@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { collectEvidenceFreshnessFailures } from "../../../scripts/quality/closeout-lib.mjs";
+import {
+  collectEvidenceFreshnessFailures,
+  hasOnlyCloseoutEvidenceChanges,
+} from "../../../scripts/quality/closeout-lib.mjs";
 
 describe("closeout evidence freshness", () => {
   it("fails when report SHA drifts from the expected git head", () => {
@@ -41,5 +44,42 @@ describe("closeout evidence freshness", () => {
     );
 
     expect(failures).toEqual([]);
+  });
+
+  it("allows head drift when only closeout evidence files changed after generation", () => {
+    const failures = collectEvidenceFreshnessFailures(
+      "final",
+      {
+        status: "passed",
+        gitHead: "2464075",
+      },
+      [
+        "# Non-Platform Final Closeout",
+        "",
+        "- Status: passed",
+        "- Git SHA: 2464075",
+      ].join("\n"),
+      "184ecb8",
+      { allowGitHeadDrift: true },
+    );
+
+    expect(failures).toEqual([]);
+  });
+
+  it("recognizes closeout latest files as the only allowed post-generation drift", () => {
+    expect(
+      hasOnlyCloseoutEvidenceChanges([
+        "docs/reports/closeout/phase1-canonical-truth/latest.json",
+        "docs/reports/closeout/phase1-canonical-truth/latest.md",
+        "docs/reports/closeout/final-non-platform/latest.json",
+      ]),
+    ).toBe(true);
+
+    expect(
+      hasOnlyCloseoutEvidenceChanges([
+        "docs/reports/closeout/final-non-platform/latest.json",
+        "scripts/quality/closeout-lib.mjs",
+      ]),
+    ).toBe(false);
   });
 });

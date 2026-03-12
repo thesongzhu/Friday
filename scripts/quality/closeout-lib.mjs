@@ -47,6 +47,40 @@ export function getGitHead() {
   }
 }
 
+const CLOSEOUT_EVIDENCE_PATH = /^docs\/reports\/closeout\/[^/]+\/latest\.(json|md)$/;
+
+export function isCloseoutEvidencePath(path) {
+  return CLOSEOUT_EVIDENCE_PATH.test(path);
+}
+
+export function hasOnlyCloseoutEvidenceChanges(paths) {
+  return paths.length > 0 && paths.every((path) => isCloseoutEvidencePath(path));
+}
+
+function listChangedFilesBetweenRefs(fromRef, toRef) {
+  try {
+    return execFileSync("git", ["diff", "--name-only", "--no-renames", `${fromRef}..${toRef}`], {
+      cwd: ROOT,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function isEvidenceOnlyHeadDrift(payloadGitHead, expectedGitHead) {
+  if (!payloadGitHead || !expectedGitHead || payloadGitHead === expectedGitHead) {
+    return payloadGitHead === expectedGitHead;
+  }
+  return hasOnlyCloseoutEvidenceChanges(
+    listChangedFilesBetweenRefs(payloadGitHead, expectedGitHead),
+  );
+}
+
 export function ensureDirectory(path) {
   mkdirSync(path, { recursive: true });
 }
@@ -100,12 +134,14 @@ export function collectEvidenceFreshnessFailures(
   payload,
   markdown,
   expectedGitHead,
+  options = {},
 ) {
+  const { allowGitHeadDrift = false } = options;
   const failures = [];
   const markdownGitHead = extractMarkdownMetadata(markdown, "Git SHA");
   const markdownStatus = extractMarkdownMetadata(markdown, "Status");
 
-  if (payload.gitHead !== expectedGitHead) {
+  if (payload.gitHead !== expectedGitHead && !allowGitHeadDrift) {
     failures.push(`${phaseId}: latest.json gitHead ${String(payload.gitHead)} does not match expected ${expectedGitHead}`);
   }
   if (markdownGitHead !== String(payload.gitHead)) {
@@ -150,12 +186,17 @@ export function assertEvidenceFreshness(phaseIds, expectedGitHead = getGitHead()
     }
 
     const markdown = readFileSync(markdownPath, "utf-8");
+    const allowGitHeadDrift = isEvidenceOnlyHeadDrift(
+      String(payload.gitHead ?? ""),
+      expectedGitHead,
+    );
     failures.push(
       ...collectEvidenceFreshnessFailures(
         phaseId,
         payload,
         markdown,
         expectedGitHead,
+        { allowGitHeadDrift },
       ),
     );
   }
