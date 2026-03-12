@@ -1,0 +1,274 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── MECHANISM-1: Gate 1 — Build + Type + Lint ──
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build API
+        run: npm run build:api
+
+      - name: Build UI
+        run: npm run build:ui
+
+  # ── MECHANISM-1: Gate 2 — Unit + Integration Tests ──
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Unit/Integration + Core E2E tests
+        env:
+          FRIDAY_E2E_CORE: "1"
+        run: npm test
+
+  # ── MECHANISM-2: Gate 3 — Migration Chain Integrity ──
+  migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check migration chain integrity
+        run: node scripts/quality/check-migrations.mjs
+
+  # ── MECHANISM-3: Gate 4 — Security Regression Gate ──
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Adversarial suite integrity check
+        run: node scripts/quality/check-adversarial-suite.mjs
+
+      - name: Run adversarial tests
+        run: npx vitest run test/adversarial
+
+  # ── MECHANISM-4: Gate — API + Type Contract Gate ──
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Contract tests (routes + types)
+        run: npm run test:contracts
+
+  # ── MECHANISM-5: Gate 5 — SSD Marker Lint ──
+  ssd-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: SSD marker lint
+        run: node scripts/quality/check-ssd-markers.mjs
+
+  # ── MECHANISM-5b: Scope/Alignment Guard ──
+  alignment-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: OpenClaw-overlap alignment guard
+        run: node scripts/quality/check-openclaw-alignment-guard.mjs
+
+  # ── MECHANISM-5c: OpenClaw-Overlap Acceptance ──
+  openclaw-overlap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run OpenClaw-overlap acceptance suite
+        run: npm run test:integration:openclaw-overlap
+
+  # ── MECHANISM-6: Secret Detection ──
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install detect-secrets
+        run: pip install detect-secrets==1.5.0
+
+      - name: Enforce secrets baseline
+        run: |
+          # Ops report CSVs contain commit SHAs that trigger deterministic false positives.
+          # Keep source-code scanning strict while excluding generated report artifacts.
+          git ls-files -z | xargs -0 detect-secrets-hook \
+            --baseline .secrets.baseline \
+            --exclude-files '(^|/)node_modules(/|$)|(^|/)dist(/|$)|(^|/)coverage(/|$)|(^|/)package-lock\.json$|(^|/)pnpm-lock\.yaml$|\.snap$|(^|/)managed-skills/[^/]+/conversion\.report\.json$|(^|/)docs/reports/ops/.*\.csv$'
+          echo "✅ No new secrets detected"
+
+      - name: Remediation guidance
+        if: failure()
+        run: |
+          echo "::error::🔑 New secret detected in source code!"
+          echo ""
+          echo "To fix:"
+          echo "  1. Remove the secret from the code"
+          echo "  2. If it's a false positive, update the baseline:"
+          echo "     detect-secrets scan --exclude-files '(^|/)node_modules(/|$)|(^|/)dist(/|$)|(^|/)coverage(/|$)|(^|/)package-lock\\.json$|(^|/)pnpm-lock\\.yaml$|\\.snap$' > .secrets.baseline"
+          echo "     detect-secrets audit .secrets.baseline"
+          echo "  3. Commit the updated .secrets.baseline"
+
+  # ── Terminal CI Aggregator — single required check for branch protection ──
+  quality-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [build, test, migrations, security, contracts, ssd-lint, alignment-guard, openclaw-overlap, secrets]
+    if: ${{ always() }}
+
+    steps:
+      - name: Check all gates passed
+        run: |
+          echo "Build:              ${{ needs.build.result }}"
+          echo "Test:               ${{ needs.test.result }}"
+          echo "Migrations:         ${{ needs.migrations.result }}"
+          echo "Security:           ${{ needs.security.result }}"
+          echo "Contracts:          ${{ needs.contracts.result }}"
+          echo "SSD Lint:           ${{ needs.ssd-lint.result }}"
+          echo "Alignment Guard:    ${{ needs.alignment-guard.result }}"
+          echo "OpenClaw Overlap:   ${{ needs.openclaw-overlap.result }}"
+          echo "Secrets:            ${{ needs.secrets.result }}"
+          echo ""
+
+          FAILED=0
+          for result in \
+            "${{ needs.build.result }}" \
+            "${{ needs.test.result }}" \
+            "${{ needs.migrations.result }}" \
+            "${{ needs.security.result }}" \
+            "${{ needs.contracts.result }}" \
+            "${{ needs.ssd-lint.result }}" \
+            "${{ needs.alignment-guard.result }}" \
+            "${{ needs.openclaw-overlap.result }}" \
+            "${{ needs.secrets.result }}" \
+          ; do
+            if [ "$result" != "success" ]; then
+              FAILED=1
+            fi
+          done
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "❌ Quality gate FAILED — one or more jobs did not succeed"
+            exit 1
+          fi
+          echo "✅ Quality gate passed — all jobs succeeded"

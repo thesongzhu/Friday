@@ -1,0 +1,95 @@
+name: Weekly Audit
+
+on:
+  schedule:
+    # Every Monday at 09:00 UTC
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+env:
+  MAX_PROD_CRITICAL: "0"
+  MAX_SKIPPED_TESTS: "21"  # Ratchet down as skips are removed
+
+jobs:
+  ssd-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: SSD marker lint
+        run: node scripts/quality/check-ssd-markers.mjs
+
+      - name: Migration chain integrity
+        run: node scripts/quality/check-migrations.mjs
+
+      - name: Adversarial suite integrity
+        run: node scripts/quality/check-adversarial-suite.mjs
+
+  npm-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: npm audit (production — fail on critical)
+        run: |
+          echo "🔍 Running npm audit (production)..."
+          AUDIT_JSON=$(npm audit --omit=dev --json 2>/dev/null || true)
+          CRITICAL=$(echo "$AUDIT_JSON" | node -e "
+            const data = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+            const v = data.metadata?.vulnerabilities || {};
+            console.log((v.critical || 0) + (v.high || 0));
+          ")
+          echo "Critical+High vulnerabilities: $CRITICAL (threshold: $MAX_PROD_CRITICAL)"
+          if [ "$CRITICAL" -gt "$MAX_PROD_CRITICAL" ]; then
+            echo "❌ Production audit failed: $CRITICAL critical/high vulnerabilities exceed threshold $MAX_PROD_CRITICAL"
+            npm audit --omit=dev
+            exit 1
+          fi
+          echo "✅ Production audit passed"
+
+      - name: npm audit (full — informational)
+        run: npm audit || true
+
+  skipped-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Scan for skipped tests
+        run: node scripts/quality/check-skipped-tests.mjs --root test --max "$MAX_SKIPPED_TESTS"

@@ -1,0 +1,111 @@
+name: Cloud Live E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Live provider for this run"
+        required: true
+        default: "openai"
+        type: choice
+        options:
+          - openai
+          - ollama
+      cloud_base_url:
+        description: "Cloud Friday base URL, e.g. https://staging.example.com"
+        required: true
+        type: string
+      auth_mode:
+        description: "Cloud login mode"
+        required: true
+        default: "access-token"
+        type: choice
+        options:
+          - access-token
+          - email-password
+          - local-passphrase
+      namespace:
+        description: "Prefix for created test artifacts"
+        required: true
+        default: "cloud-e2e"
+        type: string
+      timeout_ms:
+        description: "Per-request cloud timeout in milliseconds"
+        required: true
+        default: "30000"
+        type: string
+      environment_name:
+        description: "GitHub Environment that stores cloud e2e secrets"
+        required: true
+        default: "staging-e2e"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  cloud-live-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ inputs.environment_name }}
+    concurrency:
+      group: cloud-live-e2e-${{ inputs.environment_name }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run cloud live e2e suite
+        env:
+          CI: "true"
+          FRIDAY_E2E_TARGET: "cloud"
+          FRIDAY_E2E_CLOUD_BASE_URL: ${{ inputs.cloud_base_url }}
+          FRIDAY_E2E_CLOUD_AUTH_MODE: ${{ inputs.auth_mode }}
+          FRIDAY_E2E_CLOUD_NAMESPACE: ${{ inputs.namespace }}
+          FRIDAY_E2E_CLOUD_TIMEOUT_MS: ${{ inputs.timeout_ms }}
+
+          # Optional cloud auth vars (used depending on auth_mode)
+          FRIDAY_E2E_CLOUD_ACCESS_TOKEN: ${{ secrets.FRIDAY_E2E_CLOUD_ACCESS_TOKEN }}
+          FRIDAY_E2E_CLOUD_REFRESH_TOKEN: ${{ secrets.FRIDAY_E2E_CLOUD_REFRESH_TOKEN }}
+          FRIDAY_E2E_CLOUD_EMAIL: ${{ secrets.FRIDAY_E2E_CLOUD_EMAIL }}
+          FRIDAY_E2E_CLOUD_PASSWORD: ${{ secrets.FRIDAY_E2E_CLOUD_PASSWORD }}
+          FRIDAY_E2E_CLOUD_LOCAL_PASSPHRASE: ${{ secrets.FRIDAY_E2E_CLOUD_LOCAL_PASSPHRASE }}
+
+          # Provider credentials / refs for provider setup paths
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          E2E_OPENAI_API_KEY_ENV: OPENAI_API_KEY # pragma: allowlist secret
+
+          FRIDAY_E2E_LIVE_OPENAI: ${{ inputs.provider == 'openai' && '1' || '0' }}
+          FRIDAY_E2E_LIVE_OLLAMA: ${{ inputs.provider == 'ollama' && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          {
+            echo "provider=${{ inputs.provider }}"
+            echo "cloud_base_url=${{ inputs.cloud_base_url }}"
+            echo "auth_mode=${{ inputs.auth_mode }}"
+            echo "namespace=${{ inputs.namespace }}"
+            echo "timeout_ms=${{ inputs.timeout_ms }}"
+            echo "environment_name=${{ inputs.environment_name }}"
+          } > artifacts/cloud-e2e-meta.txt
+
+          npx vitest run test/e2e/live/friday-cloud-journeys.e2e.test.ts \
+            2>&1 | tee artifacts/cloud-e2e.log
+
+      - name: Upload cloud e2e artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-live-e2e-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn

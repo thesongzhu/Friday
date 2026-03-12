@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+#
+# MECHANISM-8: Local Pre-push Guard
+#
+# Keep the local push path fast. CI owns the broader test matrix and nightly
+# jobs own the heavyweight release, Docker, and cloud checks.
+#
+# Fast checks before push:
+# 1. TypeScript type check
+# 2. Full lint
+# 3. Migration chain integrity
+# 4. SSD marker lint
+# 5. OpenClaw alignment guard
+
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+echo "🚀 Pre-push checks..."
+
+# ── 1. TypeScript type check ──
+echo "  🔎 Type checking..."
+npm run typecheck --silent || {
+  echo -e "${RED}❌ TypeScript type check failed${NC}"
+  exit 1
+}
+echo -e "  ${GREEN}✅ Typecheck passed${NC}"
+
+# ── 2. Full lint ──
+echo "  📝 Linting..."
+npm run lint --silent || {
+  echo -e "${RED}❌ Lint failed${NC}"
+  exit 1
+}
+echo -e "  ${GREEN}✅ Lint passed${NC}"
+
+# ── 3. Migration chain integrity ──
+echo "  🔗 Migration chain integrity..."
+node scripts/quality/check-migrations.mjs || {
+  echo -e "${RED}❌ Migration chain check failed${NC}"
+  exit 1
+}
+
+# ── 4. SSD marker lint ──
+echo "  📋 SSD marker lint..."
+node scripts/quality/check-ssd-markers.mjs || {
+  echo -e "${RED}❌ SSD marker lint failed${NC}"
+  exit 1
+}
+
+# ── 5. OpenClaw alignment guard ──
+echo "  🧭 OpenClaw alignment guard..."
+node scripts/quality/check-openclaw-alignment-guard.mjs || {
+  echo -e "${RED}❌ OpenClaw alignment guard failed${NC}"
+  exit 1
+}
+
+echo -e "${GREEN}🎉 Pre-push checks passed — safe to push${NC}"

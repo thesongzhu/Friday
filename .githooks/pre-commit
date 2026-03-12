@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+#
+# MECHANISM-7: Local Pre-commit Guard
+#
+# This hook is a local fast-fail convenience and can be bypassed with
+# `git commit --no-verify`. Enforcement boundary is CI (`quality-gate` job).
+#
+# Fast checks on staged files before commit:
+# 1. Lint staged .ts/.tsx files
+# 2. Migration chain integrity (if migrations changed)
+# 3. SSD marker check (if SSD changed)
+
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+echo "🔍 Pre-commit checks..."
+
+# Collect staged files into a bash array using NUL-delimited output
+TS_FILES=()
+while IFS= read -r -d '' file; do
+  if [[ "$file" =~ \.(ts|tsx)$ ]]; then
+    TS_FILES+=("$file")
+  fi
+done < <(git diff --cached --name-only --diff-filter=ACM -z)
+
+MIGRATION_CHANGED=false
+SSD_CHANGED=false
+while IFS= read -r -d '' file; do
+  if [[ "$file" == src/state/sqlite/migrations/* ]]; then
+    MIGRATION_CHANGED=true
+  fi
+  if [[ "$file" == docs/distributed-architecture.md ]]; then
+    SSD_CHANGED=true
+  fi
+done < <(git diff --cached --name-only --diff-filter=ACM -z)
+
+# ── 1. Lint staged TypeScript files ──
+if [ "${#TS_FILES[@]}" -gt 0 ]; then
+  echo "  📝 Linting staged TypeScript files..."
+  npx eslint "${TS_FILES[@]}" --max-warnings 0 || {
+    echo -e "${RED}❌ ESLint failed on staged files${NC}"
+    exit 1
+  }
+  echo -e "  ${GREEN}✅ Lint passed${NC}"
+else
+  echo "  ⏭️  No staged .ts/.tsx files — skipping lint"
+fi
+
+# ── 2. Migration chain integrity ──
+if [ "$MIGRATION_CHANGED" = true ]; then
+  echo "  🔗 Checking migration chain integrity..."
+  node scripts/quality/check-migrations.mjs || {
+    echo -e "${RED}❌ Migration chain integrity check failed${NC}"
+    exit 1
+  }
+fi
+
+# ── 3. SSD marker check ──
+if [ "$SSD_CHANGED" = true ]; then
+  echo "  📋 Checking SSD markers..."
+  node scripts/quality/check-ssd-markers.mjs || {
+    echo -e "${RED}❌ SSD marker lint failed${NC}"
+    exit 1
+  }
+fi
+
+echo -e "${GREEN}✅ Pre-commit checks passed${NC}"

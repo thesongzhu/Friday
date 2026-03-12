@@ -1,0 +1,257 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (for example: v0.3.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      tag_name: ${{ steps.resolve_tag.outputs.tag_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+
+      - name: Resolve tag
+        id: resolve_tag
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG_NAME="${{ github.event.inputs.tag }}"
+          else
+            TAG_NAME="${GITHUB_REF_NAME}"
+          fi
+          echo "TAG_NAME=${TAG_NAME}" >> "${GITHUB_ENV}"
+          echo "tag_name=${TAG_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "Using tag: ${TAG_NAME}"
+
+      - name: Validate tag format
+        run: |
+          if [[ ! "${TAG_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([\-+].*)?$ ]]; then
+            echo "::error::Tag must match v<semver> (for example: v0.3.1)"
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify tag equals package version
+        run: |
+          TAG_VERSION="${TAG_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          echo "tag=${TAG_VERSION} package=${PKG_VERSION}"
+          if [ "${TAG_VERSION}" != "${PKG_VERSION}" ]; then
+            echo "::error::Tag version does not match package.json version"
+            exit 1
+          fi
+
+      - name: Release verify
+        run: npm run release:verify
+
+  source-distribution:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.verify.outputs.tag_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Friday
+        run: npm run build
+
+      - name: Build source distribution
+        env:
+          FRIDAY_RELEASE_DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.verify.outputs.tag_name }}
+        run: npm run build:release:source
+
+      - name: Upload source distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: friday-source-release
+          path: dist/releases/source
+
+  macos-distribution:
+    needs: verify
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.verify.outputs.tag_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Friday
+        run: npm run build
+
+      - name: Build companion release bundle
+        env:
+          FRIDAY_MACOS_SPARKLE_PRIVATE_KEY: ${{ secrets.FRIDAY_MACOS_SPARKLE_PRIVATE_KEY }}
+          FRIDAY_MACOS_SPARKLE_PUBLIC_KEY: ${{ vars.FRIDAY_MACOS_SPARKLE_PUBLIC_KEY }}
+          FRIDAY_MACOS_APPCAST_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.verify.outputs.tag_name }}
+          FRIDAY_HOMEBREW_TAP_REPO: ${{ vars.FRIDAY_HOMEBREW_TAP_REPO }}
+          FRIDAY_HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.FRIDAY_HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: npm run release:companion:local
+
+      - name: Build macOS DMG
+        env:
+          FRIDAY_RELEASE_DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.verify.outputs.tag_name }}
+        run: npm run build:companion:dmg
+
+      - name: Upload macOS distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: friday-macos-release
+          path: |
+            dist/macos/FridayCompanion.release.json
+            dist/macos/FridayCompanion.release.md
+            dist/releases/macos
+            dist/releases/channels
+            dist/releases/homebrew
+
+  publish-npm:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.verify.outputs.tag_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Friday
+        run: npm run build
+
+      - name: Resolve publish mode
+        run: |
+          MODE="${{ vars.RELEASE_PUBLISH_NPM }}"
+          if [ "${MODE}" = "true" ]; then
+            echo "PUBLISH_NPM=true" >> "${GITHUB_ENV}"
+            echo "npm publish: enabled (RELEASE_PUBLISH_NPM=true)"
+          elif [ "${MODE}" = "false" ]; then
+            echo "PUBLISH_NPM=false" >> "${GITHUB_ENV}"
+            echo "npm publish: skipped (RELEASE_PUBLISH_NPM=false)"
+          elif [ -n "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "PUBLISH_NPM=true" >> "${GITHUB_ENV}"
+            echo "npm publish: enabled (NPM_TOKEN present, auto mode)"
+          else
+            echo "PUBLISH_NPM=false" >> "${GITHUB_ENV}"
+            echo "npm publish: skipped (NPM_TOKEN missing, auto mode)"
+          fi
+
+      - name: Publish to npm
+        if: env.PUBLISH_NPM == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
+
+      - name: Skip npm publish notice
+        if: env.PUBLISH_NPM != 'true'
+        run: echo "::warning::NPM_TOKEN is not configured. GitHub release artifacts will be created without npm publication."
+
+  create-release:
+    needs:
+      - verify
+      - source-distribution
+      - macos-distribution
+      - publish-npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.verify.outputs.tag_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download source distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: friday-source-release
+          path: .
+
+      - name: Download macOS distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: friday-macos-release
+          path: .
+
+      - name: Write release manifest
+        env:
+          FRIDAY_RELEASE_TAG: ${{ needs.verify.outputs.tag_name }}
+          FRIDAY_RELEASE_DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.verify.outputs.tag_name }}
+        run: npm run release:manifest
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.verify.outputs.tag_name }}
+          generate_release_notes: true
+          files: |
+            dist/releases/**/*
+            dist/macos/FridayCompanion.release.json
+            dist/macos/FridayCompanion.release.md

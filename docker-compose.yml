@@ -1,0 +1,25 @@
+services:
+  friday-hub:
+    build: .
+    image: friday:local
+    init: true
+    restart: unless-stopped
+    environment:
+      FRIDAY_PORT: ${FRIDAY_PORT:-3141}
+      FRIDAY_HOST: ${FRIDAY_HOST:-0.0.0.0}
+      FRIDAY_STATE_DIR: /data
+      FRIDAY_SKILLS_DIR: /skills
+      FRIDAY_TOKEN_SECRET: ${FRIDAY_TOKEN_SECRET}
+      FRIDAY_CORS_ORIGINS: ${FRIDAY_CORS_ORIGINS:-}
+      FRIDAY_LOG_REQUESTS: ${FRIDAY_LOG_REQUESTS:-true}
+    ports:
+      - "${FRIDAY_PORT:-3141}:3141"
+    volumes:
+      - ${FRIDAY_STATE_DIR:-./data}:/data
+      - ${FRIDAY_SKILLS_DIR:-./skills}:/skills
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3141/v1/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
