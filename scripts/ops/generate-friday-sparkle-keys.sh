@@ -26,9 +26,9 @@ ensure_sparkle_cache() {
   fi
 
   local download_url="https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-for-Swift-Package-Manager.zip"
-  local temp_dir
+  local temp_dir=""
   temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/friday-sparkle-fetch.XXXXXX")"
-  trap 'rm -rf "${temp_dir}"' EXIT
+  trap 'rm -rf "${temp_dir:-}"' RETURN
 
   mkdir -p "$(dirname "${SPARKLE_CACHE_DIR}")"
   curl -L --fail --silent --show-error "${download_url}" -o "${temp_dir}/Sparkle.zip"
