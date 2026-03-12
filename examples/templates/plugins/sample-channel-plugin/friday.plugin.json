@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "1.0",
+  "id": "com.example.channel.demo",
+  "version": "1.0.0",
+  "name": "Demo Channel Plugin",
+  "description": "Minimal plugin template for Friday extension development.",
+  "kinds": ["channel"],
+  "entrypoints": {
+    "channel": "index.js"
+  },
+  "permissions": {
+    "grants": [
+      {
+        "id": "network-connect-demo",
+        "resource": "network",
+        "action": "connect",
+        "required": true,
+        "reason": "Connect to channel gateway in template mode."
+      }
+    ],
+    "promptOn": ["network.connect"]
+  },
+  "compatibility": {
+    "minHubVersion": "0.3.1",
+    "apiVersion": "1"
+  }
+}

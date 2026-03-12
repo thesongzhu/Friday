@@ -1,0 +1,14 @@
+{
+  "count": 1,
+  "items": [
+    {
+      "id": "local-mcp",
+      "command": "echo",
+      "args": [
+        "ready"
+      ],
+      "cwd": "/Users/jarvis/Projects/Friday",
+      "timeoutMs": 5000
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+Package: friday
+Version: {{VERSION}}
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Friday Maintainers <opensource@friday.local>
+Depends: libgtk-3-0, libayatana-appindicator3-1
+Description: Friday Agent OS shell
+ Friday bundles the Node hub, web Operator Console, and Linux companion runtime.

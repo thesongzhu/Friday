@@ -1,0 +1,44 @@
+Task ID,Title,Owner,Priority,Estimate (SP),Estimated Duration,Dependencies,Feature Flag,Acceptance Criteria
+FRI-CONV-101,Design auth bootstrap contract,Backend Engineer (Auth),P0,3 SP,1.5d,none,auth.bootstrap_local_passphrase,Contract doc includes schemas and exact preconditions. | Security reviewer signs off localhost and one-time policy.
+FRI-CONV-102,Implement auth bootstrap backend flow,Backend Engineer (Auth),P0,8 SP,4d,FRI-CONV-101,auth.bootstrap_local_passphrase,Fresh production instance can initialize local passphrase exactly once. | Non-localhost request gets blocked. | Existing hashed local account cannot be overwritten.
+FRI-CONV-103,Login UI bootstrap-required state,Frontend Engineer (Auth UX),P0,5 SP,2.5d,FRI-CONV-102,auth.bootstrap_local_passphrase,No dead-end login state on fresh production startup. | UI messaging is deterministic for all bootstrap outcomes.
+FRI-CONV-104,Auth bootstrap documentation and runbook,Developer Relations Engineer,P1,2 SP,1d,FRI-CONV-102,N/A,New operator can complete first login from docs without DB intervention.
+FRI-CONV-201,Define plugin mode config and capability schema,Backend Engineer (Platform),P1,3 SP,1.5d,none,plugins.runtime_mode,Mode contract is documented and versioned.
+FRI-CONV-202,Wire full plugin stack in hub bootstrap,Backend Engineer (Platform),P1,8 SP,4d,FRI-CONV-201,plugins.runtime_mode,Full mode supports install/enable/disable/uninstall route behavior. | Stub mode remains functional and explicit.
+FRI-CONV-203,Frontend plugin action gating by capability,Frontend Engineer (Settings),P1,5 SP,2.5d,FRI-CONV-201,plugins.runtime_mode,No actionable button leads to expected 501 in normal flow.
+FRI-CONV-301,Skills list backend-first contract,Backend Engineer (Skills API),P1,3 SP,1.5d,none,skills.backend_list_primary,Typed list contract consumed in UI without localStorage dependency.
+FRI-CONV-302,Skills page backend-first rendering,Frontend Engineer (Skills),P1,5 SP,2.5d,FRI-CONV-301,skills.backend_list_primary,Clearing localStorage does not hide server skills.
+FRI-CONV-303,Skill detail fallback runner for missing UI schema,Frontend Engineer (Skills),P2,5 SP,2.5d,none,skills.schema_fallback_runner,Missing `skill.ui.json` no longer blocks skill execution.
+FRI-CONV-401,Automation schedule contract and migration design,Backend Engineer (Data/Scheduler),P2,5 SP,2.5d,none,automation.scheduler_link,Schema and migration RFC approved.
+FRI-CONV-402,Repository and service schedule persistence wiring,Backend Engineer (Automation),P2,8 SP,4d,FRI-CONV-401,automation.scheduler_link,Automation record remains source-of-truth for schedule state.
+FRI-CONV-403,Scheduler upsert/disable linkage for automations,Backend Engineer (Scheduler),P2,8 SP,4d,FRI-CONV-402,automation.scheduler_link,Automation runs trigger at schedule with no duplicate trigger under normal conditions.
+FRI-CONV-404,Automation API route updates,Backend Engineer (Agent API),P2,5 SP,2.5d,FRI-CONV-403,automation.scheduler_link,API clients can manage scheduled and manual automations coherently.
+FRI-CONV-405,Automation UI schedule controls,Frontend Engineer (Automations),P2,5 SP,2.5d,FRI-CONV-404,automation.scheduler_link,Operator can configure schedule without direct API calls.
+FRI-CONV-501,Shared channel-kind source of truth,Backend Engineer (Channels),P2,5 SP,2.5d,none,setup.channels_unified_kinds,Setup backend accepted kinds are derived from shared source.
+FRI-CONV-502,Setup API validation expansion and contract tests,Backend Engineer (Contracts),P2,5 SP,2.5d,FRI-CONV-501,setup.channels_unified_kinds,Every UI-exposed kind is valid in setup API.
+FRI-CONV-503,Setup UI channel cards and payload mapping,Frontend Engineer (Setup Wizard),P2,8 SP,4d,FRI-CONV-502,setup.channels_unified_kinds,Setup wizard can configure all exposed channel kinds and persist successfully.
+FRI-CONV-601,Add agent scope taxonomy,Security Engineer (RBAC),P2,3 SP,1.5d,none,rbac.agent_scopes_v2,Scope model compiles and role matrix approved.
+FRI-CONV-602,Remap agent route auth requirements,Backend Engineer (RBAC),P2,5 SP,2.5d,FRI-CONV-601,rbac.agent_scopes_v2,Least privilege is enforceable per agent route class.
+FRI-CONV-603,Compatibility window telemetry and deprecation,Security Engineer (RBAC Migration),P2,3 SP,1.5d,FRI-CONV-602,rbac.agent_scopes_v2,Compatibility window has measurable usage telemetry.
+FRI-CONV-604,Agent RBAC test matrix,QA Engineer (RBAC),P2,5 SP,2.5d,FRI-CONV-602,rbac.agent_scopes_v2,Full route-level scope enforcement proven by automated tests.
+FRI-CONV-701,Define granular operational scope taxonomy,Security Engineer (Scopes),P2,3 SP,1.5d,none,rbac.operational_scopes_v2,Scope list is minimal and non-overlapping.
+FRI-CONV-702,Provider route remap to least privilege,Backend Engineer (Provider API),P2,5 SP,2.5d,FRI-CONV-701,rbac.operational_scopes_v2,Provider operations no longer require broad admin by default.
+FRI-CONV-703,Memory route remap to least privilege,Backend Engineer (Memory API),P2,5 SP,2.5d,FRI-CONV-701,rbac.operational_scopes_v2,Memory operators can function with least privilege roles.
+FRI-CONV-704,Security route review and scope decision,Security Engineer (API Security),P2,3 SP,1.5d,FRI-CONV-701,rbac.operational_scopes_v2,Security reviewer signs off route-level scope mapping.
+FRI-CONV-705,Operational RBAC regression tests,QA Engineer (RBAC Regression),P2,5 SP,2.5d,"FRI-CONV-702, FRI-CONV-703, FRI-CONV-704",rbac.operational_scopes_v2,No unauthorized access regression across operational APIs.
+FRI-CONV-801,Session key canonicalization spec,Backend Engineer (Sessions),P2,2 SP,1d,none,sessions.input_canonicalization,Canonicalization behavior is deterministic and testable.
+FRI-CONV-802,Implement canonicalization and actionable errors,Backend Engineer (Sessions),P2,5 SP,2.5d,FRI-CONV-801,sessions.input_canonicalization,Common malformed inputs now return actionable guidance or safe normalization.
+FRI-CONV-803,Session API and client tests,QA Engineer (Sessions API),P2,3 SP,1.5d,FRI-CONV-802,sessions.input_canonicalization,Validation quality remains stable under regression.
+FRI-CONV-901,Define capability payload and versioning,Backend Engineer (API Contract),P1,3 SP,1.5d,none,capabilities.handshake_v1,Capability payload schema approved and documented.
+FRI-CONV-902,Backend capability endpoint implementation,Backend Engineer (Capabilities),P1,5 SP,2.5d,FRI-CONV-901,capabilities.handshake_v1,Endpoint returns deterministic capability payload on startup and steady-state.
+FRI-CONV-903,Frontend capability bootstrap and action gating,Frontend Engineer (Capability Gating),P1,8 SP,4d,FRI-CONV-902,capabilities.handshake_v1,UI does not expose unsupported operations.
+FRI-CONV-1001,Navigation exposure adjustment,Frontend Engineer (Navigation),P2,3 SP,1.5d,none,ui.build_nav_default_visible,Build features are discoverable without hidden toggle.
+FRI-CONV-1002,First-login onboarding hint,Frontend Engineer (Onboarding UX),P3,2 SP,1d,FRI-CONV-1001,ui.build_nav_default_visible,New users see discoverability hint once.
+FRI-CONV-1101,Extend API test server helper for optional services,QA Automation Engineer,P3,8 SP,4d,none,N/A,Helper can boot required service combinations for skipped suites.
+FRI-CONV-1102,Unskip skills route E2E suite,QA Automation Engineer,P3,3 SP,1.5d,FRI-CONV-1101,N/A,Suite runs green in CI.
+FRI-CONV-1103,Unskip plugins route E2E suite,QA Automation Engineer,P3,3 SP,1.5d,FRI-CONV-1101,N/A,Suite runs green in CI.
+FRI-CONV-1104,Unskip sessions-memory route E2E suite,QA Automation Engineer,P3,3 SP,1.5d,FRI-CONV-1101,N/A,Suite runs green in CI.
+FRI-CONV-1105,Nightly full matrix pipeline,DevOps Engineer,P3,3 SP,1.5d,"FRI-CONV-1102, FRI-CONV-1103, FRI-CONV-1104",N/A,Nightly job runs expanded route matrix and reports failures.
+FRI-CONV-1201,Migration and rollback runbook,Release Engineer,P1,3 SP,1.5d,all additive migration stories,N/A,On-call can execute rollback without developer intervention.
+FRI-CONV-1202,Canary checklist and production gate script,DevOps Engineer,P1,3 SP,1.5d,all P0/P1 stories done,N/A,Promotion blocked automatically if any gate fails.
+FRI-CONV-1203,Post-release verification and deprecation switch plan,Release Manager,P2,2 SP,1d,FRI-CONV-1202,N/A,Clear date-based and metric-based deprecation criteria published.

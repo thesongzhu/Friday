@@ -1,0 +1,16 @@
+cask "friday" do
+  version "{{VERSION}}"
+  sha256 "{{SHA256}}"
+
+  url "{{URL}}"
+  name "Friday"
+  desc "Friday Agent OS companion for macOS"
+  homepage "https://github.com/thesongzhu/Friday"
+
+  app "FridayCompanion.app"
+
+  caveats <<~EOS
+    Friday Companion installs the native Agent OS companion only.
+    Start the Friday hub separately or enable launchd to run the full Agent OS stack.
+  EOS
+end

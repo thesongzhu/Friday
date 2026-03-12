@@ -1,0 +1,34 @@
+{
+  "summary": {
+    "generatedAt": "2026-03-08T23:41:15.237Z",
+    "repeats": 3,
+    "systems": [
+      "friday",
+      "openclaw"
+    ],
+    "fridayBaseUrl": "http://127.0.0.1:4123",
+    "openClawRepo": "<openclaw-repo>",
+    "totals": {
+      "equivalent": 5,
+      "fridayStronger": 2,
+      "weakerButAcceptable": 0,
+      "gap": 4,
+      "boundaryByDesign": 1
+    },
+    "gapRanking": [
+      {
+        "classification": "risk_boundary_gap",
+        "count": 2
+      },
+      {
+        "classification": "boundary_explanation_gap",
+        "count": 1
+      },
+      {
+        "classification": "execution_gap",
+        "count": 1
+      }
+    ]
+  },
+  "runDir": "./docs/reports/benchmark/openclaw-mixed-round1/2026-03-08T23-28-51.160Z"
+}

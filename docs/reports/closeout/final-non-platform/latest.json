@@ -1,0 +1,97 @@
+{
+  "status": "passed",
+  "gitHead": "5897516",
+  "generatedAt": "2026-03-11T17:55:54.200Z",
+  "title": "Non-Platform Final Closeout",
+  "notes": [
+    "All non-platform closeout gates passed."
+  ],
+  "metrics": {
+    "stepCount": "9",
+    "startedAt": "2026-03-11T17:52:57.128Z",
+    "completedAt": "2026-03-11T17:55:54.200Z"
+  },
+  "steps": [
+    {
+      "label": "Release verify",
+      "command": "npm run release:verify",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "startedAt": "2026-03-11T17:52:57.129Z",
+      "finishedAt": "2026-03-11T17:55:27.371Z"
+    },
+    {
+      "label": "Phase 1 closeout",
+      "command": "npm run closeout:phase1",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "startedAt": "2026-03-11T17:55:27.371Z",
+      "finishedAt": "2026-03-11T17:55:35.447Z"
+    },
+    {
+      "label": "Phase 2 closeout",
+      "command": "npm run closeout:phase2",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "startedAt": "2026-03-11T17:55:35.447Z",
+      "finishedAt": "2026-03-11T17:55:40.347Z"
+    },
+    {
+      "label": "Phase 3 closeout",
+      "command": "npm run closeout:phase3",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "startedAt": "2026-03-11T17:55:40.347Z",
+      "finishedAt": "2026-03-11T17:55:44.252Z"
+    },
+    {
+      "label": "Phase 4 closeout",
+      "command": "npm run closeout:phase4",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "startedAt": "2026-03-11T17:55:44.252Z",
+      "finishedAt": "2026-03-11T17:55:46.310Z"
+    },
+    {
+      "label": "Phase 5 closeout",
+      "command": "npm run closeout:phase5",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "startedAt": "2026-03-11T17:55:46.311Z",
+      "finishedAt": "2026-03-11T17:55:49.136Z"
+    },
+    {
+      "label": "Marketplace closeout",
+      "command": "npm run closeout:marketplace",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "startedAt": "2026-03-11T17:55:49.136Z",
+      "finishedAt": "2026-03-11T17:55:53.997Z"
+    },
+    {
+      "label": "UI bundle health",
+      "command": "npm run check:ui-bundle-health",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "startedAt": "2026-03-11T17:55:53.997Z",
+      "finishedAt": "2026-03-11T17:55:54.104Z"
+    },
+    {
+      "label": "Final truth audit",
+      "command": "npm run check:closeout:truth:final",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "startedAt": "2026-03-11T17:55:54.104Z",
+      "finishedAt": "2026-03-11T17:55:54.200Z"
+    }
+  ]
+}

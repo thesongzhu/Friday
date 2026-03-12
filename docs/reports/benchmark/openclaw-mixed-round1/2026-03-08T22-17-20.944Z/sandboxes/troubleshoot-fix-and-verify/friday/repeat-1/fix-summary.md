@@ -1,0 +1,1 @@
+The function `add(a, b)` in `calc.js` was corrected from returning `a - b` to returning `a + b`. After making this change, the verification command `node check.mjs` passed successfully.

@@ -1,0 +1,97 @@
+{
+  "schemaVersion": "2.0",
+  "id": "echo",
+  "name": "Echo",
+  "description": "Echoes back the input message — a minimal example skill.",
+  "version": "1.0.0",
+  "kind": "utility",
+  "category": "utility",
+  "author": {
+    "name": "Friday Team"
+  },
+  "tags": ["example", "echo"],
+
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "0.1.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 10000
+  },
+
+  "triggers": {
+    "intents": ["echo"],
+    "phrases": ["echo this", "repeat after me"],
+    "channels": ["*"]
+  },
+
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": ["intent"]
+  },
+
+  "requirements": {
+    "bins": ["bash", "jq"],
+    "env": [],
+    "config": []
+  },
+
+  "input": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "The message to echo back"
+        }
+      },
+      "required": ["message"]
+    }
+  },
+
+  "output": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "echo": {
+          "type": "string",
+          "description": "The echoed message"
+        }
+      }
+    }
+  },
+
+  "steps": [
+    {
+      "id": "echo",
+      "type": "act",
+      "completion": {},
+      "transitions": {
+        "onSuccess": null,
+        "onFailure": null
+      }
+    }
+  ],
+
+  "security": {
+    "sandbox": false,
+    "network": false,
+    "filesystem": "none",
+    "permissionPolicy": {
+      "default": "allow",
+      "rules": []
+    }
+  },
+
+  "documentation": {
+    "summary": "Echoes the input message back to the caller.",
+    "examples": [
+      {
+        "input": { "message": "Hello, Friday!" },
+        "output": { "echo": "Hello, Friday!" }
+      }
+    ]
+  }
+}

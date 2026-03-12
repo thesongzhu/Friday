@@ -1,0 +1,9 @@
+# Friday winget manifest template
+# Render this once the Windows MSI channel is available.
+PackageIdentifier: Friday.Friday
+PackageVersion: {{VERSION}}
+InstallerType: msi
+Installers:
+  - Architecture: x64
+    InstallerUrl: {{URL}}
+    InstallerSha256: {{SHA256}}

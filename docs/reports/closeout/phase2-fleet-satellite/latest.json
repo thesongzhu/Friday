@@ -1,0 +1,34 @@
+{
+  "status": "passed",
+  "gitHead": "5897516",
+  "generatedAt": "2026-03-11T17:55:40.330Z",
+  "title": "Fleet, Satellites, And Distributed Execution",
+  "notes": [
+    "Phase closeout completed successfully for phase2."
+  ],
+  "metrics": {
+    "stepCount": "2",
+    "startedAt": "2026-03-11T17:55:35.537Z",
+    "completedAt": "2026-03-11T17:55:40.330Z"
+  },
+  "steps": [
+    {
+      "label": "Fleet and satellite pack",
+      "command": "npx vitest run test/unit/api/http/routes/friday-fleet-routes.test.ts test/unit/api/http/routes/friday-satellite-runtime-routes.test.ts test/unit/api/routes/friday-satellite-pairing-routes.test.ts test/unit/api/fleet/friday-fleet-dashboard-service.test.ts test/unit/satellites/services/friday-satellite-registration-service.test.ts test/unit/satellites/services/friday-satellite-pairing-service.test.ts test/unit/satellites/services/friday-satellite-heartbeat-service.test.ts test/unit/satellites/services/friday-satellite-sync-service.test.ts test/unit/satellites/services/friday-satellite-offline-sweeper.test.ts test/unit/satellites/services/friday-outbox-queue-service.test.ts test/unit/workflows/friday-workflow-execution-service-distributed.test.ts test/unit/workflows/friday-workflow-satellite-dispatch-service.test.ts test/unit/ui/fleet-view-models.test.ts",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "startedAt": "2026-03-11T17:55:35.538Z",
+      "finishedAt": "2026-03-11T17:55:40.234Z"
+    },
+    {
+      "label": "Truth audit",
+      "command": "npm run check:closeout:truth:phase2",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "startedAt": "2026-03-11T17:55:40.234Z",
+      "finishedAt": "2026-03-11T17:55:40.330Z"
+    }
+  ]
+}

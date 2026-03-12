@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "2.0",
+  "id": "output-current-date-time",
+  "name": "Output Current Date and Time",
+  "description": "Outputs the current date and time in ISO format as JSON.",
+  "version": "1.0.0",
+  "kind": "conversation",
+  "category": "utility",
+  "author": {
+    "name": "Your Name"
+  },
+  "tags": [],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": [],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "key": "currentDateTime",
+      "type": "string",
+      "description": "The current date and time in ISO format."
+    }
+  ],
+  "permissions": {
+    "grants": [],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

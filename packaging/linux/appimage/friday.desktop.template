@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Friday
+Comment=Friday Agent OS shell
+Exec=friday start
+Icon=friday
+Categories=Utility;Development;

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Output Current Date and Time",
+  "description": "Outputs the current date and time in ISO format as JSON.",
+  "sections": [],
+  "fields": [],
+  "outputs": [
+    {
+      "id": "currentDateTime-output",
+      "outputKey": "currentDateTime",
+      "label": "currentDateTime",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Run",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

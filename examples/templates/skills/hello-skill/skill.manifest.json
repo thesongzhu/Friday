@@ -1,0 +1,70 @@
+{
+  "schemaVersion": "2.0",
+  "id": "hello-skill",
+  "name": "Hello Skill",
+  "description": "A minimal skill template for local extension.",
+  "version": "1.0.0",
+  "kind": "utility",
+  "category": "utility",
+  "author": { "name": "Template" },
+  "tags": ["template"],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "0.1.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 10000
+  },
+  "triggers": {
+    "intents": ["hello"],
+    "phrases": ["say hello"],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": ["intent"]
+  },
+  "requirements": {
+    "bins": ["bash"],
+    "env": [],
+    "config": []
+  },
+  "input": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name to greet" }
+      }
+    }
+  },
+  "output": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "greeting": { "type": "string" }
+      }
+    }
+  },
+  "steps": [
+    {
+      "id": "hello",
+      "type": "act",
+      "completion": {},
+      "transitions": { "onSuccess": null, "onFailure": null }
+    }
+  ],
+  "security": {
+    "sandbox": false,
+    "network": false,
+    "filesystem": "none",
+    "permissionPolicy": { "default": "allow", "rules": [] }
+  },
+  "documentation": {
+    "summary": "Returns a greeting.",
+    "examples": [
+      { "input": { "name": "Friday" }, "output": { "greeting": "Hello, Friday!" } }
+    ]
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "status": "passed",
+  "gitHead": "5897516",
+  "generatedAt": "2026-03-11T17:55:53.981Z",
+  "title": "Marketplace Creator Ecosystem",
+  "notes": [
+    "Phase closeout completed successfully for marketplace."
+  ],
+  "metrics": {
+    "stepCount": "3",
+    "startedAt": "2026-03-11T17:55:49.226Z",
+    "completedAt": "2026-03-11T17:55:53.981Z"
+  },
+  "steps": [
+    {
+      "label": "Route contracts",
+      "command": "npm run test:contracts:routes",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "startedAt": "2026-03-11T17:55:49.227Z",
+      "finishedAt": "2026-03-11T17:55:51.547Z"
+    },
+    {
+      "label": "Marketplace closeout pack",
+      "command": "npx vitest run test/unit/api/http/routes/friday-marketplace-asset-routes.test.ts test/unit/api/http/routes/friday-marketplace-creator-routes.test.ts test/unit/api/http/routes/friday-marketplace-request-routes.test.ts test/unit/marketplace/services/friday-marketplace-creator-service.test.ts test/unit/marketplace/services/friday-marketplace-request-board-service.test.ts test/unit/marketplace/engine/install-dispatcher.test.ts test/unit/marketplace/engine/listing-manager.test.ts test/unit/marketplace/engine/publisher-manager.test.ts test/unit/ui/marketplace-view-models.test.ts test/unit/ui/marketplace-click-path.test.ts test/unit/ui/assistant-marketplace-handoff.test.ts test/integration/marketplace/friday-marketplace-install-closure.test.ts test/integration/marketplace/friday-marketplace-install-failure-rollback.test.ts test/integration/marketplace/friday-marketplace-workflow-one-time-run-gate.test.ts",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "startedAt": "2026-03-11T17:55:51.547Z",
+      "finishedAt": "2026-03-11T17:55:53.881Z"
+    },
+    {
+      "label": "Truth audit",
+      "command": "npm run check:closeout:truth:marketplace",
+      "status": "passed",
+      "exitCode": 0,
+      "signal": null,
+      "startedAt": "2026-03-11T17:55:53.881Z",
+      "finishedAt": "2026-03-11T17:55:53.981Z"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+[
+  {
+    "task": "Fix alerts",
+    "owner": "ops",
+    "status": "open"
+  },
+  {
+    "task": "Ship wizard",
+    "owner": "product",
+    "status": "open"
+  },
+  {
+    "task": "Clean docs",
+    "owner": "ops",
+    "status": "done"
+  }
+]

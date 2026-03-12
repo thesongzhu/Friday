@@ -1,0 +1,34 @@
+{
+  "name": "Template Workflow",
+  "description": "Minimal workflow template for API create/publish/run.",
+  "tags": ["template"],
+  "graph": {
+    "nodes": [
+      {
+        "id": "trigger",
+        "type": "trigger",
+        "label": "Manual Trigger",
+        "config": {
+          "triggerType": "manual"
+        }
+      },
+      {
+        "id": "output",
+        "type": "data",
+        "label": "Output",
+        "config": {
+          "mapping": {
+            "message": "template workflow completed"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-1",
+        "sourceNodeId": "trigger",
+        "targetNodeId": "output"
+      }
+    ]
+  }
+}

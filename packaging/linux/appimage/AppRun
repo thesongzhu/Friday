@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+APPDIR="$(cd "$(dirname "$0")" && pwd)"
+exec "${APPDIR}/usr/bin/friday" start "$@"
