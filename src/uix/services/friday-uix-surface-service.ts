@@ -904,6 +904,7 @@ export function createFridayUixSurfaceService(
         }
         case "deploy-workflow":
         case "export-workflow-bundle": {
+          try {
           const goal = typeof input.parameters.goal === "string" ? input.parameters.goal.trim() : "";
           const workflowId = typeof input.parameters.workflowId === "string" ? input.parameters.workflowId : undefined;
           const draftId = typeof input.parameters.draftId === "string" ? input.parameters.draftId : undefined;
@@ -1055,6 +1056,14 @@ export function createFridayUixSurfaceService(
             result: responsePayload,
           });
           return responsePayload;
+          } catch (err) {
+            if (err instanceof FridayDomainError) throw err;
+            throw new FridayDomainError(
+              "UIX_DEPLOY_FAILED",
+              err instanceof Error ? err.message : "Workflow deployment failed unexpectedly",
+              { httpStatus: 422 },
+            );
+          }
         }
         case "recover-failed-deploy": {
           const issues = deps.selfHealing.listIssueCards({ userId: input.userId, limit: 10 });
