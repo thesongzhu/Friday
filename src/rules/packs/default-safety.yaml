@@ -1,0 +1,45 @@
+apiVersion: friday/rules/v1
+kind: PolicyBundle
+metadata:
+  id: default-safety
+  name: Default Safety Pack
+  version: 1
+  priority: 20
+  enabled: true
+  tags:
+    - default
+    - safety
+rules:
+  - id: deny-shell-rm-rf
+    name: Deny destructive shell delete
+    resource: shell
+    action: execute
+    decision: deny
+    message: Destructive rm invocation is blocked
+    priority: 10
+    conditions:
+      all:
+        - field: args.command
+          operator: matches
+          value: "(^|\\s)rm\\s+(-[a-zA-Z]*r[a-zA-Z]*f|--recursive)"
+
+  - id: warn-external-network
+    name: Warn on external network connect
+    resource: network
+    action: connect
+    decision: warn
+    message: External network access requires review
+    priority: 20
+    conditions:
+      none:
+        - field: args.host
+          operator: matches
+          value: "^(localhost|127\\.0\\.0\\.1)$"
+
+  - id: audit-filesystem-write
+    name: Audit filesystem writes
+    resource: filesystem
+    action: write
+    decision: audit
+    message: Filesystem write was recorded
+    priority: 30

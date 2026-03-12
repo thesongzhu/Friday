@@ -1,0 +1,503 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type { FridaySqliteLayer } from "#state";
+import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
+import {
+  createFridaySubagentRegistry,
+  createFridayAgentEventEmitter,
+  FRIDAY_SUBAGENT_MAX_DEPTH,
+  FRIDAY_SUBAGENT_MAX_CONCURRENT,
+  FRIDAY_SUBAGENT_ERROR_CODES,
+} from "#agent";
+import type {
+  FridayAgentRuntimeResult,
+  FridayAgentEventEmitter,
+  CreateFridaySubagentRegistryDeps,
+  CreateChildRuntimeParams,
+  FridaySubagentRegistrySpawnInput,
+} from "#agent";
+import { FridayDomainError } from "#errors";
+
+describe("FridaySubagentRegistry", () => {
+  let db: FridaySqliteLayer;
+  let idGenerator: () => string;
+  let eventEmitter: FridayAgentEventEmitter;
+  const NOW = "2026-02-19T10:00:00.000Z";
+
+  beforeEach(() => {
+    db = createTestDb();
+    idGenerator = createTestIdGenerator();
+    eventEmitter = createFridayAgentEventEmitter();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  function makeResult(overrides?: Partial<FridayAgentRuntimeResult>): FridayAgentRuntimeResult {
+    return {
+      runId: "child-run-1",
+      status: "completed",
+      response: "Task completed successfully",
+      toolCallCount: 2,
+      durationMs: 1000,
+      usageInput: 100,
+      usageOutput: 50,
+      ...overrides,
+    };
+  }
+
+  function mockCreateChildRuntime(result: FridayAgentRuntimeResult) {
+    return (_params: CreateChildRuntimeParams) => ({
+      executeRun: vi.fn().mockResolvedValue(result),
+    });
+  }
+
+  function createRegistry(
+    overrides?: Partial<CreateFridaySubagentRegistryDeps>,
+  ) {
+    return createFridaySubagentRegistry({
+      db,
+      createChildRuntime: mockCreateChildRuntime(makeResult()),
+      eventEmitter,
+      idGenerator,
+      nowIso: () => NOW,
+      ...overrides,
+    });
+  }
+
+  /** Seed a parent agent run so FK constraints are satisfied. */
+  function seedParentRun(runId: string) {
+    db.writer.prepare(
+      `INSERT OR IGNORE INTO friday_agent_runs (id, task, status, session_key, attempt, max_attempts, created_at)
+       VALUES (?, 'seed', 'pending', ?, 0, 1, ?)`,
+    ).run(runId, `agent:run:${runId}`, NOW);
+  }
+
+  function spawnInput(overrides?: Partial<FridaySubagentRegistrySpawnInput>): FridaySubagentRegistrySpawnInput {
+    const parentRunId = overrides?.parentRunId ?? "parent-run-1";
+    seedParentRun(parentRunId);
+    return {
+      task: "Do something",
+      parentRunId,
+      parentSessionKey: "agent:run:parent-run-1",
+      depth: 0,
+      rootRunId: "parent-run-1",
+      signal: new AbortController().signal,
+      ...overrides,
+    };
+  }
+
+  // ─── spawn ───
+
+  describe("spawn", () => {
+    it("completes successfully", async () => {
+      const registry = createRegistry();
+      const outcome = await registry.spawn(spawnInput());
+
+      expect(outcome.status).toBe("completed");
+      expect(outcome.response).toBe("Task completed successfully");
+      expect(outcome.toolCallCount).toBe(2);
+      expect(outcome.durationMs).toBe(1000);
+      expect(outcome.usageInput).toBe(100);
+      expect(outcome.usageOutput).toBe(50);
+    });
+
+    it("records start and completion in DB", async () => {
+      const registry = createRegistry();
+      await registry.spawn(spawnInput());
+
+      const records = registry.listByParentRunId("parent-run-1");
+      expect(records).toHaveLength(1);
+      expect(records[0].status).toBe("completed");
+      expect(records[0].startedAt).toBe(NOW);
+      expect(records[0].completedAt).toBe(NOW);
+      expect(records[0].depth).toBe(1);
+    });
+
+    it("emits spawned and completed events", async () => {
+      const events: Array<{ event: string; payload: unknown }> = [];
+      eventEmitter.on("agent.subagent.spawned", (p) =>
+        events.push({ event: "spawned", payload: p }),
+      );
+      eventEmitter.on("agent.subagent.completed", (p) =>
+        events.push({ event: "completed", payload: p }),
+      );
+
+      const registry = createRegistry();
+      await registry.spawn(spawnInput());
+
+      expect(events).toHaveLength(2);
+      expect(events[0].event).toBe("spawned");
+      expect(events[1].event).toBe("completed");
+    });
+
+    it("rejects at max depth", async () => {
+      const registry = createRegistry();
+
+      await expect(
+        registry.spawn(spawnInput({ depth: FRIDAY_SUBAGENT_MAX_DEPTH })),
+      ).rejects.toThrow(FridayDomainError);
+
+      try {
+        await registry.spawn(spawnInput({ depth: FRIDAY_SUBAGENT_MAX_DEPTH }));
+      } catch (error) {
+        expect(error).toBeInstanceOf(FridayDomainError);
+        expect((error as FridayDomainError).code).toBe(
+          FRIDAY_SUBAGENT_ERROR_CODES.MAX_DEPTH_EXCEEDED,
+        );
+      }
+    });
+
+    it("rejects at max concurrent", async () => {
+      // Pre-fill active records to MAX_CONCURRENT
+      seedParentRun("parent-run-1");
+      const repo = (await import("#agent")).createFridaySubagentRunRepository();
+      for (let i = 0; i < FRIDAY_SUBAGENT_MAX_CONCURRENT; i++) {
+        db.withWriteTransaction((writer) => {
+          const id = idGenerator();
+          repo.create(writer, {
+            id,
+            parentRunId: "parent-run-1",
+            parentSessionKey: "agent:run:parent-run-1",
+            childRunId: "",
+            childSessionKey: `agent:run:parent-run-1:sub:${id}`,
+            task: `Active task ${String(i)}`,
+            depth: 1,
+            nowIso: NOW,
+          });
+          repo.update(writer, { id, status: "running" });
+        });
+      }
+
+      // Need a fresh idGenerator since the pre-fill used some IDs
+      const registry = createFridaySubagentRegistry({
+        db,
+        createChildRuntime: mockCreateChildRuntime(makeResult()),
+        eventEmitter,
+        idGenerator,
+        nowIso: () => NOW,
+      });
+
+      await expect(
+        registry.spawn(spawnInput()),
+      ).rejects.toThrow(FridayDomainError);
+
+      try {
+        await registry.spawn(spawnInput());
+      } catch (error) {
+        expect(error).toBeInstanceOf(FridayDomainError);
+        expect((error as FridayDomainError).code).toBe(
+          FRIDAY_SUBAGENT_ERROR_CODES.MAX_CONCURRENT_EXCEEDED,
+        );
+      }
+    });
+
+    it("handles child failure", async () => {
+      const failedResult = makeResult({
+        status: "failed",
+        response: "Something went wrong",
+      });
+
+      const registry = createRegistry({
+        createChildRuntime: mockCreateChildRuntime(failedResult),
+      });
+
+      const outcome = await registry.spawn(spawnInput());
+
+      expect(outcome.status).toBe("failed");
+      expect(outcome.response).toBe("Something went wrong");
+
+      const records = registry.listByParentRunId("parent-run-1");
+      expect(records[0].status).toBe("failed");
+    });
+
+    it("handles child cancellation", async () => {
+      const cancelledResult = makeResult({
+        status: "cancelled",
+        response: "Run was cancelled",
+      });
+
+      const registry = createRegistry({
+        createChildRuntime: mockCreateChildRuntime(cancelledResult),
+      });
+
+      const outcome = await registry.spawn(spawnInput());
+
+      expect(outcome.status).toBe("cancelled");
+
+      const records = registry.listByParentRunId("parent-run-1");
+      expect(records[0].status).toBe("cancelled");
+    });
+
+    it("handles child runtime exception without rethrowing", async () => {
+      const registry = createRegistry({
+        createChildRuntime: () => ({
+          executeRun: vi.fn().mockRejectedValue(new Error("Runtime exploded")),
+        }),
+      });
+
+      const outcome = await registry.spawn(spawnInput());
+
+      expect(outcome.status).toBe("failed");
+      expect(outcome.response).toContain("Runtime exploded");
+
+      const records = registry.listByParentRunId("parent-run-1");
+      expect(records[0].status).toBe("failed");
+      expect(records[0].outcome?.response).toContain("Runtime exploded");
+    });
+
+    it("passes model override to child runtime", async () => {
+      const createChildRuntime = vi.fn().mockReturnValue({
+        executeRun: vi.fn().mockResolvedValue(makeResult()),
+      });
+
+      const registry = createRegistry({ createChildRuntime });
+
+      await registry.spawn(spawnInput({ model: "gpt-4o" }));
+
+      expect(createChildRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "gpt-4o" }),
+      );
+    });
+
+    it("persists requesterSessionKey and rootRunId", async () => {
+      const registry = createRegistry();
+      await registry.spawn(spawnInput({ rootRunId: "root-123" }));
+
+      const records = registry.listByParentRunId("parent-run-1");
+      expect(records).toHaveLength(1);
+      expect(records[0].requesterSessionKey).toBe("agent:run:parent-run-1");
+      expect(records[0].rootRunId).toBe("root-123");
+    });
+  });
+
+  // ─── spawnDetached ───
+
+  describe("spawnDetached", () => {
+    it("returns accepted immediately", () => {
+      const registry = createRegistry();
+      const result = registry.spawnDetached(spawnInput());
+
+      expect(result.status).toBe("accepted");
+      expect(result.subagentId).toBeTruthy();
+      expect(result.childSessionKey).toBeTruthy();
+    });
+
+    it("creates a pending/running record in DB", () => {
+      const registry = createRegistry();
+      const result = registry.spawnDetached(spawnInput());
+
+      const record = registry.getById(result.subagentId);
+      expect(record).toBeTruthy();
+      // It may be pending, running, or already completed depending on timing
+      expect(["pending", "running", "completed"]).toContain(record?.status);
+    });
+
+    it("eventually completes the child run", async () => {
+      const registry = createRegistry();
+      const result = registry.spawnDetached(spawnInput());
+
+      // Wait for the detached run to complete
+      const outcome = await registry.waitForCompletion(result.subagentId, 5000);
+      expect(outcome.status).toBe("completed");
+    });
+  });
+
+  // ─── finalize ───
+
+  describe("finalize", () => {
+    it("sets cleanup flags on a completed record", async () => {
+      const registry = createRegistry();
+      await registry.spawn(spawnInput());
+
+      const records = registry.listByParentRunId("parent-run-1");
+      const id = records[0].id;
+
+      registry.finalize(id);
+
+      const updated = registry.getById(id);
+      expect(updated?.cleanupRequested).toBe(true);
+      expect(updated?.archivalDeadline).toBeTruthy();
+    });
+
+    it("accepts custom archival deadline", async () => {
+      const registry = createRegistry();
+      await registry.spawn(spawnInput());
+
+      const records = registry.listByParentRunId("parent-run-1");
+      const id = records[0].id;
+      const deadline = "2026-12-31T00:00:00.000Z";
+
+      registry.finalize(id, { archivalDeadline: deadline });
+
+      const updated = registry.getById(id);
+      expect(updated?.archivalDeadline).toBe(deadline);
+    });
+  });
+
+  // ─── cleanup ───
+
+  describe("cleanup", () => {
+    it("deletes records past archival deadline", async () => {
+      const registry = createRegistry();
+      await registry.spawn(spawnInput());
+
+      const records = registry.listByParentRunId("parent-run-1");
+      const id = records[0].id;
+
+      registry.finalize(id, { archivalDeadline: "2026-01-01T00:00:00.000Z" });
+
+      const deleted = registry.cleanup("2026-06-01T00:00:00.000Z");
+      expect(deleted).toBe(1);
+
+      expect(registry.getById(id)).toBeNull();
+    });
+
+    it("does not delete records before archival deadline", async () => {
+      const registry = createRegistry();
+      await registry.spawn(spawnInput());
+
+      const records = registry.listByParentRunId("parent-run-1");
+      const id = records[0].id;
+
+      registry.finalize(id, { archivalDeadline: "2027-01-01T00:00:00.000Z" });
+
+      const deleted = registry.cleanup("2026-06-01T00:00:00.000Z");
+      expect(deleted).toBe(0);
+
+      expect(registry.getById(id)).not.toBeNull();
+    });
+  });
+
+  // ─── resumeOnBoot ───
+
+  describe("resumeOnBoot", () => {
+    it("marks pending/running as failed on boot", async () => {
+      // Create a registry with a runtime that never resolves (simulate crash)
+      const neverResolve = () => ({
+        executeRun: vi.fn().mockReturnValue(new Promise(() => {})),
+      });
+      const registry1 = createFridaySubagentRegistry({
+        db,
+        createChildRuntime: neverResolve,
+        eventEmitter,
+        idGenerator,
+        nowIso: () => NOW,
+      });
+
+      // Manually create a "stuck" record by inserting directly
+      seedParentRun("parent-run-1");
+      const repo = (await import("#agent")).createFridaySubagentRunRepository();
+      db.withWriteTransaction((writer) => {
+        repo.create(writer, {
+          id: "stuck-1",
+          parentRunId: "parent-run-1",
+          parentSessionKey: "agent:run:parent-run-1",
+          childRunId: "",
+          childSessionKey: "agent:run:parent-run-1:sub:stuck-1",
+          task: "Stuck task",
+          depth: 1,
+          nowIso: NOW,
+        });
+        repo.update(writer, { id: "stuck-1", status: "running", startedAt: NOW });
+      });
+
+      // Create a new registry (simulating reboot) and call resumeOnBoot
+      const registry2 = createFridaySubagentRegistry({
+        db,
+        createChildRuntime: mockCreateChildRuntime(makeResult()),
+        eventEmitter,
+        idGenerator,
+        nowIso: () => NOW,
+      });
+
+      const failedCount = registry2.resumeOnBoot();
+      expect(failedCount).toBe(1);
+
+      const record = registry2.getById("stuck-1");
+      expect(record?.status).toBe("failed");
+      expect(record?.outcome?.response).toContain("restarted");
+    });
+
+    it("returns 0 when no stale records exist", () => {
+      const registry = createRegistry();
+      expect(registry.resumeOnBoot()).toBe(0);
+    });
+  });
+
+  // ─── listByParentRunId ───
+
+  describe("listByParentRunId", () => {
+    it("returns correct records after spawning", async () => {
+      const registry = createRegistry();
+      await registry.spawn(spawnInput({ task: "Task A" }));
+      await registry.spawn(spawnInput({ task: "Task B" }));
+
+      const records = registry.listByParentRunId("parent-run-1");
+      expect(records).toHaveLength(2);
+    });
+  });
+
+  // ─── list with extended filters ───
+
+  describe("list", () => {
+    it("filters by requesterSessionKey", async () => {
+      const registry = createRegistry();
+      await registry.spawn(spawnInput({ task: "Task A" }));
+      await registry.spawn(spawnInput({
+        task: "Task B",
+        parentSessionKey: "other:session:key",
+        parentRunId: "parent-run-2",
+      }));
+
+      const filtered = registry.list({ requesterSessionKey: "agent:run:parent-run-1" });
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0].task).toBe("Task A");
+    });
+
+    it("filters by rootRunId", async () => {
+      const registry = createRegistry();
+      await registry.spawn(spawnInput({ task: "Task A", rootRunId: "root-1" }));
+      await registry.spawn(spawnInput({ task: "Task B", rootRunId: "root-2" }));
+
+      const filtered = registry.list({ rootRunId: "root-1" });
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0].task).toBe("Task A");
+    });
+  });
+
+  // ─── getById ───
+
+  describe("getById", () => {
+    it("returns correct record", async () => {
+      const registry = createRegistry();
+      await registry.spawn(spawnInput({ task: "Find me" }));
+
+      const records = registry.listByParentRunId("parent-run-1");
+      const found = registry.getById(records[0].id);
+
+      expect(found).not.toBeNull();
+      expect(found?.task).toBe("Find me");
+    });
+
+    it("returns null for non-existent id", () => {
+      const registry = createRegistry();
+      expect(registry.getById("nonexistent")).toBeNull();
+    });
+  });
+
+  // ─── activeCountForParent ───
+
+  describe("activeCountForParent", () => {
+    it("returns correct count during and after spawn", async () => {
+      const registry = createRegistry();
+
+      // Before spawn
+      expect(registry.activeCountForParent("parent-run-1")).toBe(0);
+
+      // After spawn (completed)
+      await registry.spawn(spawnInput());
+      expect(registry.activeCountForParent("parent-run-1")).toBe(0);
+    });
+  });
+});

@@ -1,0 +1,277 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { createFridayMemoryRoutes } from "#api";
+import type { FridayMemoryService } from "#memory";
+import type { FridayMemoryGuardServiceFactory } from "#memory";
+import type { FridayRouteDefinition, FridayHttpContext } from "#api";
+import type { FridayMemoryItem, FridayMemorySearchResult } from "#memory";
+import { FridayDomainError } from "#errors";
+
+describe("FridayMemoryRoutes", () => {
+  let memoryService: FridayMemoryService;
+  let memoryGuardFactory: FridayMemoryGuardServiceFactory;
+  let routes: FridayRouteDefinition<unknown, unknown, unknown, unknown>[];
+  const NOW = "2026-02-17T10:00:00.000Z";
+
+  function makeCtx(overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {}): FridayHttpContext<unknown, unknown, unknown> {
+    return {
+      requestId: "req-1",
+      receivedAt: NOW,
+      params: {},
+      query: {},
+      body: {},
+      headers: {},
+      principal: {
+        principalType: "user" as const,
+        principalId: "user-1",
+        userId: "user-1",
+        role: "admin" as const,
+        scopes: ["hub.admin" as const],
+        tokenId: "tok-1",
+        tokenKind: "access" as const,
+        issuedAt: NOW,
+      },
+      ...overrides,
+    };
+  }
+
+  function findRoute(operationId: string) {
+    return routes.find((r) => r.operationId === operationId)!;
+  }
+
+  const mockItem: FridayMemoryItem = {
+    id: "item-1",
+    namespace: "test",
+    key: "key-1",
+    content: "Hello world",
+    source: "system",
+    tags: [],
+    metadata: {},
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+
+  beforeEach(() => {
+    memoryService = {
+      store: vi.fn().mockResolvedValue(mockItem),
+      search: vi.fn().mockResolvedValue([]),
+      get: vi.fn().mockResolvedValue(mockItem),
+      list: vi.fn().mockResolvedValue([mockItem]),
+      delete: vi.fn().mockResolvedValue(true),
+      prune: vi.fn().mockResolvedValue({ deletedCount: 0, deletedIds: [], dryRun: false }),
+    };
+    memoryGuardFactory = {
+      forPrincipal: vi.fn().mockReturnValue(memoryService),
+      forContext: vi.fn().mockReturnValue(memoryService),
+    };
+    routes = createFridayMemoryRoutes({ memoryGuardFactory });
+  });
+
+  // ─── Route registration ───
+
+  it("registers 6 memory routes", () => {
+    expect(routes).toHaveLength(6);
+  });
+
+  it("has correct operation IDs", () => {
+    const ids = routes.map((r) => r.operationId);
+    expect(ids).toContain("memory.store");
+    expect(ids).toContain("memory.search");
+    expect(ids).toContain("memory.get");
+    expect(ids).toContain("memory.list");
+    expect(ids).toContain("memory.delete");
+    expect(ids).toContain("memory.prune");
+  });
+
+  it("all routes require hub.admin scope", () => {
+    for (const route of routes) {
+      expect(route.auth).toEqual({ public: false, anyOfScopes: ["hub.admin"] });
+    }
+  });
+
+  it("uses correct HTTP methods", () => {
+    expect(findRoute("memory.store").method).toBe("POST");
+    expect(findRoute("memory.search").method).toBe("POST");
+    expect(findRoute("memory.get").method).toBe("GET");
+    expect(findRoute("memory.list").method).toBe("GET");
+    expect(findRoute("memory.delete").method).toBe("DELETE");
+    expect(findRoute("memory.prune").method).toBe("POST");
+  });
+
+  it("uses correct paths", () => {
+    expect(findRoute("memory.store").path).toBe("/v1/memory/store");
+    expect(findRoute("memory.search").path).toBe("/v1/memory/search");
+    expect(findRoute("memory.get").path).toBe("/v1/memory/items/:id");
+    expect(findRoute("memory.list").path).toBe("/v1/memory/items");
+    expect(findRoute("memory.delete").path).toBe("/v1/memory/items/:id");
+    expect(findRoute("memory.prune").path).toBe("/v1/memory/prune");
+  });
+
+  // ─── Store handler ───
+
+  it("store handler calls service.store with correct args", async () => {
+    const route = findRoute("memory.store");
+    const ctx = makeCtx({
+      body: {
+        namespace: "test-ns",
+        content: "Hello world",
+        source: "agent",
+        tags: ["t1"],
+      },
+    });
+
+    const result = await route.handler(ctx) as { item: FridayMemoryItem };
+    expect(result.item).toBe(mockItem);
+    expect(memoryService.store).toHaveBeenCalledWith(
+      "test-ns",
+      "Hello world",
+      expect.objectContaining({ source: "agent", tags: ["t1"] }),
+    );
+  });
+
+  it("store handler defaults namespace to 'default' when omitted", async () => {
+    const route = findRoute("memory.store");
+    const ctx = makeCtx({ body: { content: "Hello" } });
+    await route.handler(ctx);
+    expect(memoryService.store).toHaveBeenCalledWith(
+      "default",
+      "Hello",
+      expect.any(Object),
+    );
+  });
+
+  it("store handler validates content is required", async () => {
+    const route = findRoute("memory.store");
+    const ctx = makeCtx({ body: { namespace: "ns" } });
+    await expect(route.handler(ctx)).rejects.toThrow(FridayDomainError);
+  });
+
+  // ─── Search handler ───
+
+  it("search handler calls service.search", async () => {
+    const searchResult: FridayMemorySearchResult = {
+      item: mockItem,
+      score: 0.9,
+      ftsScore: 0.8,
+      semanticScore: 1.0,
+      matchedBy: ["fts", "semantic"],
+      snippet: "Hello world",
+    };
+    vi.mocked(memoryService.search).mockResolvedValue([searchResult]);
+
+    const route = findRoute("memory.search");
+    const ctx = makeCtx({ body: { query: "hello" } });
+    const result = await route.handler(ctx) as { items: FridayMemorySearchResult[] };
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].score).toBe(0.9);
+  });
+
+  it("search handler validates query is required", async () => {
+    const route = findRoute("memory.search");
+    const ctx = makeCtx({ body: { query: "" } });
+    await expect(route.handler(ctx)).rejects.toThrow(FridayDomainError);
+  });
+
+  // ─── Get handler ───
+
+  it("get handler returns item", async () => {
+    const route = findRoute("memory.get");
+    const ctx = makeCtx({ params: { id: "item-1" } });
+    const result = await route.handler(ctx) as { item: FridayMemoryItem };
+    expect(result.item).toBe(mockItem);
+  });
+
+  it("get handler throws 404 when not found", async () => {
+    vi.mocked(memoryService.get).mockResolvedValue(null);
+    const route = findRoute("memory.get");
+    const ctx = makeCtx({ params: { id: "nonexistent" } });
+    await expect(route.handler(ctx)).rejects.toThrow(FridayDomainError);
+  });
+
+  // ─── Delete handler ───
+
+  it("delete handler returns deleted: true", async () => {
+    const route = findRoute("memory.delete");
+    const ctx = makeCtx({ params: { id: "item-1" } });
+    const result = await route.handler(ctx) as { deleted: boolean };
+    expect(result.deleted).toBe(true);
+  });
+
+  it("delete handler throws 404 when not found", async () => {
+    vi.mocked(memoryService.delete).mockResolvedValue(false);
+    const route = findRoute("memory.delete");
+    const ctx = makeCtx({ params: { id: "nonexistent" } });
+    await expect(route.handler(ctx)).rejects.toThrow(FridayDomainError);
+  });
+
+  // ─── List handler ───
+
+  it("list handler returns items", async () => {
+    const route = findRoute("memory.list");
+    const ctx = makeCtx({ query: { namespace: "test" } });
+    const result = await route.handler(ctx) as { items: FridayMemoryItem[] };
+    expect(result.items).toHaveLength(1);
+  });
+
+  // ─── Prune handler ───
+
+  it("prune handler calls service.prune", async () => {
+    const route = findRoute("memory.prune");
+    const ctx = makeCtx({ body: { expiredOnly: true, dryRun: true } });
+    const result = await route.handler(ctx) as { result: { deletedCount: number } };
+    expect(result.result.deletedCount).toBe(0);
+    expect(memoryService.prune).toHaveBeenCalledWith(
+      expect.objectContaining({ expiredOnly: true, dryRun: true }),
+    );
+  });
+
+  // ─── Prune body validation (CX R2) ───
+
+  it("prune handler rejects array body", async () => {
+    const route = findRoute("memory.prune");
+    const ctx = makeCtx({ body: [{ namespace: "evil" }] });
+    await expect(route.handler(ctx)).rejects.toThrow(FridayDomainError);
+    try {
+      await route.handler(ctx);
+    } catch (e) {
+      expect((e as FridayDomainError).code).toBe("VALIDATION_ERROR");
+      expect((e as FridayDomainError).message).toContain("plain object");
+    }
+  });
+
+  it("prune handler rejects string body", async () => {
+    const route = findRoute("memory.prune");
+    const ctx = makeCtx({ body: "not-an-object" });
+    await expect(route.handler(ctx)).rejects.toThrow(FridayDomainError);
+    try {
+      await route.handler(ctx);
+    } catch (e) {
+      expect((e as FridayDomainError).code).toBe("VALIDATION_ERROR");
+    }
+  });
+
+  it("prune handler rejects number body", async () => {
+    const route = findRoute("memory.prune");
+    const ctx = makeCtx({ body: 42 });
+    await expect(route.handler(ctx)).rejects.toThrow(FridayDomainError);
+    try {
+      await route.handler(ctx);
+    } catch (e) {
+      expect((e as FridayDomainError).code).toBe("VALIDATION_ERROR");
+    }
+  });
+
+  it("prune handler accepts null body (prune all in scope)", async () => {
+    const route = findRoute("memory.prune");
+    const ctx = makeCtx({ body: null });
+    // null body triggers the default {} in the handler: `const rawBody = ctx.body ?? {};`
+    const result = await route.handler(ctx) as { result: { deletedCount: number } };
+    expect(result.result.deletedCount).toBe(0);
+  });
+
+  it("prune handler accepts empty object body", async () => {
+    const route = findRoute("memory.prune");
+    const ctx = makeCtx({ body: {} });
+    const result = await route.handler(ctx) as { result: { deletedCount: number } };
+    expect(result.result.deletedCount).toBe(0);
+  });
+});

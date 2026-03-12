@@ -1,0 +1,413 @@
+import { describe, it, expect, vi } from "vitest";
+import { createFridayAgentLlmClient } from "#agent";
+import type { FridayAgentLlmStreamEvent } from "#agent";
+
+describe("FridayAgentLlmClient", () => {
+  function createSSEStream(events: string[]): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder();
+    const data = events.map((e) => `data: ${e}\n\n`).join("");
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(data));
+        controller.close();
+      },
+    });
+  }
+
+  function createMockFetch(
+    status: number,
+    body: ReadableStream<Uint8Array> | null,
+  ): typeof fetch {
+    return vi.fn().mockResolvedValue({
+      ok: status >= 200 && status < 300,
+      status,
+      text: () => Promise.resolve("error"),
+      body,
+    }) as unknown as typeof fetch;
+  }
+
+  // ─── Parses text_delta events ───
+
+  it("parses text_delta events from SSE stream", async () => {
+    const sseEvents = [
+      JSON.stringify({ type: "message_start", message: { usage: { input_tokens: 10 } } }),
+      JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+      JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello" } }),
+      JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " world" } }),
+      JSON.stringify({ type: "content_block_stop", index: 0 }),
+      JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } }),
+    ];
+
+    const fetchImpl = createMockFetch(200, createSSEStream(sseEvents));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.example.com",
+      apiKey: "test-key",
+      fetchImpl,
+    });
+
+    const events: FridayAgentLlmStreamEvent[] = [];
+    const stream = client.stream({
+      model: "test-model",
+      systemPrompt: "You are a test.",
+      messages: [{ role: "user", content: "Hi" }],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    for await (const event of stream) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(3);
+    expect(events[0]).toEqual({ type: "text_delta", text: "Hello" });
+    expect(events[1]).toEqual({ type: "text_delta", text: " world" });
+    expect(events[2]).toEqual({
+      type: "message_end",
+      stopReason: "end_turn",
+      inputTokens: 10,
+      outputTokens: 5,
+    });
+  });
+
+  // ─── Parses tool_use events ───
+
+  it("parses tool_use events from SSE stream", async () => {
+    const sseEvents = [
+      JSON.stringify({ type: "message_start", message: { usage: { input_tokens: 15 } } }),
+      JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tool-1", name: "exec" } }),
+      JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"command":' } }),
+      JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '"ls -la"}' } }),
+      JSON.stringify({ type: "content_block_stop", index: 0 }),
+      JSON.stringify({ type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 8 } }),
+    ];
+
+    const fetchImpl = createMockFetch(200, createSSEStream(sseEvents));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.example.com",
+      apiKey: "test-key",
+      fetchImpl,
+    });
+
+    const events: FridayAgentLlmStreamEvent[] = [];
+    const stream = client.stream({
+      model: "test-model",
+      systemPrompt: "Test",
+      messages: [{ role: "user", content: "Run ls" }],
+      tools: [{
+        name: "exec",
+        description: "Execute shell",
+        parameters: { properties: { command: { type: "string" } } },
+        async execute() { return { content: "ok" }; },
+      }],
+      signal: new AbortController().signal,
+    });
+
+    for await (const event of stream) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(2);
+    expect(events[0]).toEqual({
+      type: "tool_use",
+      id: "tool-1",
+      name: "exec",
+      input: { command: "ls -la" },
+    });
+    expect(events[1]).toEqual({
+      type: "message_end",
+      stopReason: "tool_use",
+      inputTokens: 15,
+      outputTokens: 8,
+    });
+  });
+
+  // ─── Throws on non-OK response ───
+
+  it("throws on non-OK HTTP response", async () => {
+    const fetchImpl = createMockFetch(401, null);
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.example.com",
+      apiKey: "bad-key",
+      fetchImpl,
+    });
+
+    const stream = client.stream({
+      model: "test-model",
+      systemPrompt: "Test",
+      messages: [{ role: "user", content: "Hi" }],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    const events: FridayAgentLlmStreamEvent[] = [];
+    await expect(async () => {
+      for await (const event of stream) {
+        events.push(event);
+      }
+    }).rejects.toThrow("LLM request failed (401)");
+  });
+
+  // ─── Sends correct request format ───
+
+  it("sends correct Anthropic API request", async () => {
+    const sseEvents = [
+      JSON.stringify({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+      JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } }),
+    ];
+
+    const fetchImpl = createMockFetch(200, createSSEStream(sseEvents));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.example.com",
+      apiKey: "test-key",
+      fetchImpl,
+    });
+
+    const stream = client.stream({
+      model: "claude-3",
+      systemPrompt: "System prompt here",
+      messages: [{ role: "user", content: "Hello" }],
+      tools: [{
+        name: "read",
+        description: "Read file",
+        parameters: { properties: { path: { type: "string" } } },
+        async execute() { return { content: "" }; },
+      }],
+      signal: new AbortController().signal,
+    });
+
+    for await (const _event of stream) {
+      // drain
+    }
+
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const [url, options] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.example.com/v1/messages");
+    expect(options.method).toBe("POST");
+
+    const headers = options.headers as Record<string, string>;
+    expect(headers["x-api-key"]).toBe("test-key");
+    expect(headers["anthropic-version"]).toBe("2023-06-01");
+
+    const body = JSON.parse(options.body as string) as Record<string, unknown>;
+    expect(body.model).toBe("claude-3");
+    expect(body.system).toBe("System prompt here");
+    expect(body.stream).toBe(true);
+
+    const tools = body.tools as Array<{ name: string; input_schema: unknown }>;
+    expect(tools).toHaveLength(1);
+    expect(tools[0].name).toBe("read");
+    expect(tools[0].input_schema).toEqual({
+      type: "object",
+      properties: { path: { type: "string" } },
+    });
+  });
+
+  // ─── Anthropic model extraction ───
+
+  it("extracts model from Anthropic message_start event", async () => {
+    const sseEvents = [
+      JSON.stringify({ type: "message_start", message: { model: "claude-sonnet-4-20250514", usage: { input_tokens: 10 } } }),
+      JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+      JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } }),
+      JSON.stringify({ type: "content_block_stop", index: 0 }),
+      JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } }),
+    ];
+
+    const fetchImpl = createMockFetch(200, createSSEStream(sseEvents));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.example.com",
+      apiKey: "test-key",
+      fetchImpl,
+    });
+
+    const events: FridayAgentLlmStreamEvent[] = [];
+    for await (const event of client.stream({
+      model: "claude-sonnet-4-20250514",
+      systemPrompt: "Test",
+      messages: [{ role: "user", content: "Hi" }],
+      tools: [],
+      signal: new AbortController().signal,
+    })) {
+      events.push(event);
+    }
+
+    const messageEnd = events.find((e) => e.type === "message_end");
+    expect(messageEnd).toBeDefined();
+    expect(messageEnd!.type).toBe("message_end");
+    if (messageEnd!.type === "message_end") {
+      expect(messageEnd!.actualModel).toBe("claude-sonnet-4-20250514");
+      expect(messageEnd!.actualProviderKind).toBe("anthropic");
+      expect(messageEnd!.actualProviderApi).toBe("anthropic-messages");
+    }
+  });
+
+  it("omits model fields when message_start has no model", async () => {
+    const sseEvents = [
+      JSON.stringify({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+      JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } }),
+    ];
+
+    const fetchImpl = createMockFetch(200, createSSEStream(sseEvents));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.example.com",
+      apiKey: "test-key",
+      fetchImpl,
+    });
+
+    const events: FridayAgentLlmStreamEvent[] = [];
+    for await (const event of client.stream({
+      model: "test-model",
+      systemPrompt: "Test",
+      messages: [{ role: "user", content: "Hi" }],
+      tools: [],
+      signal: new AbortController().signal,
+    })) {
+      events.push(event);
+    }
+
+    const messageEnd = events.find((e) => e.type === "message_end");
+    expect(messageEnd).toEqual({
+      type: "message_end",
+      stopReason: "end_turn",
+      inputTokens: 1,
+      outputTokens: 1,
+    });
+  });
+
+  it("formats OpenAI Responses tools with top-level name/parameters", async () => {
+    const sseEvents = ["[DONE]"];
+    const fetchImpl = createMockFetch(200, createSSEStream(sseEvents));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.openai.com",
+      apiKey: "test-key",
+      api: "openai-responses",
+      fetchImpl,
+    });
+
+    const stream = client.stream({
+      model: "gpt-4o-mini",
+      systemPrompt: "System prompt",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [{
+        name: "browser",
+        description: "Browser tool",
+        parameters: {
+          properties: {
+            values: { type: "array" },
+          },
+        },
+        async execute() { return { content: "" }; },
+      }],
+      signal: new AbortController().signal,
+    });
+
+    for await (const _event of stream) {
+      // drain
+    }
+
+    const [, options] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(options.body as string) as Record<string, unknown>;
+    const tools = body.tools as Array<Record<string, unknown>>;
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.type).toBe("function");
+    expect(tools[0]?.name).toBe("browser");
+    expect(tools[0]?.function).toBeUndefined();
+    const parameters = tools[0]?.parameters as Record<string, unknown>;
+    const props = parameters.properties as Record<string, unknown>;
+    const values = props.values as Record<string, unknown>;
+    expect(values.type).toBe("array");
+    expect(values.items).toBeDefined();
+  });
+
+  it("formats OpenAI Chat Completions tools with nested function field", async () => {
+    const sseEvents = [JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } })];
+    const fetchImpl = createMockFetch(200, createSSEStream([...sseEvents, "[DONE]"]));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.openai.com",
+      apiKey: "test-key",
+      api: "openai-completions",
+      fetchImpl,
+    });
+
+    const stream = client.stream({
+      model: "gpt-4o-mini",
+      systemPrompt: "System prompt",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [{
+        name: "browser",
+        description: "Browser tool",
+        parameters: {
+          properties: {
+            values: { type: "array" },
+          },
+        },
+        async execute() { return { content: "" }; },
+      }],
+      signal: new AbortController().signal,
+    });
+
+    for await (const _event of stream) {
+      // drain
+    }
+
+    const [, options] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(options.body as string) as Record<string, unknown>;
+    const tools = body.tools as Array<Record<string, unknown>>;
+    const streamOptions = body.stream_options as Record<string, unknown>;
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.type).toBe("function");
+    const fn = tools[0]?.function as Record<string, unknown>;
+    expect(fn.name).toBe("browser");
+    expect(streamOptions.include_usage).toBe(true);
+    const parameters = fn.parameters as Record<string, unknown>;
+    const props = parameters.properties as Record<string, unknown>;
+    const values = props.values as Record<string, unknown>;
+    expect(values.type).toBe("array");
+    expect(values.items).toBeDefined();
+  });
+
+  // ─── Image content block mapping ───
+
+  it("maps image content blocks to OpenAI image_url format", async () => {
+    const sseEvents = [JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } })];
+    const fetchImpl = createMockFetch(200, createSSEStream([...sseEvents, "[DONE]"]));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.openai.com",
+      apiKey: "test-key",
+      api: "openai-completions",
+      fetchImpl,
+    });
+
+    const stream = client.stream({
+      model: "gpt-4o",
+      systemPrompt: "System",
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "What is this?" },
+          { type: "image", source: { type: "url", url: "https://example.com/img.png" } },
+        ],
+      }],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    for await (const _event of stream) {
+      // drain
+    }
+
+    const [, options] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(options.body as string) as Record<string, unknown>;
+    const messages = body.messages as Array<{ role: string; content: unknown }>;
+
+    // Find user message (after system message)
+    const userMsg = messages.find((m) => m.role === "user");
+    expect(userMsg).toBeDefined();
+    expect(Array.isArray(userMsg!.content)).toBe(true);
+
+    const content = userMsg!.content as Array<Record<string, unknown>>;
+    expect(content).toHaveLength(2);
+    expect(content[0]).toEqual({ type: "text", text: "What is this?" });
+    expect(content[1]).toEqual({ type: "image_url", image_url: { url: "https://example.com/img.png" } });
+  });
+});

@@ -1,0 +1,202 @@
+// ─── Phase 8: API Layer barrel exports ───
+
+// Error code catalog
+export { FRIDAY_API_ERROR_CODES, buildFridayApiError } from "./model/friday-api-error-codes.js";
+export type { FridayApiErrorCode, FridayApiErrorShape } from "./model/friday-api-error-codes.js";
+
+// Model types
+export type * from "./model/friday-api-common.types.js";
+export type * from "./model/friday-api-auth.types.js";
+export type * from "./model/friday-api-workflow.types.js";
+export type * from "./model/friday-api-fleet.types.js";
+export type * from "./model/friday-api-realtime.types.js";
+export type * from "./model/friday-api-security.types.js";
+export type * from "./model/friday-api-provider.types.js";
+export type * from "./model/friday-api-skill-generator.types.js";
+export type * from "./model/friday-api-skill-converter.types.js";
+export type * from "./model/friday-api-memory.types.js";
+export type * from "./model/friday-api-session.types.js";
+export type * from "./model/friday-api-plugin.types.js";
+export type * from "./model/friday-api-system.types.js";
+export type * from "./model/friday-api-self-healing.types.js";
+export type * from "./model/friday-api-uix-surface.types.js";
+export type * from "./model/friday-api-runtime-admin.types.js";
+
+// Auth
+export { createFridayAuthService, FridayAuthError, hashPasswordScrypt } from "./auth/friday-auth-service.js";
+export type { FridayAuthService } from "./auth/friday-auth-service.types.js";
+export { createFridayTokenValidator, encodeToken, FridayTokenValidationError } from "./auth/friday-token-validator.js";
+export { getScopesForRole, roleHasScope, principalHasAnyScope, principalHasAnyRole } from "./auth/friday-rbac-policy.js";
+export { createFridayRateLimitService } from "./auth/friday-rate-limit-service.js";
+export type { FridayRateLimitService } from "./auth/friday-rate-limit-service.types.js";
+export { AUTH_LOCKOUT_SCOPE_SHARED_SECRET, AUTH_LOCKOUT_SCOPE_DEVICE_TOKEN } from "./auth/friday-rate-limit-service.types.js";
+export { createFridayAuthMiddlewareFactory } from "./auth/friday-auth-middleware.js";
+export type { FridayAuthMiddlewareFactory } from "./auth/friday-auth-middleware.js";
+
+// Realtime
+export { createFridayRealtimeEventBus } from "./realtime/friday-realtime-event-bus.js";
+export { createFridayRealtimeSubscriptionService } from "./realtime/friday-realtime-subscription-service.js";
+export type { FridayRealtimeSubscriptionService } from "./realtime/friday-realtime-subscription-service.js";
+export { createFridayRealtimeWsGateway } from "./realtime/friday-realtime-ws-gateway.js";
+export type { FridayRealtimeWsGateway, FridayWsConnection } from "./realtime/friday-realtime-ws-gateway.js";
+
+// Execution-control event emitter
+export { createExecutionControlEventEmitter } from "./realtime/friday-execution-control-event-emitter.js";
+export type {
+  FridayExecutionControlEventEmitter,
+  FridayExecutionControlEventName,
+  CreateExecutionControlEventEmitterDeps,
+} from "./realtime/friday-execution-control-event-emitter.js";
+
+// Event payload redaction
+export { redactEventPayload } from "./realtime/friday-event-payload-redactor.js";
+
+// Fleet
+export { createFridayFleetDashboardService } from "./fleet/friday-fleet-dashboard-service.js";
+export type { FridayFleetDashboardService } from "./fleet/friday-fleet-dashboard-service.types.js";
+export { calculateSatelliteHealth, healthStateFromScore } from "./fleet/friday-fleet-health-calculator.js";
+export type { FridayHealthCalculatorInput } from "./fleet/friday-fleet-health-calculator.js";
+export { calculateSatelliteTrust, trustBandFromScore } from "./fleet/friday-fleet-trust-calculator.js";
+export type { FridayTrustCalculatorInput } from "./fleet/friday-fleet-trust-calculator.js";
+export { createFridayFleetDashboardRepository } from "./fleet/friday-fleet-dashboard-repository.js";
+export type { FridayFleetDashboardRepository } from "./fleet/friday-fleet-dashboard-repository.js";
+
+// Conflicts
+export { createFridayWorkflowConflictService, FridayConflictServiceError } from "./conflicts/friday-workflow-conflict-service.js";
+export type { FridayWorkflowConflictService } from "./conflicts/friday-workflow-conflict-service.types.js";
+// HTTP
+export { createFridayHttpRouteRegistry } from "./http/friday-http-route-registry.js";
+export {
+  FRIDAY_ROUTE_OPERATION_ID_RENAMES,
+  FRIDAY_ROUTE_OPERATION_ID_PATTERN,
+  isFridayCanonicalRouteOperationId,
+} from "./http/friday-http-route-contract.js";
+export type {
+  FridayRenamedOperationId,
+  FridayCanonicalRenamedOperationId,
+} from "./http/friday-http-route-contract.js";
+export { buildErrorResponse, mapErrorToStatusCode, mapErrorToApiError } from "./http/friday-http-error-mapper.js";
+export { createFridayHttpServer } from "./http/friday-http-server.js";
+export type { FridayHttpServer, FridayHttpServerDeps } from "./http/friday-http-server.js";
+
+// Memory routes (guard-based)
+export { createFridayMemoryRoutes } from "./http/routes/friday-memory-routes.js";
+export type { FridayMemoryRoutesDeps } from "./http/routes/friday-memory-routes.js";
+
+// Session routes
+export { createFridaySessionRoutes } from "./http/routes/friday-session-routes.js";
+export type { FridaySessionRoutesDeps } from "./http/routes/friday-session-routes.js";
+
+// Health routes
+export { createFridayHealthRoutes } from "./http/routes/friday-health-routes.js";
+export type { FridayHealthRoutesDeps } from "./http/routes/friday-health-routes.js";
+
+// Runtime admin routes
+export { createFridayRuntimeAdminRoutes } from "./http/routes/friday-runtime-admin-routes.js";
+export type { FridayRuntimeAdminRoutesDeps } from "./http/routes/friday-runtime-admin-routes.js";
+
+// Secret routes
+export { createFridaySecretRoutes } from "./http/routes/friday-secret-routes.js";
+export type { FridaySecretRoutesDeps } from "./http/routes/friday-secret-routes.js";
+
+// HTTP Routes
+export { createFridayProviderRoutes } from "./http/routes/friday-provider-routes.js";
+export { createFridayAuthRoutes } from "./http/routes/friday-auth-routes.js";
+export { createFridayRealtimeRoutes } from "./http/routes/friday-realtime-routes.js";
+export { createFridayFleetRoutes } from "./http/routes/friday-fleet-routes.js";
+export { createFridayWorkflowRoutes } from "./http/routes/friday-workflow-routes.js";
+export type { FridayWorkflowRoutesDeps } from "./http/routes/friday-workflow-routes.js";
+export { createFridayWorkflowRunRoutes } from "./http/routes/friday-workflow-run-routes.js";
+export type { FridayWorkflowRunRoutesDeps } from "./http/routes/friday-workflow-run-routes.js";
+export { createFridayWorkflowBuilderRoutes } from "./http/routes/friday-workflow-builder-routes.js";
+export type { FridayWorkflowBuilderRoutesDeps } from "./http/routes/friday-workflow-builder-routes.js";
+export { createFridayWorkflowConflictRoutes } from "./http/routes/friday-workflow-conflict-routes.js";
+export type { FridayWorkflowConflictRoutesDeps } from "./http/routes/friday-workflow-conflict-routes.js";
+export { createFridaySkillGeneratorRoutes } from "./http/routes/friday-skill-generator-routes.js";
+export type { FridaySkillGeneratorRoutesDeps } from "./http/routes/friday-skill-generator-routes.js";
+export { createFridayDiagnosisRoutes } from "./http/routes/friday-diagnosis-routes.js";
+export type { FridayDiagnosisRoutesDeps } from "./http/routes/friday-diagnosis-routes.js";
+export { createFridayAutoFixRoutes } from "./http/routes/friday-auto-fix-routes.js";
+export type { FridayAutoFixRoutesDeps } from "./http/routes/friday-auto-fix-routes.js";
+export { createFridayAgentLoopRoutes } from "./http/routes/friday-agent-loop-routes.js";
+export type { FridayAgentLoopRoutesDeps } from "./http/routes/friday-agent-loop-routes.js";
+export { createFridaySkillConverterRoutes } from "./http/routes/friday-skill-converter-routes.js";
+export { createFridayWorkflowGeneratorRoutes } from "./http/routes/friday-workflow-generator-routes.js";
+export type { FridayWorkflowGeneratorRoutesDeps } from "./http/routes/friday-workflow-generator-routes.js";
+export { createFridaySecurityRoutes } from "./http/routes/friday-security-routes.js";
+export type { FridaySecurityRoutesDeps } from "./http/routes/friday-security-routes.js";
+
+// Plugin routes
+export { createFridayPluginRoutes } from "./http/routes/friday-plugin-routes.js";
+export type { FridayPluginRoutesDeps } from "./http/routes/friday-plugin-routes.js";
+
+// Agent routes
+export { createFridayAgentRoutes } from "./http/routes/friday-agent-routes.js";
+export type { FridayAgentRoutesDeps } from "./http/routes/friday-agent-routes.js";
+
+// Sub-agent routes
+export { createFridaySubagentRoutes } from "./http/routes/friday-subagent-routes.js";
+export type { FridaySubagentRoutesDeps } from "./http/routes/friday-subagent-routes.js";
+
+// Persistence
+export { createFridayRealtimeEventRepository } from "./persistence/friday-realtime-event-repository.js";
+export type { FridayRealtimeEventRepository } from "./persistence/friday-realtime-event-repository.js";
+export { createFridayRealtimeCheckpointRepository } from "./persistence/friday-realtime-checkpoint-repository.js";
+
+// Multi-tenant security routes (B-002)
+export { createFridayMultiTenantSecurityRoutes } from "./http/routes/friday-multi-tenant-security-routes.js";
+export type { FridayMultiTenantSecurityRoutesDeps } from "./http/routes/friday-multi-tenant-security-routes.js";
+
+// Deterministic pipeline routes (A-007)
+export { createFridayDeterministicPipelineRoutes } from "./http/routes/friday-deterministic-pipeline-routes.js";
+export type { FridayDeterministicPipelineRoutesDeps } from "./http/routes/friday-deterministic-pipeline-routes.js";
+
+// Observability routes (B-005)
+export { createFridayObservabilityRoutes } from "./http/routes/friday-observability-routes.js";
+export type { FridayObservabilityRoutesDeps } from "./http/routes/friday-observability-routes.js";
+
+// Packaging routes (B-008)
+export { createFridayPackagingRoutes } from "./http/routes/friday-packaging-routes.js";
+export type { FridayPackagingRoutesDeps } from "./http/routes/friday-packaging-routes.js";
+
+// Desktop routes (C-003)
+export { createFridayDesktopRoutes } from "./http/routes/friday-desktop-routes.js";
+export type { FridayDesktopRoutesDeps } from "./http/routes/friday-desktop-routes.js";
+
+// System routes (C-012)
+export { createFridaySystemRoutes } from "./http/routes/friday-system-routes.js";
+export type { FridaySystemRoutesDeps } from "./http/routes/friday-system-routes.js";
+export { createFridayUixRoutes } from "./http/routes/friday-uix-routes.js";
+export type { FridayUixRoutesDeps } from "./http/routes/friday-uix-routes.js";
+
+// Discovery routes (C-005)
+export { createFridayDiscoveryRoutes } from "./http/routes/friday-discovery-routes.js";
+export type { FridayDiscoveryRoutesDeps } from "./http/routes/friday-discovery-routes.js";
+
+// MCP server routes (C-011)
+export { createFridayMcpServerRoutes } from "./http/routes/friday-mcp-server-routes.js";
+export type { FridayMcpServerRoutesDeps } from "./http/routes/friday-mcp-server-routes.js";
+
+// Marketplace commerce routes (C-009)
+export { createFridayMarketplaceCommerceRoutes } from "./http/routes/friday-marketplace-commerce-routes.js";
+export type { FridayMarketplaceCommerceRoutesDeps } from "./http/routes/friday-marketplace-commerce-routes.js";
+export { createFridayMarketplaceAssetRoutes } from "./http/routes/friday-marketplace-asset-routes.js";
+export type { FridayMarketplaceAssetRoutesDeps } from "./http/routes/friday-marketplace-asset-routes.js";
+export { createFridayMarketplaceCreatorRoutes } from "./http/routes/friday-marketplace-creator-routes.js";
+export type { FridayMarketplaceCreatorRoutesDeps } from "./http/routes/friday-marketplace-creator-routes.js";
+export { createFridayMarketplaceRequestRoutes } from "./http/routes/friday-marketplace-request-routes.js";
+export type { FridayMarketplaceRequestRoutesDeps } from "./http/routes/friday-marketplace-request-routes.js";
+export { createFridaySkillMarketplaceRoutes } from "./http/routes/friday-skill-marketplace-routes.js";
+export type { FridaySkillMarketplaceRoutesDeps } from "./http/routes/friday-skill-marketplace-routes.js";
+
+// Satellite pairing routes (C-010)
+export { createFridaySatellitePairingRoutes } from "./http/routes/friday-satellite-pairing-routes.js";
+export type { FridaySatellitePairingRoutesDeps } from "./http/routes/friday-satellite-pairing-routes.js";
+export { createFridaySatelliteRuntimeRoutes } from "./http/routes/friday-satellite-runtime-routes.js";
+export type { FridaySatelliteRuntimeRoutesDeps } from "./http/routes/friday-satellite-runtime-routes.js";
+
+// Runtime
+export { createFridayApiRuntime } from "./runtime/friday-api-runtime.js";
+export type { FridayApiRuntime, CreateFridayApiRuntimeDeps } from "./runtime/friday-api-runtime.types.js";
+export { createFridayDeterministicPipelineRuntime } from "./runtime/friday-deterministic-pipeline-runtime.js";
+export type { CreateFridayDeterministicPipelineRuntimeDeps } from "./runtime/friday-deterministic-pipeline-runtime.js";

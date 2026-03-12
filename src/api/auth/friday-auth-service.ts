@@ -1,0 +1,640 @@
+import * as crypto from "node:crypto";
+
+import { FridayDomainError } from "#errors";
+
+import type {
+  FridayAuthBootstrapRequest,
+  FridayAuthBootstrapResponse,
+  FridayAuthBootstrapStatusResponse,
+  FridayAuthMeResponse,
+  FridayAuthPrincipal,
+  FridayLoginRequest,
+  FridayLoginResponse,
+  FridayLogoutRequest,
+  FridayLogoutResponse,
+  FridayRefreshRequest,
+  FridayRefreshResponse,
+  FridayRole,
+  FridayScope,
+} from "../model/friday-api-auth.types.js";
+import type {
+  CreateFridayAuthServiceDeps,
+  FridayAuthService,
+} from "./friday-auth-service.types.js";
+import { AUTH_LOCKOUT_SCOPE_SHARED_SECRET } from "./friday-rate-limit-service.types.js";
+import { getScopesForRole } from "./friday-rbac-policy.js";
+import { encodeToken } from "./friday-token-validator.js";
+import { createFridayUserRepository } from "../persistence/friday-user-repository.js";
+import type { FridayUserRow } from "../persistence/friday-user-repository.js";
+import { createFridayAuthSessionRepository } from "../persistence/friday-auth-session-repository.js";
+
+// ─── Helpers ───
+
+function hashToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function isLocalhostAddress(addr?: string): boolean {
+  if (!addr) return false;
+  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1" || addr === "localhost";
+}
+
+function normalizeTenantId(value: string | null | undefined): string | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+// ─── scrypt password hashing (SEC-004) ───
+
+const SCRYPT_KEY_LENGTH = 64;
+const SCRYPT_SALT_LENGTH = 32;
+
+/**
+ * Hash a password using scrypt. Returns `scrypt$<hex-salt>$<hex-derived-key>`.
+ */
+export function hashPasswordScrypt(password: string): string {
+  const salt = crypto.randomBytes(SCRYPT_SALT_LENGTH);
+  const derived = crypto.scryptSync(password, salt, SCRYPT_KEY_LENGTH);
+  return `scrypt$${salt.toString("hex")}$${derived.toString("hex")}`;
+}
+
+/**
+ * Verify a password against a scrypt hash (`scrypt$<hex-salt>$<hex-derived-key>`).
+ *
+ * VULN-2: All code paths must execute one scrypt derivation to prevent
+ * timing side-channels that leak whether a hash is well-formed.
+ */
+function verifyPasswordScrypt(input: string, storedHash: string): boolean {
+  const parts = storedHash.split("$");
+
+  // Validate structure: must be exactly "scrypt$<hex-salt>$<hex-derived-key>"
+  const wellFormed =
+    parts.length === 3 &&
+    parts[0] === "scrypt" &&
+    /^[0-9a-f]+$/i.test(parts[1]) &&
+    /^[0-9a-f]+$/i.test(parts[2]) &&
+    parts[1].length === SCRYPT_SALT_LENGTH * 2 &&
+    parts[2].length === SCRYPT_KEY_LENGTH * 2;
+
+  if (!wellFormed) {
+    // Malformed hash — still run one scrypt derivation (timing pad) before rejecting
+    scryptDerive(input, crypto.randomBytes(SCRYPT_SALT_LENGTH));
+    return false;
+  }
+
+  const salt = Buffer.from(parts[1], "hex");
+  const expected = Buffer.from(parts[2], "hex");
+  const derived = scryptDerive(input, salt);
+  if (derived.length !== expected.length) return false;
+  return crypto.timingSafeEqual(derived, expected);
+}
+
+/**
+ * Shared scrypt derivation helper — single place for the heavy work,
+ * used by both real verification and timing-pad paths.
+ */
+function scryptDerive(input: string, salt: Buffer): Buffer {
+  return crypto.scryptSync(input, salt, SCRYPT_KEY_LENGTH);
+}
+
+/**
+ * Returns true if the hash is a legacy SHA-256 hex string (64 hex chars).
+ */
+function isLegacySha256Hash(hash: string): boolean {
+  return /^[0-9a-f]{64}$/i.test(hash);
+}
+
+/**
+ * Verify a password against a legacy SHA-256 hex hash using constant-time comparison.
+ */
+function verifyPasswordLegacySha256(input: string, hash: string): boolean {
+  const inputHash = Buffer.from(
+    crypto.createHash("sha256").update(input).digest("hex"),
+  );
+  const storedHash = Buffer.from(hash);
+  if (inputHash.length !== storedHash.length) return false;
+  return crypto.timingSafeEqual(inputHash, storedHash);
+}
+
+/**
+ * Run a dummy scrypt verification to pad timing on non-scrypt paths.
+ * This ensures legacy SHA-256 and unknown-format branches take roughly
+ * the same wall-clock time as a real scrypt verification (VULN-2).
+ */
+function scryptTimingPad(input: string): void {
+  verifyPasswordScrypt(input, DUMMY_SCRYPT_HASH);
+}
+
+/**
+ * Verify a password, supporting both scrypt and legacy SHA-256 formats.
+ * Returns { valid, needsUpgrade } so the caller can auto-upgrade.
+ *
+ * All code paths execute one scrypt derivation so that timing is constant
+ * regardless of hash format (VULN-2 timing-oracle mitigation).
+ */
+function verifyPassword(input: string, hash: string): { valid: boolean; needsUpgrade: boolean } {
+  if (hash.startsWith("scrypt$")) {
+    return { valid: verifyPasswordScrypt(input, hash), needsUpgrade: false };
+  }
+  if (isLegacySha256Hash(hash)) {
+    const valid = verifyPasswordLegacySha256(input, hash);
+    // Pad timing: run a dummy scrypt so this path costs the same as a real scrypt path
+    scryptTimingPad(input);
+    return { valid, needsUpgrade: true };
+  }
+  // Unknown/malformed hash format — pad timing before rejecting
+  scryptTimingPad(input);
+  return { valid: false, needsUpgrade: false };
+}
+
+// ─── Auth Error ───
+
+// Dummy scrypt hash for constant-time verification against non-existent users.
+// Generated once at module load; the actual password doesn't matter.
+const DUMMY_SCRYPT_HASH = hashPasswordScrypt("__friday_dummy_password_for_timing__");
+
+export class FridayAuthError extends FridayDomainError {
+  override readonly name = "FridayAuthError";
+  constructor(code: string, message: string, options?: { retryAfterMs?: number }) {
+    super(code, message, {
+      httpStatus: code === "AUTH_LOCKED_OUT" ? 429 : 401,
+      retryable: code === "AUTH_LOCKED_OUT",
+      details: options?.retryAfterMs != null ? { retryAfterMs: options.retryAfterMs } : undefined,
+    });
+  }
+}
+
+// ─── Factory ───
+
+export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): FridayAuthService {
+  const userRepo = createFridayUserRepository();
+  const sessionRepo = createFridayAuthSessionRepository();
+  const allowPasswordless = deps.allowPasswordlessLocalLogin ?? false;
+  const allowLocalBypassLogin = deps.allowLocalBypassLogin ?? false;
+  const warn = deps.warn ?? console.warn;
+  const rateLimiter = deps.rateLimiter;
+
+  /**
+   * Derive a principal key for lockout tracking.
+   * Keys are scoped to the actual principal (email / user ID), NOT the IP,
+   * so that different accounts have independent lockout counters.
+   */
+  function deriveLockoutKey(request: FridayLoginRequest, userId?: string): string {
+    if (request.email) return `email:${request.email.toLowerCase().trim()}`;
+    if (request.local || request.localPassphrase) return `local:${userId ?? "local"}`;
+    return `local:local`;
+  }
+
+  /**
+   * Check both principal lockout and IP lockout. Throws if either is locked.
+   * Shared-secret scope is used for principal lockout.
+   */
+  function checkLockout(principalKey: string, ip?: string): void {
+    if (!rateLimiter) return;
+
+    // Check IP lockout first
+    const ipStatus = rateLimiter.checkIpLockout(ip);
+    if (ipStatus.locked) {
+      throw new FridayAuthError(
+        "AUTH_LOCKED_OUT",
+        `Too many failed login attempts from this IP. Try again after ${ipStatus.retryAfter ?? "a while"}.`,
+        { retryAfterMs: ipStatus.retryAfterMs },
+      );
+    }
+
+    // Check principal lockout (scoped to shared-secret)
+    const status = rateLimiter.checkAuthLockout(principalKey, AUTH_LOCKOUT_SCOPE_SHARED_SECRET);
+    if (status.locked) {
+      throw new FridayAuthError(
+        "AUTH_LOCKED_OUT",
+        `Too many failed login attempts. Try again after ${status.retryAfter ?? "a while"}.`,
+        { retryAfterMs: status.retryAfterMs },
+      );
+    }
+  }
+
+  /**
+   * Record a failed auth attempt for both principal and IP.
+   */
+  function recordFailure(principalKey: string, ip?: string): void {
+    if (!rateLimiter) return;
+    rateLimiter.recordAuthFailure(principalKey, AUTH_LOCKOUT_SCOPE_SHARED_SECRET);
+    rateLimiter.recordIpFailure(ip);
+  }
+
+  /**
+   * Reset auth failures on successful login for both principal and IP.
+   */
+  function resetFailures(principalKey: string, ip?: string): void {
+    if (!rateLimiter) return;
+    rateLimiter.resetAuthFailures(principalKey, AUTH_LOCKOUT_SCOPE_SHARED_SECRET);
+    rateLimiter.resetIpFailures(ip);
+  }
+
+  function findUserByEmail(email: string): FridayUserRow | null {
+    return deps.db.withReadConnection((db) => userRepo.findByEmail(db, email));
+  }
+
+  function findUserById(userId: string): FridayUserRow | null {
+    return deps.db.withReadConnection((db) => userRepo.findById(db, userId));
+  }
+
+  function findLocalUser(): FridayUserRow | null {
+    return deps.db.withReadConnection((db) => userRepo.findLocalUser(db));
+  }
+
+  function resolveTenantId(user: FridayUserRow): string {
+    const role = user.role as FridayRole;
+    return normalizeTenantId(
+      deps.resolveTenantId?.({
+        principalType: "user",
+        principalId: user.id,
+        userId: user.id,
+        role,
+      }),
+    ) ?? user.id;
+  }
+
+  /** Auto-upgrade a legacy SHA-256 hash to scrypt on successful login. */
+  function upgradePasswordHash(userId: string, plaintext: string): void {
+    const newHash = hashPasswordScrypt(plaintext);
+    const now = deps.nowIso();
+    deps.db.withWriteTransaction((db) => {
+      db.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?").run(
+        newHash,
+        now,
+        userId,
+      );
+    });
+  }
+
+  function generateTokenPair(
+    user: FridayUserRow,
+    sessionId: string,
+  ): { accessToken: string; refreshToken: string } {
+    const role = user.role as FridayRole;
+    const scopes = [...getScopesForRole(role)] as FridayScope[];
+    const nowSec = Math.floor(new Date(deps.nowIso()).getTime() / 1000);
+    const tenantId = resolveTenantId(user);
+
+    const accessToken = encodeToken(
+      {
+        tokenId: deps.idGenerator(),
+        principalType: "user",
+        principalId: user.id,
+        tenantId,
+        userId: user.id,
+        role,
+        scopes,
+        iat: nowSec,
+        exp: nowSec + deps.accessTokenTtlSec,
+        sid: sessionId,
+      },
+      deps.tokenSecret,
+    );
+
+    const refreshToken = deps.idGenerator();
+    return { accessToken, refreshToken };
+  }
+
+  return {
+    getBootstrapStatus(): FridayAuthBootstrapStatusResponse {
+      const localUser = findLocalUser();
+      const bootstrapRequired = Boolean(
+        localUser &&
+        !localUser.password_hash &&
+        !allowPasswordless,
+      );
+      return {
+        bootstrapRequired,
+        allowPasswordlessLocalLogin: allowPasswordless,
+        allowLocalBypassLogin,
+      };
+    },
+
+    bootstrapLocalPassphrase(
+      request: FridayAuthBootstrapRequest,
+      ip?: string,
+    ): FridayAuthBootstrapResponse {
+      if (!isLocalhostAddress(ip)) {
+        throw new FridayDomainError(
+          "AUTH_BOOTSTRAP_NOT_ALLOWED",
+          "Bootstrap is only allowed from localhost.",
+          { httpStatus: 403 },
+        );
+      }
+
+      const passphrase = request.passphrase.trim();
+      if (passphrase.length < 12) {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          "passphrase must be at least 12 characters",
+          { httpStatus: 400 },
+        );
+      }
+
+      const localUser = findLocalUser();
+      if (!localUser) {
+        throw new FridayDomainError(
+          "USER_NOT_FOUND",
+          "No local user configured",
+          { httpStatus: 404 },
+        );
+      }
+
+      if (localUser.password_hash) {
+        throw new FridayDomainError(
+          "AUTH_BOOTSTRAP_ALREADY_DONE",
+          "Local bootstrap has already been completed.",
+          { httpStatus: 409 },
+        );
+      }
+
+      const now = deps.nowIso();
+      const hashed = hashPasswordScrypt(passphrase);
+      deps.db.withWriteTransaction((db) => {
+        db.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?").run(
+          hashed,
+          now,
+          localUser.id,
+        );
+      });
+
+      return {
+        initialized: true,
+        initializedAt: now,
+        userId: localUser.id,
+      };
+    },
+
+    login(request, ip, userAgent) {
+      let user: FridayUserRow | null = null;
+
+      // Resolve the principal early for lockout key derivation.
+      // For local auth, look up the local user to get their ID.
+      let earlyUserId: string | undefined;
+      if (request.localPassphrase || request.local) {
+        const localUser = findLocalUser();
+        earlyUserId = localUser?.id;
+      }
+      const lockoutKey = deriveLockoutKey(request, earlyUserId);
+
+      // Pre-check: reject if locked out (checks both principal and IP)
+      checkLockout(lockoutKey, ip);
+
+      if (request.localPassphrase) {
+        user = findLocalUser();
+        if (!user) {
+          recordFailure(lockoutKey, ip);
+          throw new FridayAuthError("USER_NOT_FOUND", "No local user configured");
+        }
+        if (!user.password_hash) {
+          recordFailure(lockoutKey, ip);
+          throw new FridayAuthError(
+            "NO_PASSWORD_CONFIGURED",
+            "No password configured for this account",
+          );
+        }
+        const result = verifyPassword(request.localPassphrase, user.password_hash);
+        if (!result.valid) {
+          recordFailure(lockoutKey, ip);
+          throw new FridayAuthError("INVALID_CREDENTIALS", "Invalid passphrase");
+        }
+        if (result.needsUpgrade) {
+          upgradePasswordHash(user.id, request.localPassphrase);
+        }
+      } else if (request.email) {
+        user = findUserByEmail(request.email);
+
+        if (!request.password) {
+          // Always run a dummy verify to prevent timing leak on missing password
+          verifyPassword("__dummy__", DUMMY_SCRYPT_HASH);
+          recordFailure(lockoutKey, ip);
+          throw new FridayAuthError("INVALID_CREDENTIALS", "Invalid credentials");
+        }
+
+        // Determine which hash to verify against: real hash or dummy for unknown/no-hash users
+        const hashToVerify = (user && user.password_hash) ? user.password_hash : DUMMY_SCRYPT_HASH;
+        const result = verifyPassword(request.password, hashToVerify);
+
+        if (!user || !user.password_hash || !result.valid) {
+          recordFailure(lockoutKey, ip);
+          throw new FridayAuthError("INVALID_CREDENTIALS", "Invalid credentials");
+        }
+
+        if (result.needsUpgrade) {
+          upgradePasswordHash(user.id, request.password);
+        }
+      } else {
+        // No explicit credentials provided
+        const requestedLocalBypass = request.local === true && allowLocalBypassLogin;
+        if (!allowPasswordless && !requestedLocalBypass) {
+          throw new FridayAuthError(
+            "AUTH_METHOD_REQUIRED",
+            "No authentication method provided. Supply localPassphrase or email+password.",
+          );
+        }
+        // All local/passwordless logins require localhost — bypass only skips passphrase, not the IP trust boundary.
+        if (!isLocalhostAddress(ip)) {
+          warn(
+            `[friday] SECURITY: Passwordless login attempt rejected from non-localhost IP: ${ip ?? "unknown"}`,
+          );
+          throw new FridayAuthError(
+            "PASSWORDLESS_LOCALHOST_ONLY",
+            "Passwordless login is only allowed from localhost.",
+          );
+        }
+        // Require explicit `local: true` flag to prevent accidental bypass
+        if (!request.local) {
+          throw new FridayAuthError(
+            "LOCAL_FLAG_REQUIRED",
+            "Passwordless login requires { local: true } in the request body.",
+          );
+        }
+        user = findLocalUser();
+        if (!user) {
+          throw new FridayAuthError("USER_NOT_FOUND", "No local user configured");
+        }
+        // In regular passwordless mode, preserve passphrase protection when configured.
+        if (!requestedLocalBypass && user.password_hash) {
+          throw new FridayAuthError(
+            "PASSPHRASE_REQUIRED",
+            "This account has a password configured. Use localPassphrase to authenticate.",
+          );
+        }
+        if (requestedLocalBypass) {
+          warn("[friday] WARNING: Local bypass login used (no-signin mode).");
+        } else {
+          warn("[friday] WARNING: Passwordless local login used. This is allowed only in dev mode.");
+        }
+      }
+
+      // Auth succeeded — reset lockout state
+      resetFailures(lockoutKey, ip);
+
+      const now = deps.nowIso();
+      const sessionId = deps.idGenerator();
+      const { accessToken, refreshToken } = generateTokenPair(user, sessionId);
+      const refreshHash = hashToken(refreshToken);
+      const expiresAt = new Date(
+        new Date(now).getTime() + deps.refreshTokenTtlSec * 1000,
+      ).toISOString();
+
+      deps.db.withWriteTransaction((db) => {
+        sessionRepo.create(db, {
+          id: sessionId,
+          userId: user.id,
+          refreshTokenHash: refreshHash,
+          expiresAt,
+          ipAddress: ip,
+          userAgent,
+          now,
+        });
+
+        db.prepare("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?").run(
+          now,
+          now,
+          user.id,
+        );
+      });
+
+      return {
+        accessToken,
+        refreshToken,
+        expiresInSec: deps.accessTokenTtlSec,
+        user: {
+          id: user.id,
+          email: user.email ?? undefined,
+          displayName: user.display_name,
+          role: user.role as FridayRole,
+        },
+      };
+    },
+
+    refresh(request) {
+      const refreshHash = hashToken(request.refreshToken);
+      const now = deps.nowIso();
+
+      const session = deps.db.withReadConnection((db) =>
+        sessionRepo.findByRefreshHash(db, refreshHash, now),
+      );
+
+      if (!session) {
+        throw new FridayAuthError("INVALID_REFRESH_TOKEN", "Refresh token is invalid or expired");
+      }
+
+      const user = findUserById(session.user_id);
+      if (!user) {
+        throw new FridayAuthError("USER_NOT_FOUND", "User no longer exists");
+      }
+
+      const { accessToken, refreshToken: newRefreshToken } = generateTokenPair(
+        user,
+        session.id,
+      );
+      const newHash = hashToken(newRefreshToken);
+      const newExpires = new Date(
+        new Date(now).getTime() + deps.refreshTokenTtlSec * 1000,
+      ).toISOString();
+
+      // Atomic compare-and-swap: ensures a refresh token can only be used once.
+      // If another request already rotated the token, this will fail (changes === 0).
+      const swapped = deps.db.withWriteTransaction((db) => {
+        return sessionRepo.compareAndSwapRefreshHash(
+          db,
+          session.id,
+          refreshHash,
+          newHash,
+          newExpires,
+          now,
+        );
+      });
+
+      if (!swapped) {
+        warn(
+          `[friday] SECURITY WARNING: Refresh token replay detected for session ${session.id}, user ${session.user_id}. ` +
+          "Token was already rotated by a concurrent request.",
+        );
+        throw new FridayAuthError(
+          "TOKEN_ALREADY_USED",
+          "Refresh token has already been used. This may indicate a replay attack.",
+        );
+      }
+
+      return {
+        accessToken,
+        refreshToken: newRefreshToken,
+        expiresInSec: deps.accessTokenTtlSec,
+      };
+    },
+
+    logout(request, principal) {
+      const now = deps.nowIso();
+
+      // Revoke the current access token in-memory (SEC-005)
+      if (principal.tokenId && deps.markAccessTokenRevoked) {
+        const expSec = principal.expiresAt
+          ? Math.floor(new Date(principal.expiresAt).getTime() / 1000)
+          : Math.floor(new Date(now).getTime() / 1000) + deps.accessTokenTtlSec;
+        deps.markAccessTokenRevoked(principal.tokenId, expSec);
+      }
+
+      if (request.allSessions && principal.userId) {
+        deps.db.withWriteTransaction((db) => {
+          sessionRepo.revokeAllForUser(db, principal.userId!, now);
+        });
+      } else if (request.refreshToken) {
+        const refreshHash = hashToken(request.refreshToken);
+        deps.db.withWriteTransaction((db) => {
+          // Find session by hash regardless of active/expired/revoked state
+          const session = sessionRepo.findByRefreshHashAny(db, refreshHash);
+          if (session) {
+            sessionRepo.revokeById(db, session.id, now);
+          }
+        });
+      } else if (principal.sessionId) {
+        deps.db.withWriteTransaction((db) => {
+          sessionRepo.revokeById(db, principal.sessionId!, now);
+        });
+      }
+
+      return { ok: true as const };
+    },
+
+    me(principal) {
+      if (!principal.userId) {
+        throw new FridayAuthError("NO_USER_CONTEXT", "No user associated with this principal");
+      }
+
+      const user = findUserById(principal.userId);
+      if (!user) {
+        throw new FridayAuthError("USER_NOT_FOUND", "User not found");
+      }
+
+      let sessionExpiresAt: string | undefined;
+      if (principal.sessionId) {
+        const session = deps.db.withReadConnection((db) =>
+          sessionRepo.findById(db, principal.sessionId!),
+        );
+        sessionExpiresAt = session?.expires_at;
+      }
+
+      return {
+        user: {
+          id: user.id,
+          email: user.email ?? undefined,
+          displayName: user.display_name,
+          role: user.role as FridayRole,
+        },
+        scopes: principal.scopes,
+        sessionExpiresAt,
+      };
+    },
+  };
+}

@@ -1,0 +1,146 @@
+import type {
+  FridayCompiledWorkflowGraphV2,
+  FridayWorkflowSpecEdgeWhen,
+  FridayWorkflowSpecInput,
+  FridayWorkflowSpecOutput,
+  FridayWorkflowSpecTestCase,
+  FridayWorkflowSpecTrigger,
+  FridayWorkflowSpecV1,
+  FridayWorkflowVisualGraphV1,
+  WorkflowFailurePolicyV2,
+} from "#workflows";
+
+// ─── Session status ───
+
+export type FridayWorkflowGeneratorSessionStatus =
+  | "collecting_requirements"
+  | "needs_clarification"
+  | "generating"
+  | "ready_for_review"
+  | "approved"
+  | "saved"
+  | "failed"
+  | "cancelled";
+
+// ─── Session entity ───
+
+export interface FridayWorkflowGenerationSession {
+  sessionId: string;
+  userId: string;
+  channel: string;
+  status: FridayWorkflowGeneratorSessionStatus;
+  goal: string;
+  requirementsSummary: string;
+  openQuestions: string[];
+  decisions: string[];
+  draftWorkflowId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ─── Turn entity ───
+
+export interface FridayWorkflowGenerationTurn {
+  turnId: string;
+  sessionId: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  createdAt: string;
+}
+
+// ─── Request / response types ───
+
+export interface FridayStartWorkflowGenerationRequest {
+  goal: string;
+  requestedModel?: string;
+  userId: string;
+  channel: string;
+}
+
+export interface FridayWorkflowGenerationTurnRequest {
+  message: string;
+  requestedModel?: string;
+}
+
+export type FridayWorkflowGenerationTurnMode =
+  | "clarification_required"
+  | "preview_ready"
+  | "generation_failed";
+
+// ─── Skill context for prompts ───
+
+export interface FridayWorkflowGeneratorSkillContext {
+  id: string;
+  name: string;
+  description: string;
+  inputs: Array<{ key: string; type: string; required: boolean }>;
+  outputs: Array<{ key: string; type: string }>;
+}
+
+// ─── Requirements ───
+
+export interface FridayWorkflowGenerationRequirements {
+  goal: string;
+  trigger: FridayWorkflowSpecTrigger;
+  inputs: FridayWorkflowSpecInput[];
+  plannedSteps: Array<{
+    id: string;
+    intent: string;
+    nodeTypeHint: "action" | "condition" | "data" | "ai" | "approval";
+    preferredSkillId?: string;
+    condition?: string;
+  }>;
+  outputs: FridayWorkflowSpecOutput[];
+  errorPolicy: WorkflowFailurePolicyV2;
+  assumptions: string[];
+  testScenarios: Array<{ name: string; description?: string }>;
+}
+
+// ─── Validation types ───
+
+export type FridayGeneratedWorkflowValidationStage =
+  | "requirements"
+  | "spec"
+  | "visual"
+  | "tests"
+  | "compile"
+  | "graph"
+  | "skill_refs"
+  | "draft_consistency";
+
+export interface FridayGeneratedWorkflowValidationIssue {
+  code: string;
+  stage: FridayGeneratedWorkflowValidationStage;
+  severity: "error" | "warning";
+  message: string;
+  path?: string;
+  stepId?: string;
+  edgeRef?: { from: string; to: string; when?: FridayWorkflowSpecEdgeWhen };
+}
+
+export interface FridayGeneratedWorkflowValidationReport {
+  ok: boolean;
+  issues: FridayGeneratedWorkflowValidationIssue[];
+  repaired: boolean;
+  repairAttempts: number;
+}
+
+// ─── Draft artifact ───
+
+export interface FridayGeneratedWorkflowDraft {
+  spec: FridayWorkflowSpecV1;
+  visual: FridayWorkflowVisualGraphV1;
+  tests: FridayWorkflowSpecTestCase[];
+  compiledGraph: FridayCompiledWorkflowGraphV2;
+  validation: FridayGeneratedWorkflowValidationReport;
+}
+
+// ─── Turn response ───
+
+export interface FridayWorkflowGenerationTurnResponse {
+  session: FridayWorkflowGenerationSession;
+  mode: FridayWorkflowGenerationTurnMode;
+  questions?: string[];
+  draft?: FridayGeneratedWorkflowDraft;
+  errors?: FridayGeneratedWorkflowValidationIssue[];
+}

@@ -1,0 +1,238 @@
+import { execFile } from "node:child_process";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { promisify } from "node:util";
+
+import { describe, expect, it } from "vitest";
+
+const execFileAsync = promisify(execFile);
+const describeIfDarwin = process.platform === "darwin" ? describe : describe.skip;
+
+type ExecFailure = Error & {
+  code?: number;
+  stdout?: string;
+  stderr?: string;
+};
+
+async function runReleaseScript(
+  scriptPath: string,
+  envOverrides: Record<string, string>,
+): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync("bash", [scriptPath, process.cwd()], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ...envOverrides,
+    },
+    maxBuffer: 10 * 1024 * 1024,
+  });
+}
+
+describeIfDarwin("Friday native companion release workflow", () => {
+  it("runs the local release workflow and verifies the packaged app", async () => {
+    const repoRoot = process.cwd();
+    const releaseEnv = await runReleaseScript(
+      path.join(repoRoot, "scripts/ops/check-friday-companion-release-env.sh"),
+      {
+        FRIDAY_MACOS_RELEASE_MODE: "local",
+      },
+    );
+
+    expect(releaseEnv.stderr).toContain("environment OK for local release mode");
+
+    const releaseResult = await runReleaseScript(
+      path.join(repoRoot, "scripts/ops/release-friday-companion-app.sh"),
+      {
+        FRIDAY_MACOS_RELEASE_MODE: "local",
+      },
+    );
+    const appDir = releaseResult.stdout.trim();
+    const appBinary = path.join(appDir, "Contents", "MacOS", "FridayCompanion");
+    const releaseRecordJson = path.join(repoRoot, "dist", "macos", "FridayCompanion.release.json");
+    const releaseRecordMd = path.join(repoRoot, "dist", "macos", "FridayCompanion.release.md");
+
+    await expect(fs.access(appBinary)).resolves.toBeUndefined();
+    expect(releaseResult.stderr).toContain("running local verification");
+    expect(releaseResult.stderr).toContain("writing release record");
+    expect(releaseResult.stderr).toContain("building release artifacts");
+    expect(releaseResult.stderr).toContain("writing release manifest");
+
+    const releaseRecord = JSON.parse(await fs.readFile(releaseRecordJson, "utf8")) as {
+      releaseMode: string;
+      notarizationStatus: string;
+      appDir: string;
+      dmgReleasePath: string | null;
+      zipReleasePath: string | null;
+      sourceReleasePath: string | null;
+      sparkleAppcastPath: string | null;
+      manifestJsonPath: string | null;
+      manifestMarkdownPath: string | null;
+      homebrewCaskPath: string | null;
+    };
+    const releaseMarkdown = await fs.readFile(releaseRecordMd, "utf8");
+
+    expect(releaseRecord.releaseMode).toBe("local");
+    expect(releaseRecord.notarizationStatus).toBe("not_requested");
+    expect(releaseRecord.appDir).toBe(appDir);
+    expect(releaseRecord.dmgReleasePath).toBeTruthy();
+    expect(releaseRecord.zipReleasePath).toBeTruthy();
+    expect(releaseRecord.sourceReleasePath).toBeTruthy();
+    expect(releaseRecord.sparkleAppcastPath).toBeNull();
+    expect(releaseRecord.manifestJsonPath).toBeTruthy();
+    expect(releaseRecord.manifestMarkdownPath).toBeTruthy();
+    expect(releaseRecord.homebrewCaskPath).toBeTruthy();
+    expect(releaseMarkdown).toContain("# Friday Companion Release Record");
+    const manifestJsonPath = releaseRecord.manifestJsonPath!;
+    const manifestMarkdownPath = releaseRecord.manifestMarkdownPath!;
+    const caskPath = releaseRecord.homebrewCaskPath!;
+    const manifest = JSON.parse(await fs.readFile(manifestJsonPath, "utf8")) as {
+      channels: Record<string, { availability: string }>;
+      platforms: Array<{ platform: string; artifacts: Array<{ kind: string }> }>;
+    };
+
+    await expect(fs.access(releaseRecord.dmgReleasePath!)).resolves.toBeUndefined();
+    await expect(fs.access(releaseRecord.zipReleasePath!)).resolves.toBeUndefined();
+    await expect(fs.access(manifestMarkdownPath)).resolves.toBeUndefined();
+    await expect(fs.access(caskPath)).resolves.toBeUndefined();
+    expect(manifest.channels.homebrew.availability).toBe("generated");
+    expect(manifest.platforms.find((entry) => entry.platform === "macos")?.artifacts.some((artifact) => artifact.kind === "dmg")).toBe(true);
+
+    const verifyResult = await runReleaseScript(
+      path.join(repoRoot, "scripts/ops/verify-friday-companion-app.sh"),
+      {
+        FRIDAY_SYSTEM_COMPANION_APP_DIR: appDir,
+        FRIDAY_MACOS_VERIFY_MODE: "local",
+      },
+    );
+
+    expect(verifyResult.stdout.trim()).toBe(appDir);
+    expect(verifyResult.stderr).toContain("verifying executable signature");
+  }, 180_000);
+
+  it("generates a Sparkle appcast when update credentials are configured", async () => {
+    const repoRoot = process.cwd();
+    const keyDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-sparkle-keys-"));
+
+    const generatedKeys = await runReleaseScript(
+      path.join(repoRoot, "scripts/ops/generate-friday-sparkle-keys.sh"),
+      {
+        FRIDAY_MACOS_SPARKLE_KEY_DIR: keyDir,
+      },
+    );
+    const [privateKeyPath, publicKeyPath] = generatedKeys.stdout
+      .trim()
+      .split("\n")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    const publicKey = (await fs.readFile(publicKeyPath, "utf8")).trim();
+
+    const releaseResult = await runReleaseScript(
+      path.join(repoRoot, "scripts/ops/release-friday-companion-app.sh"),
+      {
+        FRIDAY_MACOS_RELEASE_MODE: "local",
+        FRIDAY_MACOS_SPARKLE_PRIVATE_KEY: privateKeyPath,
+        FRIDAY_MACOS_SPARKLE_PUBLIC_KEY: publicKey,
+        FRIDAY_MACOS_APPCAST_BASE_URL: "https://github.com/thesongzhu/Friday/releases/latest/download",
+      },
+    );
+
+    expect(releaseResult.stderr).toContain("generating Sparkle appcast");
+
+    const releaseRecord = JSON.parse(
+      await fs.readFile(path.join(repoRoot, "dist", "macos", "FridayCompanion.release.json"), "utf8"),
+    ) as {
+      sparkleAppcastPath: string | null;
+      manifestJsonPath: string | null;
+    };
+    const manifest = JSON.parse(
+      await fs.readFile(releaseRecord.manifestJsonPath!, "utf8"),
+    ) as {
+      channels: { sparkle: { availability: string; appcastUrl: string | null } };
+    };
+
+    expect(releaseRecord.sparkleAppcastPath).toBeTruthy();
+    await expect(fs.access(releaseRecord.sparkleAppcastPath!)).resolves.toBeUndefined();
+    expect(manifest.channels.sparkle.availability).toBe("generated");
+    expect(manifest.channels.sparkle.appcastUrl).toBe(
+      "https://github.com/thesongzhu/Friday/releases/latest/download/appcast.xml",
+    );
+  }, 180_000);
+
+  it("serializes concurrent local release invocations with a shared lock", async () => {
+    const repoRoot = process.cwd();
+    const scriptPath = path.join(repoRoot, "scripts/ops/release-friday-companion-app.sh");
+
+    const [first, second] = await Promise.all([
+      runReleaseScript(scriptPath, {
+        FRIDAY_MACOS_RELEASE_MODE: "local",
+      }),
+      runReleaseScript(scriptPath, {
+        FRIDAY_MACOS_RELEASE_MODE: "local",
+      }),
+    ]);
+
+    expect(first.stdout.trim()).toContain("FridayCompanion.app");
+    expect(second.stdout.trim()).toContain("FridayCompanion.app");
+  }, 180_000);
+
+  it("writes the default macOS beta smoke record under dist instead of the docs evidence path", async () => {
+    const repoRoot = process.cwd();
+    const scriptPath = path.join(repoRoot, "scripts/ops/run-friday-macos-beta-smoke.sh");
+    const result = await runReleaseScript(scriptPath, {
+      FRIDAY_MACOS_RELEASE_MODE: "local",
+    });
+
+    const evidencePath = result.stdout.trim();
+    expect(evidencePath).toContain(path.join("dist", "macos", "FridayCompanion.clean-machine-smoke.md"));
+
+    const contents = await fs.readFile(evidencePath, "utf8");
+    expect(contents).toContain("Status: pending");
+    expect(contents).toContain("Release mode: local");
+  }, 180_000);
+
+  it("rejects notarized release mode when Apple credentials are missing", async () => {
+    const repoRoot = process.cwd();
+
+    const error = await runReleaseScript(
+      path.join(repoRoot, "scripts/ops/check-friday-companion-release-env.sh"),
+      {
+        FRIDAY_MACOS_RELEASE_MODE: "notarize",
+        FRIDAY_MACOS_CODESIGN_IDENTITY: "",
+        FRIDAY_MACOS_NOTARY_PROFILE: "",
+        FRIDAY_MACOS_TEAM_ID: "",
+      },
+    ).then(
+      () => null,
+      (failure) => failure as ExecFailure,
+    );
+
+    expect(error).not.toBeNull();
+    expect(error?.code).toBe(78);
+    expect(error?.stderr ?? "").toContain("FRIDAY_MACOS_CODESIGN_IDENTITY is required");
+  });
+
+  it("rejects notarized release mode when configured Apple credentials are unavailable", async () => {
+    const repoRoot = process.cwd();
+
+    const error = await runReleaseScript(
+      path.join(repoRoot, "scripts/ops/check-friday-companion-release-env.sh"),
+      {
+        FRIDAY_MACOS_RELEASE_MODE: "notarize",
+        FRIDAY_MACOS_CODESIGN_IDENTITY: "Developer ID Application: Missing Identity (TEAMID1234)",
+        FRIDAY_MACOS_NOTARY_PROFILE: "missing-profile",
+        FRIDAY_MACOS_TEAM_ID: "TEAMID1234",
+      },
+    ).then(
+      () => null,
+      (failure) => failure as ExecFailure,
+    );
+
+    expect(error).not.toBeNull();
+    expect(error?.code).toBe(78);
+    expect(error?.stderr ?? "").toMatch(
+      /no valid codesigning identities are available|requested codesigning identity was not found|notary profile is unavailable or inaccessible/,
+    );
+  });
+});

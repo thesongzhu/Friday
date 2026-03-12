@@ -1,0 +1,2554 @@
+import { FridayDomainError } from "#errors";
+import type { FridayEvaluationContext, FridayEvaluationResult } from "#rules";
+
+import {
+  FRIDAY_AGENT_ERROR_CODES,
+  FRIDAY_AGENT_MAX_ATTEMPTS,
+  FRIDAY_AGENT_MAX_LOOP_ITERATIONS,
+  FRIDAY_AGENT_MAX_TOOL_CALLS,
+  FRIDAY_AGENT_RUN_TIMEOUT_MS,
+  FRIDAY_AGENT_SESSION_KEY_PREFIX,
+  FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS,
+  FRIDAY_AGENT_TOOL_TIMEOUT_MS,
+} from "../friday-agent.constants.js";
+import type {
+  FridayAgentActualExecution,
+  FridayAgentActualTurn,
+  FridayAgentArtifact,
+  FridayAgentContentBlock,
+  FridayAgentImageBlock,
+  FridayAgentMessage,
+  FridayAgentTestResult,
+  FridayAgentToolCallRecord,
+  FridayAgentToolDefinition,
+  FridayAgentToolResult,
+  FridayAgentToolResultBlock,
+  FridayAgentToolUseBlock,
+} from "../model/friday-agent.types.js";
+import { createFridayAgentRunRepository } from "../persistence/friday-agent-run-repository.js";
+import type { FridayAgentLlmStreamEvent } from "./friday-agent-llm-client.types.js";
+import type {
+  CreateFridayAgentRuntimeDeps,
+  FridayAgentRuntime,
+  FridayAgentRuntimeResult,
+} from "./friday-agent-runtime.types.js";
+import { isMutatingToolCall } from "./friday-agent-tool-mutation.js";
+import { getApprovalRequiredReasonForToolCall } from "./friday-agent-tool-risk.js";
+
+const RULES_EVALUATE_SCOPE = "rules:evaluate";
+
+// ─── Factory ───
+
+export function createFridayAgentRuntime(
+  deps: CreateFridayAgentRuntimeDeps,
+): FridayAgentRuntime {
+  const {
+    db,
+    llmClient,
+    model,
+    providerId,
+    systemPrompt: staticSystemPrompt,
+    systemPromptBuilder,
+    tools: depsTools,
+    eventEmitter,
+    idGenerator,
+    nowIso,
+    reviewGate,
+    runEventRepository,
+    selfTestService,
+    workdir,
+    sessionMirror,
+    usageRecorder,
+    artifactWriter,
+    evaluateRules,
+    learningContextBuilder,
+    communicationPromptBuilder,
+  } = deps;
+
+  // Clone the tools array so registerTool does not mutate the caller's array.
+  const tools = [...depsTools];
+
+  const repo = createFridayAgentRunRepository();
+  const toolMap = new Map<string, FridayAgentToolDefinition>();
+  for (const tool of tools) {
+    toolMap.set(tool.name, tool);
+  }
+
+  // ─── Per-run event sequence counter ───
+  const runSeqCounters = new Map<string, number>();
+
+  function nextSeq(runId: string): number {
+    const current = runSeqCounters.get(runId) ?? 0;
+    const next = current + 1;
+    runSeqCounters.set(runId, next);
+    return next;
+  }
+
+  /** Persist event durably (if repo available) then emit. */
+  function emitRunEvent(
+    eventName: string,
+    payload: Record<string, unknown>,
+    runId: string,
+  ): void {
+    if (runEventRepository) {
+      const seq = nextSeq(runId);
+      const now = nowIso();
+      try {
+        db.withWriteTransaction((writer) =>
+          runEventRepository.append(writer, {
+            eventId: idGenerator(),
+            runId,
+            seq,
+            eventName,
+            payload,
+            emittedAt: now,
+            createdAt: now,
+          }),
+        );
+      } catch {
+        // Non-fatal: event persistence failure should not kill the run
+      }
+    }
+    eventEmitter.emit(eventName as keyof typeof eventEmitter extends never ? never : Parameters<typeof eventEmitter.emit>[0], payload as never);
+  }
+
+  return {
+    registerTool(tool) {
+      const existingIndex = tools.findIndex((t) => t.name === tool.name);
+      if (existingIndex >= 0) {
+        tools[existingIndex] = tool;
+      } else {
+        tools.push(tool);
+      }
+      toolMap.set(tool.name, tool);
+    },
+
+    resumeStaleRunsOnBoot(): number {
+      const staleRuns = db.withReadConnection((reader) => repo.listActive(reader));
+      let failedCount = 0;
+      for (const run of staleRuns) {
+        db.withWriteTransaction((writer) =>
+          repo.update(writer, {
+            id: run.id,
+            status: "failed",
+            completedAt: nowIso(),
+            durationMs: 0,
+            errorCode: FRIDAY_AGENT_ERROR_CODES.INTERRUPTED,
+            errorMessage: `Agent run was in "${run.status}" state when the system restarted. Marked as failed on boot.`,
+          }),
+        );
+
+        emitRunEvent("agent.run.failed", {
+          runId: run.id,
+          error: {
+            code: FRIDAY_AGENT_ERROR_CODES.INTERRUPTED,
+            message: `Stale run recovered on boot (was "${run.status}")`,
+          },
+          durationMs: 0,
+          routeId: "agent.resume_stale_runs",
+          correlationId: run.id,
+        }, run.id);
+
+        failedCount++;
+      }
+      return failedCount;
+    },
+
+    async executeRun(params) {
+      const runId = params.runId ?? idGenerator();
+      const runCorrelationId = runId;
+      const sessionKey = params.sessionKey ?? `${FRIDAY_AGENT_SESSION_KEY_PREFIX}${runId}`;
+      const maxAttempts = params.maxAttempts ?? FRIDAY_AGENT_MAX_ATTEMPTS;
+      const timeoutMs = params.timeoutMs ?? FRIDAY_AGENT_RUN_TIMEOUT_MS;
+      const startedAt = Date.now();
+      const constraints = params.constraints;
+      const isReadOnly = constraints?.readOnly === true;
+      const disabledToolNames = normalizeToolNameSet(params.disabledToolNames);
+      const principalId =
+        typeof params.principalId === "string" && params.principalId.trim().length > 0
+          ? params.principalId
+          : undefined;
+      const scopes = normalizeScopes(params.scopes);
+
+      // Resolve per-run overrides (FIX-1)
+      const requestedProviderId = params.providerId ?? providerId;
+      const requestedModel = params.model ?? model;
+
+      // 1. Create run record
+      db.withWriteTransaction((writer) =>
+        repo.create(writer, {
+          id: runId,
+          task: params.task,
+          sessionKey,
+          providerId: requestedProviderId,
+          model: requestedModel,
+          maxAttempts,
+          nowIso: nowIso(),
+          constraints,
+        }),
+      );
+
+      // Setup abort controller with timeout
+      const runAbortController = new AbortController();
+      const abortTimer = setTimeout(() => {
+        runAbortController.abort(new Error("Agent run timed out"));
+      }, Math.max(1, timeoutMs));
+
+      // Wire external signal
+      const onExternalAbort = () => {
+        runAbortController.abort(params.signal?.reason);
+      };
+      if (params.signal?.aborted) {
+        runAbortController.abort(params.signal.reason);
+      } else {
+        params.signal?.addEventListener("abort", onExternalAbort, { once: true });
+      }
+
+      const messages: FridayAgentMessage[] = normalizeHistoryMessages(params.historyMessages);
+      const allToolCalls: FridayAgentToolCallRecord[] = [];
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
+      let responseText = "";
+      const actualTurns: FridayAgentActualTurn[] = [];
+
+      try {
+        // 2. Emit started event and transition to planning
+        if (evaluateRules) {
+          const runPolicy = await safeEvaluateRules(evaluateRules, {
+            resource: "agent",
+            action: "execute",
+            args: {
+              task: params.task,
+              providerId: requestedProviderId,
+              model: requestedModel,
+              constraints: {
+                readOnly: isReadOnly,
+              },
+            },
+            source: "agent",
+            principalId,
+            runId,
+            sessionId: sessionKey,
+            scopes,
+          }, runAbortController.signal);
+          if (runPolicy && !runPolicy.allowed) {
+            const durationMs = Date.now() - startedAt;
+            const message = runPolicy.message ?? "Agent run denied by policy";
+            db.withWriteTransaction((writer) =>
+              repo.update(writer, {
+                id: runId,
+                status: "failed",
+                completedAt: nowIso(),
+                durationMs,
+                errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+                errorMessage: message,
+                summary: deriveSummary(message),
+              }),
+            );
+
+            emitRunEvent("agent.run.failed", {
+              runId,
+              error: {
+                code: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+                message,
+              },
+              durationMs,
+              routeId: "agent.execute.run.policy",
+              correlationId: runCorrelationId,
+            }, runId);
+
+            return {
+              runId,
+              status: "failed",
+              response: message,
+              toolCallCount: 0,
+              durationMs,
+              usageInput: 0,
+              usageOutput: 0,
+            };
+          }
+        }
+
+        emitRunEvent("agent.run.started", {
+          runId,
+          task: params.task,
+          model: requestedModel,
+          providerId: requestedProviderId,
+        }, runId);
+
+        db.withWriteTransaction((writer) =>
+          repo.update(writer, {
+            id: runId,
+            status: "planning",
+            startedAt: nowIso(),
+          }),
+        );
+
+        // Build plan summary
+        const planSummary = {
+          task: params.task,
+          stepCount: 1, // Will be determined during execution
+          description: `Planning approach for: ${params.task.slice(0, 200)}`,
+        };
+
+        // Persist plan review JSON (IMPL-1)
+        const planReview = {
+          plan: planSummary,
+          decision: undefined as { approved: boolean; mode: string; reason?: string; reviewedAt: string } | undefined,
+        };
+
+        // Review gate check (IMPL-1)
+        if (params.reviewRequired && reviewGate) {
+          const decision = reviewGate.review(planSummary, nowIso());
+          planReview.decision = decision;
+
+          db.withWriteTransaction((writer) =>
+            repo.update(writer, {
+              id: runId,
+              planReview,
+            }),
+          );
+
+          if (!decision.approved) {
+            // Rejected by review gate
+            const durationMs = Date.now() - startedAt;
+            db.withWriteTransaction((writer) =>
+              repo.update(writer, {
+                id: runId,
+                status: "failed",
+                completedAt: nowIso(),
+                durationMs,
+                errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+                errorMessage: `Plan rejected by review gate: ${decision.reason ?? "no reason"}`,
+                planReview,
+              }),
+            );
+
+            emitRunEvent("agent.run.failed", {
+              runId,
+              error: {
+                code: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+                message: `Plan rejected by review gate: ${decision.reason ?? "no reason"}`,
+              },
+              durationMs,
+              routeId: "agent.execute.run.review",
+              correlationId: runCorrelationId,
+            }, runId);
+
+            return {
+              runId,
+              status: "failed",
+              response: `Plan rejected: ${decision.reason ?? "no reason"}`,
+              toolCallCount: 0,
+              durationMs,
+              usageInput: 0,
+              usageOutput: 0,
+            };
+          }
+        } else {
+          // No review required — auto-approve silently
+          planReview.decision = {
+            approved: true,
+            mode: "off",
+            reason: "No review required",
+            reviewedAt: nowIso(),
+          };
+        }
+
+        // Persist plan review
+        db.withWriteTransaction((writer) =>
+          repo.update(writer, {
+            id: runId,
+            planReview,
+          }),
+        );
+
+        emitRunEvent("agent.run.planning", {
+          runId,
+          message: `Planning approach (${String(planSummary.stepCount)} step(s))`,
+        }, runId);
+
+        // 3. Add user message (with optional inline images for vision)
+        if (params.images && params.images.length > 0) {
+          const userContent: FridayAgentContentBlock[] = [
+            { type: "text", text: params.task },
+            ...params.images.map((url): FridayAgentImageBlock => ({
+              type: "image",
+              source: { type: "url", url },
+            })),
+          ];
+          messages.push({ role: "user", content: userContent });
+        } else {
+          messages.push({ role: "user", content: params.task });
+        }
+
+        // 4. Transition to executing and enter LLM loop
+        db.withWriteTransaction((writer) =>
+          repo.update(writer, { id: runId, status: "executing" }),
+        );
+
+        // ─── Build system prompt dynamically from current tool set ───
+        const baseSystemPrompt = systemPromptBuilder
+          ? await Promise.resolve(systemPromptBuilder([...toolMap.keys()]))
+          : (staticSystemPrompt ?? "You are an AI assistant.");
+
+        // ─── Enrich system prompt with learned user preferences ───
+        let effectiveSystemPrompt = baseSystemPrompt;
+        if (learningContextBuilder && principalId) {
+          try {
+            const learningCtx = learningContextBuilder({ userId: principalId, nowIso: nowIso() });
+            const prefEntries = Object.entries(learningCtx.preferences);
+            if (prefEntries.length > 0) {
+              const prefLines = prefEntries.map(([k, v]) => `- ${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`);
+              effectiveSystemPrompt += "\n\nUser preferences (learned from past interactions):\n" + prefLines.join("\n");
+            }
+          } catch {
+            // Non-fatal: preference enrichment failure should not kill the run
+          }
+        }
+        if (communicationPromptBuilder && principalId) {
+          try {
+            const fragment = communicationPromptBuilder({ userId: principalId, nowIso: nowIso() });
+            if (fragment && fragment.trim().length > 0) {
+              effectiveSystemPrompt += `\n\n${fragment.trim()}`;
+            }
+          } catch {
+            // Non-fatal: persona enrichment failure should not kill the run
+          }
+        }
+
+        let iterations = 0;
+        let evidenceEnforcementRetries = 0;
+
+        while (iterations < FRIDAY_AGENT_MAX_LOOP_ITERATIONS) {
+          if (runAbortController.signal.aborted) {
+            break;
+          }
+
+          iterations++;
+
+          // Emit executing event per iteration (IMPL-3)
+          emitRunEvent("agent.run.executing", {
+            runId,
+            step: iterations,
+            description: `LLM turn ${String(iterations)}`,
+          }, runId);
+
+          const { assistantText, toolUseBlocks, inputTokens, outputTokens, turnMeta } =
+            await streamLlmResponse({
+              llmClient,
+              providerId: requestedProviderId,
+              model: requestedModel,
+              systemPrompt: effectiveSystemPrompt,
+              messages,
+              tools,
+              signal: runAbortController.signal,
+              eventEmitter,
+              runId,
+              emitRunEvent: (name, payload) => emitRunEvent(name, payload, runId),
+            });
+
+          totalInputTokens += inputTokens;
+          totalOutputTokens += outputTokens;
+
+          // Track actual turn metadata (IMPL-2)
+          actualTurns.push({
+            providerId: turnMeta?.actualProviderId,
+            model: turnMeta?.actualModel,
+            inputTokens,
+            outputTokens,
+            costUsd: turnMeta?.costUsd,
+          });
+
+          // Record provider usage metrics when execution metadata is available.
+          if (usageRecorder && turnMeta?.actualProviderId && turnMeta.actualProviderApi) {
+            try {
+              await usageRecorder({
+                providerId: turnMeta.actualProviderId,
+                model: turnMeta.actualModel ?? requestedModel,
+                providerApi: turnMeta.actualProviderApi,
+                inputTokens,
+                outputTokens,
+                costUsd: turnMeta.costUsd,
+              });
+            } catch {
+              // Non-fatal: usage persistence should not break run execution.
+            }
+          }
+
+          // Build assistant message content
+          const assistantContent: FridayAgentContentBlock[] = [];
+          if (assistantText) {
+            assistantContent.push({ type: "text", text: assistantText });
+          }
+          for (const toolUse of toolUseBlocks) {
+            assistantContent.push(toolUse);
+          }
+
+          messages.push({
+            role: "assistant",
+            content: assistantContent.length === 1 && assistantContent[0].type === "text"
+              ? assistantText
+              : assistantContent,
+          });
+
+          // 5. If no tool calls, we're done
+          if (toolUseBlocks.length === 0) {
+            let candidateResponse = enforceToolEvidenceForCompletionClaim(
+              assistantText,
+              allToolCalls,
+            );
+            candidateResponse = enforceFeedbackPersistenceEvidence(
+              candidateResponse,
+              allToolCalls,
+            );
+
+            if (
+              candidateResponse.trim().length > 0 &&
+              evidenceEnforcementRetries < 2 &&
+              shouldEnforceToolEvidenceForTask({
+                task: params.task,
+                responseText: candidateResponse,
+                toolMap,
+                toolCalls: allToolCalls,
+                disabledToolNames,
+              })
+            ) {
+              evidenceEnforcementRetries++;
+              const verificationPrompt = buildEvidenceRetryPrompt({
+                task: params.task,
+                toolMap,
+                disabledToolNames,
+              });
+              messages.push({
+                role: "user",
+                content: verificationPrompt,
+              });
+              continue;
+            }
+
+            responseText = candidateResponse;
+            break;
+          }
+
+          // 6. Execute tool calls and build tool_result blocks
+          const toolResultBlocks: FridayAgentToolResultBlock[] = [];
+
+          for (const toolUse of toolUseBlocks) {
+            if (runAbortController.signal.aborted) {
+              break;
+            }
+
+            if (disabledToolNames.has(toolUse.name)) {
+              const blockedResult = {
+                content: `Tool '${toolUse.name}' is disabled for this run.`,
+                isError: true,
+              };
+              const blockedRecord: FridayAgentToolCallRecord = {
+                toolCallId: toolUse.id,
+                toolName: toolUse.name,
+                args: toolUse.input,
+                result: blockedResult,
+                durationMs: 0,
+                startedAt: nowIso(),
+              };
+              allToolCalls.push(blockedRecord);
+
+              emitRunEvent("agent.run.tool_start", {
+                runId,
+                toolName: toolUse.name,
+                toolCallId: toolUse.id,
+                params: toolUse.input,
+              }, runId);
+
+              emitRunEvent("agent.run.tool_end", {
+                runId,
+                toolName: toolUse.name,
+                toolCallId: toolUse.id,
+                durationMs: 0,
+                isError: true,
+                summary: blockedResult.content.slice(0, 200),
+                errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+                routeId: "agent.execute.tool.guard",
+                correlationId: runId,
+              }, runId);
+
+              toolResultBlocks.push({
+                type: "tool_result",
+                tool_use_id: toolUse.id,
+                content: blockedResult.content,
+                is_error: true,
+              });
+              continue;
+            }
+
+            if (evaluateRules) {
+              const ruleTarget = getRuleTargetForTool(toolUse.name);
+              const policyResult = await safeEvaluateRules(evaluateRules, {
+                resource: ruleTarget.resource,
+                action: ruleTarget.action,
+                args: {
+                  toolName: toolUse.name,
+                  ...toolUse.input,
+                },
+                source: "agent",
+                principalId,
+                runId,
+                sessionId: sessionKey,
+                scopes,
+              }, runAbortController.signal);
+              if (policyResult && !policyResult.allowed) {
+                const message = policyResult.message
+                  ?? `Tool '${toolUse.name}' blocked by policy`;
+                const blockedResult = {
+                  content: message,
+                  isError: true,
+                };
+                const blockedRecord: FridayAgentToolCallRecord = {
+                  toolCallId: toolUse.id,
+                  toolName: toolUse.name,
+                  args: toolUse.input,
+                  result: blockedResult,
+                  durationMs: 0,
+                  startedAt: nowIso(),
+                };
+                allToolCalls.push(blockedRecord);
+
+                emitRunEvent("agent.run.tool_start", {
+                  runId,
+                  toolName: toolUse.name,
+                  toolCallId: toolUse.id,
+                  params: toolUse.input,
+                }, runId);
+
+                emitRunEvent("agent.run.tool_end", {
+                  runId,
+                  toolName: toolUse.name,
+                  toolCallId: toolUse.id,
+                  durationMs: 0,
+                  isError: true,
+                  summary: message.slice(0, 200),
+                  errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+                  routeId: "agent.execute.tool.policy",
+                  correlationId: runId,
+                }, runId);
+
+                toolResultBlocks.push({
+                  type: "tool_result",
+                  tool_use_id: toolUse.id,
+                  content: message,
+                  is_error: true,
+                });
+                continue;
+              }
+            }
+
+            // IMPL-4: readOnly constraint check
+            if (isReadOnly && isMutatingToolCall(toolUse.name, toolUse.input)) {
+              const blockedResult = {
+                content: `Tool '${toolUse.name}' blocked: run has readOnly constraint`,
+                isError: true,
+              };
+              const blockedRecord: FridayAgentToolCallRecord = {
+                toolCallId: toolUse.id,
+                toolName: toolUse.name,
+                args: toolUse.input,
+                result: blockedResult,
+                durationMs: 0,
+                startedAt: nowIso(),
+              };
+              allToolCalls.push(blockedRecord);
+
+              emitRunEvent("agent.run.tool_start", {
+                runId,
+                toolName: toolUse.name,
+                toolCallId: toolUse.id,
+                params: toolUse.input,
+              }, runId);
+
+              emitRunEvent("agent.run.tool_end", {
+                runId,
+                toolName: toolUse.name,
+                toolCallId: toolUse.id,
+                durationMs: 0,
+                isError: true,
+                summary: blockedResult.content.slice(0, 200),
+                errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+                routeId: "agent.execute.tool.readonly",
+                correlationId: runId,
+              }, runId);
+
+              toolResultBlocks.push({
+                type: "tool_result",
+                tool_use_id: toolUse.id,
+                content: blockedResult.content,
+                is_error: true,
+              });
+              continue;
+            }
+
+            const approvalRequiredReason = getApprovalRequiredReasonForToolCall(toolUse.name, toolUse.input);
+            if (approvalRequiredReason) {
+              const blockedResult = {
+                content: `Tool '${toolUse.name}' blocked pending approval. ${approvalRequiredReason}`,
+                isError: true,
+              };
+              const blockedRecord: FridayAgentToolCallRecord = {
+                toolCallId: toolUse.id,
+                toolName: toolUse.name,
+                args: toolUse.input,
+                result: blockedResult,
+                durationMs: 0,
+                startedAt: nowIso(),
+              };
+              allToolCalls.push(blockedRecord);
+
+              emitRunEvent("agent.run.tool_start", {
+                runId,
+                toolName: toolUse.name,
+                toolCallId: toolUse.id,
+                params: toolUse.input,
+              }, runId);
+
+              emitRunEvent("agent.run.tool_end", {
+                runId,
+                toolName: toolUse.name,
+                toolCallId: toolUse.id,
+                durationMs: 0,
+                isError: true,
+                summary: blockedResult.content.slice(0, 200),
+                errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+                routeId: "agent.execute.tool.approval_required",
+                correlationId: runId,
+              }, runId);
+
+              toolResultBlocks.push({
+                type: "tool_result",
+                tool_use_id: toolUse.id,
+                content: blockedResult.content,
+                is_error: true,
+              });
+              continue;
+            }
+
+            const toolCallRecord = await executeToolCall({
+              toolUse,
+              toolMap,
+              signal: runAbortController.signal,
+              runId,
+              sessionKey,
+              principalId,
+              nowIso,
+              emitRunEvent: (name, payload) => emitRunEvent(name, payload, runId),
+            });
+
+            allToolCalls.push(toolCallRecord);
+
+            toolResultBlocks.push({
+              type: "tool_result",
+              tool_use_id: toolUse.id,
+              content: toolCallRecord.result.content,
+              is_error: toolCallRecord.result.isError,
+            });
+          }
+
+          // OC-007: Validate every tool_use has a corresponding tool_result.
+          // If execution was interrupted, synthesize error results for missing entries.
+          if (toolResultBlocks.length < toolUseBlocks.length) {
+            for (let i = toolResultBlocks.length; i < toolUseBlocks.length; i++) {
+              const missingUse = toolUseBlocks[i]!;
+              const synthesized = {
+                content: `Tool result lost for "${missingUse.name}" — execution may have been interrupted.`,
+                isError: true,
+              };
+              allToolCalls.push({
+                toolCallId: missingUse.id,
+                toolName: missingUse.name,
+                args: missingUse.input,
+                result: synthesized,
+                durationMs: 0,
+                startedAt: nowIso(),
+              });
+              toolResultBlocks.push({
+                type: "tool_result",
+                tool_use_id: missingUse.id,
+                content: synthesized.content,
+                is_error: true,
+              });
+            }
+          }
+
+          // 7. Add tool results as user message and re-prompt
+          messages.push({
+            role: "user",
+            content: toolResultBlocks,
+          });
+        }
+
+        // Check if we hit the loop limit
+        if (iterations >= FRIDAY_AGENT_MAX_LOOP_ITERATIONS) {
+          throw new FridayDomainError(
+            FRIDAY_AGENT_ERROR_CODES.LOOP_LIMIT,
+            `Agent exceeded maximum loop iterations (${String(FRIDAY_AGENT_MAX_LOOP_ITERATIONS)})`,
+            { httpStatus: 500 },
+          );
+        }
+
+        // Check if we hit the tool call limit
+        if (allToolCalls.length >= FRIDAY_AGENT_MAX_TOOL_CALLS) {
+          throw new FridayDomainError(
+            FRIDAY_AGENT_ERROR_CODES.TOOL_CALL_LIMIT,
+            `Agent exceeded maximum tool calls (${String(FRIDAY_AGENT_MAX_TOOL_CALLS)})`,
+            { httpStatus: 500 },
+          );
+        }
+
+        // Check if cancelled
+        if (runAbortController.signal.aborted) {
+          const durationMs = Date.now() - startedAt;
+          db.withWriteTransaction((writer) =>
+            repo.update(writer, {
+              id: runId,
+              status: "cancelled",
+              completedAt: nowIso(),
+              durationMs,
+              responseText: responseText || undefined,
+            }),
+          );
+
+          emitRunEvent("agent.run.cancelled", { runId }, runId);
+
+          return {
+            runId,
+            status: "cancelled",
+            response: responseText,
+            toolCallCount: allToolCalls.length,
+            durationMs,
+            usageInput: totalInputTokens,
+            usageOutput: totalOutputTokens,
+          };
+        }
+
+        // ─── Build actual execution metadata (IMPL-2) ───
+        const totalCostUsd = actualTurns.reduce((sum, t) => sum + (t.costUsd ?? 0), 0);
+        const lastTurn = actualTurns[actualTurns.length - 1];
+        const actualExecution: FridayAgentActualExecution = {
+          actualProviderId: lastTurn?.providerId,
+          actualModel: lastTurn?.model,
+          totalCostUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
+          turns: actualTurns,
+        };
+
+        // ─── IMPL-5: Validation gate (self-test) ───
+        let testsPassed = selfTestService ? false : true;
+        let testResults: FridayAgentTestResult[] = [];
+        const collectedArtifacts: FridayAgentArtifact[] = deriveArtifactsFromToolCalls(allToolCalls);
+
+        if (selfTestService) {
+          // Transition to testing
+          db.withWriteTransaction((writer) =>
+            repo.update(writer, { id: runId, status: "testing" }),
+          );
+
+          try {
+            testResults = await selfTestService.runTests({
+              artifacts: collectedArtifacts,
+              workdir,
+            });
+            testsPassed = testResults.every((t) => t.passed);
+          } catch (testError) {
+            testsPassed = false;
+            testResults = [{
+              strategy: "llm_eval" as const,
+              passed: false,
+              errors: [{
+                message: testError instanceof Error ? testError.message : String(testError),
+                severity: "error",
+              }],
+              durationMs: 0,
+            }];
+          }
+
+          // Criteria: must have a response
+          const hasResponse = responseText.trim().length > 0;
+
+          if (!hasResponse) {
+            testsPassed = false;
+          }
+
+          if (!testsPassed) {
+            const durationMs = Date.now() - startedAt;
+            const summaryText = deriveSummary(responseText);
+
+            db.withWriteTransaction((writer) =>
+              repo.update(writer, {
+                id: runId,
+                status: "failed",
+                completedAt: nowIso(),
+                durationMs,
+                errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+                errorMessage: "Validation criteria not met",
+                usageInput: totalInputTokens,
+                usageOutput: totalOutputTokens,
+                costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
+                actualExecution,
+                testResults: testResults as unknown as FridayAgentTestResult[],
+                responseText: responseText || undefined,
+                summary: summaryText || undefined,
+              }),
+            );
+
+            emitRunEvent("agent.run.failed", {
+              runId,
+              error: {
+                code: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+                message: "Validation criteria not met",
+              },
+              durationMs,
+              routeId: "agent.execute.run.validation",
+              correlationId: runCorrelationId,
+            }, runId);
+
+            return {
+              runId,
+              status: "failed",
+              response: responseText || "Validation criteria not met",
+              toolCallCount: allToolCalls.length,
+              durationMs,
+              usageInput: totalInputTokens,
+              usageOutput: totalOutputTokens,
+            };
+          }
+        }
+
+        const extractedImages = extractImagePathsFromToolCalls(allToolCalls);
+        const outputClosureGap = detectOutputClosureGap({
+          task: params.task,
+          toolCalls: allToolCalls,
+          images: extractedImages,
+        }) ?? detectEvidenceClosureGap({
+          task: params.task,
+          responseText,
+          toolCalls: allToolCalls,
+          toolMap,
+          disabledToolNames,
+        });
+
+        if (outputClosureGap) {
+          const durationMs = Date.now() - startedAt;
+          const failureResponse = `${outputClosureGap.userMessage} (${outputClosureGap.errorCode})`;
+          const summaryText = deriveSummary(failureResponse);
+
+          db.withWriteTransaction((writer) =>
+            repo.update(writer, {
+              id: runId,
+              status: "failed",
+              completedAt: nowIso(),
+              durationMs,
+              errorCode: outputClosureGap.errorCode,
+              errorMessage: outputClosureGap.developerMessage,
+              usageInput: totalInputTokens,
+              usageOutput: totalOutputTokens,
+              costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
+              actualExecution,
+              testResults: testResults as unknown as FridayAgentTestResult[],
+              artifacts: collectedArtifacts,
+              responseText: failureResponse,
+              summary: summaryText || undefined,
+            }),
+          );
+
+          emitRunEvent("agent.run.failed", {
+            runId,
+            error: {
+              code: outputClosureGap.errorCode,
+              message: outputClosureGap.developerMessage,
+            },
+            durationMs,
+            outputClosure: {
+              attemptedImageToolCalls: outputClosureGap.attemptedImageToolCalls,
+              failedImageToolCalls: outputClosureGap.failedImageToolCalls,
+            },
+            routeId: "agent.execute.run.output_closure",
+            correlationId: runCorrelationId,
+          }, runId);
+
+          return {
+            runId,
+            status: "failed",
+            response: failureResponse,
+            toolCallCount: allToolCalls.length,
+            durationMs,
+            usageInput: totalInputTokens,
+            usageOutput: totalOutputTokens,
+          };
+        }
+
+        // ─── IMPL-7: Artifact writer ───
+        let artifactDir: string | undefined;
+        let writtenArtifacts: FridayAgentArtifact[] = collectedArtifacts;
+        if (artifactWriter) {
+          try {
+            const writerResult = artifactWriter.writeRunArtifacts({
+              runId,
+              task: params.task,
+              status: "completed",
+              response: responseText,
+              toolCalls: allToolCalls,
+              testResults: testResults as unknown as FridayAgentTestResult[],
+              artifacts: collectedArtifacts,
+              durationMs: Date.now() - startedAt,
+              usageInput: totalInputTokens,
+              usageOutput: totalOutputTokens,
+              costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
+              completedAt: nowIso(),
+            });
+            artifactDir = writerResult.artifactDir;
+            writtenArtifacts = writerResult.artifacts;
+          } catch (error) {
+            // Non-fatal: artifact writing failure should not kill the run.
+            console.warn(
+              `[friday][W-AG-ARTIFACT-WRITE-001] Failed to persist run artifacts for run ${runId}:`,
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        }
+
+        // ─── Derive summary from response (IMPL-6) ───
+        const summaryText = deriveSummary(responseText);
+
+        // 8. Finalize — success
+        const durationMs = Date.now() - startedAt;
+        db.withWriteTransaction((writer) =>
+          repo.update(writer, {
+            id: runId,
+            status: "completed",
+            completedAt: nowIso(),
+            durationMs,
+            usageInput: totalInputTokens,
+            usageOutput: totalOutputTokens,
+            costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
+            actualExecution,
+            testResults: testResults as unknown as FridayAgentTestResult[],
+            artifacts: writtenArtifacts,
+            responseText: responseText || undefined,
+            summary: summaryText || undefined,
+            artifactDir,
+          }),
+        );
+
+        emitRunEvent("agent.run.completed", {
+          runId,
+          durationMs,
+          toolCallCount: allToolCalls.length,
+          testsPassed,
+          artifacts: writtenArtifacts.map((a) => ({ type: a.type, path: a.path })),
+        }, runId);
+
+        // ─── IMPL-6: Session mirror ───
+        if (sessionMirror && responseText) {
+          try {
+            await sessionMirror(sessionKey, {
+              role: "assistant",
+              content: responseText,
+              contentText: responseText,
+              idempotencyKey: `agent-run:${runId}:response`,
+              toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
+            });
+          } catch (error) {
+            // Non-fatal: mirror failure should not kill the run.
+            console.warn(
+              `[friday][W-AG-SESSION-MIRROR-001] Failed to mirror assistant response for run ${runId}:`,
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        }
+
+        return {
+          runId,
+          status: "completed",
+          response: responseText,
+          toolCallCount: allToolCalls.length,
+          durationMs,
+          usageInput: totalInputTokens,
+          usageOutput: totalOutputTokens,
+          images: extractedImages.length > 0 ? extractedImages : undefined,
+        };
+      } catch (error) {
+        const durationMs = Date.now() - startedAt;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorCode = error instanceof FridayDomainError
+          ? error.code
+          : FRIDAY_AGENT_ERROR_CODES.LLM_ERROR;
+
+        const summaryText = deriveSummary(responseText);
+
+        db.withWriteTransaction((writer) =>
+          repo.update(writer, {
+            id: runId,
+            status: "failed",
+            completedAt: nowIso(),
+            durationMs,
+            errorCode,
+            errorMessage,
+            usageInput: totalInputTokens,
+            usageOutput: totalOutputTokens,
+            responseText: responseText || undefined,
+            summary: summaryText || undefined,
+          }),
+        );
+
+        emitRunEvent("agent.run.failed", {
+          runId,
+          error: { code: errorCode, message: errorMessage },
+          durationMs,
+          routeId: "agent.execute.run.unhandled",
+          correlationId: runCorrelationId,
+        }, runId);
+
+        return {
+          runId,
+          status: "failed",
+          response: responseText || errorMessage,
+          toolCallCount: allToolCalls.length,
+          durationMs,
+          usageInput: totalInputTokens,
+          usageOutput: totalOutputTokens,
+        };
+      } finally {
+        clearTimeout(abortTimer);
+        params.signal?.removeEventListener("abort", onExternalAbort);
+        runSeqCounters.delete(runId);
+      }
+    },
+  };
+}
+
+function normalizeScopes(scopes: string[] | undefined): string[] | undefined {
+  if (!Array.isArray(scopes) || scopes.length === 0) {
+    return undefined;
+  }
+  const normalized = scopes
+    .filter((scope): scope is string => typeof scope === "string" && scope.trim().length > 0)
+    .map((scope) => scope.trim());
+  if (normalized.length === 0) {
+    return undefined;
+  }
+  return [...new Set(normalized)];
+}
+
+function normalizeToolNameSet(toolNames: string[] | undefined): ReadonlySet<string> {
+  if (!Array.isArray(toolNames) || toolNames.length === 0) {
+    return new Set<string>();
+  }
+  const normalized = toolNames
+    .filter((name): name is string => typeof name === "string")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+  return new Set<string>(normalized);
+}
+
+function withRulesEvaluateScope(scopes: string[] | undefined): string[] {
+  const set = new Set<string>(scopes ?? []);
+  set.add(RULES_EVALUATE_SCOPE);
+  return [...set];
+}
+
+function getRuleTargetForTool(
+  toolName: string,
+): {
+  resource: FridayEvaluationContext["resource"];
+  action: FridayEvaluationContext["action"];
+} {
+  if (toolName === "skill_run") {
+    return { resource: "skill", action: "execute" };
+  }
+  if (toolName === "workflow_run") {
+    return { resource: "workflow", action: "execute" };
+  }
+  return { resource: "tool", action: "execute" };
+}
+
+async function safeEvaluateRules(
+  evaluateRules: (
+    context: FridayEvaluationContext,
+    signal?: AbortSignal,
+  ) => Promise<FridayEvaluationResult>,
+  context: FridayEvaluationContext,
+  signal?: AbortSignal,
+): Promise<FridayEvaluationResult | null> {
+  try {
+    return await evaluateRules(
+      {
+        ...context,
+        scopes: withRulesEvaluateScope(context.scopes),
+      },
+      signal,
+    );
+  } catch {
+    return null;
+  }
+}
+
+function normalizeHistoryMessages(
+  historyMessages: FridayAgentMessage[] | undefined,
+): FridayAgentMessage[] {
+  if (!Array.isArray(historyMessages) || historyMessages.length === 0) {
+    return [];
+  }
+
+  const normalized: FridayAgentMessage[] = [];
+  for (const message of historyMessages) {
+    if (message.role !== "user" && message.role !== "assistant") {
+      continue;
+    }
+
+    if (typeof message.content === "string") {
+      const content = message.content.trim();
+      if (content.length === 0) {
+        continue;
+      }
+      normalized.push({
+        role: message.role,
+        content,
+      });
+      continue;
+    }
+
+    if (Array.isArray(message.content) && message.content.length > 0) {
+      normalized.push({
+        role: message.role,
+        content: message.content,
+      });
+    }
+  }
+
+  return normalized;
+}
+
+function extractImagePathsFromToolCalls(
+  toolCalls: FridayAgentToolCallRecord[],
+): string[] {
+  const images: string[] = [];
+  const seen = new Set<string>();
+  for (const call of toolCalls) {
+    if (call.result.isError) continue;
+    if (call.toolName === "browser" || call.toolName === "canvas") {
+      try {
+        const parsed = JSON.parse(call.result.content);
+        if (typeof parsed.path === "string" && isImageFilePath(parsed.path)) {
+          if (!seen.has(parsed.path)) {
+            seen.add(parsed.path);
+            images.push(parsed.path);
+          }
+        }
+      } catch { /* not JSON or no path */ }
+    }
+  }
+  return images;
+}
+
+function isImageFilePath(p: string): boolean {
+  const lower = p.toLowerCase();
+  return lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg")
+    || lower.endsWith(".gif") || lower.endsWith(".webp");
+}
+
+interface OutputClosureGap {
+  errorCode: string;
+  userMessage: string;
+  developerMessage: string;
+  attemptedImageToolCalls: number;
+  failedImageToolCalls: number;
+}
+
+function detectOutputClosureGap(params: {
+  task: string;
+  toolCalls: FridayAgentToolCallRecord[];
+  images: string[];
+}): OutputClosureGap | null {
+  if (params.images.length > 0) return null;
+
+  const imageArtifactCalls = params.toolCalls.filter(isImageArtifactCall);
+  if (imageArtifactCalls.length === 0) return null;
+
+  const failedImageCalls = imageArtifactCalls.filter((call) => call.result.isError);
+  const failedCount = failedImageCalls.length;
+  const attemptedCount = imageArtifactCalls.length;
+
+  // Only enforce hard failure for explicit screenshot artifact routes.
+  const requestedScreenshot = imageArtifactCalls.some((call) => isBrowserScreenshotCall(call.args));
+  if (!requestedScreenshot) return null;
+
+  const latestFailure = failedImageCalls[failedImageCalls.length - 1];
+  const failureDetail = latestFailure?.result.content
+    ? latestFailure.result.content.replace(/\s+/g, " ").trim()
+    : "unknown screenshot tool failure";
+
+  return {
+    errorCode: FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR,
+    userMessage:
+      "Output delivery failed: screenshot artifact was not produced. " +
+      "Please retry after browser runtime is available.",
+    developerMessage:
+      `Screenshot closure failed for task "${params.task.slice(0, 120)}": ` +
+      `${String(attemptedCount)} screenshot tool call(s), ${String(failedCount)} failed, ` +
+      "0 image artifact paths extracted. " +
+      `Last failure: ${failureDetail}`,
+    attemptedImageToolCalls: attemptedCount,
+    failedImageToolCalls: failedCount,
+  };
+}
+
+function detectEvidenceClosureGap(params: {
+  task: string;
+  responseText: string;
+  toolCalls: FridayAgentToolCallRecord[];
+  toolMap: Map<string, FridayAgentToolDefinition>;
+  disabledToolNames?: ReadonlySet<string>;
+}): OutputClosureGap | null {
+  const normalizedTask = params.task.trim();
+  if (normalizedTask.length === 0) return null;
+
+  const category = classifyEvidenceTask(normalizedTask);
+  if (!category) return null;
+
+  const hasAttemptedEvidenceTool = params.toolCalls.some((call) => {
+    if (category === "desktop") {
+      return call.toolName === "system"
+        || call.toolName === "desktop"
+        || call.toolName === "exec"
+        || call.toolName === "read"
+        || call.toolName === "browser";
+    }
+    return call.toolName === "web_fetch"
+      || call.toolName === "web_search"
+      || call.toolName === "browser";
+  });
+
+  if (
+    !hasAttemptedEvidenceTool
+    && !hasEvidenceCapableTools(params.toolMap, params.disabledToolNames, category)
+  ) {
+    return null;
+  }
+
+  if (hasSuccessfulToolEvidence(params.toolCalls)) return null;
+
+  if (category === "web" && !taskLooksLikeExternalAction(normalizedTask)) {
+    return null;
+  }
+
+  const failedCalls = params.toolCalls.filter((call) => call.result.isError);
+  const latestFailure = failedCalls[failedCalls.length - 1];
+  const failureDetail = latestFailure?.result.content
+    ? latestFailure.result.content.replace(/\s+/g, " ").trim()
+    : "LLM produced no successful evidence-capable tool result";
+  const attemptedCount = params.toolCalls.length;
+  const failedCount = failedCalls.length;
+  const responseSummary = params.responseText.trim().slice(0, 200);
+
+  if (category === "desktop") {
+    const desktopUnavailable = hasDesktopRuntimeUnavailableFailure(params.toolCalls);
+    const userMessage = desktopUnavailable
+      ? "Desktop or system orchestration runtime is not enabled. Set FRIDAY_SYSTEM_ENABLED=true and/or FRIDAY_DESKTOP_ENABLED=true, then restart Friday."
+      : "Desktop action could not be completed with verifiable output. " +
+        "Retry after checking desktop permissions, then provide selector details only if needed.";
+
+    return {
+      errorCode: FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR,
+      userMessage,
+      developerMessage:
+        `Desktop evidence closure failed for task "${normalizedTask.slice(0, 120)}": ` +
+        `${String(attemptedCount)} tool call(s), ${String(failedCount)} failed, no successful evidence. ` +
+        `Last failure: ${failureDetail}. Final response: ${responseSummary}`,
+      attemptedImageToolCalls: attemptedCount,
+      failedImageToolCalls: failedCount,
+    };
+  }
+
+  return {
+    errorCode: FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR,
+    userMessage:
+      "External task could not be completed with verifiable tool output. " +
+      "Please retry after checking network/tool availability.",
+    developerMessage:
+      `Evidence closure failed for web task "${normalizedTask.slice(0, 120)}": ` +
+      `${String(attemptedCount)} tool call(s), ${String(failedCount)} failed, no successful evidence. ` +
+      `Last failure: ${failureDetail}. Final response: ${responseSummary}`,
+    attemptedImageToolCalls: attemptedCount,
+    failedImageToolCalls: failedCount,
+  };
+}
+
+function isImageArtifactCall(call: FridayAgentToolCallRecord): boolean {
+  if (call.toolName === "browser") {
+    return isBrowserScreenshotCall(call.args);
+  }
+  // Canvas may emit images too; keep this broad for future closure coverage.
+  if (call.toolName === "canvas") {
+    return true;
+  }
+  return false;
+}
+
+function isBrowserScreenshotCall(args: Record<string, unknown>): boolean {
+  const action = typeof args.action === "string" ? args.action.trim().toLowerCase() : "";
+  return action === "screenshot";
+}
+
+function enforceToolEvidenceForCompletionClaim(
+  responseText: string,
+  toolCalls: FridayAgentToolCallRecord[],
+): string {
+  const normalized = responseText.trim();
+  if (normalized.length === 0) return responseText;
+  if (hasSuccessfulToolEvidence(toolCalls)) return responseText;
+  if (!appearsToClaimCompletedExternalAction(normalized)) return responseText;
+  return `${normalized}\n\n` +
+    "Note: no successful tool call evidence was recorded in this run, so this completion claim is unverified.";
+}
+
+function enforceFeedbackPersistenceEvidence(
+  responseText: string,
+  toolCalls: FridayAgentToolCallRecord[],
+): string {
+  const normalized = responseText.trim();
+  if (normalized.length === 0) return responseText;
+  if (!appearsToClaimFeedbackRecorded(normalized)) return responseText;
+  if (hasFeedbackPersistenceEvidence(toolCalls)) return responseText;
+  return `${normalized}\n\n` +
+    "Note: feedback persistence was claimed, but no successful feedback/memory_store tool evidence was recorded in this run.";
+}
+
+function hasSuccessfulToolEvidence(toolCalls: FridayAgentToolCallRecord[]): boolean {
+  for (const call of toolCalls) {
+    if (!call.result.isError) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasFeedbackPersistenceEvidence(toolCalls: FridayAgentToolCallRecord[]): boolean {
+  for (const call of toolCalls) {
+    if (call.result.isError) continue;
+    if (call.toolName === "feedback" || call.toolName === "memory_store") {
+      return true;
+    }
+  }
+  return false;
+}
+
+function appearsToClaimCompletedExternalAction(text: string): boolean {
+  const englishCompletionClaim =
+    /\b(i|we)\s+(have|has|'ve)?\s*(already|just|successfully)?\s*(opened|sent|deleted|updated|created|installed|launched|executed|completed|finished)\b/i;
+  const englishDirectClaim =
+    /\b(successfully|done|completed)\b.*\b(opened|sent|deleted|updated|created|installed|launched|executed)\b/i;
+  const chineseCompletionClaim =
+    /(我|我们).{0,10}(已|已经|成功|刚刚).{0,8}(打开|发送|删除|更新|创建|安装|启动|执行|完成|处理|修复)/;
+  const chineseDirectClaim =
+    /(已|已经|成功|完成).{0,8}(打开|发送|删除|更新|创建|安装|启动|执行|处理|修复)/;
+  return (
+    englishCompletionClaim.test(text)
+    || englishDirectClaim.test(text)
+    || chineseCompletionClaim.test(text)
+    || chineseDirectClaim.test(text)
+  );
+}
+
+function appearsToClaimFeedbackRecorded(text: string): boolean {
+  const englishRecorded =
+    /\b(i|we)\s+(have|has|'ve|will|'ll)?\s*(recorded|saved|stored|remembered|log(?:ged)?)\b/i;
+  const englishFeedbackPhrase =
+    /\b(feedback|preference|correction|memory)\b.{0,20}\b(recorded|saved|stored|remembered)\b/i;
+  const chineseRecorded =
+    /(我|我们).{0,8}(已|已经|会|将|刚刚).{0,10}(记录|保存|记住|写入|收录).{0,8}(反馈|偏好|意见|记忆)?/;
+  return (
+    englishRecorded.test(text)
+    || englishFeedbackPhrase.test(text)
+    || chineseRecorded.test(text)
+  );
+}
+
+function shouldEnforceToolEvidenceForTask(params: {
+  task: string;
+  responseText: string;
+  toolMap: Map<string, FridayAgentToolDefinition>;
+  toolCalls: FridayAgentToolCallRecord[];
+  disabledToolNames?: ReadonlySet<string>;
+}): boolean {
+  const { task, responseText, toolMap, toolCalls, disabledToolNames } = params;
+  if (hasSuccessfulToolEvidence(toolCalls)) return false;
+
+  const normalizedTask = task.trim();
+  if (normalizedTask.length === 0) return false;
+  const taskCategory = classifyEvidenceTask(normalizedTask);
+  if (toolCalls.length > 0) {
+    // If a desktop route attempted tools but all failed, force one more
+    // evidence-oriented retry instead of silently accepting the failure text.
+    const allFailed = toolCalls.every((call) => call.result.isError);
+    if (allFailed && taskCategory === "desktop") {
+      // Do not force another LLM/tool round when desktop runtime is explicitly
+      // unavailable; this failure is non-recoverable without enablement changes.
+      if (hasDesktopRuntimeUnavailableFailure(toolCalls)) {
+        return false;
+      }
+      return hasEvidenceCapableTools(toolMap, disabledToolNames, "desktop");
+    }
+    return false;
+  }
+
+  if (taskCategory) {
+    return hasEvidenceCapableTools(toolMap, disabledToolNames, taskCategory);
+  }
+
+  if (!appearsToClaimCompletedExternalAction(responseText)) {
+    return false;
+  }
+
+  return hasEvidenceCapableTools(toolMap, disabledToolNames, "web")
+    || hasEvidenceCapableTools(toolMap, disabledToolNames, "desktop");
+}
+
+function hasDesktopRuntimeUnavailableFailure(
+  toolCalls: FridayAgentToolCallRecord[],
+): boolean {
+  return toolCalls.some((call) =>
+    call.result.isError === true
+      && (call.toolName === "desktop" || call.toolName === "system")
+      && typeof call.result.content === "string"
+      && (
+        call.result.content.includes(FRIDAY_DESKTOP_UNAVAILABLE_MESSAGE)
+        || call.result.content.includes(FRIDAY_SYSTEM_UNAVAILABLE_MESSAGE)
+      )
+  );
+}
+
+function hasEvidenceCapableTools(
+  toolMap: Map<string, FridayAgentToolDefinition>,
+  disabledToolNames?: ReadonlySet<string>,
+  category: "web" | "desktop" = "web",
+): boolean {
+  const isEnabled = (name: string) => !(disabledToolNames?.has(name) ?? false);
+  if (category === "desktop") {
+    return (
+      (toolMap.has("system") && isEnabled("system"))
+      || (toolMap.has("desktop") && isEnabled("desktop"))
+      || (toolMap.has("exec") && isEnabled("exec"))
+      || (toolMap.has("read") && isEnabled("read"))
+      || (toolMap.has("browser") && isEnabled("browser"))
+    );
+  }
+  return (
+    (toolMap.has("web_fetch") && isEnabled("web_fetch"))
+    || (toolMap.has("web_search") && isEnabled("web_search"))
+    || (toolMap.has("browser") && isEnabled("browser"))
+  );
+}
+
+function taskLooksLikeExternalAction(task: string): boolean {
+  if (/https?:\/\/\S+/i.test(task)) return true;
+  const english =
+    /\b(open|visit|browse|search|lookup|check|watch|summari[sz]e|fetch|download|website|youtube|reddit|news|tweet|url|link)\b/i;
+  const chinese =
+    /(打开|访问|浏览|搜索|查找|查看|抓取|总结|概括|视频|网页|网站|链接|新闻|油管|YouTube)/;
+  return english.test(task) || chinese.test(task);
+}
+
+function taskLooksLikeDesktopAction(task: string): boolean {
+  const english =
+    /\b(desktop|screen|screenshot|monitor|display|window|computer|device|mouse|keyboard|local machine)\b/i;
+  const chinese =
+    /(桌面|屏幕|截图|设备|电脑|本机|本地界面|鼠标|键盘)/;
+  return english.test(task) || chinese.test(task);
+}
+
+function classifyEvidenceTask(task: string): "web" | "desktop" | null {
+  if (taskLooksLikeDesktopAction(task)) return "desktop";
+  if (taskLooksLikeExternalAction(task)) return "web";
+  return null;
+}
+
+function buildEvidenceRetryPrompt(params: {
+  task: string;
+  toolMap: Map<string, FridayAgentToolDefinition>;
+  disabledToolNames?: ReadonlySet<string>;
+}): string {
+  const category = classifyEvidenceTask(params.task.trim()) ?? "web";
+  const isEnabled = (name: string) => !(params.disabledToolNames?.has(name) ?? false);
+  const preferredTools = category === "desktop"
+    ? ["system", "desktop", "exec", "read", "browser"]
+    : ["web_fetch", "web_search", "browser"];
+  const enabledPreferred = preferredTools.filter((name) => params.toolMap.has(name) && isEnabled(name));
+  const toolHint = enabledPreferred.length > 0 ? enabledPreferred.join("/") : "available tools";
+  const taskLabel = category === "desktop" ? "this local desktop/device task" : "this external task";
+  const approachHint = category === "desktop"
+    ? "Start with system snapshot, then use system intents before falling back to desktop session_info or desktop screenshot for visible evidence."
+    : "Use web tools to gather evidence before concluding.";
+
+  return (
+    `System verification: your previous reply has no successful tool evidence for ${taskLabel}. ` +
+    `You must use available tools (${toolHint}) and provide an evidence-backed answer. ` +
+    `${approachHint} If all attempts fail, report exact tool errors and what you retried.`
+  );
+}
+
+// ─── Summary derivation helper ───
+
+function deriveSummary(responseText: string, maxLen = 200): string | undefined {
+  if (!responseText || responseText.trim().length === 0) return undefined;
+  const firstLine = responseText.split("\n")[0]?.trim() ?? "";
+  if (firstLine.length <= maxLen) return firstLine;
+  return firstLine.slice(0, maxLen - 3) + "...";
+}
+
+// ─── LLM streaming helper ───
+
+interface StreamLlmResponseParams {
+  llmClient: CreateFridayAgentRuntimeDeps["llmClient"];
+  providerId?: string;
+  model: string;
+  systemPrompt: string;
+  messages: FridayAgentMessage[];
+  tools: FridayAgentToolDefinition[];
+  signal: AbortSignal;
+  eventEmitter: CreateFridayAgentRuntimeDeps["eventEmitter"];
+  runId: string;
+  emitRunEvent: (name: string, payload: Record<string, unknown>) => void;
+}
+
+interface TurnMeta {
+  actualProviderId?: string;
+  actualModel?: string;
+  actualProviderKind?: string;
+  actualProviderApi?: string;
+  costUsd?: number;
+}
+
+interface StreamLlmResponseResult {
+  assistantText: string;
+  toolUseBlocks: FridayAgentToolUseBlock[];
+  inputTokens: number;
+  outputTokens: number;
+  turnMeta?: TurnMeta;
+}
+
+interface ParsedTextToolCall {
+  name: string;
+  input: Record<string, unknown>;
+  id?: string;
+}
+
+async function streamLlmResponse(
+  params: StreamLlmResponseParams,
+): Promise<StreamLlmResponseResult> {
+  let assistantText = "";
+  const toolUseBlocks: FridayAgentToolUseBlock[] = [];
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let turnMeta: TurnMeta | undefined;
+
+  const stream = params.llmClient.stream({
+    providerId: params.providerId,
+    model: params.model,
+    systemPrompt: params.systemPrompt,
+    messages: params.messages,
+    tools: params.tools,
+    signal: params.signal,
+  });
+
+  for await (const event of stream as AsyncIterable<FridayAgentLlmStreamEvent>) {
+    switch (event.type) {
+      case "text_delta":
+        assistantText += event.text;
+        params.emitRunEvent("agent.run.text_delta", {
+          runId: params.runId,
+          delta: event.text,
+        });
+        break;
+
+      case "tool_use":
+        toolUseBlocks.push({
+          type: "tool_use",
+          id: event.id,
+          name: event.name,
+          input: event.input,
+        });
+        break;
+
+      case "message_end":
+        inputTokens = event.inputTokens;
+        outputTokens = event.outputTokens;
+        // Capture actual execution metadata (IMPL-2)
+        if (event.actualProviderId || event.actualModel || event.costUsd !== undefined) {
+          turnMeta = {
+            actualProviderId: event.actualProviderId,
+            actualModel: event.actualModel,
+            actualProviderKind: event.actualProviderKind,
+            actualProviderApi: event.actualProviderApi,
+            costUsd: event.costUsd,
+          };
+        }
+        break;
+    }
+  }
+
+  // Some local models emit pseudo function-call JSON as plain text instead of
+  // structured tool_use blocks. Recover these calls so the runtime can execute
+  // tools instead of returning raw JSON to users.
+  if (toolUseBlocks.length === 0 && assistantText.trim().length > 0) {
+    const recovered = recoverToolCallsFromAssistantText(assistantText, params.tools);
+    if (recovered.length > 0) {
+      for (const call of recovered) {
+        toolUseBlocks.push({
+          type: "tool_use",
+          id: call.id ?? `text-tool-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          name: call.name,
+          input: call.input,
+        });
+      }
+      assistantText = "";
+    }
+  }
+
+  return { assistantText, toolUseBlocks, inputTokens, outputTokens, turnMeta };
+}
+
+function recoverToolCallsFromAssistantText(
+  assistantText: string,
+  tools: FridayAgentToolDefinition[],
+): ParsedTextToolCall[] {
+  const validToolNames = new Set(tools.map((t) => t.name));
+  if (validToolNames.size === 0) return [];
+
+  const normalized = assistantText.trim();
+  if (normalized.length === 0) return [];
+
+  const candidates = new Set<string>([normalized]);
+  const fenced = unwrapJsonCodeFence(normalized);
+  if (fenced) candidates.add(fenced);
+  for (const block of extractJsonCodeBlocks(normalized)) {
+    candidates.add(block);
+  }
+
+  for (const candidate of candidates) {
+    if (!looksLikeJson(candidate)) continue;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+
+    if (Array.isArray(parsed)) {
+      const calls = parsed
+        .map((item) => parseTextToolCall(item, validToolNames))
+        .filter((item): item is ParsedTextToolCall => item !== null);
+      if (calls.length > 0) return calls;
+      continue;
+    }
+
+    const single = parseTextToolCall(parsed, validToolNames);
+    if (single) return [single];
+  }
+
+  return [];
+}
+
+function parseTextToolCall(
+  value: unknown,
+  validToolNames: Set<string>,
+): ParsedTextToolCall | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const obj = value as Record<string, unknown>;
+  const name = typeof obj.name === "string" ? obj.name.trim() : "";
+  if (!name || !validToolNames.has(name)) return null;
+
+  const rawArgs =
+    obj.arguments ?? obj.args ?? obj.input;
+  const args = normalizeToolCallArgs(rawArgs);
+  if (!args) return null;
+
+  const id = typeof obj.id === "string" && obj.id.trim().length > 0 ? obj.id.trim() : undefined;
+  return { name, input: args, id };
+}
+
+function normalizeToolCallArgs(value: unknown): Record<string, unknown> | null {
+  if (value === undefined || value === null) return {};
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return {};
+    if (!looksLikeJson(trimmed)) return { _raw: value };
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+      return { _raw: value };
+    } catch {
+      return { _raw: value };
+    }
+  }
+  return null;
+}
+
+function unwrapJsonCodeFence(value: string): string | null {
+  const match = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(value);
+  return match?.[1]?.trim() || null;
+}
+
+function extractJsonCodeBlocks(value: string): string[] {
+  const blocks: string[] = [];
+  const regex = /```(?:json)?\s*([\s\S]*?)\s*```/gi;
+  for (const match of value.matchAll(regex)) {
+    const content = match[1]?.trim();
+    if (content) blocks.push(content);
+  }
+  return blocks;
+}
+
+function looksLikeJson(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) return false;
+  return (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  );
+}
+
+// ─── Artifact derivation from tool calls ───
+
+function deriveArtifactsFromToolCalls(
+  toolCalls: FridayAgentToolCallRecord[],
+): FridayAgentArtifact[] {
+  const artifacts: FridayAgentArtifact[] = [];
+  const seen = new Set<string>();
+
+  const add = (artifact: FridayAgentArtifact) => {
+    const key = JSON.stringify(artifact);
+    if (seen.has(key)) return;
+    seen.add(key);
+    artifacts.push(artifact);
+  };
+
+  for (const call of toolCalls) {
+    if (call.result.isError) continue;
+
+    if (call.toolName === "write" || call.toolName === "edit") {
+      const filePath = typeof call.args.path === "string" ? call.args.path : undefined;
+      if (filePath) add({ type: "file", path: filePath });
+      continue;
+    }
+
+    if (call.toolName === "skill_run") {
+      const skillId = typeof call.args.skillId === "string" ? call.args.skillId : undefined;
+      if (skillId) add({ type: "skill", skillId });
+      continue;
+    }
+
+    if (call.toolName === "workflow_run") {
+      const workflowId = typeof call.args.workflowId === "string" ? call.args.workflowId : undefined;
+      if (workflowId) add({ type: "workflow", workflowId });
+      continue;
+    }
+  }
+
+  return artifacts;
+}
+
+// ─── Tool execution helper ───
+
+interface ExecuteToolCallParams {
+  toolUse: FridayAgentToolUseBlock;
+  toolMap: Map<string, FridayAgentToolDefinition>;
+  signal: AbortSignal;
+  runId: string;
+  sessionKey: string;
+  principalId?: string;
+  nowIso: () => string;
+  emitRunEvent: (name: string, payload: Record<string, unknown>) => void;
+}
+
+async function executeToolCall(
+  params: ExecuteToolCallParams,
+): Promise<FridayAgentToolCallRecord> {
+  const { toolUse, toolMap, signal, runId, sessionKey, nowIso, emitRunEvent } = params;
+  const routeId = "agent.execute.tool";
+  const correlationId = runId;
+  const startedAt = Date.now();
+  const toolArgs =
+    toolUse.name === "memory_search" || toolUse.name === "memory_store"
+      ? { ...toolUse.input, __sessionId: sessionKey }
+      : toolUse.name === "feedback"
+        ? { ...toolUse.input, __principalId: params.principalId }
+        : toolUse.input;
+
+  emitRunEvent("agent.run.tool_start", {
+    runId,
+    toolName: toolUse.name,
+    toolCallId: toolUse.id,
+    params: toolUse.input,
+  });
+
+  const tool = toolMap.get(toolUse.name);
+  if (!tool) {
+    const unavailableMessage = buildUnavailableToolMessage(toolUse.name);
+    const result = {
+      content: unavailableMessage,
+      isError: true,
+    };
+    const durationMs = Date.now() - startedAt;
+
+    emitRunEvent("agent.run.tool_end", {
+      runId,
+      toolName: toolUse.name,
+      toolCallId: toolUse.id,
+      durationMs,
+      isError: true,
+      summary: result.content.slice(0, 200),
+      errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
+      routeId,
+      correlationId,
+    });
+
+    return {
+      toolCallId: toolUse.id,
+      toolName: toolUse.name,
+      args: toolUse.input,
+      result,
+      durationMs,
+      startedAt: nowIso(),
+    };
+  }
+
+  // Create a timeout signal for the tool call
+  const toolAbortController = new AbortController();
+  const toolTimer = setTimeout(() => {
+    toolAbortController.abort(new Error("Tool call timed out"));
+  }, FRIDAY_AGENT_TOOL_TIMEOUT_MS);
+
+  // Wire run signal to tool signal
+  const onRunAbort = () => {
+    toolAbortController.abort(signal.reason);
+  };
+  if (signal.aborted) {
+    toolAbortController.abort(signal.reason);
+  } else {
+    signal.addEventListener("abort", onRunAbort, { once: true });
+  }
+
+  try {
+    const rawResult = await tool.execute(toolArgs, toolAbortController.signal);
+    const durationMs = Date.now() - startedAt;
+
+    // OC-007: Cap oversized tool result content to prevent context bloat
+    let result = capToolResultContent(rawResult, FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS);
+    if (result.isError) {
+      result = await maybeRecoverToolInputError({
+        toolUse,
+        toolMap,
+        signal: toolAbortController.signal,
+        runId,
+        emitRunEvent,
+        maxResultChars: FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS,
+        initialResult: result,
+      });
+      result = capToolResultContent(result, FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS);
+    }
+    if (toolUse.name === "web_fetch" && result.isError) {
+      result = await maybeFallbackWebFetchWithBrowser({
+        toolUse,
+        toolMap,
+        signal: toolAbortController.signal,
+        runId,
+        emitRunEvent,
+        maxResultChars: FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS,
+        initialResult: result,
+      });
+      result = capToolResultContent(result, FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS);
+    }
+
+    const toolEndErrorCode = result.isError
+      ? result.errorCode ?? FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR
+      : undefined;
+    emitRunEvent("agent.run.tool_end", {
+      runId,
+      toolName: toolUse.name,
+      toolCallId: toolUse.id,
+      durationMs,
+      isError: result.isError ?? false,
+      summary: result.content.slice(0, 200),
+      ...(toolEndErrorCode ? { errorCode: toolEndErrorCode } : {}),
+      routeId: result.routeId ?? routeId,
+      correlationId: result.correlationId ?? correlationId,
+    });
+
+    return {
+      toolCallId: toolUse.id,
+      toolName: toolUse.name,
+      args: toolUse.input,
+      result,
+      durationMs,
+      startedAt: nowIso(),
+    };
+  } catch (error) {
+    const durationMs = Date.now() - startedAt;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const result = { content: `Tool error: ${errorMessage}`, isError: true };
+
+    emitRunEvent("agent.run.tool_end", {
+      runId,
+      toolName: toolUse.name,
+      toolCallId: toolUse.id,
+      durationMs,
+      isError: true,
+      summary: result.content.slice(0, 200),
+      errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
+      routeId,
+      correlationId,
+    });
+
+    return {
+      toolCallId: toolUse.id,
+      toolName: toolUse.name,
+      args: toolUse.input,
+      result,
+      durationMs,
+      startedAt: nowIso(),
+    };
+  } finally {
+    clearTimeout(toolTimer);
+    signal.removeEventListener("abort", onRunAbort);
+  }
+}
+
+function buildUnavailableToolMessage(toolName: string): string {
+  if (toolName === "desktop") {
+    return FRIDAY_DESKTOP_UNAVAILABLE_MESSAGE;
+  }
+  if (toolName === "system") {
+    return FRIDAY_SYSTEM_UNAVAILABLE_MESSAGE;
+  }
+  if (toolName === "mcp") {
+    return FRIDAY_MCP_UNAVAILABLE_MESSAGE;
+  }
+  return `Unknown tool: ${toolName}`;
+}
+
+const FRIDAY_DESKTOP_UNAVAILABLE_MESSAGE =
+  'Tool "desktop" is unavailable because desktop runtime is not enabled. Set FRIDAY_DESKTOP_ENABLED=true and restart Friday.';
+
+const FRIDAY_SYSTEM_UNAVAILABLE_MESSAGE =
+  'Tool "system" is unavailable because Friday Agent OS system orchestration is not enabled. Set FRIDAY_SYSTEM_ENABLED=true and restart Friday.';
+
+const FRIDAY_MCP_UNAVAILABLE_MESSAGE =
+  'Tool "mcp" is unavailable because MCP servers are not configured. Set FRIDAY_MCP_SERVERS with at least one server and restart Friday.';
+
+interface MaybeRecoverToolInputErrorParams {
+  toolUse: FridayAgentToolUseBlock;
+  toolMap: Map<string, FridayAgentToolDefinition>;
+  signal: AbortSignal;
+  runId: string;
+  emitRunEvent: (name: string, payload: Record<string, unknown>) => void;
+  maxResultChars: number;
+  initialResult: FridayAgentToolResult;
+}
+
+interface RecoveryExecutionResult {
+  result: FridayAgentToolResult;
+  recovered: boolean;
+}
+
+async function maybeRecoverToolInputError(
+  params: MaybeRecoverToolInputErrorParams,
+): Promise<FridayAgentToolResult> {
+  const { toolUse, initialResult } = params;
+  if (!initialResult.isError) return initialResult;
+  if (!looksLikeToolInputError(initialResult.content)) return initialResult;
+
+  switch (toolUse.name) {
+    case "desktop":
+      return maybeRecoverDesktopInputError(params);
+    case "browser":
+      return maybeRecoverBrowserInputError(params);
+    case "mcp":
+      return maybeRecoverMcpInputError(params);
+    default:
+      return initialResult;
+  }
+}
+
+function looksLikeToolInputError(message: string): boolean {
+  const normalized = message.trim();
+  if (normalized.length === 0) return false;
+  return (
+    / is required\b/i.test(normalized)
+    || /invalid or incomplete/i.test(normalized)
+    || /either .+ is required/i.test(normalized)
+    || /values array is required/i.test(normalized)
+    || /args must be an object/i.test(normalized)
+    || /(需要|缺少).{0,16}(参数|字段|策略|选择器)/.test(normalized)
+    || /必填/.test(normalized)
+  );
+}
+
+async function maybeRecoverDesktopInputError(
+  params: MaybeRecoverToolInputErrorParams,
+): Promise<FridayAgentToolResult> {
+  const { toolUse, toolMap, signal, runId, emitRunEvent, maxResultChars, initialResult } = params;
+  const desktopTool = toolMap.get("desktop");
+  if (!desktopTool) return initialResult;
+
+  const normalizeDesktopActionToken = (value: unknown): string =>
+    typeof value === "string"
+      ? value.trim().toLowerCase().replace(/[\s-]+/g, "_")
+      : "";
+  const action = normalizeDesktopActionToken(toolUse.input.action);
+  const actionType = normalizeDesktopActionToken(toolUse.input.actionType);
+  const missingSelector = (
+    /strategy is required|selectorvalue is required|selector strategy is required/i.test(initialResult.content)
+    || /requires 'selector' field/i.test(initialResult.content)
+    || /coordinates or selector/i.test(initialResult.content)
+    || /(策略|选择器).{0,8}(必填|需要|缺少)/.test(initialResult.content)
+    || /(需要|缺少).{0,8}(策略|选择器)/.test(initialResult.content)
+  );
+  const missingCoordinates =
+    /x is required|y is required|startx is required|starty is required|endx is required|endy is required/i
+      .test(initialResult.content);
+  const invalidReadElement = /Invalid or incomplete actionType "read_element"/i.test(initialResult.content);
+
+  const shouldFallbackToScreenshot =
+    (action === "inspect_element" && missingSelector)
+    || (
+      action === "execute"
+      && (
+        missingSelector
+        || missingCoordinates
+        || (actionType === "read_element" && invalidReadElement)
+      )
+    );
+
+  if (!shouldFallbackToScreenshot) return initialResult;
+
+  const recovery = await executeToolRecoveryAttempt({
+    toolName: "desktop",
+    toolUse,
+    tool: desktopTool,
+    recoveryArgs: { action: "screenshot" },
+    recoveryTag: "[auto-recovery:desktop->desktop.screenshot]",
+    recoveryReason: initialResult.content,
+    signal,
+    runId,
+    emitRunEvent,
+    maxResultChars,
+    routeId: "agent.execute.tool.input_recovery",
+  });
+
+  if (recovery.recovered) {
+    return recovery.result;
+  }
+
+  return {
+    content:
+      `${initialResult.content}\n\n` +
+      "[auto-recovery:desktop->desktop.screenshot] attempted but failed.",
+    isError: true,
+  };
+}
+
+async function maybeRecoverBrowserInputError(
+  params: MaybeRecoverToolInputErrorParams,
+): Promise<FridayAgentToolResult> {
+  const { toolUse, toolMap, signal, runId, emitRunEvent, maxResultChars, initialResult } = params;
+  const browserTool = toolMap.get("browser");
+  if (!browserTool) return initialResult;
+
+  const action = typeof toolUse.input.action === "string"
+    ? toolUse.input.action.trim().toLowerCase()
+    : "";
+  const missingTarget = /Either selector or elementId is required for act\./i.test(initialResult.content);
+  if (!(action === "act" && missingTarget)) {
+    return initialResult;
+  }
+
+  const recoveryArgs: Record<string, unknown> = { action: "snapshot" };
+  const sessionId = typeof toolUse.input.sessionId === "string" ? toolUse.input.sessionId : undefined;
+  const tabId = typeof toolUse.input.tabId === "string" ? toolUse.input.tabId : undefined;
+  if (sessionId) recoveryArgs.sessionId = sessionId;
+  if (tabId) recoveryArgs.tabId = tabId;
+
+  const recovery = await executeToolRecoveryAttempt({
+    toolName: "browser",
+    toolUse,
+    tool: browserTool,
+    recoveryArgs,
+    recoveryTag: "[auto-recovery:browser.act->browser.snapshot]",
+    recoveryReason: initialResult.content,
+    signal,
+    runId,
+    emitRunEvent,
+    maxResultChars,
+    routeId: "agent.execute.tool.input_recovery",
+  });
+
+  if (recovery.recovered) {
+    return recovery.result;
+  }
+
+  return {
+    content:
+      `${initialResult.content}\n\n` +
+      "[auto-recovery:browser.act->browser.snapshot] attempted but failed.",
+    isError: true,
+  };
+}
+
+async function maybeRecoverMcpInputError(
+  params: MaybeRecoverToolInputErrorParams,
+): Promise<FridayAgentToolResult> {
+  const { toolUse, toolMap, signal, runId, emitRunEvent, maxResultChars, initialResult } = params;
+  const mcpTool = toolMap.get("mcp");
+  if (!mcpTool) return initialResult;
+
+  const errorText = initialResult.content;
+  let recoveryArgs: Record<string, unknown> | null = null;
+  const serverId = typeof toolUse.input.serverId === "string" ? toolUse.input.serverId : undefined;
+
+  if (/action is required|Invalid action/i.test(errorText)) {
+    recoveryArgs = { action: "list_servers" };
+  } else if (/toolName is required/i.test(errorText) && serverId) {
+    recoveryArgs = { action: "list_tools", serverId };
+  } else if (/serverId is required|toolName is required/i.test(errorText)) {
+    recoveryArgs = { action: "list_servers" };
+  }
+
+  if (!recoveryArgs) return initialResult;
+
+  const recovery = await executeToolRecoveryAttempt({
+    toolName: "mcp",
+    toolUse,
+    tool: mcpTool,
+    recoveryArgs,
+    recoveryTag: "[auto-recovery:mcp->discovery]",
+    recoveryReason: initialResult.content,
+    signal,
+    runId,
+    emitRunEvent,
+    maxResultChars,
+    routeId: "agent.execute.tool.input_recovery",
+  });
+
+  if (recovery.recovered) {
+    return recovery.result;
+  }
+
+  return {
+    content:
+      `${initialResult.content}\n\n` +
+      "[auto-recovery:mcp->discovery] attempted but failed.",
+    isError: true,
+  };
+}
+
+async function executeToolRecoveryAttempt(params: {
+  toolName: string;
+  toolUse: FridayAgentToolUseBlock;
+  tool: FridayAgentToolDefinition;
+  recoveryArgs: Record<string, unknown>;
+  recoveryTag: string;
+  recoveryReason: string;
+  signal: AbortSignal;
+  runId: string;
+  emitRunEvent: (name: string, payload: Record<string, unknown>) => void;
+  maxResultChars: number;
+  routeId: string;
+}): Promise<RecoveryExecutionResult> {
+  const {
+    toolName,
+    toolUse,
+    tool,
+    recoveryArgs,
+    recoveryTag,
+    recoveryReason,
+    signal,
+    runId,
+    emitRunEvent,
+    maxResultChars,
+    routeId,
+  } = params;
+  const correlationId = runId;
+  const recoveryCallId = `${toolUse.id}:input-recovery`;
+
+  emitRunEvent("agent.run.tool_start", {
+    runId,
+    toolName,
+    toolCallId: recoveryCallId,
+    params: {
+      ...recoveryArgs,
+      fallback: "tool_input_error",
+      fallbackReason: recoveryReason,
+      parentToolCallId: toolUse.id,
+    },
+  });
+
+  const startedAt = Date.now();
+  let recoveryResult: FridayAgentToolResult;
+  try {
+    recoveryResult = capToolResultContent(
+      await tool.execute(recoveryArgs, signal),
+      maxResultChars,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    emitRunEvent("agent.run.tool_end", {
+      runId,
+      toolName,
+      toolCallId: recoveryCallId,
+      durationMs: Date.now() - startedAt,
+      isError: true,
+      summary: `${recoveryTag} failed: ${message}`.slice(0, 200),
+      errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
+      routeId,
+      correlationId,
+    });
+    return {
+      recovered: false,
+      result: {
+        content: `${recoveryTag} failed: ${message}`,
+        isError: true,
+      },
+    };
+  }
+
+  emitRunEvent("agent.run.tool_end", {
+    runId,
+    toolName,
+    toolCallId: recoveryCallId,
+    durationMs: Date.now() - startedAt,
+    isError: recoveryResult.isError ?? false,
+    summary: recoveryResult.content.slice(0, 200),
+    routeId,
+    correlationId,
+  });
+
+  if (recoveryResult.isError) {
+    return { recovered: false, result: recoveryResult };
+  }
+
+  return {
+    recovered: true,
+    result: {
+      content:
+        `${recoveryTag} recovered from input error (${recoveryReason}).\n` +
+        recoveryResult.content,
+      isError: false,
+      blocks: recoveryResult.blocks,
+    },
+  };
+}
+
+interface MaybeFallbackWebFetchWithBrowserParams {
+  toolUse: FridayAgentToolUseBlock;
+  toolMap: Map<string, FridayAgentToolDefinition>;
+  signal: AbortSignal;
+  runId: string;
+  emitRunEvent: (name: string, payload: Record<string, unknown>) => void;
+  maxResultChars: number;
+  initialResult: FridayAgentToolResult;
+}
+
+async function maybeFallbackWebFetchWithBrowser(
+  params: MaybeFallbackWebFetchWithBrowserParams,
+): Promise<FridayAgentToolResult> {
+  const { toolUse, toolMap, signal, runId, emitRunEvent, maxResultChars, initialResult } = params;
+  const routeId = "agent.execute.tool.web_fetch_fallback";
+  const correlationId = runId;
+  if (!shouldAttemptWebFetchBrowserFallback(initialResult.content)) {
+    return initialResult;
+  }
+  const url = typeof toolUse.input.url === "string" ? toolUse.input.url.trim() : "";
+  if (url.length === 0) return initialResult;
+
+  const browserTool = toolMap.get("browser");
+  if (!browserTool) return initialResult;
+
+  const fallbackTag = "[auto-fallback:web_fetch->browser]";
+  const openArgs: Record<string, unknown> = { action: "open", url };
+  const openCallId = `${toolUse.id}:fallback-browser-open`;
+  emitRunEvent("agent.run.tool_start", {
+    runId,
+    toolName: "browser",
+    toolCallId: openCallId,
+    params: { ...openArgs, fallback: "web_fetch_error" },
+  });
+
+  const openStarted = Date.now();
+  let openResult: FridayAgentToolResult;
+  try {
+    openResult = capToolResultContent(
+      await browserTool.execute(openArgs, signal),
+      maxResultChars,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    emitRunEvent("agent.run.tool_end", {
+      runId,
+      toolName: "browser",
+      toolCallId: openCallId,
+      durationMs: Date.now() - openStarted,
+      isError: true,
+      summary: `${fallbackTag} open failed: ${message}`.slice(0, 200),
+      errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
+      routeId,
+      correlationId,
+    });
+    return {
+      content:
+        `${initialResult.content}\n\n` +
+        `${fallbackTag} open failed: ${message}`,
+      isError: true,
+    };
+  }
+
+  emitRunEvent("agent.run.tool_end", {
+    runId,
+    toolName: "browser",
+    toolCallId: openCallId,
+    durationMs: Date.now() - openStarted,
+    isError: openResult.isError ?? false,
+    summary: openResult.content.slice(0, 200),
+    routeId,
+    correlationId,
+  });
+
+  if (openResult.isError) {
+    return {
+      content:
+        `${initialResult.content}\n\n` +
+        `${fallbackTag} open failed: ${openResult.content}`,
+      isError: true,
+    };
+  }
+
+  const openPayload = parseJsonObject(openResult.content);
+  const sessionId = typeof openPayload?.sessionId === "string" ? openPayload.sessionId : undefined;
+  const tabId = typeof openPayload?.tabId === "string" ? openPayload.tabId : undefined;
+  if (!sessionId) {
+    return {
+      content:
+        `${initialResult.content}\n\n` +
+        `${fallbackTag} browser open succeeded but session metadata is unavailable.`,
+      isError: false,
+    };
+  }
+
+  const snapshotArgs: Record<string, unknown> = { action: "snapshot", sessionId };
+  if (tabId) snapshotArgs.tabId = tabId;
+  const snapshotCallId = `${toolUse.id}:fallback-browser-snapshot`;
+
+  emitRunEvent("agent.run.tool_start", {
+    runId,
+    toolName: "browser",
+    toolCallId: snapshotCallId,
+    params: { ...snapshotArgs, fallback: "web_fetch_error" },
+  });
+
+  const snapshotStarted = Date.now();
+  let snapshotResult: FridayAgentToolResult;
+  try {
+    snapshotResult = capToolResultContent(
+      await browserTool.execute(snapshotArgs, signal),
+      maxResultChars,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    emitRunEvent("agent.run.tool_end", {
+      runId,
+      toolName: "browser",
+      toolCallId: snapshotCallId,
+      durationMs: Date.now() - snapshotStarted,
+      isError: true,
+      summary: `${fallbackTag} snapshot failed: ${message}`.slice(0, 200),
+      errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
+      routeId,
+      correlationId,
+    });
+    return {
+      content:
+        `${initialResult.content}\n\n` +
+        `${fallbackTag} open succeeded but snapshot failed: ${message}`,
+      isError: false,
+    };
+  }
+
+  emitRunEvent("agent.run.tool_end", {
+    runId,
+    toolName: "browser",
+    toolCallId: snapshotCallId,
+    durationMs: Date.now() - snapshotStarted,
+    isError: snapshotResult.isError ?? false,
+    summary: snapshotResult.content.slice(0, 200),
+    routeId,
+    correlationId,
+  });
+
+  if (snapshotResult.isError) {
+    return {
+      content:
+        `${initialResult.content}\n\n` +
+        `${fallbackTag} open succeeded but snapshot failed: ${snapshotResult.content}`,
+      isError: false,
+    };
+  }
+
+  return {
+    content:
+      `${initialResult.content}\n\n` +
+      `${fallbackTag} browser snapshot succeeded:\n${snapshotResult.content}`,
+    isError: false,
+  };
+}
+
+function shouldAttemptWebFetchBrowserFallback(content: string): boolean {
+  const lower = content.toLowerCase();
+  // Security block decisions should never be bypassed via browser fallback.
+  if (lower.includes("ssrf guard")) return false;
+  if (lower.includes("blocked private")) return false;
+  if (lower.includes("blocked hostname")) return false;
+  if (lower.includes("blocked protocol")) return false;
+  if (lower.includes("not in allowlist")) return false;
+
+  if (lower.includes("js-rendered")) return true;
+  if (lower.includes("require javascript")) return true;
+  if (lower.includes("fetch error:")) return true;
+  if (lower.includes("request timed out")) return true;
+  return false;
+}
+
+function parseJsonObject(content: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(content);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+// ─── OC-007: Tool result size capping ───
+
+function capToolResultContent(
+  result: FridayAgentToolResult,
+  maxChars: number,
+): FridayAgentToolResult {
+  if (result.content.length <= maxChars) return result;
+  const truncated =
+    result.content.slice(0, maxChars) +
+    `\n\n[truncated: output was ${String(result.content.length)} chars, showing first ${String(maxChars)}]`;
+  return { ...result, content: truncated };
+}

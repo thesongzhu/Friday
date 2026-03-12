@@ -1,0 +1,369 @@
+/**
+ * B-005 Observability API Routes — exposes trace search, audit log queries,
+ * SLO status, alert management, and alert rule CRUD.
+ *
+ * @module api/http/routes
+ */
+
+import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import { FridayDomainError } from "../../../errors/friday-domain-error.js";
+import type {
+  FridayAcknowledgeAlertRequest,
+  FridayAcknowledgeAlertResponse,
+  FridayCreateAlertDestinationRequest,
+  FridayCreateAlertDestinationResponse,
+  FridayCreateAlertRuleRequest,
+  FridayCreateAlertRuleResponse,
+  FridayDeleteAlertDestinationResponse,
+  FridayDeleteAlertRuleRequest,
+  FridayDeleteAlertRuleResponse,
+  FridayGetAlertResponse,
+  FridayGetAlertRuleResponse,
+  FridayGetAuditEntryResponse,
+  FridayGetObservabilityOverviewResponse,
+  FridayGetObservabilityTimeSeriesQuery,
+  FridayGetObservabilityTimeSeriesResponse,
+  FridayGetSloStatusResponse,
+  FridayGetTraceResponse,
+  FridayListAlertDestinationsResponse,
+  FridayListAlertRulesQuery,
+  FridayListAlertRulesResponse,
+  FridayListAlertsQuery,
+  FridayListAlertsResponse,
+  FridayListSlosQuery,
+  FridayListSlosResponse,
+  FridaySearchAuditEntriesQuery,
+  FridaySearchAuditEntriesResponse,
+  FridaySearchTracesQuery,
+  FridaySearchTracesResponse,
+  FridayTestAlertDispatchRequest,
+  FridayTestAlertDispatchResponse,
+  FridayUpdateAlertDestinationRequest,
+  FridayUpdateAlertDestinationResponse,
+  FridayUpdateAlertRuleRequest,
+  FridayUpdateAlertRuleResponse,
+} from "../../../observability/api/friday-observability-api.types.js";
+import type { UUID } from "../../../security/multi-tenant/model/friday-multi-tenant-security.types.js";
+
+// ─── Service Dependencies ───
+
+export interface FridayObservabilityRoutesDeps {
+  overview: {
+    get(): FridayGetObservabilityOverviewResponse | Promise<FridayGetObservabilityOverviewResponse>;
+  };
+  timeSeries: {
+    get(
+      query: FridayGetObservabilityTimeSeriesQuery,
+    ): FridayGetObservabilityTimeSeriesResponse | Promise<FridayGetObservabilityTimeSeriesResponse>;
+  };
+  traces: {
+    search(query: FridaySearchTracesQuery): FridaySearchTracesResponse | Promise<FridaySearchTracesResponse>;
+    get(traceId: string): FridayGetTraceResponse | Promise<FridayGetTraceResponse>;
+  };
+  audit: {
+    search(
+      query: FridaySearchAuditEntriesQuery,
+    ): FridaySearchAuditEntriesResponse | Promise<FridaySearchAuditEntriesResponse>;
+    get(entryId: UUID): FridayGetAuditEntryResponse | Promise<FridayGetAuditEntryResponse>;
+  };
+  slos: {
+    list(query: FridayListSlosQuery): FridayListSlosResponse | Promise<FridayListSlosResponse>;
+    get(sloId: UUID): FridayGetSloStatusResponse | Promise<FridayGetSloStatusResponse>;
+  };
+  alerts: {
+    list(query: FridayListAlertsQuery): FridayListAlertsResponse | Promise<FridayListAlertsResponse>;
+    get(alertId: UUID): FridayGetAlertResponse | Promise<FridayGetAlertResponse>;
+    acknowledge(
+      alertId: UUID,
+      req: FridayAcknowledgeAlertRequest,
+    ): FridayAcknowledgeAlertResponse | Promise<FridayAcknowledgeAlertResponse>;
+    testDispatch(
+      alertId: UUID,
+      req: FridayTestAlertDispatchRequest,
+    ): FridayTestAlertDispatchResponse | Promise<FridayTestAlertDispatchResponse>;
+  };
+  alertDestinations: {
+    list(): FridayListAlertDestinationsResponse | Promise<FridayListAlertDestinationsResponse>;
+    create(
+      req: FridayCreateAlertDestinationRequest,
+    ): FridayCreateAlertDestinationResponse | Promise<FridayCreateAlertDestinationResponse>;
+    update(
+      destinationId: UUID,
+      req: FridayUpdateAlertDestinationRequest,
+    ): FridayUpdateAlertDestinationResponse | Promise<FridayUpdateAlertDestinationResponse>;
+    delete(destinationId: UUID): FridayDeleteAlertDestinationResponse | Promise<FridayDeleteAlertDestinationResponse>;
+  };
+  alertRules: {
+    list(query: FridayListAlertRulesQuery): FridayListAlertRulesResponse | Promise<FridayListAlertRulesResponse>;
+    get(ruleId: UUID): FridayGetAlertRuleResponse | Promise<FridayGetAlertRuleResponse>;
+    create(req: FridayCreateAlertRuleRequest): FridayCreateAlertRuleResponse | Promise<FridayCreateAlertRuleResponse>;
+    update(
+      ruleId: UUID,
+      req: FridayUpdateAlertRuleRequest,
+    ): FridayUpdateAlertRuleResponse | Promise<FridayUpdateAlertRuleResponse>;
+    delete(
+      ruleId: UUID,
+      req: FridayDeleteAlertRuleRequest,
+    ): FridayDeleteAlertRuleResponse | Promise<FridayDeleteAlertRuleResponse>;
+  };
+}
+
+// ─── Factory ───
+
+export function createFridayObservabilityRoutes(
+  deps: FridayObservabilityRoutesDeps,
+): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  return [
+    {
+      operationId: "observability.overview",
+      method: "GET",
+      path: "/v1/observability/overview",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      async handler() {
+        return deps.overview.get();
+      },
+    },
+    {
+      operationId: "observability.time.series",
+      method: "GET",
+      path: "/v1/observability/time-series",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      async handler(ctx) {
+        return deps.timeSeries.get(ctx.query as FridayGetObservabilityTimeSeriesQuery);
+      },
+    },
+    // ═══════════════════════════════════════════════════════════════
+    // TRACES
+    // ═══════════════════════════════════════════════════════════════
+
+    {
+      operationId: "observability.traces.search",
+      method: "GET",
+      path: "/v1/observability/traces",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      async handler(ctx) {
+        return deps.traces.search(ctx.query as FridaySearchTracesQuery);
+      },
+    },
+    {
+      operationId: "observability.traces.get",
+      method: "GET",
+      path: "/v1/observability/traces/:traceId",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      async handler(ctx) {
+        const { traceId } = ctx.params as { traceId: string };
+        return deps.traces.get(traceId);
+      },
+    },
+
+    // ═══════════════════════════════════════════════════════════════
+    // AUDIT
+    // ═══════════════════════════════════════════════════════════════
+
+    {
+      operationId: "observability.audit.search",
+      method: "GET",
+      path: "/v1/observability/audit",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      async handler(ctx) {
+        return deps.audit.search(ctx.query as FridaySearchAuditEntriesQuery);
+      },
+    },
+    {
+      operationId: "observability.audit.get",
+      method: "GET",
+      path: "/v1/observability/audit/:entryId",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      async handler(ctx) {
+        const { entryId } = ctx.params as { entryId: UUID };
+        return deps.audit.get(entryId);
+      },
+    },
+
+    // ═══════════════════════════════════════════════════════════════
+    // SLOs
+    // ═══════════════════════════════════════════════════════════════
+
+    {
+      operationId: "observability.slos.list",
+      method: "GET",
+      path: "/v1/observability/slos",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      async handler(ctx) {
+        return deps.slos.list(ctx.query as FridayListSlosQuery);
+      },
+    },
+    {
+      operationId: "observability.slos.get",
+      method: "GET",
+      path: "/v1/observability/slos/:sloId",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      async handler(ctx) {
+        const { sloId } = ctx.params as { sloId: UUID };
+        return deps.slos.get(sloId);
+      },
+    },
+
+    // ═══════════════════════════════════════════════════════════════
+    // ALERTS
+    // ═══════════════════════════════════════════════════════════════
+
+    {
+      operationId: "observability.alerts.list",
+      method: "GET",
+      path: "/v1/observability/alerts",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      async handler(ctx) {
+        return deps.alerts.list(ctx.query as FridayListAlertsQuery);
+      },
+    },
+    {
+      operationId: "observability.alerts.get",
+      method: "GET",
+      path: "/v1/observability/alerts/:alertId",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      async handler(ctx) {
+        const { alertId } = ctx.params as { alertId: UUID };
+        return deps.alerts.get(alertId);
+      },
+    },
+    {
+      operationId: "observability.alerts.acknowledge",
+      method: "POST",
+      path: "/v1/observability/alerts/:alertId/acknowledge",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      async handler(ctx) {
+        const { alertId } = ctx.params as { alertId: UUID };
+        const body = (ctx.body ?? {}) as FridayAcknowledgeAlertRequest;
+        return deps.alerts.acknowledge(alertId, body);
+      },
+    },
+    {
+      operationId: "observability.alerts.test.dispatch",
+      method: "POST",
+      path: "/v1/observability/alerts/:alertId/test-dispatch",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      async handler(ctx) {
+        const { alertId } = ctx.params as { alertId: UUID };
+        return deps.alerts.testDispatch(
+          alertId,
+          ((ctx.body ?? {}) as FridayTestAlertDispatchRequest),
+        );
+      },
+    },
+
+    // ═══════════════════════════════════════════════════════════════
+    // ALERT DESTINATIONS
+    // ═══════════════════════════════════════════════════════════════
+
+    {
+      operationId: "observability.alert.destinations.list",
+      method: "GET",
+      path: "/v1/observability/alert-destinations",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      async handler() {
+        return deps.alertDestinations.list();
+      },
+    },
+    {
+      operationId: "observability.alert.destinations.create",
+      method: "POST",
+      path: "/v1/observability/alert-destinations",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      async handler(ctx) {
+        return deps.alertDestinations.create(ctx.body as FridayCreateAlertDestinationRequest);
+      },
+    },
+    {
+      operationId: "observability.alert.destinations.update",
+      method: "PATCH",
+      path: "/v1/observability/alert-destinations/:destinationId",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      async handler(ctx) {
+        const { destinationId } = ctx.params as { destinationId: UUID };
+        return deps.alertDestinations.update(
+          destinationId,
+          ctx.body as FridayUpdateAlertDestinationRequest,
+        );
+      },
+    },
+    {
+      operationId: "observability.alert.destinations.delete",
+      method: "DELETE",
+      path: "/v1/observability/alert-destinations/:destinationId",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      async handler(ctx) {
+        const { destinationId } = ctx.params as { destinationId: UUID };
+        return deps.alertDestinations.delete(destinationId);
+      },
+    },
+
+    // ═══════════════════════════════════════════════════════════════
+    // ALERT RULES
+    // ═══════════════════════════════════════════════════════════════
+
+    {
+      operationId: "observability.alert.rules.list",
+      method: "GET",
+      path: "/v1/observability/alert-rules",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      async handler(ctx) {
+        return deps.alertRules.list(ctx.query as FridayListAlertRulesQuery);
+      },
+    },
+    {
+      operationId: "observability.alert.rules.get",
+      method: "GET",
+      path: "/v1/observability/alert-rules/:ruleId",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      async handler(ctx) {
+        const { ruleId } = ctx.params as { ruleId: UUID };
+        return deps.alertRules.get(ruleId);
+      },
+    },
+    {
+      operationId: "observability.alert.rules.create",
+      method: "POST",
+      path: "/v1/observability/alert-rules",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      async handler(ctx) {
+        const body = ctx.body as FridayCreateAlertRuleRequest;
+        if (!body || typeof body.name !== "string" || body.name.trim() === "") {
+          throw new FridayDomainError("VALIDATION_ERROR", "name is required");
+        }
+        if (!body.condition) {
+          throw new FridayDomainError("VALIDATION_ERROR", "condition is required");
+        }
+        return deps.alertRules.create(body);
+      },
+    },
+    {
+      operationId: "observability.alert.rules.update",
+      method: "PUT",
+      path: "/v1/observability/alert-rules/:ruleId",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      async handler(ctx) {
+        const { ruleId } = ctx.params as { ruleId: UUID };
+        const body = ctx.body as FridayUpdateAlertRuleRequest;
+        if (!body || typeof body.etag !== "string" || body.etag.trim() === "") {
+          throw new FridayDomainError("VALIDATION_ERROR", "etag is required");
+        }
+        return deps.alertRules.update(ruleId, body);
+      },
+    },
+    {
+      operationId: "observability.alert.rules.delete",
+      method: "DELETE",
+      path: "/v1/observability/alert-rules/:ruleId",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      async handler(ctx) {
+        const { ruleId } = ctx.params as { ruleId: UUID };
+        const body = ctx.body as FridayDeleteAlertRuleRequest;
+        if (!body || typeof body.etag !== "string" || body.etag.trim() === "") {
+          throw new FridayDomainError("VALIDATION_ERROR", "etag is required");
+        }
+        return deps.alertRules.delete(ruleId, body);
+      },
+    },
+  ];
+}

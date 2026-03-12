@@ -1,0 +1,307 @@
+/**
+ * Shared helper: spins up a real in-memory API test server.
+ *
+ * Creates real FridayApiRuntime + real FridayHttpServer (from prod) against
+ * an in-memory SQLite database.  This ensures all middleware (auth, scopes,
+ * roles, rate-limiting, body-size enforcement, error mapping) behaves
+ * identically to production.
+ */
+
+import * as net from "node:net";
+import * as crypto from "node:crypto";
+
+import Database from "better-sqlite3";
+import type { FridaySqliteLayer } from "#state";
+import { runFridayMigrations, FRIDAY_SQLITE_MIGRATIONS } from "#state";
+import { createFridayApiRuntime, hashPasswordScrypt } from "#api";
+import type { FridayApiRuntime } from "#api";
+import { createFridayHttpServer } from "#api";
+import type { FridayHttpServer } from "#api";
+import { createFridayProviderService } from "#providers";
+import type { FridayProviderService } from "#providers";
+import { createFridayMemoryService } from "#memory";
+import type { FridayMemoryService } from "#memory";
+import { encodeToken } from "#api";
+import type { FridayAccessTokenClaims, FridayScope, FridayRole } from "#api";
+import {
+  createFridayApprovalRequestRepository,
+  createFridayAutoFixActionRepository,
+  createFridayDiagnosisRecordRepository,
+  createFridayErrorIncidentRepository,
+  createFridayLearnedLessonRepository,
+  createFridaySelfHealingApiService,
+  createFridaySelfLearningRuntime,
+} from "#learning";
+import type { FridaySelfHealingApiService } from "#learning";
+import type { FridaySkillConverterService } from "#skills/converter";
+import type { FridaySkillGeneratorService } from "#skills/generator";
+import type { FridaySkillRegistry } from "#skills";
+import type { FridayPluginManifestLoader, FridayPluginService } from "#plugins";
+import { createFridayUixSurfaceService } from "../../../../src/uix/services/friday-uix-surface-service.js";
+
+// ─── Constants ─────────────────────────────────────────────────────────────
+
+const TOKEN_SECRET = "test-secret-key-for-e2e-tests";
+const ACCESS_TTL = 900;
+const REFRESH_TTL = 604_800;
+const NOW = "2025-06-15T10:00:00.000Z";
+
+// ─── In-memory DB ──────────────────────────────────────────────────────────
+
+function createTestDb(): FridaySqliteLayer {
+  const db = new Database(":memory:");
+  runFridayMigrations({ db, migrations: FRIDAY_SQLITE_MIGRATIONS });
+
+  // Insert a test user (admin, local-only) with password hash — used for auth + FK constraints
+  const passwordHash = hashPasswordScrypt("any");
+  db.prepare(
+    `INSERT OR IGNORE INTO users (id, display_name, role, is_local_only, password_hash, created_at, updated_at)
+     VALUES ('test-user', 'Test User', 'admin', 1, ?, '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')`,
+  ).run(passwordHash);
+
+  return {
+    dbPath: ":memory:",
+    writer: db,
+    reads: {
+      size: 1,
+      withReadConnection<T>(fn: (d: Database.Database) => T): T {
+        return fn(db);
+      },
+      close() {},
+    },
+    withWriteTransaction<T>(fn: (writerDb: Database.Database) => T): T {
+      return db.transaction(() => fn(db))();
+    },
+    withReadConnection<T>(fn: (d: Database.Database) => T): T {
+      return fn(db);
+    },
+    checkpoint() {},
+    close() {
+      db.close();
+    },
+  };
+}
+
+// ─── ID generator ──────────────────────────────────────────────────────────
+
+function createIdGenerator(): () => string {
+  let counter = 0;
+  return () => `tid-${String(++counter).padStart(6, "0")}`;
+}
+
+// ─── Free port discovery ───────────────────────────────────────────────────
+
+function findFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address();
+      if (!addr || typeof addr === "string") {
+        srv.close();
+        reject(new Error("Could not determine free port"));
+        return;
+      }
+      const port = addr.port;
+      srv.close(() => resolve(port));
+    });
+    srv.on("error", reject);
+  });
+}
+
+// ─── Test environment ──────────────────────────────────────────────────────
+
+export interface FridayApiTestEnv {
+  baseUrl: string;
+  apiRuntime: FridayApiRuntime;
+  db: FridaySqliteLayer;
+  providerService: FridayProviderService;
+  selfHealingService?: FridaySelfHealingApiService;
+  close(): Promise<void>;
+}
+
+export interface CreateFridayApiTestEnvOptions {
+  converterService?: FridaySkillConverterService;
+  skillGenerator?: FridaySkillGeneratorService;
+  skillRegistry?: FridaySkillRegistry;
+  pluginService?: FridayPluginService;
+  pluginManifestLoader?: FridayPluginManifestLoader;
+  memoryService?: FridayMemoryService;
+  enableDefaultMemoryService?: boolean;
+  enableSelfHealing?: boolean;
+}
+
+/**
+ * Boots the full API stack in-memory with the real prod HTTP server
+ * and returns a handle.
+ *
+ * Call `close()` in afterAll/afterEach to shut down cleanly.
+ */
+export async function createFridayApiTestEnv(
+  options: CreateFridayApiTestEnvOptions = {},
+): Promise<FridayApiTestEnv> {
+  const db = createTestDb();
+  const idGenerator = createIdGenerator();
+
+  const providerService = createFridayProviderService({
+    db,
+    idGenerator,
+    nowIso: () => NOW,
+  });
+
+  const memoryService =
+    options.memoryService ??
+    (options.enableDefaultMemoryService
+      ? createFridayMemoryService({
+          db,
+          providerService,
+          idGenerator,
+          nowIso: () => NOW,
+        })
+      : undefined);
+
+  const selfLearningRuntime = options.enableSelfHealing
+    ? createFridaySelfLearningRuntime({
+      db,
+      idGenerator,
+      nowIso: () => NOW,
+    })
+    : undefined;
+  const selfHealingService = selfLearningRuntime
+    ? createFridaySelfHealingApiService({
+      db,
+      idGenerator,
+      nowIso: () => NOW,
+      incidentRepo: createFridayErrorIncidentRepository(),
+      diagnosisRepo: createFridayDiagnosisRecordRepository(),
+      lessonRepo: createFridayLearnedLessonRepository(),
+      actionRepo: createFridayAutoFixActionRepository(),
+      approvalRepo: createFridayApprovalRequestRepository(),
+      diagnosisService: selfLearningRuntime.diagnosis,
+      planService: selfLearningRuntime.autoFixPlan,
+      riskService: selfLearningRuntime.autoFixRisk,
+      executionService: selfLearningRuntime.autoFixExecution,
+      rollbackService: selfLearningRuntime.autoFixRollback,
+      approvalService: selfLearningRuntime.approvals,
+      autoFixDispatcher: selfLearningRuntime.autoFixDispatcher,
+      metricsService: selfLearningRuntime.metrics,
+      pipeline: selfLearningRuntime.pipeline,
+    })
+    : undefined;
+  const uixService = selfHealingService
+    ? createFridayUixSurfaceService({
+      idGenerator,
+      skillGenerator: options.skillGenerator,
+      selfHealing: selfHealingService,
+    })
+    : undefined;
+
+  const apiRuntime = createFridayApiRuntime({
+    db,
+    idGenerator,
+    nowIso: () => NOW,
+    tokenSecret: TOKEN_SECRET,
+    accessTokenTtlSec: ACCESS_TTL,
+    refreshTokenTtlSec: REFRESH_TTL,
+    allowPasswordlessLocalLogin: true, // E2E tests use passwordless login
+    providerService,
+    memoryService,
+    converterService: options.converterService,
+    skillGenerator: options.skillGenerator,
+    skillRegistry: options.skillRegistry,
+    diagnosis: selfHealingService ? { service: selfHealingService } : undefined,
+    autoFix: selfHealingService ? { service: selfHealingService } : undefined,
+    uix: uixService ? { service: uixService } : undefined,
+    pluginService: options.pluginService,
+    pluginManifestLoader: options.pluginManifestLoader,
+    computeChecksum: (content: string) =>
+      crypto.createHash("sha256").update(content).digest("hex"),
+    resolveSkill: (_skillId: string) => ({ id: _skillId }),
+    invokeSkill: async (_skillId, _runId, _nodeId, payload) =>
+      ({ output: payload }),
+  });
+
+  const port = await findFreePort();
+
+  const httpServer: FridayHttpServer = createFridayHttpServer({
+    routes: apiRuntime.routes,
+    wsGateway: apiRuntime.wsGateway,
+    middleware: apiRuntime.middleware,
+    port,
+    host: "127.0.0.1",
+  });
+
+  await httpServer.listen();
+
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  return {
+    baseUrl,
+    apiRuntime,
+    db,
+    providerService,
+    selfHealingService,
+    async close() {
+      await httpServer.close();
+      db.close();
+    },
+  };
+}
+
+// ─── Auth helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Login the default test user and return tokens.
+ */
+export async function loginTestUser(baseUrl: string): Promise<{
+  accessToken: string;
+  refreshToken: string;
+}> {
+  const res = await fetch(`${baseUrl}/v1/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ localPassphrase: "any" }),
+  });
+  const json = (await res.json()) as {
+    ok: boolean;
+    data: { accessToken: string; refreshToken: string };
+  };
+  if (!json.ok) throw new Error("Login failed in test helper");
+  return {
+    accessToken: json.data.accessToken,
+    refreshToken: json.data.refreshToken,
+  };
+}
+
+/**
+ * Convenience: return headers with Authorization bearer token.
+ */
+export function authHeaders(token: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+}
+
+/**
+ * Create a token with specific scopes (for testing scope enforcement).
+ * Uses the real token encoding from prod.
+ */
+export function createTokenWithScopes(
+  scopes: FridayScope[],
+  opts?: { role?: FridayRole; userId?: string },
+): string {
+  const nowSec = Math.floor(new Date(NOW).getTime() / 1000);
+  const claims: FridayAccessTokenClaims = {
+    tokenId: `test-token-${crypto.randomUUID()}`,
+    principalType: "user",
+    principalId: opts?.userId ?? "test-user",
+    userId: opts?.userId ?? "test-user",
+    role: opts?.role ?? "admin",
+    scopes,
+    iat: nowSec,
+    exp: nowSec + ACCESS_TTL,
+  };
+  return encodeToken(claims, TOKEN_SECRET);
+}
+
+export { TOKEN_SECRET, NOW };

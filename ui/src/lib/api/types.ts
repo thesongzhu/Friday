@@ -1,0 +1,1742 @@
+// ─── Friday API envelope types ───
+
+export interface ApiSuccess<T> {
+  ok: true;
+  data: T;
+  requestId: string;
+}
+
+export interface ApiFailure {
+  ok: false;
+  error: {
+    code: string;
+    message: string;
+    retryable?: boolean;
+    retryAfterMs?: number;
+  };
+  requestId: string;
+}
+
+export type ApiEnvelope<T> = ApiSuccess<T> | ApiFailure;
+
+// ─── Auth types ───
+
+export interface FridayUser {
+  id: string;
+  email?: string;
+  displayName: string;
+  role: string;
+}
+
+export interface LoginResponse {
+  accessToken: string;
+  refreshToken: string;
+  expiresInSec: number;
+  user: FridayUser;
+}
+
+export interface RefreshResponse {
+  accessToken: string;
+  refreshToken: string;
+  expiresInSec: number;
+}
+
+export interface MeResponse {
+  user: FridayUser;
+  scopes: string[];
+  sessionExpiresAt?: string;
+}
+
+export interface AuthBootstrapStatusResponse {
+  bootstrapRequired: boolean;
+  allowPasswordlessLocalLogin: boolean;
+  allowLocalBypassLogin: boolean;
+}
+
+export interface AuthBootstrapResponse {
+  initialized: true;
+  initializedAt: string;
+  userId: string;
+}
+
+// ─── Agent types ───
+
+export type AgentRunStatus =
+  | "pending"
+  | "planning"
+  | "executing"
+  | "testing"
+  | "fixing"
+  | "completed"
+  | "failed"
+  | "failed_tests"
+  | "cancelled";
+
+export interface AgentRunRecord {
+  id: string;
+  task: string;
+  status: AgentRunStatus;
+  model?: string;
+  sessionKey?: string;
+  startedAt: string;
+  completedAt?: string;
+  durationMs?: number;
+  usageInput?: number;
+  usageOutput?: number;
+  costUsd?: number;
+  output?: string;
+  error?: string;
+  responseText?: string;
+  summary?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  constraints?: {
+    readOnly?: boolean;
+  };
+  planReview?: {
+    plan: {
+      task: string;
+      stepCount: number;
+      description: string;
+    };
+    decision?: {
+      approved: boolean;
+      mode: string;
+      reason?: string;
+      reviewedAt: string;
+    };
+  };
+  actualExecution?: {
+    actualProviderId?: string;
+    actualModel?: string;
+    actualProviderKind?: string;
+    actualProviderApi?: string;
+    totalCostUsd?: number;
+    turns: Array<{
+      providerId?: string;
+      model?: string;
+      inputTokens: number;
+      outputTokens: number;
+      costUsd?: number;
+    }>;
+  };
+  artifacts?: Array<{
+    type: string;
+    path?: string;
+    skillId?: string;
+    workflowId?: string;
+  }>;
+  testResults?: Array<{
+    strategy: "syntax" | "execute" | "manifest" | "compile" | "llm_eval";
+    passed: boolean;
+    errors: Array<{
+      message: string;
+      file?: string;
+      line?: number;
+      severity: "error" | "warning";
+    }>;
+    durationMs: number;
+  }>;
+  artifactDir?: string;
+}
+
+export interface AgentAutomation {
+  id: string;
+  name: string;
+  description?: string;
+  sourceRunId?: string;
+  taskTemplate: string;
+  schedule?: {
+    type: "cron";
+    cron: string;
+    timezone?: string;
+  };
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ─── Full automation record (matches backend FridayAgentAutomationRecord) ───
+
+export interface AgentAutomationRecord {
+  id: string;
+  name: string;
+  description?: string;
+  sourceRunId?: string;
+  taskTemplate: string;
+  variables?: Record<string, string>;
+  skillIds?: string[];
+  workflowIds?: string[];
+  triggerId?: string;
+  schedule?: {
+    type: "cron";
+    cron: string;
+    timezone?: string;
+  };
+  enabled: boolean;
+  lastRunId?: string;
+  lastRunAt?: string;
+  runCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ─── Agent runtime result (automation run response) ───
+
+export interface AgentRuntimeResult {
+  runId: string;
+  status: "completed" | "failed" | "cancelled";
+  response: string;
+  toolCallCount: number;
+  durationMs: number;
+  usageInput: number;
+  usageOutput: number;
+}
+
+// ─── Skill UI schema types ───
+
+export type SkillUiFieldKind =
+  | "text"
+  | "textarea"
+  | "number"
+  | "toggle"
+  | "select"
+  | "json"
+  | "file";
+
+export type SkillUiOutputWidget =
+  | "text"
+  | "json"
+  | "table"
+  | "keyValue";
+
+export interface SkillUiSection {
+  id: string;
+  label: string;
+  fieldIds: string[];
+}
+
+export interface SkillUiField {
+  id: string;
+  inputKey: string;
+  kind: SkillUiFieldKind;
+  label: string;
+  required: boolean;
+  help?: string;
+  placeholder?: string;
+  defaultValue?: unknown;
+  validation?: {
+    regex?: string;
+    min?: number;
+    max?: number;
+    enum?: string[];
+  };
+}
+
+export interface SkillUiOutput {
+  id: string;
+  outputKey: string;
+  label: string;
+  widget: SkillUiOutputWidget;
+}
+
+export interface SkillUiAction {
+  id: "run" | "reset";
+  label: string;
+  style: "primary" | "secondary";
+}
+
+export interface SkillUiSchemaV1 {
+  schemaVersion: "1.0";
+  title: string;
+  description?: string;
+  sections: SkillUiSection[];
+  fields: SkillUiField[];
+  outputs: SkillUiOutput[];
+  actions: SkillUiAction[];
+}
+
+// ─── Skill generator types ───
+
+export type SkillGeneratorSessionStatus =
+  | "collecting_requirements"
+  | "needs_clarification"
+  | "generating"
+  | "ready_for_review"
+  | "approved"
+  | "saved"
+  | "failed"
+  | "cancelled";
+
+export interface SkillGenerationSession {
+  sessionId: string;
+  userId: string;
+  channel: string;
+  status: SkillGeneratorSessionStatus;
+  goal: string;
+  specSummary: string;
+  openQuestions: string[];
+  decisions: string[];
+  draftSkillId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillGenerationTurn {
+  turnId: string;
+  sessionId: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  createdAt: string;
+}
+
+export type SkillGenerationTurnMode =
+  | "clarification_required"
+  | "preview_ready"
+  | "generation_failed";
+
+export interface GeneratedSkillValidationIssue {
+  code: string;
+  severity: "error" | "warning";
+  message: string;
+  path?: string;
+}
+
+export interface GeneratedSkillValidationReport {
+  ok: boolean;
+  issues: GeneratedSkillValidationIssue[];
+  repaired: boolean;
+  repairAttempts: number;
+}
+
+export interface GeneratedSkillFile {
+  path: string;
+  language: "json" | "javascript" | "typescript" | "bash" | "markdown";
+  executable?: boolean;
+  content: string;
+}
+
+export interface GeneratedSkillDraft {
+  manifest: SkillManifestSummary;
+  files: GeneratedSkillFile[];
+  uiSchema: SkillUiSchemaV1;
+  runtimeKind: "shell" | "node";
+  validation: GeneratedSkillValidationReport;
+}
+
+/** Minimal manifest info needed on the UI side */
+export interface SkillManifestSummary {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  runtime: { kind: string };
+  tags: string[];
+}
+
+export interface StartSessionResponse {
+  session: SkillGenerationSession;
+  mode: SkillGenerationTurnMode;
+  questions?: string[];
+  draft?: GeneratedSkillDraft;
+  errors?: GeneratedSkillValidationIssue[];
+}
+
+export interface GetSessionResponse {
+  session: SkillGenerationSession;
+  turns: SkillGenerationTurn[];
+  draft?: GeneratedSkillDraft;
+}
+
+export interface SubmitTurnResponse {
+  session: SkillGenerationSession;
+  mode: SkillGenerationTurnMode;
+  questions?: string[];
+  draft?: GeneratedSkillDraft;
+  errors?: GeneratedSkillValidationIssue[];
+}
+
+export interface GenerateResponse {
+  draft: GeneratedSkillDraft;
+}
+
+export interface ApproveResponse {
+  sessionId: string;
+  skillId: string;
+  skillDir: string;
+  savedFiles: string[];
+  registryRefreshed: boolean;
+}
+
+export interface SkillGeneratorTestSummary {
+  ok: boolean;
+  executable: boolean;
+  issues: GeneratedSkillValidationIssue[];
+  durationMs: number;
+}
+
+export interface SkillGenerationEvidence {
+  sessionId: string;
+  validationSummary: {
+    ok: boolean;
+    repaired: boolean;
+    repairAttempts: number;
+    issueCount: number;
+  };
+  repairSummary: {
+    attempted: boolean;
+    attempts: number;
+  };
+  executableTestSummary: SkillGeneratorTestSummary | null;
+  approvalReadiness: {
+    ready: boolean;
+    reason: string;
+  };
+  savedSkillIdentity?: {
+    skillId: string;
+  };
+}
+
+// ─── Skills registry list types ───
+
+export interface SkillListResponse {
+  items: SkillLifecycleSummary[];
+}
+
+export interface SkillSourceRecord {
+  id: string;
+  name: string;
+  baseUrl: string;
+  enabled: boolean;
+  trustPolicy: "strict" | "warn" | "permissive";
+  pinnedKeyIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillLifecycleSummary {
+  skillId: string;
+  name: string;
+  description?: string;
+  source: string;
+  origin: string;
+  status: string;
+  category?: string;
+  tags: string[];
+  publisher?: string;
+  latestVersion?: string;
+  installedVersion?: string;
+  updateAvailable: boolean;
+  sourceId?: string;
+  managed: boolean;
+  registryLoaded: boolean;
+  currentManifest?: Record<string, unknown>;
+}
+
+export interface SkillCatalogItem {
+  sourceId: string;
+  skillId: string;
+  skillName: string;
+  publisher?: string;
+  version: string;
+  category?: string;
+  releasedAt?: string;
+  signatureValid: boolean;
+  trustScore: number;
+  manifest: Record<string, unknown>;
+  installed: boolean;
+  installedVersion?: string;
+  updateAvailable: boolean;
+  sourceDetails?: SkillSourceRecord;
+}
+
+export interface SkillVersionRecord {
+  id: string;
+  version: string;
+  checksum: string;
+  releasedAt: string;
+  yankedAt?: string;
+}
+
+export interface SkillInstallationRecord {
+  id: string;
+  version: string;
+  satelliteId?: string;
+  status: string;
+  permissionsGranted: string[];
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillVerificationEvidence {
+  skillId: string;
+  verifiedAt: string;
+  ok: boolean;
+  manifestVerdict: {
+    ok: boolean;
+    issues: Array<{
+      code: string;
+      severity: "error" | "warning";
+      message: string;
+      path?: string;
+    }>;
+  };
+  packageIntegrity: {
+    available: boolean;
+    ok: boolean;
+    expectedChecksum?: string;
+    actualChecksum?: string;
+    archivePath?: string;
+  };
+  dependencyCheck: {
+    ok: boolean;
+    checkedBins: string[];
+    missingBins: string[];
+  };
+  runtimeDryRun: {
+    attempted: boolean;
+    ok: boolean;
+    executable: boolean;
+    reason: string;
+  };
+  trustSummary: {
+    verdict: "trusted" | "warning" | "blocked" | "local";
+    policy?: string;
+    score?: number;
+    signatureValid?: boolean;
+    reasons: string[];
+  };
+}
+
+export interface SkillLifecycleDetail extends SkillLifecycleSummary {
+  sourceDetails?: SkillSourceRecord;
+  versions: SkillVersionRecord[];
+  installations: SkillInstallationRecord[];
+  catalogEntry?: SkillCatalogItem;
+  verification?: SkillVerificationEvidence;
+}
+
+export interface SkillInstallResult {
+  installationIds: string[];
+  resolvedVersion: string;
+  verification: {
+    integrityValid: boolean;
+    signatureValid: boolean;
+    checks: string[];
+  };
+  trust: {
+    total: number;
+    signature: number;
+    integrity: number;
+    keyPinning: number;
+    sourcePolicy: number;
+    publisher: number;
+    freshness: number;
+    reasons: string[];
+  };
+}
+
+export interface SkillInstallOutcome {
+  skill: SkillLifecycleDetail;
+  installation: SkillInstallResult;
+}
+
+export interface SkillUpdateOutcome extends SkillInstallOutcome {
+  updated: boolean;
+  previousVersion?: string;
+}
+
+export interface SkillDeleteOutcome {
+  deleted: true;
+  skillId: string;
+}
+
+export interface SkillManifestValidationOutcome {
+  ok: boolean;
+  issues: Array<{
+    code: string;
+    severity: "error" | "warning";
+    message: string;
+    path?: string;
+  }>;
+}
+
+// ─── Skill converter types ───
+
+export type SkillSourceFormat =
+  | "friday-package"
+  | "clawdbot-skill-md"
+  | "n8n-node"
+  | "openai-gpt-action"
+  | "code-repo"
+  | "undocumented-api"
+  | "unknown";
+
+export interface SkillConversionSource {
+  uri?: string;
+  contentBase64?: string;
+  formatHint?: SkillSourceFormat | "auto";
+}
+
+export interface ConverterInfo {
+  id: string;
+  displayName: string;
+  sourceFormats: SkillSourceFormat[];
+}
+
+export interface SkillValidationIssue {
+  stage: string;
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+  path?: string;
+}
+
+export interface ConvertedSkillDraft {
+  manifest: SkillManifestSummary;
+  uiSchema: SkillUiSchemaV1;
+  files: Array<{ path: string; content: string; executable?: boolean }>;
+  warnings: string[];
+  conversionReport: {
+    sourceFormat: SkillSourceFormat;
+    sourceRef?: string;
+    convertedAt: string;
+    converterId: string;
+  };
+}
+
+export interface ConvertResponse {
+  converterId: string;
+  detectedFormat: SkillSourceFormat;
+  drafts: ConvertedSkillDraft[];
+  validation: Array<{
+    skillId: string;
+    ok: boolean;
+    issues: SkillValidationIssue[];
+  }>;
+}
+
+export interface ImportResponse {
+  converterId: string;
+  detectedFormat: SkillSourceFormat;
+  imports: Array<{
+    skillId: string;
+    skillDir: string;
+    installed: boolean;
+    issues: SkillValidationIssue[];
+  }>;
+  registryRefreshed: boolean;
+}
+
+export interface PackResponse {
+  packageFile: string;
+  checksumSha256: string;
+}
+
+// ─── SSE event types ───
+
+export interface AgentRunStreamEvent {
+  type: string;
+  runId?: string;
+  parentRunId?: string;
+  timestamp?: string;
+  // text_delta
+  delta?: string;
+  // tool events
+  toolName?: string;
+  toolCallId?: string;
+  summary?: string;
+  durationMs?: number;
+  // subagent events
+  subagentId?: string;
+  subagentTask?: string;
+  status?: AgentRunStatus;
+  // status events
+  output?: string;
+  error?: string;
+}
+
+// ─── Sub-agent types ───
+
+export interface SubagentRecord {
+  id: string;
+  parentRunId: string;
+  task: string;
+  status: AgentRunStatus;
+  startedAt: string;
+  completedAt?: string;
+  durationMs?: number;
+}
+
+// ─── Workflow types ───
+
+export type WorkflowNodeType = "trigger" | "action" | "condition" | "data" | "ai" | "approval";
+
+export type WorkflowRunStatus =
+  | "queued"
+  | "running"
+  | "pausing"
+  | "paused"
+  | "compensating"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type NodeAttemptStatus =
+  | "queued"
+  | "running"
+  | "retrying"
+  | "completed"
+  | "failed"
+  | "blocked_offline"
+  | "cancelled";
+
+export type FridayWorkflowStatus = "draft" | "published" | "archived";
+
+export type FridayWorkflowActionType = "skill" | "ai_completion" | "http_request";
+
+// ─── Workflow failure policy ───
+
+export type WorkflowFailureStrategy =
+  | "fail_fast"
+  | "continue_on_error"
+  | "fallback_step"
+  | "compensate"
+  | "pause_for_approval";
+
+export interface WorkflowFailurePolicyV2 {
+  onFailure: WorkflowFailureStrategy;
+  fallbackStepId?: string;
+  compensationWorkflowId?: string;
+  notifyUser: boolean;
+}
+
+// ─── Spec types ───
+
+export type FridayWorkflowSpecTrigger =
+  | { type: "manual" }
+  | { type: "schedule"; cron: string; timezone: string }
+  | { type: "event"; source: string; event: string };
+
+export type FridayWorkflowSpecInputType = "string" | "number" | "boolean" | "object" | "array";
+
+export interface FridayWorkflowSpecInput {
+  key: string;
+  type: FridayWorkflowSpecInputType;
+  required: boolean;
+  defaultValue?: unknown;
+}
+
+export type FridayWorkflowSpecStepType =
+  | "skill_call"
+  | "tool_call"
+  | "condition"
+  | "transform"
+  | "human_approval";
+
+export interface FridayWorkflowSpecStep {
+  id: string;
+  type: FridayWorkflowSpecStepType;
+  ref?: string;
+  args?: Record<string, unknown>;
+  condition?: string;
+  timeoutSec?: number;
+  retry?: { maxAttempts: number; backoffMs: number };
+}
+
+export type FridayWorkflowSpecEdgeWhen = "success" | "failure" | "true" | "false";
+
+export interface FridayWorkflowSpecEdge {
+  from: string;
+  to: string;
+  when?: FridayWorkflowSpecEdgeWhen;
+}
+
+export interface FridayWorkflowSpecOutput {
+  key: string;
+  fromStep: string;
+  path: string;
+}
+
+export interface FridayWorkflowSpecTestCase {
+  name: string;
+  description?: string;
+  inputs: Record<string, unknown>;
+  mocks?: Record<string, { output: Record<string, unknown>; status?: "completed" | "failed" }>;
+  assertions: Array<{
+    path: string;
+    operator: "==" | "!=" | ">" | "<" | "contains" | "matches";
+    expected: unknown;
+  }>;
+}
+
+export interface FridayWorkflowSpecV1 {
+  schemaVersion: "1.0";
+  workflowId: string;
+  name: string;
+  description: string;
+  startStepId: string;
+  trigger: FridayWorkflowSpecTrigger;
+  inputs: FridayWorkflowSpecInput[];
+  steps: FridayWorkflowSpecStep[];
+  edges: FridayWorkflowSpecEdge[];
+  outputs: FridayWorkflowSpecOutput[];
+  errorPolicy: WorkflowFailurePolicyV2;
+  tests: FridayWorkflowSpecTestCase[];
+}
+
+// ─── Visual graph types ───
+
+export interface FridayWorkflowCanvasViewportV1 {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+export interface FridayWorkflowCanvasPanelLayoutV1 {
+  leftOpen: boolean;
+  rightOpen: boolean;
+  bottomOpen: boolean;
+}
+
+export interface FridayWorkflowBuilderNodeLayoutV1 {
+  nodeId: string;
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  zIndex?: number;
+}
+
+export interface FridayWorkflowBuilderEdgeLayoutV1 {
+  edgeKey: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+  bendPoints?: Array<{ x: number; y: number }>;
+}
+
+export interface FridayWorkflowVisualGraphV1 {
+  schemaVersion: "1.0";
+  workflowId: string;
+  viewport: FridayWorkflowCanvasViewportV1;
+  selectedNodeId?: string;
+  selectedEdgeKey?: string;
+  panelLayout: FridayWorkflowCanvasPanelLayoutV1;
+  nodes: FridayWorkflowBuilderNodeLayoutV1[];
+  edges: FridayWorkflowBuilderEdgeLayoutV1[];
+}
+
+// ─── Compiled graph types ───
+
+export interface FridayWorkflowNode {
+  id: string;
+  type: WorkflowNodeType;
+  label: string;
+  config: Record<string, unknown>;
+  retryPolicy?: {
+    maxAttempts: number;
+    backoff: "none" | "fixed" | "exponential";
+    baseDelayMs: number;
+    maxDelayMs: number;
+    retryOn: string[];
+  };
+  timeoutMs?: number;
+}
+
+export interface FridayWorkflowEdge {
+  id: string;
+  sourceNodeId: string;
+  sourcePort?: string;
+  targetNodeId: string;
+  targetPort?: string;
+  condition?: string;
+  priority?: number;
+}
+
+export interface FridayCompiledWorkflowGraphV2 {
+  schemaVersion: "2.0";
+  workflowId: string;
+  workflowVersionId: string;
+  sourceSpecSchemaVersion: "1.0";
+  graph: {
+    nodes: FridayWorkflowNode[];
+    edges: FridayWorkflowEdge[];
+    variables?: Record<string, unknown>;
+  };
+  failurePolicy: WorkflowFailurePolicyV2;
+  tests: FridayWorkflowSpecTestCase[];
+  checksum: string;
+}
+
+// ─── Workflow entity types ───
+
+export interface FridayWorkflowEntity {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  tags: string[];
+  ownerUserId?: string;
+  latestVersionNumber: number;
+  publishedVersionNumber?: number;
+  isArchived: boolean;
+  revision: number;
+  etag: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt?: string;
+  deletedBy?: string;
+}
+
+export interface FridayWorkflowVersionEntity {
+  id: string;
+  workflowId: string;
+  versionNumber: number;
+  checksum: string;
+  graphJson: unknown;
+  createdByUserId?: string;
+  isPublished: boolean;
+  changeNote?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ─── Workflow run entity types ───
+
+export interface FridayWorkflowRunEntity {
+  id: string;
+  workflowId: string;
+  workflowVersionId: string;
+  status: WorkflowRunStatus;
+  triggerType: string;
+  triggerPayload?: Record<string, unknown>;
+  startedByUserId?: string;
+  startedBySatelliteId?: string;
+  startedAt: string;
+  finishedAt?: string;
+  correlationId?: string;
+  context?: Record<string, unknown>;
+  failure?: {
+    code: string;
+    message: string;
+    details?: unknown;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FridayWorkflowRunNodeEntity {
+  id: string;
+  runId: string;
+  nodeId: string;
+  attempt: number;
+  attemptId: string;
+  status: NodeAttemptStatus;
+  satelliteId?: string;
+  leaseOwner?: string;
+  leaseExpiresAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  input?: unknown;
+  output?: unknown;
+  error?: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    details?: unknown;
+  };
+  idempotencyKey: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FridayRunTimelineEntry {
+  seq: number;
+  streamId: string;
+  event: string;
+  emittedAt: string;
+  nodeId?: string;
+  attempt?: number;
+  status?: WorkflowRunStatus | NodeAttemptStatus;
+  payload: Record<string, unknown>;
+}
+
+// ─── Draft types ───
+
+export type FridayWorkflowDraftStatus = "active" | "archived" | "published" | "conflicted";
+
+export interface FridayWorkflowDraftAutosaveState {
+  enabled: boolean;
+  intervalMs: number;
+  lastSavedAt?: string;
+}
+
+export interface FridayWorkflowDraftEntity {
+  draftId: string;
+  workflowId: string;
+  ownerUserId?: string;
+  title: string;
+  status: FridayWorkflowDraftStatus;
+  revision: number;
+  baseWorkflowVersionId?: string;
+  spec: FridayWorkflowSpecV1;
+  visual: FridayWorkflowVisualGraphV1;
+  createdAt: string;
+  updatedAt: string;
+  publishedVersionId?: string;
+  autosave: FridayWorkflowDraftAutosaveState;
+}
+
+// ─── Validation types ───
+
+export type FridayWorkflowValidationSeverity = "error" | "warning" | "info";
+
+export type FridayWorkflowValidationStage =
+  | "spec_schema"
+  | "graph_compile"
+  | "compiled_graph"
+  | "skill_refs"
+  | "expressions"
+  | "tests"
+  | "canvas";
+
+export interface FridayWorkflowBuilderValidationIssue {
+  code: string;
+  stage: FridayWorkflowValidationStage;
+  severity: FridayWorkflowValidationSeverity;
+  message: string;
+  jsonPath?: string;
+  stepId?: string;
+  edgeRef?: { from: string; to: string; when?: FridayWorkflowSpecEdgeWhen };
+}
+
+export interface FridayWorkflowBuilderValidationReport {
+  valid: boolean;
+  issues: FridayWorkflowBuilderValidationIssue[];
+  compiledGraphPreview?: FridayCompiledWorkflowGraphV2;
+  generatedAt: string;
+}
+
+// ─── Lock types ───
+
+export interface FridayWorkflowEditLock {
+  workflowId: string;
+  lockToken: string;
+  ownerUserId: string;
+  ownerSessionId?: string;
+  acquiredAt: string;
+  heartbeatAt: string;
+  expiresAt: string;
+}
+
+export interface FridayAcquireWorkflowLockResponse {
+  acquired: boolean;
+  lock?: FridayWorkflowEditLock;
+  conflict?: FridayWorkflowEditLock;
+}
+
+// ─── Editor graph types ───
+
+export type FridayWorkflowNodeConfig =
+  | { triggerType: "cron"; cron: string; timezone: string }
+  | { triggerType: "webhook"; method: "POST"; secretRef?: string; dedupeKeyPath?: string }
+  | { triggerType: "event"; source: string; event: string; filterExpr?: string; pluginId?: string }
+  | { actionType: "skill"; skillId: string; inputMapping?: Record<string, unknown> }
+  | { actionType: "ai_completion"; prompt: string; model?: string; temperature?: number }
+  | { actionType: "http_request"; method: string; url: string; headers?: Record<string, string>; body?: unknown }
+  | { conditionType: "if" | "switch"; expression: string; cases?: Array<{ label: string; expression: string }> }
+  | {
+      transformType: "map" | "template" | "merge";
+      mapping?: Record<string, unknown>;
+      expression?: string;
+      outputKey?: string;
+    }
+  | {
+      approverUserId?: string;
+      approverRole?: "owner" | "admin" | "operator";
+      timeoutMs?: number;
+      onReject?: "fail" | "reject_branch";
+    };
+
+export interface FridayWorkflowNodeDefinition {
+  id: string;
+  type: WorkflowNodeType;
+  name: string;
+  config: FridayWorkflowNodeConfig;
+  timeoutMs?: number;
+}
+
+export interface FridayWorkflowEditorGraphV1 {
+  schemaVersion: "1.0";
+  reactFlowVersion: "11";
+  nodes: FridayWorkflowEditorNode[];
+  edges: FridayWorkflowEditorEdge[];
+  viewport?: FridayWorkflowEditorViewport;
+}
+
+export interface FridayWorkflowEditorNode {
+  id: string;
+  type: "workflow_node";
+  position: { x: number; y: number };
+  width?: number;
+  height?: number;
+  data: FridayWorkflowNodeDefinition;
+}
+
+export interface FridayWorkflowEditorEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+  data?: {
+    condition?: string;
+    branch?: string;
+  };
+}
+
+export interface FridayWorkflowEditorViewport {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+// ─── Generator types ───
+
+export type FridayWorkflowGeneratorSessionStatus =
+  | "collecting_requirements"
+  | "needs_clarification"
+  | "generating"
+  | "ready_for_review"
+  | "approved"
+  | "saved"
+  | "failed"
+  | "cancelled";
+
+export interface FridayWorkflowGenerationSession {
+  sessionId: string;
+  userId: string;
+  channel: string;
+  status: FridayWorkflowGeneratorSessionStatus;
+  goal: string;
+  requirementsSummary: string;
+  openQuestions: string[];
+  decisions: string[];
+  draftWorkflowId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FridayWorkflowGenerationTurn {
+  turnId: string;
+  sessionId: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  createdAt: string;
+}
+
+export type FridayWorkflowGenerationTurnMode =
+  | "clarification_required"
+  | "preview_ready"
+  | "generation_failed";
+
+export interface FridayGeneratedWorkflowValidationIssue {
+  code: string;
+  stage: string;
+  severity: "error" | "warning";
+  message: string;
+  path?: string;
+  stepId?: string;
+  edgeRef?: { from: string; to: string; when?: FridayWorkflowSpecEdgeWhen };
+}
+
+export interface FridayGeneratedWorkflowValidationReport {
+  ok: boolean;
+  issues: FridayGeneratedWorkflowValidationIssue[];
+  repaired: boolean;
+  repairAttempts: number;
+}
+
+export interface FridayGeneratedWorkflowDraft {
+  spec: FridayWorkflowSpecV1;
+  visual: FridayWorkflowVisualGraphV1;
+  tests: FridayWorkflowSpecTestCase[];
+  compiledGraph: FridayCompiledWorkflowGraphV2;
+  validation: FridayGeneratedWorkflowValidationReport;
+}
+
+export interface FridayWorkflowGeneratorStartSessionResponse {
+  session: FridayWorkflowGenerationSession;
+  mode: FridayWorkflowGenerationTurnMode;
+  questions?: string[];
+  draft?: FridayGeneratedWorkflowDraft;
+  errors?: FridayGeneratedWorkflowValidationIssue[];
+}
+
+export interface FridayWorkflowGeneratorGetSessionResponse {
+  session: FridayWorkflowGenerationSession;
+  turns: FridayWorkflowGenerationTurn[];
+  draft?: FridayGeneratedWorkflowDraft;
+}
+
+export interface FridayWorkflowGeneratorSubmitMessageResponse {
+  session: FridayWorkflowGenerationSession;
+  mode: FridayWorkflowGenerationTurnMode;
+  questions?: string[];
+  draft?: FridayGeneratedWorkflowDraft;
+  errors?: FridayGeneratedWorkflowValidationIssue[];
+}
+
+export interface FridayWorkflowGeneratorGenerateResponse {
+  draft: FridayGeneratedWorkflowDraft;
+}
+
+export interface FridayWorkflowGeneratorApproveResponse {
+  sessionId: string;
+  workflowId: string;
+  workflowVersionId: string;
+  versionNumber: number;
+  slug: string;
+  published: boolean;
+}
+
+// ─── Errors ───
+
+export class ApiError extends Error {
+  readonly code: string;
+  readonly statusCode: number;
+  readonly retryable: boolean;
+  readonly retryAfterMs?: number;
+
+  constructor(code: string, message: string, statusCode: number, retryable = false, retryAfterMs?: number) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.statusCode = statusCode;
+    this.retryable = retryable;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+export class AuthExpiredError extends ApiError {
+  constructor() {
+    super("AUTH_EXPIRED", "Session expired. Please log in again.", 401);
+    this.name = "AuthExpiredError";
+  }
+}
+
+// ─── Session types ───
+
+export type FridaySessionStatus = "active" | "idle" | "archived" | "pruned";
+export type FridaySessionRole = "system" | "user" | "assistant" | "tool";
+export type FridaySessionChatKind = "dm" | "group" | "channel" | "thread";
+
+export interface FridaySessionRecord {
+  id: string;
+  key: string;
+  channel: string;
+  accountId: string;
+  chatId: string;
+  userId?: string;
+  chatKind: FridaySessionChatKind;
+  status: FridaySessionStatus;
+  memoryNamespace?: string;
+  parentSessionKey?: string;
+  rootSessionKey?: string;
+  forkedFromMessageId?: string;
+  metadata: Record<string, unknown>;
+  contextInputTokens: number;
+  contextOutputTokens: number;
+  contextTotalTokens: number;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+  lastActivityAt?: string;
+  statusChangedAt?: string;
+  idleAt?: string;
+  archivedAt?: string;
+  prunedAt?: string;
+}
+
+export interface FridaySessionMessageRecord {
+  id: string;
+  sessionId: string;
+  sessionKey: string;
+  sequence: number;
+  role: FridaySessionRole;
+  content: unknown;
+  contentText: string;
+  toolCalls?: unknown[];
+  tokenCount: number;
+  idempotencyKey?: string;
+  parentMessageId?: string;
+  metadata: Record<string, unknown>;
+  memoryExtractStatus: "pending" | "extracted" | "skipped" | "failed";
+  memoryExtractedAt?: string;
+  occurredAt: string;
+  createdAt: string;
+  updatedAt: string;
+  inherited?: boolean;
+  inheritedFromSessionKey?: string;
+  inheritedFromMessageId?: string;
+}
+
+export interface FridaySessionPruneResult {
+  archivedToPrunedCount: number;
+  hardDeletedCount: number;
+  sessionKeys: string[];
+}
+
+export interface FridaySessionSweepResult {
+  idledCount: number;
+  archivedCount: number;
+  prunedCount: number;
+  hardDeletedCount: number;
+}
+
+export interface FridaySessionForkCreateResult {
+  forkSession: FridaySessionRecord;
+  inheritedMessageCount: number;
+  forkedFromMessageId?: string;
+}
+
+export interface FridaySessionForkMergeResult {
+  parentMessage: FridaySessionMessageRecord;
+  forkSession: FridaySessionRecord;
+}
+
+export interface FridaySessionMemoryExtractionRunResult {
+  jobId?: string;
+  sessionKey: string;
+  trigger: "auto" | "manual" | "retry";
+  mode: "queued" | "inline";
+  queued: boolean;
+  processedMessageCount: number;
+  extractedMessageCount: number;
+  skippedMessageCount: number;
+  failedMessageCount: number;
+  memoryItemsCreated: number;
+}
+
+export interface FridaySessionMemoryExtractionStatus {
+  sessionKey: string;
+  pendingMessages: number;
+  extractedMessages: number;
+  skippedMessages: number;
+  failedMessages: number;
+  queuedJobs: number;
+  runningJobs: number;
+  lastCompletedAt?: string;
+  lastFailedAt?: string;
+  lastErrorCode?: string;
+  lastErrorMessage?: string;
+}
+
+export interface FridaySessionMemoryRetryResult {
+  sessionsQueued: string[];
+  resetMessageCount: number;
+}
+
+// ─── Memory types ───
+
+export interface FridayMemoryItem {
+  id: string;
+  namespace: string;
+  key: string;
+  content: string;
+  source: string;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  ttlSeconds?: number;
+  expiresAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FridayMemorySearchResult {
+  item: FridayMemoryItem;
+  score: number;
+  ftsScore: number;
+  semanticScore: number;
+  matchedBy: Array<"fts" | "semantic">;
+  snippet: string;
+}
+
+export interface FridayMemoryPruneResult {
+  deletedCount: number;
+  deletedIds: string[];
+  dryRun: boolean;
+}
+
+// ─── Provider types ───
+
+export type FridayProviderKind =
+  | "openai"
+  | "anthropic"
+  | "google"
+  | "ollama"
+  | "openai-compatible";
+
+export type FridayProviderApi =
+  | "openai-completions"
+  | "openai-responses"
+  | "anthropic-messages"
+  | "google-generative-ai"
+  | "ollama";
+
+export type FridayProviderAuthMode = "api-key" | "bearer-token" | "oauth" | "none";
+
+export interface FridayProviderValidationState {
+  status: "never" | "ok" | "failed";
+  checkedAt?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  httpStatus?: number;
+}
+
+export interface FridayProviderConfigJson {
+  api: FridayProviderApi;
+  authMode: FridayProviderAuthMode;
+  oauthProvider?: string;
+  keySource: { kind: string; refKey?: string; envVar?: string };
+  supportedModels: string[];
+  headers?: Record<string, string>;
+  validation?: FridayProviderValidationState;
+}
+
+export interface FridayProviderProfile {
+  id: string;
+  kind: FridayProviderKind;
+  name: string;
+  baseUrl: string;
+  enabled: boolean;
+  defaultModel?: string;
+  config: FridayProviderConfigJson;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FridayModelRoutingConfig {
+  defaultProviderId: string;
+  defaultModel?: string;
+  fallbackProviderIds: string[];
+}
+
+export interface FridayOAuthLoginInitiation {
+  providerId: string;
+  oauthProvider: string;
+  authorizationUrl: string;
+  state: string;
+  codeVerifier: string;
+  scopes: string[];
+}
+
+export interface FridayOAuthLoginResult {
+  providerId: string;
+  oauthProvider: string;
+  connected: true;
+  expiresAt: string;
+  tokenType: string;
+  scope: string;
+}
+
+// ─── Provider usage types ───
+
+export interface FridayProviderUsageSummaryRow {
+  day?: string;
+  providerId?: string;
+  model?: string;
+  callCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  costUsd: number;
+}
+
+export interface FridayProviderUsageSummary {
+  from: string;
+  to: string;
+  groupBy: "day" | "provider" | "model";
+  rows: FridayProviderUsageSummaryRow[];
+  totals: {
+    callCount: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    totalTokens: number;
+    costUsd: number;
+  };
+}
+
+export type FridayBudgetState = "ok" | "near_limit" | "over_limit";
+
+export interface FridayLlmBudgetConfig {
+  monthlyLimitUsd: number;
+}
+
+export interface FridayLlmBudgetStatus {
+  month: string;
+  config: FridayLlmBudgetConfig | null;
+  spentUsd: number;
+  remainingUsd: number | null;
+  state: FridayBudgetState;
+}
+
+// ─── Security types ───
+
+export type FridayHealthState = "healthy" | "degraded" | "critical";
+export type FridayTrustBand = "low" | "medium" | "high";
+
+export interface FridaySecurityFinding {
+  id: string;
+  severity: "low" | "medium" | "high";
+  type: "token_scope_risk" | "revocation_gap" | "offline_high_privilege" | "trust_mismatch";
+  message: string;
+  satelliteId?: string;
+  tokenId?: string;
+  detectedAt: string;
+}
+
+export interface FridaySecurityCenterResponse {
+  generatedAt: string;
+  tokens: {
+    active: number;
+    expired: number;
+    revoked24h: number;
+    highPrivilegeActive: number;
+  };
+  satellites: {
+    restricted: number;
+    trusted: number;
+    revoked: number;
+    pendingPairings: number;
+  };
+  findings: FridaySecurityFinding[];
+}
+
+export interface FridayRevokeTokenResponse {
+  revoked: boolean;
+  tokenId: string;
+}
+
+export interface FridayRevokeSatelliteResponse {
+  revoked: true;
+  satelliteId: string;
+}
+
+// ─── Fleet types ───
+
+export interface FridayFleetOverviewResponse {
+  generatedAt: string;
+  totals: {
+    satellites: number;
+    pending: number;
+    paired: number;
+    online: number;
+    degraded: number;
+    offline: number;
+    revoked: number;
+  };
+  queue: {
+    queued: number;
+    leased: number;
+    failed: number;
+    deadLetter: number;
+  };
+  workflows: {
+    activeRuns: number;
+    completed1h: number;
+    failed1h: number;
+  };
+  health: {
+    score: number;
+    state: FridayHealthState;
+    reasons: string[];
+  };
+  trust: {
+    averageScore: number;
+    lowTrustCount: number;
+    restrictedCount: number;
+    revokedCount: number;
+  };
+}
+
+export interface FridayFleetSatelliteCard {
+  satelliteId: string;
+  type: string;
+  displayName: string;
+  pairingStatus: string;
+  trustLevel: string;
+  trustScore: number;
+  trustBand: FridayTrustBand;
+  healthScore: number;
+  healthState: FridayHealthState;
+  lastSeenAt?: string;
+  heartbeatAgeMs?: number;
+  cpuPercent?: number;
+  memoryPercent?: number;
+  loadAvg1m?: number;
+  queueDepth?: number;
+  activeRuns?: number;
+  tags: string[];
+  alerts: string[];
+}
+
+export type FridayFleetRemediationRiskClass =
+  | "safe_probe"
+  | "bounded_repair"
+  | "destructive_or_sensitive";
+
+export type FridayFleetRemediationActionStatus =
+  | "ready"
+  | "blocked"
+  | "completed"
+  | "skipped";
+
+export interface FridayFleetRemediationActionExecutionResult {
+  satelliteId: string;
+  actionId: string;
+  status: Exclude<FridayFleetRemediationActionStatus, "ready">;
+  summary: string;
+  affectedCount: number;
+  requiresApproval: boolean;
+  riskClass: FridayFleetRemediationRiskClass;
+}
+
+export interface FridayFleetRemediationAction {
+  actionId: string;
+  title: string;
+  summary: string;
+  reason: string;
+  status: FridayFleetRemediationActionStatus;
+  riskClass: FridayFleetRemediationRiskClass;
+  requiresApproval: boolean;
+}
+
+export interface FridayFleetRemediationPlan {
+  generatedAt: string;
+  satelliteId: string;
+  status: "stable" | "attention_required" | "blocked";
+  summary: string;
+  reasons: string[];
+  actions: FridayFleetRemediationAction[];
+}
+
+export interface FridayFleetSatelliteRuntimeRecovery {
+  state: "stable" | "retrying" | "degraded" | "halted";
+  continuationMode: "already_dispatched_only";
+  offlinePlanningMode: "deferred";
+  summary: string;
+  reasons: string[];
+  queueRecoveryState: "stable" | "retrying" | "blocked";
+  syncRecoveryState: "stable" | "recovering" | "blocked";
+  requiresOperatorIntervention: boolean;
+  autoRetryActive: boolean;
+  nextOperatorAction:
+    | "monitor_only"
+    | "restore_heartbeat"
+    | "re_authorize_satellite"
+    | "requeue_expired_leases"
+    | "expire_stale_messages"
+    | "resume_blocked_work";
+}
+
+export interface FridayFleetSatelliteDetailResponse {
+  satellite: FridayFleetSatelliteCard;
+  capabilities: Array<{
+    key: string;
+    available: boolean;
+    limits?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+  }>;
+  queue: {
+    queued: number;
+    leased: number;
+    failed: number;
+    deadLetter: number;
+  };
+  workflowLoad: {
+    queuedNodes: number;
+    runningNodes: number;
+    retryingNodes: number;
+    blockedOfflineNodes: number;
+  };
+  runtimeRecovery: FridayFleetSatelliteRuntimeRecovery;
+  trustBreakdown: {
+    identityScore: number;
+    statusScore: number;
+    hygieneScore: number;
+    incidentPenalty: number;
+    finalScore: number;
+    band: FridayTrustBand;
+    reasons: string[];
+  };
+  healthBreakdown: {
+    heartbeatScore: number;
+    resourceScore: number;
+    queueScore: number;
+    reliabilityScore: number;
+    finalScore: number;
+    state: FridayHealthState;
+  };
+  remediation: FridayFleetRemediationPlan;
+}
+
+export interface FridayPendingSatellitePairingRequest {
+  requestId: string;
+  satelliteId: string;
+  displayName: string;
+  type: string;
+  pairingCode: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface FridayApproveSatellitePairingResponse {
+  token: string;
+  tokenId: string;
+  expiresAt: string;
+  configRevision: number;
+  tokenVersion: number;
+}
+
+export interface FridayRejectSatellitePairingResponse {
+  ok: true;
+  rejectedAt: string;
+}
+
+// ─── Health types ───
+
+export interface FridayHealthResponse {
+  status: string;
+  version: string;
+  uptime: number;
+  capabilities?: {
+    schemaVersion: string;
+    auth?: {
+      allowPasswordlessLocalLogin?: boolean;
+      allowLocalBypassLogin?: boolean;
+    };
+    plugins?: {
+      runtimeMode?: "stub" | "full";
+      marketplaceAvailable?: boolean;
+    };
+    marketplace?: {
+      commerceEnabled?: boolean;
+      skillSourceEnabled?: boolean;
+      pluginMarketplaceEnabled?: boolean;
+    };
+    channels?: {
+      supportedKinds?: string[];
+      enabledKinds?: string[];
+    };
+    system?: {
+      enabled?: boolean;
+      remoteMode?: "trusted_private_network" | "disabled" | "unavailable";
+    };
+  };
+}

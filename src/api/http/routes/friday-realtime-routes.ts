@@ -1,0 +1,164 @@
+import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import type {
+  FridayRealtimeAckRequest,
+  FridayRealtimeAckResponse,
+  FridayRealtimePullRequest,
+  FridayRealtimePullResponse,
+  FridayRealtimeSubscribeRequest,
+  FridayRealtimeSubscribeResponse,
+} from "../../model/friday-api-realtime.types.js";
+import type { FridayRealtimeSubscriptionService } from "../../realtime/friday-realtime-subscription-service.js";
+import { FridayDomainError } from "#errors";
+
+/** Maximum value for realtime pull limit. */
+const REALTIME_MAX_PULL_LIMIT = 200;
+
+export interface FridayRealtimeRoutesDeps {
+  subscriptionService: FridayRealtimeSubscriptionService;
+  currentEpoch: number;
+}
+
+export function createFridayRealtimeRoutes(
+  deps: FridayRealtimeRoutesDeps,
+): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  return [
+    {
+      operationId: "realtime.subscribe",
+      method: "POST",
+      path: "/v1/realtime/subscriptions",
+      auth: { public: false, anyOfScopes: ["workflow.read", "fleet.read", "satellite.read", "security.read", "diagnosis.read", "session.read"] },
+      rateLimitPolicyId: "realtime.subscribe",
+      async handler(ctx) {
+        const body = ctx.body as Record<string, unknown> | null;
+        if (!body || !Array.isArray(body.subscriptions)) {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "subscriptions is required and must be an array",
+            { httpStatus: 400 },
+          );
+        }
+        const { subscriptions } = body as unknown as FridayRealtimeSubscribeRequest;
+        const result = deps.subscriptionService.validateSubscriptions(
+          subscriptions,
+          ctx.principal!,
+        );
+        return {
+          subscriptions: result.accepted,
+          epoch: deps.currentEpoch,
+        } satisfies FridayRealtimeSubscribeResponse;
+      },
+    },
+    {
+      operationId: "realtime.pull",
+      method: "POST",
+      path: "/v1/realtime/pull",
+      auth: { public: false, anyOfScopes: ["workflow.read", "fleet.read", "satellite.read", "security.read", "diagnosis.read", "session.read"] },
+      rateLimitPolicyId: "realtime.pull",
+      async handler(ctx) {
+        const pullBody = ctx.body as Record<string, unknown> | null;
+        if (!pullBody || typeof pullBody.streamId !== "string" || pullBody.streamId.trim() === "") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "streamId is required and must be a non-empty string",
+            { httpStatus: 400 },
+          );
+        }
+        const { streamId, afterSeq, limit, cursor } = pullBody as unknown as FridayRealtimePullRequest;
+
+        // Verify stream authorization per principal
+        if (!deps.subscriptionService.isStreamAuthorized(ctx.principal!, streamId)) {
+          throw Object.assign(new Error(`Not authorized for stream '${streamId}'`), {
+            code: "STREAM_NOT_AUTHORIZED",
+            statusCode: 403,
+          });
+        }
+
+        // Verify cursor HMAC if provided
+        if (cursor && !deps.subscriptionService.verifyCursor(cursor, streamId, afterSeq ?? 0, deps.currentEpoch)) {
+          throw Object.assign(new Error("Invalid cursor"), {
+            code: "CURSOR_INVALID",
+            statusCode: 400,
+          });
+        }
+
+        const clampedLimit = Math.min(limit ?? 50, REALTIME_MAX_PULL_LIMIT);
+        const events = deps.subscriptionService.pullEvents(
+          streamId,
+          afterSeq ?? 0,
+          clampedLimit,
+        );
+        return {
+          items: events,
+          streamId,
+          epoch: deps.currentEpoch,
+        } satisfies FridayRealtimePullResponse;
+      },
+    },
+    {
+      operationId: "realtime.ack",
+      method: "POST",
+      path: "/v1/realtime/ack",
+      auth: { public: false, anyOfScopes: ["workflow.read", "fleet.read", "satellite.read", "security.read", "diagnosis.read", "session.read"] },
+      async handler(ctx) {
+        const ackBody = ctx.body as Record<string, unknown> | null;
+        if (!ackBody || typeof ackBody.streamId !== "string" || ackBody.streamId.trim() === "") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "streamId is required and must be a non-empty string",
+            { httpStatus: 400 },
+          );
+        }
+        if (typeof ackBody.seq !== "number") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "seq is required and must be a number",
+            { httpStatus: 400 },
+          );
+        }
+        if (typeof ackBody.epoch !== "number") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "epoch is required and must be a number",
+            { httpStatus: 400 },
+          );
+        }
+        const { streamId, seq, epoch, cursor } = ackBody as unknown as FridayRealtimeAckRequest;
+
+        // Verify stream authorization per principal
+        if (!deps.subscriptionService.isStreamAuthorized(ctx.principal!, streamId)) {
+          throw Object.assign(new Error(`Not authorized for stream '${streamId}'`), {
+            code: "STREAM_NOT_AUTHORIZED",
+            statusCode: 403,
+          });
+        }
+
+        // Verify cursor HMAC if provided
+        if (cursor && !deps.subscriptionService.verifyCursor(cursor, streamId, seq, epoch)) {
+          throw Object.assign(new Error("Invalid cursor"), {
+            code: "CURSOR_INVALID",
+            statusCode: 400,
+          });
+        }
+
+        const ackResult = deps.subscriptionService.ackEvent(
+          ctx.principal!.principalId,
+          streamId,
+          seq,
+          epoch,
+          cursor,
+        );
+        if (!ackResult.accepted) {
+          throw Object.assign(new Error("ACK_REJECTED"), {
+            code: "ACK_REJECTED",
+            statusCode: 409,
+          });
+        }
+        return {
+          accepted: true as const,
+          streamId,
+          seq,
+        } satisfies FridayRealtimeAckResponse;
+      },
+    },
+  ];
+}

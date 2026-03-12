@@ -1,0 +1,22 @@
+export const systemKeys = {
+  all: ["system"] as const,
+  session: () => [...systemKeys.all, "session"] as const,
+  state: () => [...systemKeys.all, "state"] as const,
+  approvals: () => [...systemKeys.all, "approvals"] as const,
+  events: () => [...systemKeys.all, "events"] as const,
+  remoteDevices: () => [...systemKeys.all, "remote-devices"] as const,
+  remoteSessions: () => [...systemKeys.all, "remote-sessions"] as const,
+  diagnosisIncidents: () => [...systemKeys.all, "diagnosis-incidents"] as const,
+  autoFixActions: () => [...systemKeys.all, "auto-fix-actions"] as const,
+  autoFixMetrics: () => [...systemKeys.all, "auto-fix-metrics"] as const,
+  agentLoopPolicy: () => [...systemKeys.all, "agent-loop-policy"] as const,
+  agentLoopExpertMode: () => [...systemKeys.all, "agent-loop-expert-mode"] as const,
+  agentLoopRuns: () => [...systemKeys.all, "agent-loop-runs"] as const,
+  assistantTemplates: () => [...systemKeys.all, "assistant-templates"] as const,
+  assistantIssues: () => [...systemKeys.all, "assistant-issues"] as const,
+  communicationPersona: () => [...systemKeys.all, "communication-persona"] as const,
+  communicationPreferences: () => [...systemKeys.all, "communication-preferences"] as const,
+  workflowOverview: (workflowId: string) => [...systemKeys.all, "workflow-overview", workflowId] as const,
+  workflowVisualization: (workflowId: string, targetKey: string) =>
+    [...systemKeys.all, "workflow-visualization", workflowId, targetKey] as const,
+};
