@@ -1,15 +1,15 @@
 {
   "status": "passed",
-  "gitHead": "5897516",
-  "generatedAt": "2026-03-11T17:55:35.430Z",
+  "gitHead": "2464075",
+  "generatedAt": "2026-03-12T02:46:14.839Z",
   "title": "Canonical Truth Unification",
   "notes": [
     "Phase closeout completed successfully for phase1."
   ],
   "metrics": {
     "stepCount": "4",
-    "startedAt": "2026-03-11T17:55:27.466Z",
-    "completedAt": "2026-03-11T17:55:35.430Z"
+    "startedAt": "2026-03-12T02:46:07.239Z",
+    "completedAt": "2026-03-12T02:46:14.839Z"
   },
   "steps": [
     {
@@ -18,8 +18,8 @@
       "status": "passed",
       "exitCode": 0,
       "signal": null,
-      "startedAt": "2026-03-11T17:55:27.467Z",
-      "finishedAt": "2026-03-11T17:55:29.789Z"
+      "startedAt": "2026-03-12T02:46:07.240Z",
+      "finishedAt": "2026-03-12T02:46:09.508Z"
     },
     {
       "label": "Type contracts",
@@ -27,8 +27,8 @@
       "status": "passed",
       "exitCode": 0,
       "signal": null,
-      "startedAt": "2026-03-11T17:55:29.789Z",
-      "finishedAt": "2026-03-11T17:55:30.974Z"
+      "startedAt": "2026-03-12T02:46:09.509Z",
+      "finishedAt": "2026-03-12T02:46:10.696Z"
     },
     {
       "label": "Canonical API compatibility pack",
@@ -36,8 +36,8 @@
       "status": "passed",
       "exitCode": 0,
       "signal": null,
-      "startedAt": "2026-03-11T17:55:30.974Z",
-      "finishedAt": "2026-03-11T17:55:35.331Z"
+      "startedAt": "2026-03-12T02:46:10.697Z",
+      "finishedAt": "2026-03-12T02:46:14.742Z"
     },
     {
       "label": "Truth audit",
@@ -45,8 +45,8 @@
       "status": "passed",
       "exitCode": 0,
       "signal": null,
-      "startedAt": "2026-03-11T17:55:35.331Z",
-      "finishedAt": "2026-03-11T17:55:35.430Z"
+      "startedAt": "2026-03-12T02:46:14.742Z",
+      "finishedAt": "2026-03-12T02:46:14.839Z"
     }
   ]
 }
