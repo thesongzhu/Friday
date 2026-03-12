@@ -5,6 +5,7 @@ import { createFridayWorkflowCompiler } from "../../compiler/friday-workflow-com
 import { createFridayWorkflowValidator } from "../../compiler/friday-workflow-validator.js";
 import type { FridayWorkflowSpecTestCase, FridayWorkflowSpecV1 } from "../../model/friday-workflow-spec.types.js";
 import type { FridayWorkflowVisualGraphV1 } from "../../builder/model/friday-workflow-builder-canvas.types.js";
+import { createFridayWorkflowBuilderSpecVersionRepository } from "../../builder/persistence/friday-workflow-builder-spec-version-repository.js";
 
 import type {
   CreateFridayWorkflowGeneratorServiceDeps,
@@ -297,6 +298,7 @@ export function createFridayWorkflowGeneratorService(
     createFridayProviderInferenceClient({
       providerService: deps.providerService,
     });
+  const specVersionRepo = createFridayWorkflowBuilderSpecVersionRepository();
 
   const compiler = createFridayWorkflowCompiler({
     computeChecksum: deps.computeChecksum,
@@ -992,6 +994,16 @@ export function createFridayWorkflowGeneratorService(
         draft.compiledGraph,
       );
 
+      deps.db.withWriteTransaction((db) => {
+        specVersionRepo.create(db, {
+          workflowId: workflow.id,
+          workflowVersionId: version.id,
+          spec: draft.spec,
+          checksum: draft.compiledGraph.checksum,
+          createdAt: deps.nowIso(),
+        });
+      });
+
       // Publish version
       const publishedVersion = deps.workflowCrud.publishVersion(
         workflow.id,
@@ -1002,6 +1014,8 @@ export function createFridayWorkflowGeneratorService(
       const approvedSession: FridayWorkflowGenerationSession = {
         ...session,
         status: "approved",
+        workflowId: workflow.id,
+        workflowVersionId: publishedVersion.id,
         updatedAt: deps.nowIso(),
       };
       repo.updateSession(approvedSession);

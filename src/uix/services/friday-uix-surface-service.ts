@@ -649,19 +649,23 @@ export function createFridayUixSurfaceService(
       return;
     }
     const message = input.error instanceof Error ? input.error.message : String(input.error);
-    deps.selfHealing.reportStructuredFailure({
-      userId: input.userId,
-      runId: `assistant:${input.scope}:${deps.idGenerator()}`,
-      category: "workflow",
-      severity: "high",
-      message,
-      correlationId: input.correlationId,
-      context: {
-        source: "assistant",
-        scope: input.scope,
-        detail: input.detail,
-      },
-    });
+    try {
+      deps.selfHealing.reportStructuredFailure({
+        userId: input.userId,
+        runId: `assistant:${input.scope}:${deps.idGenerator()}`,
+        category: "workflow",
+        severity: "high",
+        message,
+        correlationId: input.correlationId,
+        context: {
+          source: "assistant",
+          scope: input.scope,
+          detail: input.detail,
+        },
+      });
+    } catch (reportError) {
+      console.warn("[friday] assistant failure reporting failed", reportError);
+    }
   }
 
   return {

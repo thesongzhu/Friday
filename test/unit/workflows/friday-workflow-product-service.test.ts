@@ -55,6 +55,29 @@ function makeDeps() {
     workflowId: "wf-1",
     versionNumber: 1,
     checksum: "checksum-1",
+    graphJson: {
+      schemaVersion: "2.0",
+      workflowId: "wf-1",
+      workflowVersionId: "version-1",
+      sourceSpecSchemaVersion: "1.0",
+      graph: {
+        nodes: [
+          {
+            id: "step-1",
+            type: "action",
+            label: "step-1",
+            config: {},
+          },
+        ],
+        edges: [],
+      },
+      failurePolicy: {
+        onFailure: "fail_fast",
+        notifyUser: true,
+      },
+      tests: [],
+      checksum: "compiled-checksum-1",
+    },
     createdByUserId: "user-1",
     isPublished: true,
     changeNote: "Initial publish",
@@ -157,13 +180,24 @@ function makeDeps() {
     })),
   };
 
+  const workflowGenerator = {
+    getSession: vi.fn(async () => null),
+  };
+
   return {
     service: createFridayWorkflowProductService({
       builderRuntime,
       workflowRuntime,
+      workflowGenerator: workflowGenerator as never,
       observability: observability as never,
       selfHealing: selfHealing as never,
-      db: { withReadConnection: (fn) => fn({} as never) },
+      db: {
+        withReadConnection: (fn) => fn({
+          prepare: vi.fn(() => ({
+            get: vi.fn(() => undefined),
+          })),
+        } as never),
+      },
       idGenerator: () => "id-1",
       nowIso: () => NOW,
     }),
@@ -171,6 +205,7 @@ function makeDeps() {
     workflowRuntime,
     observability,
     selfHealing,
+    workflowGenerator,
   };
 }
 
@@ -231,5 +266,71 @@ describe("createFridayWorkflowProductService", () => {
     expect(visualization.workflow.id).toBe("wf-1");
     expect(visualization.draft?.draftId).toBe("draft-1");
     expect(visualization.nodeTimeline[0]?.nodeId).toBe("step-1");
+  });
+
+  it("restores a deployable draft from a saved workflow generator session", async () => {
+    const { service, builderRuntime, workflowGenerator } = makeDeps();
+    vi.mocked(workflowGenerator.getSession).mockResolvedValueOnce({
+      session: {
+        sessionId: "session-1",
+        userId: "user-1",
+        channel: "assistant",
+        status: "saved",
+        goal: "Deploy release flow",
+        requirementsSummary: "{}",
+        openQuestions: [],
+        decisions: [],
+        workflowId: "wf-1",
+        workflowVersionId: "version-1",
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+      turns: [],
+    });
+    vi.mocked(builderRuntime.drafts.createDraft).mockReturnValueOnce({
+      draftId: "draft-restored",
+      workflowId: "wf-1",
+      title: "Release Flow Draft",
+      status: "active",
+      revision: 1,
+      spec: {
+        schemaVersion: "1.0",
+        workflowId: "wf-1",
+        name: "Release Flow",
+        description: "Deploy the release workflow",
+        trigger: { type: "manual" },
+        inputs: [],
+        startStepId: "step-1",
+        steps: [{ id: "step-1", type: "tool_call" }],
+        edges: [],
+        outputs: [],
+        tests: [],
+      },
+      visual: {
+        schemaVersion: "1.0",
+        workflowId: "wf-1",
+        viewport: { x: 0, y: 0, zoom: 1 },
+        panelLayout: { leftOpen: true, rightOpen: true, bottomOpen: false },
+        nodes: [{ nodeId: "step-1", x: 100, y: 120 }],
+        edges: [],
+      },
+      createdAt: NOW,
+      updatedAt: NOW,
+      autosave: { enabled: true, intervalMs: 30000 },
+    } as never);
+
+    const result = await service.materializeGeneratedSession({
+      sessionId: "session-1",
+      actorUserId: "user-1",
+    });
+
+    expect(builderRuntime.drafts.createDraft).toHaveBeenCalledWith(expect.objectContaining({
+      workflowId: "wf-1",
+      ownerUserId: "user-1",
+    }));
+    expect(result.workflowId).toBe("wf-1");
+    expect(result.draftId).toBe("draft-restored");
+    expect(result.deployReady).toBe(true);
+    expect(result.summary).toContain("restored");
   });
 });

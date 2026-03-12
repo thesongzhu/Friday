@@ -349,6 +349,28 @@ export function createFridayWorkflowProductService(
     };
   }
 
+  function createDraftFromVisualization(input: {
+    workflowId: UUID;
+    actorUserId: string;
+    title: string;
+    spec: FridayWorkflowSpecV1;
+    visual: FridayWorkflowVisualGraphV1;
+  }) {
+    return deps.builderRuntime.drafts.createDraft({
+      workflowId: input.workflowId,
+      title: input.title,
+      spec: {
+        ...input.spec,
+        workflowId: input.workflowId,
+      },
+      visual: {
+        ...input.visual,
+        workflowId: input.workflowId,
+      },
+      ownerUserId: input.actorUserId,
+    });
+  }
+
   return {
     async materializeGeneratedSession(input) {
       if (!deps.workflowGenerator) {
@@ -359,12 +381,49 @@ export function createFridayWorkflowProductService(
         );
       }
       const sessionState = await deps.workflowGenerator.getSession(input.sessionId);
-      if (!sessionState || !sessionState.draft) {
+      if (!sessionState) {
         throw new FridayDomainError(
           "WORKFLOW_GENERATOR_DRAFT_NOT_FOUND",
           "Generate a workflow draft before preparing deploy actions",
           { httpStatus: 404 },
         );
+      }
+
+      if (!sessionState.draft) {
+        const workflowId = sessionState.session.workflowId as UUID | undefined;
+        const workflowVersionId = sessionState.session.workflowVersionId as UUID | undefined;
+        if (!workflowId || !workflowVersionId) {
+          throw new FridayDomainError(
+            "WORKFLOW_GENERATOR_DRAFT_NOT_FOUND",
+            "Generate a workflow draft before preparing deploy actions",
+            { httpStatus: 404 },
+          );
+        }
+
+        const workflow = getWorkflowOrThrow(workflowId);
+        const versionTarget = buildVisualizationTarget({
+          workflowId,
+          versionId: workflowVersionId,
+        });
+        const restoredDraft = createDraftFromVisualization({
+          workflowId,
+          actorUserId: input.actorUserId,
+          title: `${workflow.name} Draft`,
+          spec: versionTarget.spec,
+          visual: versionTarget.visual,
+        });
+
+        return {
+          kind: "draft_ready",
+          workflowId,
+          workflowName: workflow.name,
+          draftId: restoredDraft.draftId,
+          sessionId: input.sessionId,
+          summary: "Friday restored the saved workflow session into a deployable draft.",
+          routeTarget: "/workflows",
+          deployReady: true,
+          questions: sessionState.session.openQuestions,
+        };
       }
 
       const generated = sessionState.draft;
@@ -373,20 +432,12 @@ export function createFridayWorkflowProductService(
         name: generated.spec.name,
         description: generated.spec.description,
       });
-      const spec: FridayWorkflowSpecV1 = {
-        ...generated.spec,
+      const draft = createDraftFromVisualization({
         workflowId: workflow.id,
-      };
-      const visual: FridayWorkflowVisualGraphV1 = {
-        ...generated.visual,
-        workflowId: workflow.id,
-      };
-      const draft = deps.builderRuntime.drafts.createDraft({
-        workflowId: workflow.id,
+        actorUserId: input.actorUserId,
         title: `${generated.spec.name} Draft`,
-        spec,
-        visual,
-        ownerUserId: input.actorUserId,
+        spec: generated.spec,
+        visual: generated.visual,
       });
 
       return {

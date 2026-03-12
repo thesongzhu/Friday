@@ -508,6 +508,29 @@ describe("FridayWorkflowGeneratorService", () => {
       expect(deps.workflowCrud.publishVersion).toHaveBeenCalled();
     });
 
+    it("persists approved workflow identity on the saved session", async () => {
+      mockFetchForLlm([
+        makeRequirementsResponse("ready_for_generation"),
+        makeSpecResponse(),
+        makeVisualResponse(),
+        makeTestsResponse(),
+      ]);
+
+      const startResult = await service.startSession({
+        goal: "Send emails",
+        userId: "u-1",
+        channel: "test",
+      });
+
+      await service.approveAndSave(startResult.session.sessionId);
+
+      const sessionData = await service.getSession(startResult.session.sessionId);
+      expect(sessionData?.session.status).toBe("saved");
+      expect(sessionData?.session.workflowId).toBe("wf-1");
+      expect(sessionData?.session.workflowVersionId).toBe("wv-1");
+      expect(sessionData?.draft).toBeUndefined();
+    });
+
     it("rejects when not in ready_for_review status", async () => {
       mockFetchForLlm([makeRequirementsResponse("needs_clarification")]);
       const startResult = await service.startSession({

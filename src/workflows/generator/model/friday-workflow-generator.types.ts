@@ -34,6 +34,8 @@ export interface FridayWorkflowGenerationSession {
   openQuestions: string[];
   decisions: string[];
   draftWorkflowId?: string;
+  workflowId?: string;
+  workflowVersionId?: string;
   createdAt: string;
   updatedAt: string;
 }

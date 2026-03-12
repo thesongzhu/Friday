@@ -125,4 +125,83 @@ describe("createFridayUixSurfaceService", () => {
 
     expect(reportStructuredFailure).not.toHaveBeenCalled();
   });
+
+  it("wraps unexpected deploy failures as UIX_DEPLOY_FAILED with 422", async () => {
+    const reportStructuredFailure = vi.fn();
+    const service = createFridayUixSurfaceService({
+      idGenerator: () => "assistant-error-3",
+      selfHealing: {
+        reportStructuredFailure,
+        listIssueCards: vi.fn(() => []),
+      } as never,
+      workflowProduct: {
+        materializeGeneratedSession: vi.fn(async () => {
+          throw new Error("workflow session exploded");
+        }),
+      } as never,
+    });
+
+    await expect(
+      service.executeTemplate({
+        templateId: "deploy-workflow",
+        userId: "user-1",
+        parameters: { sessionId: "workflow-session-1", runNow: true },
+      }),
+    ).rejects.toMatchObject({
+      code: "UIX_DEPLOY_FAILED",
+      httpStatus: 422,
+      message: "workflow session exploded",
+    } satisfies Partial<FridayDomainError>);
+
+    expect(reportStructuredFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationId: "assistant-template:deploy-workflow",
+        message: "workflow session exploded",
+      }),
+    );
+  });
+
+  it("preserves deploy domain errors when failure reporting throws", async () => {
+    const reportStructuredFailure = vi.fn(() => {
+      throw new Error("self-healing pipeline unavailable");
+    });
+    const missingDraftError = new FridayDomainError(
+      "WORKFLOW_GENERATOR_DRAFT_NOT_FOUND",
+      "Generate a workflow draft before preparing deploy actions",
+      { httpStatus: 404 },
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const service = createFridayUixSurfaceService({
+      idGenerator: () => "assistant-error-4",
+      selfHealing: {
+        reportStructuredFailure,
+        listIssueCards: vi.fn(() => []),
+      } as never,
+      workflowProduct: {
+        materializeGeneratedSession: vi.fn(async () => {
+          throw missingDraftError;
+        }),
+      } as never,
+    });
+
+    await expect(
+      service.executeTemplate({
+        templateId: "deploy-workflow",
+        userId: "user-1",
+        parameters: { sessionId: "missing-session-id", runNow: true },
+      }),
+    ).rejects.toBe(missingDraftError);
+
+    expect(reportStructuredFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationId: "assistant-template:deploy-workflow",
+        message: "Generate a workflow draft before preparing deploy actions",
+      }),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[friday] assistant failure reporting failed",
+      expect.any(Error),
+    );
+    warnSpy.mockRestore();
+  });
 });
