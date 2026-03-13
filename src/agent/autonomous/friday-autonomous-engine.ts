@@ -605,7 +605,7 @@ export function createFridayAutonomousEngine(
         let stepCompleted = false;
         let stepRetries = 0;
 
-        while (!stepCompleted && stepRetries <= currentStep.maxRetries) {
+        while (!stepCompleted && stepRetries < currentStep.maxRetries) {
           if (signal.aborted) break;
 
           // Check iteration budget

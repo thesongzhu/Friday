@@ -84,7 +84,9 @@ export function createFridayJobSchedulerService(
       nextWakeAt = undefined;
       const p = runLoop();
       inFlightRunLoopPromise = p;
-      p.catch(() => {}).finally(() => {
+      p.catch((err) => {
+        console.error("[friday] Job scheduler run loop failed:", err instanceof Error ? err.message : String(err));
+      }).finally(() => {
         if (inFlightRunLoopPromise === p) inFlightRunLoopPromise = null;
       });
     }, clamped);
@@ -395,7 +397,9 @@ export function createFridayJobSchedulerService(
       // Start the run loop
       const p = runLoop();
       inFlightRunLoopPromise = p;
-      p.catch(() => {}).finally(() => {
+      p.catch((err) => {
+        console.error("[friday] Job scheduler run loop failed:", err instanceof Error ? err.message : String(err));
+      }).finally(() => {
         if (inFlightRunLoopPromise === p) inFlightRunLoopPromise = null;
       });
       await p;
@@ -408,7 +412,9 @@ export function createFridayJobSchedulerService(
 
       // Await in-flight run loop if any
       if (inFlightRunLoopPromise) {
-        await inFlightRunLoopPromise.catch(() => {});
+        await inFlightRunLoopPromise.catch((err) => {
+          console.error("[friday] Job scheduler run loop failed during stop:", err instanceof Error ? err.message : String(err));
+        });
         inFlightRunLoopPromise = null;
       }
     },

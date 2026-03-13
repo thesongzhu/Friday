@@ -379,6 +379,15 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
         clearInterval(healthMonitorTimer);
       }
 
+      // Log channels without status adapters — their health cannot be auto-monitored.
+      for (const [kind, entry] of entries) {
+        if (entry.running && !entry.plugin.adapters?.status) {
+          console.warn(
+            `[friday] Channel "${kind}" has no status adapter — health monitoring will rely on running flag only`,
+          );
+        }
+      }
+
       healthMonitorTimer = setInterval(() => {
         for (const [kind, entry] of entries) {
           if (restarting.has(kind)) continue;

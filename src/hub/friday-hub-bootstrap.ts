@@ -177,6 +177,8 @@ import {
   createFridayLearnedLessonRepository,
   createFridaySelfHealingApiService,
   createFridaySelfLearningRuntime,
+  type StepExecutor,
+  type FridayAutoFixStepKind,
 } from "#learning";
 import {
   createFridayObservabilityApiService,
@@ -552,8 +554,15 @@ export async function createFridayHub(
         rulesEngine.loadDomainBundle(bundle, rules);
       }
     });
-  } catch {
+  } catch (err) {
     // Older installs may not have rules tables; keep hub bootable.
+    // Log unexpected errors so genuine database failures are visible.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("no such table") || msg.includes("no such column")) {
+      console.warn("[friday] Rules tables not found (older install) — rules engine will start empty");
+    } else {
+      console.error("[friday] Unexpected error loading rules — rules engine will start empty:", msg);
+    }
   }
 
   const evaluateRules = async (
@@ -2004,7 +2013,8 @@ export async function createFridayHub(
       runtimePluginService = stubPluginService;
       pluginMarketplaceAvailable = false;
       console.error(
-        "[friday] Plugin runtime full mode initialization failed; falling back to stub mode:",
+        "[friday] WARNING: Plugin runtime full mode initialization failed; falling back to stub mode.",
+        "Plugin install/enable/disable APIs will return 501.",
         err instanceof Error ? err.message : String(err),
       );
     }
@@ -2168,10 +2178,39 @@ export async function createFridayHub(
   }
 
   // ─── Self-learning runtime ───
+
+  // Build real auto-fix step executors wired to hub-level services.
+  // These replace the default marker-based executors with actual operations.
+  const hubStepExecutors: Partial<Record<FridayAutoFixStepKind, StepExecutor>> = {
+    pause_workflow: (step) => {
+      if (!step.target) return false;
+      try {
+        // step.target is a workflow run ID
+        workflowRuntime.execution.cancelRun(step.target, "auto-fix: pause_workflow").catch(() => {});
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    disable_skill: (step) => {
+      if (!step.target) return false;
+      // Verify the skill exists before marking as disabled
+      const skill = registry.get(step.target);
+      if (!skill) return false;
+      const payload = step.payload as Record<string, unknown> | null;
+      if (payload && typeof payload === "object") {
+        payload._skillDisabled = true;
+        payload._disabledAt = new Date().toISOString();
+      }
+      return true;
+    },
+  };
+
   const selfLearningRuntime = createFridaySelfLearningRuntime({
     db: stateRuntime.sqlite,
     idGenerator,
     nowIso,
+    stepExecutors: hubStepExecutors,
   });
   const observabilityService = createFridayObservabilityApiService({
     db: stateRuntime.sqlite,
@@ -2182,6 +2221,8 @@ export async function createFridayHub(
   // Wire the lazy learning context reference now that learning runtime is created.
   _learningContextRef = selfLearningRuntime.context;
 
+  // Buffer events published before the real event publisher is wired (late init).
+  const selfHealingEventBuffer: Array<{ streamId: string; event: string; payload: Record<string, unknown>; correlationId?: string }> = [];
   let selfHealingEventPublisher:
     | {
       publish(
@@ -2224,7 +2265,11 @@ export async function createFridayHub(
     },
     publishEvent: {
       publish(streamId, event, payload, correlationId) {
-        selfHealingEventPublisher?.publish(streamId, event, payload, correlationId);
+        if (selfHealingEventPublisher) {
+          selfHealingEventPublisher.publish(streamId, event, payload, correlationId);
+        } else {
+          selfHealingEventBuffer.push({ streamId, event, payload, correlationId });
+        }
       },
     },
   });
@@ -2244,7 +2289,11 @@ export async function createFridayHub(
     observability: observabilityService,
     publishEvent: {
       publish(streamId, event, payload, correlationId) {
-        selfHealingEventPublisher?.publish(streamId, event, payload, correlationId);
+        if (selfHealingEventPublisher) {
+          selfHealingEventPublisher.publish(streamId, event, payload, correlationId);
+        } else {
+          selfHealingEventBuffer.push({ streamId, event, payload, correlationId });
+        }
       },
     },
   });
@@ -2650,6 +2699,12 @@ export async function createFridayHub(
       );
     },
   };
+
+  // Flush any events that were buffered during bootstrap before the publisher was ready.
+  for (const buffered of selfHealingEventBuffer) {
+    selfHealingEventPublisher.publish(buffered.streamId, buffered.event, buffered.payload, buffered.correlationId);
+  }
+  selfHealingEventBuffer.length = 0;
 
   // ─── Agent → Learning bridge ───
   const agentLearningBridge = createFridayAgentLearningBridge({

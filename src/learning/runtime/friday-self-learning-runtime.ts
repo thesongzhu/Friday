@@ -123,6 +123,8 @@ export function createFridaySelfLearningRuntime(
     diagnosisRepo,
     lessonExtractionService: lessonExtraction,
     nowIso: deps.nowIso,
+    stepExecutors: deps.stepExecutors,
+    stepVerifiers: deps.stepVerifiers,
   });
 
   const autoFixRollback = createFridayAutoFixRollbackService({

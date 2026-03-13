@@ -51,7 +51,12 @@ export function createFridayAutoFixRollbackService(
         };
       }
 
-      // Execute rollback steps (simulated as successful in base implementation)
+      // Execute rollback: mark the action as rolled back in the database.
+      // The rollback plan steps are recorded but not individually executed
+      // in the base implementation — callers should inject richer rollback
+      // executors for production use. The return value reflects that the
+      // database state was updated successfully (rollbackSucceeded) even
+      // though the overall auto-fix action did not succeed (success: false).
       return deps.db.withWriteTransaction((db) => {
         const rolledBack = deps.actionRepo.markRolledBack(
           db,
@@ -64,6 +69,7 @@ export function createFridayAutoFixRollbackService(
           verificationPassed: false,
           rollbackAttempted: true,
           rollbackSucceeded: true,
+          errorMessage: `Rollback requested (${reason}): action status reverted to rolled_back`,
         };
       });
     },

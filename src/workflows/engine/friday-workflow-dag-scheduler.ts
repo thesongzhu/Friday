@@ -187,8 +187,11 @@ export function createFridayWorkflowDagScheduler(): FridayWorkflowDagScheduler {
               if (condResult) {
                 anyEnabledEdge = true;
               }
-            } catch {
-              // Condition evaluation failure — treat as not enabled
+            } catch (err) {
+              // Log condition evaluation failures to aid debugging
+              console.warn(
+                `[friday] Workflow DAG edge condition evaluation failed for edge ${pred}→${nodeId}: ${err instanceof Error ? err.message : String(err)}`,
+              );
             }
           } else {
             // Unconditional edge
@@ -198,6 +201,13 @@ export function createFridayWorkflowDagScheduler(): FridayWorkflowDagScheduler {
 
         if (allSatisfied && anyEnabledEdge) {
           ready.push(nodeId);
+        }
+
+        // When all predecessors are terminal but no edge condition was
+        // satisfied, the node can never become ready.  Mark it as
+        // "cancelled" so the workflow run does not hang indefinitely.
+        if (allSatisfied && !anyEnabledEdge && predecessors.length > 0) {
+          nodeStatuses.set(nodeId, "cancelled");
         }
       }
 
