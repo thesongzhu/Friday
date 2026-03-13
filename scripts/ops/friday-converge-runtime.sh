@@ -121,6 +121,8 @@ DB_PATH="$STATE_DIR/friday.db"
 FRIDAY_JSON="$HOME/.friday/friday.json"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 FRIDAY_LABEL="com.friday.hub"
+FRIDAY_COMPANION_LABEL="com.friday.companion"
+FRIDAY_UI_LABEL="com.friday.ui-open"
 OPENCLAW_LABELS=("ai.openclaw.gateway" "com.clawdbot.gateway")
 UID_VALUE="$(id -u)"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -180,80 +182,9 @@ if [[ "$KEEP_OPENCLAW" != "true" ]]; then
   run_cmd pkill -f "clawdbot.*gateway" >/dev/null 2>&1 || true
 fi
 
-log "Migrating channels from legacy ~/.friday/friday.json into Friday setup_state (if needed)"
+log "Legacy channel migration is now handled by Friday startup against setup_state + managed secrets"
 if [[ "$DRY_RUN" == "true" ]]; then
-  log "DRY-RUN: node migrate channels + sanitize legacy file"
-else
-  DB_PATH="$DB_PATH" FRIDAY_JSON="$FRIDAY_JSON" node --input-type=commonjs <<'NODE'
-const fs = require("node:fs");
-const path = require("node:path");
-const Database = require("better-sqlite3");
-
-const dbPath = process.env.DB_PATH;
-const fridayJsonPath = process.env.FRIDAY_JSON;
-if (!dbPath) throw new Error("DB_PATH missing");
-
-const db = new Database(dbPath);
-try {
-  let legacy = null;
-  if (fridayJsonPath && fs.existsSync(fridayJsonPath)) {
-    try {
-      legacy = JSON.parse(fs.readFileSync(fridayJsonPath, "utf8"));
-    } catch {
-      legacy = null;
-    }
-  }
-
-  const row = db
-    .prepare("SELECT channels_json FROM friday_setup_state WHERE id = 'singleton'")
-    .get();
-
-  const hasSetupChannels = (() => {
-    if (!row || typeof row.channels_json !== "string") return false;
-    try {
-      const parsed = JSON.parse(row.channels_json);
-      return Array.isArray(parsed) && parsed.length > 0;
-    } catch {
-      return false;
-    }
-  })();
-
-  const toSetupArray = (channelsObj) => {
-    if (!channelsObj || typeof channelsObj !== "object" || Array.isArray(channelsObj)) {
-      return [];
-    }
-    const out = [];
-    for (const [kind, raw] of Object.entries(channelsObj)) {
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
-      const copy = { ...raw };
-      const enabled = copy.enabled !== false;
-      delete copy.enabled;
-      out.push({ kind, enabled, config: copy });
-    }
-    return out;
-  };
-
-  const legacyChannels = legacy ? toSetupArray(legacy.channels) : [];
-  if (!hasSetupChannels && legacyChannels.length > 0) {
-    const now = new Date().toISOString();
-    db.prepare(
-      `INSERT INTO friday_setup_state (id, channels_json, created_at, updated_at)
-       VALUES ('singleton', ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET channels_json = excluded.channels_json, updated_at = excluded.updated_at`
-    ).run(JSON.stringify(legacyChannels), now, now);
-  }
-
-  // Keep legacy file for backward compatibility, but remove channel block so runtime
-  // no longer has a second startup source.
-  if (legacy && Object.prototype.hasOwnProperty.call(legacy, "channels")) {
-    delete legacy.channels;
-    fs.mkdirSync(path.dirname(fridayJsonPath), { recursive: true });
-    fs.writeFileSync(fridayJsonPath, `${JSON.stringify(legacy, null, 2)}\n`, "utf8");
-  }
-} finally {
-  db.close();
-}
-NODE
+  log "DRY-RUN: no direct channel mutation; next Friday start will reconcile legacy config"
 fi
 
 log "Setting Friday default routing model in state DB"
@@ -370,14 +301,18 @@ NODE
 fi
 
 log "Restarting Friday runtime"
+run_cmd launchctl enable "gui/$UID_VALUE/$FRIDAY_COMPANION_LABEL" >/dev/null 2>&1 || true
+run_cmd launchctl kickstart -k "gui/$UID_VALUE/$FRIDAY_COMPANION_LABEL"
 run_cmd launchctl enable "gui/$UID_VALUE/$FRIDAY_LABEL" >/dev/null 2>&1 || true
 run_cmd launchctl kickstart -k "gui/$UID_VALUE/$FRIDAY_LABEL"
+run_cmd launchctl enable "gui/$UID_VALUE/$FRIDAY_UI_LABEL" >/dev/null 2>&1 || true
+run_cmd launchctl kickstart -k "gui/$UID_VALUE/$FRIDAY_UI_LABEL" >/dev/null 2>&1 || true
 
 log "Convergence verification"
 if [[ "$DRY_RUN" == "true" ]]; then
-  log "DRY-RUN: launchctl list | grep -E 'com\\.friday\\.hub|openclaw|clawdbot'"
+  log "DRY-RUN: launchctl list | grep -E 'com\\.friday\\.(hub|companion|ui-open)|openclaw|clawdbot'"
 else
-  launchctl list | grep -E "com\\.friday\\.hub|openclaw|clawdbot" || true
+  launchctl list | grep -E "com\\.friday\\.(hub|companion|ui-open)|openclaw|clawdbot" || true
 fi
 if [[ "$DRY_RUN" != "true" ]]; then
   DB_PATH="$DB_PATH" node --input-type=commonjs <<'NODE'

@@ -259,6 +259,8 @@ async function createServiceFixtureWithOptions(options?: {
   remoteAuthAdapter?: FridaySystemRemoteAuthAdapter;
   companionBridge?: FridaySystemCompanionBridge;
   companionState?: CompanionTestState;
+  companionReconnectIntervalMs?: number;
+  warn?: (message: string) => void;
 }) {
   const db = options?.db ?? createTestDb();
   const fixtureId = ++fixtureSequence;
@@ -283,6 +285,8 @@ async function createServiceFixtureWithOptions(options?: {
     execCommand,
     remoteMode: options?.remoteMode,
     remoteAuthAdapter: options?.remoteAuthAdapter ?? createRemoteAuthAdapter(),
+    companionReconnectIntervalMs: options?.companionReconnectIntervalMs,
+    warn: options?.warn,
     remoteAuth: {
       rpName: "Friday Agent OS",
       rpId: "localhost",
@@ -320,6 +324,54 @@ describe("createFridaySystemService", () => {
     expect(events.map((event) => event.event)).toContain("system.session.started");
     expect(events.map((event) => event.event)).toContain("system.health.updated");
     expect(events.map((event) => event.event)).toContain("system.companion.connected");
+  });
+
+  it("starts in degraded mode when the companion socket is unavailable", async () => {
+    const warn = vi.fn();
+    const fixture = await createServiceFixtureWithOptions({
+      companionReconnectIntervalMs: 0,
+      warn,
+      companionBridge: {
+        ...createCompanionBridge(),
+        async connect() {
+          throw new Error("connect ENOENT /tmp/system-companion.sock");
+        },
+        isConnected() {
+          return false;
+        },
+        async getStatus() {
+          return {
+            id: "companion-offline",
+            platform: "darwin" as const,
+            connected: false,
+            transport: {
+              mode: "unix_socket" as const,
+              protocol: "jsonrpc-2.0" as const,
+              authenticated: false,
+              socketPath: `${WORKSPACE_ROOT}/system-companion.sock`,
+            },
+            launchAtLoginEnabled: true,
+            panicHotkey: "cmd+shift+escape",
+            safeMode: false,
+            overlayVisible: false,
+            lastHeartbeatAt: "2026-03-06T12:00:00.000Z",
+            capabilities: createCompanionCapabilities(true),
+            permissions: [],
+          };
+        },
+      },
+    });
+    allocatedDbs.push(fixture.db);
+
+    const session = await fixture.service.getSession();
+    const events = fixture.service.listEvents();
+
+    expect(session.health.status).toBe("unavailable");
+    expect(session.health.reasons).toContain("companion_disconnected");
+    expect(events.map((event) => event.event)).toContain("system.session.started");
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("system companion unavailable at startup"),
+    );
   });
 
   it("propagates native companion safe mode into health and revokes the active lease", async () => {

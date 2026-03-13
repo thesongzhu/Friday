@@ -11,6 +11,7 @@ If startup fails or the companion is unhealthy, use [friday-agent-os-troubleshoo
 2. Auto-restart if either process exits unexpectedly.
 3. Persistent stdout/stderr logs under `~/.friday/launchd/`.
 4. A shared companion auth token file at `.friday/run/system-companion.auth.token`.
+5. A one-shot local UI opener that waits for health and opens the browser UI once per login/boot session.
 
 ## Prerequisites
 
@@ -44,6 +45,8 @@ When the companion launch agent starts, `scripts/ops/friday-companion-run.sh` pr
 
 The Node daemon path is for development fallback only. External beta operators should use the packaged native app or the Swift build artifact.
 
+`scripts/ops/friday-service-run.sh` also enables loopback-only local bypass login for the local UI/app bootstrap path. Raw localhost REST and WS requests still require Bearer tokens; the browser UI simply auto-calls `POST /v1/auth/login { "local": true }` when the runtime advertises it.
+
 ## Status
 
 ```bash
@@ -67,6 +70,7 @@ The shared Unix socket and auth token live inside the repo:
 
 1. `.friday/run/system-companion.sock`
 2. `.friday/run/system-companion.auth.token`
+3. `~/.friday/run/ui-launch-mode.txt`
 
 ## Uninstall
 
@@ -92,3 +96,7 @@ Trusted-device remote sessions require all of the following:
 
 For gateway/webhook channels (Discord/Slack/etc.), Friday must be running to receive events.
 This launchd setup keeps both the hub and the companion running so channel traffic, Agent OS state, and companion-backed system actions stay available after login.
+
+Legacy channel config in `~/.friday/friday.json` is migration input only. On startup, Friday now migrates supported channel secrets into managed secret storage plus `friday_setup_state.channels_json`, then removes the legacy `channels` block so runtime truth no longer depends on plaintext compat mode.
+
+Discord wake semantics are limited to "Friday is already running while the Mac is awake and logged in." This setup does not provide network wake-from-sleep for the whole machine.

@@ -110,6 +110,8 @@ export interface CreateFridaySystemServiceDeps {
   cloudPlanningMode?: FridaySystemCloudPlanningMode;
   defaultLeaseTtlMs?: number;
   companionHeartbeatStaleMs?: number;
+  companionReconnectIntervalMs?: number;
+  warn?: (message: string) => void;
   remoteAuth?: {
     rpName?: string;
     rpId?: string;
@@ -327,7 +329,9 @@ export async function createFridaySystemService(
   const cloudPlanningMode = deps.cloudPlanningMode ?? "opt_in";
   const leaseTtlMs = deps.defaultLeaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
   const companionHeartbeatStaleMs = deps.companionHeartbeatStaleMs ?? DEFAULT_COMPANION_HEARTBEAT_STALE_MS;
+  const companionReconnectIntervalMs = deps.companionReconnectIntervalMs ?? 5_000;
   const remoteAuthAdapter = deps.remoteAuthAdapter ?? createFridaySystemRemoteAuthAdapter();
+  const warn = deps.warn ?? console.warn;
   const remoteAuthRpName = deps.remoteAuth?.rpName ?? "Friday Agent OS";
   const remoteAuthOrigin = deps.remoteAuth?.origin ?? "http://localhost:3141";
   const remoteAuthRpId = deps.remoteAuth?.rpId ?? "localhost";
@@ -360,8 +364,8 @@ export async function createFridaySystemService(
   let lastCompanionHeartbeatStale: boolean | undefined;
   let lastCompanionSafeMode: boolean | undefined;
   let lastPermissionFingerprint = "";
-
-  await deps.companionBridge.connect();
+  let reconnectTimer: NodeJS.Timeout | null = null;
+  let reconnectInFlight: Promise<void> | null = null;
 
   async function emitEvent(
     event: FridaySystemEventName,
@@ -475,6 +479,51 @@ export async function createFridaySystemService(
     });
   }
 
+  function clearCompanionReconnectTimer(): void {
+    if (!reconnectTimer) {
+      return;
+    }
+    clearInterval(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  async function attemptCompanionReconnect(): Promise<void> {
+    if (deps.companionBridge.isConnected()) {
+      clearCompanionReconnectTimer();
+      return;
+    }
+    if (reconnectInFlight) {
+      return reconnectInFlight;
+    }
+    reconnectInFlight = (async () => {
+      try {
+        await deps.companionBridge.connect();
+        clearCompanionReconnectTimer();
+        await emitHealthIfChanged("companion_reconnected");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        warn(`[friday] system companion unavailable; continuing in degraded mode: ${message}`);
+      } finally {
+        reconnectInFlight = null;
+      }
+    })();
+    return reconnectInFlight;
+  }
+
+  function scheduleCompanionReconnect(): void {
+    if (companionReconnectIntervalMs <= 0 || reconnectTimer !== null) {
+      return;
+    }
+    reconnectTimer = setInterval(() => {
+      if (deps.companionBridge.isConnected()) {
+        clearCompanionReconnectTimer();
+        return;
+      }
+      void attemptCompanionReconnect();
+    }, companionReconnectIntervalMs);
+    reconnectTimer.unref?.();
+  }
+
   function normalizeActiveLease(nowIso = deps.nowIso()): FridaySystemControlLease | null {
     if (activeLease && isLeaseExpired(activeLease, nowIso)) {
       deps.db.withWriteTransaction((db) => {
@@ -503,6 +552,10 @@ export async function createFridaySystemService(
     permissions?: FridaySystemPermissionGrant[],
   ): Promise<FridaySystemHealth> {
     const companionStatus = companion ?? await deps.companionBridge.getStatus();
+    if (!companionStatus.connected) {
+      scheduleCompanionReconnect();
+      void attemptCompanionReconnect();
+    }
     const grants = permissions ?? await readPermissions(companionStatus.permissions);
     const desktopConnected = deps.desktopSessionManager?.isConnected() ?? false;
     const reasons: string[] = [];
@@ -878,6 +931,14 @@ export async function createFridaySystemService(
       approvalRuleId,
       controlLeaseId,
     };
+  }
+
+  try {
+    await deps.companionBridge.connect();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    warn(`[friday] system companion unavailable at startup; continuing in degraded mode: ${message}`);
+    scheduleCompanionReconnect();
   }
 
   await emitEvent("system.session.started", {

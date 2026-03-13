@@ -1,6 +1,7 @@
 import * as React from "react";
 import { authStorage } from "@/lib/storage/auth-storage";
 import { fetchBootstrapStatus, fetchMe, login, logout, type LoginInput } from "@/lib/api/auth";
+import { healthApi } from "@/lib/api/health";
 import type { FridayUser } from "@/lib/api/types";
 
 // ─── Context shape ───
@@ -48,7 +49,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
 
       try {
-        // No-signin path: always try local auto-login first.
+        const health = await healthApi.getHealth();
+        if (cancelled) return;
+
+        const authCapabilities = health.capabilities?.auth;
+        const localBootstrapAllowed = authCapabilities?.allowLocalBypassLogin
+          || authCapabilities?.allowPasswordlessLocalLogin;
+        if (!localBootstrapAllowed) {
+          setIsLoading(false);
+          return;
+        }
+
         const response = await login({ local: true });
         if (cancelled) return;
         setUser(response.user);

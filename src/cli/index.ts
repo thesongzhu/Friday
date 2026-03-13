@@ -3,6 +3,7 @@ export {
   finalizeCliCommand,
   isCliEntrypointPath,
   loadProcessEnvFromDotEnvFile,
+  prepareStartupChannelsConfig,
   readSetupNetworkBinding,
   resolveStartupNetworkBinding,
   type ParsedArgs,

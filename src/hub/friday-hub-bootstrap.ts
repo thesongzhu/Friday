@@ -334,6 +334,9 @@ export function resolveFridayHubConfig(
   const isProduction = env.NODE_ENV === "production";
   const tokenSecretExplicit = tokenSecretResult.source === "config" || tokenSecretResult.source === "env";
   const allowPasswordlessLocalLogin = !tokenSecretExplicit && !isProduction;
+  const allowLocalBypassLogin = ["1", "true", "yes", "on"].includes(
+    (env.FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN ?? "").trim().toLowerCase(),
+  );
 
   const serverVersion = input.serverVersion ?? FRIDAY_HUB_DEFAULT_SERVER_VERSION;
 
@@ -370,6 +373,7 @@ export function resolveFridayHubConfig(
     logRequests,
     pluginRuntimeMode,
     allowPasswordlessLocalLogin,
+    allowLocalBypassLogin,
     pipelineEnabled: pipelineRuntimeConfig.enabled,
     pipelineMode: pipelineRuntimeConfig.mode,
   };
@@ -459,6 +463,9 @@ export async function createFridayHub(
   const isProduction = process.env.NODE_ENV === "production";
   const tokenSecretExplicit = tokenSecretResult.source === "config" || tokenSecretResult.source === "env";
   const allowPasswordlessLocalLogin = !tokenSecretExplicit && !isProduction;
+  const allowLocalBypassLogin = ["1", "true", "yes", "on"].includes(
+    (process.env.FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN ?? "").trim().toLowerCase(),
+  );
   const pipelineRuntimeConfig = resolveFridayPipelineRuntimeConfig(process.env);
   const capabilityGates = resolveFridayCapabilityGates(process.env);
   const crossChannelIdentityEnabled = process.env.FRIDAY_CROSS_CHANNEL_IDENTITY_ENABLED === "true";
@@ -2390,7 +2397,7 @@ export async function createFridayHub(
     skillRegistry: registry,
     tokenSecret,
     allowPasswordlessLocalLogin,
-    allowLocalBypassLogin: false,
+    allowLocalBypassLogin,
     pluginRuntimeMode,
     pluginMarketplaceAvailable,
     supportedChannelKinds: [...FRIDAY_SUPPORTED_CHANNEL_KINDS],

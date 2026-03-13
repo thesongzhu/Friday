@@ -7,6 +7,7 @@ import {
   isCliEntrypointPath,
   parseArgs,
   loadProcessEnvFromDotEnvFile,
+  prepareStartupChannelsConfig,
   readSetupNetworkBinding,
   resolveStartupNetworkBinding,
 } from "#cli";
@@ -451,6 +452,186 @@ describe("readSetupNetworkBinding", () => {
     } finally {
       db.close();
       fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("prepareStartupChannelsConfig", () => {
+  it("migrates legacy channel config into setup_state managed secrets and scrubs friday.json", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "friday-cli-channels-test-"));
+    const stateDir = path.join(tmpHome, "state");
+    const dbPath = path.join(stateDir, "friday.db");
+    const legacyDir = path.join(tmpHome, ".friday");
+    const legacyPath = path.join(legacyDir, "friday.json");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.mkdirSync(legacyDir, { recursive: true });
+
+    const db = new Database(dbPath);
+    try {
+      db.exec(`
+        CREATE TABLE friday_setup_state (
+          id TEXT PRIMARY KEY,
+          channels_json TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE secrets (
+          id TEXT PRIMARY KEY,
+          scope TEXT NOT NULL,
+          ref_key TEXT NOT NULL,
+          encrypted_value TEXT NOT NULL,
+          key_id TEXT NOT NULL,
+          expires_at TEXT,
+          rotated_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      fs.writeFileSync(
+        legacyPath,
+        JSON.stringify({
+          channels: {
+            discord: {
+              token: "fake-discord-token",
+              allowedUsers: ["jarvis"],
+            },
+          },
+        }, null, 2),
+      );
+
+      const resolution = prepareStartupChannelsConfig({
+        env: { HOME: tmpHome },
+        dbPath,
+        nowIso: () => "2026-03-12T12:00:00.000Z",
+      });
+
+      expect(resolution.source).toBe("migrated_legacy_to_setup_state");
+      expect(resolution.migrated).toBe(true);
+      expect(resolution.compatMode).toBe(false);
+      expect(resolution.channels).toBeUndefined();
+
+      const setupRow = db
+        .prepare("SELECT channels_json FROM friday_setup_state WHERE id = 'singleton'")
+        .get() as { channels_json: string };
+      expect(setupRow.channels_json).toContain("secret://channel/");
+      expect(setupRow.channels_json).not.toContain("fake-discord-token");
+
+      const secretCount = db
+        .prepare("SELECT COUNT(*) AS count FROM secrets WHERE scope = 'channel'")
+        .get() as { count: number };
+      expect(secretCount.count).toBe(1);
+
+      const legacy = JSON.parse(fs.readFileSync(legacyPath, "utf8")) as Record<string, unknown>;
+      expect(legacy.channels).toBeUndefined();
+    } finally {
+      db.close();
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to legacy runtime config when setup_state is unavailable", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "friday-cli-channels-fallback-"));
+    const legacyDir = path.join(tmpHome, ".friday");
+    const legacyPath = path.join(legacyDir, "friday.json");
+    fs.mkdirSync(legacyDir, { recursive: true });
+    fs.writeFileSync(
+      legacyPath,
+      JSON.stringify({
+        channels: {
+          discord: {
+            token: "fake-discord-token",
+          },
+        },
+      }, null, 2),
+    );
+
+    const resolution = prepareStartupChannelsConfig({
+      env: { HOME: tmpHome },
+      dbPath: path.join(tmpHome, "missing.db"),
+    });
+
+    expect(resolution.source).toBe("legacy_runtime_fallback");
+    expect(resolution.compatMode).toBe(true);
+    expect(resolution.channels).toEqual({
+      enabled: true,
+      instances: [
+        expect.objectContaining({
+          kind: "discord",
+          token: "fake-discord-token",
+        }),
+      ],
+    });
+
+    const legacy = JSON.parse(fs.readFileSync(legacyPath, "utf8")) as Record<string, unknown>;
+    expect(legacy.channels).toBeDefined();
+
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  it("rewrites existing setup_state plaintext secrets into managed secret refs", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "friday-cli-setup-state-secret-"));
+    const stateDir = path.join(tmpHome, "state");
+    const dbPath = path.join(stateDir, "friday.db");
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const db = new Database(dbPath);
+    try {
+      db.exec(`
+        CREATE TABLE friday_setup_state (
+          id TEXT PRIMARY KEY,
+          channels_json TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE secrets (
+          id TEXT PRIMARY KEY,
+          scope TEXT NOT NULL,
+          ref_key TEXT NOT NULL,
+          encrypted_value TEXT NOT NULL,
+          key_id TEXT NOT NULL,
+          expires_at TEXT,
+          rotated_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      db.prepare(
+        `INSERT INTO friday_setup_state (id, channels_json, created_at, updated_at)
+         VALUES ('singleton', ?, '2026-03-12T12:00:00.000Z', '2026-03-12T12:00:00.000Z')`,
+      ).run(JSON.stringify([
+        {
+          kind: "discord",
+          enabled: true,
+          config: {
+            token: "fake-discord-token",
+          },
+        },
+      ]));
+
+      const resolution = prepareStartupChannelsConfig({
+        env: { HOME: tmpHome },
+        dbPath,
+        nowIso: () => "2026-03-12T12:30:00.000Z",
+      });
+
+      expect(resolution.source).toBe("setup_state");
+      expect(resolution.migrated).toBe(true);
+      expect(resolution.compatMode).toBe(false);
+      expect(resolution.channels).toBeUndefined();
+
+      const setupRow = db
+        .prepare("SELECT channels_json FROM friday_setup_state WHERE id = 'singleton'")
+        .get() as { channels_json: string };
+      expect(setupRow.channels_json).toContain("secret://channel/");
+      expect(setupRow.channels_json).not.toContain("fake-discord-token");
+
+      const secretCount = db
+        .prepare("SELECT COUNT(*) AS count FROM secrets WHERE scope = 'channel'")
+        .get() as { count: number };
+      expect(secretCount.count).toBe(1);
+    } finally {
+      db.close();
+      fs.rmSync(tmpHome, { recursive: true, force: true });
     }
   });
 });

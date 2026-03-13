@@ -9,12 +9,17 @@ REPO_DIR="$(cd "${REPO_DIR}" && pwd)"
 
 RUNNER="${REPO_DIR}/scripts/ops/friday-service-run.sh"
 COMPANION_RUNNER="${REPO_DIR}/scripts/ops/friday-companion-run.sh"
+UI_RUNNER="${REPO_DIR}/scripts/ops/friday-open-ui-on-login.sh"
 if [ ! -x "${RUNNER}" ]; then
   echo "[install] missing executable runner: ${RUNNER}" >&2
   exit 1
 fi
 if [ ! -x "${COMPANION_RUNNER}" ]; then
   echo "[install] missing executable runner: ${COMPANION_RUNNER}" >&2
+  exit 1
+fi
+if [ ! -x "${UI_RUNNER}" ]; then
+  echo "[install] missing executable runner: ${UI_RUNNER}" >&2
   exit 1
 fi
 
@@ -26,6 +31,7 @@ fi
 
 HUB_LABEL="com.friday.hub"
 COMPANION_LABEL="com.friday.companion"
+UI_LABEL="com.friday.ui-open"
 AGENT_DIR="${HOME}/Library/LaunchAgents"
 LOG_DIR="${HOME}/.friday/launchd"
 mkdir -p "${AGENT_DIR}" "${LOG_DIR}"
@@ -42,6 +48,7 @@ fi
 
 HUB_PLIST_PATH="${AGENT_DIR}/${HUB_LABEL}.plist"
 COMPANION_PLIST_PATH="${AGENT_DIR}/${COMPANION_LABEL}.plist"
+UI_PLIST_PATH="${AGENT_DIR}/${UI_LABEL}.plist"
 
 HUB_STDOUT_LOG="${LOG_DIR}/friday.stdout.log"
 HUB_STDERR_LOG="${LOG_DIR}/friday.stderr.log"
@@ -152,24 +159,74 @@ cat > "${COMPANION_PLIST_PATH}" <<EOF
 </plist>
 EOF
 
-launchctl bootout "gui/${UID}" "${HUB_PLIST_PATH}" >/dev/null 2>&1 || true
-launchctl bootstrap "gui/${UID}" "${HUB_PLIST_PATH}"
-launchctl enable "gui/${UID}/${HUB_LABEL}"
-launchctl kickstart -k "gui/${UID}/${HUB_LABEL}"
+cat > "${UI_PLIST_PATH}" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${UI_LABEL}</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>${UI_RUNNER}</string>
+    <string>${REPO_DIR}</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>${REPO_DIR}</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>FRIDAY_NODE_BIN</key>
+    <string>${NODE_BIN}</string>
+    <key>FRIDAY_AUTO_OPEN_UI</key>
+    <string>true</string>
+    <key>PATH</key>
+    <string>${PATH}</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>${LOG_DIR}/friday-ui-open.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>${LOG_DIR}/friday-ui-open.stderr.log</string>
+</dict>
+</plist>
+EOF
 
 launchctl bootout "gui/${UID}" "${COMPANION_PLIST_PATH}" >/dev/null 2>&1 || true
+launchctl enable "gui/${UID}/${COMPANION_LABEL}" >/dev/null 2>&1 || true
 launchctl bootstrap "gui/${UID}" "${COMPANION_PLIST_PATH}"
-launchctl enable "gui/${UID}/${COMPANION_LABEL}"
 launchctl kickstart -k "gui/${UID}/${COMPANION_LABEL}"
+
+launchctl bootout "gui/${UID}" "${HUB_PLIST_PATH}" >/dev/null 2>&1 || true
+launchctl enable "gui/${UID}/${HUB_LABEL}" >/dev/null 2>&1 || true
+launchctl bootstrap "gui/${UID}" "${HUB_PLIST_PATH}"
+launchctl kickstart -k "gui/${UID}/${HUB_LABEL}"
+
+launchctl bootout "gui/${UID}" "${UI_PLIST_PATH}" >/dev/null 2>&1 || true
+launchctl enable "gui/${UID}/${UI_LABEL}" >/dev/null 2>&1 || true
+launchctl bootstrap "gui/${UID}" "${UI_PLIST_PATH}"
+launchctl kickstart -k "gui/${UID}/${UI_LABEL}"
 
 echo "[install] installed launch agents:"
 echo "[install]   ${HUB_PLIST_PATH}"
 echo "[install]   ${COMPANION_PLIST_PATH}"
-echo "[install] labels: ${HUB_LABEL}, ${COMPANION_LABEL}"
+echo "[install]   ${UI_PLIST_PATH}"
+echo "[install] labels: ${HUB_LABEL}, ${COMPANION_LABEL}, ${UI_LABEL}"
 echo "[install] logs:"
 echo "[install]   hub: ${HUB_STDOUT_LOG} / ${HUB_STDERR_LOG}"
 echo "[install]   companion: ${COMPANION_STDOUT_LOG} / ${COMPANION_STDERR_LOG}"
+echo "[install]   ui-open: ${LOG_DIR}/friday-ui-open.stdout.log / ${LOG_DIR}/friday-ui-open.stderr.log"
 echo "[install] status:"
 echo "[install]   launchctl print gui/${UID}/${HUB_LABEL}"
 echo "[install]   launchctl print gui/${UID}/${COMPANION_LABEL}"
+echo "[install]   launchctl print gui/${UID}/${UI_LABEL}"
 echo "[install] shared companion auth token: ${TOKEN_FILE}"

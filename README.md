@@ -271,6 +271,8 @@ bash scripts/ops/uninstall-friday-launchagent.sh
 
 Details: [docs/ops/friday-autostart-macos.md](docs/ops/friday-autostart-macos.md)
 
+On macOS launchd installs, Friday also opens the local browser UI once after login and the UI auto-bootstraps a local session when `/v1/health` advertises loopback local bypass. This changes the human local UX only; raw localhost REST and WS calls still require Bearer tokens.
+
 Native companion release packaging, signing, notarization, DMG creation, and release-manifest flow:
 [docs/ops/friday-companion-release-macos.md](docs/ops/friday-companion-release-macos.md)
 
@@ -318,6 +320,8 @@ curl -X POST http://localhost:3141/v1/auth/login \
 curl http://localhost:3141/v1/providers \
   -H "Authorization: Bearer <accessToken>"
 ```
+
+For the local browser UI, you normally do not need to run that curl flow manually anymore when Friday is started through the macOS launchd runner. The UI will probe `/v1/health` and auto-bootstrap a loopback local session when the runtime allows it.
 
 ### Production setup
 

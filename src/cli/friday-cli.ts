@@ -20,8 +20,22 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  buildFridayChannelSecretRef,
+  buildFridayChannelSecretRefKey,
+  type FridaySupportedChannelKind,
+  getFridayChannelSecretFieldDescriptors,
+  isFridayEnvSecretRef,
+  parseFridayChannelsConfig,
+  parseFridayChannelSecretRef,
+} from "#channels";
 import { createFridayHub, resolveFridayHubConfig } from "#hub";
 import type { FridayHubConfig } from "#hub";
+import {
+  createFridaySecretRepository,
+  encryptSecret,
+  getMasterKey,
+} from "#providers";
 import { resolveFridayDbPath } from "#state";
 import { resolveSafePath } from "#utilities";
 import Database from "better-sqlite3";
@@ -315,6 +329,31 @@ Options:
 // ─── Commands ───
 
 type JsonObject = Record<string, unknown>;
+const channelSecretRepository = createFridaySecretRepository();
+
+interface FridayStartupChannelsResolution {
+  channels?: JsonObject;
+  source:
+    | "env_override"
+    | "setup_state"
+    | "migrated_legacy_to_setup_state"
+    | "legacy_runtime_fallback"
+    | "none";
+  migrated: boolean;
+  scrubbedLegacy: boolean;
+  compatMode: boolean;
+}
+
+interface LegacyFridayJsonDocument {
+  path: string;
+  content: JsonObject;
+}
+
+interface FridayPersistedSetupChannel {
+  kind: FridaySupportedChannelKind;
+  enabled: boolean;
+  config: JsonObject;
+}
 
 function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -555,8 +594,10 @@ function buildChannelsFromLegacyMap(rawMap: JsonObject): JsonObject | undefined 
   return { enabled: true, instances };
 }
 
-function loadChannelsFromEnv(): JsonObject | undefined {
-  const raw = process.env.FRIDAY_CHANNELS_JSON;
+function loadChannelsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): JsonObject | undefined {
+  const raw = env.FRIDAY_CHANNELS_JSON;
   if (!raw || raw.trim() === "") return undefined;
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -572,16 +613,20 @@ function loadChannelsFromEnv(): JsonObject | undefined {
   }
 }
 
-function loadChannelsFromLegacyFridayJson(): JsonObject | undefined {
-  const home = process.env.HOME;
+function readLegacyFridayJsonDocument(
+  env: NodeJS.ProcessEnv = process.env,
+): LegacyFridayJsonDocument | undefined {
+  const home = env.HOME;
   if (!home || home.trim() === "") return undefined;
   const legacyPath = join(home, ".friday", "friday.json");
   if (!existsSync(legacyPath)) return undefined;
   try {
     const parsed = JSON.parse(readFileSync(legacyPath, "utf8")) as unknown;
     if (!isObject(parsed)) return undefined;
-    if (!isObject(parsed.channels)) return undefined;
-    return buildChannelsFromLegacyMap(parsed.channels);
+    return {
+      path: legacyPath,
+      content: parsed,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[friday] Failed to parse ${legacyPath}: ${message}`);
@@ -589,21 +634,283 @@ function loadChannelsFromLegacyFridayJson(): JsonObject | undefined {
   }
 }
 
-function resolveStartupChannelsConfig(): JsonObject | undefined {
-  const fromEnv = loadChannelsFromEnv();
-  if (fromEnv) return fromEnv;
+function loadChannelsFromLegacyFridayJson(
+  env: NodeJS.ProcessEnv = process.env,
+): JsonObject | undefined {
+  const legacy = readLegacyFridayJsonDocument(env);
+  if (!legacy || !isObject(legacy.content.channels)) {
+    return undefined;
+  }
+  return buildChannelsFromLegacyMap(legacy.content.channels);
+}
 
-  const fromLegacy = loadChannelsFromLegacyFridayJson();
-  if (fromLegacy) {
-    // Legacy config stores secrets as plaintext — relax secret policy to
-    // avoid rejecting valid tokens from ~/.friday/friday.json.
-    if (!process.env.FRIDAY_CHANNEL_SECRET_POLICY) {
-      process.env.FRIDAY_CHANNEL_SECRET_POLICY = "compat"; // pragma: allowlist secret
+function scrubLegacyChannelsBlock(legacy: LegacyFridayJsonDocument): boolean {
+  if (!Object.prototype.hasOwnProperty.call(legacy.content, "channels")) {
+    return false;
+  }
+  delete legacy.content.channels;
+  writeFileSync(legacy.path, `${JSON.stringify(legacy.content, null, 2)}\n`, "utf8");
+  return true;
+}
+
+function hasSqliteTable(db: Database.Database, tableName: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT name
+       FROM sqlite_master
+       WHERE type = 'table' AND name = ?`,
+    )
+    .get(tableName) as { name?: string } | undefined;
+  return row?.name === tableName;
+}
+
+function readSetupStateChannels(db: Database.Database): FridayPersistedSetupChannel[] {
+  const row = db
+    .prepare("SELECT channels_json FROM friday_setup_state WHERE id = 'singleton'")
+    .get() as { channels_json?: string | null } | undefined;
+  if (!row?.channels_json) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(row.channels_json) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
     }
-    return fromLegacy;
+    return parsed
+      .filter((item): item is { kind?: unknown; enabled?: unknown; config?: unknown } =>
+        isObject(item),
+      )
+      .map((item) => ({
+        kind: String(item.kind ?? "").trim() as FridaySupportedChannelKind,
+        enabled: item.enabled !== false,
+        config: isObject(item.config) ? item.config : {},
+      }))
+      .filter((item) => item.kind.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function buildPersistedChannelsFromLegacyMap(rawMap: JsonObject): FridayPersistedSetupChannel[] {
+  const persisted: FridayPersistedSetupChannel[] = [];
+  for (const [kind, value] of Object.entries(rawMap)) {
+    if (!isObject(value)) continue;
+    const normalized = normalizeLegacyChannelEntry(kind, value);
+    if (!normalized) continue;
+
+    const { kind: normalizedKind, enabled, ...config } = normalized;
+    if (typeof normalizedKind !== "string") {
+      continue;
+    }
+
+    persisted.push({
+      kind: normalizedKind as FridaySupportedChannelKind,
+      enabled: enabled !== false,
+      config,
+    });
+  }
+  return persisted;
+}
+
+function persistMigratedChannels(
+  db: Database.Database,
+  persistedChannels: FridayPersistedSetupChannel[],
+  nowIso: string,
+): { changed: boolean } {
+  const secretWrites: Array<{ refKey: string; plaintext: string }> = [];
+  const normalizedChannels = persistedChannels.map((channel, slot) => {
+    const config: JsonObject = { ...channel.config };
+    for (const field of getFridayChannelSecretFieldDescriptors(channel.kind, config)) {
+      const rawValue = config[field.field];
+      if (typeof rawValue !== "string") {
+        continue;
+      }
+      const trimmed = rawValue.trim();
+      if (
+        trimmed.length === 0
+        || isFridayEnvSecretRef(trimmed)
+        || parseFridayChannelSecretRef(trimmed)
+      ) {
+        continue;
+      }
+      const refKey = buildFridayChannelSecretRefKey(channel.kind, slot, field.field);
+      secretWrites.push({ refKey, plaintext: trimmed });
+      config[field.field] = buildFridayChannelSecretRef(refKey);
+    }
+    return {
+      kind: channel.kind,
+      enabled: channel.enabled,
+      config,
+    };
+  });
+  const changed = JSON.stringify(normalizedChannels) !== JSON.stringify(persistedChannels);
+
+  const enabledInstances = normalizedChannels
+    .filter((channel) => channel.enabled)
+    .map((channel) => ({
+      kind: channel.kind,
+      enabled: true,
+      ...channel.config,
+    }));
+  if (enabledInstances.length > 0) {
+    parseFridayChannelsConfig({
+      enabled: true,
+      instances: enabledInstances,
+    });
   }
 
-  return undefined;
+  if (!changed && secretWrites.length === 0) {
+    return { changed: false };
+  }
+
+  if (secretWrites.length > 0) {
+    const masterKey = getMasterKey();
+    for (const write of secretWrites) {
+      const envelope = encryptSecret(write.plaintext, masterKey);
+      channelSecretRepository.upsert(db, {
+        id: `channel-secret:${write.refKey}`,
+        scope: "channel",
+        refKey: write.refKey,
+        encryptedValue: JSON.stringify(envelope),
+        keyId: "master-v1",
+        nowIso,
+      });
+    }
+  }
+
+  db.prepare(
+    `INSERT OR IGNORE INTO friday_setup_state (id, created_at, updated_at)
+     VALUES ('singleton', ?, ?)`,
+  ).run(nowIso, nowIso);
+  db.prepare(
+    `UPDATE friday_setup_state
+     SET channels_json = ?, updated_at = ?
+     WHERE id = 'singleton'`,
+  ).run(JSON.stringify(normalizedChannels), nowIso);
+  return { changed };
+}
+
+export function prepareStartupChannelsConfig(options?: {
+  env?: NodeJS.ProcessEnv;
+  dbPath?: string;
+  nowIso?: () => string;
+}): FridayStartupChannelsResolution {
+  const env = options?.env ?? process.env;
+  const fromEnv = loadChannelsFromEnv(env);
+  if (fromEnv) {
+    return {
+      channels: fromEnv,
+      source: "env_override",
+      migrated: false,
+      scrubbedLegacy: false,
+      compatMode: false,
+    };
+  }
+
+  const legacy = readLegacyFridayJsonDocument(env);
+  const legacyChannels = legacy && isObject(legacy.content.channels)
+    ? legacy.content.channels
+    : undefined;
+  const dbPath = options?.dbPath ?? resolveFridayDbPath({ env });
+
+  if (!existsSync(dbPath)) {
+    const runtimeFallback = legacyChannels ? buildChannelsFromLegacyMap(legacyChannels) : undefined;
+    return {
+      channels: runtimeFallback,
+      source: runtimeFallback ? "legacy_runtime_fallback" : "none",
+      migrated: false,
+      scrubbedLegacy: false,
+      compatMode: Boolean(runtimeFallback),
+    };
+  }
+
+  let db: Database.Database | null = null;
+  try {
+    db = new Database(dbPath);
+    const hasSetupTable = hasSqliteTable(db, "friday_setup_state");
+    const hasSecretsTable = hasSqliteTable(db, "secrets");
+    if (!hasSetupTable || !hasSecretsTable) {
+      const runtimeFallback = legacyChannels ? buildChannelsFromLegacyMap(legacyChannels) : undefined;
+      return {
+        channels: runtimeFallback,
+        source: runtimeFallback ? "legacy_runtime_fallback" : "none",
+        migrated: false,
+        scrubbedLegacy: false,
+        compatMode: Boolean(runtimeFallback),
+      };
+    }
+
+    const existingSetupChannels = readSetupStateChannels(db);
+    if (existingSetupChannels.length > 0) {
+      const nowIso = options?.nowIso?.() ?? new Date().toISOString();
+      let changed = false;
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        changed = persistMigratedChannels(db, existingSetupChannels, nowIso).changed;
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+      const scrubbedLegacy = legacy ? scrubLegacyChannelsBlock(legacy) : false;
+      return {
+        source: "setup_state",
+        migrated: changed,
+        scrubbedLegacy,
+        compatMode: false,
+      };
+    }
+
+    if (!legacyChannels) {
+      return {
+        source: "none",
+        migrated: false,
+        scrubbedLegacy: false,
+        compatMode: false,
+      };
+    }
+
+    const persistedChannels = buildPersistedChannelsFromLegacyMap(legacyChannels);
+    if (persistedChannels.length === 0) {
+      const scrubbedLegacy = legacy ? scrubLegacyChannelsBlock(legacy) : false;
+      return {
+        source: "none",
+        migrated: false,
+        scrubbedLegacy,
+        compatMode: false,
+      };
+    }
+
+    const nowIso = options?.nowIso?.() ?? new Date().toISOString();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      persistMigratedChannels(db, persistedChannels, nowIso);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    const scrubbedLegacy = legacy ? scrubLegacyChannelsBlock(legacy) : false;
+    return {
+      source: "migrated_legacy_to_setup_state",
+      migrated: true,
+      scrubbedLegacy,
+      compatMode: false,
+    };
+  } catch (error) {
+    const runtimeFallback = legacyChannels ? buildChannelsFromLegacyMap(legacyChannels) : undefined;
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[friday] Failed to migrate legacy channel config into setup_state: ${message}`);
+    return {
+      channels: runtimeFallback,
+      source: runtimeFallback ? "legacy_runtime_fallback" : "none",
+      migrated: false,
+      scrubbedLegacy: false,
+      compatMode: Boolean(runtimeFallback),
+    };
+  } finally {
+    db?.close();
+  }
 }
 
 interface SetupNetworkStateRow {
@@ -771,11 +1078,15 @@ function buildConfig(parsed: ParsedArgs): FridayHubConfig {
 
 async function cmdStart(parsed: ParsedArgs): Promise<void> {
   const startupBinding = resolveStartupNetworkBinding(parsed);
+  const startupChannels = prepareStartupChannelsConfig();
+  if (startupChannels.compatMode && !process.env.FRIDAY_CHANNEL_SECRET_POLICY) {
+    process.env.FRIDAY_CHANNEL_SECRET_POLICY = "compat"; // pragma: allowlist secret
+  }
   const config: FridayHubConfig = {
     ...buildConfig(parsed),
     host: startupBinding.host,
     port: startupBinding.port,
-    channels: resolveStartupChannelsConfig(),
+    channels: startupChannels.channels,
   };
   const resolved = resolveFridayHubConfig(config);
   const hub = await createFridayHub(config);

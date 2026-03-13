@@ -85,6 +85,7 @@ resolve_companion_auth_token() {
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
   export FRIDAY_SYSTEM_NATIVE_COMPANION_MODE="${FRIDAY_SYSTEM_NATIVE_COMPANION_MODE:-auto}"
+  export FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN="${FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN:-true}"
   if [[ "${FRIDAY_SYSTEM_COMPANION_TRANSPORT:-unix_socket}" == "unix_socket" && "${FRIDAY_SYSTEM_NATIVE_COMPANION_MODE}" != "node" ]]; then
     export FRIDAY_SYSTEM_COMPANION_SERVER_MODE="${FRIDAY_SYSTEM_COMPANION_SERVER_MODE:-external}"
     resolve_companion_auth_token

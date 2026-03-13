@@ -156,6 +156,19 @@ describe("resolveFridayHubConfig", () => {
     expect(resolved.allowPasswordlessLocalLogin).toBe(false);
   });
 
+  it("sets allowLocalBypassLogin when FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN is enabled", () => {
+    const resolved = resolveFridayHubConfig(
+      makeConfig(),
+      { FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN: "true" },
+    );
+    expect(resolved.allowLocalBypassLogin).toBe(true);
+  });
+
+  it("keeps allowLocalBypassLogin disabled by default", () => {
+    const resolved = resolveFridayHubConfig(makeConfig(), emptyEnv());
+    expect(resolved.allowLocalBypassLogin).toBe(false);
+  });
+
   // ─── CORS origins ───
 
   it("defaults corsOrigins to [] (SEC-007: CORS disabled by default)", () => {

@@ -688,6 +688,8 @@ export interface FridayResolvedHubConfig {
   pluginRuntimeMode: "stub" | "full";
   /** Whether passwordless local login is allowed (dev mode only). */
   allowPasswordlessLocalLogin: boolean;
+  /** Whether loopback UI/app surfaces may bootstrap a local session via `login({ local: true })`. */
+  allowLocalBypassLogin: boolean;
   /** Whether deterministic pipeline execution is globally enabled. */
   pipelineEnabled: boolean;
   /** Deterministic pipeline enforcement mode. */
