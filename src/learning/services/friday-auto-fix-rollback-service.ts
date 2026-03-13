@@ -3,6 +3,11 @@ import type { FridaySqliteLayer } from "#state";
 import type { FridayAutoFixActionRepository } from "../persistence/friday-auto-fix-action-repository.js";
 import type { UUID } from "../model/friday-learning.types.js";
 import type { FridayAutoFixExecutionResult } from "../model/friday-auto-fix.types.js";
+import type {
+  StepExecutor,
+  StepVerifier,
+} from "./friday-auto-fix-execution-service.js";
+import type { FridayAutoFixStepKind } from "../model/friday-auto-fix.types.js";
 
 export interface FridayAutoFixRollbackService {
   rollback(actionId: UUID, reason: string): Promise<FridayAutoFixExecutionResult>;
@@ -12,6 +17,8 @@ export interface CreateAutoFixRollbackServiceDeps {
   db: FridaySqliteLayer;
   actionRepo: FridayAutoFixActionRepository;
   nowIso: () => string;
+  stepExecutors?: Partial<Record<FridayAutoFixStepKind, StepExecutor>>;
+  stepVerifiers?: Partial<Record<FridayAutoFixStepKind, StepVerifier>>;
 }
 
 export function createFridayAutoFixRollbackService(
@@ -51,12 +58,44 @@ export function createFridayAutoFixRollbackService(
         };
       }
 
-      // Execute rollback: mark the action as rolled back in the database.
-      // The rollback plan steps are recorded but not individually executed
-      // in the base implementation — callers should inject richer rollback
-      // executors for production use. The return value reflects that the
-      // database state was updated successfully (rollbackSucceeded) even
-      // though the overall auto-fix action did not succeed (success: false).
+      const executors = deps.stepExecutors ?? {};
+      const verifiers = deps.stepVerifiers ?? {};
+
+      for (const step of rollbackPlan.steps) {
+        const executor = executors[step.kind];
+        if (!executor) {
+          return {
+            action,
+            success: false,
+            verificationPassed: false,
+            rollbackAttempted: true,
+            rollbackSucceeded: false,
+            errorMessage: `Rollback requested (${reason}) but step '${step.stepId}' (${step.kind}) has no executor`,
+          };
+        }
+        if (!await executor(step)) {
+          return {
+            action,
+            success: false,
+            verificationPassed: false,
+            rollbackAttempted: true,
+            rollbackSucceeded: false,
+            errorMessage: `Rollback requested (${reason}) but step '${step.stepId}' (${step.kind}) failed during execution`,
+          };
+        }
+        const verifier = verifiers[step.kind];
+        if (verifier && !await verifier(step)) {
+          return {
+            action,
+            success: false,
+            verificationPassed: false,
+            rollbackAttempted: true,
+            rollbackSucceeded: false,
+            errorMessage: `Rollback requested (${reason}) but step '${step.stepId}' (${step.kind}) failed verification`,
+          };
+        }
+      }
+
       return deps.db.withWriteTransaction((db) => {
         const rolledBack = deps.actionRepo.markRolledBack(
           db,
@@ -69,7 +108,7 @@ export function createFridayAutoFixRollbackService(
           verificationPassed: false,
           rollbackAttempted: true,
           rollbackSucceeded: true,
-          errorMessage: `Rollback requested (${reason}): action status reverted to rolled_back`,
+          errorMessage: `Rollback requested (${reason}): rollback plan executed successfully`,
         };
       });
     },

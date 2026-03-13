@@ -31,6 +31,11 @@ import type {
 } from "#rules";
 import type { FridaySqliteLayer } from "#state";
 import type { FridaySessionMessageRecord } from "#sessions";
+import type {
+  FridayAutoFixStepKind,
+  StepExecutor,
+  StepVerifier,
+} from "#learning";
 import type { FridayHubConfigManagerService, FridaySkillRegistrySettings } from "../services/friday-hub-config-manager.types.js";
 import type { FridayDiscoveredSkillRecord, FridayHubMemoryStateService } from "../services/friday-hub-memory-state.types.js";
 import { appendFridayAuditLog } from "../services/friday-hub-audit-log-writer.js";
@@ -602,6 +607,75 @@ export function createStubConfigManager(
     }),
     getSkillRegistrySettings: async () => skillSettings,
     getSkillSecurityProfile: async () => securityProfile,
+  };
+}
+
+export interface FridayHubAutoFixExecutionSupport {
+  stepExecutors: Partial<Record<FridayAutoFixStepKind, StepExecutor>>;
+  stepVerifiers: Partial<Record<FridayAutoFixStepKind, StepVerifier>>;
+}
+
+function isRevertPayload(payload: unknown): boolean {
+  return typeof payload === "object" &&
+    payload !== null &&
+    "revert" in payload &&
+    (payload as { revert?: unknown }).revert === true;
+}
+
+export function createFridayHubAutoFixExecutionSupport(deps: {
+  registry: FridaySkillRegistry;
+  memoryState: FridayHubMemoryStateService;
+  nowIso: () => string;
+}): FridayHubAutoFixExecutionSupport {
+  const unsupportedKinds: FridayAutoFixStepKind[] = [
+    "retry_node",
+    "switch_model_fallback",
+    "trim_payload",
+    "apply_config_patch",
+    "grant_permission",
+    "pause_workflow",
+  ];
+
+  const stepExecutors: Partial<Record<FridayAutoFixStepKind, StepExecutor>> = {};
+  const stepVerifiers: Partial<Record<FridayAutoFixStepKind, StepVerifier>> = {};
+
+  for (const kind of unsupportedKinds) {
+    stepExecutors[kind] = async () => false;
+    stepVerifiers[kind] = async () => false;
+  }
+
+  stepExecutors.disable_skill = async (step) => {
+    if (!step.target) {
+      return false;
+    }
+
+    const revert = isRevertPayload(step.payload);
+    if (!revert && !deps.registry.get(step.target)) {
+      return false;
+    }
+
+    await deps.memoryState.updateSkillStatus(
+      step.target,
+      revert ? "installed" : "disabled",
+      revert
+        ? `auto-fix rollback @ ${deps.nowIso()}`
+        : `auto-fix disable_skill @ ${deps.nowIso()}`,
+    );
+    return true;
+  };
+
+  stepVerifiers.disable_skill = async (step) => {
+    if (!step.target) {
+      return false;
+    }
+    const revert = isRevertPayload(step.payload);
+    const statuses = await deps.memoryState.listSkillStatuses();
+    return statuses[step.target] === (revert ? "installed" : "disabled");
+  };
+
+  return {
+    stepExecutors,
+    stepVerifiers,
   };
 }
 

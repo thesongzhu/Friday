@@ -36,6 +36,17 @@ export interface FridayWorkflowDagScheduler {
     expressionContext: FridayExpressionContext,
     expressionEvaluator: FridayExpressionEvaluator,
   ): string[];
+
+  computeSchedulingResult(
+    adjacency: FridayDagAdjacency,
+    nodeStatuses: Map<string, NodeAttemptStatus>,
+    graph: FridayCompiledWorkflowGraphV2,
+    expressionContext: FridayExpressionContext,
+    expressionEvaluator: FridayExpressionEvaluator,
+  ): {
+    readyNodes: string[];
+    deadEndedNodes: string[];
+  };
 }
 
 // ─── Terminal node statuses for scheduling purposes ───
@@ -49,6 +60,83 @@ const TERMINAL_STATUSES: ReadonlySet<NodeAttemptStatus> = new Set([
 // ─── Factory ───
 
 export function createFridayWorkflowDagScheduler(): FridayWorkflowDagScheduler {
+  function evaluateSchedulingResult(
+    adjacency: FridayDagAdjacency,
+    nodeStatuses: Map<string, NodeAttemptStatus>,
+    graph: FridayCompiledWorkflowGraphV2,
+    expressionContext: FridayExpressionContext,
+    expressionEvaluator: FridayExpressionEvaluator,
+  ): {
+    readyNodes: string[];
+    deadEndedNodes: string[];
+  } {
+    const readyNodes: string[] = [];
+    const deadEndedNodes: string[] = [];
+
+    const edgeIndex = new Map<string, typeof graph.graph.edges[0]>();
+    for (const edge of graph.graph.edges) {
+      edgeIndex.set(`${edge.sourceNodeId}→${edge.targetNodeId}`, edge);
+    }
+
+    for (const nodeId of adjacency.topoOrder) {
+      const currentStatus = nodeStatuses.get(nodeId);
+      if (currentStatus && currentStatus !== "retrying") continue;
+
+      if (currentStatus === "retrying") {
+        readyNodes.push(nodeId);
+        continue;
+      }
+
+      const predecessors = adjacency.inbound.get(nodeId) ?? [];
+      if (predecessors.length === 0) {
+        readyNodes.push(nodeId);
+        continue;
+      }
+
+      let allSatisfied = true;
+      let anyEnabledEdge = false;
+
+      for (const pred of predecessors) {
+        const predStatus = nodeStatuses.get(pred);
+
+        if (!predStatus || !TERMINAL_STATUSES.has(predStatus)) {
+          allSatisfied = false;
+          break;
+        }
+
+        const edge = edgeIndex.get(`${pred}→${nodeId}`);
+        if (edge?.condition) {
+          try {
+            const condResult = expressionEvaluator.exec(
+              edge.condition,
+              expressionContext,
+            );
+            if (condResult) {
+              anyEnabledEdge = true;
+            }
+          } catch (err) {
+            console.warn(
+              `[friday] Workflow DAG edge condition evaluation failed for edge ${pred}→${nodeId}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        } else {
+          anyEnabledEdge = true;
+        }
+      }
+
+      if (allSatisfied && anyEnabledEdge) {
+        readyNodes.push(nodeId);
+      } else if (allSatisfied && !anyEnabledEdge && predecessors.length > 0) {
+        deadEndedNodes.push(nodeId);
+      }
+    }
+
+    return {
+      readyNodes: readyNodes.slice(0, MAX_CONCURRENT_NODES),
+      deadEndedNodes,
+    };
+  }
+
   return {
     buildAdjacency(graph) {
       const outbound = new Map<string, string[]>();
@@ -137,81 +225,29 @@ export function createFridayWorkflowDagScheduler(): FridayWorkflowDagScheduler {
       expressionContext,
       expressionEvaluator,
     ) {
-      const ready: string[] = [];
+      return evaluateSchedulingResult(
+        adjacency,
+        nodeStatuses,
+        graph,
+        expressionContext,
+        expressionEvaluator,
+      ).readyNodes;
+    },
 
-      // Build an edge index for condition lookups: source→target → edge
-      const edgeIndex = new Map<string, typeof graph.graph.edges[0]>();
-      for (const edge of graph.graph.edges) {
-        edgeIndex.set(`${edge.sourceNodeId}→${edge.targetNodeId}`, edge);
-      }
-
-      for (const nodeId of adjacency.topoOrder) {
-        // Skip nodes that already have a terminal or in-progress attempt
-        // but treat "retrying" as eligible for execution
-        const currentStatus = nodeStatuses.get(nodeId);
-        if (currentStatus && currentStatus !== "retrying") continue;
-
-        // Retrying nodes are immediately ready — predecessors were already satisfied
-        if (currentStatus === "retrying") {
-          ready.push(nodeId);
-          continue;
-        }
-
-        const predecessors = adjacency.inbound.get(nodeId) ?? [];
-
-        if (predecessors.length === 0) {
-          // Entry node — always ready
-          ready.push(nodeId);
-          continue;
-        }
-
-        let allSatisfied = true;
-        let anyEnabledEdge = false;
-
-        for (const pred of predecessors) {
-          const predStatus = nodeStatuses.get(pred);
-
-          if (!predStatus || !TERMINAL_STATUSES.has(predStatus)) {
-            allSatisfied = false;
-            break;
-          }
-
-          // Check edge condition
-          const edge = edgeIndex.get(`${pred}→${nodeId}`);
-          if (edge?.condition) {
-            try {
-              const condResult = expressionEvaluator.exec(
-                edge.condition,
-                expressionContext,
-              );
-              if (condResult) {
-                anyEnabledEdge = true;
-              }
-            } catch (err) {
-              // Log condition evaluation failures to aid debugging
-              console.warn(
-                `[friday] Workflow DAG edge condition evaluation failed for edge ${pred}→${nodeId}: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            }
-          } else {
-            // Unconditional edge
-            anyEnabledEdge = true;
-          }
-        }
-
-        if (allSatisfied && anyEnabledEdge) {
-          ready.push(nodeId);
-        }
-
-        // When all predecessors are terminal but no edge condition was
-        // satisfied, the node can never become ready.  Mark it as
-        // "cancelled" so the workflow run does not hang indefinitely.
-        if (allSatisfied && !anyEnabledEdge && predecessors.length > 0) {
-          nodeStatuses.set(nodeId, "cancelled");
-        }
-      }
-
-      return ready.slice(0, MAX_CONCURRENT_NODES);
+    computeSchedulingResult(
+      adjacency,
+      nodeStatuses,
+      graph,
+      expressionContext,
+      expressionEvaluator,
+    ) {
+      return evaluateSchedulingResult(
+        adjacency,
+        nodeStatuses,
+        graph,
+        expressionContext,
+        expressionEvaluator,
+      );
     },
   };
 }

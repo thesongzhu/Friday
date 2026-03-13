@@ -177,8 +177,6 @@ import {
   createFridayLearnedLessonRepository,
   createFridaySelfHealingApiService,
   createFridaySelfLearningRuntime,
-  type StepExecutor,
-  type FridayAutoFixStepKind,
 } from "#learning";
 import {
   createFridayObservabilityApiService,
@@ -240,6 +238,7 @@ import type { FridayMarketplaceAssetType } from "../marketplace/model/index.js";
 
 import {
   buildFridayChannelDeliveryFailureText,
+  createFridayHubAutoFixExecutionSupport,
   createStubConfigManager,
   createStubMemoryState,
   deriveMarketplaceSkillIdCandidates,
@@ -2179,38 +2178,18 @@ export async function createFridayHub(
 
   // ─── Self-learning runtime ───
 
-  // Build real auto-fix step executors wired to hub-level services.
-  // These replace the default marker-based executors with actual operations.
-  const hubStepExecutors: Partial<Record<FridayAutoFixStepKind, StepExecutor>> = {
-    pause_workflow: (step) => {
-      if (!step.target) return false;
-      try {
-        // step.target is a workflow run ID
-        workflowRuntime.execution.cancelRun(step.target, "auto-fix: pause_workflow").catch(() => {});
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    disable_skill: (step) => {
-      if (!step.target) return false;
-      // Verify the skill exists before marking as disabled
-      const skill = registry.get(step.target);
-      if (!skill) return false;
-      const payload = step.payload as Record<string, unknown> | null;
-      if (payload && typeof payload === "object") {
-        payload._skillDisabled = true;
-        payload._disabledAt = new Date().toISOString();
-      }
-      return true;
-    },
-  };
+  const hubAutoFixSupport = createFridayHubAutoFixExecutionSupport({
+    registry,
+    memoryState,
+    nowIso,
+  });
 
   const selfLearningRuntime = createFridaySelfLearningRuntime({
     db: stateRuntime.sqlite,
     idGenerator,
     nowIso,
-    stepExecutors: hubStepExecutors,
+    stepExecutors: hubAutoFixSupport.stepExecutors,
+    stepVerifiers: hubAutoFixSupport.stepVerifiers,
   });
   const observabilityService = createFridayObservabilityApiService({
     db: stateRuntime.sqlite,

@@ -32,6 +32,7 @@ export {
   resolveTokenSecret,
   // Stub services
   createStubConfigManager,
+  createFridayHubAutoFixExecutionSupport,
   createStubMemoryState,
 } from "./hub-helpers.js";
 
@@ -40,6 +41,7 @@ export type {
   ChannelConfigResolutionResult,
   // Token secret
   FridayTokenSecretResult,
+  FridayHubAutoFixExecutionSupport,
   // Public types
   FridayHub,
   FridayHubStatus,

@@ -3,6 +3,7 @@ import type { FridaySqliteLayer } from "#state";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
 import { createFridayAutoFixDispatcherService } from "#learning";
 import { createFridayAutoFixExecutionService } from "#learning";
+import { createFridayAutoFixRollbackService } from "#learning";
 import { createFridayAutoFixActionRepository } from "#learning";
 import { createFridayApprovalRequestRepository } from "#learning";
 import { createFridayErrorIncidentRepository } from "#learning";
@@ -121,6 +122,11 @@ describe("FridayAutoFixDispatcherService", () => {
       actionRepo,
       incidentRepo,
       diagnosisRepo,
+      rollbackService: createFridayAutoFixRollbackService({
+        db,
+        actionRepo,
+        nowIso: () => NOW,
+      }),
       nowIso: () => NOW,
     });
 
