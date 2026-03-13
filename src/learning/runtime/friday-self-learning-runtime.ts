@@ -116,19 +116,24 @@ export function createFridaySelfLearningRuntime(
     idGenerator: deps.idGenerator,
   });
 
+  const autoFixRollback = createFridayAutoFixRollbackService({
+    db: deps.db,
+    actionRepo,
+    nowIso: deps.nowIso,
+    stepExecutors: deps.stepExecutors,
+    stepVerifiers: deps.stepVerifiers,
+  });
+
   const autoFixExecution = createFridayAutoFixExecutionService({
     db: deps.db,
     actionRepo,
     incidentRepo,
     diagnosisRepo,
     lessonExtractionService: lessonExtraction,
+    rollbackService: autoFixRollback,
     nowIso: deps.nowIso,
-  });
-
-  const autoFixRollback = createFridayAutoFixRollbackService({
-    db: deps.db,
-    actionRepo,
-    nowIso: deps.nowIso,
+    stepExecutors: deps.stepExecutors,
+    stepVerifiers: deps.stepVerifiers,
   });
 
   const approvals = createFridayApprovalWorkflowService({

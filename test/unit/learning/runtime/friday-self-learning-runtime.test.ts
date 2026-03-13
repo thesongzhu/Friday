@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
 import { createFridaySelfLearningRuntime } from "#learning";
+import { createFridayAutoFixActionRepository } from "#learning";
+import { createFridayDiagnosisRecordRepository } from "#learning";
+import { createFridayErrorIncidentRepository } from "#learning";
 import type { FridaySelfLearningRuntime } from "#learning";
+import type { FridayAutoFixPlan } from "#learning";
 import type { FridayLearningEventAppendInput } from "#ledger";
 
 describe("FridaySelfLearningRuntime", () => {
@@ -188,5 +192,93 @@ describe("FridaySelfLearningRuntime", () => {
     // Phase 7: lessons are NOT created during ingestion — they're extracted after successful execution
     expect(result.lessonsUpdated).toHaveLength(0);
     expect(result.incidentsCreated[0]!.autoFixEligible).toBe(false);
+  });
+
+  it("wires injected step executors and verifiers into autoFixExecution", async () => {
+    const retryExecutorCalled: string[] = [];
+    const retryVerifierCalled: string[] = [];
+    runtime = createFridaySelfLearningRuntime({
+      db,
+      idGenerator: idGen,
+      nowIso: () => NOW,
+      stepExecutors: {
+        retry_node: async (step) => {
+          retryExecutorCalled.push(step.stepId);
+          return true;
+        },
+      },
+      stepVerifiers: {
+        retry_node: async (step) => {
+          retryVerifierCalled.push(step.stepId);
+          return true;
+        },
+      },
+    });
+
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    const actionRepo = createFridayAutoFixActionRepository();
+
+    incidentRepo.insert(db.writer, {
+      incidentId: "inc-runtime-001",
+      userId: "test-user",
+      ts: NOW,
+      category: "tool",
+      severity: "medium",
+      signature: "sig-runtime",
+      context: {},
+      autoFixEligible: true,
+      status: "open",
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    diagnosisRepo.insert(db.writer, {
+      id: "diag-runtime-001",
+      incidentId: "inc-runtime-001",
+      errorFingerprint: "sig-runtime",
+      confidence: 0.8,
+      diagnosis: { summary: "runtime wiring test" },
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    const plan: FridayAutoFixPlan = {
+      title: "Retry node",
+      summary: "Retry the failed node",
+      steps: [
+        {
+          stepId: "step-runtime-001",
+          kind: "retry_node",
+          target: "tool",
+          payload: {},
+          verify: { method: "error_absent", timeoutMs: 5000 },
+        },
+      ],
+      evidence: {
+        fingerprint: "sig-runtime",
+        matchedLessonIds: [],
+        diagnosisId: "diag-runtime-001",
+        recurrenceCount: 1,
+      },
+    };
+
+    actionRepo.insert(db.writer, {
+      actionId: "action-runtime-001",
+      incidentId: "inc-runtime-001",
+      userId: "test-user",
+      riskTier: 0,
+      plan,
+      status: "planned",
+      outcome: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    const result = await runtime.autoFixExecution.execute("action-runtime-001");
+
+    expect(result.success).toBe(true);
+    expect(retryExecutorCalled).toEqual(["step-runtime-001"]);
+    expect(retryVerifierCalled).toEqual(["step-runtime-001"]);
   });
 });

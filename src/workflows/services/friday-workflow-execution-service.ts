@@ -530,15 +530,60 @@ export function createFridayWorkflowExecutionService(
       }
 
       const exprContext = buildExpressionContext(runEntity, nodeContexts);
-      const readyNodes = deps.dagScheduler.computeReadyNodes(
+      const schedulingResult = deps.dagScheduler.computeSchedulingResult(
         plan.adjacency,
         nodeStatuses,
         plan.compiledGraph,
         exprContext,
         deps.expressionEvaluator,
       );
+      const { readyNodes, deadEndedNodes } = schedulingResult;
 
-      if (readyNodes.length === 0) break;
+      if (deadEndedNodes.length > 0) {
+        deps.db.withWriteTransaction((db) => {
+          for (const nodeId of deadEndedNodes) {
+            const currentStatus = nodeStatuses.get(nodeId);
+            if (currentStatus) {
+              continue;
+            }
+
+            const latestAttempt = deps.nodeRepo.getLatestAttempt(db, runId, nodeId);
+            if (latestAttempt) {
+              nodeStatuses.set(nodeId, latestAttempt.status);
+              continue;
+            }
+
+            const attemptId = deps.idGenerator();
+            const entity: FridayWorkflowRunNodeEntity = {
+              id: deps.idGenerator(),
+              runId,
+              nodeId,
+              attempt: 1,
+              attemptId,
+              status: "cancelled",
+              idempotencyKey: deps.retryManager.generateIdempotencyKey(
+                runId,
+                nodeId,
+                1,
+              ),
+              input: exprContext as unknown as JsonValue,
+              finishedAt: deps.nowIso(),
+              createdAt: deps.nowIso(),
+              updatedAt: deps.nowIso(),
+            };
+
+            deps.nodeRepo.insertNodeAttempt(db, entity);
+            nodeStatuses.set(nodeId, "cancelled");
+          }
+        });
+      }
+
+      if (readyNodes.length === 0) {
+        if (deadEndedNodes.length === 0) {
+          break;
+        }
+        continue;
+      }
 
       // Create node attempt records (or reuse existing retrying attempts)
       const attempts: FridayWorkflowRunNodeEntity[] = [];

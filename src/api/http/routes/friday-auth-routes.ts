@@ -63,7 +63,15 @@ export function createFridayAuthRoutes(
       auth: { public: true },
       rateLimitPolicyId: "auth.login",
       async handler(ctx) {
-        return deps.authService.login(ctx.body as FridayLoginRequest, ctx.ip, ctx.userAgent);
+        const body = ctx.body as Record<string, unknown> | null;
+        if (!body || typeof body !== "object") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "Request body is required",
+            { httpStatus: 400 },
+          );
+        }
+        return deps.authService.login(body as unknown as FridayLoginRequest, ctx.ip, ctx.userAgent);
       },
     },
     {
@@ -81,7 +89,7 @@ export function createFridayAuthRoutes(
             { httpStatus: 400 },
           );
         }
-        return deps.authService.refresh(body as unknown as FridayRefreshRequest);
+        return deps.authService.refresh({ refreshToken: body.refreshToken as string });
       },
     },
     {
