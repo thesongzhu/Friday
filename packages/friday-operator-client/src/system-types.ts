@@ -576,6 +576,16 @@ export interface FridaySystemHealth {
   updatedAt: string;
 }
 
+export interface FridaySystemBrowserDiagnostics {
+  configuredMode: "auto" | "headless" | "host_chrome_visible";
+  activeMode: "headless" | "host_chrome_visible";
+  targetBrowser: string;
+  browserTarget?: string;
+  fallbackReason?: string;
+  sessionId?: string;
+  tabId?: string;
+}
+
 export interface FridaySystemSnapshot {
   capturedAt: string;
   platform: FridayDesktopPlatform;
@@ -594,6 +604,7 @@ export interface FridaySystemSnapshot {
   };
   health: FridaySystemHealth;
   companion: FridaySystemCompanionStatus;
+  browser?: FridaySystemBrowserDiagnostics;
   controlLease: FridaySystemControlLease | null;
   approvalsSummary: {
     total: number;

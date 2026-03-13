@@ -16,6 +16,7 @@ import type {
 import type {
   FridaySystemApprovalDecision,
   FridaySystemApprovalRule,
+  FridaySystemBrowserDiagnostics,
   FridaySystemCapabilityAvailability,
   FridaySystemCloudPlanningMode,
   FridaySystemCompanionStatus,
@@ -112,6 +113,7 @@ export interface CreateFridaySystemServiceDeps {
   companionHeartbeatStaleMs?: number;
   companionReconnectIntervalMs?: number;
   warn?: (message: string) => void;
+  getBrowserDiagnostics?: () => FridaySystemBrowserDiagnostics | undefined;
   remoteAuth?: {
     rpName?: string;
     rpId?: string;
@@ -608,6 +610,7 @@ export async function createFridaySystemService(
     const remoteDevices = deps.db.withReadConnection((db) => repository.listRemoteDevices(db));
     const remoteSessions = deps.db.withReadConnection((db) => repository.listRemoteSessions(db, { limit: 200 }));
     const health = await readHealth(companion, permissions);
+    const browser = deps.getBrowserDiagnostics?.();
     const latestSeenAt = remoteSessions.reduce<string | undefined>((latest, session) => {
       if (!latest) {
         return session.lastSeenAt;
@@ -634,6 +637,14 @@ export async function createFridaySystemService(
       },
       health,
       companion,
+      ...(browser
+        ? {
+          browser: {
+            ...browser,
+            browserTarget: browser.browserTarget ?? browser.targetBrowser,
+          },
+        }
+        : {}),
       controlLease: normalizeActiveLease(),
       approvalsSummary: {
         total: approvals.length,

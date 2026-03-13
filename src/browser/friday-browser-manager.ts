@@ -11,19 +11,50 @@ const DEFAULT_MAX_TOTAL_PAGES = 16;
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 20_000;
 const DEFAULT_ACTION_TIMEOUT_MS = 15_000;
 
+export type FridayBrowserPresentationMode =
+  | "auto"
+  | "headless"
+  | "host_chrome_visible";
+
+export type FridayBrowserActiveMode =
+  | "headless"
+  | "host_chrome_visible";
+
+export interface FridayBrowserExecutionContext {
+  presentationMode?: FridayBrowserPresentationMode;
+  source?: string;
+  interactive?: boolean;
+}
+
+export interface FridayBrowserPresentationState {
+  configuredMode: FridayBrowserPresentationMode;
+  activeMode: FridayBrowserActiveMode;
+  targetBrowser: string;
+  fallbackReason?: string;
+  sessionId?: string;
+  tabId?: string;
+}
+
 // ─── Options ───
 
 export interface CreateFridayBrowserManagerOptions {
   workspaceRoot: string;
   allowedOrigins?: string[];
   headless?: boolean;
+  presentationMode?: FridayBrowserPresentationMode;
   maxSessions?: number;
   maxTabsPerSession?: number;
   maxTotalPages?: number;
   navigationTimeoutMs?: number;
   actionTimeoutMs?: number;
+  platform?: NodeJS.Platform;
+  isCi?: boolean;
   /** Injectable chromium launcher for testing. */
   launchImpl?: typeof chromium.launch;
+  /** Injectable CDP connector for testing. */
+  connectOverCdpImpl?: typeof chromium.connectOverCDP;
+  /** Injectable host Chrome endpoint resolver for testing. */
+  resolveHostChromeEndpointImpl?: typeof resolveHostChromeEndpoint;
   /** OC-009: Connect to an existing browser via CDP or pass extra launch args. */
   hostBrowser?: {
     /** Chrome DevTools Protocol WebSocket endpoint. */
@@ -60,6 +91,8 @@ export interface BrowserSession {
   activeTabId: string;
   elementCache: Map<string, string>;
   tabCounter: number;
+  connectedOverCdp?: boolean;
+  presentation: FridayBrowserPresentationState;
   /** Optional profile metadata for multi-profile support. */
   profile?: BrowserProfileMetadata;
 }
@@ -67,17 +100,33 @@ export interface BrowserSession {
 // ─── Manager interface ───
 
 export interface FridayBrowserManager {
-  launch(sessionId: string, signal?: AbortSignal, profile?: string): Promise<{ sessionId: string; tabId: string; reused: boolean }>;
+  launch(
+    sessionId: string,
+    signal?: AbortSignal,
+    profile?: string,
+    context?: FridayBrowserExecutionContext,
+  ): Promise<{ sessionId: string; tabId: string; reused: boolean }>;
   getPage(sessionId: string, opts?: { tabId?: string; createIfMissing?: boolean }, signal?: AbortSignal): Promise<{ tabId: string; page: Page }>;
   getSession(sessionId: string): BrowserSession | undefined;
   snapshotAria(sessionId: string, opts?: { tabId?: string }, signal?: AbortSignal): Promise<string>;
   close(sessionId?: string): Promise<void>;
+  getDiagnostics(): FridayBrowserPresentationState;
   /** List sessions for a given profile name, or all if no profile specified. */
   listSessions(profile?: string): Array<{ sessionId: string; profile?: BrowserProfileMetadata; tabCount: number; activeTabId: string }>;
   /** Get sessions matching a profile name. */
   getSessionsByProfile(profile: string): Array<{ sessionId: string; session: BrowserSession }>;
   readonly sessions: ReadonlyMap<string, BrowserSession>;
-  readonly options: Readonly<Required<Omit<CreateFridayBrowserManagerOptions, "launchImpl" | "hostBrowser">> & { hostBrowser?: CreateFridayBrowserManagerOptions["hostBrowser"] }>;
+  readonly options: Readonly<
+    Required<
+      Omit<
+        CreateFridayBrowserManagerOptions,
+        "launchImpl"
+        | "hostBrowser"
+        | "connectOverCdpImpl"
+        | "resolveHostChromeEndpointImpl"
+      >
+    > & { hostBrowser?: CreateFridayBrowserManagerOptions["hostBrowser"] }
+  >;
 }
 
 // ─── Origin matching ───
@@ -277,6 +326,7 @@ export function createFridayBrowserManager(
   opts: CreateFridayBrowserManagerOptions,
 ): FridayBrowserManager {
   const headless = opts.headless ?? true;
+  const configuredMode = opts.presentationMode ?? "auto";
   const maxSessions = opts.maxSessions ?? DEFAULT_MAX_SESSIONS;
   const maxTabsPerSession = opts.maxTabsPerSession ?? DEFAULT_MAX_TABS_PER_SESSION;
   const maxTotalPages = opts.maxTotalPages ?? DEFAULT_MAX_TOTAL_PAGES;
@@ -284,15 +334,55 @@ export function createFridayBrowserManager(
   const actionTimeoutMs = opts.actionTimeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
   const allowedOrigins = opts.allowedOrigins ?? [];
   const workspaceRoot = opts.workspaceRoot;
+  const platform = opts.platform ?? process.platform;
+  const isCi = opts.isCi ?? process.env.CI === "true";
   const launchFn = opts.launchImpl ?? chromium.launch.bind(chromium);
+  const connectOverCdp = opts.connectOverCdpImpl ?? chromium.connectOverCDP.bind(chromium);
+  const resolveHostChromeEndpointFn = opts.resolveHostChromeEndpointImpl ?? resolveHostChromeEndpoint;
   // OC-009: Visible browser control — CDP connect or extra launch args
   let wsEndpoint = opts.hostBrowser?.wsEndpoint;
   const extraLaunchArgs = opts.hostBrowser?.launchArgs ?? [];
-  const useHostChrome = opts.hostBrowser?.useHostChrome ?? false;
   const cdpPort = opts.hostBrowser?.cdpPort ?? DEFAULT_CDP_PORT;
   const hostChromePath = opts.hostBrowser?.chromePath;
 
   const sessions = new Map<string, BrowserSession>();
+
+  function predictedPresentationForMode(
+    mode: FridayBrowserPresentationMode | FridayBrowserActiveMode,
+  ): Pick<FridayBrowserPresentationState, "activeMode" | "targetBrowser"> {
+    if (mode === "host_chrome_visible") {
+      return {
+        activeMode: "host_chrome_visible",
+        targetBrowser: "Google Chrome",
+      };
+    }
+    return {
+      activeMode: "headless",
+      targetBrowser: "Playwright Chromium",
+    };
+  }
+
+  function resolveLaunchPresentationMode(
+    context?: FridayBrowserExecutionContext,
+  ): FridayBrowserActiveMode {
+    const hintedMode = context?.presentationMode;
+    if (hintedMode === "headless" || hintedMode === "host_chrome_visible") {
+      return hintedMode;
+    }
+    if (configuredMode === "headless" || configuredMode === "host_chrome_visible") {
+      return configuredMode;
+    }
+    const source = context?.source?.trim().toLowerCase();
+    if (platform === "darwin" && !isCi && context?.interactive === true && source === "agent_page") {
+      return "host_chrome_visible";
+    }
+    return "headless";
+  }
+
+  let lastPresentation: FridayBrowserPresentationState = {
+    configuredMode,
+    ...predictedPresentationForMode(configuredMode),
+  };
 
   function totalOpenPages(): number {
     return Array.from(sessions.values()).reduce((sum, s) => sum + s.tabs.size, 0);
@@ -319,11 +409,14 @@ export function createFridayBrowserManager(
     workspaceRoot,
     allowedOrigins,
     headless,
+    presentationMode: configuredMode,
     maxSessions,
     maxTabsPerSession,
     maxTotalPages,
     navigationTimeoutMs,
     actionTimeoutMs,
+    platform,
+    isCi,
     hostBrowser: opts.hostBrowser,
   };
 
@@ -335,6 +428,12 @@ export function createFridayBrowserManager(
     const session = sessions.get(sessionId);
     if (!session) return;
     sessions.delete(sessionId);
+    if (session.connectedOverCdp) {
+      await Promise.all(
+        Array.from(session.tabs.values()).map((page) => page.close().catch(() => {})),
+      );
+      return;
+    }
     await session.browser.close().catch(() => {});
   }
 
@@ -342,6 +441,7 @@ export function createFridayBrowserManager(
     sessionId: string,
     signal?: AbortSignal,
     profile?: string,
+    executionContext?: FridayBrowserExecutionContext,
   ): Promise<{ sessionId: string; tabId: string; reused: boolean }> {
     const existing = sessions.get(sessionId);
     if (existing) {
@@ -349,6 +449,11 @@ export function createFridayBrowserManager(
         // Verify the active tab is still usable (not closed externally).
         const activePage = existing.tabs.get(existing.activeTabId);
         if (activePage && !activePage.isClosed()) {
+          lastPresentation = {
+            ...existing.presentation,
+            sessionId,
+            tabId: existing.activeTabId,
+          };
           return { sessionId, tabId: existing.activeTabId, reused: true };
         }
         // Active tab is dead — clean it up and create a fresh one.
@@ -362,6 +467,12 @@ export function createFridayBrowserManager(
           const newTabId = `tab-${String(existing.tabCounter)}`;
           existing.tabs.set(newTabId, newPage);
           existing.activeTabId = newTabId;
+          existing.presentation = {
+            ...existing.presentation,
+            sessionId,
+            tabId: newTabId,
+          };
+          lastPresentation = existing.presentation;
           return { sessionId, tabId: newTabId, reused: true };
         } finally {
           releaseSlot();
@@ -380,63 +491,60 @@ export function createFridayBrowserManager(
     signal?.throwIfAborted();
 
     let browser: Browser | undefined;
-    let context: BrowserContext | undefined;
+    let browserContext: BrowserContext | undefined;
     let page: Page | undefined;
     let created = false;
+    let connectedOverCdp = false;
+    const requestedMode = resolveLaunchPresentationMode(executionContext);
+    let actualMode: FridayBrowserActiveMode = requestedMode;
+    let fallbackReason: string | undefined;
+
+    async function launchPlaywrightBrowser(forceHeadless = headless): Promise<Browser> {
+      return launchFn({
+        headless: forceHeadless,
+        args: extraLaunchArgs.length > 0 ? extraLaunchArgs : undefined,
+      });
+    }
 
     try {
-      // Auto-discover host Chrome CDP each time if useHostChrome is enabled
-      // and we don't already have a cached wsEndpoint.
-      if (useHostChrome && !wsEndpoint) {
+      if (requestedMode === "host_chrome_visible" && !wsEndpoint) {
         try {
-          wsEndpoint = await resolveHostChromeEndpoint(cdpPort, hostChromePath);
-        } catch (cdpResolveErr) {
-          // Host Chrome CDP unavailable (e.g. Chrome running without
-          // --remote-debugging-port and `open -a` can't add the flag to a
-          // running instance on macOS).  Fall back to Playwright Chromium.
-          console.warn(
-            `[friday] Chrome CDP did not become available; falling back to Playwright Chromium`,
-          );
-          wsEndpoint = undefined;
+          wsEndpoint = await resolveHostChromeEndpointFn(cdpPort, hostChromePath);
+        } catch (error) {
+          fallbackReason = error instanceof Error ? error.message : String(error);
+          actualMode = "headless";
+          console.warn("[friday] Host Chrome unavailable; falling back to Playwright Chromium");
         }
       }
 
-      // OC-009: Connect to existing browser via CDP, or launch Playwright Chromium
-      if (wsEndpoint) {
+      // OC-009: Connect to existing browser via CDP, or launch Playwright Chromium.
+      if (requestedMode === "host_chrome_visible" && wsEndpoint && actualMode === "host_chrome_visible") {
         try {
-          browser = await chromium.connectOverCDP(wsEndpoint);
-        } catch (cdpErr) {
-          // CDP endpoint went stale — clear cache and re-resolve or fall back
-          if (useHostChrome) {
-            console.warn(`[friday] CDP connect failed, re-resolving host Chrome: ${String(cdpErr)}`);
+          browser = await connectOverCdp(wsEndpoint);
+          connectedOverCdp = true;
+        } catch (error) {
+          console.warn(`[friday] CDP connect failed, re-resolving host Chrome: ${String(error)}`);
+          wsEndpoint = undefined;
+          try {
+            wsEndpoint = await resolveHostChromeEndpointFn(cdpPort, hostChromePath);
+            browser = await connectOverCdp(wsEndpoint);
+            connectedOverCdp = true;
+          } catch (retryError) {
+            fallbackReason = retryError instanceof Error ? retryError.message : String(retryError);
+            actualMode = "headless";
             wsEndpoint = undefined;
-            try {
-              wsEndpoint = await resolveHostChromeEndpoint(cdpPort, hostChromePath);
-              browser = await chromium.connectOverCDP(wsEndpoint);
-            } catch (retryErr) {
-              console.warn(`[friday] CDP retry failed; falling back to Playwright Chromium`);
-              wsEndpoint = undefined;
-              browser = await launchFn({
-                headless,
-                args: extraLaunchArgs.length > 0 ? extraLaunchArgs : undefined,
-              });
-            }
-          } else {
-            throw cdpErr;
+            browser = await launchPlaywrightBrowser(true);
           }
         }
       } else {
-        browser = await launchFn({
-          headless,
-          args: extraLaunchArgs.length > 0 ? extraLaunchArgs : undefined,
-        });
+        browser = await launchPlaywrightBrowser(requestedMode === "headless" ? headless : true);
       }
 
       signal?.throwIfAborted();
 
       // When connected via CDP, try to reuse an existing blank tab instead of
       // creating a new context + page (which would open a redundant blank tab).
-      if (wsEndpoint) {
+      if (connectedOverCdp) {
         const existingContexts = browser.contexts();
         for (const ctx of existingContexts) {
           const pages = ctx.pages();
@@ -445,39 +553,52 @@ export function createFridayBrowserManager(
             return u === "about:blank" || u === "" || u.startsWith("chrome://newtab");
           });
           if (blank) {
-            context = ctx;
+            browserContext = ctx;
             page = blank;
-            context.setDefaultNavigationTimeout(navigationTimeoutMs);
-            context.setDefaultTimeout(actionTimeoutMs);
+            browserContext.setDefaultNavigationTimeout(navigationTimeoutMs);
+            browserContext.setDefaultTimeout(actionTimeoutMs);
             break;
           }
         }
       }
 
-      if (!context) {
-        context = await browser.newContext();
-        context.setDefaultNavigationTimeout(navigationTimeoutMs);
-        context.setDefaultTimeout(actionTimeoutMs);
+      if (!browserContext) {
+        browserContext = await browser.newContext();
+        browserContext.setDefaultNavigationTimeout(navigationTimeoutMs);
+        browserContext.setDefaultTimeout(actionTimeoutMs);
       }
 
       const releasePageSlot = reservePageSlot();
       try {
         if (!page) {
-          page = await context.newPage();
+          page = await browserContext.newPage();
         }
         const tabId = "tab-1";
+        const presentation: FridayBrowserPresentationState = {
+          configuredMode,
+          activeMode: actualMode,
+          targetBrowser: actualMode === "host_chrome_visible"
+            ? "Google Chrome"
+            : "Playwright Chromium",
+          ...(fallbackReason ? { fallbackReason } : {}),
+          sessionId,
+          tabId,
+        };
 
         const session: BrowserSession = {
           browser,
-          context,
-          tabs: new Map([[tabId, page]]),
+          context: browserContext,
+          tabs: new Map<string, Page>([[tabId, page]]),
           activeTabId: tabId,
           elementCache: new Map(),
           tabCounter: 1,
+          connectedOverCdp,
+          presentation,
           profile: profile ? { name: profile, createdAt: Date.now() } : undefined,
         };
 
         sessions.set(sessionId, session);
+        lastPresentation = presentation;
         created = true;
         return { sessionId, tabId, reused: false };
       } finally {
@@ -486,8 +607,10 @@ export function createFridayBrowserManager(
     } finally {
       if (!created) {
         await page?.close().catch(() => {});
-        await context?.close().catch(() => {});
-        await browser?.close().catch(() => {});
+        await browserContext?.close().catch(() => {});
+        if (!connectedOverCdp) {
+          await browser?.close().catch(() => {});
+        }
       }
     }
   }
@@ -519,6 +642,12 @@ export function createFridayBrowserManager(
         session.tabs.delete(targetTabId);
         // Fall through to createIfMissing logic
       } else {
+        session.presentation = {
+          ...session.presentation,
+          sessionId,
+          tabId: targetTabId,
+        };
+        lastPresentation = session.presentation;
         return { tabId: targetTabId, page: existing };
       }
     }
@@ -542,6 +671,12 @@ export function createFridayBrowserManager(
       const newTabId = `tab-${String(session.tabCounter)}`;
       session.tabs.set(newTabId, page);
       session.activeTabId = newTabId;
+      session.presentation = {
+        ...session.presentation,
+        sessionId,
+        tabId: newTabId,
+      };
+      lastPresentation = session.presentation;
 
       return { tabId: newTabId, page };
     } finally {
@@ -566,18 +701,33 @@ export function createFridayBrowserManager(
     if (sessionId !== undefined) {
       const session = sessions.get(sessionId);
       if (session) {
-        await session.browser.close().catch(() => {});
+        if (session.connectedOverCdp) {
+          await Promise.all(
+            Array.from(session.tabs.values()).map((page) => page.close().catch(() => {})),
+          );
+        } else {
+          await session.browser.close().catch(() => {});
+        }
         sessions.delete(sessionId);
       }
       return;
     }
 
     // Close all sessions
-    const closeTasks = Array.from(sessions.values()).map((s) =>
-      s.browser.close().catch(() => {}),
-    );
+    const closeTasks = Array.from(sessions.values()).map((session) => {
+      if (session.connectedOverCdp) {
+        return Promise.all(
+          Array.from(session.tabs.values()).map((page) => page.close().catch(() => {})),
+        ).then(() => undefined);
+      }
+      return session.browser.close().catch(() => {});
+    });
     await Promise.all(closeTasks);
     sessions.clear();
+  }
+
+  function getDiagnostics(): FridayBrowserPresentationState {
+    return { ...lastPresentation };
   }
 
   function listSessions(
@@ -614,6 +764,7 @@ export function createFridayBrowserManager(
     getSession,
     snapshotAria,
     close,
+    getDiagnostics,
     listSessions,
     getSessionsByProfile,
     get sessions() {

@@ -15,6 +15,12 @@ import type { FridayAgentEventEmitter } from "./friday-agent-event-emitter.js";
 import type { FridayAgentLlmClient } from "./friday-agent-llm-client.types.js";
 import type { FridayAgentReviewGate } from "./friday-agent-review-gate.js";
 
+export interface FridayAgentExecutionContext {
+  surface?: string;
+  interactive?: boolean;
+  browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
+}
+
 // ─── Runtime interface ───
 
 export interface FridayAgentRuntime {
@@ -41,6 +47,8 @@ export interface FridayAgentRuntime {
     scopes?: string[];
     /** Optional per-run hard blocklist of tool names. */
     disabledToolNames?: string[];
+    /** Optional surface/runtime context for tool routing decisions. */
+    executionContext?: FridayAgentExecutionContext;
   }): Promise<FridayAgentRuntimeResult>;
 
   /**

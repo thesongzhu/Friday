@@ -46,6 +46,11 @@ export interface FridayAgentRoutesDeps {
     timeoutMs?: number;
     requireReview?: boolean;
     constraints?: { readOnly?: boolean };
+    executionContext?: {
+      surface?: string;
+      interactive?: boolean;
+      browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
+    };
     principalId?: string;
     scopes?: string[];
   }) => Promise<FridayAgentRuntimeResult>;
@@ -140,6 +145,38 @@ export function createFridayAgentRoutes(
           };
         }
 
+        let executionContext:
+          | {
+            surface?: string;
+            interactive?: boolean;
+            browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
+          }
+          | undefined;
+        if (
+          body.executionContext !== undefined
+          && typeof body.executionContext === "object"
+          && body.executionContext !== null
+          && !Array.isArray(body.executionContext)
+        ) {
+          const input = body.executionContext as Record<string, unknown>;
+          const surface = typeof input.surface === "string" && input.surface.trim().length > 0
+            ? input.surface.trim()
+            : undefined;
+          const interactive = typeof input.interactive === "boolean"
+            ? input.interactive
+            : undefined;
+          const browserPresentationMode = input.browserPresentationMode === "auto"
+            || input.browserPresentationMode === "headless"
+            || input.browserPresentationMode === "host_chrome_visible"
+            ? input.browserPresentationMode
+            : undefined;
+          executionContext = {
+            ...(surface ? { surface } : {}),
+            ...(interactive !== undefined ? { interactive } : {}),
+            ...(browserPresentationMode ? { browserPresentationMode } : {}),
+          };
+        }
+
         const principalInput = ctx.principal
           ? {
             principalId: ctx.principal.principalId,
@@ -155,6 +192,7 @@ export function createFridayAgentRoutes(
           timeoutMs,
           requireReview,
           constraints,
+          executionContext,
           ...principalInput,
         });
         return result;

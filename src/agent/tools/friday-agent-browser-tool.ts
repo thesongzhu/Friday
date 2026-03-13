@@ -9,7 +9,12 @@ import {
   readNumberParam,
   readStringParam,
 } from "./friday-agent-tool-helpers.js";
-import type { FridayBrowserManager } from "../../browser/friday-browser-manager.js";
+import type {
+  FridayBrowserExecutionContext,
+  FridayBrowserManager,
+  FridayBrowserPresentationMode,
+  FridayBrowserPresentationState,
+} from "../../browser/friday-browser-manager.js";
 import { browserArtifactDir, validateUrl } from "../../browser/friday-browser-manager.js";
 import { resolveBrowserTarget } from "../../browser/friday-browser-target-id.js";
 import type {
@@ -135,7 +140,8 @@ export function createFridayAgentBrowserTool(
   return {
     name: "browser",
     description:
-      "Control a headless browser. Actions: open, navigate, screenshot, snapshot (AX tree + interactive elements), " +
+      "Control a browser session that can run either in a visible desktop Chrome window or in a background headless browser. " +
+      "Actions: open, navigate, screenshot, snapshot (AX tree + interactive elements), " +
       "act (click/type/press/hover/drag/select/fill/resize/wait/evaluate/close), tabs (list/new/switch/close), close, " +
       "status, start, stop, profiles, focus, console, pdf, upload, dialog.",
     parameters: {
@@ -387,6 +393,103 @@ export function createFridayAgentBrowserTool(
     return "default";
   }
 
+  function readBrowserExecutionContext(
+    args: Record<string, unknown>,
+  ): FridayBrowserExecutionContext | undefined {
+    const presentationMode = readStringParam(args, "__browserPresentationMode") as FridayBrowserPresentationMode | undefined;
+    const source = readStringParam(args, "__browserExecutionSource");
+    const interactive = readBooleanParam(args, "__browserInteractive");
+
+    if (!presentationMode && !source && interactive === undefined) {
+      return undefined;
+    }
+
+    return {
+      ...(presentationMode ? { presentationMode } : {}),
+      ...(source ? { source } : {}),
+      ...(interactive !== undefined ? { interactive } : {}),
+    };
+  }
+
+  function presentModeLabel(mode: FridayBrowserPresentationMode | "headless" | "host_chrome_visible"): string {
+    return mode === "host_chrome_visible" ? "visible desktop" : "headless";
+  }
+
+  function summarizeBrowserTarget(url: string | undefined, targetBrowser: string): string {
+    if (url) {
+      try {
+        return new URL(url).hostname.replace(/^www\./, "");
+      } catch {
+        if (url.trim().length > 0) {
+          return url.trim();
+        }
+      }
+    }
+    return targetBrowser;
+  }
+
+  function resolvePresentationState(input: {
+    sessionId?: string;
+    tabId?: string;
+    presentation?: FridayBrowserPresentationState;
+  } = {}): FridayBrowserPresentationState {
+    const sessionPresentation = input.sessionId
+      ? browserManager.getSession(input.sessionId)?.presentation
+      : undefined;
+    const base = input.presentation ?? sessionPresentation ?? browserManager.getDiagnostics();
+    return {
+      ...base,
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      ...(input.tabId ? { tabId: input.tabId } : {}),
+    };
+  }
+
+  function browserJsonResult(
+    payload: Record<string, unknown>,
+    input: {
+      sessionId?: string;
+      tabId?: string;
+      url?: string;
+      presentation?: FridayBrowserPresentationState;
+    } = {},
+  ): FridayAgentToolResult {
+    const sessionId = input.sessionId ?? (typeof payload.sessionId === "string" ? payload.sessionId : undefined);
+    const tabId = input.tabId ?? (typeof payload.tabId === "string" ? payload.tabId : undefined);
+    const url = input.url ?? (typeof payload.url === "string" ? payload.url : undefined);
+    const presentation = resolvePresentationState({
+      sessionId,
+      tabId,
+      presentation: input.presentation,
+    });
+    const browserTarget = presentation.targetBrowser;
+    const presentationSummary = `${summarizeBrowserTarget(url, browserTarget)} · ${presentModeLabel(presentation.activeMode)}`;
+    const browserPresentation = {
+      presentationMode: presentation.activeMode,
+      targetBrowser: browserTarget,
+      browserTarget,
+      ...(sessionId ? { sessionId } : {}),
+      ...(tabId ? { tabId } : {}),
+      ...(presentation.fallbackReason ? { fallbackReason: presentation.fallbackReason } : {}),
+      presentationSummary,
+    };
+
+    return jsonResult(
+      {
+        ...payload,
+        presentationMode: presentation.activeMode,
+        targetBrowser: browserTarget,
+        browserTarget,
+        ...(presentation.fallbackReason ? { fallbackReason: presentation.fallbackReason } : {}),
+        presentationSummary,
+      },
+      {
+        metadata: {
+          browserPresentation,
+        },
+      },
+    );
+  }
+
   // ─── Action handlers ───
 
   async function handleOpen(
@@ -396,6 +499,7 @@ export function createFridayAgentBrowserTool(
     const sessionId = resolveSessionIdForOpenOrStart(args);
     const url = readStringParam(args, "url");
     const profile = readStringParam(args, "profile");
+    const executionContext = readBrowserExecutionContext(args);
 
     if (url) {
       const urlError = validateUrl(url, browserManager.options.allowedOrigins);
@@ -407,7 +511,7 @@ export function createFridayAgentBrowserTool(
     let lastError: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const { tabId, reused } = await browserManager.launch(sessionId, signal, profile);
+        const { tabId, reused } = await browserManager.launch(sessionId, signal, profile, executionContext);
 
         if (url) {
           const { page } = await browserManager.getPage(sessionId, { tabId }, signal);
@@ -416,14 +520,17 @@ export function createFridayAgentBrowserTool(
 
         const { page } = await browserManager.getPage(sessionId, { tabId }, signal);
 
-        return jsonResult({
-          sessionId,
-          tabId,
-          reused: reused && attempt === 0,
-          profile: profile ?? undefined,
-          url: page.url(),
-          title: await page.title(),
-        });
+        return browserJsonResult(
+          {
+            sessionId,
+            tabId,
+            reused: reused && attempt === 0,
+            profile: profile ?? undefined,
+            url: page.url(),
+            title: await page.title(),
+          },
+          { sessionId, tabId, url: page.url() },
+        );
       } catch (err) {
         lastError = err;
         const msg = err instanceof Error ? err.message : String(err);
@@ -446,6 +553,7 @@ export function createFridayAgentBrowserTool(
     signal: AbortSignal,
   ): Promise<FridayAgentToolResult> {
     const url = readStringParam(args, "url", { required: true });
+    const executionContext = readBrowserExecutionContext(args);
     const urlError = validateUrl(url, browserManager.options.allowedOrigins);
     if (urlError) return errorResult(urlError);
 
@@ -457,12 +565,15 @@ export function createFridayAgentBrowserTool(
         const { page } = await browserManager.getPage(sessionId, { tabId }, signal);
         await page.goto(url, { waitUntil: "domcontentloaded" });
 
-        return jsonResult({
-          sessionId,
-          tabId,
-          url: page.url(),
-          title: await page.title(),
-        });
+        return browserJsonResult(
+          {
+            sessionId,
+            tabId,
+            url: page.url(),
+            title: await page.title(),
+          },
+          { sessionId, tabId, url: page.url() },
+        );
       } catch (err) {
         lastError = err;
         const msg = err instanceof Error ? err.message : String(err);
@@ -470,7 +581,7 @@ export function createFridayAgentBrowserTool(
           const sessionId = resolveSessionId(args);
           await browserManager.close(sessionId).catch(() => {});
           // Re-launch the session so retry can proceed
-          await browserManager.launch(sessionId, signal);
+          await browserManager.launch(sessionId, signal, undefined, executionContext);
           continue;
         }
         if (attempt === 0 && isTimeoutError(msg)) {
@@ -500,16 +611,20 @@ export function createFridayAgentBrowserTool(
     if (mode === "base64") {
       const base64 = buffer.toString("base64");
       const viewport = page.viewportSize();
-      return jsonResult({
-        sessionId,
-        tabId,
-        mode: "base64",
-        mimeType: "image/png",
-        base64,
-        width: viewport?.width ?? 0,
-        height: viewport?.height ?? 0,
-        byteLength: buffer.byteLength,
-      });
+      return browserJsonResult(
+        {
+          sessionId,
+          tabId,
+          mode: "base64",
+          mimeType: "image/png",
+          base64,
+          width: viewport?.width ?? 0,
+          height: viewport?.height ?? 0,
+          byteLength: buffer.byteLength,
+          url: page.url(),
+        },
+        { sessionId, tabId, url: page.url() },
+      );
     }
 
     // Save to file
@@ -524,16 +639,20 @@ export function createFridayAgentBrowserTool(
 
     const viewport = page.viewportSize();
 
-    return jsonResult({
-      sessionId,
-      tabId,
-      mode: "path",
-      mimeType: "image/png",
-      path: filePath,
-      width: viewport?.width ?? 0,
-      height: viewport?.height ?? 0,
-      byteLength: buffer.byteLength,
-    });
+    return browserJsonResult(
+      {
+        sessionId,
+        tabId,
+        mode: "path",
+        mimeType: "image/png",
+        path: filePath,
+        width: viewport?.width ?? 0,
+        height: viewport?.height ?? 0,
+        byteLength: buffer.byteLength,
+        url: page.url(),
+      },
+      { sessionId, tabId, url: page.url() },
+    );
   }
 
   async function handleSnapshot(
@@ -618,15 +737,18 @@ export function createFridayAgentBrowserTool(
       session.elementCache.set(el.elementId, el.selector);
     }
 
-    return jsonResult({
-      sessionId,
-      tabId,
-      url: page.url(),
-      title: await page.title(),
-      axTree,
-      axText,
-      interactive,
-    });
+    return browserJsonResult(
+      {
+        sessionId,
+        tabId,
+        url: page.url(),
+        title: await page.title(),
+        axTree,
+        axText,
+        interactive,
+      },
+      { sessionId, tabId, url: page.url() },
+    );
   }
 
   async function handleAct(
@@ -744,14 +866,17 @@ export function createFridayAgentBrowserTool(
       case "evaluate": {
         const text = readStringParam(args, "text", { required: true });
         const evalResult = await page.evaluate(text);
-        return jsonResult({
-          sessionId,
-          tabId,
-          act: actKind,
-          result: evalResult,
-          url: page.url(),
-          title: await page.title(),
-        });
+        return browserJsonResult(
+          {
+            sessionId,
+            tabId,
+            act: actKind,
+            result: evalResult,
+            url: page.url(),
+            title: await page.title(),
+          },
+          { sessionId, tabId, url: page.url() },
+        );
       }
       case "close": {
         // Close the current tab
@@ -763,23 +888,29 @@ export function createFridayAgentBrowserTool(
             session.activeTabId = session.tabs.keys().next().value!;
           }
         }
-        return jsonResult({
-          sessionId,
-          closedTabId: tabId,
-          act: actKind,
-          remainingTabs: session?.tabs.size ?? 0,
-        });
+        return browserJsonResult(
+          {
+            sessionId,
+            closedTabId: tabId,
+            act: actKind,
+            remainingTabs: session?.tabs.size ?? 0,
+          },
+          { sessionId },
+        );
       }
     }
 
-    return jsonResult({
-      sessionId,
-      tabId,
-      act: actKind,
-      selector: selector ?? undefined,
-      url: page.url(),
-      title: await page.title(),
-    });
+    return browserJsonResult(
+      {
+        sessionId,
+        tabId,
+        act: actKind,
+        selector: selector ?? undefined,
+        url: page.url(),
+        title: await page.title(),
+      },
+      { sessionId, tabId, url: page.url() },
+    );
   }
 
   async function handleTabs(
@@ -798,7 +929,7 @@ export function createFridayAgentBrowserTool(
           url: page.url(),
           active: tid === session.activeTabId,
         }));
-        return jsonResult({ sessionId, tabs });
+        return browserJsonResult({ sessionId, tabs }, { sessionId });
       }
       case "new": {
         const { tabId, page } = await browserManager.getPage(
@@ -819,12 +950,15 @@ export function createFridayAgentBrowserTool(
           }
           await page.goto(url, { waitUntil: "domcontentloaded" });
         }
-        return jsonResult({
-          sessionId,
-          tabId,
-          url: page.url(),
-          title: await page.title(),
-        });
+        return browserJsonResult(
+          {
+            sessionId,
+            tabId,
+            url: page.url(),
+            title: await page.title(),
+          },
+          { sessionId, tabId, url: page.url() },
+        );
       }
       case "switch": {
         const tabId = readStringParam(args, "tabId", { required: true });
@@ -833,12 +967,15 @@ export function createFridayAgentBrowserTool(
         }
         session.activeTabId = tabId;
         const page = session.tabs.get(tabId)!;
-        return jsonResult({
-          sessionId,
-          tabId,
-          url: page.url(),
-          title: await page.title(),
-        });
+        return browserJsonResult(
+          {
+            sessionId,
+            tabId,
+            url: page.url(),
+            title: await page.title(),
+          },
+          { sessionId, tabId, url: page.url() },
+        );
       }
       case "close": {
         const tabId = readStringParam(args, "tabId");
@@ -855,11 +992,14 @@ export function createFridayAgentBrowserTool(
           session.activeTabId = session.tabs.keys().next().value!;
         }
 
-        return jsonResult({
-          sessionId,
-          closedTabId: targetTabId,
-          remainingTabs: session.tabs.size,
-        });
+        return browserJsonResult(
+          {
+            sessionId,
+            closedTabId: targetTabId,
+            remainingTabs: session.tabs.size,
+          },
+          { sessionId },
+        );
       }
       default:
         return errorResult(
@@ -870,8 +1010,9 @@ export function createFridayAgentBrowserTool(
 
   async function handleClose(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
     const sessionId = resolveSessionId(args);
+    const presentation = browserManager.getSession(sessionId)?.presentation ?? browserManager.getDiagnostics();
     await browserManager.close(sessionId);
-    return jsonResult({ sessionId, closed: true });
+    return browserJsonResult({ sessionId, closed: true }, { sessionId, presentation });
   }
 
   // ─── New action handlers ───
@@ -879,16 +1020,24 @@ export function createFridayAgentBrowserTool(
   function handleStatus(args: Record<string, unknown>): FridayAgentToolResult {
     const profile = readStringParam(args, "profile");
     const sessions = browserManager.listSessions(profile);
-    return jsonResult({
-      totalSessions: sessions.length,
-      maxSessions: browserManager.options.maxSessions,
-      sessions: sessions.map((s) => ({
-        sessionId: s.sessionId,
-        profile: s.profile?.name ?? null,
-        tabCount: s.tabCount,
-        activeTabId: s.activeTabId,
-      })),
-    });
+    const diagnostics = browserManager.getDiagnostics();
+    return browserJsonResult(
+      {
+        totalSessions: sessions.length,
+        maxSessions: browserManager.options.maxSessions,
+        sessions: sessions.map((s) => ({
+          sessionId: s.sessionId,
+          profile: s.profile?.name ?? null,
+          tabCount: s.tabCount,
+          activeTabId: s.activeTabId,
+        })),
+      },
+      {
+        sessionId: diagnostics.sessionId,
+        tabId: diagnostics.tabId,
+        presentation: diagnostics,
+      },
+    );
   }
 
   async function handleStart(
@@ -907,13 +1056,13 @@ export function createFridayAgentBrowserTool(
       for (const { sessionId } of sessions) {
         await browserManager.close(sessionId);
       }
-      return jsonResult({
+      return browserJsonResult({
         profile,
         closedSessions: sessions.length,
       });
     }
     await browserManager.close();
-    return jsonResult({ closedAll: true });
+    return browserJsonResult({ closedAll: true });
   }
 
   function handleProfiles(): FridayAgentToolResult {
@@ -930,7 +1079,7 @@ export function createFridayAgentBrowserTool(
       sessionCount: count,
     }));
 
-    return jsonResult({ profiles });
+    return browserJsonResult({ profiles });
   }
 
   async function handleFocus(
@@ -946,12 +1095,15 @@ export function createFridayAgentBrowserTool(
     const { page } = await browserManager.getPage(sessionId, { tabId }, signal);
     await page.bringToFront();
 
-    return jsonResult({
-      sessionId,
-      tabId,
-      url: page.url(),
-      title: await page.title(),
-    });
+    return browserJsonResult(
+      {
+        sessionId,
+        tabId,
+        url: page.url(),
+        title: await page.title(),
+      },
+      { sessionId, tabId, url: page.url() },
+    );
   }
 
   async function handleConsole(
@@ -966,20 +1118,26 @@ export function createFridayAgentBrowserTool(
     const text = readStringParam(args, "text");
     if (text) {
       const result = await page.evaluate(text);
-      return jsonResult({
-        sessionId,
-        tabId,
-        result,
-        url: page.url(),
-      });
+      return browserJsonResult(
+        {
+          sessionId,
+          tabId,
+          result,
+          url: page.url(),
+        },
+        { sessionId, tabId, url: page.url() },
+      );
     }
 
-    return jsonResult({
-      sessionId,
-      tabId,
-      message: "Console listener active. Use 'text' param to evaluate an expression.",
-      url: page.url(),
-    });
+    return browserJsonResult(
+      {
+        sessionId,
+        tabId,
+        message: "Console listener active. Use 'text' param to evaluate an expression.",
+        url: page.url(),
+      },
+      { sessionId, tabId, url: page.url() },
+    );
   }
 
   async function handlePdf(
@@ -999,13 +1157,16 @@ export function createFridayAgentBrowserTool(
     const buffer = await page.pdf();
     fs.writeFileSync(filePath, buffer);
 
-    return jsonResult({
-      sessionId,
-      tabId,
-      path: filePath,
-      byteLength: buffer.byteLength,
-      url: page.url(),
-    });
+    return browserJsonResult(
+      {
+        sessionId,
+        tabId,
+        path: filePath,
+        byteLength: buffer.byteLength,
+        url: page.url(),
+      },
+      { sessionId, tabId, url: page.url() },
+    );
   }
 
   /**
@@ -1066,13 +1227,16 @@ export function createFridayAgentBrowserTool(
 
     await page.setInputFiles(selector, filePaths);
 
-    return jsonResult({
-      sessionId,
-      tabId,
-      selector,
-      uploadedFiles: filePaths.length,
-      url: page.url(),
-    });
+    return browserJsonResult(
+      {
+        sessionId,
+        tabId,
+        selector,
+        uploadedFiles: filePaths.length,
+        url: page.url(),
+      },
+      { sessionId, tabId, url: page.url() },
+    );
   }
 
   async function handleDialog(
@@ -1119,20 +1283,26 @@ export function createFridayAgentBrowserTool(
         page.off("dialog", listener);
       }
 
-      return jsonResult({
-        sessionId,
-        tabId,
-        dialog: null,
-        message: "No dialog appeared within timeout.",
-      });
+      return browserJsonResult(
+        {
+          sessionId,
+          tabId,
+          dialog: null,
+          message: "No dialog appeared within timeout.",
+        },
+        { sessionId, tabId },
+      );
     }
 
-    return jsonResult({
-      sessionId,
-      tabId,
-      dialog: result,
-      accepted: accept,
-      promptText: promptText ?? null,
-    });
+    return browserJsonResult(
+      {
+        sessionId,
+        tabId,
+        dialog: result,
+        accepted: accept,
+        promptText: promptText ?? null,
+      },
+      { sessionId, tabId },
+    );
   }
 }

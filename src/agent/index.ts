@@ -59,6 +59,7 @@ export type {
 export type {
   FridayAgentRuntime,
   FridayAgentRuntimeResult,
+  FridayAgentExecutionContext,
   CreateFridayAgentRuntimeDeps,
 } from "./runtime/friday-agent-runtime.types.js";
 export { createFridayAgentRuntime } from "./runtime/friday-agent-runtime.js";

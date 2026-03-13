@@ -646,8 +646,16 @@ export interface AgentRunStreamEvent {
   // tool events
   toolName?: string;
   toolCallId?: string;
+  params?: Record<string, unknown>;
   summary?: string;
   durationMs?: number;
+  isError?: boolean;
+  presentationMode?: "headless" | "host_chrome_visible";
+  targetBrowser?: string;
+  browserTarget?: string;
+  sessionId?: string;
+  tabId?: string;
+  fallbackReason?: string;
   // subagent events
   subagentId?: string;
   subagentTask?: string;

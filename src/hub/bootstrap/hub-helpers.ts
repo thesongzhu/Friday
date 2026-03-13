@@ -49,6 +49,7 @@ import type { FridayWorkflowGeneratorService, FridayWorkflowRuntime } from "#wor
 import type { FridayApiRuntime } from "#api";
 import type { FridayChannelRegistry, WebchatWsService } from "#channels";
 import type { FridaySatelliteRuntime } from "#satellites";
+import type { FridayBrowserPresentationMode } from "#browser";
 
 // ─── Constants ───
 
@@ -204,7 +205,9 @@ export function resolveBrowserHostConfigFromEnv(
 } | undefined {
   const wsEndpoint = env.FRIDAY_BROWSER_WS_ENDPOINT?.trim();
   const rawLaunchArgs = env.FRIDAY_BROWSER_LAUNCH_ARGS?.trim();
-  const useHostChrome = env.FRIDAY_BROWSER_USE_HOST_CHROME === "true";
+  const resolvedPresentationMode = resolveBrowserPresentationModeFromEnv(env);
+  const useHostChrome = env.FRIDAY_BROWSER_USE_HOST_CHROME === "true"
+    || resolvedPresentationMode === "host_chrome_visible";
   const cdpPort = env.FRIDAY_BROWSER_CDP_PORT
     ? parseInt(env.FRIDAY_BROWSER_CDP_PORT, 10) || undefined
     : undefined;
@@ -244,6 +247,29 @@ export function resolveBrowserHostConfigFromEnv(
     cdpPort,
     chromePath,
   };
+}
+
+export function resolveBrowserPresentationModeFromEnv(
+  env: NodeJS.ProcessEnv,
+): FridayBrowserPresentationMode {
+  const explicitMode = env.FRIDAY_BROWSER_PRESENTATION_MODE?.trim();
+  if (
+    explicitMode === "auto"
+    || explicitMode === "headless"
+    || explicitMode === "host_chrome_visible"
+  ) {
+    return explicitMode;
+  }
+  if (env.FRIDAY_BROWSER_USE_HOST_CHROME === "true") {
+    return "host_chrome_visible";
+  }
+  if (env.FRIDAY_BROWSER_HEADLESS === "false") {
+    return "host_chrome_visible";
+  }
+  if (env.FRIDAY_BROWSER_HEADLESS === "true") {
+    return "headless";
+  }
+  return "auto";
 }
 
 // ─── Desktop config ───

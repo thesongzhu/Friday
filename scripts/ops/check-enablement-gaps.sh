@@ -120,12 +120,35 @@ check_mcp() {
   print_ok "FRIDAY_MCP_SERVERS configured"
 }
 
-check_browser_host_mode() {
-  if [[ "${FRIDAY_BROWSER_USE_HOST_CHROME:-false}" == "true" ]]; then
-    print_warn "FRIDAY_BROWSER_USE_HOST_CHROME=true may fallback if CDP is unavailable."
+check_browser_presentation_mode() {
+  local mode="${FRIDAY_BROWSER_PRESENTATION_MODE:-}"
+  if [[ -z "${mode}" ]]; then
+    if [[ "${FRIDAY_BROWSER_USE_HOST_CHROME:-false}" == "true" ]]; then
+      print_warn "Legacy browser config uses host Chrome mode; prefer FRIDAY_BROWSER_PRESENTATION_MODE=host_chrome_visible or auto."
+      return
+    fi
+    if [[ "${FRIDAY_BROWSER_HEADLESS:-}" == "false" ]]; then
+      print_warn "Legacy browser config uses FRIDAY_BROWSER_HEADLESS=false; prefer FRIDAY_BROWSER_PRESENTATION_MODE=host_chrome_visible or auto."
+      return
+    fi
+    print_warn "FRIDAY_BROWSER_PRESENTATION_MODE is unset; default auto mode is recommended for local interactive runs."
     return
   fi
-  print_ok "FRIDAY_BROWSER_USE_HOST_CHROME=false (stable Playwright Chromium mode)"
+
+  case "${mode}" in
+    auto)
+      print_ok "FRIDAY_BROWSER_PRESENTATION_MODE=auto (interactive local runs prefer visible desktop Chrome)"
+      ;;
+    host_chrome_visible)
+      print_warn "FRIDAY_BROWSER_PRESENTATION_MODE=host_chrome_visible may fallback to headless if host Chrome CDP is unavailable."
+      ;;
+    headless)
+      print_warn "FRIDAY_BROWSER_PRESENTATION_MODE=headless keeps browser actions in the background."
+      ;;
+    *)
+      print_fail "FRIDAY_BROWSER_PRESENTATION_MODE must be one of: auto, headless, host_chrome_visible."
+      ;;
+  esac
 }
 
 main() {
@@ -135,7 +158,7 @@ main() {
   check_channels_json
   check_desktop
   check_mcp
-  check_browser_host_mode
+  check_browser_presentation_mode
 
   if (( failures > 0 )); then
     echo "[enablement-check] FAILED with ${failures} failure(s), ${warnings} warning(s)."

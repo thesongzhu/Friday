@@ -29,6 +29,7 @@ import { createFridayAgentRunRepository } from "../persistence/friday-agent-run-
 import type { FridayAgentLlmStreamEvent } from "./friday-agent-llm-client.types.js";
 import type {
   CreateFridayAgentRuntimeDeps,
+  FridayAgentExecutionContext,
   FridayAgentRuntime,
   FridayAgentRuntimeResult,
 } from "./friday-agent-runtime.types.js";
@@ -164,6 +165,7 @@ export function createFridayAgentRuntime(
       const constraints = params.constraints;
       const isReadOnly = constraints?.readOnly === true;
       const disabledToolNames = normalizeToolNameSet(params.disabledToolNames);
+      const executionContext = params.executionContext;
       const principalId =
         typeof params.principalId === "string" && params.principalId.trim().length > 0
           ? params.principalId
@@ -738,6 +740,7 @@ export function createFridayAgentRuntime(
               runId,
               sessionKey,
               principalId,
+              executionContext,
               nowIso,
               emitRunEvent: (name, payload) => emitRunEvent(name, payload, runId),
             });
@@ -1870,8 +1873,105 @@ interface ExecuteToolCallParams {
   runId: string;
   sessionKey: string;
   principalId?: string;
+  executionContext?: FridayAgentExecutionContext;
   nowIso: () => string;
   emitRunEvent: (name: string, payload: Record<string, unknown>) => void;
+}
+
+function augmentToolArgsForRuntime(params: {
+  toolName: string;
+  input: Record<string, unknown>;
+  sessionKey: string;
+  principalId?: string;
+  executionContext?: FridayAgentExecutionContext;
+}): Record<string, unknown> {
+  if (params.toolName === "memory_search" || params.toolName === "memory_store") {
+    return { ...params.input, __sessionId: params.sessionKey };
+  }
+  if (params.toolName === "feedback") {
+    return { ...params.input, __principalId: params.principalId };
+  }
+  if (params.toolName === "browser") {
+    return {
+      ...params.input,
+      ...(params.executionContext?.browserPresentationMode
+        ? { __browserPresentationMode: params.executionContext.browserPresentationMode }
+        : {}),
+      ...(params.executionContext?.surface
+        ? { __browserExecutionSource: params.executionContext.surface }
+        : {}),
+      ...(typeof params.executionContext?.interactive === "boolean"
+        ? { __browserInteractive: params.executionContext.interactive }
+        : {}),
+    };
+  }
+  return params.input;
+}
+
+function readBrowserPresentationPayload(
+  result: FridayAgentToolResult,
+): Record<string, unknown> | null {
+  const raw = result.metadata?.browserPresentation;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  return raw as Record<string, unknown>;
+}
+
+function deriveToolEventSummary(result: FridayAgentToolResult): string {
+  const browserPayload = readBrowserPresentationPayload(result);
+  const browserSummary = typeof browserPayload?.presentationSummary === "string"
+    ? browserPayload.presentationSummary.trim()
+    : "";
+  if (browserSummary.length > 0) {
+    return browserSummary.slice(0, 200);
+  }
+  return result.content.slice(0, 200);
+}
+
+function buildToolEndEventPayload(params: {
+  runId: string;
+  toolName: string;
+  toolCallId: string;
+  durationMs: number;
+  result: FridayAgentToolResult;
+  routeId: string;
+  correlationId: string;
+}): Record<string, unknown> {
+  const browserPayload = readBrowserPresentationPayload(params.result);
+  return {
+    runId: params.runId,
+    toolName: params.toolName,
+    toolCallId: params.toolCallId,
+    durationMs: params.durationMs,
+    isError: params.result.isError ?? false,
+    summary: deriveToolEventSummary(params.result),
+    ...(params.result.isError
+      ? { errorCode: params.result.errorCode ?? FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR }
+      : {}),
+    routeId: params.result.routeId ?? params.routeId,
+    correlationId: params.result.correlationId ?? params.correlationId,
+    ...(typeof browserPayload?.presentationMode === "string"
+      ? { presentationMode: browserPayload.presentationMode }
+      : {}),
+    ...(typeof browserPayload?.targetBrowser === "string"
+      ? { targetBrowser: browserPayload.targetBrowser }
+      : {}),
+    ...(typeof browserPayload?.browserTarget === "string"
+      ? { browserTarget: browserPayload.browserTarget }
+      : typeof browserPayload?.targetBrowser === "string"
+        ? { browserTarget: browserPayload.targetBrowser }
+        : {}),
+    ...(typeof browserPayload?.sessionId === "string"
+      ? { sessionId: browserPayload.sessionId }
+      : {}),
+    ...(typeof browserPayload?.tabId === "string"
+      ? { tabId: browserPayload.tabId }
+      : {}),
+    ...(typeof browserPayload?.fallbackReason === "string"
+      ? { fallbackReason: browserPayload.fallbackReason }
+      : {}),
+  };
 }
 
 async function executeToolCall(
@@ -1881,12 +1981,13 @@ async function executeToolCall(
   const routeId = "agent.execute.tool";
   const correlationId = runId;
   const startedAt = Date.now();
-  const toolArgs =
-    toolUse.name === "memory_search" || toolUse.name === "memory_store"
-      ? { ...toolUse.input, __sessionId: sessionKey }
-      : toolUse.name === "feedback"
-        ? { ...toolUse.input, __principalId: params.principalId }
-        : toolUse.input;
+  const toolArgs = augmentToolArgsForRuntime({
+    toolName: toolUse.name,
+    input: toolUse.input,
+    sessionKey,
+    principalId: params.principalId,
+    executionContext: params.executionContext,
+  });
 
   emitRunEvent("agent.run.tool_start", {
     runId,
@@ -1954,6 +2055,9 @@ async function executeToolCall(
         toolMap,
         signal: toolAbortController.signal,
         runId,
+        sessionKey,
+        principalId: params.principalId,
+        executionContext: params.executionContext,
         emitRunEvent,
         maxResultChars: FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS,
         initialResult: result,
@@ -1966,6 +2070,9 @@ async function executeToolCall(
         toolMap,
         signal: toolAbortController.signal,
         runId,
+        sessionKey,
+        principalId: params.principalId,
+        executionContext: params.executionContext,
         emitRunEvent,
         maxResultChars: FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS,
         initialResult: result,
@@ -1973,20 +2080,15 @@ async function executeToolCall(
       result = capToolResultContent(result, FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS);
     }
 
-    const toolEndErrorCode = result.isError
-      ? result.errorCode ?? FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR
-      : undefined;
-    emitRunEvent("agent.run.tool_end", {
+    emitRunEvent("agent.run.tool_end", buildToolEndEventPayload({
       runId,
       toolName: toolUse.name,
       toolCallId: toolUse.id,
       durationMs,
-      isError: result.isError ?? false,
-      summary: result.content.slice(0, 200),
-      ...(toolEndErrorCode ? { errorCode: toolEndErrorCode } : {}),
-      routeId: result.routeId ?? routeId,
-      correlationId: result.correlationId ?? correlationId,
-    });
+      result,
+      routeId,
+      correlationId,
+    }));
 
     return {
       toolCallId: toolUse.id,
@@ -2054,6 +2156,9 @@ interface MaybeRecoverToolInputErrorParams {
   toolMap: Map<string, FridayAgentToolDefinition>;
   signal: AbortSignal;
   runId: string;
+  sessionKey: string;
+  principalId?: string;
+  executionContext?: FridayAgentExecutionContext;
   emitRunEvent: (name: string, payload: Record<string, unknown>) => void;
   maxResultChars: number;
   initialResult: FridayAgentToolResult;
@@ -2100,7 +2205,18 @@ function looksLikeToolInputError(message: string): boolean {
 async function maybeRecoverDesktopInputError(
   params: MaybeRecoverToolInputErrorParams,
 ): Promise<FridayAgentToolResult> {
-  const { toolUse, toolMap, signal, runId, emitRunEvent, maxResultChars, initialResult } = params;
+  const {
+    toolUse,
+    toolMap,
+    signal,
+    runId,
+    sessionKey,
+    principalId,
+    executionContext,
+    emitRunEvent,
+    maxResultChars,
+    initialResult,
+  } = params;
   const desktopTool = toolMap.get("desktop");
   if (!desktopTool) return initialResult;
 
@@ -2144,6 +2260,9 @@ async function maybeRecoverDesktopInputError(
     recoveryReason: initialResult.content,
     signal,
     runId,
+    sessionKey,
+    principalId,
+    executionContext,
     emitRunEvent,
     maxResultChars,
     routeId: "agent.execute.tool.input_recovery",
@@ -2164,7 +2283,18 @@ async function maybeRecoverDesktopInputError(
 async function maybeRecoverBrowserInputError(
   params: MaybeRecoverToolInputErrorParams,
 ): Promise<FridayAgentToolResult> {
-  const { toolUse, toolMap, signal, runId, emitRunEvent, maxResultChars, initialResult } = params;
+  const {
+    toolUse,
+    toolMap,
+    signal,
+    runId,
+    sessionKey,
+    principalId,
+    executionContext,
+    emitRunEvent,
+    maxResultChars,
+    initialResult,
+  } = params;
   const browserTool = toolMap.get("browser");
   if (!browserTool) return initialResult;
 
@@ -2191,6 +2321,9 @@ async function maybeRecoverBrowserInputError(
     recoveryReason: initialResult.content,
     signal,
     runId,
+    sessionKey,
+    principalId,
+    executionContext,
     emitRunEvent,
     maxResultChars,
     routeId: "agent.execute.tool.input_recovery",
@@ -2211,7 +2344,18 @@ async function maybeRecoverBrowserInputError(
 async function maybeRecoverMcpInputError(
   params: MaybeRecoverToolInputErrorParams,
 ): Promise<FridayAgentToolResult> {
-  const { toolUse, toolMap, signal, runId, emitRunEvent, maxResultChars, initialResult } = params;
+  const {
+    toolUse,
+    toolMap,
+    signal,
+    runId,
+    sessionKey,
+    principalId,
+    executionContext,
+    emitRunEvent,
+    maxResultChars,
+    initialResult,
+  } = params;
   const mcpTool = toolMap.get("mcp");
   if (!mcpTool) return initialResult;
 
@@ -2238,6 +2382,9 @@ async function maybeRecoverMcpInputError(
     recoveryReason: initialResult.content,
     signal,
     runId,
+    sessionKey,
+    principalId,
+    executionContext,
     emitRunEvent,
     maxResultChars,
     routeId: "agent.execute.tool.input_recovery",
@@ -2264,6 +2411,9 @@ async function executeToolRecoveryAttempt(params: {
   recoveryReason: string;
   signal: AbortSignal;
   runId: string;
+  sessionKey: string;
+  principalId?: string;
+  executionContext?: FridayAgentExecutionContext;
   emitRunEvent: (name: string, payload: Record<string, unknown>) => void;
   maxResultChars: number;
   routeId: string;
@@ -2277,6 +2427,9 @@ async function executeToolRecoveryAttempt(params: {
     recoveryReason,
     signal,
     runId,
+    sessionKey,
+    principalId,
+    executionContext,
     emitRunEvent,
     maxResultChars,
     routeId,
@@ -2299,8 +2452,15 @@ async function executeToolRecoveryAttempt(params: {
   const startedAt = Date.now();
   let recoveryResult: FridayAgentToolResult;
   try {
+    const toolArgs = augmentToolArgsForRuntime({
+      toolName,
+      input: recoveryArgs,
+      sessionKey,
+      principalId,
+      executionContext,
+    });
     recoveryResult = capToolResultContent(
-      await tool.execute(recoveryArgs, signal),
+      await tool.execute(toolArgs, signal),
       maxResultChars,
     );
   } catch (error) {
@@ -2325,16 +2485,15 @@ async function executeToolRecoveryAttempt(params: {
     };
   }
 
-  emitRunEvent("agent.run.tool_end", {
+  emitRunEvent("agent.run.tool_end", buildToolEndEventPayload({
     runId,
     toolName,
     toolCallId: recoveryCallId,
     durationMs: Date.now() - startedAt,
-    isError: recoveryResult.isError ?? false,
-    summary: recoveryResult.content.slice(0, 200),
+    result: recoveryResult,
     routeId,
     correlationId,
-  });
+  }));
 
   if (recoveryResult.isError) {
     return { recovered: false, result: recoveryResult };
@@ -2348,6 +2507,7 @@ async function executeToolRecoveryAttempt(params: {
         recoveryResult.content,
       isError: false,
       blocks: recoveryResult.blocks,
+      metadata: recoveryResult.metadata,
     },
   };
 }
@@ -2357,6 +2517,9 @@ interface MaybeFallbackWebFetchWithBrowserParams {
   toolMap: Map<string, FridayAgentToolDefinition>;
   signal: AbortSignal;
   runId: string;
+  sessionKey: string;
+  principalId?: string;
+  executionContext?: FridayAgentExecutionContext;
   emitRunEvent: (name: string, payload: Record<string, unknown>) => void;
   maxResultChars: number;
   initialResult: FridayAgentToolResult;
@@ -2365,7 +2528,18 @@ interface MaybeFallbackWebFetchWithBrowserParams {
 async function maybeFallbackWebFetchWithBrowser(
   params: MaybeFallbackWebFetchWithBrowserParams,
 ): Promise<FridayAgentToolResult> {
-  const { toolUse, toolMap, signal, runId, emitRunEvent, maxResultChars, initialResult } = params;
+  const {
+    toolUse,
+    toolMap,
+    signal,
+    runId,
+    sessionKey,
+    principalId,
+    executionContext,
+    emitRunEvent,
+    maxResultChars,
+    initialResult,
+  } = params;
   const routeId = "agent.execute.tool.web_fetch_fallback";
   const correlationId = runId;
   if (!shouldAttemptWebFetchBrowserFallback(initialResult.content)) {
@@ -2390,8 +2564,15 @@ async function maybeFallbackWebFetchWithBrowser(
   const openStarted = Date.now();
   let openResult: FridayAgentToolResult;
   try {
+    const toolArgs = augmentToolArgsForRuntime({
+      toolName: "browser",
+      input: openArgs,
+      sessionKey,
+      principalId,
+      executionContext,
+    });
     openResult = capToolResultContent(
-      await browserTool.execute(openArgs, signal),
+      await browserTool.execute(toolArgs, signal),
       maxResultChars,
     );
   } catch (error) {
@@ -2415,16 +2596,15 @@ async function maybeFallbackWebFetchWithBrowser(
     };
   }
 
-  emitRunEvent("agent.run.tool_end", {
+  emitRunEvent("agent.run.tool_end", buildToolEndEventPayload({
     runId,
     toolName: "browser",
     toolCallId: openCallId,
     durationMs: Date.now() - openStarted,
-    isError: openResult.isError ?? false,
-    summary: openResult.content.slice(0, 200),
+    result: openResult,
     routeId,
     correlationId,
-  });
+  }));
 
   if (openResult.isError) {
     return {
@@ -2461,8 +2641,15 @@ async function maybeFallbackWebFetchWithBrowser(
   const snapshotStarted = Date.now();
   let snapshotResult: FridayAgentToolResult;
   try {
+    const toolArgs = augmentToolArgsForRuntime({
+      toolName: "browser",
+      input: snapshotArgs,
+      sessionKey,
+      principalId,
+      executionContext,
+    });
     snapshotResult = capToolResultContent(
-      await browserTool.execute(snapshotArgs, signal),
+      await browserTool.execute(toolArgs, signal),
       maxResultChars,
     );
   } catch (error) {
@@ -2486,16 +2673,15 @@ async function maybeFallbackWebFetchWithBrowser(
     };
   }
 
-  emitRunEvent("agent.run.tool_end", {
+  emitRunEvent("agent.run.tool_end", buildToolEndEventPayload({
     runId,
     toolName: "browser",
     toolCallId: snapshotCallId,
     durationMs: Date.now() - snapshotStarted,
-    isError: snapshotResult.isError ?? false,
-    summary: snapshotResult.content.slice(0, 200),
+    result: snapshotResult,
     routeId,
     correlationId,
-  });
+  }));
 
   if (snapshotResult.isError) {
     return {
