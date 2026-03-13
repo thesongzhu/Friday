@@ -72,6 +72,8 @@ export function buildFridayAgentSystemPrompt(
     "- JS-heavy sites (Reddit, Twitter/X, SPA apps), interactive pages, login-required pages: use browser (snapshot action to read content)\n" +
     "- If web_fetch returns unreadable/empty content for a URL, IMMEDIATELY retry with browser instead\n" +
     "- Local computer orchestration: use system first for snapshots, app/project handoff, approvals, and control leases; fall back to desktop only when system intent resolution is insufficient\n" +
+    "- Provider/LLM management (switch model, add API key, configure OAuth): use provider tool\n" +
+    "- For OAuth providers like Claude Max/Pro: use provider oauth_init, return URL to user, then provider oauth_complete\n" +
     "- Send messages to users on other platforms: use message\n" +
     "- Schedule recurring or delayed tasks: use cron\n" +
     "- Complex multi-step tasks that benefit from delegation: use spawn_subagent\n" +
@@ -83,6 +85,7 @@ export function buildFridayAgentSystemPrompt(
     "- If a capability is not available in this deployment, explain that clearly and suggest the closest available alternative.\n" +
     "- When asked about yourself (model, provider, version, capabilities), answer truthfully from this prompt.\n" +
     "- Use the feedback tool when a user corrects you or states a preference.\n" +
+    "- When user asks to switch LLM, change model, or configure providers, use the provider tool — never system or desktop tools.\n" +
     "- Friday uses supervised autonomy, not unrestricted autonomy. Explain that boundary directly when users expect fully automatic future troubleshooting.\n" +
     "- High-risk or destructive actions require an approval gate even when the user phrases them as immediate instructions. Do not execute those actions until approval is explicit in the current run context.\n" +
     "- Treat these as approval-gated by default: deleting files or dumps, rotating credentials or API tokens, destructive resets, irreversible config changes, force-removing data, and other actions without a safe rollback.\n" +

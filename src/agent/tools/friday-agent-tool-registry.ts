@@ -43,6 +43,8 @@ import { createFridayAgentSystemTool } from "./friday-agent-system-tool.js";
 import { createFridayAgentMemoryExtractTool } from "./friday-agent-memory-extract-tool.js";
 import type { FridayMcpAdapter } from "../mcp/friday-mcp-adapter.types.js";
 import type { FridaySessionMemoryExtractionService } from "#sessions";
+import type { FridayProviderService } from "../../providers/services/friday-provider-service.types.js";
+import { createFridayAgentProviderTool } from "./friday-agent-provider-tool.js";
 
 // ─── Registry options ───
 
@@ -90,6 +92,8 @@ export interface CreateFridayAgentToolRegistryOptions {
   mcpAdapter?: FridayMcpAdapter;
   /** OC-013: Session memory extraction service for memory_extract tool. */
   extractionService?: FridaySessionMemoryExtractionService;
+  /** Provider service for LLM provider management tool. */
+  providerService?: FridayProviderService;
   /** Web search provider: "serper" | "tavily" | "duckduckgo". Defaults to "duckduckgo". */
   webSearchProvider?: string;
   /** API key for the configured web search provider. */
@@ -245,5 +249,12 @@ export function createFridayAgentToolRegistry(
       createFridayAgentMcpTool({ mcpAdapter: options.mcpAdapter }),
     );
   }
+
+  if (options?.providerService) {
+    tools.push(
+      createFridayAgentProviderTool({ providerService: options.providerService }),
+    );
+  }
+
   return tools;
 }
