@@ -205,9 +205,13 @@ export function readStringArrayParam(
 
 // ─── Result formatters ───
 
-export function jsonResult(payload: unknown): FridayAgentToolResult {
+export function jsonResult(
+  payload: unknown,
+  meta?: { metadata?: Record<string, unknown> },
+): FridayAgentToolResult {
   return {
     content: JSON.stringify(payload, null, 2),
+    ...(meta?.metadata ? { metadata: meta.metadata } : {}),
   };
 }
 

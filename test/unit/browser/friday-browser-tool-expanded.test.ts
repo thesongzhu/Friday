@@ -52,6 +52,7 @@ function createMockContext() {
       pages.push(page);
       return Promise.resolve(page);
     }),
+    pages: vi.fn().mockImplementation(() => pages),
     setDefaultNavigationTimeout: vi.fn(),
     setDefaultTimeout: vi.fn(),
     close: vi.fn().mockResolvedValue(undefined),
@@ -62,6 +63,7 @@ function createMockContext() {
 function createMockBrowser() {
   const context = createMockContext();
   return {
+    contexts: vi.fn().mockReturnValue([context]),
     newContext: vi.fn().mockResolvedValue(context),
     close: vi.fn().mockResolvedValue(undefined),
     isConnected: vi.fn().mockReturnValue(true),
@@ -649,6 +651,79 @@ describe("FridayBrowserManager — Profile Support", () => {
       });
 
       expect(manager.getSessionsByProfile("nonexistent")).toHaveLength(0);
+    });
+  });
+});
+
+describe("FridayBrowserManager — Presentation Mode", () => {
+  it("prefers visible host Chrome for interactive agent_page launches on local macOS", async () => {
+    const blankPage = createMockPage();
+    blankPage.url.mockReturnValue("about:blank");
+    const context = createMockContext();
+    context._pages.push(blankPage);
+    const cdpBrowser = {
+      contexts: vi.fn().mockReturnValue([context]),
+      newContext: vi.fn().mockResolvedValue(context),
+      close: vi.fn().mockResolvedValue(undefined),
+      isConnected: vi.fn().mockReturnValue(true),
+    };
+    const launchImpl = createMockLaunch();
+    const connectOverCdpImpl = vi.fn().mockResolvedValue(cdpBrowser);
+    const resolveHostChromeEndpointImpl = vi.fn().mockResolvedValue("ws://127.0.0.1:9222/devtools/browser/test");
+
+    const manager = createFridayBrowserManager({
+      workspaceRoot: "/tmp/test",
+      presentationMode: "auto",
+      platform: "darwin",
+      isCi: false,
+      launchImpl: launchImpl as never,
+      connectOverCdpImpl: connectOverCdpImpl as never,
+      resolveHostChromeEndpointImpl: resolveHostChromeEndpointImpl as never,
+    });
+
+    await manager.launch("visible-session", undefined, undefined, {
+      source: "agent_page",
+      interactive: true,
+    });
+
+    expect(resolveHostChromeEndpointImpl).toHaveBeenCalled();
+    expect(connectOverCdpImpl).toHaveBeenCalledWith("ws://127.0.0.1:9222/devtools/browser/test");
+    expect(launchImpl).not.toHaveBeenCalled();
+    expect(manager.getDiagnostics()).toMatchObject({
+      configuredMode: "auto",
+      activeMode: "host_chrome_visible",
+      targetBrowser: "Google Chrome",
+      sessionId: "visible-session",
+      tabId: "tab-1",
+    });
+  });
+
+  it("falls back to headless Playwright when host Chrome is unavailable", async () => {
+    const launchImpl = createMockLaunch();
+    const resolveHostChromeEndpointImpl = vi.fn().mockRejectedValue(new Error("Host Chrome not available"));
+
+    const manager = createFridayBrowserManager({
+      workspaceRoot: "/tmp/test",
+      presentationMode: "host_chrome_visible",
+      platform: "darwin",
+      isCi: false,
+      launchImpl: launchImpl as never,
+      resolveHostChromeEndpointImpl: resolveHostChromeEndpointImpl as never,
+    });
+
+    await manager.launch("fallback-session", undefined, undefined, {
+      source: "agent_page",
+      interactive: true,
+    });
+
+    expect(launchImpl).toHaveBeenCalled();
+    expect(manager.getDiagnostics()).toMatchObject({
+      configuredMode: "host_chrome_visible",
+      activeMode: "headless",
+      targetBrowser: "Playwright Chromium",
+      fallbackReason: "Host Chrome not available",
+      sessionId: "fallback-session",
+      tabId: "tab-1",
     });
   });
 });

@@ -1983,6 +1983,98 @@ describe("FridayAgentRuntime", () => {
     expect(browserExecute).not.toHaveBeenCalled();
   });
 
+  it("injects browser execution context and emits browser presentation metadata", async () => {
+    const browserExecute = vi.fn(async () => ({
+      content: JSON.stringify({
+        sessionId: "visible-session",
+        tabId: "tab-1",
+        url: "https://www.facebook.com",
+      }),
+      metadata: {
+        browserPresentation: {
+          presentationMode: "host_chrome_visible",
+          targetBrowser: "Google Chrome",
+          browserTarget: "Google Chrome",
+          sessionId: "visible-session",
+          tabId: "tab-1",
+          presentationSummary: "facebook.com · visible desktop",
+        },
+      },
+    }));
+    const browserTool: FridayAgentToolDefinition = {
+      name: "browser",
+      description: "Browser tool",
+      parameters: { properties: { action: { type: "string" }, url: { type: "string" } } },
+      execute: browserExecute,
+    };
+
+    const llmClient = createMockLlmClient([
+      [
+        { type: "tool_use", id: "call-1", name: "browser", input: { action: "open", url: "https://www.facebook.com" } },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 5, outputTokens: 3 },
+      ],
+      [
+        { type: "text_delta", text: "Opened Facebook." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 4, outputTokens: 2 },
+      ],
+    ]);
+
+    const emitter = createFridayAgentEventEmitter();
+    const toolStartEvents: Array<Record<string, unknown>> = [];
+    const toolEndEvents: Array<Record<string, unknown>> = [];
+    emitter.on("agent.run.tool_start", (payload) => {
+      toolStartEvents.push(payload as Record<string, unknown>);
+    });
+    emitter.on("agent.run.tool_end", (payload) => {
+      toolEndEvents.push(payload as Record<string, unknown>);
+    });
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [browserTool],
+      eventEmitter: emitter,
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Open Facebook",
+      executionContext: {
+        surface: "agent_page",
+        interactive: true,
+        browserPresentationMode: "host_chrome_visible",
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(browserExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "open",
+        url: "https://www.facebook.com",
+        __browserExecutionSource: "agent_page",
+        __browserInteractive: true,
+        __browserPresentationMode: "host_chrome_visible",
+      }),
+      expect.any(AbortSignal),
+    );
+    expect(toolStartEvents[0]?.params).toEqual({
+      action: "open",
+      url: "https://www.facebook.com",
+    });
+    expect(toolEndEvents[0]).toMatchObject({
+      presentationMode: "host_chrome_visible",
+      targetBrowser: "Google Chrome",
+      browserTarget: "Google Chrome",
+      sessionId: "visible-session",
+      tabId: "tab-1",
+      summary: "facebook.com · visible desktop",
+    });
+  });
+
   it("populates images from browser screenshot tool calls", async () => {
     const screenshotPath = "/tmp/friday-test/artifacts/browser/default/12345-tab-1.png";
     const browserTool: FridayAgentToolDefinition = {

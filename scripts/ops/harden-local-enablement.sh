@@ -171,8 +171,7 @@ main() {
 
   upsert_env "FRIDAY_TOKEN_SECRET" "$(quote_env_value "${token_secret}")"
   upsert_env "FRIDAY_CHANNEL_SECRET_POLICY" "strict"
-  upsert_env "FRIDAY_BROWSER_USE_HOST_CHROME" "false"
-  upsert_env "FRIDAY_BROWSER_HEADLESS" "true"
+  upsert_env "FRIDAY_BROWSER_PRESENTATION_MODE" "auto"
   upsert_env "FRIDAY_DESKTOP_ENABLED" "true"
   upsert_env "FRIDAY_DESKTOP_SANDBOX_ALLOWED_ROOTS" "$(quote_env_value "${ROOT_DIR}")"
   upsert_env "FRIDAY_MCP_SERVERS" "$(quote_env_value "${mcp_servers_json}")"
@@ -184,8 +183,7 @@ main() {
 
   echo "[enablement][ok] Updated ${ENV_FILE}"
   echo "[enablement][ok] FRIDAY_CHANNEL_SECRET_POLICY=strict"
-  echo "[enablement][ok] FRIDAY_BROWSER_USE_HOST_CHROME=false"
-  echo "[enablement][ok] FRIDAY_BROWSER_HEADLESS=true"
+  echo "[enablement][ok] FRIDAY_BROWSER_PRESENTATION_MODE=auto"
   echo "[enablement][ok] FRIDAY_DESKTOP_ENABLED=true"
   echo "[enablement][ok] FRIDAY_MCP_SERVERS configured (filesystem server)"
 

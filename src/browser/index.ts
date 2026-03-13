@@ -3,6 +3,10 @@ export type {
   BrowserSession,
   BrowserProfileMetadata,
   FridayBrowserManager,
+  FridayBrowserExecutionContext,
+  FridayBrowserPresentationMode,
+  FridayBrowserActiveMode,
+  FridayBrowserPresentationState,
 } from "./friday-browser-manager.js";
 
 export {

@@ -69,6 +69,18 @@ function mapTone(status?: string): "neutral" | "success" | "warning" | "danger" 
   return "neutral";
 }
 
+function formatBrowserMode(mode?: "headless" | "host_chrome_visible"): string {
+  if (mode === "host_chrome_visible") return "visible desktop";
+  if (mode === "headless") return "headless";
+  return "unknown";
+}
+
+function browserModeTone(mode?: "headless" | "host_chrome_visible"): "neutral" | "success" | "warning" | "danger" {
+  if (mode === "host_chrome_visible") return "success";
+  if (mode === "headless") return "warning";
+  return "neutral";
+}
+
 function getBlockedApprovalEvents(events: FridaySystemEvent[]): FridaySystemEvent[] {
   return events.filter((event) =>
     event.event === "system.intent.blocked"
@@ -141,6 +153,16 @@ export function AgentPage() {
     () => getBlockedApprovalEvents(systemEvents.events),
     [systemEvents.events],
   );
+  const runEvents = useAgentRunEvents(currentRunId, {
+    enabled: currentRunId !== null,
+    onTerminal: () => {
+      void refetchRuns();
+    },
+  });
+  const latestBrowserTool = useMemo(
+    () => [...runEvents.toolCalls].reverse().find((tool) => tool.toolName === "browser"),
+    [runEvents.toolCalls],
+  );
 
   useEffect(() => {
     if (currentRunId) return;
@@ -152,19 +174,16 @@ export function AgentPage() {
     }
   }, [currentRunId, deferredRuns]);
 
-  const runEvents = useAgentRunEvents(currentRunId, {
-    enabled: currentRunId !== null,
-    onTerminal: () => {
-      void refetchRuns();
-    },
-  });
-
   const startRunMutation = useMutation({
     mutationFn: (input: { task: string; readOnly: boolean }) =>
       agentApi.startRun({
         task: input.task,
         readOnly: input.readOnly,
         requireReview: false,
+        executionContext: {
+          surface: "agent_page",
+          interactive: true,
+        },
       }),
     onSuccess: (result, input) => {
       toast.success(`Run started for "${input.task}"`);
@@ -389,7 +408,15 @@ export function AgentPage() {
           </form>
         </ShellCard>
 
-        <ShellCard eyebrow="Live Run" title="Execution Console">
+        <ShellCard
+          eyebrow="Live Run"
+          title="Execution Console"
+          aside={latestBrowserTool?.presentationMode ? (
+            <StatusPill tone={browserModeTone(latestBrowserTool.presentationMode)}>
+              {formatBrowserMode(latestBrowserTool.presentationMode)}
+            </StatusPill>
+          ) : undefined}
+        >
           <div className="grid gap-4 lg:grid-cols-[1.25fr_0.75fr]">
             <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
@@ -426,11 +453,31 @@ export function AgentPage() {
                     <div key={tool.id} className="rounded-2xl border border-white/[0.08] bg-white/[0.04] p-3">
                       <div className="flex items-center justify-between gap-3">
                         <span className="font-medium text-white">{tool.toolName}</span>
-                        <StatusPill tone={mapTone(tool.status)}>{tool.status}</StatusPill>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {tool.toolName === "browser" && tool.presentationMode ? (
+                            <StatusPill tone={browserModeTone(tool.presentationMode)}>
+                              {formatBrowserMode(tool.presentationMode)}
+                            </StatusPill>
+                          ) : null}
+                          <StatusPill tone={mapTone(tool.status)}>{tool.status}</StatusPill>
+                        </div>
                       </div>
                       <p className="mt-2 text-xs text-white/50">
-                        {tool.summary ?? "Tool call completed without a summary."}
+                        {tool.summary
+                          ?? (tool.toolName === "browser"
+                            ? tool.targetUrl ?? "Browser action in progress."
+                            : "Tool call completed without a summary.")}
                       </p>
+                      {tool.toolName === "browser" && tool.browserTarget ? (
+                        <p className="mt-2 text-[11px] text-white/35">
+                          Target: {tool.browserTarget}
+                        </p>
+                      ) : null}
+                      {tool.toolName === "browser" && tool.fallbackReason ? (
+                        <p className="mt-2 text-[11px] text-amber-200/90">
+                          Fallback: {tool.fallbackReason}
+                        </p>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -476,10 +523,21 @@ export function AgentPage() {
                   <Metric label="Remote Mode" value={session.remoteMode} tone={mapTone(session.remoteMode === "trusted_private_network" ? "active" : "unavailable")} />
                   <Metric label="Workspace" value={state.workspaceRoot} mono />
                   <Metric label="Active Task" value={state.activeTask ?? "None"} />
+                  <Metric
+                    label="Browser Mode"
+                    value={state.browser ? formatBrowserMode(state.browser.activeMode) : "unobserved"}
+                    tone={state.browser ? browserModeTone(state.browser.activeMode) : "neutral"}
+                  />
+                  <Metric label="Browser Target" value={state.browser?.browserTarget ?? state.browser?.targetBrowser ?? "unknown"} />
                 </div>
                 <p className="text-sm leading-6 text-white/60">
                   {summarizeHealthReasons(state.health)}
                 </p>
+                {state.browser?.fallbackReason ? (
+                  <p className="text-sm leading-6 text-amber-200/90">
+                    Browser fallback: {state.browser.fallbackReason}
+                  </p>
+                ) : null}
                 <div className="flex flex-wrap gap-2">
                   <ActionButton
                     tone="secondary"
@@ -517,6 +575,8 @@ export function AgentPage() {
                   <Metric label="Panic Hotkey" value={state.companion.panicHotkey} mono />
                   <Metric label="Companion Safe Mode" value={state.companion.safeMode ? "active" : "clear"} tone={mapTone(state.companion.safeMode ? "warning" : "active")} />
                   <Metric label="Overlay" value={state.companion.overlayVisible ? "visible" : "hidden"} />
+                  <Metric label="Browser Session" value={state.browser?.sessionId ?? "none"} mono />
+                  <Metric label="Browser Tab" value={state.browser?.tabId ?? "none"} mono />
                 </div>
                 <div className="space-y-3">
                   <div className="flex flex-wrap gap-2">

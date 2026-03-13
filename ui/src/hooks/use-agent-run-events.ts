@@ -13,6 +13,14 @@ export interface ToolCallViewModel {
   endedAt?: string;
   durationMs?: number;
   summary?: string;
+  params?: Record<string, unknown>;
+  presentationMode?: "headless" | "host_chrome_visible";
+  targetBrowser?: string;
+  browserTarget?: string;
+  sessionId?: string;
+  tabId?: string;
+  fallbackReason?: string;
+  targetUrl?: string;
   status: "running" | "completed" | "failed";
 }
 
@@ -57,6 +65,18 @@ function isTerminalStatus(value: string | null | undefined): value is "completed
 // ─── Backoff delays ───
 
 const BACKOFF_MS = [500, 1000, 2000, 5000];
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function readBrowserTargetUrl(params: Record<string, unknown> | undefined): string | undefined {
+  if (!params) return undefined;
+  const url = params.url;
+  return typeof url === "string" && url.trim().length > 0 ? url.trim() : undefined;
+}
 
 // ─── Hook ───
 
@@ -176,12 +196,15 @@ export function useAgentRunEvents(
 
           // Tool start
           if (eventType === "agent.run.tool_start" && parsed.toolCallId) {
+            const params = asRecord(parsed.params);
             setToolCalls((prev) => [
               ...prev,
               {
                 id: parsed.toolCallId!,
                 toolName: parsed.toolName ?? "unknown",
                 startedAt: parsed.timestamp ?? new Date().toISOString(),
+                params,
+                targetUrl: readBrowserTargetUrl(params),
                 status: "running",
               },
             ]);
@@ -197,7 +220,13 @@ export function useAgentRunEvents(
                       endedAt: parsed.timestamp,
                       durationMs: parsed.durationMs,
                       summary: parsed.summary,
-                      status: "completed" as const,
+                      status: parsed.isError ? "failed" as const : "completed" as const,
+                      presentationMode: parsed.presentationMode,
+                      targetBrowser: parsed.targetBrowser,
+                      browserTarget: parsed.browserTarget ?? parsed.targetBrowser,
+                      sessionId: parsed.sessionId,
+                      tabId: parsed.tabId,
+                      fallbackReason: parsed.fallbackReason,
                     }
                   : tc,
               ),

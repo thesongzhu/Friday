@@ -10,6 +10,11 @@ interface StartRunInput {
   requireReview?: boolean;
   readOnly?: boolean;
   sessionKey?: string;
+  executionContext?: {
+    surface?: string;
+    interactive?: boolean;
+    browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
+  };
 }
 
 interface StartRunResponse {
@@ -62,6 +67,7 @@ export const agentApi = {
       requireReview: input.requireReview,
       sessionKey: input.sessionKey,
       constraints: input.readOnly ? { readOnly: true } : undefined,
+      executionContext: input.executionContext,
     };
     return apiClient.post<typeof payload, StartRunResponse>("/v1/agent/runs", payload);
   },

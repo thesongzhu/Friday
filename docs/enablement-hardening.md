@@ -14,7 +14,7 @@ What it does:
 
 1. Ensures `FRIDAY_TOKEN_SECRET` exists in `.env` (preserves existing value).
 2. Forces `FRIDAY_CHANNEL_SECRET_POLICY=strict`.
-3. Configures browser runtime for stable mode (`FRIDAY_BROWSER_USE_HOST_CHROME=false`, `FRIDAY_BROWSER_HEADLESS=true`).
+3. Configures browser runtime for adaptive local mode (`FRIDAY_BROWSER_PRESENTATION_MODE=auto`).
 4. Ensures desktop runtime is enabled and sandbox-rooted to the current workspace.
 5. Enables MCP via a safe local filesystem server config (`FRIDAY_MCP_SERVERS`).
 6. If a legacy `~/.friday/friday.json` Discord token is found, migrates runtime channel config to env-ref mode:
@@ -37,6 +37,11 @@ npm run check:enablement-gaps
 - channel config includes plaintext secrets
 - desktop runtime is not enabled
 - MCP server config is invalid
+
+Notes:
+
+- `FRIDAY_BROWSER_PRESENTATION_MODE=auto` prefers a visible desktop Chrome session for interactive local `/agent` runs on macOS.
+- If host Chrome/CDP is unavailable, Friday falls back to a background headless browser session and reports the fallback reason in the UI.
 
 ## Restart runtime
 

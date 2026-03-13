@@ -14,6 +14,9 @@ function createMockPage(overrides?: Partial<Record<string, unknown>>) {
     fill: vi.fn().mockResolvedValue(undefined),
     focus: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
+    isClosed: vi.fn().mockReturnValue(false),
+    removeListener: vi.fn(),
+    off: vi.fn(),
     viewportSize: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
     evaluate: vi.fn().mockResolvedValue([
       { elementId: "e0", tag: "button", role: "button", name: "Submit", selector: "button.submit" },
@@ -44,6 +47,13 @@ function createMockManager(overrides?: Partial<FridayBrowserManager>): FridayBro
   const mockPage = createMockPage();
   const elementCache = new Map<string, string>();
   const tabs = new Map<string, unknown>([["tab-1", mockPage]]);
+  const presentation = {
+    configuredMode: "auto" as const,
+    activeMode: "headless" as const,
+    targetBrowser: "Playwright Chromium",
+    sessionId: "test-session",
+    tabId: "tab-1",
+  };
   const session: BrowserSession = {
     browser: {} as never,
     context: {} as never,
@@ -51,6 +61,7 @@ function createMockManager(overrides?: Partial<FridayBrowserManager>): FridayBro
     activeTabId: "tab-1",
     elementCache,
     tabCounter: 1,
+    presentation,
   };
   const sessions = new Map<string, BrowserSession>([["test-session", session]]);
 
@@ -62,6 +73,7 @@ function createMockManager(overrides?: Partial<FridayBrowserManager>): FridayBro
       "- heading \"Hello\" [level=1]\n- button \"Submit\"",
     ),
     close: vi.fn().mockResolvedValue(undefined),
+    getDiagnostics: vi.fn().mockReturnValue(presentation),
     listSessions: vi.fn().mockImplementation((profile?: string) => {
       const result: Array<{ sessionId: string; profile?: unknown; tabCount: number; activeTabId: string }> = [];
       for (const [sid, s] of sessions) {
@@ -154,7 +166,7 @@ describe("FridayAgentBrowserTool", () => {
       const parsed = JSON.parse(result.content);
       expect(parsed.sessionId).toBe("test-session");
       expect(parsed.tabId).toBe("tab-1");
-      expect(manager.launch).toHaveBeenCalledWith("test-session", expect.any(AbortSignal), undefined);
+      expect(manager.launch).toHaveBeenCalledWith("test-session", expect.any(AbortSignal), undefined, undefined);
     });
 
     it("launches a session and navigates to URL", async () => {
@@ -187,7 +199,7 @@ describe("FridayAgentBrowserTool", () => {
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content);
       expect(parsed.sessionId).toBe("default");
-      expect(manager.launch).toHaveBeenCalledWith("default", expect.any(AbortSignal), undefined);
+      expect(manager.launch).toHaveBeenCalledWith("default", expect.any(AbortSignal), undefined, undefined);
     });
 
     it("start alias also uses default session when session params are omitted", async () => {
@@ -199,7 +211,39 @@ describe("FridayAgentBrowserTool", () => {
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content);
       expect(parsed.sessionId).toBe("default");
-      expect(manager.launch).toHaveBeenCalledWith("default", expect.any(AbortSignal), undefined);
+      expect(manager.launch).toHaveBeenCalledWith("default", expect.any(AbortSignal), undefined, undefined);
+    });
+
+    it("includes visible desktop presentation metadata when the session is backed by host Chrome", async () => {
+      const tool = createFridayAgentBrowserTool({ browserManager: manager });
+      const session = manager.getSession("test-session");
+      if (!session) {
+        throw new Error("test-session should exist");
+      }
+      session.presentation = {
+        configuredMode: "auto",
+        activeMode: "host_chrome_visible",
+        targetBrowser: "Google Chrome",
+        sessionId: "test-session",
+        tabId: "tab-1",
+      };
+
+      const result = await tool.execute(
+        { action: "open", sessionId: "test-session", url: "https://www.facebook.com" },
+        signal(),
+      );
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content);
+      expect(parsed.presentationMode).toBe("host_chrome_visible");
+      expect(parsed.targetBrowser).toBe("Google Chrome");
+      expect(parsed.presentationSummary).toBe("example.com · visible desktop");
+      expect(result.metadata?.browserPresentation).toMatchObject({
+        presentationMode: "host_chrome_visible",
+        targetBrowser: "Google Chrome",
+        sessionId: "test-session",
+        tabId: "tab-1",
+      });
     });
   });
 

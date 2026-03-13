@@ -250,6 +250,7 @@ import {
   parseDesktopSandboxAllowedRoots,
   parseFridayChannelIdentityMap,
   resolveBrowserHostConfigFromEnv,
+  resolveBrowserPresentationModeFromEnv,
   resolveChannelInitConfigWithSecretPolicy,
   resolveFridayChannelSessionKey,
   resolveFridayChannelTerminalText,
@@ -810,9 +811,10 @@ export async function createFridayHub(
 
   // Build browser + XHS runtime deps
   const browserHostConfig = resolveBrowserHostConfigFromEnv(process.env);
+  const browserPresentationMode = resolveBrowserPresentationModeFromEnv(process.env);
   const browserManager = createFridayBrowserManager({
     workspaceRoot,
-    headless: process.env.FRIDAY_BROWSER_HEADLESS !== "false",
+    presentationMode: browserPresentationMode,
     hostBrowser: browserHostConfig,
   });
   const xhsSessionManager = createXhsSessionManager({
@@ -1037,6 +1039,13 @@ export async function createFridayHub(
       workspaceRoot,
       companionBridge: systemCompanionBridge,
       desktopSessionManager,
+      getBrowserDiagnostics: () => {
+        const diagnostics = browserManager.getDiagnostics();
+        return {
+          ...diagnostics,
+          browserTarget: diagnostics.targetBrowser,
+        };
+      },
       mode: "agent_os",
       remoteMode: systemRemoteMode,
       cloudPlanningMode: systemCloudPlanningMode,

@@ -56,6 +56,8 @@ export interface FridayAgentToolResult {
   /** String content (backward-compatible — always present). */
   content: string;
   isError?: boolean;
+  /** Optional structured metadata emitted by tools for UI/event consumers. */
+  metadata?: Record<string, unknown>;
   /** Optional structured error code for observability and recovery logic. */
   errorCode?: string;
   /** Optional route id emitted by underlying tool subsystem. */
@@ -256,6 +258,12 @@ export interface FridayAgentToolEndPayload {
   durationMs: number;
   isError: boolean;
   summary?: string;
+  presentationMode?: "headless" | "host_chrome_visible";
+  targetBrowser?: string;
+  browserTarget?: string;
+  sessionId?: string;
+  tabId?: string;
+  fallbackReason?: string;
   errorCode?: string;
   routeId?: string;
   correlationId?: string;

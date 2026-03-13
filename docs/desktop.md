@@ -27,6 +27,7 @@ Notes:
 
 - `FRIDAY_DESKTOP_ENABLED` defaults to disabled (`false` unless explicitly set to `true`).
 - `FRIDAY_DESKTOP_SANDBOX_ALLOWED_ROOTS` defaults to workspace root when unset.
+- For browser automation that should be visible on your desktop, set `FRIDAY_BROWSER_PRESENTATION_MODE=auto` (recommended) or `FRIDAY_BROWSER_PRESENTATION_MODE=host_chrome_visible`.
 
 ## Dependency and Permission Check
 

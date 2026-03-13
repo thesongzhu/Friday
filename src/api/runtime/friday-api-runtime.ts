@@ -76,7 +76,11 @@ import {
   createFridayAgentAutomationService,
   createFridayAgentRunRepository,
 } from "#agent";
-import type { FridayAgentAutomationService, FridayAgentMessage } from "#agent";
+import type {
+  FridayAgentAutomationService,
+  FridayAgentExecutionContext,
+  FridayAgentMessage,
+} from "#agent";
 import { createFridayHealthRoutes } from "../http/routes/friday-health-routes.js";
 import { createFridayApiTokenRepository } from "../persistence/friday-api-token-repository.js";
 import type { FridayAuthPrincipal } from "../model/friday-api-common.types.js";
@@ -1576,6 +1580,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       constraints?: { readOnly?: boolean };
       principalId?: string;
       scopes?: string[];
+      executionContext?: FridayAgentExecutionContext;
       persistTaskMessage?: boolean;
       taskAlreadyInHistory?: boolean;
       idempotencyPrefix: "api-agent-run" | "api-session-run";
@@ -1622,6 +1627,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         constraints: input.constraints,
         principalId: input.principalId,
         scopes: input.scopes,
+        executionContext: input.executionContext,
         historyMessages,
       });
     }
@@ -1649,6 +1655,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       timeoutMs?: number;
       principalId?: string;
       scopes?: string[];
+      executionContext?: FridayAgentExecutionContext;
       persistTaskMessage?: boolean;
       taskAlreadyInHistory?: boolean;
     }) => {
@@ -1662,6 +1669,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         timeoutMs: input.timeoutMs,
         principalId: input.principalId,
         scopes: input.scopes,
+        executionContext: input.executionContext,
         persistTaskMessage: input.persistTaskMessage,
         taskAlreadyInHistory: input.taskAlreadyInHistory,
         idempotencyPrefix: "api-session-run",
@@ -1704,6 +1712,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       timeoutMs?: number;
       requireReview?: boolean;
       constraints?: { readOnly?: boolean };
+      executionContext?: FridayAgentExecutionContext;
       principalId?: string;
       scopes?: string[];
     }) => {
@@ -1726,6 +1735,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           constraints: input.constraints,
           principalId: input.principalId,
           scopes: input.scopes,
+          executionContext: input.executionContext,
           idempotencyPrefix: "api-agent-run",
         });
       } finally {

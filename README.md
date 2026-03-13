@@ -783,11 +783,12 @@ See [Dockerfile](Dockerfile) and [docker-compose.yml](docker-compose.yml) for fu
 
 ## Browser Automation
 
-Friday ships a headless Playwright-based browser tool accessible by the agent runtime.
+Friday ships a browser automation tool that can run either in a visible desktop Chrome window or in a background Playwright session, depending on runtime mode.
 
 - **Supported actions:** open, navigate, snapshot (accessibility tree), screenshot, act (click/type/press), tabs (list/new/switch/close), close
 - **Safety controls:** origin allowlist (`allowedOrigins`), per-session and per-tab limits, global page cap (`maxTotalPages`), artifact path sanitization
-- **Config:** `FRIDAY_BROWSER_HEADLESS` (default `true`), browser artifact directory at `.friday/artifacts/browser/<sessionId>/`
+- **Config:** `FRIDAY_BROWSER_PRESENTATION_MODE` (`auto` by default), browser artifact directory at `.friday/artifacts/browser/<sessionId>/`
+- **Local desktop behavior:** interactive macOS runs started from `/agent` prefer visible desktop Chrome and fall back to headless when host Chrome/CDP is unavailable
 - **Accessibility:** `snapshotAria()` provides ARIA-based page snapshots for structured agent reasoning
 
 ## Desktop Runtime
@@ -968,8 +969,9 @@ Note:
 | `FRIDAY_CORS_ORIGINS` | `[]` (disabled) | Comma-separated allowed origins. Set to `*` or specific origins to enable CORS. |
 | `FRIDAY_LOG_REQUESTS` | `true` | Enable `[FRIDAY] GET /path 200 3ms` request logging |
 | `FRIDAY_ENABLE_HSTS` | `true` | HTTP Strict Transport Security header (default on in production). Disable if not behind TLS. |
-| `FRIDAY_BROWSER_HEADLESS` | `true` | Browser tool headless mode (`false` for visible browser) |
-| `FRIDAY_BROWSER_USE_HOST_CHROME` | `false` | Connect/launch host Chrome via CDP for browser tool |
+| `FRIDAY_BROWSER_PRESENTATION_MODE` | `auto` | Browser presentation mode: `auto`, `headless`, or `host_chrome_visible` |
+| `FRIDAY_BROWSER_HEADLESS` | `true` | Legacy fallback knob. Prefer `FRIDAY_BROWSER_PRESENTATION_MODE`. |
+| `FRIDAY_BROWSER_USE_HOST_CHROME` | `false` | Legacy fallback knob. Prefer `FRIDAY_BROWSER_PRESENTATION_MODE`. |
 | `FRIDAY_DESKTOP_ENABLED` | `false` | Enable desktop runtime and register `desktop` tool |
 | `FRIDAY_DESKTOP_SANDBOX_ALLOWED_ROOTS` | workspace root | Comma-separated allowed roots for desktop file operations |
 | `FRIDAY_CHANNEL_SECRET_POLICY` | `strict` | Channel secret policy (`strict` blocks plaintext secrets, `compat` allows with warnings) |
