@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Autofix Readiness Review",
+  "description": "Inspect planned repairs, approval gates, and rollback coverage.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "limit",
+        "status"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "limit",
+      "inputKey": "limit",
+      "kind": "number",
+      "label": "Limit",
+      "required": false
+    },
+    {
+      "id": "status",
+      "inputKey": "status",
+      "kind": "text",
+      "label": "Status",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Review Autofix Plans",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

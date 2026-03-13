@@ -35,8 +35,12 @@ export function createFridayNodeExecutor(): FridayNodeExecutor {
           };
         }
 
-        // Build optional runtime context with AI helper
-        const ctx = options.aiHelper ? { ai: options.aiHelper } : undefined;
+        // Build optional runtime context with AI helper plus readonly Friday services.
+        const ctx = {
+          ...(options.runtimeContext ?? {}),
+          ...(options.aiHelper ? { ai: options.aiHelper } : {}),
+        };
+        const runtimeCtx = Object.keys(ctx).length > 0 ? ctx : undefined;
 
         // Race between execution, timeout, and external abort signal
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -45,7 +49,7 @@ export function createFridayNodeExecutor(): FridayNodeExecutor {
         });
 
         const racers: Promise<unknown>[] = [
-          executeFn(options.input, ctx) as Promise<unknown>,
+          executeFn(options.input, runtimeCtx) as Promise<unknown>,
           timeoutPromise,
         ];
 

@@ -1,6 +1,7 @@
 import { FridayDomainError } from "#errors";
 import type { FridayAgentRuntime } from "#agent";
 import type { FridaySqliteLayer } from "#state";
+import type { FridaySkillExecutor } from "#skills";
 import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridayWorkflowGeneratorService, FridayWorkflowProductService } from "#workflows";
 import type {
@@ -86,6 +87,7 @@ export interface CreateFridayUixSurfaceServiceDeps {
   workflowGenerator?: FridayWorkflowGeneratorService;
   workflowProduct?: FridayWorkflowProductService;
   selfHealing: FridaySelfHealingApiService;
+  skillExecutor?: FridaySkillExecutor;
   agentRuntime?: FridayAgentRuntime;
   observability?: FridayObservabilityApiService;
   preferenceRepo?: FridayUixUserPreferenceRepository;
@@ -279,6 +281,12 @@ function normalizeGoalText(value: string): string {
   return value.trim().length > 0 ? value.trim() : "Help the user complete the requested task safely";
 }
 
+function asOutputRecord(value: unknown): Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
 function buildAssistantGuidance(input: {
   text: string;
   intent: FridayBeginnerIntentResolution["intent"];
@@ -470,7 +478,7 @@ export function createFridayUixSurfaceService(
         confidence: 0.88,
         summary: "This looks like a request to review or fix detected issues.",
         routeTarget: "/assistant",
-        suggestedTemplateIds: ["review-issues"],
+        suggestedTemplateIds: ["review-issues", "recover-failed-deploy"],
       }, buildAssistantGuidance({
         text: textInput,
         intent: "review_issues",
@@ -623,6 +631,63 @@ export function createFridayUixSurfaceService(
       deployReady: false,
       questions: input.questions,
       sessionId: input.sessionId,
+    };
+  }
+
+  async function executeStarterSkillTemplate(input: {
+    templateId: string;
+    userId: string;
+    skillId: string;
+    parameters?: Record<string, unknown>;
+    guidanceText: string;
+    intent: FridayBeginnerIntentResolution["intent"];
+    defaultSummary: string;
+  }) {
+    if (!deps.skillExecutor) {
+      throw new FridayDomainError(
+        "UIX_STARTER_SKILL_UNAVAILABLE",
+        "Bundled starter skills are not available in this runtime",
+        { httpStatus: 503 },
+      );
+    }
+    const handle = deps.skillExecutor.execute({
+      skillId: input.skillId,
+      input: input.parameters ?? {},
+      sessionId: `assistant-template:${input.templateId}`,
+      userId: input.userId,
+      channel: "assistant",
+    });
+    const result = await handle.result;
+    if (result.status !== "completed") {
+      throw new FridayDomainError(
+        "UIX_STARTER_SKILL_FAILED",
+        result.stderr || `Starter skill "${input.skillId}" failed`,
+        { httpStatus: 422 },
+      );
+    }
+    const output = asOutputRecord(result.output);
+    const summary =
+      typeof output.summary === "string" && output.summary.trim().length > 0
+        ? output.summary.trim()
+        : input.defaultSummary;
+    return {
+      response: applyGuidance({
+        templateId: input.templateId,
+        status: "executed" as const,
+        summary,
+        routeTarget: "/assistant" as const,
+        result: {
+          skillId: input.skillId,
+          runId: result.runId,
+          nextStep: output.nextStep,
+          output,
+        },
+      }, buildUserGuidance(input.userId, {
+        text: input.guidanceText,
+        intent: input.intent,
+      })),
+      output,
+      runId: result.runId,
     };
   }
 
@@ -1065,6 +1130,42 @@ export function createFridayUixSurfaceService(
           }
         }
         case "recover-failed-deploy": {
+          if (deps.skillExecutor) {
+            const executed = await executeStarterSkillTemplate({
+              templateId: input.templateId,
+              userId: input.userId,
+              skillId: "failed-deploy-recovery-brief",
+              guidanceText: "Recover failed deploy",
+              intent: "review_issues",
+              defaultSummary: "Friday summarized the current failed deploy recovery path.",
+            });
+            const details = asOutputRecord(executed.output.details);
+            const action = asOutputRecord(details.action);
+            const responsePayload: FridayUixTemplateExecutionResponse = {
+              ...executed.response,
+              workflow: executed.output.summary
+                ? blockedWorkflowCard({
+                  workflowName: "Workflow deploy",
+                  summary: typeof executed.output.nextStep === "string" && executed.output.nextStep.trim().length > 0
+                    ? `${executed.output.summary} ${executed.output.nextStep}`.trim()
+                    : executed.response.summary,
+                })
+                : undefined,
+              result: {
+                ...executed.response.result,
+                requiresApproval: Boolean(action.requiresApproval),
+                recommendedSkillId: details.recommendedSkillId,
+                recommendedTemplateId: details.recommendedTemplateId,
+              },
+            };
+            await deps.observability?.recordAssistantEvent({
+              userId: input.userId,
+              event: "template_executed",
+              summary: responsePayload.summary,
+              result: responsePayload,
+            });
+            return responsePayload;
+          }
           const issues = deps.selfHealing.listIssueCards({ userId: input.userId, limit: 10 });
           const workflowIssue = issues.find((issue) => issue.title.toLowerCase().includes("workflow"))
             ?? issues[0]
@@ -1101,6 +1202,24 @@ export function createFridayUixSurfaceService(
           return responsePayload;
         }
         case "review-issues": {
+          if (deps.skillExecutor) {
+            const executed = await executeStarterSkillTemplate({
+              templateId: input.templateId,
+              userId: input.userId,
+              skillId: "review-open-issues",
+              parameters: { limit: 10 },
+              guidanceText: "Review detected issues",
+              intent: "review_issues",
+              defaultSummary: "Friday reviewed the current issue queue.",
+            });
+            await deps.observability?.recordAssistantEvent({
+              userId: input.userId,
+              event: "template_executed",
+              summary: executed.response.summary,
+              result: executed.response,
+            });
+            return executed.response;
+          }
           const issues = deps.selfHealing.listIssueCards({ userId: input.userId, limit: 10 });
           const responsePayload: FridayUixTemplateExecutionResponse = applyGuidance({
             templateId: input.templateId,

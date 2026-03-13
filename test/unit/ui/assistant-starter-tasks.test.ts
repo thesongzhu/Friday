@@ -7,19 +7,22 @@ import {
 
 describe("assistant starter tasks", () => {
   it("defines click-first first-task recommendations for setup handoff", () => {
-    expect(FRIDAY_ASSISTANT_STARTER_TASKS).toHaveLength(4);
+    expect(FRIDAY_ASSISTANT_STARTER_TASKS).toHaveLength(7);
     expect(FRIDAY_ASSISTANT_STARTER_TASKS.map((task) => task.id)).toEqual([
-      "clarify-next-step",
-      "deploy-reporting-workflow",
-      "enable-triage-skill",
-      "recover-degraded-system",
+      "review-repo-health",
+      "check-release-readiness",
+      "review-open-issues",
+      "review-autofix-readiness",
+      "recover-failed-deploy",
+      "run-log-error-triage",
+      "diagnose-local-service",
     ]);
   });
 
   it("resolves starter tasks by id", () => {
-    const task = getAssistantStarterTask("deploy-reporting-workflow");
-    expect(task?.title).toContain("workflow");
-    expect(task?.goal).toContain("deploy");
+    const task = getAssistantStarterTask("review-autofix-readiness");
+    expect(task?.title).toContain("repair");
+    expect(task?.goal).toContain("autofix-readiness-review");
     expect(getAssistantStarterTask("missing-task")).toBeNull();
   });
 });

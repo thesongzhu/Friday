@@ -82,6 +82,7 @@ export interface FridaySkillLifecycleSummary {
   source: string;
   origin: string;
   status: string;
+  starter: boolean;
   category?: string;
   tags: string[];
   publisher?: string;
@@ -203,6 +204,7 @@ function registryToSummary(skill: FridayRegisteredSkill): FridaySkillLifecycleSu
     source: skill.source,
     origin: skill.origin,
     status: skill.status,
+    starter: (skill.manifest.tags ?? []).includes("starter"),
     category: skill.manifest.category,
     tags: skill.manifest.tags ?? [],
     publisher: skill.manifest.author?.name,
@@ -223,6 +225,7 @@ function persistedToSummary(skill: FridaySkillEntity, catalogEntry: FridaySkillC
     source: skill.source,
     origin: skill.origin,
     status: skill.status,
+    starter: (skill.currentManifest?.tags ?? catalogEntry?.manifest.tags ?? []).includes("starter"),
     category: skill.currentManifest?.category ?? catalogEntry?.manifest.category,
     tags: skill.currentManifest?.tags ?? catalogEntry?.manifest.tags ?? [],
     publisher: skill.publisher ?? catalogEntry?.publisher,
@@ -258,6 +261,7 @@ export function createFridaySkillLifecycleService(
         releasedAt: item.indexedAt,
         signatureValid: item.signatureValid,
         trustScore: item.trustScore,
+        starter: (manifest.tags ?? []).includes("starter"),
         manifest,
       };
     });
@@ -326,6 +330,7 @@ export function createFridaySkillLifecycleService(
         source: "marketplace",
         origin: "managed",
         status: "not_installed",
+        starter: (catalogEntry.manifest.tags ?? []).includes("starter"),
         category: catalogEntry.category,
         tags: catalogEntry.manifest.tags ?? [],
         publisher: catalogEntry.publisher,

@@ -204,6 +204,7 @@ describe("FridaySkillRegistry Lifecycle (Integration)", () => {
       const testSkill = reg.get("test-skill");
       expect(testSkill).not.toBeNull();
       expect(testSkill!.manifest.name).toBe("Test Skill");
+      expect(testSkill!.status).toBe("installed");
     });
   });
 
@@ -245,6 +246,19 @@ describe("FridaySkillRegistry Lifecycle (Integration)", () => {
       await reg.initialize();
 
       expect(reg.list()).toHaveLength(0);
+    });
+
+    it("loads the bundled diagnosis and recovery starter skills from the repo starter pack", async () => {
+      const workspace = process.cwd();
+      const skillsDir = path.join(workspace, "skills");
+
+      const reg = createRegistry(workspace, skillsDir);
+      await reg.initialize();
+
+      expect(reg.get("system-health-snapshot")).not.toBeNull();
+      expect(reg.get("review-open-issues")).not.toBeNull();
+      expect(reg.get("autofix-readiness-review")).not.toBeNull();
+      expect(reg.get("failed-deploy-recovery-brief")).not.toBeNull();
     });
   });
 

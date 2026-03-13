@@ -3,6 +3,7 @@ import type { SkillCatalogItem, SkillLifecycleDetail, SkillLifecycleSummary } fr
 export type FridaySkillFocus = "details" | "install" | "verify" | "sources";
 
 export interface SkillOperatorSections {
+  starter: SkillLifecycleSummary[];
   installed: SkillLifecycleSummary[];
   updates: SkillLifecycleSummary[];
   available: SkillCatalogItem[];
@@ -48,8 +49,12 @@ export function buildSkillOperatorSections(input: {
   skills: SkillLifecycleSummary[];
   catalog: SkillCatalogItem[];
 }): SkillOperatorSections {
+  const starter = input.skills
+    .filter((skill) => skill.starter)
+    .sort((left, right) => left.name.localeCompare(right.name));
+
   const installed = input.skills
-    .filter((skill) => skill.status !== "not_installed")
+    .filter((skill) => skill.status !== "not_installed" && !skill.starter)
     .sort((left, right) => left.name.localeCompare(right.name));
 
   const updates = input.skills
@@ -58,10 +63,11 @@ export function buildSkillOperatorSections(input: {
 
   const installedIds = new Set(input.skills.map((skill) => skill.skillId));
   const available = input.catalog
-    .filter((item) => !installedIds.has(item.skillId))
+    .filter((item) => !installedIds.has(item.skillId) && !item.starter)
     .sort((left, right) => left.skillName.localeCompare(right.skillName));
 
   return {
+    starter,
     installed,
     updates,
     available,
@@ -76,7 +82,9 @@ export function chooseInitialSkillId(input: {
   if (input.selectedSkillId) {
     return input.selectedSkillId;
   }
-  const preferredInstalled = input.skills.find((skill) => skill.updateAvailable) ?? input.skills[0];
+  const preferredInstalled = input.skills.find((skill) => skill.updateAvailable)
+    ?? input.skills.find((skill) => skill.starter)
+    ?? input.skills[0];
   if (preferredInstalled) {
     return preferredInstalled.skillId;
   }

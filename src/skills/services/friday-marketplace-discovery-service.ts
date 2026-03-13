@@ -44,6 +44,7 @@ export function createFridayMarketplaceDiscoveryService(
       releasedAt: entity.indexedAt,
       signatureValid: entity.signatureValid,
       trustScore: entity.trustScore,
+      starter: (manifest?.tags ?? []).includes("starter"),
       manifest,
     };
   }

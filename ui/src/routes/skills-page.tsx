@@ -5,6 +5,7 @@ import { BadgeCheck, Download, Package, RefreshCcw, ShieldCheck, Trash2 } from "
 import { toast } from "sonner";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { skillsApi } from "@/lib/api/skills";
+import { trackStarterSkillBatch, trackStarterSkillEvent } from "@/lib/skills/starter-skill-telemetry";
 import {
   buildSkillHref,
   buildSkillOperatorSections,
@@ -51,6 +52,15 @@ export function SkillsPage() {
   const skills = skillsQuery.data ?? [];
   const catalog = catalogQuery.data?.items ?? [];
   const sections = buildSkillOperatorSections({ skills, catalog });
+
+  useEffect(() => {
+    if (sections.starter.length === 0) return;
+    trackStarterSkillBatch("starter_skill_shown", {
+      skillIds: sections.starter.map((skill) => skill.skillId),
+      source: "skills_page",
+      metadata: { count: sections.starter.length },
+    });
+  }, [sections.starter]);
 
   useEffect(() => {
     if (
@@ -155,6 +165,15 @@ export function SkillsPage() {
     ? catalog.find((item) => item.skillId === selectedSkillId) ?? null
     : null;
 
+  useEffect(() => {
+    if (!detail?.starter) return;
+    trackStarterSkillEvent("starter_skill_detail_opened", {
+      skillId: detail.skillId,
+      source: "skills_page",
+      metadata: { origin: detail.origin },
+    });
+  }, [detail?.origin, detail?.skillId, detail?.starter]);
+
   return (
     <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
       <div className="space-y-4">
@@ -181,7 +200,7 @@ export function SkillsPage() {
             <div className="space-y-4 text-sm text-white/70">
               <p>
                 Friday uses this page as the operator detail view for a skill that Assistant has already recommended.
-                The core lifecycle stays click-first: install, verify, update, remove, and inspect trust evidence.
+                The core lifecycle stays click-first: starter pack first, then managed installs, trust evidence, updates, and repair actions.
               </p>
               <div className="grid gap-3 sm:grid-cols-3">
                 <SkillMetric label="Selected skill" value={detail?.name ?? selectedCatalog?.skillName ?? selectedSkillId} />
@@ -204,13 +223,49 @@ export function SkillsPage() {
         </ShellCard>
 
         <ShellCard
-          eyebrow="Installed Skills"
+          eyebrow="Bundled Starter Pack"
+          title="Starter skills that ship with Friday"
+          aside={<StatusPill tone={sections.starter.length > 0 ? "success" : "neutral"}>{sections.starter.length} bundled</StatusPill>}
+        >
+          <div className="space-y-3">
+            {sections.starter.length === 0 ? (
+              <p className="text-sm text-white/60">No bundled starter skills are visible yet.</p>
+            ) : (
+              sections.starter.map((skill) => (
+                <button
+                  key={skill.skillId}
+                  type="button"
+                  onClick={() => handleSelectSkill(skill.skillId)}
+                  className="agent-selection-card"
+                  data-active={skill.skillId === selectedSkillId}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-white">{skill.name}</p>
+                      <p className="text-xs text-white/50">{skill.skillId}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <StatusPill tone="success">starter</StatusPill>
+                      <StatusPill tone={toneForSkillLifecycle(skill)}>{skill.status}</StatusPill>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-sm text-white/60">
+                    {skill.description || "Bundled starter skill."}
+                  </p>
+                </button>
+              ))
+            )}
+          </div>
+        </ShellCard>
+
+        <ShellCard
+          eyebrow="Installed / Managed"
           title="Choose the skill Friday should manage"
-          aside={<StatusPill tone={sections.installed.length > 0 ? "success" : "neutral"}>{sections.installed.length} active</StatusPill>}
+          aside={<StatusPill tone={sections.installed.length > 0 ? "success" : "neutral"}>{sections.installed.length} managed</StatusPill>}
         >
           <div className="space-y-3">
             {sections.installed.length === 0 ? (
-              <p className="text-sm text-white/60">No installed skills yet. Friday can install marketplace or generated skills here.</p>
+              <p className="text-sm text-white/60">No managed skills yet. Friday can still use the bundled starter pack immediately.</p>
             ) : (
               sections.installed.map((skill) => (
                 <button
@@ -271,7 +326,7 @@ export function SkillsPage() {
         </ShellCard>
 
         <ShellCard
-          eyebrow="Catalog"
+          eyebrow="Marketplace"
           title="New skills you can install"
           aside={<StatusPill tone={sections.available.length > 0 ? "neutral" : "success"}>{sections.available.length} installable</StatusPill>}
         >
@@ -321,15 +376,18 @@ export function SkillsPage() {
             <p className="text-sm text-white/60">Select an installed skill or catalog item to inspect lifecycle evidence.</p>
           ) : detail ? (
             <div className="space-y-4 text-sm text-white/75">
-              <div className="agent-subcard p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="font-medium text-white">{detail.name}</p>
-                    <p className="text-xs text-white/50">{detail.skillId}</p>
-                  </div>
-                  <StatusPill tone={toneForSkillLifecycle(detail)}>
-                    {detail.installedVersion ?? detail.latestVersion ?? "unversioned"}
-                  </StatusPill>
+                <div className="agent-subcard p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-white">{detail.name}</p>
+                      <p className="text-xs text-white/50">{detail.skillId}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {detail.starter ? <StatusPill tone="success">starter pack</StatusPill> : null}
+                      <StatusPill tone={toneForSkillLifecycle(detail)}>
+                        {detail.installedVersion ?? detail.latestVersion ?? "unversioned"}
+                      </StatusPill>
+                    </div>
                 </div>
                 <p className="mt-3 text-white/60">
                   {detail.description || "No description recorded for this skill."}
@@ -341,6 +399,7 @@ export function SkillsPage() {
                   <p>Source trust: {detail.sourceDetails?.trustPolicy ?? "local"}</p>
                   <p>Installed version: {detail.installedVersion ?? "not installed"}</p>
                   <p>Latest version: {detail.latestVersion ?? "unknown"}</p>
+                  <p>Starter pack: {detail.starter ? "yes" : "no"}</p>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-3">
                   {detail.installedVersion ? (
@@ -370,7 +429,7 @@ export function SkillsPage() {
                       Update
                     </ActionButton>
                   ) : null}
-                  {detail.installedVersion || detail.registryLoaded ? (
+                  {!detail.starter && (detail.installedVersion || detail.registryLoaded) ? (
                     <ActionButton
                       tone="danger"
                       onClick={() => void deleteMutation.mutateAsync(detail.skillId)}

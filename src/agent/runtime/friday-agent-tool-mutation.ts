@@ -51,6 +51,7 @@ const READ_ONLY_TOOLS = new Set([
   "subagent_spawn",
   "subagent_status",
   "agents_list",
+  "skills_list",
   "image_analysis",
 ]);
 

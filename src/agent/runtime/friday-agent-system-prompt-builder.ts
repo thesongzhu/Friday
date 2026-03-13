@@ -14,12 +14,19 @@ export interface BuildFridayAgentSystemPromptParams {
   version: string;
   /** Workspace context fragment (from loadFridayWorkspaceContext). Injected after base prompt. */
   workspaceContext?: string;
+  /** Bundled starter skills that should be preferred before generating new ones. */
+  starterSkills?: Array<{
+    skillId: string;
+    purpose: string;
+    triggerPhrases: string[];
+    tags?: string[];
+  }>;
 }
 
 export function buildFridayAgentSystemPrompt(
   params: BuildFridayAgentSystemPromptParams,
 ): string {
-  const { toolNames, modelIdentity, version, workspaceContext } = params;
+  const { toolNames, modelIdentity, version, workspaceContext, starterSkills } = params;
   const toolList = toolNames.join(", ");
   const toolSet = new Set(toolNames);
   const hasTool = (name: string) => toolSet.has(name);
@@ -55,6 +62,29 @@ export function buildFridayAgentSystemPrompt(
     "- Self-learning: errors, corrections, and preferences are recorded automatically to improve over time",
   ].join("\n");
 
+  const diagnosisRecoverySkills = (starterSkills ?? []).filter((skill) =>
+    (skill.tags ?? []).some((tag) => tag === "starter.diagnosis" || tag === "starter.recovery"),
+  );
+  const otherStarterSkills = (starterSkills ?? []).filter((skill) =>
+    !diagnosisRecoverySkills.includes(skill),
+  );
+  const renderStarterList = (skills: NonNullable<BuildFridayAgentSystemPromptParams["starterSkills"]>) =>
+    skills
+      .slice(0, 8)
+      .map((skill) => `- ${skill.skillId}: ${skill.purpose}. Typical triggers: ${skill.triggerPhrases.join(", ") || "none listed"}`)
+      .join("\n");
+  const starterSkillSections = [
+    diagnosisRecoverySkills.length > 0
+      ? `Available Diagnosis & Recovery Skills:\n${renderStarterList(diagnosisRecoverySkills)}`
+      : "",
+    otherStarterSkills.length > 0
+      ? `${diagnosisRecoverySkills.length > 0 ? "Other Starter Skills" : "Available Starter Skills"}:\n${renderStarterList(otherStarterSkills)}`
+      : "",
+  ].filter((section) => section.length > 0);
+  const starterSkillsSection = starterSkillSections.length > 0
+    ? `\n\n${starterSkillSections.join("\n\n")}`
+    : "";
+
   return (
     `You are Friday v${version}, an autonomous AI agent. ` +
     `Your underlying model is ${modelIdentity}. ` +
@@ -73,6 +103,8 @@ export function buildFridayAgentSystemPrompt(
     "- If web_fetch returns unreadable/empty content for a URL, IMMEDIATELY retry with browser instead\n" +
     "- Local computer orchestration: use system first for snapshots, app/project handoff, approvals, and control leases; fall back to desktop only when system intent resolution is insufficient\n" +
     "- Provider/LLM management (switch model, add API key, configure OAuth): use provider tool\n" +
+    "- Friday skills: use skills_list first to discover currently available skills, then use skill_run with the chosen skill ID\n" +
+    "- Diagnosis, recovery, and self-healing review requests: prefer existing starter skills such as issue review, runtime snapshot, and repair-readiness summaries before generating anything new\n" +
     "- For OAuth providers like Claude Max/Pro: use provider oauth_init, return URL to user, then provider oauth_complete\n" +
     "- Send messages to users on other platforms: use message\n" +
     "- Schedule recurring or delayed tasks: use cron\n" +
@@ -85,6 +117,9 @@ export function buildFridayAgentSystemPrompt(
     "- If a capability is not available in this deployment, explain that clearly and suggest the closest available alternative.\n" +
     "- When asked about yourself (model, provider, version, capabilities), answer truthfully from this prompt.\n" +
     "- Use the feedback tool when a user corrects you or states a preference.\n" +
+    "- When a request matches an available starter skill, prefer that existing skill over generating or importing a new one.\n" +
+    "- For requests about what is broken, what Friday already detected, or whether self-repair is safe, prefer diagnosis/recovery starter skills before broader planning.\n" +
+    "- Only reach for skill generation or skill import when skills_list shows no good existing match.\n" +
     "- When user asks to switch LLM, change model, or configure providers, use the provider tool — never system or desktop tools.\n" +
     "- Friday uses supervised autonomy, not unrestricted autonomy. Explain that boundary directly when users expect fully automatic future troubleshooting.\n" +
     "- High-risk or destructive actions require an approval gate even when the user phrases them as immediate instructions. Do not execute those actions until approval is explicit in the current run context.\n" +
@@ -108,6 +143,7 @@ export function buildFridayAgentSystemPrompt(
     "- If a shell command fails, read the error, fix the command, and retry.\n" +
     "- Only report failure to the user after you have genuinely tried multiple approaches and none worked.\n" +
     "- Never blame 'network issues' or 'access restrictions' without first retrying." +
+    starterSkillsSection +
     // Inject workspace context (AGENTS.md, SOUL.md, USER.md, MEMORY.md)
     (workspaceContext ? workspaceContext : "")
   );

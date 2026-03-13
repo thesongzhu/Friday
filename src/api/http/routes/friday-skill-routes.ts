@@ -18,6 +18,7 @@ function toLegacyCompatibleListItem(item: {
   skillId: string;
   name: string;
   status: string;
+  starter?: boolean;
   tags: string[];
   installedVersion?: string;
   latestVersion?: string;
@@ -120,6 +121,7 @@ export function createFridaySkillRoutes(
           origin: skill.origin,
           status: skill.status,
           category: skill.manifest.category,
+          starter: (skill.manifest.tags ?? []).includes("starter"),
           tags: skill.manifest.tags ?? [],
           latestVersion: skill.manifest.version,
           installedVersion: skill.manifest.version,

@@ -206,4 +206,106 @@ describe("createFridayUixSurfaceService", () => {
     );
     warnSpy.mockRestore();
   });
+
+  it("routes review-issues through the bundled starter skill when a skill executor is available", async () => {
+    const execute = vi.fn(() => ({
+      runId: "skill-run-1",
+      result: Promise.resolve({
+        runId: "skill-run-1",
+        status: "completed",
+        output: {
+          summary: "Friday has 2 open issue card(s).",
+          nextStep: "Review the approval-gated repair first.",
+          details: {
+            recommendedTemplateId: "review-issues",
+            recommendedSkillId: "autofix-readiness-review",
+          },
+        },
+        stdout: "",
+        stderr: "",
+        durationMs: 12,
+      }),
+    }));
+    const service = createFridayUixSurfaceService({
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+      skillExecutor: {
+        execute,
+        cancel: vi.fn(),
+      },
+    });
+
+    const response = await service.executeTemplate({
+      templateId: "review-issues",
+      userId: "user-1",
+      parameters: {},
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skillId: "review-open-issues",
+        userId: "user-1",
+        channel: "assistant",
+      }),
+    );
+    expect(response.summary).toContain("open issue");
+    expect(response.result).toMatchObject({
+      skillId: "review-open-issues",
+      nextStep: "Review the approval-gated repair first.",
+    });
+  });
+
+  it("routes recover-failed-deploy through the bundled recovery skill when a skill executor is available", async () => {
+    const execute = vi.fn(() => ({
+      runId: "skill-run-2",
+      result: Promise.resolve({
+        runId: "skill-run-2",
+        status: "completed",
+        output: {
+          summary: "Failed deploy recovery: root cause points to a workflow publish error.",
+          nextStep: "Review the rollback-backed fix before executing anything.",
+          details: {
+            action: {
+              requiresApproval: true,
+            },
+            recommendedTemplateId: "recover-failed-deploy",
+            recommendedSkillId: "autofix-readiness-review",
+          },
+        },
+        stdout: "",
+        stderr: "",
+        durationMs: 14,
+      }),
+    }));
+    const service = createFridayUixSurfaceService({
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+      skillExecutor: {
+        execute,
+        cancel: vi.fn(),
+      },
+    });
+
+    const response = await service.executeTemplate({
+      templateId: "recover-failed-deploy",
+      userId: "user-1",
+      parameters: {},
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skillId: "failed-deploy-recovery-brief",
+        userId: "user-1",
+        channel: "assistant",
+      }),
+    );
+    expect(response.summary).toContain("Failed deploy recovery");
+    expect(response.workflow?.kind).toBe("blocked");
+    expect(response.result).toMatchObject({
+      skillId: "failed-deploy-recovery-brief",
+      requiresApproval: true,
+    });
+  });
 });

@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Local Service Diagnose",
+  "description": "Check a process, port, health URL, and logs.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "processName",
+        "port",
+        "healthUrl",
+        "logPath"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "processName",
+      "inputKey": "processName",
+      "kind": "text",
+      "label": "Process Name",
+      "required": false
+    },
+    {
+      "id": "port",
+      "inputKey": "port",
+      "kind": "number",
+      "label": "Port",
+      "required": false
+    },
+    {
+      "id": "healthUrl",
+      "inputKey": "healthUrl",
+      "kind": "text",
+      "label": "Health URL",
+      "required": false
+    },
+    {
+      "id": "logPath",
+      "inputKey": "logPath",
+      "kind": "text",
+      "label": "Log Path",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Diagnose Service",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

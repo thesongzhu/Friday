@@ -1,0 +1,108 @@
+{
+  "schemaVersion": "2.0",
+  "id": "autofix-readiness-review",
+  "name": "Autofix Readiness Review",
+  "description": "Inspect planned auto-fix actions, approval requirements, and rollback coverage without executing anything.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": {
+    "name": "Friday"
+  },
+  "tags": [
+    "starter",
+    "starter.recovery",
+    "starter.diagnosis",
+    "autofix",
+    "self-healing"
+  ],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [
+      "autofix_readiness_review"
+    ],
+    "phrases": [
+      "review auto fix readiness",
+      "can friday self heal this safely",
+      "show me the repair plan risk"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 96,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "limit",
+      "type": "number",
+      "required": false,
+      "label": "Limit",
+      "help": "Optional max number of actions to inspect."
+    },
+    {
+      "key": "status",
+      "type": "string",
+      "required": false,
+      "label": "Status",
+      "help": "Optional action status filter such as planned or applied."
+    }
+  ],
+  "outputs": [
+    {
+      "key": "summary",
+      "type": "string",
+      "description": "High-level auto-fix readiness summary."
+    },
+    {
+      "key": "nextStep",
+      "type": "string",
+      "description": "The safest next action."
+    },
+    {
+      "key": "details",
+      "type": "object",
+      "description": "Structured auto-fix action details."
+    }
+  ],
+  "permissions": {
+    "grants": [],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": [
+      "starter_skill_invoked",
+      "starter_skill_suggested"
+    ]
+  }
+}

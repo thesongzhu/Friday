@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type {
   FridayDiscoveredSkillCandidate,
@@ -71,7 +71,18 @@ export function resolveFridaySkillDiscoveryRoots(
     return aIdx - bIdx;
   });
 
-  return roots;
+  const dedupedRoots: FridaySkillDiscoveryRoot[] = [];
+  const seenDirs = new Set<string>();
+  for (const root of roots) {
+    const resolvedDir = resolve(root.dir);
+    if (seenDirs.has(resolvedDir)) {
+      continue;
+    }
+    seenDirs.add(resolvedDir);
+    dedupedRoots.push(root);
+  }
+
+  return dedupedRoots;
 }
 
 /** Returns true if a directory looks like a skill (has manifest or SKILL.md). */

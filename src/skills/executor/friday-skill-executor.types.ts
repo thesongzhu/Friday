@@ -38,6 +38,40 @@ export interface FridaySkillAiHelperContext {
   infer(prompt: string, requestedModel?: string): Promise<string>;
 }
 
+export interface FridaySkillReadonlySystemContext {
+  getSnapshot(): Promise<Record<string, unknown>>;
+}
+
+export interface FridaySkillReadonlyDiagnosisContext {
+  listIssueCards(limit?: number): Promise<Record<string, unknown>[]>;
+  listIncidents(limit?: number): Promise<Record<string, unknown>[]>;
+  getIncident(incidentId: string): Promise<Record<string, unknown> | null>;
+}
+
+export interface FridaySkillReadonlyAutofixContext {
+  listActions(limit?: number, status?: string): Promise<Record<string, unknown>[]>;
+  getAction(actionId: string): Promise<Record<string, unknown> | null>;
+}
+
+export interface FridaySkillNodeRuntimeContext {
+  ai?: FridaySkillAiHelperContext;
+  system?: FridaySkillReadonlySystemContext;
+  diagnosis?: FridaySkillReadonlyDiagnosisContext;
+  autofix?: FridaySkillReadonlyAutofixContext;
+}
+
+export interface FridaySkillReadonlySystemServiceLike {
+  getState(): Promise<unknown>;
+}
+
+export interface FridaySkillReadonlySelfHealingServiceLike {
+  listIssueCards(input: { userId: string; limit?: number }): unknown[];
+  listIncidents(input: { userId: string; limit?: number }): unknown[];
+  getIncident(input: { incidentId: string }): unknown | null;
+  listActions(input: { userId: string; status?: string; limit?: number }): unknown[];
+  getAction(input: { actionId: string }): unknown | null;
+}
+
 export interface FridayNodeRunOptions {
   entrypoint: string;
   input: Record<string, unknown>;
@@ -45,6 +79,7 @@ export interface FridayNodeRunOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   aiHelper?: FridaySkillAiHelperContext;
+  runtimeContext?: Omit<FridaySkillNodeRuntimeContext, "ai">;
 }
 
 export interface FridayNodeRunResult {
@@ -97,6 +132,8 @@ export interface CreateFridaySkillExecutorDeps {
   idGenerator: () => string;
   nowIso: () => string;
   providerService?: FridayProviderServiceLike;
+  getSystemService?: () => FridaySkillReadonlySystemServiceLike | undefined;
+  getSelfHealingService?: () => FridaySkillReadonlySelfHealingServiceLike | undefined;
 }
 
 /**
