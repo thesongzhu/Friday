@@ -83,7 +83,7 @@ describe("FridaySatellitePairingService", () => {
       checkpointRepo,
       idGenerator: createTestIdGenerator(),
       nowIso: () => nowIso,
-      tokenSecret: "test-token-secret",
+      tokenSecret: "test-token-secret", // pragma: allowlist secret
       generateEphemeralKeyPair: () => EPHEMERAL_KEY,
     });
   }
