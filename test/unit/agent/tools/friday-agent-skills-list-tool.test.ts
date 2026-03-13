@@ -1,0 +1,230 @@
+import { describe, expect, it } from "vitest";
+import { createFridayAgentSkillsListTool } from "#agent";
+import type { FridaySkillRegistry, FridayRegisteredSkill, SkillManifestV2 } from "#skills";
+
+function buildManifest(overrides: Partial<SkillManifestV2>): SkillManifestV2 {
+  const base: SkillManifestV2 = {
+    schemaVersion: "2.0",
+    id: "skill.test",
+    name: "Skill Test",
+    description: "A test skill",
+    version: "1.0.0",
+    kind: "conversation",
+    category: "utility",
+    author: { name: "Friday" },
+    tags: [],
+    runtime: {
+      kind: "node",
+      entrypoint: "index.mjs",
+      minHubVersion: "1.0.0",
+      apiVersion: "1",
+      timeoutMsDefault: 30_000,
+    },
+    triggers: {
+      intents: [],
+      phrases: [],
+      channels: ["*"],
+    },
+    invocation: {
+      userInvocable: true,
+      modelInvocable: true,
+      priority: 50,
+      modes: ["intent"],
+    },
+    requirements: {
+      bins: [],
+      env: [],
+      config: [],
+      os: ["darwin", "linux"],
+    },
+    inputs: [],
+    outputs: [],
+    permissions: {
+      grants: [],
+      promptOn: [],
+    },
+    schemas: null,
+    flow: null,
+    executionTargets: {
+      allowedSatelliteTypes: ["desktop", "cloud-vm"],
+      requiredCapabilities: [],
+    },
+    telemetry: {
+      events: [],
+    },
+  };
+
+  return {
+    ...base,
+    ...overrides,
+    author: { ...base.author, ...(overrides.author ?? {}) },
+    runtime: {
+      ...base.runtime,
+      ...(overrides.runtime ?? {}),
+    },
+    triggers: {
+      ...base.triggers,
+      ...(overrides.triggers ?? {}),
+    },
+    invocation: {
+      ...base.invocation,
+      ...(overrides.invocation ?? {}),
+    },
+    requirements: {
+      ...base.requirements,
+      ...(overrides.requirements ?? {}),
+    },
+    permissions: {
+      ...base.permissions,
+      ...(overrides.permissions ?? {}),
+    },
+    executionTargets: {
+      ...base.executionTargets,
+      ...(overrides.executionTargets ?? {}),
+    },
+    telemetry: {
+      ...base.telemetry,
+      ...(overrides.telemetry ?? {}),
+    },
+  };
+}
+
+function buildRegisteredSkill(input: {
+  manifest: SkillManifestV2;
+  status?: FridayRegisteredSkill["status"];
+  origin?: FridayRegisteredSkill["origin"];
+}): FridayRegisteredSkill {
+  return {
+    manifest: input.manifest,
+    skillDir: "/tmp/test-skill",
+    source: input.origin === "bundled" ? "bundled" : "local",
+    origin: input.origin ?? "bundled",
+    status: input.status ?? "installed",
+    loaded: {
+      skillDir: "/tmp/test-skill",
+      manifest: input.manifest,
+      loadMode: "manifest-v2",
+      declaredFiles: [],
+    },
+    validation: {
+      ok: true,
+      issues: [],
+    },
+    trust: {
+      trustTier: "bundled",
+      executionMode: "trusted",
+      sandboxPolicy: {
+        trustTier: "bundled",
+        defaultExecutionMode: "trusted",
+        allowedExecutionModes: ["trusted", "restricted"],
+      },
+    },
+  };
+}
+
+function createRegistry(skills: FridayRegisteredSkill[]): FridaySkillRegistry {
+  return {
+    list: () => skills,
+    get: (skillId) => skills.find((skill) => skill.manifest.id === skillId) ?? null,
+    resolveByIntent: () => null,
+    validateAll: () => [],
+    reload: async () => {},
+    refresh: async () => {},
+    isCompatible: () => ({ compatible: true, reasons: [] }),
+    startWatching: async () => {},
+    stopWatching: async () => {},
+    close: async () => {},
+  };
+}
+
+describe("createFridayAgentSkillsListTool", () => {
+  it("lists starter skills first with trigger metadata", async () => {
+    const tool = createFridayAgentSkillsListTool({
+      skillRegistry: createRegistry([
+        buildRegisteredSkill({
+          manifest: buildManifest({
+            id: "review-open-issues",
+            name: "Review Open Issues",
+            description: "Inspect current issues",
+            tags: ["starter", "starter.diagnosis"],
+            triggers: {
+              intents: ["review_open_issues"],
+              phrases: ["review open issues"],
+              channels: ["*"],
+            },
+          }),
+        }),
+        buildRegisteredSkill({
+          manifest: buildManifest({
+            id: "repo-health-check",
+            name: "Repo Health Check",
+            description: "Inspect repo health",
+            tags: ["starter", "starter.devops"],
+            triggers: {
+              intents: ["repo_health_check"],
+              phrases: ["review repo health"],
+              channels: ["*"],
+            },
+          }),
+        }),
+        buildRegisteredSkill({
+          manifest: buildManifest({
+            id: "custom-skill",
+            name: "Custom Skill",
+            description: "Other skill",
+            tags: ["custom"],
+          }),
+          origin: "managed",
+        }),
+      ]),
+    });
+
+    const result = await tool.execute({}, new AbortController().signal);
+    const parsed = JSON.parse(result.content) as { skills: Array<Record<string, unknown>> };
+
+    expect(parsed.skills[0]?.skillId).toBe("review-open-issues");
+    expect(parsed.skills[0]?.starter).toBe(true);
+    expect(parsed.skills[0]?.phrases).toEqual(["review open issues"]);
+  });
+
+  it("filters installed status, origin, tag, and free-text query", async () => {
+    const tool = createFridayAgentSkillsListTool({
+      skillRegistry: createRegistry([
+        buildRegisteredSkill({
+          manifest: buildManifest({
+            id: "repo-health-check",
+            name: "Repo Health Check",
+            description: "Inspect repo health",
+            tags: ["starter", "starter.devops"],
+          }),
+          origin: "bundled",
+          status: "installed",
+        }),
+        buildRegisteredSkill({
+          manifest: buildManifest({
+            id: "market-analysis",
+            name: "Market Analysis",
+            description: "Analyze market logs",
+            tags: ["analysis"],
+          }),
+          origin: "managed",
+          status: "disabled",
+        }),
+      ]),
+    });
+
+    const result = await tool.execute(
+      {
+        installedOnly: true,
+        origin: "bundled",
+        tag: "starter.devops",
+        q: "repo",
+      },
+      new AbortController().signal,
+    );
+    const parsed = JSON.parse(result.content) as { count: number; skills: Array<Record<string, unknown>> };
+
+    expect(parsed.count).toBe(1);
+    expect(parsed.skills[0]?.skillId).toBe("repo-health-check");
+  });
+});

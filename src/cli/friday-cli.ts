@@ -14,11 +14,12 @@
  *   friday convert     <source> --out <dir> [--from <format>]
  *   friday converters                                       — list converters
  *   friday pack        <skill-dir> --out <file.tgz>
+ *   friday skills init <skill-id> [--template node|shell] [--out <dir>]
  *   friday --help                                           — usage info
  */
 
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildFridayChannelSecretRef,
@@ -46,7 +47,7 @@ import { runFridayCliAuthLoginAnthropic } from "./friday-cli-auth.js";
 // ─── Arg parser ───
 
 export interface ParsedArgs {
-  command: "start" | "list" | "run" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth";
+  command: "start" | "list" | "run" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth" | "skills";
   skillDirs: string[];
   port: number | undefined;
   skillId: string | undefined;
@@ -70,6 +71,9 @@ export interface ParsedArgs {
   providerId: string | undefined;
   code: string | undefined;
   noBrowser: boolean;
+  skillsSubcommand: string | undefined;
+  template: "node" | "shell" | undefined;
+  initSkillId: string | undefined;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -98,6 +102,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
     providerId: undefined,
     code: undefined,
     noBrowser: false,
+    skillsSubcommand: undefined,
+    template: undefined,
+    initSkillId: undefined,
   };
 
   if (args.length === 0) {
@@ -110,7 +117,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     return result;
   }
 
-  const validCommands = ["start", "list", "run", "status", "import", "convert", "converters", "pack", "auth"] as const;
+  const validCommands = ["start", "list", "run", "status", "import", "convert", "converters", "pack", "auth", "skills"] as const;
   type ValidCommand = (typeof validCommands)[number];
 
   if ((validCommands as readonly string[]).includes(cmd)) {
@@ -232,6 +239,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
 
+    if (arg === "--template" && i + 1 < args.length) {
+      const template = args[i + 1]!;
+      result.template = template === "shell" ? "shell" : template === "node" ? "node" : undefined;
+      i += 2;
+      continue;
+    }
+
     // For `run`, the first positional after the command is the skill ID
     if (result.command === "run" && result.skillId === undefined && !arg.startsWith("--")) {
       result.skillId = arg;
@@ -251,6 +265,19 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.skillDir = arg;
       i += 1;
       continue;
+    }
+
+    if (result.command === "skills" && !arg.startsWith("--")) {
+      if (result.skillsSubcommand === undefined) {
+        result.skillsSubcommand = arg;
+        i += 1;
+        continue;
+      }
+      if (result.initSkillId === undefined) {
+        result.initSkillId = arg;
+        i += 1;
+        continue;
+      }
     }
 
     // For `auth`, parse subcommand and target: auth login anthropic
@@ -306,6 +333,9 @@ Usage:
   friday pack <skill-dir> --out <file.tgz>
       Package a native Friday skill directory into a .friday.tgz archive.
 
+  friday skills init <skill-id> [--template node|shell] [--out <dir>]
+      Create a minimal local skill template with manifest, entrypoint, and SKILL.md.
+
   friday --help
       Show this help message.
 
@@ -317,6 +347,7 @@ Options:
   --from <format>       Source format hint (auto, clawdbot-skill-md, n8n-node, openai-gpt-action, code-repo, undocumented-api, friday-package).
   --target <path>       Install target (managed, workspace, or a custom path).
   --out <path>          Output directory or file path.
+  --template <kind>     Template runtime for \`friday skills init\` (node or shell).
   --replace             Overwrite existing skill on collision.
   --dry-run             Preview conversion without installing.
   --split-operations    Create one skill per OpenAPI operation (default).
@@ -1353,6 +1384,170 @@ async function cmdPack(parsed: ParsedArgs): Promise<void> {
   }
 }
 
+function normalizeSkillId(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function buildSkillsInitTemplate(input: {
+  skillId: string;
+  template: "node" | "shell";
+}): Array<{ path: string; content: string; mode?: number }> {
+  const displayName = input.skillId
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+  const manifest = {
+    schemaVersion: "2.0",
+    id: input.skillId,
+    name: displayName,
+    description: `${displayName} — starter skill template.`,
+    version: "1.0.0",
+    kind: "conversation",
+    category: "utility",
+    author: {
+      name: "Friday Operator",
+    },
+    tags: [],
+    runtime: {
+      kind: input.template,
+      entrypoint: input.template === "shell" ? "run.sh" : "index.mjs",
+      minHubVersion: "1.0.0",
+      apiVersion: "1",
+      timeoutMsDefault: 30_000,
+    },
+    triggers: {
+      intents: [],
+      phrases: [],
+      channels: ["*"],
+    },
+    invocation: {
+      userInvocable: true,
+      modelInvocable: true,
+      priority: 50,
+      modes: ["intent"],
+    },
+    requirements: {
+      bins: input.template === "shell" ? ["node"] : [],
+      env: [],
+      config: [],
+      os: ["darwin", "linux", "win32"],
+    },
+    inputs: [
+      {
+        key: "message",
+        type: "string",
+        required: false,
+        label: "Message",
+        help: "Optional input passed into the template skill.",
+      },
+    ],
+    outputs: [
+      {
+        key: "summary",
+        type: "string",
+        description: "High-level result from the template skill.",
+      },
+      {
+        key: "details",
+        type: "object",
+        description: "Structured output from the template skill.",
+      },
+    ],
+    permissions: {
+      grants: input.template === "shell"
+        ? [
+            {
+              id: "shell-execute",
+              resource: "shell",
+              action: "execute",
+              required: true,
+              reason: "Shell template skills execute run.sh locally.",
+            },
+          ]
+        : [],
+      promptOn: input.template === "shell" ? ["shell.execute"] : [],
+    },
+    schemas: null,
+    flow: null,
+    executionTargets: {
+      allowedSatelliteTypes: ["desktop", "cloud-vm"],
+      requiredCapabilities: [],
+    },
+    telemetry: {
+      events: [],
+    },
+  };
+
+  const nodeEntrypoint = `export async function execute(input) {\n  const message = typeof input?.message === "string" && input.message.trim().length > 0\n    ? input.message.trim()\n    : "Friday node skill template is ready.";\n\n  return {\n    summary: message,\n    details: {\n      ok: true,\n      runtime: "node",\n      receivedInput: input ?? {},\n    },\n  };\n}\n`;
+
+  const shellEntrypoint = `#!/usr/bin/env sh\nset -eu\n\nINPUT_JSON=\"$(cat)\"\nMESSAGE=$(printf '%s' \"$INPUT_JSON\" | node -e \"const fs=require('fs'); const raw=fs.readFileSync(0,'utf8'); const input=raw ? JSON.parse(raw) : {}; process.stdout.write(typeof input.message === 'string' && input.message.trim() ? input.message.trim() : 'Friday shell skill template is ready.');\")\nprintf '{\"summary\":%s,\"details\":{\"ok\":true,\"runtime\":\"shell\"}}\\n' \"$(printf '%s' \"$MESSAGE\" | node -e \"const fs=require('fs'); process.stdout.write(JSON.stringify(fs.readFileSync(0,'utf8')))\")\"\n`;
+
+  const skillDoc = `# ${displayName}\n\nPurpose: describe what this skill should do.\n\nInputs:\n- \`message\`: optional free-form input for the template.\n\nBehavior:\n- Keep this skill non-destructive by default.\n- Return structured JSON output on success.\n`;
+
+  return [
+    {
+      path: "skill.manifest.json",
+      content: `${JSON.stringify(manifest, null, 2)}\n`,
+    },
+    {
+      path: input.template === "shell" ? "run.sh" : "index.mjs",
+      content: input.template === "shell" ? shellEntrypoint : nodeEntrypoint,
+      mode: input.template === "shell" ? 0o755 : undefined,
+    },
+    {
+      path: "SKILL.md",
+      content: skillDoc,
+    },
+  ];
+}
+
+async function cmdSkills(parsed: ParsedArgs): Promise<void> {
+  if (parsed.skillsSubcommand !== "init") {
+    console.error("Usage: friday skills init <skill-id> [--template node|shell] [--out <dir>]");
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!parsed.initSkillId) {
+    console.error("Error: missing <skill-id> argument for `friday skills init`.");
+    process.exitCode = 1;
+    return;
+  }
+
+  const skillId = normalizeSkillId(parsed.initSkillId);
+  if (!skillId) {
+    console.error("Error: <skill-id> must contain at least one alphanumeric character.");
+    process.exitCode = 1;
+    return;
+  }
+
+  const template = parsed.template ?? "node";
+  const outputDir = parsed.out
+    ? (isAbsolute(parsed.out) ? parsed.out : resolveSafePath(process.cwd(), parsed.out))
+    : resolveSafePath(process.cwd(), join("managed-skills", skillId));
+
+  if (existsSync(outputDir)) {
+    console.error(`Error: output directory already exists: ${outputDir}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  mkdirSync(outputDir, { recursive: true });
+  for (const file of buildSkillsInitTemplate({ skillId, template })) {
+    const absolutePath = join(outputDir, file.path);
+    mkdirSync(dirname(absolutePath), { recursive: true });
+    writeFileSync(absolutePath, file.content, file.mode ? { mode: file.mode } : undefined);
+  }
+
+  console.log(`✨ Created ${template} skill template`);
+  console.log(`   Skill ID: ${skillId}`);
+  console.log(`   Directory: ${outputDir}`);
+}
+
 async function cmdAuth(parsed: ParsedArgs): Promise<void> {
   if (parsed.authSubcommand !== "login" || parsed.authTarget !== "anthropic") {
     console.error("Usage: friday auth login anthropic [--provider-id <id>] [--code <code#state>] [--no-browser]");
@@ -1447,6 +1642,9 @@ async function main(): Promise<void> {
       break;
     case "auth":
       await cmdAuth(parsed);
+      break;
+    case "skills":
+      await cmdSkills(parsed);
       break;
     case "help":
     default:

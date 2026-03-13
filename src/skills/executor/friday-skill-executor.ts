@@ -10,6 +10,7 @@ import type { FridaySkillRunSnapshot } from "#ledger";
 import { FridayDomainError } from "#errors";
 import { createFridayShellExecutor } from "./friday-shell-executor.js";
 import { createFridayNodeExecutor } from "./friday-node-executor.js";
+import { createFridaySkillReadonlyRuntimeContext } from "./friday-skill-runtime-bridge.js";
 import { resolve } from "node:path";
 
 /**
@@ -359,6 +360,7 @@ export function createFridaySkillExecutor(
                 };
               }
 
+              const runtimeContext = createFridaySkillReadonlyRuntimeContext(deps, request);
               const nodeResult = await nodeExecutor.run({
                 entrypoint: manifest.runtime.entrypoint,
                 input: request.input,
@@ -366,6 +368,7 @@ export function createFridaySkillExecutor(
                 timeoutMs,
                 signal: controller.signal,
                 aiHelper,
+                runtimeContext,
               });
 
               const runState = activeRuns.get(runId);

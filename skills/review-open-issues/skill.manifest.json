@@ -1,0 +1,101 @@
+{
+  "schemaVersion": "2.0",
+  "id": "review-open-issues",
+  "name": "Review Open Issues",
+  "description": "Summarize Friday's open issue cards and diagnosis incidents before any repair step.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": {
+    "name": "Friday"
+  },
+  "tags": [
+    "starter",
+    "starter.diagnosis",
+    "issues",
+    "diagnostics",
+    "self-healing"
+  ],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [
+      "review_open_issues"
+    ],
+    "phrases": [
+      "review open issues",
+      "what problems has friday already found",
+      "show me detected incidents"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 95,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "limit",
+      "type": "number",
+      "required": false,
+      "label": "Limit",
+      "help": "Optional max number of issue cards and incidents to inspect."
+    }
+  ],
+  "outputs": [
+    {
+      "key": "summary",
+      "type": "string",
+      "description": "Issue-review summary."
+    },
+    {
+      "key": "nextStep",
+      "type": "string",
+      "description": "The safest next diagnostic or recovery action."
+    },
+    {
+      "key": "details",
+      "type": "object",
+      "description": "Structured issue and incident details."
+    }
+  ],
+  "permissions": {
+    "grants": [],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": [
+      "starter_skill_invoked",
+      "starter_skill_suggested"
+    ]
+  }
+}

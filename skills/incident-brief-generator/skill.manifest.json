@@ -1,0 +1,166 @@
+{
+  "schemaVersion": "2.0",
+  "id": "incident-brief-generator",
+  "name": "Incident Brief Generator",
+  "description": "Turn symptoms, service signals, and log evidence into a short incident brief with next actions.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": {
+    "name": "Friday"
+  },
+  "tags": [
+    "starter",
+    "starter.devops",
+    "incident",
+    "handoff",
+    "report"
+  ],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 120000
+  },
+  "triggers": {
+    "intents": [
+      "incident_brief_generator"
+    ],
+    "phrases": [
+      "generate an incident brief",
+      "summarize this outage",
+      "prepare a handoff summary for the incident"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 88,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [
+      "lsof",
+      "pgrep"
+    ],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "symptoms",
+      "type": "string",
+      "required": false,
+      "label": "Symptoms",
+      "help": "Plain-language symptoms or impact statement."
+    },
+    {
+      "key": "notes",
+      "type": "string",
+      "required": false,
+      "label": "Notes",
+      "help": "Extra operator notes or context."
+    },
+    {
+      "key": "processName",
+      "type": "string",
+      "required": false,
+      "label": "Process Name",
+      "help": "Optional process name for local inspection."
+    },
+    {
+      "key": "port",
+      "type": "number",
+      "required": false,
+      "label": "Port",
+      "help": "Optional local port for inspection."
+    },
+    {
+      "key": "healthUrl",
+      "type": "string",
+      "required": false,
+      "label": "Health URL",
+      "help": "Optional health URL for inspection."
+    },
+    {
+      "key": "logPath",
+      "type": "string",
+      "required": false,
+      "label": "Log Path",
+      "help": "Optional log file or directory."
+    },
+    {
+      "key": "workspaceRoot",
+      "type": "string",
+      "required": false,
+      "label": "Workspace Root",
+      "help": "Optional workspace directory for log discovery."
+    }
+  ],
+  "outputs": [
+    {
+      "key": "briefMarkdown",
+      "type": "string",
+      "description": "Incident brief in Markdown."
+    },
+    {
+      "key": "summary",
+      "type": "string",
+      "description": "Short operator summary."
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "filesystem-read",
+        "resource": "filesystem",
+        "action": "read",
+        "required": true,
+        "reason": "Read repository files, logs, and local metadata to produce diagnostics."
+      },
+      {
+        "id": "shell-execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": false,
+        "reason": "Run bounded local inspection commands such as git, lsof, pgrep, and package scripts."
+      },
+      {
+        "id": "network-connect",
+        "resource": "network",
+        "action": "connect",
+        "required": false,
+        "reason": "Check a local or user-provided health endpoint to confirm service status."
+      }
+    ],
+    "promptOn": [
+      "shell.execute",
+      "network.connect"
+    ]
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": [
+      "starter_skill_invoked",
+      "starter_skill_suggested"
+    ]
+  }
+}

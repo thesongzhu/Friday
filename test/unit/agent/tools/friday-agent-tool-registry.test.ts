@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { createFridayAgentToolRegistry } from "#agent";
+import type { FridaySkillRegistry } from "#skills";
 import type { FridaySessionService } from "../../../../src/sessions/services/friday-session-service.types.js";
 import type { FridayAgentRuntime } from "#agent";
 import type { FridayJobSchedulerRepository } from "../../../../src/jobs/scheduler/friday-job-scheduler-repository.js";
@@ -42,6 +43,21 @@ function stubMcpAdapter(): FridayMcpAdapter {
     listPrompts: vi.fn(),
     getPrompt: vi.fn(),
   };
+}
+
+function stubSkillRegistry(): FridaySkillRegistry {
+  return {
+    list: vi.fn().mockReturnValue([]),
+    get: vi.fn(),
+    resolveByIntent: vi.fn(),
+    validateAll: vi.fn().mockReturnValue([]),
+    reload: vi.fn(),
+    refresh: vi.fn(),
+    isCompatible: vi.fn().mockReturnValue({ compatible: true, reasons: [] }),
+    startWatching: vi.fn(),
+    stopWatching: vi.fn(),
+    close: vi.fn(),
+  } as unknown as FridaySkillRegistry;
 }
 
 describe("createFridayAgentToolRegistry", () => {
@@ -127,5 +143,18 @@ describe("createFridayAgentToolRegistry", () => {
     expect(names).toContain("exec");
     expect(names).toContain("read");
     expect(names).toContain("web_fetch");
+  });
+
+  it("includes skills_list when skill executor and registry are provided", () => {
+    const tools = createFridayAgentToolRegistry({
+      skillExecutor: {
+        execute: vi.fn(),
+        cancel: vi.fn(),
+      } as never,
+      skillRegistry: stubSkillRegistry(),
+    });
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("skills_list");
+    expect(names).toContain("skill_run");
   });
 });

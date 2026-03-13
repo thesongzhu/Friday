@@ -115,6 +115,8 @@ export type { CreateFridayAgentWebSearchToolOptions } from "./tools/friday-agent
 export { createFridayAgentWebSearchTool } from "./tools/friday-agent-web-search-tool.js";
 export type { CreateFridayAgentSkillToolDeps } from "./tools/friday-agent-skill-tool.js";
 export { createFridayAgentSkillTool } from "./tools/friday-agent-skill-tool.js";
+export type { CreateFridayAgentSkillsListToolDeps } from "./tools/friday-agent-skills-list-tool.js";
+export { createFridayAgentSkillsListTool } from "./tools/friday-agent-skills-list-tool.js";
 export type { CreateFridayAgentSkillGeneratorToolDeps } from "./tools/friday-agent-skill-generator-tool.js";
 export { createFridayAgentSkillGeneratorTool } from "./tools/friday-agent-skill-generator-tool.js";
 export type { CreateFridayAgentSkillImportToolDeps } from "./tools/friday-agent-skill-import-tool.js";

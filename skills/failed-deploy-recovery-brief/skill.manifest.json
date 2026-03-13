@@ -1,0 +1,102 @@
+{
+  "schemaVersion": "2.0",
+  "id": "failed-deploy-recovery-brief",
+  "name": "Failed Deploy Recovery Brief",
+  "description": "Summarize the current failed-deploy incident, repair boundary, and safest next recovery step.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": {
+    "name": "Friday"
+  },
+  "tags": [
+    "starter",
+    "starter.recovery",
+    "starter.diagnosis",
+    "workflow",
+    "deploy",
+    "self-healing"
+  ],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [
+      "failed_deploy_recovery_brief"
+    ],
+    "phrases": [
+      "recover failed deploy",
+      "summarize the failed deployment",
+      "help me recover this workflow deploy"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 97,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "incidentId",
+      "type": "string",
+      "required": false,
+      "label": "Incident ID",
+      "help": "Optional incident to summarize directly."
+    }
+  ],
+  "outputs": [
+    {
+      "key": "summary",
+      "type": "string",
+      "description": "High-level failed-deploy recovery summary."
+    },
+    {
+      "key": "nextStep",
+      "type": "string",
+      "description": "The next recovery-safe action."
+    },
+    {
+      "key": "details",
+      "type": "object",
+      "description": "Structured incident and repair details."
+    }
+  ],
+  "permissions": {
+    "grants": [],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": [
+      "starter_skill_invoked",
+      "starter_skill_suggested"
+    ]
+  }
+}

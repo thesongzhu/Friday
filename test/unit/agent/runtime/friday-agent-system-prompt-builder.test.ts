@@ -101,4 +101,33 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("Do not write placeholders like 'Contents of X'");
     expect(prompt).toContain("clearly labeled blocker section");
   });
+
+  it("documents starter skill discovery and usage guidance", () => {
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["read", "skill_run", "skills_list"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+      starterSkills: [
+        {
+          skillId: "review-open-issues",
+          purpose: "Inspect detected incidents and issue cards",
+          triggerPhrases: ["review open issues"],
+          tags: ["starter", "starter.diagnosis"],
+        },
+        {
+          skillId: "repo-health-check",
+          purpose: "Inspect repository state and suggest the next action",
+          triggerPhrases: ["review repo health"],
+          tags: ["starter", "starter.devops"],
+        },
+      ],
+    });
+
+    expect(prompt).toContain("use skills_list first");
+    expect(prompt).toContain("prefer that existing skill over generating or importing a new one");
+    expect(prompt).toContain("Available Diagnosis & Recovery Skills:");
+    expect(prompt).toContain("review-open-issues");
+    expect(prompt).toContain("Other Starter Skills:");
+    expect(prompt).toContain("repo-health-check");
+  });
 });

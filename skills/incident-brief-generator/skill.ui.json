@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Incident Brief Generator",
+  "description": "Turn incident notes and evidence into a concise brief.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "symptoms",
+        "evidence"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "symptoms",
+      "inputKey": "symptoms",
+      "kind": "textarea",
+      "label": "Symptoms",
+      "required": false
+    },
+    {
+      "id": "evidence",
+      "inputKey": "evidence",
+      "kind": "textarea",
+      "label": "Evidence",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "briefMarkdown",
+      "outputKey": "briefMarkdown",
+      "label": "Brief",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Generate Brief",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

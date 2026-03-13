@@ -7,11 +7,13 @@ import { toast } from "sonner";
 import { healthApi } from "@/lib/api/health";
 import { providersApi } from "@/lib/api/providers";
 import { setupApi } from "@/lib/api/setup";
+import { skillsApi } from "@/lib/api/skills";
 import { systemApi } from "@/lib/api/system";
 import {
   FRIDAY_ASSISTANT_STARTER_TASKS,
   getAssistantStarterTask,
 } from "@/lib/assistant/starter-tasks";
+import { trackStarterSkillBatch } from "@/lib/skills/starter-skill-telemetry";
 import type { ChannelKind, ProviderKind, SetupStepId } from "@/lib/setup/types";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import {
@@ -33,6 +35,19 @@ const DEFAULT_CHANNELS: ChannelKind[] = [
   "feishu",
   "whatsapp",
 ];
+
+const STARTER_SKILL_EXAMPLES: Record<string, string> = {
+  "repo-health-check": "Review repo health and tell me the next useful step.",
+  "workspace-change-risk-review": "Review the current diff and call out change risk.",
+  "release-readiness-check": "Check whether this workspace is ready to ship.",
+  "system-health-snapshot": "Capture Friday's current system snapshot and summarize runtime health.",
+  "review-open-issues": "Review what Friday has already detected and tell me the top issue to inspect next.",
+  "autofix-readiness-review": "Show which planned repairs are approval-gated and which are still safe to inspect.",
+  "failed-deploy-recovery-brief": "Summarize the failed deploy and the safest recovery path without executing it.",
+  "log-error-triage": "Cluster recurring errors from today's local logs.",
+  "local-service-diagnose": "Diagnose the local service on port 3141 and explain what looks wrong.",
+  "incident-brief-generator": "Turn these logs and notes into a concise incident brief.",
+};
 
 function titleCase(value: string): string {
   return value
@@ -93,6 +108,16 @@ export function SetupPage() {
     retry: 0,
   });
 
+  const { data: starterSkills = [] } = useQuery({
+    queryKey: ["setup", "starter-skills"],
+    queryFn: async () => {
+      const skills = await skillsApi.listSkills();
+      return skills.filter((skill) => skill.starter);
+    },
+    retry: 0,
+    staleTime: 30_000,
+  });
+
   useEffect(() => {
     if (setupStatus && !setupStatus.needsSetup) {
       navigate("/", { replace: true });
@@ -124,6 +149,15 @@ export function SetupPage() {
     setCommunicationMbti(persona.mbti ?? "");
     setCommunicationSaved(true);
   }, [persona]);
+
+  useEffect(() => {
+    if (starterSkills.length === 0) return;
+    trackStarterSkillBatch("starter_skill_shown", {
+      skillIds: starterSkills.map((skill) => skill.skillId),
+      source: "setup_preview",
+      metadata: { count: starterSkills.length },
+    });
+  }, [starterSkills]);
 
   const supportedChannels = useMemo(() => {
     const discovered = supportedHealth?.capabilities?.channels?.supportedKinds ?? [];
@@ -517,7 +551,46 @@ export function SetupPage() {
           </ShellCard>
         </div>
 
-        <ShellCard eyebrow="6. Finish" title="Enter Friday">
+        <ShellCard eyebrow="6. Starter Pack" title="Bundled skills ship ready">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+            <div className="space-y-3">
+              <p className="text-sm leading-6 text-white/60">
+                Friday now ships with a bundled starter pack for local development and diagnostics. These starter skills are already installed, model-invocable, and non-destructive by default.
+              </p>
+              <div className="grid gap-3 md:grid-cols-2">
+                {starterSkills.length === 0 ? (
+                  <p className="text-sm text-white/50">Starter pack inventory will appear once the local skill registry is available.</p>
+                ) : starterSkills.map((skill) => (
+                  <div key={skill.skillId} className="agent-subcard">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-white">{skill.name}</p>
+                        <p className="mt-2 text-sm leading-6 text-white/58">{skill.description ?? "Bundled starter skill."}</p>
+                      </div>
+                      <StatusPill tone="success">starter</StatusPill>
+                    </div>
+                    <p className="mt-3 text-xs uppercase tracking-[0.18em] text-white/35">Example</p>
+                    <p className="mt-2 text-sm text-white/72">
+                      {STARTER_SKILL_EXAMPLES[skill.skillId] ?? "Run this starter skill from Assistant or Command Center."}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-[24px] border border-white/[0.08] bg-black/20 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/35">
+                Default boundaries
+              </p>
+              <div className="mt-4 space-y-3 text-sm leading-6 text-white/60">
+                <p>Starter skills are diagnostic-first: they summarize risk, readiness, logs, and service state before suggesting an action.</p>
+                <p>They are bundled with Friday, so there is nothing to install during setup.</p>
+                <p>They do not auto-restart services, delete files, or mutate system state in v1.</p>
+              </div>
+            </div>
+          </div>
+        </ShellCard>
+
+        <ShellCard eyebrow="7. Finish" title="Enter Friday">
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
             <div className="space-y-4">
               <div className="space-y-2 text-sm text-white/60">
@@ -570,7 +643,7 @@ export function SetupPage() {
                     <div className="mt-4 space-y-3">
                       <p className="text-sm font-semibold text-white">{selectedStarterTask.title}</p>
                       <p className="text-sm leading-6 text-white/60">
-                        Friday will open the assistant with a guided first task so you can click through the next step instead of learning the full operator shell first.
+                        Friday will open the assistant with a skill-backed first task, so you can use the bundled starter pack immediately instead of starting from a generator flow.
                       </p>
                       <div className="agent-subcard">
                         <p className="text-xs uppercase tracking-[0.18em] text-white/35">Goal Friday will start with</p>

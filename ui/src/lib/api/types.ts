@@ -421,6 +421,7 @@ export interface SkillLifecycleSummary {
   source: string;
   origin: string;
   status: string;
+  starter: boolean;
   category?: string;
   tags: string[];
   publisher?: string;
@@ -443,6 +444,7 @@ export interface SkillCatalogItem {
   releasedAt?: string;
   signatureValid: boolean;
   trustScore: number;
+  starter: boolean;
   manifest: Record<string, unknown>;
   installed: boolean;
   installedVersion?: string;

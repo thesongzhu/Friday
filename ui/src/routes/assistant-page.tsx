@@ -75,11 +75,23 @@ const OPERATOR_ID = "assistant-shell";
 const QUICK_INTENTS = [
   "Help me figure out what I should do next.",
   "Generate and deploy a workflow for weekly reporting.",
-  "Generate and enable a skill for triaging errors.",
+  "Review what Friday has already detected and tell me the safest next recovery step.",
   "This system looks unhealthy. Figure out what is wrong and guide me.",
 ] as const;
 
 const ASSISTANT_TASK_STORIES = [
+  {
+    templateId: "review-issues",
+    title: "Review detected issues",
+    description: "Open the current diagnosis and repair queue first, so Friday starts from facts instead of asking you to invent a workflow or skill.",
+    outcome: "A prioritized issue summary with the safest next action.",
+  },
+  {
+    templateId: "recover-failed-deploy",
+    title: "Recover a failed system or deploy",
+    description: "Open the safest issue-review and recovery path first, then move into bounded fixes and approvals only if needed.",
+    outcome: "A recovery path with problem summary, next action, and approvals if required.",
+  },
   {
     templateId: "generate-workflow",
     title: "Build a workflow for me",
@@ -91,12 +103,6 @@ const ASSISTANT_TASK_STORIES = [
     title: "Create a skill I can enable",
     description: "Friday generates a skill from plain language, then hands it into validation and install instead of leaving you with raw output.",
     outcome: "A validated skill with install and enable actions ready.",
-  },
-  {
-    templateId: "recover-failed-deploy",
-    title: "Recover a failed system or deploy",
-    description: "Open the safest issue-review and recovery path first, then move into bounded fixes and approvals only if needed.",
-    outcome: "A recovery path with problem summary, next action, and approvals if required.",
   },
   {
     templateId: "ask-for-help",

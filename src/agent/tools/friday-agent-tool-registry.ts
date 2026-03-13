@@ -1,4 +1,4 @@
-import type { FridaySkillExecutor } from "#skills";
+import type { FridaySkillExecutor, FridaySkillRegistry } from "#skills";
 import type { FridayWorkflowExecutionService } from "#workflows";
 import type { FridayMemoryService } from "#memory";
 import type { FridayAgentToolDefinition } from "../model/friday-agent.types.js";
@@ -10,6 +10,7 @@ import { createFridayAgentFileTools } from "./friday-agent-file-tools.js";
 import { createFridayAgentWebFetchTool } from "./friday-agent-web-fetch-tool.js";
 import { createFridayAgentWebSearchTool } from "./friday-agent-web-search-tool.js";
 import { createFridayAgentSkillTool } from "./friday-agent-skill-tool.js";
+import { createFridayAgentSkillsListTool } from "./friday-agent-skills-list-tool.js";
 import { createFridayAgentWorkflowTool } from "./friday-agent-workflow-tool.js";
 import { createFridayAgentMemoryTools } from "./friday-agent-memory-tools.js";
 import { createFridayAgentSubagentTools } from "./friday-agent-subagent-tools.js";
@@ -51,6 +52,7 @@ import { createFridayAgentProviderTool } from "./friday-agent-provider-tool.js";
 export interface CreateFridayAgentToolRegistryOptions {
   workdir?: string;
   skillExecutor?: FridaySkillExecutor;
+  skillRegistry?: FridaySkillRegistry;
   workflowExecutionService?: FridayWorkflowExecutionService;
   memoryService?: FridayMemoryService;
   subagentRegistry?: FridaySubagentRegistry;
@@ -119,6 +121,7 @@ export function createFridayAgentToolRegistry(
 
   if (options?.skillExecutor) {
     tools.push(
+      ...(options.skillRegistry ? [createFridayAgentSkillsListTool({ skillRegistry: options.skillRegistry })] : []),
       createFridayAgentSkillTool({ skillExecutor: options.skillExecutor }),
     );
   }

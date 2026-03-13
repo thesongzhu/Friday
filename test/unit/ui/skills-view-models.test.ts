@@ -12,11 +12,24 @@ describe("skills view models", () => {
     const result = buildSkillOperatorSections({
       skills: [
         {
+          skillId: "skill.starter",
+          name: "Starter",
+          source: "bundled",
+          origin: "bundled",
+          status: "installed",
+          starter: true,
+          tags: ["starter"],
+          updateAvailable: false,
+          managed: false,
+          registryLoaded: true,
+        },
+        {
           skillId: "skill.alpha",
           name: "Alpha",
           source: "marketplace",
           origin: "managed",
           status: "installed",
+          starter: false,
           tags: [],
           updateAvailable: false,
           managed: true,
@@ -28,6 +41,7 @@ describe("skills view models", () => {
           source: "marketplace",
           origin: "managed",
           status: "installed",
+          starter: false,
           tags: [],
           updateAvailable: true,
           managed: true,
@@ -42,6 +56,7 @@ describe("skills view models", () => {
           version: "1.0.0",
           signatureValid: true,
           trustScore: 90,
+          starter: false,
           manifest: {},
           installed: true,
           installedVersion: "1.0.0",
@@ -54,6 +69,7 @@ describe("skills view models", () => {
           version: "1.0.0",
           signatureValid: false,
           trustScore: 55,
+          starter: false,
           manifest: {},
           installed: false,
           updateAvailable: false,
@@ -61,6 +77,7 @@ describe("skills view models", () => {
       ],
     });
 
+    expect(result.starter.map((item) => item.skillId)).toEqual(["skill.starter"]);
     expect(result.installed.map((item) => item.skillId)).toEqual(["skill.alpha", "skill.beta"]);
     expect(result.updates.map((item) => item.skillId)).toEqual(["skill.beta"]);
     expect(result.available.map((item) => item.skillId)).toEqual(["skill.gamma"]);
@@ -76,6 +93,7 @@ describe("skills view models", () => {
           source: "marketplace",
           origin: "managed",
           status: "installed",
+          starter: false,
           tags: [],
           updateAvailable: false,
           managed: true,
@@ -87,6 +105,7 @@ describe("skills view models", () => {
           source: "marketplace",
           origin: "managed",
           status: "installed",
+          starter: false,
           tags: [],
           updateAvailable: true,
           managed: true,
@@ -110,6 +129,7 @@ describe("skills view models", () => {
         source: "marketplace",
         origin: "managed",
         status: "installed",
+        starter: false,
         tags: [],
         updateAvailable: false,
         managed: true,

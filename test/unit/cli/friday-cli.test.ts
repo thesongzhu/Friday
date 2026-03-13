@@ -50,6 +50,10 @@ describe("parseArgs", () => {
       expect(parseArgs(argv("status")).command).toBe("status");
     });
 
+    it("parses skills command", () => {
+      expect(parseArgs(argv("skills", "init", "demo-skill")).command).toBe("skills");
+    });
+
     it("falls back to help for unknown command", () => {
       expect(parseArgs(argv("bogus")).command).toBe("help");
     });
@@ -207,6 +211,24 @@ describe("parseArgs", () => {
     it("skillDir is undefined if not provided", () => {
       const result = parseArgs(argv("pack", "--out", "/tmp/out.tgz"));
       expect(result.skillDir).toBeUndefined();
+    });
+  });
+
+  describe("skills init command", () => {
+    it("parses skills init with template and output directory", () => {
+      const result = parseArgs(argv("skills", "init", "demo-skill", "--template", "shell", "--out", "/tmp/demo-skill"));
+      expect(result.command).toBe("skills");
+      expect(result.skillsSubcommand).toBe("init");
+      expect(result.initSkillId).toBe("demo-skill");
+      expect(result.template).toBe("shell");
+      expect(result.out).toBe("/tmp/demo-skill");
+    });
+
+    it("defaults template to undefined at parse time when not provided", () => {
+      const result = parseArgs(argv("skills", "init", "demo-skill"));
+      expect(result.skillsSubcommand).toBe("init");
+      expect(result.initSkillId).toBe("demo-skill");
+      expect(result.template).toBeUndefined();
     });
   });
 

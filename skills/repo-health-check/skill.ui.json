@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Repo Health Check",
+  "description": "Review the current repository state and suggest the next action.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "workspaceRoot"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "workspaceRoot",
+      "inputKey": "workspaceRoot",
+      "kind": "text",
+      "label": "Workspace Root",
+      "required": false,
+      "help": "Optional directory to inspect. Defaults to the current workspace."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Run Check",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Review Open Issues",
+  "description": "Inspect Friday's issue cards and diagnosis incidents.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "limit"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "limit",
+      "inputKey": "limit",
+      "kind": "number",
+      "label": "Limit",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Review Issues",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

@@ -195,8 +195,13 @@ export class FridaySkillRegistryImpl implements FridaySkillRegistry {
 
       if (!trustResult.decision) continue;
 
-      // Higher precedence origin overwrites lower (later in candidates list = higher precedence)
-      const status: SkillLifecycleStatus = existingStatuses[manifest.id] ?? "not_installed";
+      const persistedStatus = existingStatuses[manifest.id];
+      const shouldAutoInstallBundled =
+        candidate.root.origin === "bundled"
+        && (persistedStatus === undefined || persistedStatus === "not_installed");
+      const status: SkillLifecycleStatus = shouldAutoInstallBundled
+        ? "installed"
+        : (persistedStatus ?? "not_installed");
 
       newSkills.set(manifest.id, {
         manifest,

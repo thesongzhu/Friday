@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "1.0",
+  "title": "System Health Snapshot",
+  "description": "Summarize Friday runtime health, browser mode, companion state, and approvals.",
+  "sections": [],
+  "fields": [],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Capture Snapshot",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Workspace Change Risk Review",
+  "description": "Review changed files and summarize the main change risks.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "workspaceRoot"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "workspaceRoot",
+      "inputKey": "workspaceRoot",
+      "kind": "text",
+      "label": "Workspace Root",
+      "required": false,
+      "help": "Optional directory to inspect. Defaults to the current workspace."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Review Risk",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

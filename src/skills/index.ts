@@ -184,6 +184,12 @@ export {
   type FetchFn,
   type CreateMarketplaceHttpClientDeps,
 } from "./services/friday-marketplace-http-client.js";
+export type {
+  FridaySkillReadonlySystemContext,
+  FridaySkillReadonlyDiagnosisContext,
+  FridaySkillReadonlyAutofixContext,
+  FridaySkillNodeRuntimeContext,
+} from "./executor/friday-skill-executor.types.js";
 export {
   createFridayMarketplaceSourceService,
   type FridayMarketplaceSourceService,

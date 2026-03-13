@@ -1,0 +1,152 @@
+{
+  "schemaVersion": "2.0",
+  "id": "local-service-diagnose",
+  "name": "Local Service Diagnose",
+  "description": "Check a local process, port, health URL, and recent logs to explain whether a service looks healthy, degraded, or unavailable.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "automation",
+  "author": {
+    "name": "Friday"
+  },
+  "tags": [
+    "starter",
+    "starter.devops",
+    "service",
+    "health",
+    "diagnostics"
+  ],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 120000
+  },
+  "triggers": {
+    "intents": [
+      "local_service_diagnose"
+    ],
+    "phrases": [
+      "diagnose this local service",
+      "check if my service is healthy",
+      "inspect the process port and health endpoint"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 94,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [
+      "lsof",
+      "pgrep"
+    ],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "processName",
+      "type": "string",
+      "required": false,
+      "label": "Process Name",
+      "help": "Optional process name to locate with pgrep."
+    },
+    {
+      "key": "port",
+      "type": "number",
+      "required": false,
+      "label": "Port",
+      "help": "Optional local TCP port to inspect."
+    },
+    {
+      "key": "healthUrl",
+      "type": "string",
+      "required": false,
+      "label": "Health URL",
+      "help": "Optional HTTP health URL."
+    },
+    {
+      "key": "logPath",
+      "type": "string",
+      "required": false,
+      "label": "Log Path",
+      "help": "Optional log file or directory."
+    },
+    {
+      "key": "workspaceRoot",
+      "type": "string",
+      "required": false,
+      "label": "Workspace Root",
+      "help": "Optional workspace directory for log discovery."
+    }
+  ],
+  "outputs": [
+    {
+      "key": "status",
+      "type": "string",
+      "description": "Overall service diagnosis."
+    },
+    {
+      "key": "summary",
+      "type": "string",
+      "description": "Human-readable diagnosis."
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "filesystem-read",
+        "resource": "filesystem",
+        "action": "read",
+        "required": true,
+        "reason": "Read repository files, logs, and local metadata to produce diagnostics."
+      },
+      {
+        "id": "shell-execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": false,
+        "reason": "Run bounded local inspection commands such as git, lsof, pgrep, and package scripts."
+      },
+      {
+        "id": "network-connect",
+        "resource": "network",
+        "action": "connect",
+        "required": false,
+        "reason": "Check a local or user-provided health endpoint to confirm service status."
+      }
+    ],
+    "promptOn": [
+      "shell.execute",
+      "network.connect"
+    ]
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": [
+      "starter_skill_invoked",
+      "starter_skill_suggested"
+    ]
+  }
+}

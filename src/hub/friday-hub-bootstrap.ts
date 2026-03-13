@@ -508,6 +508,8 @@ export async function createFridayHub(
     idGenerator,
     nowIso,
     providerService,
+    getSystemService: () => systemService,
+    getSelfHealingService: () => selfHealingApiService,
   });
 
   const rulesRepository = createFridayRulesRepository();
@@ -1235,6 +1237,7 @@ export async function createFridayHub(
   const agentTools = createFridayAgentToolRegistry({
     workdir: workspaceRoot,
     skillExecutor: executor,
+    skillRegistry: registry,
     workflowExecutionService: workflowRuntime.execution,
     memoryService,
     browserManager,
@@ -1708,11 +1711,39 @@ export async function createFridayHub(
     } catch {
       // Non-fatal: workspace context loading failure should not block agent runs.
     }
+    const starterSkills = registry.list()
+      .filter((skill) => (skill.manifest.tags ?? []).includes("starter"))
+      .sort((left, right) => {
+        const leftPriority =
+          (left.manifest.tags ?? []).includes("starter.recovery")
+            ? 0
+            : (left.manifest.tags ?? []).includes("starter.diagnosis")
+              ? 1
+              : 2;
+        const rightPriority =
+          (right.manifest.tags ?? []).includes("starter.recovery")
+            ? 0
+            : (right.manifest.tags ?? []).includes("starter.diagnosis")
+              ? 1
+              : 2;
+        if (leftPriority !== rightPriority) {
+          return leftPriority - rightPriority;
+        }
+        return left.manifest.name.localeCompare(right.manifest.name);
+      })
+      .slice(0, 8)
+      .map((skill) => ({
+        skillId: skill.manifest.id,
+        purpose: skill.manifest.description,
+        triggerPhrases: skill.manifest.triggers.phrases ?? [],
+        tags: skill.manifest.tags ?? [],
+      }));
     return buildFridayAgentSystemPrompt({
       toolNames,
       modelIdentity: agentModelIdentity,
       version: FRIDAY_VERSION,
       workspaceContext,
+      starterSkills,
     });
   };
 
@@ -1786,6 +1817,7 @@ export async function createFridayHub(
     createChildRuntime: (params) => {
       const childTools = createFridayAgentToolRegistry({
         workdir: workspaceRoot,
+        skillRegistry: registry,
         memoryService,
         browserManager,
         xhsPageInteractions,
@@ -2299,6 +2331,7 @@ export async function createFridayHub(
     db: stateRuntime.sqlite,
     idGenerator,
     skillGenerator,
+    skillExecutor: executor,
     workflowGenerator,
     workflowProduct: workflowProductService,
     selfHealing: selfHealingApiService,

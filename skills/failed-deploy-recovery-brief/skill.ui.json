@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Failed Deploy Recovery Brief",
+  "description": "Summarize the active failed-deploy incident and safe recovery path.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "incidentId"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "incidentId",
+      "inputKey": "incidentId",
+      "kind": "text",
+      "label": "Incident ID",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Build Recovery Brief",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

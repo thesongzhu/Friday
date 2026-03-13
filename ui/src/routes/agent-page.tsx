@@ -10,6 +10,7 @@ import {
   startAuthentication,
   startRegistration,
 } from "@simplewebauthn/browser";
+import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   AppWindow,
@@ -23,6 +24,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { agentApi } from "@/lib/api/agent";
+import { skillsApi } from "@/lib/api/skills";
 import { systemApi } from "@/lib/api/system";
 import type {
   FridaySystemApprovalRule,
@@ -41,9 +43,24 @@ import {
   buildSystemTimelineItems,
   summarizeHealthReasons,
 } from "@/lib/system/view-models";
+import { buildSkillHref } from "@/lib/skills/view-models";
+import { trackStarterSkillBatch, trackStarterSkillEvent } from "@/lib/skills/starter-skill-telemetry";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 
 const OPERATOR_ID = "ui-operator";
+
+const STARTER_SKILL_PROMPTS: Record<string, string> = {
+  "repo-health-check": "Run the repo-health-check starter skill for this workspace and tell me the next useful action.",
+  "workspace-change-risk-review": "Run the workspace-change-risk-review starter skill against the current workspace changes and summarize risk.",
+  "release-readiness-check": "Run the release-readiness-check starter skill and tell me whether this workspace is ready to ship.",
+  "system-health-snapshot": "Run the system-health-snapshot starter skill and summarize Friday runtime health, browser mode, companion state, and approvals.",
+  "review-open-issues": "Run the review-open-issues starter skill and tell me what Friday has already detected, what matters most, and what I should inspect next.",
+  "autofix-readiness-review": "Run the autofix-readiness-review starter skill and explain which planned repairs are safe, which need approval, and what rollback coverage exists.",
+  "failed-deploy-recovery-brief": "Run the failed-deploy-recovery-brief starter skill and summarize the current failed deploy and the safest recovery path.",
+  "log-error-triage": "Run the log-error-triage starter skill on the relevant local logs and cluster the recurring errors.",
+  "local-service-diagnose": "Run the local-service-diagnose starter skill for the local service I am working on and explain what looks wrong.",
+  "incident-brief-generator": "Run the incident-brief-generator starter skill and turn the current evidence into a concise incident brief.",
+};
 
 function formatTimestamp(value?: string): string {
   if (!value) return "Never";
@@ -89,7 +106,51 @@ function getBlockedApprovalEvents(events: FridaySystemEvent[]): FridaySystemEven
   );
 }
 
+function scoreStarterSkill(input: {
+  skillId: string;
+  task: string;
+  healthStatus?: string;
+  approvalCount?: number;
+  blockedApprovalCount?: number;
+}): number {
+  const task = input.task.toLowerCase();
+  let score = 0;
+
+  if (input.healthStatus === "degraded" || input.healthStatus === "blocked") {
+    if (input.skillId === "system-health-snapshot") score += 45;
+    if (input.skillId === "review-open-issues") score += 35;
+    if (input.skillId === "autofix-readiness-review") score += 25;
+    if (input.skillId === "local-service-diagnose") score += 40;
+    if (input.skillId === "incident-brief-generator") score += 20;
+  }
+
+  if ((input.approvalCount ?? 0) > 0 || (input.blockedApprovalCount ?? 0) > 0) {
+    if (input.skillId === "autofix-readiness-review") score += 60;
+    if (input.skillId === "review-open-issues") score += 40;
+  }
+
+  if (task.length === 0) {
+    if (input.skillId === "system-health-snapshot") score += 18;
+    if (input.skillId === "repo-health-check") score += 15;
+    if (input.skillId === "release-readiness-check") score += 10;
+  }
+
+  if (/(repo|workspace|next step|what should i do)/.test(task) && input.skillId === "repo-health-check") score += 60;
+  if (/(diff|change|risk|review)/.test(task) && input.skillId === "workspace-change-risk-review") score += 60;
+  if (/(release|ship|deploy|lint|test|build|typecheck)/.test(task) && input.skillId === "release-readiness-check") score += 60;
+  if (/(system|runtime|browser|companion|permission|snapshot|desktop)/.test(task) && input.skillId === "system-health-snapshot") score += 65;
+  if (/(issue|problem|broken|wrong|incident|approval)/.test(task) && input.skillId === "review-open-issues") score += 70;
+  if (/(repair|self.?heal|auto.?fix|approval|rollback|safe fix)/.test(task) && input.skillId === "autofix-readiness-review") score += 75;
+  if (/(failed deploy|deployment failed|recover deploy|workflow failed|deploy recovery)/.test(task) && input.skillId === "failed-deploy-recovery-brief") score += 80;
+  if (/(log|error|exception|stack|triage)/.test(task) && input.skillId === "log-error-triage") score += 60;
+  if (/(service|health|port|process|server|diagnose)/.test(task) && input.skillId === "local-service-diagnose") score += 60;
+  if (/(incident|brief|summary|postmortem)/.test(task) && input.skillId === "incident-brief-generator") score += 60;
+
+  return score;
+}
+
 export function AgentPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [task, setTask] = useState("");
   const [readOnly, setReadOnly] = useState(false);
@@ -139,6 +200,16 @@ export function AgentPage() {
     refetchInterval: 20_000,
   });
 
+  const { data: starterSkills = [] } = useQuery({
+    queryKey: ["agent-os", "starter-skills"],
+    queryFn: async () => {
+      const skills = await skillsApi.listSkills();
+      return skills.filter((skill) => skill.starter);
+    },
+    retry: 0,
+    refetchInterval: 30_000,
+  });
+
   const systemEvents = useSystemEvents(Boolean(session));
   const deferredRuns = useDeferredValue(runs);
   const approvalCards = useMemo(
@@ -163,6 +234,22 @@ export function AgentPage() {
     () => [...runEvents.toolCalls].reverse().find((tool) => tool.toolName === "browser"),
     [runEvents.toolCalls],
   );
+  const recommendedStarterSkills = useMemo(
+    () => starterSkills
+      .map((skill) => ({
+        ...skill,
+        score: scoreStarterSkill({
+          skillId: skill.skillId,
+          task,
+          healthStatus: state?.health.status,
+          approvalCount: approvalCards.length,
+          blockedApprovalCount: blockedApprovalEvents.length,
+        }),
+      }))
+      .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
+      .slice(0, 3),
+    [approvalCards.length, blockedApprovalEvents.length, starterSkills, task, state?.health.status],
+  );
 
   useEffect(() => {
     if (currentRunId) return;
@@ -173,6 +260,15 @@ export function AgentPage() {
       setCurrentRunId(active.id);
     }
   }, [currentRunId, deferredRuns]);
+
+  useEffect(() => {
+    if (recommendedStarterSkills.length === 0) return;
+    trackStarterSkillBatch("starter_skill_suggested", {
+      skillIds: recommendedStarterSkills.map((skill) => skill.skillId),
+      source: "command_center",
+      metadata: { taskLength: task.trim().length, healthStatus: state?.health.status },
+    });
+  }, [recommendedStarterSkills, state?.health.status, task]);
 
   const startRunMutation = useMutation({
     mutationFn: (input: { task: string; readOnly: boolean }) =>
@@ -406,6 +502,55 @@ export function AgentPage() {
               </div>
             </div>
           </form>
+        </ShellCard>
+
+        <ShellCard
+          eyebrow="Recommended Skills"
+          title="Starter pack matches for this session"
+          aside={<StatusPill tone={recommendedStarterSkills.length > 0 ? "success" : "neutral"}>{recommendedStarterSkills.length} suggested</StatusPill>}
+        >
+          <div className="grid gap-3">
+            {recommendedStarterSkills.length === 0 ? (
+              <p className="text-sm text-white/50">Starter recommendations will appear once the skill registry is loaded.</p>
+            ) : recommendedStarterSkills.map((skill) => (
+              <div key={skill.skillId} className="agent-subcard">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">{skill.name}</p>
+                    <p className="mt-2 text-sm leading-6 text-white/58">{skill.description ?? "Bundled starter skill."}</p>
+                  </div>
+                  <StatusPill tone="success">starter</StatusPill>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <ActionButton
+                    tone="secondary"
+                    onClick={() => {
+                      const prompt = STARTER_SKILL_PROMPTS[skill.skillId] ?? `Run the ${skill.skillId} starter skill for the current context.`;
+                      setTask(prompt);
+                      trackStarterSkillEvent("starter_skill_invoked", {
+                        skillId: skill.skillId,
+                        source: "command_center_prefill",
+                      });
+                    }}
+                  >
+                    Use Skill
+                  </ActionButton>
+                  <ActionButton
+                    tone="secondary"
+                    onClick={() => {
+                      trackStarterSkillEvent("starter_skill_detail_opened", {
+                        skillId: skill.skillId,
+                        source: "command_center_details",
+                      });
+                      navigate(buildSkillHref(skill.skillId));
+                    }}
+                  >
+                    Open Details
+                  </ActionButton>
+                </div>
+              </div>
+            ))}
+          </div>
         </ShellCard>
 
         <ShellCard

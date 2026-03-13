@@ -203,6 +203,7 @@ export interface FridaySkillCatalogItem {
   releasedAt?: string;
   signatureValid: boolean;
   trustScore: number;
+  starter: boolean;
   manifest: SkillManifestV2;
 }
 

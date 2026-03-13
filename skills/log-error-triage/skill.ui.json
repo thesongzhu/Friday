@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Log Error Triage",
+  "description": "Cluster local log errors and summarize likely causes.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "logPath",
+        "maxFiles"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "logPath",
+      "inputKey": "logPath",
+      "kind": "text",
+      "label": "Log Path",
+      "required": false,
+      "help": "Optional log file or directory to inspect."
+    },
+    {
+      "id": "maxFiles",
+      "inputKey": "maxFiles",
+      "kind": "number",
+      "label": "Max Files",
+      "required": false,
+      "help": "Optional limit for discovered log files."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "clusters",
+      "outputKey": "clusters",
+      "label": "Clusters",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Triage Logs",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

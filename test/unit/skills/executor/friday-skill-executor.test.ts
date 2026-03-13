@@ -310,4 +310,87 @@ describe("FridaySkillExecutor", () => {
 
     expect(result1.runId).not.toBe(result2.runId);
   });
+
+  it("injects readonly Friday runtime helpers into node skills without write interfaces", async () => {
+    const fs = await import("node:fs/promises");
+    const scriptDir = await fs.mkdtemp("/tmp/friday-node-runtime-");
+    await fs.writeFile(
+      `${scriptDir}/index.mjs`,
+      `
+export async function execute(_input, ctx) {
+  const snapshot = await ctx.system.getSnapshot();
+  const issues = await ctx.diagnosis.listIssueCards(5);
+  const incidents = await ctx.diagnosis.listIncidents(5);
+  const incident = await ctx.diagnosis.getIncident("incident-1");
+  const actions = await ctx.autofix.listActions(5, "planned");
+  const action = await ctx.autofix.getAction("action-1");
+  return {
+    hasSystem: typeof ctx?.system?.getSnapshot === "function",
+    hasDiagnosis: typeof ctx?.diagnosis?.listIssueCards === "function",
+    hasAutofix: typeof ctx?.autofix?.listActions === "function",
+    hasWriteInterface: Boolean(ctx?.autofix?.execute || ctx?.autofix?.rollback || ctx?.diagnosis?.approve),
+    workspaceRoot: snapshot.workspaceRoot,
+    issueCount: issues.length,
+    incidentCount: incidents.length,
+    incidentId: incident?.incident?.incidentId,
+    actionCount: actions.length,
+    actionId: action?.action?.actionId,
+  };
+}
+`,
+      "utf8",
+    );
+
+    const skill = makeRegisteredSkill({
+      id: "node-runtime-skill",
+      runtimeKind: "node",
+      entrypoint: "index.mjs",
+      skillDir: scriptDir,
+    });
+
+    const skills = new Map<string, FridayRegisteredSkill>();
+    skills.set("node-runtime-skill", skill);
+
+    const executor = createFridaySkillExecutor({
+      db,
+      registry: createMockRegistry(skills),
+      runStore,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2025-01-15T10:00:00.000Z",
+      getSystemService: () => ({
+        getState: async () => ({
+          workspaceRoot: "/tmp/friday-workspace",
+          health: { status: "healthy" },
+        }),
+      }),
+      getSelfHealingService: () => ({
+        listIssueCards: () => [{ id: "issue-1", kind: "incident", incidentId: "incident-1" }],
+        listIncidents: () => [{ incident: { incidentId: "incident-1", category: "workflow" } }],
+        getIncident: () => ({ incident: { incidentId: "incident-1", category: "workflow" } }),
+        listActions: () => [{ action: { actionId: "action-1", incidentId: "incident-1" } }],
+        getAction: () => ({ action: { actionId: "action-1", incidentId: "incident-1" } }),
+      }),
+    });
+
+    const result = await executor.execute({
+      ...baseRequest,
+      skillId: "node-runtime-skill",
+    }).result;
+
+    expect(result.status).toBe("completed");
+    expect(result.output).toMatchObject({
+      hasSystem: true,
+      hasDiagnosis: true,
+      hasAutofix: true,
+      hasWriteInterface: false,
+      workspaceRoot: "/tmp/friday-workspace",
+      issueCount: 1,
+      incidentCount: 1,
+      incidentId: "incident-1",
+      actionCount: 1,
+      actionId: "action-1",
+    });
+
+    await fs.rm(scriptDir, { recursive: true, force: true });
+  });
 });
