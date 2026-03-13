@@ -1,5 +1,9 @@
 import { FridayDomainError } from "#errors";
-import type { FridayProviderApi } from "#providers";
+import {
+  FRIDAY_ANTHROPIC_OAUTH_HEADERS,
+  FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX,
+} from "#providers";
+import type { FridayProviderApi, FridayProviderAuthMode } from "#providers";
 
 import { validateGatewayUrl } from "../tools/friday-agent-gateway-validation.js";
 import { FRIDAY_AGENT_ERROR_CODES } from "../friday-agent.constants.js";
@@ -41,6 +45,7 @@ export function createFridayAgentLlmClient(
 ): FridayAgentLlmClient {
   const { baseUrl, apiKey } = deps;
   const api: FridayProviderApi = deps.api ?? "anthropic-messages";
+  const authMode: FridayProviderAuthMode | undefined = deps.authMode;
   const fetchFn = deps.fetchImpl ?? fetch;
 
   // SSRF guard: validate the provider baseUrl at construction time
@@ -62,7 +67,7 @@ export function createFridayAgentLlmClient(
         yield* handleOpenAIStream(fetchFn, baseUrl, apiKey, api, params);
       } else {
         // Default: anthropic-messages (backwards compatible)
-        yield* handleAnthropicStream(fetchFn, baseUrl, apiKey, params);
+        yield* handleAnthropicStream(fetchFn, baseUrl, apiKey, authMode, params);
       }
     },
   };
@@ -74,12 +79,16 @@ async function* handleAnthropicStream(
   fetchFn: typeof fetch,
   baseUrl: string,
   apiKey: string,
+  authMode: FridayProviderAuthMode | undefined,
   params: FridayAgentLlmStreamParams,
 ): AsyncIterable<FridayAgentLlmStreamEvent> {
+  const isOAuth = authMode === "oauth";
   const body: AnthropicMessageRequest = {
     model: params.model,
     max_tokens: 8192,
-    system: params.systemPrompt,
+    system: isOAuth
+      ? `${FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX}\n\n${params.systemPrompt}`
+      : params.systemPrompt,
     messages: params.messages.map((m) => ({
       role: m.role,
       content: m.content,
@@ -92,8 +101,15 @@ async function* handleAnthropicStream(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
+      ...(isOAuth
+        ? {
+            "Authorization": `Bearer ${apiKey}`,
+            ...FRIDAY_ANTHROPIC_OAUTH_HEADERS,
+          }
+        : {
+            "x-api-key": apiKey,
+          }),
     },
     body: JSON.stringify(body),
     signal: params.signal,

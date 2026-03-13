@@ -2,7 +2,7 @@ import type {
   FridayAgentMessage,
   FridayAgentToolDefinition,
 } from "../model/friday-agent.types.js";
-import type { FridayProviderApi } from "#providers";
+import type { FridayProviderApi, FridayProviderAuthMode } from "#providers";
 
 // ─── Streaming event types ───
 
@@ -62,5 +62,7 @@ export interface CreateFridayAgentLlmClientDeps {
   apiKey: string;
   /** Provider API type. Defaults to "anthropic-messages" for backwards compat. */
   api?: FridayProviderApi;
+  /** Auth mode is needed for Anthropic OAuth because it uses Bearer headers, not x-api-key. */
+  authMode?: FridayProviderAuthMode;
   fetchImpl?: typeof fetch;
 }

@@ -311,10 +311,41 @@ describe("FridayProviderService", () => {
     });
 
     it("set and get roundtrip", async () => {
-      const input = {
-        defaultProviderId: "p1",
+      await service.createProvider({
+        kind: "openai",
+        name: "P1",
+        baseUrl: "https://p1.test",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
         defaultModel: "gpt-4o",
-        fallbackProviderIds: ["p2", "p3"],
+        validateOnSave: false,
+      });
+      await service.createProvider({
+        kind: "openai",
+        name: "P2",
+        baseUrl: "https://p2.test",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4.1"],
+        defaultModel: "gpt-4.1",
+        validateOnSave: false,
+      });
+      await service.createProvider({
+        kind: "openai",
+        name: "P3",
+        baseUrl: "https://p3.test",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4.1-mini"],
+        defaultModel: "gpt-4.1-mini",
+        validateOnSave: false,
+      });
+
+      const input = {
+        defaultProviderId: "test-id-0001",
+        defaultModel: "gpt-4o",
+        fallbackProviderIds: ["test-id-0002", "test-id-0003"],
       };
 
       const result = await service.setRoutingConfig(input);
@@ -325,20 +356,83 @@ describe("FridayProviderService", () => {
     });
 
     it("overwrites existing config", async () => {
-      await service.setRoutingConfig({
-        defaultProviderId: "p1",
-        fallbackProviderIds: ["p2"],
+      await service.createProvider({
+        kind: "openai",
+        name: "P1",
+        baseUrl: "https://p1.test",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await service.createProvider({
+        kind: "openai",
+        name: "P2",
+        baseUrl: "https://p2.test",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4.1"],
+        defaultModel: "gpt-4.1",
+        validateOnSave: false,
+      });
+      await service.createProvider({
+        kind: "anthropic",
+        name: "P3",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "api-key",
+        api: "anthropic-messages",
+        supportedModels: ["claude-3"],
+        defaultModel: "claude-3",
+        validateOnSave: false,
       });
 
       await service.setRoutingConfig({
-        defaultProviderId: "p3",
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: ["test-id-0002"],
+      });
+
+      await service.setRoutingConfig({
+        defaultProviderId: "test-id-0003",
         defaultModel: "claude-3",
         fallbackProviderIds: [],
       });
 
       const config = await service.getRoutingConfig();
-      expect(config.defaultProviderId).toBe("p3");
+      expect(config.defaultProviderId).toBe("test-id-0003");
       expect(config.defaultModel).toBe("claude-3");
+    });
+
+    it("rejects an unknown defaultProviderId", async () => {
+      await expect(
+        service.setRoutingConfig({
+          defaultProviderId: "claude",
+          fallbackProviderIds: [],
+        }),
+      ).rejects.toThrow('defaultProviderId "claude" does not match an existing provider');
+    });
+
+    it("rejects a defaultModel not supported by the target provider", async () => {
+      await service.createProvider({
+        kind: "anthropic",
+        name: "Claude OAuth",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "oauth",
+        api: "anthropic-messages",
+        supportedModels: ["claude-sonnet-4-20250514"],
+        defaultModel: "claude-sonnet-4-20250514",
+        validateOnSave: false,
+      });
+
+      await expect(
+        service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          defaultModel: "claude-opus-4-20250514",
+          fallbackProviderIds: [],
+        }),
+      ).rejects.toThrow(
+        'defaultModel "claude-opus-4-20250514" is not supported by provider "test-id-0001"',
+      );
     });
   });
 
@@ -432,6 +526,31 @@ describe("FridayProviderService", () => {
       } finally {
         delete process.env.TEST_KEY;
       }
+    });
+
+    it("reports the broken routing reference when zero candidates are available", async () => {
+      db.withWriteTransaction((conn) => {
+        conn.prepare(
+          `INSERT INTO hub_settings (key, value_json, revision, created_at, updated_at)
+           VALUES (?, ?, 1, ?, ?)`,
+        ).run(
+          "llm.routing.v1",
+          JSON.stringify({
+            defaultProviderId: "claude",
+            fallbackProviderIds: [],
+          }),
+          NOW,
+          NOW,
+        );
+      });
+
+      await expect(
+        service.runWithFallback({
+          run: async () => "test",
+        }),
+      ).rejects.toThrow(
+        'No enabled providers available for routing: defaultProviderId "claude" not found',
+      );
     });
   });
 

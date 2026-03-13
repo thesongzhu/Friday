@@ -766,6 +766,7 @@ export async function createFridayHub(
             baseUrl: _route.provider.baseUrl,
             apiKey: credential ?? "",
             api: _route.provider.config.api,
+            authMode: _route.provider.config.authMode,
           });
 
           // Collect all stream events so the fallback can detect errors

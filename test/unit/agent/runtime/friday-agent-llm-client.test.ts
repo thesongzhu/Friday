@@ -202,6 +202,46 @@ describe("FridayAgentLlmClient", () => {
     });
   });
 
+  it("uses Bearer auth and Claude OAuth headers for Anthropic OAuth", async () => {
+    const sseEvents = [
+      JSON.stringify({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+      JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } }),
+    ];
+
+    const fetchImpl = createMockFetch(200, createSSEStream(sseEvents));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.anthropic.com",
+      apiKey: "oauth-access-token",
+      api: "anthropic-messages",
+      authMode: "oauth",
+      fetchImpl,
+    });
+
+    const stream = client.stream({
+      model: "claude-sonnet-4-20250514",
+      systemPrompt: "System prompt here",
+      messages: [{ role: "user", content: "Hello" }],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    for await (const _event of stream) {
+      // drain
+    }
+
+    const [, options] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    const headers = options.headers as Record<string, string>;
+    expect(headers["Authorization"]).toBe("Bearer oauth-access-token");
+    expect(headers["x-api-key"]).toBeUndefined();
+    expect(headers["anthropic-beta"]).toContain("oauth-2025-04-20");
+    expect(headers["anthropic-beta"]).toContain("claude-code-20250219");
+
+    const body = JSON.parse(options.body as string) as Record<string, unknown>;
+    expect(body.system).toBe(
+      "You are Claude Code, Anthropic's official CLI for Claude.\n\nSystem prompt here",
+    );
+  });
+
   // ─── Anthropic model extraction ───
 
   it("extracts model from Anthropic message_start event", async () => {
