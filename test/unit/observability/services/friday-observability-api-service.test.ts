@@ -159,6 +159,51 @@ describe("createFridayObservabilityApiService", () => {
     expect(audit.items.some((entry) => entry.description.includes("Agent loop"))).toBe(true);
   });
 
+  it("searches audit entries after multiple recorded events without mutating the frozen trail", async () => {
+    const service = createService();
+
+    await service.recordAssistantEvent({
+      userId: "user-1",
+      event: "template_executed",
+      summary: "Executed deploy template.",
+      result: {
+        templateId: "deploy-workflow",
+        status: "executed",
+        summary: "Deploy workflow succeeded",
+        routeTarget: "/assistant",
+        state: "ready_to_execute",
+        objective: "Deploy a workflow",
+        assumptions: [],
+        unknowns: [],
+        successTest: "Workflow is deployed",
+        fallbackPath: "Ask for a missing workflow session",
+        result: { deployed: true },
+      },
+    });
+
+    await service.recordSkillGeneratorEvent({
+      event: "draft_saved",
+      sessionId: "skill-session-1",
+      userId: "user-1",
+      summary: "Saved a generated skill draft.",
+      ok: true,
+      evidence: {
+        approvalReadiness: {
+          ready: true,
+          blockers: [],
+        },
+      },
+    });
+
+    const audit = service.routes.audit.search({});
+
+    expect(audit.items).toHaveLength(2);
+    expect(audit.items.map((entry) => entry.action).sort()).toEqual([
+      "skills.draft_saved",
+      "uix.template_executed",
+    ]);
+  });
+
   it("lists default SLOs and returns SLO detail", async () => {
     const service = createService();
 

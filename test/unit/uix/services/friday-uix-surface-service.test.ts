@@ -84,7 +84,6 @@ describe("createFridayUixSurfaceService", () => {
     expect(reportStructuredFailure).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: "user-1",
-        runId: "assistant:template:assistant-error-1",
         category: "workflow",
         severity: "high",
         message: "workflow compiler exploded",
@@ -96,6 +95,7 @@ describe("createFridayUixSurfaceService", () => {
         },
       }),
     );
+    expect(reportStructuredFailure.mock.calls[0]?.[0]).not.toHaveProperty("runId");
   });
 
   it("does not report expected validation failures into self-healing", async () => {
@@ -159,6 +159,7 @@ describe("createFridayUixSurfaceService", () => {
         message: "workflow session exploded",
       }),
     );
+    expect(reportStructuredFailure.mock.calls[0]?.[0]).not.toHaveProperty("runId");
   });
 
   it("preserves deploy domain errors when failure reporting throws", async () => {
@@ -198,6 +199,7 @@ describe("createFridayUixSurfaceService", () => {
         message: "Generate a workflow draft before preparing deploy actions",
       }),
     );
+    expect(reportStructuredFailure.mock.calls[0]?.[0]).not.toHaveProperty("runId");
     expect(warnSpy).toHaveBeenCalledWith(
       "[friday] assistant failure reporting failed",
       expect.any(Error),

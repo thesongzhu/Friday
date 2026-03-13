@@ -211,6 +211,44 @@ friday converters
 
 > **Note:** Skills are user-created — use the skill generator (`friday` CLI or API) or import from supported formats. See [docs/getting-started.md](docs/getting-started.md) for a full walkthrough.
 
+## Validation Model
+
+Friday uses three explicit readiness levels:
+
+- `Repo Ready` — source tree, package output, and release gates are green
+- `Product Ready (Local)` — the real public product surface is green on an isolated local runtime
+- `Cloud Ready` — an optional thin smoke against a specific deployed cloud instance
+
+Normal development and release work should treat these as:
+
+- `Repo Ready`: required
+- `Product Ready (Local)`: required
+- `Cloud Ready`: only required when claiming a deployed cloud environment is ready
+
+Canonical commands:
+
+```bash
+# Required release gate
+npm run verify:repo-ready
+
+# Required local product-surface gate
+npm run verify:product-local
+
+# Optional post-deploy cloud smoke
+npm run verify:cloud-smoke
+
+# Optional Docker runtime smoke
+npm run verify:docker-smoke
+
+# Explicit combined closure run (local + cloud)
+npm run test:e2e:closure:all
+```
+
+Notes:
+
+- `npm run test:e2e:closure` now defaults to the local-only product gate.
+- `npm run verify:cloud-smoke` remains intentionally separate; missing cloud env contract must not block normal repo release readiness.
+
 ## Auto-Start on macOS
 
 If you want Friday to start automatically after reboot/login and stay alive for channel traffic, use launchd. On macOS Agent OS installs this manages both the Node hub and the native Friday companion:

@@ -163,7 +163,10 @@ import {
 } from "#channels";
 import type { FridayChannelMessage } from "#channels";
 import { createFridayChannelInboundDebouncer, createFridayChannelTypingController, sanitizeChannelInput } from "#channels";
-import { createFridaySatelliteRuntime } from "#satellites";
+import {
+  createFridaySatelliteRepository,
+  createFridaySatelliteRuntime,
+} from "#satellites";
 import {
   createFridayAgentLoopRepository,
   createFridayAgentLoopService,
@@ -2340,6 +2343,7 @@ export async function createFridayHub(
   const satelliteRuntime = createFridaySatelliteRuntime({
     db: stateRuntime.sqlite,
     cursorSecret: tokenSecret,
+    tokenSecret,
     idGenerator,
     nowIso,
     learningEventWriter,
@@ -2371,6 +2375,8 @@ export async function createFridayHub(
     nowIso,
   });
   workflowRuntime.execution.setDistributedDispatcher(workflowSatelliteDispatcher);
+
+  const satelliteRepo = createFridaySatelliteRepository();
 
   const apiRuntime = createFridayApiRuntime({
     db: stateRuntime!.sqlite,
@@ -2439,6 +2445,105 @@ export async function createFridayHub(
       }
       : undefined,
     outboxQueueService: satelliteRuntime.outbox,
+    satellitePairing: {
+      registerSatellite: async (input) => satelliteRuntime.registration.register({
+        type: input.type as Parameters<typeof satelliteRuntime.registration.register>[0]["type"],
+        displayName: input.displayName,
+        publicKey: input.publicKey,
+        runtime: input.runtime,
+        transport: input.transport,
+        requestedByIp: input.requestedByIp,
+        requestedByUserAgent: input.requestedByUserAgent,
+      }),
+      listPendingPairings: async () =>
+        stateRuntime!.sqlite.withReadConnection((db) => {
+          const rows = db.prepare(
+            `SELECT
+               r.id AS request_id,
+               r.satellite_id,
+               s.display_name,
+               s.type,
+               r.code,
+               r.created_at,
+               r.expires_at
+             FROM satellite_pairing_requests r
+             JOIN satellites s ON s.id = r.satellite_id
+             WHERE r.status = 'pending' AND s.deleted_at IS NULL
+             ORDER BY r.created_at DESC`,
+          ).all() as Array<{
+            request_id: string;
+            satellite_id: string;
+            display_name: string;
+            type: string;
+            code: string;
+            created_at: string;
+            expires_at: string;
+          }>;
+          return rows.map((row) => ({
+            requestId: row.request_id,
+            satelliteId: row.satellite_id,
+            displayName: row.display_name,
+            type: row.type,
+            pairingCode: row.code,
+            createdAt: row.created_at,
+            expiresAt: row.expires_at,
+          }));
+        }),
+      approvePairing: async (input) => {
+        const result = satelliteRuntime.pairing.approvePairing({
+          ...input,
+          scopes: input.scopes ?? [],
+        });
+        return { ...result, expiresAt: result.expiresAt ?? "" };
+      },
+      rejectPairing: async (input) => {
+        satelliteRuntime.pairing.rejectPairing(input);
+        return { rejectedAt: nowIso() };
+      },
+      completeHandshake: async (input) => satelliteRuntime.pairing.completeHandshake({
+        ...input,
+        supportedAlgorithms: (input.supportedAlgorithms ?? []) as Parameters<typeof satelliteRuntime.pairing.completeHandshake>[0]["supportedAlgorithms"],
+      }),
+      revokeSatellite: async (input) => {
+        satelliteRuntime.pairing.revokeSatellite({
+          satelliteId: input.satelliteId,
+          reason: input.reason,
+        });
+        return { revokedAt: nowIso() };
+      },
+      getPairingRequest: async (satelliteId) =>
+        stateRuntime!.sqlite.withReadConnection((db) => {
+          const request = db.prepare(
+            `SELECT *
+             FROM satellite_pairing_requests
+             WHERE satellite_id = ?
+             ORDER BY created_at DESC
+             LIMIT 1`,
+          ).get(satelliteId) as {
+            id: string;
+            satellite_id: string;
+            status: string;
+            code: string;
+            created_at: string;
+            expires_at: string;
+          } | undefined;
+          if (!request) {
+            return null;
+          }
+          const satellite = satelliteRepo.getSatellite(db, satelliteId);
+          if (!satellite) {
+            return null;
+          }
+          return {
+            requestId: request.id,
+            satelliteId: request.satellite_id,
+            status: request.status,
+            pairingCode: request.code,
+            createdAt: request.created_at,
+            expiresAt: request.expires_at,
+          };
+        }),
+    },
     skillMarketplace: marketplaceRuntime
       ? {
         sources: marketplaceRuntime.sources,

@@ -102,11 +102,18 @@ describe("createFridaySatellitePairingRoutes", () => {
         body: { type: "edge", displayName: "Test", publicKey: "pk-abc" },
       }) as any);
 
-      expect(result).toEqual({ data: expect.objectContaining({ satelliteId: "sat-001" }) });
+      expect(result).toEqual(expect.objectContaining({ satelliteId: "sat-001" }));
       expect(deps.registerSatellite).toHaveBeenCalledWith(expect.objectContaining({
         type: "edge",
         displayName: "Test",
         publicKey: "pk-abc",
+        runtime: {
+          platform: "unknown",
+          arch: "unknown",
+          appVersion: "unknown",
+          nodeVersion: "unknown",
+        },
+        transport: "ws",
         requestedByIp: "127.0.0.1",
         requestedByUserAgent: "test-agent",
       }));
@@ -127,12 +134,23 @@ describe("createFridaySatellitePairingRoutes", () => {
       const route = findRoute(routes, "satellites.register");
 
       await route.handler(makeCtx({
-        body: { type: "edge", displayName: "Test", publicKey: "pk-abc", runtime: "node", transport: "ws" },
+        body: {
+          type: "edge",
+          displayName: "Test",
+          publicKey: "pk-abc",
+          runtime: { platform: "darwin", arch: "arm64", appVersion: "1.2.3", nodeVersion: "22.0.0" },
+          transport: "mixed",
+        },
       }) as any);
 
       expect(deps.registerSatellite).toHaveBeenCalledWith(expect.objectContaining({
-        runtime: "node",
-        transport: "ws",
+        runtime: {
+          platform: "darwin",
+          arch: "arm64",
+          appVersion: "1.2.3",
+          nodeVersion: "22.0.0",
+        },
+        transport: "mixed",
       }));
     });
   });
@@ -149,7 +167,7 @@ describe("createFridaySatellitePairingRoutes", () => {
       expect(route.auth).toEqual({ public: false, anyOfScopes: ["satellite.read"] });
 
       const result = await route.handler(makeCtx() as any);
-      expect(result).toEqual({ data: expect.arrayContaining([expect.objectContaining({ requestId: "req-001" })]) });
+      expect(result).toEqual(expect.arrayContaining([expect.objectContaining({ requestId: "req-001" })]));
     });
   });
 
@@ -164,7 +182,7 @@ describe("createFridaySatellitePairingRoutes", () => {
       expect(route.path).toBe("/v1/satellites/:satelliteId/pairing");
 
       const result = await route.handler(makeCtx({ params: { satelliteId: "sat-001" } }) as any);
-      expect(result).toEqual({ data: expect.objectContaining({ requestId: "req-001" }) });
+      expect(result).toEqual(expect.objectContaining({ requestId: "req-001" }));
     });
 
     it("returns NOT_FOUND when no pairing request exists", async () => {
@@ -193,7 +211,7 @@ describe("createFridaySatellitePairingRoutes", () => {
         body: { scopes: ["read"], tokenTtlMs: 3600000 },
       }) as any);
 
-      expect(result).toEqual({ data: expect.objectContaining({ token: "tok-abc" }) });
+      expect(result).toEqual(expect.objectContaining({ token: "tok-abc" }));
       expect(deps.approvePairing).toHaveBeenCalledWith(expect.objectContaining({
         satelliteId: "sat-001",
         requestId: "req-001",
@@ -243,7 +261,7 @@ describe("createFridaySatellitePairingRoutes", () => {
         body: { reason: "not authorized" },
       }) as any);
 
-      expect(result).toEqual({ data: { ok: true, rejectedAt: "2026-02-25T12:00:00Z" } });
+      expect(result).toEqual({ rejectedAt: "2026-02-25T12:00:00Z" });
       expect(deps.rejectPairing).toHaveBeenCalledWith(expect.objectContaining({
         reason: "not authorized",
       }));
@@ -281,7 +299,7 @@ describe("createFridaySatellitePairingRoutes", () => {
         },
       }) as any);
 
-      expect(result).toEqual({ data: expect.objectContaining({ accepted: true, streamId: "stream-001" }) });
+      expect(result).toEqual(expect.objectContaining({ accepted: true, streamId: "stream-001" }));
     });
 
     it("returns validation error when required handshake fields are missing", async () => {
@@ -313,7 +331,7 @@ describe("createFridaySatellitePairingRoutes", () => {
         body: { reason: "compromised" },
       }) as any);
 
-      expect(result).toEqual({ data: { ok: true, revokedAt: "2026-02-25T14:00:00Z" } });
+      expect(result).toEqual({ revokedAt: "2026-02-25T14:00:00Z" });
       expect(deps.revokeSatellite).toHaveBeenCalledWith(expect.objectContaining({
         satelliteId: "sat-001",
         resolverUserId: "user-001",

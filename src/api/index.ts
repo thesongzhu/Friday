@@ -109,7 +109,13 @@ export type { FridayWorkflowRoutesDeps } from "./http/routes/friday-workflow-rou
 export { createFridayWorkflowRunRoutes } from "./http/routes/friday-workflow-run-routes.js";
 export type { FridayWorkflowRunRoutesDeps } from "./http/routes/friday-workflow-run-routes.js";
 export { createFridayWorkflowBuilderRoutes } from "./http/routes/friday-workflow-builder-routes.js";
-export type { FridayWorkflowBuilderRoutesDeps } from "./http/routes/friday-workflow-builder-routes.js";
+export {
+  createFridayWorkflowBuilderTemplateRoutes,
+} from "./http/routes/friday-workflow-builder-routes.js";
+export type {
+  FridayWorkflowBuilderRoutesDeps,
+  FridayWorkflowBuilderTemplateRoutesDeps,
+} from "./http/routes/friday-workflow-builder-routes.js";
 export { createFridayWorkflowConflictRoutes } from "./http/routes/friday-workflow-conflict-routes.js";
 export type { FridayWorkflowConflictRoutesDeps } from "./http/routes/friday-workflow-conflict-routes.js";
 export { createFridaySkillGeneratorRoutes } from "./http/routes/friday-skill-generator-routes.js";

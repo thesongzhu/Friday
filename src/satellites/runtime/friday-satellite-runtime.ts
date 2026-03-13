@@ -25,6 +25,7 @@ import { createFridayLearningEventLedger, createFridaySkillRunCheckpointWriter, 
 export interface CreateFridaySatelliteRuntimeOptions {
   db: FridaySqliteLayer;
   cursorSecret: string;
+  tokenSecret: string;
   idGenerator: () => string;
   nowIso: () => string;
   retentionPolicy?: FridayRetentionPolicy;
@@ -51,6 +52,7 @@ export function createFridaySatelliteRuntime(
   const {
     db,
     cursorSecret,
+    tokenSecret,
     idGenerator,
     nowIso,
     retentionPolicy,
@@ -102,6 +104,7 @@ export function createFridaySatelliteRuntime(
     checkpointRepo,
     idGenerator,
     nowIso,
+    tokenSecret,
   });
 
   const capabilities = createFridaySatelliteCapabilityService({

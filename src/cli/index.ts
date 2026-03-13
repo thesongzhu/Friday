@@ -1,5 +1,7 @@
 export {
   parseArgs,
+  finalizeCliCommand,
+  isCliEntrypointPath,
   loadProcessEnvFromDotEnvFile,
   readSetupNetworkBinding,
   resolveStartupNetworkBinding,

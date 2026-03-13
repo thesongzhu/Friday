@@ -23,6 +23,55 @@ import type {
   FridaySaveDraftResponse,
 } from "../../model/friday-api-workflow.types.js";
 
+export interface FridayWorkflowBuilderTemplateRoutesDeps {
+  listTemplates: (query: { scope?: string }) => unknown;
+  getTemplate: (templateId: string) => unknown;
+  instantiateTemplate: (
+    templateId: string,
+    body: { workflowId: UUID; title: string; ownerUserId?: string },
+  ) => unknown;
+}
+
+export function createFridayWorkflowBuilderTemplateRoutes(
+  deps: FridayWorkflowBuilderTemplateRoutesDeps,
+): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  return [
+    {
+      operationId: "templates.list",
+      method: "GET",
+      path: "/v1/workflow-builder/templates",
+      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      async handler(ctx) {
+        const query = ctx.query as Record<string, unknown>;
+        return deps.listTemplates({
+          scope: typeof query.scope === "string" ? query.scope : undefined,
+        });
+      },
+    },
+    {
+      operationId: "templates.get",
+      method: "GET",
+      path: "/v1/workflow-builder/templates/:templateId",
+      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      async handler(ctx) {
+        const { templateId } = ctx.params as { templateId: string };
+        return deps.getTemplate(templateId);
+      },
+    },
+    {
+      operationId: "templates.instantiate",
+      method: "POST",
+      path: "/v1/workflow-builder/templates/:templateId/instantiate",
+      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      async handler(ctx) {
+        const { templateId } = ctx.params as { templateId: string };
+        const body = ctx.body as { workflowId: UUID; title: string; ownerUserId?: string };
+        return deps.instantiateTemplate(templateId, body);
+      },
+    },
+  ];
+}
+
 export interface FridayWorkflowBuilderRoutesDeps {
   createDraft: (workflowId: UUID, input: FridayCreateDraftRequest) => FridayCreateDraftResponse;
   listDrafts: (workflowId: UUID, query: FridayPaginationQuery) => FridayListDraftsResponse;

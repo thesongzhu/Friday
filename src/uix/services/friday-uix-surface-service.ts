@@ -652,7 +652,6 @@ export function createFridayUixSurfaceService(
     try {
       deps.selfHealing.reportStructuredFailure({
         userId: input.userId,
-        runId: `assistant:${input.scope}:${deps.idGenerator()}`,
         category: "workflow",
         severity: "high",
         message,

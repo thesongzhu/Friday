@@ -16,8 +16,13 @@ export interface FridaySatellitePairingRoutesDeps {
     type: string;
     displayName: string;
     publicKey: string;
-    runtime?: string;
-    transport?: string;
+    runtime: {
+      platform: string;
+      arch: string;
+      appVersion: string;
+      nodeVersion: string;
+    };
+    transport: "ws" | "http-poll" | "mixed";
     requestedByIp?: string;
     requestedByUserAgent?: string;
   }) => Promise<{
@@ -116,17 +121,29 @@ export function createFridaySatellitePairingRoutes(
           };
         }
 
+        const rawRuntime = body.runtime as Record<string, unknown> | undefined;
+        const runtime = {
+          platform: typeof rawRuntime?.platform === "string" ? rawRuntime.platform : "unknown",
+          arch: typeof rawRuntime?.arch === "string" ? rawRuntime.arch : "unknown",
+          appVersion: typeof rawRuntime?.appVersion === "string" ? rawRuntime.appVersion : "unknown",
+          nodeVersion: typeof rawRuntime?.nodeVersion === "string" ? rawRuntime.nodeVersion : "unknown",
+        };
+        const rawTransport = body.transport as string | undefined;
+        const transport: "ws" | "http-poll" | "mixed" = rawTransport === "http-poll" || rawTransport === "mixed"
+          ? rawTransport
+          : "ws";
+
         const result = await deps.registerSatellite({
           type,
           displayName,
           publicKey,
-          runtime: body.runtime as string | undefined,
-          transport: body.transport as string | undefined,
+          runtime,
+          transport,
           requestedByIp: ctx.ip,
           requestedByUserAgent: ctx.userAgent,
         });
 
-        return { data: result };
+        return result;
       },
     },
 
@@ -137,8 +154,7 @@ export function createFridaySatellitePairingRoutes(
       path: "/v1/satellites/pairing",
       auth: { public: false, anyOfScopes: ["satellite.read" as any] },
       async handler() {
-        const pending = await deps.listPendingPairings();
-        return { data: pending };
+        return deps.listPendingPairings();
       },
     },
 
@@ -154,7 +170,7 @@ export function createFridaySatellitePairingRoutes(
         if (!request) {
           return { error: { code: "NOT_FOUND", message: "No pairing request found" } };
         }
-        return { data: request };
+        return request;
       },
     },
 
@@ -180,7 +196,7 @@ export function createFridaySatellitePairingRoutes(
           tokenTtlMs: body.tokenTtlMs as number | undefined,
         });
 
-        return { data: result };
+        return result;
       },
     },
 
@@ -205,7 +221,7 @@ export function createFridaySatellitePairingRoutes(
           reason: body.reason as string | undefined,
         });
 
-        return { data: { ok: true, rejectedAt: result.rejectedAt } };
+        return { rejectedAt: result.rejectedAt };
       },
     },
 
@@ -238,7 +254,7 @@ export function createFridaySatellitePairingRoutes(
           supportedAlgorithms: body.supportedAlgorithms as string[] | undefined,
         });
 
-        return { data: result };
+        return result;
       },
     },
 
@@ -258,7 +274,7 @@ export function createFridaySatellitePairingRoutes(
           reason: body.reason as string | undefined,
         });
 
-        return { data: { ok: true, revokedAt: result.revokedAt } };
+        return { revokedAt: result.revokedAt };
       },
     },
   ];

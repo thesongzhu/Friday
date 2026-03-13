@@ -83,6 +83,7 @@ describe("FridaySatellitePairingService", () => {
       checkpointRepo,
       idGenerator: createTestIdGenerator(),
       nowIso: () => nowIso,
+      tokenSecret: "test-token-secret",
       generateEphemeralKeyPair: () => EPHEMERAL_KEY,
     });
   }
@@ -116,6 +117,7 @@ describe("FridaySatellitePairingService", () => {
     });
 
     expect(result.token).toBeTruthy();
+    expect(result.token.split(".")).toHaveLength(2);
     expect(result.tokenId).toBeTruthy();
     expect(result.tokenVersion).toBe(1);
 

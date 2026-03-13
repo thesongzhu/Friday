@@ -11,6 +11,7 @@ import type { FridayWorkflowDraftEntity } from "../model/friday-workflow-builder
 import type { FridayWorkflowBuilderTemplateRepository } from "../persistence/friday-workflow-builder-template-repository.js";
 import type { FridayWorkflowBuilderDraftService } from "./friday-workflow-builder-draft-service.js";
 import type { FridaySkillRepository } from "#skills";
+import type { FridaySkillRegistry } from "#skills";
 
 // ─── Interface ───
 
@@ -42,6 +43,7 @@ export interface CreateTemplateServiceDeps {
   draftService: FridayWorkflowBuilderDraftService;
   builtinTemplates: FridayWorkflowTemplateEntity[];
   skillRepo?: FridaySkillRepository;
+  skillRegistry?: FridaySkillRegistry;
   idGenerator: () => string;
   nowIso: () => string;
 }
@@ -53,16 +55,31 @@ export function createFridayWorkflowBuilderTemplateService(
 ): FridayWorkflowBuilderTemplateService {
   /** Derive templates from installed skills that support workflow mode. */
   function getSkillDerivedTemplates(): FridayWorkflowTemplateEntity[] {
-    if (!deps.skillRepo) return [];
-    const installed = deps.db.withReadConnection((db) =>
-      deps.skillRepo!.listInstalled(db),
-    );
-    return installed
-      .filter(
-        (s) =>
-          s.currentManifest &&
-          s.currentManifest.invocation.modes.includes("workflow"),
-      )
+    const installed = deps.skillRepo
+      ? deps.db.withReadConnection((db) => deps.skillRepo!.listInstalled(db))
+      : [];
+    const registered = deps.skillRegistry
+      ? deps.skillRegistry.list().map((skill) => ({
+        id: skill.manifest.id,
+        currentManifest: skill.manifest,
+      }))
+      : [];
+    const discovered = [...installed, ...registered];
+    const seenSkillIds = new Set<string>();
+    return discovered
+      .filter((s) => {
+        if (!s.currentManifest) {
+          return false;
+        }
+        if (seenSkillIds.has(s.id)) {
+          return false;
+        }
+        if (!s.currentManifest.invocation.modes.includes("workflow")) {
+          return false;
+        }
+        seenSkillIds.add(s.id);
+        return true;
+      })
       .map((s) => {
         const manifest = s.currentManifest!;
         const now = deps.nowIso();

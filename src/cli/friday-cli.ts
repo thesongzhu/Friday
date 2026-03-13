@@ -17,8 +17,9 @@
  *   friday --help                                           — usage info
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createFridayHub, resolveFridayHubConfig } from "#hub";
 import type { FridayHubConfig } from "#hub";
 import { resolveFridayDbPath } from "#state";
@@ -1086,6 +1087,22 @@ function padEnd(s: string, len: number): string {
   return s.length >= len ? s.slice(0, len) : s + " ".repeat(len - s.length);
 }
 
+export async function finalizeCliCommand(
+  command: ParsedArgs["command"],
+  exit: (code?: number) => unknown = process.exit,
+): Promise<void> {
+  if (command === "start") {
+    return;
+  }
+
+  await new Promise((resolve) => setImmediate(resolve));
+  const exitCode =
+    typeof process.exitCode === "number"
+      ? process.exitCode
+      : Number.parseInt(String(process.exitCode ?? 0), 10);
+  exit(Number.isFinite(exitCode) ? exitCode : 1);
+}
+
 // ─── Main ───
 
 async function main(): Promise<void> {
@@ -1125,9 +1142,29 @@ async function main(): Promise<void> {
       printUsage();
       break;
   }
+
+  await finalizeCliCommand(parsed.command);
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exitCode = 1;
-});
+export function isCliEntrypointPath(argvPath: string | undefined, moduleUrl: string): boolean {
+  if (typeof argvPath !== "string" || argvPath.trim().length === 0) {
+    return false;
+  }
+
+  const modulePath = fileURLToPath(moduleUrl);
+
+  try {
+    return realpathSync(argvPath) === realpathSync(modulePath);
+  } catch {
+    return argvPath === modulePath;
+  }
+}
+
+const isCliEntrypoint = isCliEntrypointPath(process.argv[1], import.meta.url);
+
+if (isCliEntrypoint) {
+  main().catch((err) => {
+    console.error("Fatal error:", err);
+    process.exitCode = 1;
+  });
+}

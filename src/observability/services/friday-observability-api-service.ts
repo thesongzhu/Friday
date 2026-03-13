@@ -1780,18 +1780,20 @@ export function createFridayObservabilityApiService(
     },
     audit: {
       search(query): FridaySearchAuditEntriesResponse {
-        const filtered = audit.query({
-          actorId: query.actorId,
-          actionCategory: query.actionCategory,
-          action: query.action,
-          resourceType: query.resourceType,
-          resourceId: query.resourceId,
-          outcome: query.outcome,
-          module: query.module,
-          traceId: query.traceId,
-          after: query.after,
-          before: query.before,
-        }).sort((left, right) => right.recordedAt.localeCompare(left.recordedAt));
+        const filtered = [
+          ...audit.query({
+            actorId: query.actorId,
+            actionCategory: query.actionCategory,
+            action: query.action,
+            resourceType: query.resourceType,
+            resourceId: query.resourceId,
+            outcome: query.outcome,
+            module: query.module,
+            traceId: query.traceId,
+            after: query.after,
+            before: query.before,
+          }),
+        ].sort((left, right) => right.recordedAt.localeCompare(left.recordedAt));
         const page = paginate(filtered, query);
         return {
           items: page.items.map((entry) => ({

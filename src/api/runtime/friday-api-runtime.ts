@@ -28,7 +28,10 @@ import { createFridayAuthRoutes } from "../http/routes/friday-auth-routes.js";
 import { createFridayRuntimeAdminRoutes } from "../http/routes/friday-runtime-admin-routes.js";
 import { createFridaySecretRoutes } from "../http/routes/friday-secret-routes.js";
 import { createFridayWorkflowRoutes } from "../http/routes/friday-workflow-routes.js";
-import { createFridayWorkflowBuilderRoutes } from "../http/routes/friday-workflow-builder-routes.js";
+import {
+  createFridayWorkflowBuilderRoutes,
+  createFridayWorkflowBuilderTemplateRoutes,
+} from "../http/routes/friday-workflow-builder-routes.js";
 import { createFridayWorkflowProductRoutes } from "../http/routes/friday-workflow-product-routes.js";
 import { createFridayWorkflowRunRoutes } from "../http/routes/friday-workflow-run-routes.js";
 import { createFridayWorkflowConflictRoutes } from "../http/routes/friday-workflow-conflict-routes.js";
@@ -463,6 +466,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const builderRuntime = createFridayWorkflowBuilderRuntime({
     db: deps.db,
     crudService: workflowRuntime.crud,
+    skillRegistry: deps.skillRegistry,
     idGenerator: deps.idGenerator,
     nowIso: deps.nowIso,
     computeChecksum: deps.computeChecksum,
@@ -661,6 +665,42 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   }
 
   // Register builder routes (real service wiring)
+  for (const route of createFridayWorkflowBuilderTemplateRoutes({
+    listTemplates: ({ scope }) => ({
+      items: builderRuntime.templates.listTemplates(
+        scope === "user" || scope === "global" ? scope : undefined,
+      ),
+    }),
+    getTemplate: (templateId) => {
+      const template = builderRuntime.templates.getTemplate(templateId);
+      if (!template) {
+        throw new FridayDomainError("TEMPLATE_NOT_FOUND", "Template not found", { httpStatus: 404 });
+      }
+      return { template };
+    },
+    instantiateTemplate: (templateId, body) => {
+      if (!body || typeof body !== "object") {
+        throw new FridayDomainError("VALIDATION_ERROR", "Request body is required", { httpStatus: 400 });
+      }
+      if (typeof body.workflowId !== "string" || body.workflowId.length === 0) {
+        throw new FridayDomainError("VALIDATION_ERROR", "workflowId is required", { httpStatus: 400 });
+      }
+      if (typeof body.title !== "string" || body.title.trim().length === 0) {
+        throw new FridayDomainError("VALIDATION_ERROR", "title is required", { httpStatus: 400 });
+      }
+      return {
+        draft: builderRuntime.templates.instantiateTemplate(
+          templateId,
+          body.workflowId,
+          body.title,
+          body.ownerUserId,
+        ),
+      };
+    },
+  })) {
+    routes.register(route);
+  }
+
   for (const route of createFridayWorkflowBuilderRoutes({
     createDraft: (workflowId, input) => {
       const draft = builderRuntime.drafts.createDraft({

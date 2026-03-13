@@ -3,6 +3,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect } from "vitest";
 import {
+  finalizeCliCommand,
+  isCliEntrypointPath,
   parseArgs,
   loadProcessEnvFromDotEnvFile,
   readSetupNetworkBinding,
@@ -330,6 +332,24 @@ describe("parseArgs", () => {
   });
 });
 
+describe("finalizeCliCommand", () => {
+  it("does not force-exit the long-running start command", async () => {
+    let exitCode: number | undefined;
+    await finalizeCliCommand("start", (code) => {
+      exitCode = code;
+    });
+    expect(exitCode).toBeUndefined();
+  });
+
+  it("forces one-shot commands to exit after completion", async () => {
+    let exitCode: number | undefined;
+    await finalizeCliCommand("list", (code) => {
+      exitCode = code;
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("resolveStartupNetworkBinding", () => {
   const argv = (...args: string[]) => ["node", "friday-cli.js", ...args];
 
@@ -430,6 +450,34 @@ describe("readSetupNetworkBinding", () => {
       });
     } finally {
       db.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("isCliEntrypointPath", () => {
+  it("matches the direct module path", () => {
+    const modulePath = path.join("/tmp", "friday-cli.js");
+    const moduleUrl = new URL(`file://${modulePath}`);
+    expect(isCliEntrypointPath(modulePath, moduleUrl.href)).toBe(true);
+  });
+
+  it("matches an npm bin symlink that resolves to the CLI module", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-cli-entry-"));
+    try {
+      const realDir = path.join(tmpDir, "dist", "cli");
+      const binDir = path.join(tmpDir, "node_modules", ".bin");
+      fs.mkdirSync(realDir, { recursive: true });
+      fs.mkdirSync(binDir, { recursive: true });
+
+      const realCliPath = path.join(realDir, "friday-cli.js");
+      const symlinkPath = path.join(binDir, "friday");
+      fs.writeFileSync(realCliPath, "#!/usr/bin/env node\n", "utf8");
+      fs.symlinkSync(realCliPath, symlinkPath);
+
+      const moduleUrl = new URL(`file://${realCliPath}`);
+      expect(isCliEntrypointPath(symlinkPath, moduleUrl.href)).toBe(true);
+    } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

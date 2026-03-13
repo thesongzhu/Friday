@@ -1,4 +1,5 @@
 import type { FridaySqliteLayer } from "#state";
+import type { FridaySkillRegistry } from "#skills";
 import type { FridayWorkflowCrudService } from "../../services/friday-workflow-crud-service.js";
 
 import { createFridayWorkflowCompiler } from "../../compiler/friday-workflow-compiler.js";
@@ -44,6 +45,7 @@ export interface FridayWorkflowBuilderRuntime {
 export interface CreateWorkflowBuilderRuntimeDeps {
   db: FridaySqliteLayer;
   crudService: FridayWorkflowCrudService;
+  skillRegistry?: FridaySkillRegistry;
   idGenerator: () => string;
   nowIso: () => string;
   computeChecksum: (content: string) => string;
@@ -90,6 +92,7 @@ export function createFridayWorkflowBuilderRuntime(
     templateRepo,
     draftService: drafts,
     builtinTemplates: getFridayBuiltinWorkflowTemplates(),
+    skillRegistry: deps.skillRegistry,
     idGenerator: deps.idGenerator,
     nowIso: deps.nowIso,
   });

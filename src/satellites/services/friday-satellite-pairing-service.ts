@@ -2,6 +2,8 @@ import { createHash, createVerify, generateKeyPairSync, randomBytes } from "node
 
 import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
+import type { FridayAccessTokenClaims, FridayScope } from "../../api/model/friday-api-auth.types.js";
+import { encodeToken } from "../../api/auth/friday-token-validator.js";
 import type { FridaySatelliteRepository } from "../persistence/friday-satellite-repository.js";
 import type { FridaySatellitePairingRequestRepository } from "../persistence/friday-satellite-pairing-request-repository.js";
 import type { FridayApiTokenRepository } from "../persistence/friday-satellite-api-token-repository.js";
@@ -70,6 +72,7 @@ export interface CreatePairingServiceDeps {
   checkpointRepo: FridayStreamCheckpointRepository;
   idGenerator: () => string;
   nowIso: () => string;
+  tokenSecret: string;
   /** Optional override for ephemeral key generation (testing). */
   generateEphemeralKeyPair?: () => { publicKey: string; privateKey: string };
 }
@@ -159,23 +162,37 @@ export function createFridaySatellitePairingService(
         const expiresAt = input.tokenTtlMs
           ? new Date(new Date(nowIso).getTime() + input.tokenTtlMs).toISOString()
           : undefined;
+        const issuedAtSec = Math.floor(new Date(nowIso).getTime() / 1000);
+        const expiresAtSec = expiresAt
+          ? Math.floor(new Date(expiresAt).getTime() / 1000)
+          : issuedAtSec + 24 * 60 * 60;
 
         const satellite = deps.satelliteRepo.getSatellite(db, input.satelliteId);
         const tokenVersion = satellite?.token_version ?? 1;
+        const accessTokenClaims: FridayAccessTokenClaims = {
+          tokenId,
+          principalType: "satellite",
+          principalId: input.satelliteId,
+          scopes: input.scopes as FridayScope[],
+          iat: issuedAtSec,
+          exp: expiresAtSec,
+          ver: tokenVersion,
+        };
+        const encodedToken = encodeToken(accessTokenClaims, deps.tokenSecret);
 
         deps.apiTokenRepo.insertToken(db, {
           id: tokenId,
           userId: null,
           principalType: "satellite",
           label: `satellite:${input.satelliteId}:v${tokenVersion}`,
-          tokenHash: hashToken(plainToken),
+          tokenHash: hashToken(encodedToken),
           scopes: input.scopes,
           expiresAt,
           nowIso,
         });
 
         return {
-          token: plainToken,
+          token: encodedToken,
           tokenId,
           expiresAt,
           configRevision: 1,

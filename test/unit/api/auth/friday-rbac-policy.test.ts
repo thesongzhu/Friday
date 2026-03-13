@@ -14,12 +14,17 @@ describe("FridayRbacPolicy", () => {
       expect(scopes).toContain("workflow.read");
       expect(scopes).toContain("security.write");
       expect(scopes).toContain("skill.write");
+      expect(scopes).toContain("marketplace.admin");
+      expect(scopes).toContain("desktop.execute");
+      expect(scopes).toContain("playbook.write");
     });
 
     it("returns all scopes for admin", () => {
       const scopes = getScopesForRole("admin");
       expect(scopes).toContain("hub.admin");
       expect(scopes).toContain("security.write");
+      expect(scopes).toContain("marketplace.write");
+      expect(scopes).toContain("desktop.read");
     });
 
     it("returns limited scopes for operator", () => {
@@ -30,17 +35,23 @@ describe("FridayRbacPolicy", () => {
       expect(scopes).toContain("agent.read");
       expect(scopes).toContain("agent.run");
       expect(scopes).toContain("agent.write");
+      expect(scopes).toContain("marketplace.write");
+      expect(scopes).toContain("desktop.execute");
       expect(scopes).not.toContain("hub.admin");
       expect(scopes).not.toContain("security.write");
+      expect(scopes).not.toContain("marketplace.admin");
     });
 
     it("returns read-only scopes for viewer", () => {
       const scopes = getScopesForRole("viewer");
       expect(scopes).toContain("workflow.read");
       expect(scopes).toContain("fleet.read");
+      expect(scopes).toContain("marketplace.read");
+      expect(scopes).toContain("desktop.read");
       expect(scopes).not.toContain("workflow.write");
       expect(scopes).not.toContain("workflow.run");
       expect(scopes).not.toContain("hub.admin");
+      expect(scopes).not.toContain("desktop.write");
     });
   });
 
