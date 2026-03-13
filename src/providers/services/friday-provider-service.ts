@@ -54,6 +54,21 @@ function secretRefKey(providerId: string): string {
   return `provider:${providerId}:apiKey`;
 }
 
+function describeRoutingReference(
+  providerMap: ReadonlyMap<string, FridayProviderProfile>,
+  label: string,
+  providerId: string,
+): string {
+  const provider = providerMap.get(providerId);
+  if (!provider) {
+    return `${label} "${providerId}" not found`;
+  }
+  if (!provider.enabled) {
+    return `${label} "${providerId}" is disabled`;
+  }
+  return `${label} "${providerId}" is enabled but was not selected`;
+}
+
 // ─── Factory ───
 
 export function createFridayProviderService(
@@ -275,6 +290,106 @@ export function createFridayProviderService(
         ).run(ROUTING_SETTINGS_KEY, json, now, now);
       }
     });
+  }
+
+  function validateRoutingConfig(input: FridayModelRoutingConfig): FridayModelRoutingConfig {
+    const providers = deps.db.withReadConnection((db) => profileRepo.list(db));
+    const providerMap = new Map<string, FridayProviderProfile>();
+    for (const provider of providers) {
+      providerMap.set(provider.id, provider);
+    }
+
+    if (!input.defaultProviderId) {
+      if (input.fallbackProviderIds.length > 0) {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          "fallbackProviderIds cannot be set when defaultProviderId is empty",
+          { httpStatus: 400 },
+        );
+      }
+      return input;
+    }
+
+    const defaultProvider = providerMap.get(input.defaultProviderId);
+    if (!defaultProvider) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        `defaultProviderId "${input.defaultProviderId}" does not match an existing provider`,
+        { httpStatus: 400 },
+      );
+    }
+    if (!defaultProvider.enabled) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        `defaultProviderId "${input.defaultProviderId}" is disabled`,
+        { httpStatus: 400 },
+      );
+    }
+    if (
+      input.defaultModel &&
+      defaultProvider.config.supportedModels.length > 0 &&
+      !defaultProvider.config.supportedModels.includes(input.defaultModel)
+    ) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        `defaultModel "${input.defaultModel}" is not supported by provider "${input.defaultProviderId}"`,
+        { httpStatus: 400 },
+      );
+    }
+
+    for (const fallbackProviderId of input.fallbackProviderIds) {
+      const fallbackProvider = providerMap.get(fallbackProviderId);
+      if (!fallbackProvider) {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          `fallbackProviderId "${fallbackProviderId}" does not match an existing provider`,
+          { httpStatus: 400 },
+        );
+      }
+      if (!fallbackProvider.enabled) {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          `fallbackProviderId "${fallbackProviderId}" is disabled`,
+          { httpStatus: 400 },
+        );
+      }
+    }
+
+    return input;
+  }
+
+  function explainNoCandidates(
+    routing: FridayModelRoutingConfig,
+    providers: FridayProviderProfile[],
+  ): string {
+    const providerMap = new Map<string, FridayProviderProfile>();
+    for (const provider of providers) {
+      providerMap.set(provider.id, provider);
+    }
+
+    const details: string[] = [];
+    if (routing.defaultProviderId) {
+      details.push(
+        describeRoutingReference(
+          providerMap,
+          "defaultProviderId",
+          routing.defaultProviderId,
+        ),
+      );
+    }
+    for (const fallbackProviderId of routing.fallbackProviderIds) {
+      details.push(
+        describeRoutingReference(
+          providerMap,
+          "fallbackProviderId",
+          fallbackProviderId,
+        ),
+      );
+    }
+
+    return details.length > 0
+      ? `No enabled providers available for routing: ${details.join("; ")}`
+      : "No enabled providers available for routing";
   }
 
   // ─── Service implementation ───
@@ -651,8 +766,9 @@ export function createFridayProviderService(
     },
 
     async setRoutingConfig(input) {
-      saveRoutingConfig(input);
-      return input;
+      const validated = validateRoutingConfig(input);
+      saveRoutingConfig(validated);
+      return validated;
     },
 
     async resolveRoute(requestedModel) {
@@ -675,7 +791,7 @@ export function createFridayProviderService(
       if (candidates.length === 0) {
         throw new FridayDomainError(
           "PROVIDER_NO_CANDIDATES",
-          "No enabled providers available for routing",
+          explainNoCandidates(routing, providers),
           { httpStatus: 400 },
         );
       }
@@ -714,6 +830,13 @@ export function createFridayProviderService(
         providers,
         requestedModel: params.requestedModel,
       });
+      if (candidates.length === 0) {
+        throw new FridayDomainError(
+          "PROVIDER_NO_CANDIDATES",
+          explainNoCandidates(routing, providers),
+          { httpStatus: 400 },
+        );
+      }
 
       // Apply cost-aware routing when no specific model was requested
       const budget = await budgetService.getBudgetStatus();
