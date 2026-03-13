@@ -17,6 +17,7 @@ import { createFridayErrorDiagnosisService } from "#learning";
 import { createFridayAutoFixPlanService } from "#learning";
 import { createFridayAutoFixRiskAssessmentService } from "#learning";
 import { createFridayAutoFixExecutionService } from "#learning";
+import { createFridayAutoFixRollbackService } from "#learning";
 import { createFridayAutoFixDispatcherService } from "#learning";
 import { createFridayApprovalWorkflowService } from "#learning";
 import type { FridaySelfLearningPipelineService } from "#learning";
@@ -585,6 +586,11 @@ describe("Approval → execution linkage", () => {
       actionRepo,
       incidentRepo,
       diagnosisRepo,
+      rollbackService: createFridayAutoFixRollbackService({
+        db,
+        actionRepo,
+        nowIso: () => NOW,
+      }),
       nowIso: () => NOW,
     });
 
@@ -709,6 +715,11 @@ describe("Approval → execution linkage", () => {
       actionRepo,
       incidentRepo,
       diagnosisRepo,
+      rollbackService: createFridayAutoFixRollbackService({
+        db,
+        actionRepo,
+        nowIso: () => NOW,
+      }),
       nowIso: () => NOW,
     });
 

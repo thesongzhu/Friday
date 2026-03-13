@@ -4,10 +4,12 @@ import type { FridayAutoFixActionRepository } from "../persistence/friday-auto-f
 import type { FridayErrorIncidentRepository } from "../persistence/friday-error-incident-repository.js";
 import type { FridayDiagnosisRecordRepository } from "../persistence/friday-diagnosis-record-repository.js";
 import type { FridayAutoFixLessonExtractionService } from "./friday-auto-fix-lesson-extraction-service.js";
+import type { FridayAutoFixRollbackService } from "./friday-auto-fix-rollback-service.js";
 import type { UUID } from "../model/friday-learning.types.js";
 import type {
   FridayAutoFixExecutionResult,
   FridayAutoFixPlanStep,
+  FridayAutoFixRollbackStep,
   FridayAutoFixStepKind,
 } from "../model/friday-auto-fix.types.js";
 
@@ -15,11 +17,25 @@ export interface FridayAutoFixExecutionService {
   execute(actionId: UUID): Promise<FridayAutoFixExecutionResult>;
 }
 
+export type FridayAutoFixExecutableStep =
+  | FridayAutoFixPlanStep
+  | FridayAutoFixRollbackStep;
+
+function hasVerifySpec(
+  step: FridayAutoFixExecutableStep,
+): step is FridayAutoFixPlanStep & { verify: NonNullable<FridayAutoFixPlanStep["verify"]> } {
+  return "verify" in step && step.verify != null;
+}
+
 /** A step executor returns true if the step succeeded. */
-export type StepExecutor = (step: FridayAutoFixPlanStep) => boolean;
+export type StepExecutor = (
+  step: FridayAutoFixExecutableStep,
+) => boolean | Promise<boolean>;
 
 /** A step verifier returns true if verification passed. */
-export type StepVerifier = (step: FridayAutoFixPlanStep) => boolean;
+export type StepVerifier = (
+  step: FridayAutoFixExecutableStep,
+) => boolean | Promise<boolean>;
 
 export interface CreateAutoFixExecutionServiceDeps {
   db: FridaySqliteLayer;
@@ -27,6 +43,7 @@ export interface CreateAutoFixExecutionServiceDeps {
   incidentRepo: FridayErrorIncidentRepository;
   diagnosisRepo: FridayDiagnosisRecordRepository;
   lessonExtractionService?: FridayAutoFixLessonExtractionService;
+  rollbackService: FridayAutoFixRollbackService;
   nowIso: () => string;
   /** Override executors per step kind for production use. */
   stepExecutors?: Partial<Record<FridayAutoFixStepKind, StepExecutor>>;
@@ -136,37 +153,37 @@ const DEFAULT_EXECUTORS: Record<FridayAutoFixStepKind, StepExecutor> = {
  */
 const DEFAULT_VERIFIERS: Record<FridayAutoFixStepKind, StepVerifier> = {
   retry_node: (step) => {
-    if (!step.verify) return true; // no verify spec → auto-pass
+    if (!hasVerifySpec(step)) return true; // no verify spec → auto-pass
     const payload = step.payload as Record<string, unknown> | null;
     return payload != null && payload._retryRequested === true;
   },
   switch_model_fallback: (step) => {
-    if (!step.verify) return true;
+    if (!hasVerifySpec(step)) return true;
     const payload = step.payload as Record<string, unknown> | null;
     return payload != null && payload._modelFallbackRequested === true;
   },
   trim_payload: (step) => {
-    if (!step.verify) return true;
+    if (!hasVerifySpec(step)) return true;
     const payload = step.payload as Record<string, unknown> | null;
     return payload != null && payload._trimRequested === true;
   },
   apply_config_patch: (step) => {
-    if (!step.verify) return true;
+    if (!hasVerifySpec(step)) return true;
     const payload = step.payload as Record<string, unknown> | null;
     return payload != null && payload._configPatchApplied === true;
   },
   grant_permission: (step) => {
-    if (!step.verify) return true;
+    if (!hasVerifySpec(step)) return true;
     const payload = step.payload as Record<string, unknown> | null;
     return payload != null && payload._permissionGranted === true;
   },
   disable_skill: (step) => {
-    if (!step.verify) return true;
+    if (!hasVerifySpec(step)) return true;
     const payload = step.payload as Record<string, unknown> | null;
     return payload != null && payload._skillDisabled === true;
   },
   pause_workflow: (step) => {
-    if (!step.verify) return true;
+    if (!hasVerifySpec(step)) return true;
     const payload = step.payload as Record<string, unknown> | null;
     return payload != null && payload._workflowPaused === true;
   },
@@ -177,6 +194,25 @@ export function createFridayAutoFixExecutionService(
 ): FridayAutoFixExecutionService {
   const executors = { ...DEFAULT_EXECUTORS, ...deps.stepExecutors };
   const verifiers = { ...DEFAULT_VERIFIERS, ...deps.stepVerifiers };
+
+  async function finalizeFailedAction(
+    actionId: UUID,
+    nowIso: string,
+    errorMessage: string,
+    rollbackAttempted: boolean,
+  ): Promise<FridayAutoFixExecutionResult> {
+    return deps.db.withWriteTransaction((db) => {
+      const failed = deps.actionRepo.markApplied(db, actionId, "failed", nowIso)!;
+      return {
+        action: failed,
+        success: false,
+        verificationPassed: false,
+        rollbackAttempted,
+        rollbackSucceeded: false,
+        errorMessage,
+      };
+    });
+  }
 
   return {
     async execute(actionId) {
@@ -215,10 +251,17 @@ export function createFridayAutoFixExecutionService(
 
       // Execute plan steps via executor map
       let executionSucceeded = true;
+      let executionFailureMessage: string | undefined;
       for (const step of action.plan.steps) {
         const executor = executors[step.kind];
-        if (!executor || !executor(step)) {
+        if (!executor) {
           executionSucceeded = false;
+          executionFailureMessage = `No executor available for auto-fix step kind '${step.kind}'`;
+          break;
+        }
+        if (!await executor(step)) {
+          executionSucceeded = false;
+          executionFailureMessage = `Auto-fix step '${step.stepId}' (${step.kind}) failed during execution`;
           break;
         }
       }
@@ -227,38 +270,47 @@ export function createFridayAutoFixExecutionService(
         // Execution failed — attempt rollback
         const rollbackPlan = action.rollbackPlan ?? action.plan.rollbackPlan;
         if (rollbackPlan) {
-          return deps.db.withWriteTransaction((db) => {
-            const rolledBack = deps.actionRepo.markRolledBack(db, actionId, nowIso)!;
-            return {
-              action: rolledBack,
-              success: false,
-              verificationPassed: false,
-              rollbackAttempted: true,
-              rollbackSucceeded: true,
-            };
-          });
+          const rollbackResult = await deps.rollbackService.rollback(
+            actionId,
+            executionFailureMessage ?? "Forward execution failed",
+          );
+          if (rollbackResult.rollbackSucceeded) {
+            return rollbackResult;
+          }
+          return finalizeFailedAction(
+            actionId,
+            nowIso,
+            rollbackResult.errorMessage ??
+              executionFailureMessage ??
+              "Step execution failed and rollback did not complete",
+            true,
+          );
         }
 
-        return deps.db.withWriteTransaction((db) => {
-          const failed = deps.actionRepo.markApplied(db, actionId, "failed", nowIso)!;
-          return {
-            action: failed,
-            success: false,
-            verificationPassed: false,
-            rollbackAttempted: false,
-            rollbackSucceeded: false,
-            errorMessage: "Step execution failed, no rollback plan available",
-          };
-        });
+        return finalizeFailedAction(
+          actionId,
+          nowIso,
+          executionFailureMessage ?? "Step execution failed, no rollback plan available",
+          false,
+        );
       }
 
       // Run verification per step kind
       let verificationPassed = true;
+      let verificationFailureMessage: string | undefined;
       for (const step of action.plan.steps) {
         if (step.verify) {
           const verifier = verifiers[step.kind];
-          if (!verifier || !verifier(step)) {
+          if (!verifier) {
             verificationPassed = false;
+            verificationFailureMessage =
+              `No verifier available for auto-fix step kind '${step.kind}'`;
+            break;
+          }
+          if (!await verifier(step)) {
+            verificationPassed = false;
+            verificationFailureMessage =
+              `Auto-fix step '${step.stepId}' (${step.kind}) failed verification`;
             break;
           }
         }
@@ -338,39 +390,29 @@ export function createFridayAutoFixExecutionService(
       // Verification failed — attempt rollback
       const rollbackPlan = action.rollbackPlan ?? action.plan.rollbackPlan;
       if (!rollbackPlan) {
-        return deps.db.withWriteTransaction((db) => {
-          const failed = deps.actionRepo.markApplied(
-            db,
-            actionId,
-            "failed",
-            nowIso,
-          )!;
-          return {
-            action: failed,
-            success: false,
-            verificationPassed: false,
-            rollbackAttempted: false,
-            rollbackSucceeded: false,
-            errorMessage: "Verification failed, no rollback plan available",
-          };
-        });
-      }
-
-      // Execute rollback
-      return deps.db.withWriteTransaction((db) => {
-        const rolledBack = deps.actionRepo.markRolledBack(
-          db,
+        return finalizeFailedAction(
           actionId,
           nowIso,
-        )!;
-        return {
-          action: rolledBack,
-          success: false,
-          verificationPassed: false,
-          rollbackAttempted: true,
-          rollbackSucceeded: true,
-        };
-      });
+          verificationFailureMessage ?? "Verification failed, no rollback plan available",
+          false,
+        );
+      }
+
+      const rollbackResult = await deps.rollbackService.rollback(
+        actionId,
+        verificationFailureMessage ?? "Verification failed",
+      );
+      if (rollbackResult.rollbackSucceeded) {
+        return rollbackResult;
+      }
+      return finalizeFailedAction(
+        actionId,
+        nowIso,
+        rollbackResult.errorMessage ??
+          verificationFailureMessage ??
+          "Verification failed and rollback did not complete",
+        true,
+      );
     },
   };
 }

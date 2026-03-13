@@ -238,8 +238,8 @@ export function createFridayMarketplaceCommerceRoutes(
         requireString(body, "displayName");
         requireString(body, "contactEmail");
 
-        const tenantId = ctx.principal?.principalId ?? "system";
-        const principalId = ctx.principal?.principalId ?? "system";
+        const tenantId = requirePrincipalId(ctx);
+        const principalId = requirePrincipalId(ctx);
         const existingPublishers = await deps.listPublishers(tenantId);
 
         const result = createPublisher(
@@ -588,7 +588,7 @@ export function createFridayMarketplaceCommerceRoutes(
           listing,
           version,
           {
-            reviewerId: ctx.principal?.principalId ?? "system",
+            reviewerId: requirePrincipalId(ctx),
             decision: body.decision as "approved" | "rejected",
             notes: body.notes as string | undefined,
           },
@@ -786,8 +786,8 @@ export function createFridayMarketplaceCommerceRoutes(
           throw new FridayDomainError("PRICING_PLAN_NOT_FOUND", `Pricing plan not found`, { httpStatus: 404 });
         }
 
-        const buyerTenantId = ctx.principal?.principalId ?? "system";
-        const buyerPrincipalId = ctx.principal?.principalId ?? "system";
+        const buyerTenantId = requirePrincipalId(ctx);
+        const buyerPrincipalId = requirePrincipalId(ctx);
 
         const result = initiateCheckout(
           {
@@ -944,7 +944,7 @@ export function createFridayMarketplaceCommerceRoutes(
           {
             amount: body.amount as FridayMoneyAmount | undefined,
             reason: body.reason as string,
-            initiatedBy: ctx.principal?.principalId ?? "system",
+            initiatedBy: requirePrincipalId(ctx),
           },
           purchaseDeps,
         );
@@ -1044,8 +1044,8 @@ export function createFridayMarketplaceCommerceRoutes(
           throw new FridayDomainError("LISTING_VERSION_NOT_FOUND", `Version "${versionId}" not found`, { httpStatus: 404 });
         }
 
-        const tenantId = ctx.principal?.principalId ?? "system";
-        const principalId = ctx.principal?.principalId ?? "system";
+        const tenantId = requirePrincipalId(ctx);
+        const principalId = requirePrincipalId(ctx);
         const entitlements = await deps.listEntitlements({
           tenantId,
           listingId: id,
@@ -1649,6 +1649,17 @@ export function createFridayMarketplaceCommerceRoutes(
 }
 
 // ─── Validation Helpers ───
+
+function requirePrincipalId(ctx: Ctx): string {
+  if (!ctx.principal?.principalId) {
+    throw new FridayDomainError(
+      "AUTH_REQUIRED",
+      "Authentication is required for this operation",
+      { httpStatus: 401 },
+    );
+  }
+  return ctx.principal.principalId;
+}
 
 function requireString(body: Record<string, unknown>, field: string): void {
   if (typeof body[field] !== "string" || !(body[field] as string).trim()) {

@@ -119,7 +119,7 @@ export { createFridayAutoFixRiskAssessmentService } from "./services/friday-auto
 export type { FridayAutoFixRiskAssessmentService } from "./services/friday-auto-fix-risk-assessment-service.js";
 
 export { createFridayAutoFixExecutionService } from "./services/friday-auto-fix-execution-service.js";
-export type { FridayAutoFixExecutionService } from "./services/friday-auto-fix-execution-service.js";
+export type { FridayAutoFixExecutionService, StepExecutor, StepVerifier } from "./services/friday-auto-fix-execution-service.js";
 
 export { createFridayAutoFixRollbackService } from "./services/friday-auto-fix-rollback-service.js";
 export type { FridayAutoFixRollbackService } from "./services/friday-auto-fix-rollback-service.js";

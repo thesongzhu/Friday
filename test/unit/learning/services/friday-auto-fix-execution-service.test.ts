@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
 import { createFridayAutoFixExecutionService } from "#learning";
+import { createFridayAutoFixRollbackService } from "#learning";
 import { createFridayAutoFixActionRepository } from "#learning";
 import { createFridayErrorIncidentRepository } from "#learning";
 import { createFridayDiagnosisRecordRepository } from "#learning";
@@ -68,11 +69,17 @@ describe("FridayAutoFixExecutionService", () => {
   beforeEach(() => {
     db = createTestDb();
     const { incidentRepo, diagnosisRepo, actionRepo } = setupDeps();
+    const rollbackService = createFridayAutoFixRollbackService({
+      db,
+      actionRepo,
+      nowIso: () => NOW,
+    });
     service = createFridayAutoFixExecutionService({
       db,
       actionRepo,
       incidentRepo,
       diagnosisRepo,
+      rollbackService,
       nowIso: () => NOW,
     });
 
@@ -102,6 +109,98 @@ describe("FridayAutoFixExecutionService", () => {
     expect(result.action.status).toBe("applied");
     expect(result.action.outcome).toBe("success");
     expect(result.rollbackAttempted).toBe(false);
+  });
+
+  it("honors injected executors and verifiers for supported kinds", async () => {
+    const actionRepo = createFridayAutoFixActionRepository();
+    actionRepo.insert(db.writer, {
+      actionId: "action-disable-001",
+      incidentId: "inc-001",
+      userId: "test-user",
+      riskTier: 0,
+      plan: {
+        title: "Disable skill",
+        summary: "Disable skill-x",
+        steps: [
+          {
+            stepId: "step-disable-001",
+            kind: "disable_skill",
+            target: "skill-x",
+            payload: {},
+            verify: { method: "error_absent", timeoutMs: 5000 },
+          },
+        ],
+        evidence: {
+          fingerprint: "sig-abc",
+          matchedLessonIds: [],
+          diagnosisId: "diag-001",
+          recurrenceCount: 1,
+        },
+      },
+      status: "planned",
+      outcome: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    const executed: string[] = [];
+    const verified: string[] = [];
+    const overrideService = createFridayAutoFixExecutionService({
+      db,
+      actionRepo,
+      incidentRepo: createFridayErrorIncidentRepository(),
+      diagnosisRepo: createFridayDiagnosisRecordRepository(),
+      rollbackService: createFridayAutoFixRollbackService({
+        db,
+        actionRepo,
+        nowIso: () => NOW,
+      }),
+      nowIso: () => NOW,
+      stepExecutors: {
+        disable_skill: async (step) => {
+          executed.push(step.stepId);
+          return true;
+        },
+      },
+      stepVerifiers: {
+        disable_skill: async (step) => {
+          verified.push(step.stepId);
+          return true;
+        },
+      },
+    });
+
+    const result = await overrideService.execute("action-disable-001");
+
+    expect(result.success).toBe(true);
+    expect(executed).toEqual(["step-disable-001"]);
+    expect(verified).toEqual(["step-disable-001"]);
+  });
+
+  it("fails closed when an injected executor rejects a step kind", async () => {
+    const failClosedService = createFridayAutoFixExecutionService({
+      db,
+      actionRepo: createFridayAutoFixActionRepository(),
+      incidentRepo: createFridayErrorIncidentRepository(),
+      diagnosisRepo: createFridayDiagnosisRecordRepository(),
+      rollbackService: createFridayAutoFixRollbackService({
+        db,
+        actionRepo: createFridayAutoFixActionRepository(),
+        nowIso: () => NOW,
+      }),
+      nowIso: () => NOW,
+      stepExecutors: {
+        retry_node: async () => false,
+      },
+    });
+
+    const result = await failClosedService.execute("action-001");
+
+    expect(result.success).toBe(false);
+    expect(result.rollbackAttempted).toBe(false);
+    expect(result.action.status).toBe("applied");
+    expect(result.action.outcome).toBe("failed");
+    expect(result.errorMessage).toContain("failed during execution");
   });
 
   it("marks incident as mitigated on success", async () => {
@@ -266,6 +365,14 @@ describe("FridayAutoFixExecutionService", () => {
         actionRepo,
         incidentRepo,
         diagnosisRepo,
+        rollbackService: createFridayAutoFixRollbackService({
+          db,
+          actionRepo,
+          nowIso: () => NOW,
+          stepExecutors: {
+            apply_config_patch: async () => true,
+          },
+        }),
         nowIso: () => NOW,
         stepVerifiers: {
           apply_config_patch: () => false, // Verification fails
@@ -348,6 +455,11 @@ describe("FridayAutoFixExecutionService", () => {
         actionRepo,
         incidentRepo,
         diagnosisRepo,
+        rollbackService: createFridayAutoFixRollbackService({
+          db,
+          actionRepo,
+          nowIso: () => NOW,
+        }),
         nowIso: () => NOW,
         stepVerifiers: {
           retry_node: () => false, // Verification fails
@@ -362,7 +474,7 @@ describe("FridayAutoFixExecutionService", () => {
       expect(result.rollbackSucceeded).toBe(false);
       expect(result.action.status).toBe("applied");
       expect(result.action.outcome).toBe("failed");
-      expect(result.errorMessage).toContain("Verification failed");
+      expect(result.errorMessage).toContain("failed verification");
     });
   });
 });

@@ -850,6 +850,46 @@ describe("Issue 3 (R2): End-to-end workflow execution flows", () => {
 
   // ── Retry flow: start → fail → retryRun → succeed → complete ──
 
+  it("persists dead-ended conditional nodes as cancelled and still completes the run", async () => {
+    const graph = makeGraph(
+      "wf-dead-ended-conditional",
+      "wv-dead-ended-conditional",
+      [
+        { id: "A" },
+        { id: "B" },
+        { id: "C" },
+      ],
+      [
+        {
+          id: "e1",
+          source: "A",
+          target: "B",
+          condition: '$steps.A.status == "failed"',
+        },
+        { id: "e2", source: "A", target: "C" },
+      ],
+      "continue_on_error",
+    );
+    const { workflowId, versionId } = seedWorkflow(graph);
+    const svc = buildService();
+
+    const runEntity = await svc.startRun({
+      workflowId,
+      workflowVersionId: versionId,
+      triggerType: "manual",
+    });
+
+    await settle(200);
+
+    const run = svc.getRun(runEntity.id);
+    expect(run).not.toBeNull();
+    expect(run!.status).toBe("completed");
+
+    const nodes = svc.getRunNodes(runEntity.id);
+    expect(nodes.find((node) => node.nodeId === "B")?.status).toBe("cancelled");
+    expect(nodes.find((node) => node.nodeId === "C")?.status).toBe("completed");
+  });
+
   it("retry flow: start run → node fails → retryRun → node succeeds → run completes", async () => {
     const graph = makeGraph(
       "wf-retry-e2e",

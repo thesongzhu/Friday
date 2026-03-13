@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFridayWorkflowDagScheduler } from "#workflows";
 import { createFridayExpressionEvaluator } from "#workflows";
 import type { FridayCompiledWorkflowGraphV2 } from "#workflows";
@@ -8,6 +8,10 @@ import type { FridayExpressionContext } from "#workflows";
 describe("FridayWorkflowDagScheduler", () => {
   const scheduler = createFridayWorkflowDagScheduler();
   const exprEval = createFridayExpressionEvaluator();
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   function makeGraph(
     nodes: Array<{ id: string; type?: string }>,
@@ -179,6 +183,75 @@ describe("FridayWorkflowDagScheduler", () => {
       exprEval,
     );
     expect(ready).not.toContain("B");
+  });
+
+  it("reports nodes as dead-ended when all conditional predecessors evaluate false", () => {
+    const graph = makeGraph(
+      [{ id: "A" }, { id: "B" }],
+      [
+        {
+          id: "e1",
+          source: "A",
+          target: "B",
+          condition: '$steps.A.status == "failed"',
+        },
+      ],
+    );
+    const adj = scheduler.buildAdjacency(graph);
+    const ctx: FridayExpressionContext = {
+      inputs: {},
+      steps: {
+        A: {
+          output: { status: "completed" },
+          status: "completed",
+        },
+      },
+    };
+    const statuses = new Map<string, NodeAttemptStatus>([
+      ["A", "completed"],
+    ]);
+
+    const result = scheduler.computeSchedulingResult(
+      adj,
+      statuses,
+      graph,
+      ctx,
+      exprEval,
+    );
+
+    expect(result.readyNodes).not.toContain("B");
+    expect(result.deadEndedNodes).toContain("B");
+  });
+
+  it("warns when condition evaluation fails and treats the edge as disabled", () => {
+    const graph = makeGraph(
+      [{ id: "A" }, { id: "B" }],
+      [
+        {
+          id: "e1",
+          source: "A",
+          target: "B",
+          condition: "$inputs.bad == ",
+        },
+      ],
+    );
+    const adj = scheduler.buildAdjacency(graph);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const statuses = new Map<string, NodeAttemptStatus>([
+      ["A", "completed"],
+    ]);
+
+    const result = scheduler.computeSchedulingResult(
+      adj,
+      statuses,
+      graph,
+      emptyCtx,
+      exprEval,
+    );
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(result.readyNodes).not.toContain("B");
+    expect(result.deadEndedNodes).toContain("B");
   });
 
   it("entry nodes computation", () => {
