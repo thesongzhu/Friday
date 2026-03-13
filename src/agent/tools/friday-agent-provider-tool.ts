@@ -1,3 +1,12 @@
+/**
+ * Agent Provider Tool — Manage LLM providers from within the agent runtime.
+ *
+ * Allows the agent to list, create, update, delete providers, and handle OAuth
+ * flows for providers like Anthropic (Claude Max/Pro).
+ *
+ * @module agent/tools/friday-agent-provider-tool
+ */
+
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
 import type { FridayProviderService } from "../../providers/services/friday-provider-service.types.js";
 import type {
@@ -5,36 +14,34 @@ import type {
   FridayProviderAuthMode,
   FridayProviderKind,
 } from "../../providers/model/friday-provider.types.js";
-import { isFridayProviderKind } from "../../providers/model/friday-provider-catalog.js";
-import { detectFridayProviderKindFromApiKey } from "../../providers/model/friday-provider-catalog.js";
-import { FRIDAY_PROVIDER_KINDS, FRIDAY_PROVIDER_APIS } from "../../providers/model/friday-provider.types.js";
 import {
   errorResult,
   jsonResult,
-  readBooleanParam,
-  readRecordParam,
-  readStringArrayParam,
   readStringParam,
+  readBooleanParam,
 } from "./friday-agent-tool-helpers.js";
 
-// ─── Constants ───
+// ─── Types ───
+
+export interface CreateFridayAgentProviderToolOptions {
+  providerService: FridayProviderService;
+}
 
 type ProviderAction =
   | "list"
   | "get"
-  | "detect"
   | "create"
   | "update"
   | "delete"
   | "oauth_init"
   | "oauth_complete"
   | "set_default"
-  | "validate";
+  | "validate"
+  | "routing";
 
 const VALID_ACTIONS = new Set<ProviderAction>([
   "list",
   "get",
-  "detect",
   "create",
   "update",
   "delete",
@@ -42,6 +49,15 @@ const VALID_ACTIONS = new Set<ProviderAction>([
   "oauth_complete",
   "set_default",
   "validate",
+  "routing",
+]);
+
+const VALID_KINDS = new Set<FridayProviderKind>([
+  "openai",
+  "anthropic",
+  "google",
+  "ollama",
+  "openai-compatible",
 ]);
 
 const VALID_AUTH_MODES = new Set<FridayProviderAuthMode>([
@@ -51,11 +67,13 @@ const VALID_AUTH_MODES = new Set<FridayProviderAuthMode>([
   "none",
 ]);
 
-// ─── Types ───
-
-export interface CreateFridayAgentProviderToolOptions {
-  providerService: FridayProviderService;
-}
+const VALID_APIS = new Set<FridayProviderApi>([
+  "openai-completions",
+  "openai-responses",
+  "anthropic-messages",
+  "google-generative-ai",
+  "ollama",
+]);
 
 // ─── Factory ───
 
@@ -67,73 +85,72 @@ export function createFridayAgentProviderTool(
   return {
     name: "provider",
     description:
-      "Manage LLM providers and model routing. " +
-      "Actions: list (list all providers), get (get provider by ID), detect (auto-detect provider type from API key), " +
-      "create (create new provider), update (update existing provider), delete (delete provider), " +
-      "oauth_init (start OAuth flow, returns authorization URL), oauth_complete (complete OAuth with code), " +
-      "set_default (set default provider/model for routing), validate (validate provider connection).",
+      "Manage LLM providers (OpenAI, Anthropic, Google, Ollama). " +
+      "Actions: list (show all providers), get (single provider by ID), " +
+      "create (add new provider), update (modify provider), delete (remove provider), " +
+      "oauth_init (start OAuth flow for Claude Max/Pro - returns authorization URL), " +
+      "oauth_complete (finish OAuth with authorization code), " +
+      "set_default (set default provider and model), " +
+      "validate (test provider connection), " +
+      "routing (get current routing config).",
     parameters: {
       properties: {
         action: {
           type: "string",
           enum: Array.from(VALID_ACTIONS),
-          description: "Provider action to perform.",
+          description: "Provider management action.",
         },
         providerId: {
           type: "string",
-          description: "Provider ID (required for get, update, delete, oauth_init, oauth_complete, validate).",
+          description: "Provider ID (required for get/update/delete/oauth_init/oauth_complete/set_default/validate).",
         },
         kind: {
           type: "string",
-          enum: Array.from(FRIDAY_PROVIDER_KINDS),
-          description: "Provider kind (required for create). E.g., openai, anthropic, ollama.",
+          enum: Array.from(VALID_KINDS),
+          description: "Provider kind (required for create): openai, anthropic, google, ollama, openai-compatible.",
         },
         name: {
           type: "string",
-          description: "Display name for the provider (required for create, optional for update).",
+          description: "Display name for create/update.",
         },
         baseUrl: {
           type: "string",
-          description: "Base URL for the provider API (required for create, optional for update).",
-        },
-        apiKey: {
-          type: "string",
-          description: "API key or $ENV_VAR reference. Use $ENV_VAR syntax to reference environment variables.",
-        },
-        api: {
-          type: "string",
-          enum: Array.from(FRIDAY_PROVIDER_APIS),
-          description: "API protocol (openai-completions, openai-responses, anthropic-messages, google-generative-ai, ollama).",
+          description: "API base URL for create/update.",
         },
         authMode: {
           type: "string",
-          enum: ["api-key", "bearer-token", "oauth", "none"],
-          description: "Authentication mode.",
+          enum: Array.from(VALID_AUTH_MODES),
+          description: "Authentication mode: api-key, bearer-token, oauth, none.",
+        },
+        api: {
+          type: "string",
+          enum: Array.from(VALID_APIS),
+          description: "API format: openai-completions, openai-responses, anthropic-messages, google-generative-ai, ollama.",
+        },
+        apiKey: {
+          type: "string",
+          description: "API key for create/update. Use $ENV_VAR syntax for environment variable reference.",
         },
         supportedModels: {
           type: "array",
           items: { type: "string" },
-          description: "List of supported model identifiers.",
+          description: "List of supported model IDs for create/update.",
         },
         defaultModel: {
           type: "string",
-          description: "Default model to use for this provider.",
-        },
-        headers: {
-          type: "object",
-          description: "Additional HTTP headers to send with requests.",
+          description: "Default model ID for create/update/set_default.",
         },
         enabled: {
           type: "boolean",
-          description: "Whether the provider is enabled.",
+          description: "Whether the provider is enabled (default: true).",
         },
-        authorizationCode: {
+        code: {
           type: "string",
-          description: "OAuth authorization code (required for oauth_complete).",
+          description: "OAuth authorization code for oauth_complete. Format: 'code' or 'code#state'.",
         },
         state: {
           type: "string",
-          description: "OAuth state parameter (optional for oauth_complete).",
+          description: "OAuth state for oauth_complete (if not included in code).",
         },
       },
       required: ["action"],
@@ -141,7 +158,7 @@ export function createFridayAgentProviderTool(
 
     async execute(
       args: Record<string, unknown>,
-      _signal: AbortSignal,
+      signal: AbortSignal,
     ): Promise<FridayAgentToolResult> {
       const action = readStringParam(args, "action", { required: true }) as ProviderAction;
 
@@ -157,8 +174,6 @@ export function createFridayAgentProviderTool(
             return await handleList();
           case "get":
             return await handleGet(args);
-          case "detect":
-            return await handleDetect(args);
           case "create":
             return await handleCreate(args);
           case "update":
@@ -173,40 +188,28 @@ export function createFridayAgentProviderTool(
             return await handleSetDefault(args);
           case "validate":
             return await handleValidate(args);
+          case "routing":
+            return await handleRouting();
           default:
             return errorResult(`Unknown provider action: ${action as string}`);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        if (message.includes("aborted") || message.includes("abort")) {
+          return errorResult("Provider action aborted.");
+        }
         return errorResult(`Provider error: ${message}`);
       }
     },
   };
 
-  // ─── Action handlers ───
+  // ─── Action Handlers ───
 
   async function handleList(): Promise<FridayAgentToolResult> {
     const providers = await providerService.listProviders();
-    const routing = await providerService.getRoutingConfig();
-
     return jsonResult({
-      providers: providers.map((p) => ({
-        id: p.id,
-        kind: p.kind,
-        name: p.name,
-        baseUrl: p.baseUrl,
-        enabled: p.enabled,
-        defaultModel: p.defaultModel,
-        authMode: p.config.authMode,
-        api: p.config.api,
-        validationStatus: p.config.validation?.status ?? "never",
-        isDefault: p.id === routing.defaultProviderId,
-      })),
-      routing: {
-        defaultProviderId: routing.defaultProviderId,
-        defaultModel: routing.defaultModel,
-        fallbackProviderIds: routing.fallbackProviderIds,
-      },
+      count: providers.length,
+      providers: providers.map(sanitizeProvider),
     });
   }
 
@@ -215,188 +218,127 @@ export function createFridayAgentProviderTool(
     const provider = await providerService.getProvider(providerId);
 
     if (!provider) {
-      return errorResult(`Provider not found: ${providerId}`);
+      return errorResult(`Provider "${providerId}" not found.`);
     }
 
-    return jsonResult({
-      id: provider.id,
-      kind: provider.kind,
-      name: provider.name,
-      baseUrl: provider.baseUrl,
-      enabled: provider.enabled,
-      defaultModel: provider.defaultModel,
-      config: {
-        api: provider.config.api,
-        authMode: provider.config.authMode,
-        supportedModels: provider.config.supportedModels,
-        headers: provider.config.headers,
-        validation: provider.config.validation,
-      },
-      createdAt: provider.createdAt,
-      updatedAt: provider.updatedAt,
-    });
-  }
-
-  async function handleDetect(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
-    const apiKey = readStringParam(args, "apiKey", { required: true });
-    const detection = detectFridayProviderKindFromApiKey(apiKey);
-
-    return jsonResult({
-      detectedKind: detection.kind,
-      confidence: detection.confidence,
-      message: `Detected provider kind '${detection.kind}' with ${detection.confidence} confidence.`,
-    });
+    return jsonResult({ provider: sanitizeProvider(provider) });
   }
 
   async function handleCreate(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
-    const kind = readStringParam(args, "kind", { required: true });
-    const name = readStringParam(args, "name", { required: true });
-    const baseUrl = readStringParam(args, "baseUrl", { required: true });
-    const api = readStringParam(args, "api", { required: true }) as FridayProviderApi;
-    const authMode = readStringParam(args, "authMode", { required: true }) as FridayProviderAuthMode;
+    const kind = readStringParam(args, "kind", { required: true }) as FridayProviderKind;
+    if (!VALID_KINDS.has(kind)) {
+      return errorResult(`Invalid kind "${kind}". Valid: ${Array.from(VALID_KINDS).join(", ")}`);
+    }
+
+    const name = readStringParam(args, "name") ?? `${kind} Provider`;
+    const baseUrl = readStringParam(args, "baseUrl") ?? getDefaultBaseUrl(kind);
+    const authMode = (readStringParam(args, "authMode") ?? "api-key") as FridayProviderAuthMode;
+    const api = (readStringParam(args, "api") ?? getDefaultApi(kind)) as FridayProviderApi;
     const apiKey = readStringParam(args, "apiKey");
-    const supportedModels = readStringArrayParam(args, "supportedModels") ?? [];
-    const defaultModel = readStringParam(args, "defaultModel");
-    const headers = readRecordParam(args, "headers");
-    const enabled = readBooleanParam(args, "enabled");
-
-    if (!isFridayProviderKind(kind)) {
-      return errorResult(
-        `Invalid provider kind "${kind}". Valid kinds: ${FRIDAY_PROVIDER_KINDS.slice(0, 10).join(", ")}...`,
-      );
-    }
-
-    if (!VALID_AUTH_MODES.has(authMode)) {
-      return errorResult(
-        `Invalid auth mode "${authMode}". Valid: ${Array.from(VALID_AUTH_MODES).join(", ")}`,
-      );
-    }
+    const supportedModels = (args.supportedModels as string[]) ?? getDefaultModels(kind);
+    const defaultModel = readStringParam(args, "defaultModel") ?? supportedModels[0];
+    const enabled = readBooleanParam(args, "enabled") ?? true;
 
     const provider = await providerService.createProvider({
-      kind: kind as FridayProviderKind,
+      kind,
       name,
       baseUrl,
-      api,
       authMode,
+      api,
       apiKey,
       supportedModels,
       defaultModel,
-      headers,
       enabled,
     });
 
     return jsonResult({
-      success: true,
-      message: `Provider "${provider.name}" created successfully.`,
-      provider: {
-        id: provider.id,
-        kind: provider.kind,
-        name: provider.name,
-        baseUrl: provider.baseUrl,
-        enabled: provider.enabled,
-        authMode: provider.config.authMode,
-        validationStatus: provider.config.validation?.status ?? "never",
-      },
+      created: true,
+      provider: sanitizeProvider(provider),
     });
   }
 
   async function handleUpdate(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
     const providerId = readStringParam(args, "providerId", { required: true });
+
+    const patch: Record<string, unknown> = {};
     const name = readStringParam(args, "name");
     const baseUrl = readStringParam(args, "baseUrl");
-    const api = readStringParam(args, "api") as FridayProviderApi | undefined;
     const authMode = readStringParam(args, "authMode") as FridayProviderAuthMode | undefined;
+    const api = readStringParam(args, "api") as FridayProviderApi | undefined;
     const apiKey = readStringParam(args, "apiKey");
-    const supportedModels = readStringArrayParam(args, "supportedModels");
+    const supportedModels = args.supportedModels as string[] | undefined;
     const defaultModel = readStringParam(args, "defaultModel");
-    const headers = readRecordParam(args, "headers");
     const enabled = readBooleanParam(args, "enabled");
 
-    if (authMode && !VALID_AUTH_MODES.has(authMode)) {
-      return errorResult(
-        `Invalid auth mode "${authMode}". Valid: ${Array.from(VALID_AUTH_MODES).join(", ")}`,
-      );
-    }
+    if (name !== undefined) patch.name = name;
+    if (baseUrl !== undefined) patch.baseUrl = baseUrl;
+    if (authMode !== undefined) patch.authMode = authMode;
+    if (api !== undefined) patch.api = api;
+    if (apiKey !== undefined) patch.apiKey = apiKey;
+    if (supportedModels !== undefined) patch.supportedModels = supportedModels;
+    if (defaultModel !== undefined) patch.defaultModel = defaultModel;
+    if (enabled !== undefined) patch.enabled = enabled;
 
-    const provider = await providerService.updateProvider(providerId, {
-      name,
-      baseUrl,
-      api,
-      authMode,
-      apiKey,
-      supportedModels,
-      defaultModel,
-      headers,
-      enabled,
-    });
+    const provider = await providerService.updateProvider(providerId, patch);
 
     return jsonResult({
-      success: true,
-      message: `Provider "${provider.name}" updated successfully.`,
-      provider: {
-        id: provider.id,
-        kind: provider.kind,
-        name: provider.name,
-        baseUrl: provider.baseUrl,
-        enabled: provider.enabled,
-        authMode: provider.config.authMode,
-        validationStatus: provider.config.validation?.status ?? "never",
-      },
+      updated: true,
+      provider: sanitizeProvider(provider),
     });
   }
 
   async function handleDelete(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
     const providerId = readStringParam(args, "providerId", { required: true });
 
-    // Get provider name before deletion for the message
-    const provider = await providerService.getProvider(providerId);
-    if (!provider) {
-      return errorResult(`Provider not found: ${providerId}`);
-    }
-
     await providerService.deleteProvider(providerId);
 
     return jsonResult({
-      success: true,
-      message: `Provider "${provider.name}" deleted successfully.`,
+      deleted: true,
+      providerId,
     });
   }
 
   async function handleOAuthInit(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
     const providerId = readStringParam(args, "providerId", { required: true });
 
-    const initiation = await providerService.initiateOAuthLogin({ providerId });
+    const result = await providerService.initiateOAuthLogin({ providerId });
 
     return jsonResult({
-      success: true,
-      message: "OAuth flow initiated. Direct the user to the authorization URL.",
-      authorizationUrl: initiation.authorizationUrl,
-      state: initiation.state,
-      providerId: initiation.providerId,
-      oauthProvider: initiation.oauthProvider,
-      instructions: "User must visit the authorization URL and authorize the application. " +
-        "After authorization, they will receive a code to complete the flow with oauth_complete.",
+      authorizationUrl: result.authorizationUrl,
+      state: result.state,
+      scopes: result.scopes,
+      providerId: result.providerId,
+      instructions:
+        "1. Open the authorizationUrl in your browser\n" +
+        "2. Log in with your Claude Max/Pro account\n" +
+        "3. Click 'Allow' to authorize\n" +
+        "4. Copy the code shown (format: code#state)\n" +
+        "5. Call oauth_complete with the code",
     });
   }
 
   async function handleOAuthComplete(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
     const providerId = readStringParam(args, "providerId", { required: true });
-    const authorizationCode = readStringParam(args, "authorizationCode", { required: true });
+    const code = readStringParam(args, "code", { required: true });
     const state = readStringParam(args, "state");
 
     const result = await providerService.completeOAuthLogin({
       providerId,
-      authorizationCode,
+      authorizationCode: code,
       state,
     });
 
+    // Fetch the updated provider after OAuth completion
+    const provider = await providerService.getProvider(result.providerId);
+
     return jsonResult({
       success: true,
-      message: `OAuth login completed for provider. Connected: ${result.connected}`,
       providerId: result.providerId,
       oauthProvider: result.oauthProvider,
       connected: result.connected,
       expiresAt: result.expiresAt,
+      provider: provider ? sanitizeProvider(provider) : null,
+      message: "OAuth completed successfully. Provider is now configured and ready to use.",
     });
   }
 
@@ -404,51 +346,112 @@ export function createFridayAgentProviderTool(
     const providerId = readStringParam(args, "providerId", { required: true });
     const defaultModel = readStringParam(args, "defaultModel");
 
-    // Verify provider exists
-    const provider = await providerService.getProvider(providerId);
-    if (!provider) {
-      return errorResult(`Provider not found: ${providerId}`);
-    }
-
-    // Get current routing config and update
-    const currentRouting = await providerService.getRoutingConfig();
-    const updatedRouting = await providerService.setRoutingConfig({
-      ...currentRouting,
+    const routing = await providerService.setRoutingConfig({
       defaultProviderId: providerId,
-      defaultModel: defaultModel ?? currentRouting.defaultModel,
+      defaultModel,
+      fallbackProviderIds: [],
     });
 
     return jsonResult({
       success: true,
-      message: `Default provider set to "${provider.name}"${defaultModel ? ` with model "${defaultModel}"` : ""}.`,
-      routing: {
-        defaultProviderId: updatedRouting.defaultProviderId,
-        defaultModel: updatedRouting.defaultModel,
-        fallbackProviderIds: updatedRouting.fallbackProviderIds,
-      },
+      routing,
+      message: `Default provider set to "${providerId}"${defaultModel ? ` with model "${defaultModel}"` : ""}.`,
     });
   }
 
   async function handleValidate(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
     const providerId = readStringParam(args, "providerId", { required: true });
 
-    const validationState = await providerService.validateProvider(providerId);
-
-    const provider = await providerService.getProvider(providerId);
-    const providerName = provider?.name ?? providerId;
-
-    if (validationState.status === "ok") {
-      return jsonResult({
-        success: true,
-        message: `Provider "${providerName}" validation passed.`,
-        validation: validationState,
-      });
-    }
+    const validation = await providerService.validateProvider(providerId);
 
     return jsonResult({
-      success: false,
-      message: `Provider "${providerName}" validation failed: ${validationState.errorMessage ?? "Unknown error"}`,
-      validation: validationState,
+      providerId,
+      status: validation.status,
+      checkedAt: validation.checkedAt,
+      errorMessage: validation.errorMessage,
     });
+  }
+
+  async function handleRouting(): Promise<FridayAgentToolResult> {
+    const routing = await providerService.getRoutingConfig();
+
+    return jsonResult({ routing });
+  }
+
+  // ─── Helpers ───
+
+  function sanitizeProvider(provider: {
+    id: string;
+    kind: string;
+    name: string;
+    baseUrl: string;
+    enabled: boolean;
+    defaultModel?: string;
+    config: {
+      api: string;
+      authMode: string;
+      supportedModels?: string[];
+      validation?: { status: string; checkedAt?: string; errorMessage?: string };
+    };
+  }): Record<string, unknown> {
+    // Never expose API keys in output
+    return {
+      id: provider.id,
+      kind: provider.kind,
+      name: provider.name,
+      baseUrl: provider.baseUrl,
+      enabled: provider.enabled,
+      defaultModel: provider.defaultModel,
+      api: provider.config.api,
+      authMode: provider.config.authMode,
+      supportedModels: provider.config.supportedModels ?? [],
+      validation: provider.config.validation ?? { status: "never" },
+    };
+  }
+
+  function getDefaultBaseUrl(kind: FridayProviderKind): string {
+    switch (kind) {
+      case "openai":
+        return "https://api.openai.com";
+      case "anthropic":
+        return "https://api.anthropic.com";
+      case "google":
+        return "https://generativelanguage.googleapis.com";
+      case "ollama":
+        return "http://localhost:11434";
+      default:
+        return "";
+    }
+  }
+
+  function getDefaultApi(kind: FridayProviderKind): FridayProviderApi {
+    switch (kind) {
+      case "openai":
+      case "openai-compatible":
+        return "openai-completions";
+      case "anthropic":
+        return "anthropic-messages";
+      case "google":
+        return "google-generative-ai";
+      case "ollama":
+        return "ollama";
+      default:
+        return "openai-completions";
+    }
+  }
+
+  function getDefaultModels(kind: FridayProviderKind): string[] {
+    switch (kind) {
+      case "openai":
+        return ["gpt-4o", "gpt-4o-mini", "gpt-4.1"];
+      case "anthropic":
+        return ["claude-sonnet-4-20250514", "claude-opus-4-20250514"];
+      case "google":
+        return ["gemini-2.0-flash", "gemini-1.5-pro"];
+      case "ollama":
+        return ["llama3.2:3b", "qwen2.5-coder:7b"];
+      default:
+        return [];
+    }
   }
 }
