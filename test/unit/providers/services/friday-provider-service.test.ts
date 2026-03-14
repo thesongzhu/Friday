@@ -513,7 +513,7 @@ describe("FridayProviderService", () => {
         fallbackProviderIds: ["test-id-0002"],
       });
 
-      const route = await service.resolveRoute("claude-opus-4-6");
+      const route = await service.resolveRoute("claude-opus-4");
       expect(route.provider.id).toBe("test-id-0002");
       expect(route.model).toBe("claude-opus-4-20250514");
     });
@@ -546,6 +546,28 @@ describe("FridayProviderService", () => {
       });
 
       await expect(service.resolveRoute("claude-opus-4-6")).rejects.toMatchObject({
+        code: "PROVIDER_NO_CANDIDATES",
+      });
+    });
+
+    it("does not downgrade a requested sibling model to a broader supported model", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+
+      await service.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: [],
+      });
+
+      await expect(service.resolveRoute("gpt-4o-mini")).rejects.toMatchObject({
         code: "PROVIDER_NO_CANDIDATES",
       });
     });
