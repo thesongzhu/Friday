@@ -323,6 +323,75 @@ describe("createFridayProviderInferenceClient", () => {
     }
   });
 
+  it("infer surfaces OpenAI Responses refusals as provider errors", async () => {
+    const mockProfile: FridayProviderProfile = {
+      id: "provider-responses",
+      kind: "openai",
+      name: "Responses Provider",
+      baseUrl: "https://api.test.com",
+      enabled: true,
+      defaultModel: "gpt-4o",
+      config: {
+        api: "openai-responses",
+        authMode: "api-key",
+        keySource: { kind: "none" },
+        supportedModels: ["gpt-4o"],
+      },
+      createdAt: "2025-01-01T00:00:00Z",
+      updatedAt: "2025-01-01T00:00:00Z",
+    };
+
+    const route: FridayResolvedProviderRoute = {
+      provider: mockProfile,
+      model: "gpt-4o",
+    };
+
+    const mockProvider: FridayProviderService = {
+      listProviders: vi.fn(),
+      getProvider: vi.fn(),
+      createProvider: vi.fn(),
+      updateProvider: vi.fn(),
+      deleteProvider: vi.fn(),
+      validateProvider: vi.fn(),
+      getRoutingConfig: vi.fn(),
+      setRoutingConfig: vi.fn(),
+      resolveRoute: vi.fn(),
+      runWithFallback: vi.fn().mockImplementation(async (params: {
+        run: (route: FridayResolvedProviderRoute, credential: string | null) => Promise<unknown>;
+      }) => {
+        const result = await params.run(route, "test-key");
+        return { result, route, attempts: [] };
+      }),
+    } as unknown as FridayProviderService;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        output: [
+          {
+            type: "message",
+            content: [{ type: "refusal", refusal: "I'm sorry, I can't assist with that request." }],
+          },
+        ],
+      }),
+    });
+
+    try {
+      const client = createFridayProviderInferenceClient({
+        providerService: mockProvider,
+      });
+
+      await expect(
+        client.infer({
+          prompt: { system: "test", user: "test" },
+        }),
+      ).rejects.toThrow("Provider refused request");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("infer with sessionContext sends OAuth headers in compaction summarize calls", async () => {
     const oauthProfile: FridayProviderProfile = {
       id: "oauth-provider-session",

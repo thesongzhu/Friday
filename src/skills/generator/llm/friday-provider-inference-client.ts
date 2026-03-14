@@ -237,6 +237,37 @@ function extractTextFromResponse(
   }
 }
 
+function extractRefusalFromResponse(
+  api: FridayProviderApi,
+  body: Record<string, unknown>,
+): string | undefined {
+  switch (api) {
+    case "openai-completions": {
+      const choices = body["choices"] as
+        | Array<{ message?: { refusal?: string | null } }>
+        | undefined;
+      const refusal = choices?.[0]?.message?.refusal;
+      return typeof refusal === "string" && refusal.trim().length > 0
+        ? refusal
+        : undefined;
+    }
+    case "openai-responses": {
+      const output = body["output"] as
+        | Array<{ type?: string; content?: Array<{ type?: string; refusal?: string }> }>
+        | undefined;
+      const messageItem = output?.find((o) => o.type === "message");
+      const refusalPart = messageItem?.content?.find((c) => c.type === "refusal");
+      return typeof refusalPart?.refusal === "string" && refusalPart.refusal.trim().length > 0
+        ? refusalPart.refusal
+        : undefined;
+    }
+    case "anthropic-messages":
+    case "google-generative-ai":
+    case "ollama":
+      return undefined;
+  }
+}
+
 // ─── Parse JSON from model output ───
 
 function parseJsonFromText<T>(rawText: string): T {
@@ -471,6 +502,14 @@ export function createFridayProviderInferenceClient(
           const rawText = extractTextFromResponse(api, responseBody);
 
           if (!rawText) {
+            const refusal = extractRefusalFromResponse(api, responseBody);
+            if (refusal) {
+              throw new FridayDomainError(
+                "PROVIDER_ERROR",
+                `Provider refused request: ${refusal.slice(0, 500)}`,
+                { httpStatus: 422 },
+              );
+            }
             throw new FridayDomainError("PROVIDER_ERROR", "Empty response from provider", { httpStatus: 502 });
           }
 

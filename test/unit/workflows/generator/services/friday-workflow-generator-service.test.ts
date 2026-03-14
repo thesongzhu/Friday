@@ -393,6 +393,61 @@ describe("FridayWorkflowGeneratorService", () => {
       expect(result.draft!.tests.length).toBeGreaterThanOrEqual(1);
       expect(result.draft!.tests[0]!.assertions.length).toBeGreaterThanOrEqual(1);
     });
+
+    it("falls back to deterministic visual and tests when auxiliary LLM calls fail", async () => {
+      const originalFetch = globalThis.fetch;
+      let callIdx = 0;
+      globalThis.fetch = vi.fn().mockImplementation(async () => {
+        callIdx++;
+        if (callIdx === 1) {
+          return {
+            ok: true,
+            json: async () => ({
+              choices: [{ message: { content: JSON.stringify(makeRequirementsResponse("ready_for_generation")) } }],
+            }),
+          } as Response;
+        }
+        if (callIdx === 2) {
+          return {
+            ok: true,
+            json: async () => ({
+              choices: [{ message: { content: JSON.stringify(makeSpecResponse()) } }],
+            }),
+          } as Response;
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { content: "" } }],
+          }),
+        } as Response;
+      });
+
+      try {
+        const result = await service.startSession({
+          goal: "Send emails",
+          userId: "u-1",
+          channel: "test",
+        });
+
+        expect(result.mode).toBe("preview_ready");
+        expect(result.session.status).toBe("ready_for_review");
+        expect(result.draft).toBeDefined();
+        expect(result.draft!.validation.ok).toBe(true);
+        expect(result.draft!.validation.issues).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ code: "VISUAL_FALLBACK", severity: "warning" }),
+            expect.objectContaining({ code: "TESTS_FALLBACK", severity: "warning" }),
+          ]),
+        );
+        const visualNodeIds = new Set(result.draft!.visual.nodes.map((n) => n.nodeId));
+        expect(visualNodeIds.has("__trigger__")).toBe(true);
+        expect(visualNodeIds.has("send")).toBe(true);
+        expect(result.draft!.tests.length).toBeGreaterThanOrEqual(1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe("submitTurn", () => {
