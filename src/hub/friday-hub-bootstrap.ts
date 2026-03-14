@@ -1250,6 +1250,7 @@ export async function createFridayHub(
     sessionService: hubSessionService,
     agentRuntimeGetter,
     mcpAdapter,
+    providerService,
     webSearchProvider: process.env.FRIDAY_SEARCH_PROVIDER,
     webSearchApiKey: process.env.FRIDAY_SERPER_API_KEY ?? process.env.FRIDAY_TAVILY_API_KEY,
   });
@@ -1827,6 +1828,7 @@ export async function createFridayHub(
         systemService,
         ssrfGuard: agentSsrfGuard,
         mcpAdapter,
+        providerService,
       });
       return createFridayAgentRuntime({
         db: stateRuntime!.sqlite,

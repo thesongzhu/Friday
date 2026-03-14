@@ -105,7 +105,7 @@ export function buildFridayAgentSystemPrompt(
     "- Provider/LLM management (switch model, add API key, configure OAuth): use provider tool\n" +
     "- Friday skills: use skills_list first to discover currently available skills, then use skill_run with the chosen skill ID\n" +
     "- Diagnosis, recovery, and self-healing review requests: prefer existing starter skills such as issue review, runtime snapshot, and repair-readiness summaries before generating anything new\n" +
-    "- For OAuth providers like Claude Max/Pro: use provider oauth_init, return URL to user, then provider oauth_complete\n" +
+    "- For OAuth providers like Claude Max/Pro: use provider oauth_init (it can auto-create or reuse the Anthropic OAuth provider), return URL to user, then provider oauth_complete; if the user asked to switch Friday to Claude, follow with provider set_default\n" +
     "- Send messages to users on other platforms: use message\n" +
     "- Schedule recurring or delayed tasks: use cron\n" +
     "- Complex multi-step tasks that benefit from delegation: use spawn_subagent\n" +
