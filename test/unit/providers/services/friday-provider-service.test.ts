@@ -485,6 +485,70 @@ describe("FridayProviderService", () => {
       const route = await service.resolveRoute("gpt-4o-mini");
       expect(route.model).toBe("gpt-4o-mini");
     });
+
+    it("resolves requested model aliases to the provider supported model", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await service.createProvider({
+        kind: "anthropic",
+        name: "Claude",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "api-key",
+        api: "anthropic-messages",
+        supportedModels: ["claude-opus-4-20250514"],
+        defaultModel: "claude-opus-4-20250514",
+        validateOnSave: false,
+      });
+
+      await service.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: ["test-id-0002"],
+      });
+
+      const route = await service.resolveRoute("claude-opus-4-6");
+      expect(route.provider.id).toBe("test-id-0002");
+      expect(route.model).toBe("claude-opus-4-20250514");
+    });
+
+    it("throws when no provider supports the requested model", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await service.createProvider({
+        kind: "anthropic",
+        name: "Claude",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "api-key",
+        api: "anthropic-messages",
+        supportedModels: ["claude-sonnet-4-20250514"],
+        defaultModel: "claude-sonnet-4-20250514",
+        validateOnSave: false,
+      });
+
+      await service.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: ["test-id-0002"],
+      });
+
+      await expect(service.resolveRoute("claude-opus-4-6")).rejects.toMatchObject({
+        code: "PROVIDER_NO_CANDIDATES",
+      });
+    });
   });
 
   describe("runWithFallback", () => {

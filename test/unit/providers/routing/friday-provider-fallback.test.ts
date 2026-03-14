@@ -109,7 +109,7 @@ describe("FridayProviderFallback", () => {
       expect(candidates).toHaveLength(1);
     });
 
-    it("uses requestedModel when provided", () => {
+    it("uses exact requestedModel match when supported", () => {
       const fb = createFridayProviderFallback();
       const providers = [makeProvider("p1")];
       const routing: FridayModelRoutingConfig = {
@@ -125,6 +125,125 @@ describe("FridayProviderFallback", () => {
       });
 
       expect(candidates[0].model).toBe("gpt-4o-mini");
+    });
+
+    it("matches requestedModel aliases using normalized prefix fallback", () => {
+      const fb = createFridayProviderFallback();
+      const providers = [
+        makeProvider(
+          "p1",
+          "anthropic",
+          true,
+          "claude-opus-4-20250514",
+          ["claude-opus-4-20250514", "claude-sonnet-4-20250514"],
+        ),
+      ];
+      const routing: FridayModelRoutingConfig = {
+        defaultProviderId: "p1",
+        fallbackProviderIds: [],
+      };
+
+      const candidates = fb.resolveCandidates({
+        routing,
+        providers,
+        requestedModel: "Claude_Opus_4_6",
+      });
+
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0].model).toBe("claude-opus-4-20250514");
+    });
+
+    it("skips unsupported default provider and promotes matching fallback", () => {
+      const fb = createFridayProviderFallback();
+      const providers = [
+        makeProvider("p1", "openai", true, "gpt-4o", ["gpt-4o"]),
+        makeProvider(
+          "p2",
+          "anthropic",
+          true,
+          "claude-opus-4-20250514",
+          ["claude-opus-4-20250514"],
+        ),
+      ];
+      const routing: FridayModelRoutingConfig = {
+        defaultProviderId: "p1",
+        fallbackProviderIds: ["p2"],
+      };
+
+      const candidates = fb.resolveCandidates({
+        routing,
+        providers,
+        requestedModel: "claude-opus-4-6",
+      });
+
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0].provider.id).toBe("p2");
+      expect(candidates[0].model).toBe("claude-opus-4-20250514");
+    });
+
+    it("returns no candidates when requestedModel is unsupported everywhere", () => {
+      const fb = createFridayProviderFallback();
+      const providers = [
+        makeProvider("p1", "openai", true, "gpt-4o", ["gpt-4o"]),
+        makeProvider("p2", "anthropic", true, "claude-sonnet-4-20250514", ["claude-sonnet-4-20250514"]),
+      ];
+      const routing: FridayModelRoutingConfig = {
+        defaultProviderId: "p1",
+        fallbackProviderIds: ["p2"],
+      };
+
+      const candidates = fb.resolveCandidates({
+        routing,
+        providers,
+        requestedModel: "claude-opus-4-6",
+      });
+
+      expect(candidates).toEqual([]);
+    });
+
+    it("keeps supportedModels order stable when multiple prefix matches exist", () => {
+      const fb = createFridayProviderFallback();
+      const providers = [
+        makeProvider(
+          "p1",
+          "anthropic",
+          true,
+          "claude-opus-4-20250528",
+          ["claude-opus-4-20250528", "claude-opus-4-20250514"],
+        ),
+      ];
+      const routing: FridayModelRoutingConfig = {
+        defaultProviderId: "p1",
+        fallbackProviderIds: [],
+      };
+
+      const candidates = fb.resolveCandidates({
+        routing,
+        providers,
+        requestedModel: "claude-opus-4-6",
+      });
+
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0].model).toBe("claude-opus-4-20250528");
+    });
+
+    it("treats blank requestedModel as no requested model", () => {
+      const fb = createFridayProviderFallback();
+      const providers = [makeProvider("p1", "openai", true, "provider-default", ["model-a", "model-b"])];
+      const routing: FridayModelRoutingConfig = {
+        defaultProviderId: "p1",
+        defaultModel: "routing-default",
+        fallbackProviderIds: [],
+      };
+
+      const candidates = fb.resolveCandidates({
+        routing,
+        providers,
+        requestedModel: "   ",
+      });
+
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0].model).toBe("routing-default");
     });
 
     it("falls back to routing.defaultModel when no requestedModel", () => {

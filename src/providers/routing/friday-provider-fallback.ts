@@ -110,6 +110,44 @@ function classifyProviderError(err: unknown): {
   return { reason: "unknown", status, code };
 }
 
+function normalizeModelId(input: string): string {
+  return input.trim().toLowerCase().replace(/_/g, "-").replace(/-+/g, "-");
+}
+
+function buildRequestedPrefixes(requested: string): string[] {
+  const parts = requested.split("-").filter(Boolean);
+  const out: string[] = [];
+  for (let i = parts.length; i >= 2; i -= 1) {
+    out.push(parts.slice(0, i).join("-"));
+  }
+  return out;
+}
+
+function resolveRequestedModelForProvider(
+  requestedModel: string,
+  supportedModels: string[],
+): string | null {
+  if (!requestedModel.trim()) return null;
+  if (supportedModels.length === 0) return null;
+
+  const req = normalizeModelId(requestedModel);
+  const normalized = supportedModels.map((raw) => ({
+    raw,
+    norm: normalizeModelId(raw),
+  }));
+
+  const exact = normalized.find((model) => model.norm === req);
+  if (exact) return exact.raw;
+
+  const prefixes = buildRequestedPrefixes(req);
+  for (const prefix of prefixes) {
+    const hit = normalized.find((model) => model.norm.startsWith(prefix));
+    if (hit) return hit.raw;
+  }
+
+  return null;
+}
+
 // ─── Fallback interface ───
 
 export interface FridayProviderFallback {
@@ -205,13 +243,23 @@ export function createFridayProviderFallback(
         const provider = providerMap.get(id);
         if (!provider || !provider.enabled) continue;
 
-        // Determine model: requested > routing default > provider default > first supported
+        const requested = requestedModel?.trim();
+        if (requested) {
+          const matched = resolveRequestedModelForProvider(
+            requested,
+            provider.config.supportedModels,
+          );
+          if (!matched) continue;
+          candidates.push({ provider, model: matched });
+          continue;
+        }
+
+        // Determine model: routing default > provider default > first supported
         const model =
-          requestedModel ??
-          routing.defaultModel ??
-          provider.defaultModel ??
-          provider.config.supportedModels[0] ??
-          "";
+          routing.defaultModel
+          ?? provider.defaultModel
+          ?? provider.config.supportedModels[0]
+          ?? "";
 
         candidates.push({ provider, model });
       }
