@@ -127,7 +127,7 @@ describe("FridayProviderFallback", () => {
       expect(candidates[0].model).toBe("gpt-4o-mini");
     });
 
-    it("matches requestedModel aliases using normalized prefix fallback", () => {
+    it("matches requestedModel aliases when provider support adds a numeric suffix", () => {
       const fb = createFridayProviderFallback();
       const providers = [
         makeProvider(
@@ -146,7 +146,7 @@ describe("FridayProviderFallback", () => {
       const candidates = fb.resolveCandidates({
         routing,
         providers,
-        requestedModel: "Claude_Opus_4_6",
+        requestedModel: "Claude_Opus_4",
       });
 
       expect(candidates).toHaveLength(1);
@@ -173,7 +173,7 @@ describe("FridayProviderFallback", () => {
       const candidates = fb.resolveCandidates({
         routing,
         providers,
-        requestedModel: "claude-opus-4-6",
+        requestedModel: "claude-opus-4",
       });
 
       expect(candidates).toHaveLength(1);
@@ -201,7 +201,26 @@ describe("FridayProviderFallback", () => {
       expect(candidates).toEqual([]);
     });
 
-    it("keeps supportedModels order stable when multiple prefix matches exist", () => {
+    it("does not downgrade a specific requested model to a broader sibling", () => {
+      const fb = createFridayProviderFallback();
+      const providers = [
+        makeProvider("p1", "openai", true, "gpt-4o", ["gpt-4o"]),
+      ];
+      const routing: FridayModelRoutingConfig = {
+        defaultProviderId: "p1",
+        fallbackProviderIds: [],
+      };
+
+      const candidates = fb.resolveCandidates({
+        routing,
+        providers,
+        requestedModel: "gpt-4o-mini",
+      });
+
+      expect(candidates).toEqual([]);
+    });
+
+    it("keeps supportedModels order stable when multiple numeric-suffix alias matches exist", () => {
       const fb = createFridayProviderFallback();
       const providers = [
         makeProvider(
@@ -220,7 +239,7 @@ describe("FridayProviderFallback", () => {
       const candidates = fb.resolveCandidates({
         routing,
         providers,
-        requestedModel: "claude-opus-4-6",
+        requestedModel: "claude-opus-4",
       });
 
       expect(candidates).toHaveLength(1);

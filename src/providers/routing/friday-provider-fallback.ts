@@ -114,13 +114,15 @@ function normalizeModelId(input: string): string {
   return input.trim().toLowerCase().replace(/_/g, "-").replace(/-+/g, "-");
 }
 
-function buildRequestedPrefixes(requested: string): string[] {
-  const parts = requested.split("-").filter(Boolean);
-  const out: string[] = [];
-  for (let i = parts.length; i >= 2; i -= 1) {
-    out.push(parts.slice(0, i).join("-"));
+function isNumericSuffixAliasMatch(
+  requestedModel: string,
+  supportedModel: string,
+): boolean {
+  if (!supportedModel.startsWith(`${requestedModel}-`)) {
+    return false;
   }
-  return out;
+  const suffix = supportedModel.slice(requestedModel.length + 1);
+  return /^\d[\d-]*$/.test(suffix);
 }
 
 function resolveRequestedModelForProvider(
@@ -139,11 +141,8 @@ function resolveRequestedModelForProvider(
   const exact = normalized.find((model) => model.norm === req);
   if (exact) return exact.raw;
 
-  const prefixes = buildRequestedPrefixes(req);
-  for (const prefix of prefixes) {
-    const hit = normalized.find((model) => model.norm.startsWith(prefix));
-    if (hit) return hit.raw;
-  }
+  const alias = normalized.find((model) => isNumericSuffixAliasMatch(req, model.norm));
+  if (alias) return alias.raw;
 
   return null;
 }
