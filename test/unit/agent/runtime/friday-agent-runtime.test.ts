@@ -141,6 +141,30 @@ describe("FridayAgentRuntime", () => {
     };
   }
 
+  function createSuccessfulWebSearchTool(options?: {
+    metadata?: Record<string, unknown>;
+    content?: string;
+  }): FridayAgentToolDefinition {
+    return {
+      name: "web_search",
+      description: "Successful web search tool",
+      parameters: {
+        properties: {
+          query: { type: "string" },
+        },
+        required: ["query"],
+      },
+      async execute() {
+        return {
+          content:
+            options?.content
+            ?? "1. Headline\n   URL: https://example.com/1\n   Date: 2026-02-19\n   Summary",
+          metadata: options?.metadata,
+        };
+      },
+    };
+  }
+
   function createDesktopRecoveryTool(
     spy?: ReturnType<typeof vi.fn>,
     options: {
@@ -457,7 +481,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     await runtime.executeRun({
-      task: "latest task",
+      task: "follow-up task",
       historyMessages: [
         { role: "user", content: "first question" },
         { role: "assistant", content: "first answer" },
@@ -467,7 +491,7 @@ describe("FridayAgentRuntime", () => {
     expect(capturedMessages).toEqual([
       { role: "user", content: "first question" },
       { role: "assistant", content: "first answer" },
-      { role: "user", content: "latest task" },
+      { role: "user", content: "follow-up task" },
     ]);
   });
 
@@ -680,6 +704,334 @@ describe("FridayAgentRuntime", () => {
     expect(result.status).toBe("failed");
     expect(result.toolCallCount).toBe(0);
     expect(result.response).toContain("AGENT_OUTPUT_CLOSURE_ERROR");
+  });
+
+  it("re-prompts latest news answers until dates and URLs are included", async () => {
+    let callCount = 0;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        callCount++;
+        if (callCount === 1) {
+          yield {
+            type: "tool_use",
+            id: "call-1",
+            name: "web_search",
+            input: { query: "Iran latest news", freshness: "day", numResults: 3 },
+          };
+          yield { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 };
+          return;
+        }
+        if (callCount === 2) {
+          yield { type: "text_delta", text: "Here are the latest Iran headlines." };
+          yield { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 7 };
+          return;
+        }
+        yield {
+          type: "text_delta",
+          text: "1. Headline A (2026-02-19) https://example.com/a\n2. Headline B (2026-02-18) https://example.com/b",
+        };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 11, outputTokens: 9 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [
+        createSuccessfulWebSearchTool({
+          metadata: {
+            provider: "serper",
+            freshnessRequested: "day",
+            freshnessApplied: true,
+            hasDates: true,
+            warning: null,
+          },
+        }),
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Give me the latest Iran news",
+      timezone: "UTC",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(callCount).toBe(3);
+    expect(result.response).toContain("2026-02-19");
+    expect(result.response).toContain("https://example.com/a");
+  });
+
+  it("keeps latest-news enforcement sticky across history follow-ups", async () => {
+    let callCount = 0;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        callCount++;
+        if (callCount === 1) {
+          yield {
+            type: "tool_use",
+            id: "call-1",
+            name: "web_search",
+            input: { query: "Iran latest news", freshness: "day", numResults: 3 },
+          };
+          yield { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 };
+          return;
+        }
+        if (callCount === 2) {
+          yield { type: "text_delta", text: "再来三条：" };
+          yield { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 7 };
+          return;
+        }
+        yield {
+          type: "text_delta",
+          text: "1. Headline A (2026-02-19) https://example.com/a\n2. Headline B (2026-02-18) https://example.com/b\n3. Headline C (2026-02-17) https://example.com/c",
+        };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 11, outputTokens: 9 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [
+        createSuccessfulWebSearchTool({
+          metadata: {
+            provider: "serper",
+            freshnessRequested: "day",
+            freshnessApplied: true,
+            hasDates: true,
+            warning: null,
+          },
+        }),
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "再来三条",
+      timezone: "UTC",
+      historyMessages: [
+        { role: "user", content: "Give me the latest Iran news" },
+        { role: "assistant", content: "previous answer" },
+      ],
+    });
+
+    expect(result.status).toBe("completed");
+    expect(callCount).toBe(3);
+    expect(result.response).toContain("https://example.com/c");
+  });
+
+  it("requires each listed latest-news item to include its own date and URL", async () => {
+    let callCount = 0;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        callCount++;
+        if (callCount === 1) {
+          yield {
+            type: "tool_use",
+            id: "call-1",
+            name: "web_search",
+            input: { query: "Iran latest news", freshness: "day", numResults: 3 },
+          };
+          yield { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 };
+          return;
+        }
+        if (callCount === 2) {
+          yield {
+            type: "text_delta",
+            text: "1. Headline A (2026-02-19) https://example.com/a\n2. Headline B\n3. Headline C (2026-02-17) https://example.com/c",
+          };
+          yield { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 7 };
+          return;
+        }
+        yield {
+          type: "text_delta",
+          text: "1. Headline A (2026-02-19) https://example.com/a\n2. Headline B (2026-02-18) https://example.com/b\n3. Headline C (2026-02-17) https://example.com/c",
+        };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 11, outputTokens: 9 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [
+        createSuccessfulWebSearchTool({
+          metadata: {
+            provider: "serper",
+            freshnessRequested: "day",
+            freshnessApplied: true,
+            hasDates: true,
+            warning: null,
+          },
+        }),
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Give me the latest Iran news",
+      timezone: "UTC",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(callCount).toBe(3);
+    expect(result.response).toContain("https://example.com/b");
+  });
+
+  it("does not accept a generic latestness caveat without exact date and timezone", async () => {
+    let callCount = 0;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        callCount++;
+        if (callCount === 1) {
+          yield {
+            type: "tool_use",
+            id: "call-1",
+            name: "web_search",
+            input: { query: "Iran latest news", freshness: "day", numResults: 3 },
+          };
+          yield { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 };
+          return;
+        }
+        yield { type: "text_delta", text: "I cannot verify that these are the latest results." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 7 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [
+        createSuccessfulWebSearchTool({
+          metadata: {
+            provider: "duckduckgo",
+            freshnessRequested: "day",
+            freshnessApplied: false,
+            hasDates: false,
+            warning: "DuckDuckGo HTML search does not provide verified recency filtering or stable publication dates; latest-ness is unverified.",
+          },
+        }),
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Give me the latest Iran news",
+      timezone: "UTC",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(callCount).toBe(3);
+    expect(result.response).toContain("2026-02-19 (UTC)");
+  });
+
+  it("does not treat current capability questions as time-sensitive news", async () => {
+    let callCount = 0;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        callCount++;
+        yield { type: "text_delta", text: "Discord is enabled. MCP is disabled. Provider mutations are blocked by readOnly. Desktop companion is disconnected." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 18 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "What can Friday do right now in this deployment? Use current runtime facts only.",
+      timezone: "UTC",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(callCount).toBe(1);
+    expect(result.response).toContain("Discord is enabled.");
+    expect(result.response).not.toContain("unverified search results");
+    expect(result.response).not.toContain("I could not verify that these are the latest results");
+  });
+
+  it("adds a caveat when latest news evidence remains unverified after retry", async () => {
+    let callCount = 0;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        callCount++;
+        if (callCount === 1) {
+          yield {
+            type: "tool_use",
+            id: "call-1",
+            name: "web_search",
+            input: { query: "Iran latest news", freshness: "day", numResults: 3 },
+          };
+          yield { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 };
+          return;
+        }
+        yield { type: "text_delta", text: "These are the top search hits I found." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 7 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [
+        createSuccessfulWebSearchTool({
+          metadata: {
+            provider: "duckduckgo",
+            freshnessRequested: "day",
+            freshnessApplied: false,
+            hasDates: false,
+            warning: "DuckDuckGo HTML search does not provide verified recency filtering or stable publication dates; latest-ness is unverified.",
+          },
+          content: "Warning: DuckDuckGo HTML search does not provide verified recency filtering or stable publication dates; latest-ness is unverified.",
+        }),
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Give me the latest Iran news",
+      timezone: "UTC",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(callCount).toBe(3);
+    expect(result.response).toContain("could not verify");
+    expect(result.response).toContain("2026-02-19 (UTC)");
   });
 
   it("fails desktop route when no successful evidence-capable tool result exists", async () => {
@@ -2903,6 +3255,65 @@ describe("FridayAgentRuntime", () => {
     expect(capturedSystemPrompt).toContain("User preferences (learned from past interactions):");
     expect(capturedSystemPrompt).toContain("- language: Chinese");
     expect(capturedSystemPrompt).toContain("- tone: formal");
+  });
+
+  it("uses learned timezone preference when no explicit timezone is provided", async () => {
+    let callCount = 0;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        callCount++;
+        if (callCount === 1) {
+          yield {
+            type: "tool_use",
+            id: "call-1",
+            name: "web_search",
+            input: { query: "Iran latest news", freshness: "day", numResults: 3 },
+          };
+          yield { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 };
+          return;
+        }
+        yield { type: "text_delta", text: "These are the top search hits I found." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 7 };
+      },
+    };
+
+    const learningContextBuilder = vi.fn().mockReturnValue({
+      preferences: {
+        "pref:timezone": "America/Los_Angeles",
+      },
+    });
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [
+        createSuccessfulWebSearchTool({
+          metadata: {
+            provider: "duckduckgo",
+            freshnessRequested: "day",
+            freshnessApplied: false,
+            hasDates: false,
+            warning: "DuckDuckGo HTML search does not provide verified recency filtering or stable publication dates; latest-ness is unverified.",
+          },
+        }),
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => "2026-02-19T02:30:00.000Z",
+      learningContextBuilder,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Give me the latest Iran news",
+      principalId: "user-123",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(callCount).toBe(3);
+    expect(result.response).toContain("2026-02-18 (America/Los_Angeles)");
   });
 
   it("does not enrich system prompt when no principalId is provided", async () => {

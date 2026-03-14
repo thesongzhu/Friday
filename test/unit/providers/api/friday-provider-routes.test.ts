@@ -25,6 +25,25 @@ describe("FridayProviderRoutes", () => {
     updatedAt: NOW,
   };
 
+  const anthropicOauthProfile: FridayProviderProfile = {
+    id: "anth-001",
+    kind: "anthropic",
+    name: "Claude OAuth",
+    baseUrl: "https://api.anthropic.com",
+    enabled: true,
+    defaultModel: "claude-sonnet-4-20250514",
+    config: {
+      api: "anthropic-messages",
+      authMode: "oauth",
+      keySource: { kind: "none" },
+      oauthProvider: "anthropic",
+      supportedModels: ["claude-sonnet-4-20250514"],
+      validation: { status: "never" },
+    },
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+
   function makeCtx(overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {}): FridayHttpContext<unknown, unknown, unknown> {
     return {
       requestId: "req-1",
@@ -40,9 +59,13 @@ describe("FridayProviderRoutes", () => {
 
   function makeMockService(): FridayProviderService {
     return {
-      listProviders: vi.fn(async () => [sampleProfile]),
+      listProviders: vi.fn(async () => [sampleProfile, anthropicOauthProfile]),
       getProvider: vi.fn(async (id: string) =>
-        id === "prov-001" ? sampleProfile : null,
+        id === "prov-001"
+          ? sampleProfile
+          : id === "anth-001"
+            ? anthropicOauthProfile
+            : null,
       ),
       createProvider: vi.fn(async () => sampleProfile),
       updateProvider: vi.fn(async () => sampleProfile),
@@ -55,7 +78,7 @@ describe("FridayProviderRoutes", () => {
       ),
       getRoutingConfig: vi.fn(
         async (): Promise<FridayModelRoutingConfig> => ({
-          defaultProviderId: "prov-001",
+          defaultProviderId: "anth-001",
           fallbackProviderIds: [],
         }),
       ),
@@ -76,7 +99,7 @@ describe("FridayProviderRoutes", () => {
       getBudgetStatus: vi.fn(async () => ({ monthlyLimitUsd: 0, monthlySpentUsd: 0, remainingUsd: 0, usagePercent: 0, budgetExceeded: false })),
       setBudgetConfig: vi.fn(async () => ({ monthlyLimitUsd: 0 })),
       initiateOAuthLogin: vi.fn(async () => ({
-        providerId: "prov-001",
+        providerId: "anth-001",
         oauthProvider: "anthropic" as const,
         authorizationUrl: "https://claude.ai/oauth/authorize?...",
         state: "test-state",
@@ -84,7 +107,7 @@ describe("FridayProviderRoutes", () => {
         scopes: ["org:create_api_key", "user:profile", "user:inference"],
       })),
       completeOAuthLogin: vi.fn(async () => ({
-        providerId: "prov-001",
+        providerId: "anth-001",
         oauthProvider: "anthropic" as const,
         connected: true as const,
         expiresAt: NOW,
@@ -137,7 +160,7 @@ describe("FridayProviderRoutes", () => {
       const listRoute = routes.find((r) => r.operationId === "providers.list")!;
 
       const result = await listRoute.handler(makeCtx());
-      expect(result).toEqual({ items: [sampleProfile] });
+      expect(result).toEqual({ items: [sampleProfile, anthropicOauthProfile] });
     });
 
     it("providers.get returns provider", async () => {
@@ -232,7 +255,7 @@ describe("FridayProviderRoutes", () => {
       const result = await getRoutingRoute.handler(makeCtx());
       expect(result).toEqual({
         routing: {
-          defaultProviderId: "prov-001",
+          defaultProviderId: "anth-001",
           fallbackProviderIds: [],
         },
       });
@@ -267,11 +290,28 @@ describe("FridayProviderRoutes", () => {
       )!;
 
       const result = await initiateRoute.handler(
-        makeCtx({ body: { providerId: "prov-001" } }),
+        makeCtx({ body: { providerId: "anth-001" } }),
       );
 
       expect(mockService.initiateOAuthLogin).toHaveBeenCalledWith({
-        providerId: "prov-001",
+        providerId: "anth-001",
+      });
+      expect(result).toHaveProperty("oauth");
+    });
+
+    it("auth.oauth.anthropic.initiate auto-selects the routed anthropic oauth provider when providerId is omitted", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const initiateRoute = routes.find(
+        (r) => r.operationId === "auth.oauth.anthropic.initiate",
+      )!;
+
+      const result = await initiateRoute.handler(makeCtx({ body: {} }));
+
+      expect(mockService.initiateOAuthLogin).toHaveBeenCalledWith({
+        providerId: "anth-001",
       });
       expect(result).toHaveProperty("oauth");
     });
@@ -288,18 +328,65 @@ describe("FridayProviderRoutes", () => {
       const result = await callbackRoute.handler(
         makeCtx({
           body: {
-            providerId: "prov-001",
+            providerId: "anth-001",
             authorizationCode: "code#state",
           },
         }),
       );
 
       expect(mockService.completeOAuthLogin).toHaveBeenCalledWith({
-        providerId: "prov-001",
+        providerId: "anth-001",
         authorizationCode: "code#state",
         state: undefined,
       });
       expect(result).toHaveProperty("oauth");
+    });
+
+    it("auth.oauth.anthropic.callback auto-selects the routed anthropic oauth provider when providerId is omitted", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const callbackRoute = routes.find(
+        (r) => r.operationId === "auth.oauth.anthropic.callback",
+      )!;
+
+      const result = await callbackRoute.handler(
+        makeCtx({
+          body: {
+            authorizationCode: "code#state",
+          },
+        }),
+      );
+
+      expect(mockService.completeOAuthLogin).toHaveBeenCalledWith({
+        providerId: "anth-001",
+        authorizationCode: "code#state",
+        state: undefined,
+      });
+      expect(result).toHaveProperty("oauth");
+    });
+
+    it("auth.oauth.anthropic.initiate returns a clear ambiguity error when multiple oauth providers match", async () => {
+      const mockService = makeMockService();
+      mockService.listProviders = vi.fn(async () => [
+        anthropicOauthProfile,
+        { ...anthropicOauthProfile, id: "anth-002", name: "Claude OAuth 2" },
+      ]);
+      mockService.getRoutingConfig = vi.fn(async () => ({
+        defaultProviderId: "prov-001",
+        fallbackProviderIds: [],
+      }));
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const initiateRoute = routes.find(
+        (r) => r.operationId === "auth.oauth.anthropic.initiate",
+      )!;
+
+      await expect(
+        initiateRoute.handler(makeCtx({ body: {} })),
+      ).rejects.toThrow("Multiple anthropic OAuth providers are available. Specify providerId.");
     });
   });
 

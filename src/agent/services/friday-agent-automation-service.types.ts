@@ -68,6 +68,7 @@ export interface FridayAgentAutomationRunInput {
   taskOverride?: string;
   providerId?: string;
   model?: string;
+  timezone?: string;
   timeoutMs?: number;
 }
 
@@ -117,6 +118,7 @@ export interface CreateFridayAgentAutomationServiceDeps {
     task: string;
     providerId?: string;
     model?: string;
+    timezone?: string;
     timeoutMs?: number;
   }) => Promise<FridayAgentRuntimeResult>;
   idGenerator: () => string;

@@ -71,6 +71,8 @@ export interface FridaySubagentContext {
   parentSessionKey: string;
   /** Root-level run ID (the original top-level run) */
   rootRunId: string;
+  /** Parent run timezone when known. */
+  timezone?: string;
 }
 
 // ─── Detached spawn result ───
@@ -80,6 +82,10 @@ export interface FridaySubagentDetachedResult {
   childRunId: string;
   childSessionKey: string;
   status: "accepted";
+  statusSnapshot: FridaySubagentRunStatus;
+  outcome?: FridaySubagentOutcome;
+  detached: true;
+  awaited: false;
 }
 
 // ─── Registry interface ───
@@ -113,6 +119,7 @@ export interface FridaySubagentRegistrySpawnInput {
   task: string;
   label?: string;
   model?: string;
+  timezone?: string;
   timeoutMs?: number;
   parentRunId: string;
   parentSessionKey: string;
@@ -140,6 +147,7 @@ export interface CreateFridaySubagentRegistryDeps {
       task: string;
       sessionKey: string;
       runId?: string;
+      timezone?: string;
       timeoutMs?: number;
       signal?: AbortSignal;
       constraints?: FridayAgentRunConstraints;

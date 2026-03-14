@@ -31,12 +31,17 @@ export interface BuildFridayAgentSystemPromptParams {
     marketplaceEnabled?: boolean;
     selfLearningEnabled?: boolean;
   };
+  currentTime?: {
+    nowIso: string;
+    timezone: string;
+    localDate: string;
+  };
 }
 
 export function buildFridayAgentSystemPrompt(
   params: BuildFridayAgentSystemPromptParams,
 ): string {
-  const { toolNames, modelIdentity, version, workspaceContext, starterSkills, runtimeCapabilities } = params;
+  const { toolNames, modelIdentity, version, workspaceContext, starterSkills, runtimeCapabilities, currentTime } = params;
   const toolList = toolNames.join(", ");
   const toolSet = new Set(toolNames);
   const hasTool = (name: string) => toolSet.has(name);
@@ -114,6 +119,15 @@ export function buildFridayAgentSystemPrompt(
   const starterSkillsSection = starterSkillSections.length > 0
     ? `\n\n${starterSkillSections.join("\n\n")}`
     : "";
+  const timeContextSection = currentTime
+    ? "Current time context:\n" +
+      `- nowIso: ${currentTime.nowIso}\n` +
+      `- timezone: ${currentTime.timezone}\n` +
+      `- localDate: ${currentTime.localDate}\n\n`
+    : "";
+  const timelinessReference = currentTime
+    ? `Treat ${currentTime.localDate} in ${currentTime.timezone} as the reference date for words like latest/current/today.`
+    : "Treat the current run date and timezone as the reference for words like latest/current/today.";
 
   return (
     `You are Friday v${version}, an autonomous AI agent. ` +
@@ -126,11 +140,14 @@ export function buildFridayAgentSystemPrompt(
     "Capabilities:\n" +
     `${capabilityLines}\n` +
     "\n\n" +
+    timeContextSection +
     "Tool selection strategy:\n" +
     "- Information lookup (news, facts, documentation): use web_search first, then web_fetch for specific URLs\n" +
     "- Fetch a specific URL (articles, docs, pages): use web_fetch — HTML is auto-parsed to readable text\n" +
     "- JS-heavy sites (Reddit, Twitter/X, SPA apps), interactive pages, login-required pages: use browser (snapshot action to read content)\n" +
     "- If web_fetch returns unreadable/empty content for a URL, IMMEDIATELY retry with browser instead\n" +
+    `- For time-sensitive requests (latest/current/today/news/最新/今天/最近): ${timelinessReference} Use recency-filtered search when available, verify publication dates, and include absolute dates plus source URLs in the answer. If verifiable dates are unavailable, explicitly say the latestness is unverified.\n` +
+    "- When the user asks what Friday can do right now, which capabilities are enabled in this deployment, or whether messaging/MCP/provider mutations are currently available, use capabilities first\n" +
     "- Local computer orchestration: use system first for snapshots, app/project handoff, approvals, and control leases; fall back to desktop only when system intent resolution is insufficient\n" +
     "- Provider/LLM management (switch model, add API key, configure OAuth): use provider tool\n" +
     "- Friday skills: use skills_list first to discover currently available skills, then use skill_run with the chosen skill ID\n" +
@@ -143,7 +160,7 @@ export function buildFridayAgentSystemPrompt(
       ? "- Schedule recurring or delayed tasks: use cron\n"
       : "- Scheduled or delayed execution is unavailable in this deployment.\n") +
     (subagentsEnabled
-      ? "- Complex multi-step tasks that benefit from delegation: use spawn_subagent\n"
+      ? "- Complex multi-step tasks that benefit from delegation: use spawn_subagent. If the user needs the child result now, use wait=true or keep polling get_subagent until terminal state instead of treating the initial delegated snapshot as final.\n"
       : "- Sub-agent delegation is unavailable in this deployment.\n") +
     (selfLearningEnabled
       ? "- Record user corrections or stated preferences: use feedback\n"
@@ -153,7 +170,7 @@ export function buildFridayAgentSystemPrompt(
     "- Be direct and action-oriented. Use tools immediately when a task requires them.\n" +
     "- Never say you cannot do something that your currently registered tools support.\n" +
     "- If a capability is not available in this deployment, explain that clearly and suggest the closest available alternative.\n" +
-    "- When asked about yourself (model, provider, version, capabilities), answer truthfully from this prompt.\n" +
+    "- When asked about your current deployment capabilities, use capabilities before answering. Use the prompt for model/version framing, not for guessing runtime state.\n" +
     "- Use the feedback tool when a user corrects you or states a preference.\n" +
     "- When a request matches an available starter skill, prefer that existing skill over generating or importing a new one.\n" +
     "- For requests about what is broken, what Friday already detected, or whether self-repair is safe, prefer diagnosis/recovery starter skills before broader planning.\n" +

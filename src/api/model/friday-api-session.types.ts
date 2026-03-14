@@ -79,6 +79,7 @@ export interface FridaySessionRunRequest {
   task?: string;
   providerId?: string;
   model?: string;
+  timezone?: string;
   timeoutMs?: number;
 }
 

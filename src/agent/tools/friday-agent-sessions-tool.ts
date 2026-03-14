@@ -5,6 +5,7 @@ import type {
 } from "../model/friday-agent.types.js";
 import type { FridaySessionService } from "../../sessions/services/friday-session-service.types.js";
 import type { FridayAgentRuntime } from "../runtime/friday-agent-runtime.types.js";
+import { getFridayAgentToolExecutionContext } from "../runtime/friday-agent-tool-execution-context.js";
 import {
   errorResult,
   jsonResult,
@@ -246,6 +247,7 @@ export function createFridayAgentSessionsTool(
       sessionKey: sessionId,
       signal,
       historyMessages,
+      timezone: getFridayAgentToolExecutionContext(signal)?.timezone,
     });
 
     return jsonResult({

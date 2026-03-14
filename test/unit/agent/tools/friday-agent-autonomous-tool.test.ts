@@ -1,9 +1,20 @@
 import { describe, it, expect, vi } from "vitest";
 import { createFridayAgentAutonomousTool } from "../../../../src/agent/tools/friday-agent-autonomous-tool.js";
 import type { FridayAutonomousEngine } from "../../../../src/agent/autonomous/friday-autonomous.types.js";
+import { attachFridayAgentToolExecutionContext } from "../../../../src/agent/runtime/friday-agent-tool-execution-context.js";
 
 function signal(): AbortSignal {
   return new AbortController().signal;
+}
+
+function signalWithContext(timezone: string): AbortSignal {
+  const controller = new AbortController();
+  return attachFridayAgentToolExecutionContext(controller.signal, {
+    runId: "run-ctx-1",
+    sessionKey: "agent:run:ctx-1",
+    readOnly: false,
+    timezone,
+  });
 }
 
 function createMockEngine(overrides?: Partial<FridayAutonomousEngine>): FridayAutonomousEngine {
@@ -72,6 +83,23 @@ describe("FridayAgentAutonomousTool", () => {
           description: "Test",
           priority: "critical",
           config: expect.objectContaining({ maxIterationsPerGoal: 10 }),
+        }),
+      );
+    });
+
+    it("passes timezone from the parent execution context", async () => {
+      const engine = createMockEngine();
+      const tool = createFridayAgentAutonomousTool({ autonomousEngine: engine });
+
+      await tool.execute(
+        { action: "execute_goal", description: "Check the latest news" },
+        signalWithContext("America/Los_Angeles"),
+      );
+
+      expect(engine.executeGoal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Check the latest news",
+          timezone: "America/Los_Angeles",
         }),
       );
     });

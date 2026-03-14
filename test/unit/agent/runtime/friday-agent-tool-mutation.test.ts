@@ -56,6 +56,10 @@ describe("isMutatingToolCall", () => {
     expect(isMutatingToolCall("list_subagents", {})).toBe(false);
   });
 
+  it("classifies capabilities as non-mutating", () => {
+    expect(isMutatingToolCall("capabilities", {})).toBe(false);
+  });
+
   // ─── Conditional: browser ───
 
   it("classifies browser click as mutating", () => {

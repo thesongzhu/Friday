@@ -11,6 +11,7 @@
 
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
 import type { FridayAutonomousEngine, FridayAutonomousGoalListFilters } from "../autonomous/friday-autonomous.types.js";
+import { getFridayAgentToolExecutionContext } from "../runtime/friday-agent-tool-execution-context.js";
 import {
   errorResult,
   jsonResult,
@@ -147,6 +148,7 @@ export function createFridayAgentAutonomousTool(
         ...(maxIterations != null ? { maxIterationsPerGoal: maxIterations } : {}),
         ...(timeoutMs != null ? { maxTimePerGoalMs: timeoutMs } : {}),
       },
+      timezone: getFridayAgentToolExecutionContext(signal)?.timezone,
       signal,
     });
 

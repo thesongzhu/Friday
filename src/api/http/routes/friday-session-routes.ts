@@ -49,6 +49,7 @@ export interface FridaySessionRoutesDeps {
     task: string;
     providerId?: string;
     model?: string;
+    timezone?: string;
     timeoutMs?: number;
     principalId?: string;
     scopes?: string[];
@@ -187,6 +188,17 @@ function validateRunBody(body: unknown): asserts body is FridaySessionRunRequest
   }
   if (b.model !== undefined && (typeof b.model !== "string" || b.model.trim() === "")) {
     errors.push("model must be a non-empty string when provided");
+  }
+  if (b.timezone !== undefined) {
+    if (typeof b.timezone !== "string" || b.timezone.trim() === "") {
+      errors.push("timezone must be a non-empty IANA timezone string when provided");
+    } else {
+      try {
+        Intl.DateTimeFormat("en-US", { timeZone: b.timezone.trim() }).format(new Date());
+      } catch {
+        errors.push("timezone is not a valid IANA timezone");
+      }
+    }
   }
   if (
     b.timeoutMs !== undefined &&
@@ -662,6 +674,7 @@ export function createFridaySessionRoutes(
           task,
           providerId: body.providerId,
           model: body.model,
+          timezone: body.timezone?.trim(),
           timeoutMs: body.timeoutMs,
           persistTaskMessage: Boolean(taskFromBody),
           taskAlreadyInHistory: !taskFromBody,

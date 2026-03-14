@@ -120,6 +120,7 @@ import {
 } from "#agent";
 import type { FridayImageAnalysisFn } from "#agent";
 import type {
+  FridayAgentCapabilitiesSnapshot,
   FridayAgentLlmClient,
   FridayAgentLlmStreamEvent,
   FridayAgentMessage,
@@ -1239,6 +1240,67 @@ export async function createFridayHub(
   if (mcpAdapter) {
     console.log(`[friday] MCP adapter enabled with ${String(mcpServers.length)} server(s)`);
   }
+  const configuredSearchProvider = process.env.FRIDAY_SEARCH_PROVIDER?.trim().toLowerCase();
+  const hasConfiguredSearchKey = Boolean(
+    process.env.FRIDAY_SERPER_API_KEY?.trim() || process.env.FRIDAY_TAVILY_API_KEY?.trim(),
+  );
+  if (process.env.NODE_ENV !== "test") {
+    const searchWarning = configuredSearchProvider === "serper" && !process.env.FRIDAY_SERPER_API_KEY?.trim()
+      ? 'Configured search provider "serper" is missing FRIDAY_SERPER_API_KEY; time-sensitive news lookup is unverified.'
+      : configuredSearchProvider === "tavily" && !process.env.FRIDAY_TAVILY_API_KEY?.trim()
+        ? 'Configured search provider "tavily" is missing FRIDAY_TAVILY_API_KEY; time-sensitive news lookup is unverified.'
+        : !configuredSearchProvider
+          ? "FRIDAY_SEARCH_PROVIDER is not configured; Friday will fall back to DuckDuckGo HTML search and time-sensitive news lookup is unverified."
+          : !hasConfiguredSearchKey && (configuredSearchProvider === "serper" || configuredSearchProvider === "tavily")
+            ? `Search provider "${configuredSearchProvider}" has no API key configured; time-sensitive news lookup is unverified.`
+            : undefined;
+    if (searchWarning) {
+      console.warn(`[friday] ${searchWarning}`);
+    }
+  }
+
+  const getAgentCapabilitySnapshot = async (input: { readOnly: boolean }): Promise<FridayAgentCapabilitiesSnapshot> => {
+    const messagingKinds = typeof channelRegistry !== "undefined"
+      ? channelRegistry.list().filter((kind) => channelRegistry.status(kind) === "connected")
+      : [];
+    const providerCount = await providerService.listProviders()
+      .then((providers) => providers.length)
+      .catch(() => 0);
+    const systemSnapshot = systemService
+      ? await systemService.getState().catch(() => undefined)
+      : undefined;
+    const browserDiagnostics = browserManager?.getDiagnostics();
+
+    return {
+      readOnly: input.readOnly,
+      messaging: {
+        enabled: messagingKinds.length > 0,
+        kinds: messagingKinds,
+      },
+      mcp: {
+        enabled: !!mcpAdapter && mcpAdapter.listServers().length > 0,
+        serverCount: mcpAdapter?.listServers().length ?? 0,
+      },
+      provider: {
+        available: true,
+        configuredCount: providerCount,
+        mutationBlockedByReadOnly: input.readOnly,
+      },
+      browser: {
+        activeMode: browserDiagnostics?.activeMode,
+        targetBrowser: browserDiagnostics?.targetBrowser,
+      },
+      system: {
+        enabled: !!systemService,
+      },
+      desktop: {
+        connected: systemSnapshot?.health.desktopConnected ?? false,
+      },
+      companion: {
+        connected: systemSnapshot?.health.companionConnected ?? false,
+      },
+    };
+  };
 
   const agentTools = createFridayAgentToolRegistry({
     workdir: workspaceRoot,
@@ -1258,6 +1320,7 @@ export async function createFridayHub(
     providerService,
     webSearchProvider: process.env.FRIDAY_SEARCH_PROVIDER,
     webSearchApiKey: process.env.FRIDAY_SERPER_API_KEY ?? process.env.FRIDAY_TAVILY_API_KEY,
+    capabilitySnapshotGetter: getAgentCapabilitySnapshot,
   });
 
   const mcpServer = (() => {
@@ -1708,7 +1771,12 @@ export async function createFridayHub(
   // current set of registered tool names, so the prompt is always accurate.
   // Loads workspace context files (AGENTS.md, SOUL.md, USER.md, MEMORY.md)
   // fresh on each run so edits take effect immediately.
-  const agentSystemPromptBuilder = async (toolNames: string[]) => {
+  const agentSystemPromptBuilder = async (input: {
+    toolNames: string[];
+    nowIso: string;
+    timezone: string;
+    localDate: string;
+  }) => {
     let workspaceContext: string | undefined;
     try {
       const ctx = await loadFridayWorkspaceContext(workspaceRoot);
@@ -1746,27 +1814,32 @@ export async function createFridayHub(
         tags: skill.manifest.tags ?? [],
       }));
     return buildFridayAgentSystemPrompt({
-      toolNames,
+      toolNames: input.toolNames,
       modelIdentity: agentModelIdentity,
       version: FRIDAY_VERSION,
       workspaceContext,
       starterSkills,
+      currentTime: {
+        nowIso: input.nowIso,
+        timezone: input.timezone,
+        localDate: input.localDate,
+      },
       runtimeCapabilities: {
-        messagingEnabled: toolNames.includes("message")
+        messagingEnabled: input.toolNames.includes("message")
           && typeof channelRegistry !== "undefined"
           && channelRegistry.list().some((kind) => channelRegistry.status(kind) === "connected"),
         messagingKinds: typeof channelRegistry !== "undefined"
           ? channelRegistry.list().filter((kind) => channelRegistry.status(kind) === "connected")
           : [],
-        mcpEnabled: toolNames.includes("mcp")
+        mcpEnabled: input.toolNames.includes("mcp")
           && typeof mcpAdapter !== "undefined"
           && !!mcpAdapter
           && mcpAdapter.listServers().length > 0,
         mcpServerCount: mcpAdapter?.listServers().length ?? 0,
-        cronEnabled: toolNames.includes("cron") && !!jobScheduler && !!schedulerRepo,
-        subagentsEnabled: toolNames.includes("spawn_subagent"),
+        cronEnabled: input.toolNames.includes("cron") && !!jobScheduler && !!schedulerRepo,
+        subagentsEnabled: input.toolNames.includes("spawn_subagent"),
         marketplaceEnabled: !!marketplaceRuntime,
-        selfLearningEnabled: toolNames.includes("feedback"),
+        selfLearningEnabled: input.toolNames.includes("feedback"),
       },
     });
   };
@@ -1872,6 +1945,7 @@ export async function createFridayHub(
         providerService,
         webSearchProvider: process.env.FRIDAY_SEARCH_PROVIDER,
         webSearchApiKey: process.env.FRIDAY_SERPER_API_KEY ?? process.env.FRIDAY_TAVILY_API_KEY,
+        capabilitySnapshotGetter: getAgentCapabilitySnapshot,
       });
       const childRuntime = createFridayAgentRuntime({
         db: stateRuntime!.sqlite,
@@ -2915,6 +2989,7 @@ export async function createFridayHub(
         fallbackPrompt:
           "Run a proactive system heartbeat check. If there is no urgent action needed, respond only with HEARTBEAT_OK. " +
           "If action is needed, provide a concise actionable summary.",
+        timezone: process.env.FRIDAY_HEARTBEAT_TZ,
         activeHours: {
           enabled: capabilityGates.heartbeatActiveHoursEnabled,
           startHour: Number(process.env.FRIDAY_HEARTBEAT_ACTIVE_START_HOUR ?? "9"),
@@ -3253,9 +3328,14 @@ export async function createFridayHub(
           // to actually perform work instead of logging a no-op warning.
           return async () => {
             const task = typeof payload.task === "string" ? payload.task : `Execute scheduled job: ${jobId}`;
+            const scheduleTimezone = schedulerRepoRef.getById(jobId)?.scheduleTz ?? undefined;
+            const payloadTimezone = typeof payload.timezone === "string" && payload.timezone.trim().length > 0
+              ? payload.timezone.trim()
+              : undefined;
             const result = await agentRuntime.executeRun({
               task,
               sessionKey: `cron:${jobId}`,
+              timezone: payloadTimezone ?? scheduleTimezone,
             });
             return { runId: result.runId, status: result.status };
           };
@@ -3752,6 +3832,7 @@ export async function createFridayHub(
                 sessionKey,
                 historyMessages,
                 principalId: msg.senderId,
+                timezone: msg.timezone,
               });
 
               typingController.stopRun();

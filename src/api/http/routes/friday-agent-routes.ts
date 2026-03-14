@@ -44,6 +44,7 @@ export interface FridayAgentRoutesDeps {
     sessionKey?: string;
     providerId?: string;
     model?: string;
+    timezone?: string;
     timeoutMs?: number;
     requireReview?: boolean;
     constraints?: { readOnly?: boolean };
@@ -135,6 +136,7 @@ export function createFridayAgentRoutes(
           );
         }
         const model = typeof body.model === "string" ? body.model : undefined;
+        const timezone = parseOptionalIanaTimezone(body.timezone, "timezone");
         let timeoutMs: number | undefined;
         if (body.timeoutMs !== undefined) {
           const parsed = Number(body.timeoutMs);
@@ -204,6 +206,7 @@ export function createFridayAgentRoutes(
           sessionKey,
           providerId,
           model,
+          timezone,
           timeoutMs,
           requireReview,
           constraints,
@@ -648,6 +651,28 @@ function isStringArray(value: unknown): value is string[] {
 function isStringRecord(value: unknown): value is Record<string, string> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   return Object.values(value).every((v) => typeof v === "string");
+}
+
+function parseOptionalIanaTimezone(value: unknown, path: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${path} must be a non-empty string when provided`,
+      { httpStatus: 400 },
+    );
+  }
+  const timezone = value.trim();
+  try {
+    Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(new Date());
+  } catch {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${path} is not a valid IANA timezone`,
+      { httpStatus: 400 },
+    );
+  }
+  return timezone;
 }
 
 function parseAutomationSchedule(

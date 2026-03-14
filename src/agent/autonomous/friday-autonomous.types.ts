@@ -411,6 +411,8 @@ export interface FridayAutonomousGoalParams {
   readonly config?: Partial<FridayAutonomousEngineConfig>;
   /** Optional abort signal. */
   readonly signal?: AbortSignal;
+  /** Optional timezone for time-sensitive internal runs. */
+  readonly timezone?: string;
   /** Optional parent goal ID for sub-goal decomposition. */
   readonly parentGoalId?: UUID;
   /** Optional context from a setup recipe. */
@@ -477,6 +479,7 @@ export interface CreateFridayAutonomousEngineDeps {
       images?: string[];
       sessionKey?: string;
       runId?: string;
+      timezone?: string;
       timeoutMs?: number;
       signal?: AbortSignal;
     }): Promise<{ runId: string; status: string; response: string; usageInput: number; usageOutput: number }>;

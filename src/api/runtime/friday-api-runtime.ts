@@ -1575,6 +1575,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       sessionKey?: string;
       providerId?: string;
       model?: string;
+      timezone?: string;
       timeoutMs?: number;
       signal?: AbortSignal;
       reviewRequired?: boolean;
@@ -1622,6 +1623,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         runId: input.runId,
         providerId: input.providerId,
         model: input.model,
+        timezone: input.timezone,
         timeoutMs: input.timeoutMs,
         signal: input.signal,
         reviewRequired: input.reviewRequired,
@@ -1653,6 +1655,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       task: string;
       providerId?: string;
       model?: string;
+      timezone?: string;
       timeoutMs?: number;
       principalId?: string;
       scopes?: string[];
@@ -1667,6 +1670,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         sessionKey: input.sessionKey,
         providerId: input.providerId,
         model: input.model,
+        timezone: input.timezone,
         timeoutMs: input.timeoutMs,
         principalId: input.principalId,
         scopes: input.scopes,
@@ -1711,6 +1715,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       sessionKey?: string;
       providerId?: string;
       model?: string;
+      timezone?: string;
       timeoutMs?: number;
       requireReview?: boolean;
       constraints?: { readOnly?: boolean };
@@ -1731,6 +1736,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           sessionKey: input.sessionKey,
           providerId: input.providerId,
           model: input.model,
+          timezone: input.timezone,
           timeoutMs: input.timeoutMs,
           signal: abortController.signal,
           reviewRequired: input.requireReview,

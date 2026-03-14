@@ -46,6 +46,10 @@ import type { FridayMcpAdapter } from "../mcp/friday-mcp-adapter.types.js";
 import type { FridaySessionMemoryExtractionService } from "#sessions";
 import type { FridayProviderService } from "../../providers/services/friday-provider-service.types.js";
 import { createFridayAgentProviderTool } from "./friday-agent-provider-tool.js";
+import {
+  createFridayAgentCapabilitiesTool,
+  type FridayAgentCapabilitiesSnapshot,
+} from "./friday-agent-capabilities-tool.js";
 
 // ─── Registry options ───
 
@@ -100,6 +104,9 @@ export interface CreateFridayAgentToolRegistryOptions {
   webSearchProvider?: string;
   /** API key for the configured web search provider. */
   webSearchApiKey?: string;
+  /** Deterministic runtime capability snapshot getter for the capabilities tool. */
+  capabilitySnapshotGetter?: (input: { readOnly: boolean }) =>
+    Promise<FridayAgentCapabilitiesSnapshot> | FridayAgentCapabilitiesSnapshot;
 }
 
 // ─── Factory ───
@@ -256,6 +263,12 @@ export function createFridayAgentToolRegistry(
   if (options?.providerService) {
     tools.push(
       createFridayAgentProviderTool({ providerService: options.providerService }),
+    );
+  }
+
+  if (options?.capabilitySnapshotGetter) {
+    tools.push(
+      createFridayAgentCapabilitiesTool({ getSnapshot: options.capabilitySnapshotGetter }),
     );
   }
 

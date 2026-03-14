@@ -268,6 +268,39 @@ describe("FridayAgentRoutes", () => {
       );
     });
 
+    it("forwards timezone when provided", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const ctx = {
+        body: { task: "Latest news", timezone: "America/Los_Angeles" },
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+      await route.handler(ctx);
+      expect(stubDeps.startRun).toHaveBeenCalledWith(
+        expect.objectContaining({ timezone: "America/Los_Angeles" }),
+      );
+    });
+
+    it("rejects invalid timezone", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const ctx = {
+        body: { task: "Latest news", timezone: "Mars/Olympus" },
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+      await expect(route.handler(ctx)).rejects.toThrow("timezone is not a valid IANA timezone");
+    });
+
     it("forwards principal context when authenticated", async () => {
       const routes = createFridayAgentRoutes(stubDeps);
       const route = routes.find((r) => r.operationId === "agent.runs.start")!;

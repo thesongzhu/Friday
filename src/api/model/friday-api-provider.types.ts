@@ -102,7 +102,10 @@ export interface FridaySetBudgetConfigResponse {
 // ─── OAuth types ───
 
 export interface FridayInitiateAnthropicOAuthRequest {
-  providerId: string;
+  providerId?: string;
+  kind?: FridayProviderKind;
+  name?: string;
+  defaultModel?: string;
 }
 
 export interface FridayInitiateAnthropicOAuthResponse {
@@ -110,7 +113,10 @@ export interface FridayInitiateAnthropicOAuthResponse {
 }
 
 export interface FridayCompleteAnthropicOAuthCallbackRequest {
-  providerId: string;
+  providerId?: string;
+  kind?: FridayProviderKind;
+  name?: string;
+  defaultModel?: string;
   authorizationCode: string;
   state?: string;
 }

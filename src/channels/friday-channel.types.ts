@@ -34,6 +34,8 @@ export interface FridayChannelMessage {
   threadId?: string;
   /** Platform-specific raw event payload. */
   raw?: unknown;
+  /** Optional sender timezone when the channel can resolve it. */
+  timezone?: string;
   /** Unix timestamp in milliseconds. */
   timestamp: number;
 }

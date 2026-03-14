@@ -184,4 +184,21 @@ describe("createFridayAgentToolRegistry", () => {
     const names = tools.map((t) => t.name);
     expect(names).toContain("provider");
   });
+
+  it("includes capabilities tool when capabilitySnapshotGetter is provided", () => {
+    const tools = createFridayAgentToolRegistry({
+      capabilitySnapshotGetter: () => ({
+        readOnly: false,
+        messaging: { enabled: true, kinds: ["discord"] },
+        mcp: { enabled: false, serverCount: 0 },
+        provider: { available: true, configuredCount: 1, mutationBlockedByReadOnly: false },
+        browser: { activeMode: "host_chrome_visible", targetBrowser: "Google Chrome" },
+        system: { enabled: true },
+        desktop: { connected: false },
+        companion: { connected: false },
+      }),
+    });
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("capabilities");
+  });
 });
