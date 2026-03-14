@@ -1,6 +1,7 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridayAgentRuntimeResult } from "../runtime/friday-agent-runtime.types.js";
 import type { FridayAgentEventEmitter } from "../runtime/friday-agent-event-emitter.js";
+import type { FridayAgentRunConstraints } from "../model/friday-agent.types.js";
 
 // ─── Sub-agent run status ───
 
@@ -76,6 +77,7 @@ export interface FridaySubagentContext {
 
 export interface FridaySubagentDetachedResult {
   subagentId: string;
+  childRunId: string;
   childSessionKey: string;
   status: "accepted";
 }
@@ -116,6 +118,7 @@ export interface FridaySubagentRegistrySpawnInput {
   parentSessionKey: string;
   depth: number;
   rootRunId: string;
+  constraints?: FridayAgentRunConstraints;
   signal: AbortSignal;
 }
 
@@ -139,6 +142,7 @@ export interface CreateFridaySubagentRegistryDeps {
       runId?: string;
       timeoutMs?: number;
       signal?: AbortSignal;
+      constraints?: FridayAgentRunConstraints;
     }) => Promise<FridayAgentRuntimeResult>;
   };
   eventEmitter: FridayAgentEventEmitter;
@@ -150,4 +154,5 @@ export interface CreateChildRuntimeParams {
   model?: string;
   systemPrompt: string;
   depth: number;
+  rootRunId: string;
 }

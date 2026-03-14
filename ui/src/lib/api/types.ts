@@ -643,6 +643,9 @@ export interface AgentRunStreamEvent {
   runId?: string;
   parentRunId?: string;
   timestamp?: string;
+  seq?: number;
+  emittedAt?: string;
+  replayed?: boolean;
   // text_delta
   delta?: string;
   // tool events
@@ -660,6 +663,7 @@ export interface AgentRunStreamEvent {
   fallbackReason?: string;
   // subagent events
   subagentId?: string;
+  childRunId?: string;
   subagentTask?: string;
   status?: AgentRunStatus;
   // status events

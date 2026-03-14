@@ -8,7 +8,6 @@ import {
   createFridayAgentToolRegistry,
   createFridayAgentRunRepository,
   FRIDAY_SUBAGENT_MAX_DEPTH,
-  FRIDAY_SUBAGENT_SESSION_KEY_SEPARATOR,
   FRIDAY_AGENT_SESSION_KEY_PREFIX,
 } from "#agent";
 import type {
@@ -19,6 +18,7 @@ import type {
   CreateChildRuntimeParams,
   FridaySubagentRunRecord,
 } from "#agent";
+import { buildFridaySubagentSessionKey } from "#sessions";
 
 describe("FridaySubagentIntegration", () => {
   let db: FridaySqliteLayer;
@@ -70,7 +70,15 @@ describe("FridaySubagentIntegration", () => {
       idGenerator,
       nowIso: () => NOW,
       createChildRuntime(params: CreateChildRuntimeParams) {
-        const childTools = createFridayAgentToolRegistry();
+        const childTools = createFridayAgentToolRegistry({
+          subagentRegistry: registry,
+          subagentContext: {
+            depth: params.depth,
+            parentRunId: "child-parent",
+            parentSessionKey: "agent:run:child-parent",
+            rootRunId: params.rootRunId,
+          },
+        });
 
         const childRuntime = createFridayAgentRuntime({
           db,
@@ -329,6 +337,9 @@ describe("FridaySubagentIntegration", () => {
     // Check child run record
     const childRunId = subagentRecords[0].childRunId;
     expect(childRunId).toBeTruthy();
+    expect(subagentRecords[0].childSessionKey).toBe(
+      buildFridaySubagentSessionKey(sessionKey, childRunId),
+    );
     const childRun = db.withReadConnection((reader) =>
       runRepo.getById(reader, childRunId),
     );

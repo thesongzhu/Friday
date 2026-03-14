@@ -7,10 +7,21 @@ import type {
   FridaySubagentRunRecord,
   FridaySubagentDetachedResult,
 } from "#agent";
+import { buildFridaySubagentSessionKey } from "#sessions";
+import { attachFridayAgentToolExecutionContext } from "../../../../src/agent/runtime/friday-agent-tool-execution-context.js";
 import { FridayDomainError } from "#errors";
 
 function signal(): AbortSignal {
   return new AbortController().signal;
+}
+
+function signalWithContext(overrides?: Partial<{ runId: string; sessionKey: string; readOnly: boolean }>): AbortSignal {
+  const controller = new AbortController();
+  return attachFridayAgentToolExecutionContext(controller.signal, {
+    runId: overrides?.runId ?? "live-run-1",
+    sessionKey: overrides?.sessionKey ?? "agent:run:live-run-1",
+    readOnly: overrides?.readOnly ?? false,
+  });
 }
 
 function makeContext(overrides?: Partial<FridaySubagentContext>): FridaySubagentContext {
@@ -41,7 +52,7 @@ function makeRecord(overrides?: Partial<FridaySubagentRunRecord>): FridaySubagen
     parentRunId: "parent-run-1",
     parentSessionKey: "agent:run:parent-run-1",
     childRunId: "child-run-1",
-    childSessionKey: "agent:run:parent-run-1:sub:sub-1",
+    childSessionKey: buildFridaySubagentSessionKey("agent:run:parent-run-1", "child-run-1"),
     task: "Test task",
     depth: 1,
     status: "completed",
@@ -55,7 +66,8 @@ function makeRecord(overrides?: Partial<FridaySubagentRunRecord>): FridaySubagen
 function makeDetachedResult(overrides?: Partial<FridaySubagentDetachedResult>): FridaySubagentDetachedResult {
   return {
     subagentId: "sub-detached-1",
-    childSessionKey: "agent:run:parent-run-1:sub:sub-detached-1",
+    childRunId: "child-run-detached-1",
+    childSessionKey: buildFridaySubagentSessionKey("agent:run:parent-run-1", "child-run-detached-1"),
     status: "accepted",
     ...overrides,
   };
@@ -98,6 +110,7 @@ describe("FridayAgentSubagentTools", () => {
       const parsed = JSON.parse(result.content) as Record<string, unknown>;
       expect(parsed.status).toBe("accepted");
       expect(parsed.subagentId).toBe("sub-detached-1");
+      expect(parsed.childRunId).toBe("child-run-detached-1");
       expect(parsed.childSessionKey).toBeTruthy();
       expect(registry.spawnDetached).toHaveBeenCalled();
       expect(registry.spawn).not.toHaveBeenCalled();
@@ -231,6 +244,32 @@ describe("FridayAgentSubagentTools", () => {
       );
     });
 
+    it("uses the current run context from the execution signal and inherits readOnly", async () => {
+      const spawnDetachedFn = vi.fn().mockReturnValue(makeDetachedResult());
+      const registry = mockRegistry({ spawnDetached: spawnDetachedFn });
+
+      const tools = createFridayAgentSubagentTools({
+        registry,
+        subagentContext: makeContext({
+          parentRunId: "stale-run",
+          parentSessionKey: "agent:run:stale-run",
+          rootRunId: "stale-run",
+        }),
+      });
+
+      const spawnTool = tools.find((t) => t.name === "spawn_subagent")!;
+      await spawnTool.execute({ task: "Inspect runtime" }, signalWithContext({ readOnly: true }));
+
+      expect(spawnDetachedFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          parentRunId: "live-run-1",
+          parentSessionKey: "agent:run:live-run-1",
+          rootRunId: "live-run-1",
+          constraints: { readOnly: true },
+        }),
+      );
+    });
+
     it("handles unexpected errors", async () => {
       const registry = mockRegistry({
         spawnDetached: vi.fn().mockImplementation(() => {
@@ -341,6 +380,7 @@ describe("FridayAgentSubagentTools", () => {
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content) as Record<string, unknown>;
       expect(parsed.id).toBe("sub-42");
+      expect(parsed.childRunId).toBe("child-run-1");
       expect(parsed.task).toBe("Find specific");
       expect(parsed.status).toBe("completed");
       expect(parsed.outcome).toBeDefined();

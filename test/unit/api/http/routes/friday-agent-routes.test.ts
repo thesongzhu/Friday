@@ -72,6 +72,7 @@ describe("FridayAgentRoutes", () => {
       startRun: vi.fn<[{ task: string }], Promise<FridayAgentRuntimeResult>>().mockResolvedValue(createStubResult()),
       getRun: vi.fn<[string], FridayAgentRunRecord | null>().mockReturnValue(createStubRun()),
       listRuns: vi.fn().mockReturnValue([]),
+      listRunEvents: vi.fn().mockReturnValue([]),
       cancelRun: vi.fn(),
       eventEmitter: createStubEventEmitter(),
       automationService: createStubAutomationService(),
@@ -505,9 +506,38 @@ describe("FridayAgentRoutes", () => {
       expect(result.streaming).toBe(false);
     });
 
-    it("sends final status and closes for terminal runs with raw response", async () => {
+    it("replays persisted events and closes for terminal runs with raw response", async () => {
       const run = createStubRun({ status: "completed" });
       stubDeps.getRun = vi.fn().mockReturnValue(run);
+      stubDeps.listRunEvents = vi.fn().mockReturnValue([
+        {
+          eventId: "evt-1",
+          runId: "run-1",
+          seq: 1,
+          eventName: "agent.run.tool_end",
+          payload: {
+            runId: "run-1",
+            toolName: "browser",
+            toolCallId: "call-1",
+            summary: "facebook.com · visible desktop",
+          },
+          emittedAt: "2026-01-01T00:00:01.000Z",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+        {
+          eventId: "evt-2",
+          runId: "run-1",
+          seq: 2,
+          eventName: "agent.run.completed",
+          payload: {
+            runId: "run-1",
+            durationMs: 1000,
+            toolCallCount: 1,
+          },
+          emittedAt: "2026-01-01T00:00:02.000Z",
+          createdAt: "2026-01-01T00:00:02.000Z",
+        },
+      ]);
       const routes = createFridayAgentRoutes(stubDeps);
       const route = routes.find((r) => r.operationId === "agent.runs.events")!;
 
@@ -537,7 +567,13 @@ describe("FridayAgentRoutes", () => {
         Connection: "keep-alive",
       });
       expect(mockRes.write).toHaveBeenCalledWith(
-        expect.stringContaining('"type":"agent.run.status"'),
+        expect.stringContaining('"type":"agent.run.tool_end"'),
+      );
+      expect(mockRes.write).toHaveBeenCalledWith(
+        expect.stringContaining('"replayed":true'),
+      );
+      expect(mockRes.write).toHaveBeenCalledWith(
+        expect.stringContaining('"type":"agent.run.completed"'),
       );
       expect(mockRes.end).toHaveBeenCalled();
     });
@@ -574,6 +610,59 @@ describe("FridayAgentRoutes", () => {
       expect(emitter.on).toHaveBeenCalledTimes(11);
       // Should register close handler
       expect(mockRes.on).toHaveBeenCalledWith("close", expect.any(Function));
+    });
+
+    it("replays persisted events before subscribing for active runs", async () => {
+      const run = createStubRun({ status: "executing" });
+      stubDeps.getRun = vi.fn().mockReturnValue(run);
+      stubDeps.listRunEvents = vi.fn().mockReturnValue([
+        {
+          eventId: "evt-1",
+          runId: "run-1",
+          seq: 7,
+          eventName: "agent.run.tool_start",
+          payload: {
+            runId: "run-1",
+            toolName: "provider",
+            toolCallId: "call-7",
+          },
+          emittedAt: "2026-01-01T00:00:07.000Z",
+          createdAt: "2026-01-01T00:00:07.000Z",
+        },
+      ]);
+      const emitter = createStubEventEmitter();
+      stubDeps.eventEmitter = emitter;
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.events")!;
+
+      const mockRes = {
+        writeHead: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+        on: vi.fn(),
+      };
+
+      const ctx = {
+        body: null,
+        params: { runId: "run-1" },
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+        _raw: mockRes,
+      };
+
+      await route.handler(ctx);
+
+      expect(stubDeps.listRunEvents).toHaveBeenCalledWith("run-1", 0);
+      expect(mockRes.write).toHaveBeenCalledWith(
+        expect.stringContaining('"seq":7'),
+      );
+      expect(mockRes.write).toHaveBeenCalledWith(
+        expect.stringContaining('"replayed":true'),
+      );
+      expect(emitter.on).toHaveBeenCalledTimes(11);
     });
   });
 

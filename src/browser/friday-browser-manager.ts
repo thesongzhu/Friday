@@ -1,5 +1,6 @@
 import { type Browser, type BrowserContext, chromium, type Page } from "playwright";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 
@@ -225,6 +226,16 @@ const CHROME_PATHS_MACOS = [
 ];
 
 function findChromeExecutable(customPath?: string): string | undefined {
+  if (customPath?.endsWith(".app")) {
+    const appName = path.basename(customPath, ".app");
+    const executable = path.join(customPath, "Contents", "MacOS", appName);
+    try {
+      fs.accessSync(executable, fs.constants.X_OK);
+      return executable;
+    } catch {
+      return undefined;
+    }
+  }
   if (customPath) {
     try {
       fs.accessSync(customPath, fs.constants.X_OK);
@@ -246,6 +257,18 @@ function findChromeExecutable(customPath?: string): string | undefined {
   return undefined;
 }
 
+function chromeAppBundleFromExecutable(executablePath: string): string | undefined {
+  if (process.platform !== "darwin") {
+    return undefined;
+  }
+  const appBundle = path.resolve(executablePath, "../../..");
+  return appBundle.endsWith(".app") ? appBundle : undefined;
+}
+
+function hostChromeUserDataDir(port: number): string {
+  return path.join(os.tmpdir(), "friday-host-chrome-cdp", `port-${String(port)}`);
+}
+
 async function probeCdpEndpoint(port: number): Promise<string | undefined> {
   try {
     const controller = new AbortController();
@@ -263,17 +286,30 @@ async function probeCdpEndpoint(port: number): Promise<string | undefined> {
 }
 
 function launchChromeWithCdp(chromePath: string, port: number): void {
+  const userDataDir = hostChromeUserDataDir(port);
+  fs.mkdirSync(userDataDir, { recursive: true });
+  const launchArgs = [
+    `--remote-debugging-port=${String(port)}`,
+    `--user-data-dir=${userDataDir}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--new-window",
+    "about:blank",
+  ];
   if (process.platform === "darwin") {
-    // On macOS, `open -a` with --args only applies flags when Chrome is NOT
-    // already running.  If Chrome is already open, the flags are ignored and
-    // CDP won't be available — the caller should handle this via fallback.
-    const child = spawn("open", ["-a", chromePath, "--args", `--remote-debugging-port=${String(port)}`], {
-      detached: true,
-      stdio: "ignore",
-    });
+    const appBundle = chromeAppBundleFromExecutable(chromePath);
+    const child = appBundle
+      ? spawn("open", ["-na", appBundle, "--args", ...launchArgs], {
+          detached: true,
+          stdio: "ignore",
+        })
+      : spawn(chromePath, launchArgs, {
+          detached: true,
+          stdio: "ignore",
+        });
     child.unref();
   } else {
-    const child = spawn(chromePath, [`--remote-debugging-port=${String(port)}`], {
+    const child = spawn(chromePath, launchArgs, {
       detached: true,
       stdio: "ignore",
     });
@@ -443,39 +479,44 @@ export function createFridayBrowserManager(
     profile?: string,
     executionContext?: FridayBrowserExecutionContext,
   ): Promise<{ sessionId: string; tabId: string; reused: boolean }> {
+    const requestedMode = resolveLaunchPresentationMode(executionContext);
     const existing = sessions.get(sessionId);
     if (existing) {
       if (isSessionAlive(existing)) {
+        if (existing.presentation.activeMode !== requestedMode) {
+          await evictDeadSession(sessionId);
+        } else {
         // Verify the active tab is still usable (not closed externally).
-        const activePage = existing.tabs.get(existing.activeTabId);
-        if (activePage && !activePage.isClosed()) {
-          lastPresentation = {
-            ...existing.presentation,
-            sessionId,
-            tabId: existing.activeTabId,
-          };
-          return { sessionId, tabId: existing.activeTabId, reused: true };
-        }
-        // Active tab is dead — clean it up and create a fresh one.
-        if (activePage) {
-          existing.tabs.delete(existing.activeTabId);
-        }
-        const releaseSlot = reservePageSlot();
-        try {
-          const newPage = await existing.context.newPage();
-          existing.tabCounter += 1;
-          const newTabId = `tab-${String(existing.tabCounter)}`;
-          existing.tabs.set(newTabId, newPage);
-          existing.activeTabId = newTabId;
-          existing.presentation = {
-            ...existing.presentation,
-            sessionId,
-            tabId: newTabId,
-          };
-          lastPresentation = existing.presentation;
-          return { sessionId, tabId: newTabId, reused: true };
-        } finally {
-          releaseSlot();
+          const activePage = existing.tabs.get(existing.activeTabId);
+          if (activePage && !activePage.isClosed()) {
+            lastPresentation = {
+              ...existing.presentation,
+              sessionId,
+              tabId: existing.activeTabId,
+            };
+            return { sessionId, tabId: existing.activeTabId, reused: true };
+          }
+          // Active tab is dead — clean it up and create a fresh one.
+          if (activePage) {
+            existing.tabs.delete(existing.activeTabId);
+          }
+          const releaseSlot = reservePageSlot();
+          try {
+            const newPage = await existing.context.newPage();
+            existing.tabCounter += 1;
+            const newTabId = `tab-${String(existing.tabCounter)}`;
+            existing.tabs.set(newTabId, newPage);
+            existing.activeTabId = newTabId;
+            existing.presentation = {
+              ...existing.presentation,
+              sessionId,
+              tabId: newTabId,
+            };
+            lastPresentation = existing.presentation;
+            return { sessionId, tabId: newTabId, reused: true };
+          } finally {
+            releaseSlot();
+          }
         }
       }
       // Browser died — evict stale session and re-launch below
@@ -495,7 +536,6 @@ export function createFridayBrowserManager(
     let page: Page | undefined;
     let created = false;
     let connectedOverCdp = false;
-    const requestedMode = resolveLaunchPresentationMode(executionContext);
     let actualMode: FridayBrowserActiveMode = requestedMode;
     let fallbackReason: string | undefined;
 

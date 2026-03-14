@@ -157,6 +157,48 @@ describe("Browser Tool — Expanded Actions", () => {
     });
   });
 
+  describe("presentation mode transitions", () => {
+    it("relaunches a headless session when a visible desktop session is requested", async () => {
+      const connectOverCdp = vi.fn().mockResolvedValue(createMockBrowser());
+      const resolveHostChromeEndpoint = vi.fn().mockResolvedValue("ws://chrome.test/devtools/browser/1");
+      manager = createFridayBrowserManager({
+        workspaceRoot: "/tmp/test",
+        launchImpl: launchImpl as never,
+        connectOverCdpImpl: connectOverCdp as never,
+        resolveHostChromeEndpointImpl: resolveHostChromeEndpoint as never,
+        presentationMode: "auto",
+        platform: "darwin",
+        isCi: false,
+        hostBrowser: { useHostChrome: true },
+      });
+
+      const firstLaunch = await manager.launch(
+        "default",
+        signal,
+        undefined,
+        { presentationMode: "headless" },
+      );
+      const headlessSession = manager.getSession("default");
+
+      expect(firstLaunch.reused).toBe(false);
+      expect(headlessSession?.presentation.activeMode).toBe("headless");
+
+      const visibleLaunch = await manager.launch(
+        "default",
+        signal,
+        undefined,
+        { presentationMode: "host_chrome_visible", interactive: true, source: "agent_page" },
+      );
+      const visibleSession = manager.getSession("default");
+
+      expect(visibleLaunch.reused).toBe(false);
+      expect(headlessSession?.browser.close).toHaveBeenCalled();
+      expect(connectOverCdp).toHaveBeenCalled();
+      expect(visibleSession?.presentation.activeMode).toBe("host_chrome_visible");
+      expect(visibleSession?.presentation.fallbackReason).toBeUndefined();
+    });
+  });
+
   // ─── Profiles Action ───
 
   describe("profiles action", () => {

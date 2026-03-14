@@ -6,6 +6,7 @@ import type {
   FridaySubagentRegistry,
   FridaySubagentRunStatus,
 } from "../subagent/friday-subagent.types.js";
+import { getFridayAgentToolExecutionContext } from "../runtime/friday-agent-tool-execution-context.js";
 import {
   errorResult,
   jsonResult,
@@ -30,6 +31,23 @@ export function createFridayAgentSubagentTools(
     createListSubagentsTool(deps),
     createGetSubagentTool(deps),
   ];
+}
+
+function resolveSubagentContext(
+  fallback: FridaySubagentContext,
+  signal: AbortSignal,
+): FridaySubagentContext {
+  const executionContext = getFridayAgentToolExecutionContext(signal);
+  if (!executionContext) {
+    return fallback;
+  }
+
+  return {
+    depth: fallback.depth,
+    parentRunId: executionContext.runId,
+    parentSessionKey: executionContext.sessionKey,
+    rootRunId: fallback.depth === 0 ? executionContext.runId : fallback.rootRunId,
+  };
 }
 
 // ─── spawn_subagent ───
@@ -70,6 +88,7 @@ function createSpawnSubagentTool(
       required: ["task"],
     },
     async execute(args, signal) {
+      const subagentContext = resolveSubagentContext(deps.subagentContext, signal);
       const task = readStringParam(args, "task", { required: true });
       const label = readStringParam(args, "label");
       const model = readStringParam(args, "model");
@@ -82,10 +101,13 @@ function createSpawnSubagentTool(
           label,
           model,
           timeoutMs,
-          parentRunId: deps.subagentContext.parentRunId,
-          parentSessionKey: deps.subagentContext.parentSessionKey,
-          depth: deps.subagentContext.depth,
-          rootRunId: deps.subagentContext.rootRunId,
+          parentRunId: subagentContext.parentRunId,
+          parentSessionKey: subagentContext.parentSessionKey,
+          depth: subagentContext.depth,
+          rootRunId: subagentContext.rootRunId,
+          constraints: getFridayAgentToolExecutionContext(signal)?.readOnly
+            ? { readOnly: true }
+            : undefined,
           signal,
         };
 
@@ -118,8 +140,9 @@ function createSpawnSubagentTool(
         return jsonResult({
           status: "accepted",
           subagentId: detached.subagentId,
+          childRunId: detached.childRunId,
           childSessionKey: detached.childSessionKey,
-          message: "Sub-agent spawned. Use get_subagent or list_subagents to check status.",
+          message: "Sub-agent delegated and still running. Use get_subagent or list_subagents to check status.",
         });
       } catch (error) {
         if (error instanceof FridayDomainError) {
@@ -150,16 +173,17 @@ function createListSubagentsTool(
         },
       },
     },
-    async execute(args) {
+    async execute(args, signal) {
+      const subagentContext = resolveSubagentContext(deps.subagentContext, signal);
       const status = readStringParam(args, "status") as FridaySubagentRunStatus | undefined;
-
-      const records = deps.registry.listByParentRunId(deps.subagentContext.parentRunId);
+      const records = deps.registry.listByParentRunId(subagentContext.parentRunId);
       const filtered = status ? records.filter((r) => r.status === status) : records;
 
       return jsonResult({
         count: filtered.length,
         subagents: filtered.map((r) => ({
           id: r.id,
+          childRunId: r.childRunId,
           task: r.task,
           label: r.label,
           status: r.status,
@@ -198,7 +222,8 @@ function createGetSubagentTool(
       },
       required: ["subagentId"],
     },
-    async execute(args) {
+    async execute(args, signal) {
+      const subagentContext = resolveSubagentContext(deps.subagentContext, signal);
       const subagentId = readStringParam(args, "subagentId", { required: true });
 
       const record = deps.registry.getById(subagentId);
@@ -208,14 +233,16 @@ function createGetSubagentTool(
 
       // Authorize: only allow access to subagents owned by this run/session
       if (
-        record.parentRunId !== deps.subagentContext.parentRunId &&
-        record.parentSessionKey !== deps.subagentContext.parentSessionKey
+        record.parentRunId !== subagentContext.parentRunId &&
+        record.parentSessionKey !== subagentContext.parentSessionKey &&
+        record.rootRunId !== subagentContext.rootRunId
       ) {
         return errorResult(`Sub-agent '${subagentId}' not found.`);
       }
 
       return jsonResult({
         id: record.id,
+        childRunId: record.childRunId,
         task: record.task,
         label: record.label,
         status: record.status,

@@ -74,6 +74,7 @@ import { createFridayChannelWebhookRoutes } from "../http/routes/friday-channel-
 import {
   createFridayAgentAutomationRepository,
   createFridayAgentAutomationService,
+  createFridayAgentRunEventRepository,
   createFridayAgentRunRepository,
 } from "#agent";
 import type {
@@ -1702,6 +1703,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   let agentAutomationService: FridayAgentAutomationService | undefined;
   if (deps.agentRuntime && deps.agentEventEmitter) {
     const agentRepo = createFridayAgentRunRepository();
+    const agentRunEventRepo = createFridayAgentRunEventRepository();
     const agentAbortControllers = new Map<string, AbortController>();
 
     const startRun = async (input: {
@@ -1768,6 +1770,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       listRuns: (query) => {
         return deps.db.withReadConnection((db) =>
           agentRepo.list(db, query),
+        );
+      },
+      listRunEvents: (runId, afterSeq) => {
+        return deps.db.withReadConnection((db) =>
+          agentRunEventRepo.list(db, runId, afterSeq),
         );
       },
       cancelRun: (runId) => {

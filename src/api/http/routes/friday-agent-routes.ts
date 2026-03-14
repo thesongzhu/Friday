@@ -11,6 +11,7 @@ import type {
 } from "#agent";
 import { FridayDomainError } from "#errors";
 import { isValidCronExpression } from "#jobs";
+import type { FridayAgentRunEventRecord } from "#agent";
 
 // ─── Constants ───
 
@@ -60,6 +61,7 @@ export interface FridayAgentRoutesDeps {
     limit?: number;
     cursor?: string;
   }) => FridayAgentRunRecord[];
+  listRunEvents: (runId: string, afterSeq?: number) => FridayAgentRunEventRecord[];
   cancelRun: (runId: string) => void;
   eventEmitter: FridayAgentEventEmitter;
   automationService: FridayAgentAutomationService;
@@ -80,6 +82,19 @@ interface FridaySseResponse {
 export function createFridayAgentRoutes(
   deps: FridayAgentRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  function serializeReplayEvent(
+    event: FridayAgentRunEventRecord,
+    replayed: boolean,
+  ): string {
+    return JSON.stringify({
+      type: event.eventName,
+      ...event.payload,
+      seq: event.seq,
+      emittedAt: event.emittedAt,
+      replayed,
+    });
+  }
+
   return [
     // ─── POST /v1/agent/runs ───
     {
@@ -284,6 +299,7 @@ export function createFridayAgentRoutes(
       auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
+        const query = ctx.query as Record<string, string | undefined>;
         const run = deps.getRun(runId);
         if (!run) {
           throw new FridayDomainError(
@@ -291,6 +307,18 @@ export function createFridayAgentRoutes(
             "Agent run not found",
             { httpStatus: 404 },
           );
+        }
+        let afterSeq: number | undefined;
+        if (query.afterSeq !== undefined) {
+          const parsed = Number(query.afterSeq);
+          if (!Number.isInteger(parsed) || parsed < 0) {
+            throw new FridayDomainError(
+              "VALIDATION_ERROR",
+              "afterSeq must be a non-negative integer",
+              { httpStatus: 400 },
+            );
+          }
+          afterSeq = parsed;
         }
 
         // Access raw response for SSE streaming.
@@ -308,15 +336,10 @@ export function createFridayAgentRoutes(
           Connection: "keep-alive",
         });
 
-        // If run is already terminal, send final status and close
-        if (TERMINAL_STATUSES.has(run.status)) {
-          rawRes.write(`data: ${JSON.stringify({ type: "agent.run.status", runId, status: run.status })}\n\n`);
-          rawRes.end();
-          return undefined as unknown as Record<string, unknown>;
-        }
-
-        // Subscribe to all agent events filtered by runId
         let closed = false;
+        let terminalSeen = false;
+        let lastSeq = afterSeq ?? 0;
+        let flushChain = Promise.resolve();
         // Additional terminal/testing event types can be appended here once they
         // are added to FridayAgentEventMap.
         const eventNames: FridayAgentEventName[] = [
@@ -345,6 +368,32 @@ export function createFridayAgentRoutes(
           }
         }
 
+        const flushPersistedEvents = async (replayed: boolean): Promise<void> => {
+          const events = deps.listRunEvents(runId, lastSeq);
+          for (const event of events) {
+            if (closed) {
+              return;
+            }
+            lastSeq = event.seq;
+            rawRes.write(`data: ${serializeReplayEvent(event, replayed)}\n\n`);
+            if (TERMINAL_EVENT_NAMES.has(event.eventName)) {
+              terminalSeen = true;
+            }
+          }
+        };
+
+        const queueFlush = (replayed: boolean): void => {
+          flushChain = flushChain
+            .then(() => flushPersistedEvents(replayed))
+            .then(() => {
+              if (!closed && terminalSeen) {
+                rawRes.end();
+                cleanup();
+              }
+            })
+            .catch(() => {});
+        };
+
         // Keepalive
         const keepaliveTimer = setInterval(() => {
           if (!closed) {
@@ -355,6 +404,23 @@ export function createFridayAgentRoutes(
         // Listen for client disconnect
         rawRes.on("close", cleanup);
 
+        await flushPersistedEvents(true);
+        if (terminalSeen || TERMINAL_STATUSES.has(run.status)) {
+          if (!terminalSeen) {
+            rawRes.write(`data: ${JSON.stringify({
+              type: "agent.run.status",
+              runId,
+              status: run.status,
+              seq: lastSeq,
+              emittedAt: run.completedAt ?? run.createdAt,
+              replayed: true,
+            })}\n\n`);
+          }
+          rawRes.end();
+          cleanup();
+          return undefined as unknown as Record<string, unknown>;
+        }
+
         // Subscribe to events
         for (const eventName of eventNames) {
           const listener = ((payload: FridayAgentEventMap[typeof eventName]) => {
@@ -362,15 +428,7 @@ export function createFridayAgentRoutes(
             const p = payload as unknown as Record<string, unknown>;
             const payloadRunId = p.runId ?? p.parentRunId;
             if (payloadRunId !== runId) return;
-
-            const sseData = { type: eventName, ...payload, timestamp: new Date().toISOString() };
-            rawRes.write(`data: ${JSON.stringify(sseData)}\n\n`);
-
-            // Close stream on terminal events (derived from TERMINAL_STATUSES)
-            if (TERMINAL_EVENT_NAMES.has(eventName)) {
-              rawRes.end();
-              cleanup();
-            }
+            queueFlush(false);
           }) as AnyListener;
 
           listeners.push({ event: eventName, listener });

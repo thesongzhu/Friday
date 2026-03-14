@@ -9,15 +9,27 @@ const MUTATING_TOOLS = new Set([
   "exec",
   "memory_store",
   "workflow_run",
-  "skill_run",
 ]);
 
 // Tools that are mutating only for certain actions/sub-operations
 const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>) => boolean> = {
+  system: (args) => {
+    const action = typeof args.action === "string" ? args.action : "";
+    const readOnlyActions = new Set([
+      "snapshot",
+      "read_notification",
+      "notification_list",
+      "search_file",
+      "clipboard_read",
+    ]);
+    return !readOnlyActions.has(action);
+  },
   browser: (args) => {
     // browser actions that mutate state
     let action = typeof args.action === "string" ? args.action : "";
     const mutatingActions = new Set([
+      "open",
+      "navigate",
       "click", "type", "fill", "select", "press", "drag",
       "upload", "evaluate",
     ]);
@@ -35,6 +47,26 @@ const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>)
     ]);
     return mutatingActions.has(action);
   },
+  gateway: (args) => {
+    const action = typeof args.action === "string" ? args.action : "";
+    return action !== "status" && action !== "config_get";
+  },
+  skill_run: (args) => {
+    const skillId = typeof args.skillId === "string" ? args.skillId : "";
+    const readOnlySkills = new Set([
+      "repo-health-check",
+      "workspace-change-risk-review",
+      "release-readiness-check",
+      "log-error-triage",
+      "local-service-diagnose",
+      "incident-brief-generator",
+      "system-health-snapshot",
+      "review-open-issues",
+      "autofix-readiness-review",
+      "failed-deploy-recovery-brief",
+    ]);
+    return !readOnlySkills.has(skillId);
+  },
 };
 
 // Tools that are always read-only
@@ -48,8 +80,9 @@ const READ_ONLY_TOOLS = new Set([
   "memory_query",
   "memory_get",
   "echo",
-  "subagent_spawn",
-  "subagent_status",
+  "spawn_subagent",
+  "get_subagent",
+  "list_subagents",
   "agents_list",
   "skills_list",
   "image_analysis",

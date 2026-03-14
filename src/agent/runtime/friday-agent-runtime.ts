@@ -33,6 +33,7 @@ import type {
   FridayAgentRuntime,
   FridayAgentRuntimeResult,
 } from "./friday-agent-runtime.types.js";
+import { attachFridayAgentToolExecutionContext } from "./friday-agent-tool-execution-context.js";
 import { isMutatingToolCall } from "./friday-agent-tool-mutation.js";
 import { getApprovalRequiredReasonForToolCall } from "./friday-agent-tool-risk.js";
 
@@ -173,8 +174,10 @@ export function createFridayAgentRuntime(
       const scopes = normalizeScopes(params.scopes);
 
       // Resolve per-run overrides (FIX-1)
-      const requestedProviderId = params.providerId ?? providerId;
-      const requestedModel = params.model ?? model;
+      const requestedProviderId = normalizeDefaultRouteSentinel(params.providerId)
+        ?? normalizeDefaultRouteSentinel(providerId);
+      const requestedModel = normalizeDefaultRouteSentinel(params.model)
+        ?? normalizeDefaultRouteSentinel(model);
 
       // 1. Create run record
       db.withWriteTransaction((writer) =>
@@ -212,6 +215,52 @@ export function createFridayAgentRuntime(
       let totalOutputTokens = 0;
       let responseText = "";
       const actualTurns: FridayAgentActualTurn[] = [];
+      let latestTestResults: FridayAgentTestResult[] = [];
+      let latestArtifacts: FridayAgentArtifact[] = [];
+      let latestActualExecution: FridayAgentActualExecution | undefined;
+      let latestCostUsd: number | undefined;
+
+      const persistRunArtifacts = (input: {
+        status: string;
+        response: string;
+        durationMs: number;
+        completedAt: string;
+        testResults: FridayAgentTestResult[];
+        artifacts: FridayAgentArtifact[];
+        costUsd?: number;
+      }): { artifactDir?: string; artifacts: FridayAgentArtifact[] } => {
+        let artifactDir: string | undefined;
+        let writtenArtifacts = input.artifacts;
+        if (!artifactWriter) {
+          return { artifactDir, artifacts: writtenArtifacts };
+        }
+
+        try {
+          const writerResult = artifactWriter.writeRunArtifacts({
+            runId,
+            task: params.task,
+            status: input.status,
+            response: input.response,
+            toolCalls: allToolCalls,
+            testResults: input.testResults,
+            artifacts: input.artifacts,
+            durationMs: input.durationMs,
+            usageInput: totalInputTokens,
+            usageOutput: totalOutputTokens,
+            costUsd: input.costUsd,
+            completedAt: input.completedAt,
+          });
+          artifactDir = writerResult.artifactDir;
+          writtenArtifacts = writerResult.artifacts;
+        } catch (error) {
+          console.warn(
+            `[friday][W-AG-ARTIFACT-WRITE-001] Failed to persist run artifacts for run ${runId}:`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+
+        return { artifactDir, artifacts: writtenArtifacts };
+      };
 
       try {
         // 2. Emit started event and transition to planning
@@ -221,8 +270,8 @@ export function createFridayAgentRuntime(
             action: "execute",
             args: {
               task: params.task,
-              providerId: requestedProviderId,
-              model: requestedModel,
+              providerId: requestedProviderId ?? "default",
+              model: requestedModel ?? "default",
               constraints: {
                 readOnly: isReadOnly,
               },
@@ -440,7 +489,7 @@ export function createFridayAgentRuntime(
             await streamLlmResponse({
               llmClient,
               providerId: requestedProviderId,
-              model: requestedModel,
+              model: requestedModel ?? "default",
               systemPrompt: effectiveSystemPrompt,
               messages,
               tools,
@@ -467,7 +516,7 @@ export function createFridayAgentRuntime(
             try {
               await usageRecorder({
                 providerId: turnMeta.actualProviderId,
-                model: turnMeta.actualModel ?? requestedModel,
+                model: turnMeta.actualModel ?? requestedModel ?? "default",
                 providerApi: turnMeta.actualProviderApi,
                 inputTokens,
                 outputTokens,
@@ -739,6 +788,7 @@ export function createFridayAgentRuntime(
               signal: runAbortController.signal,
               runId,
               sessionKey,
+              readOnly: isReadOnly,
               principalId,
               executionContext,
               nowIso,
@@ -841,11 +891,14 @@ export function createFridayAgentRuntime(
           totalCostUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
           turns: actualTurns,
         };
+        latestActualExecution = actualExecution;
+        latestCostUsd = totalCostUsd > 0 ? totalCostUsd : undefined;
 
         // ─── IMPL-5: Validation gate (self-test) ───
         let testsPassed = selfTestService ? false : true;
         let testResults: FridayAgentTestResult[] = [];
         const collectedArtifacts: FridayAgentArtifact[] = deriveArtifactsFromToolCalls(allToolCalls);
+        latestArtifacts = collectedArtifacts;
 
         if (selfTestService) {
           // Transition to testing
@@ -871,6 +924,7 @@ export function createFridayAgentRuntime(
               durationMs: 0,
             }];
           }
+          latestTestResults = testResults;
 
           // Criteria: must have a response
           const hasResponse = responseText.trim().length > 0;
@@ -879,15 +933,36 @@ export function createFridayAgentRuntime(
             testsPassed = false;
           }
 
+          if (
+            !testsPassed
+            && hasSafeDiagnosticCompletionEvidence({
+              task: params.task,
+              responseText,
+              toolCalls: allToolCalls,
+            })
+          ) {
+            testsPassed = true;
+          }
+
           if (!testsPassed) {
             const durationMs = Date.now() - startedAt;
             const summaryText = deriveSummary(responseText);
+            const completedAt = nowIso();
+            const persistedArtifacts = persistRunArtifacts({
+              status: "failed",
+              response: responseText || "Validation criteria not met",
+              durationMs,
+              completedAt,
+              testResults,
+              artifacts: collectedArtifacts,
+              costUsd: latestCostUsd,
+            });
 
             db.withWriteTransaction((writer) =>
               repo.update(writer, {
                 id: runId,
                 status: "failed",
-                completedAt: nowIso(),
+                completedAt,
                 durationMs,
                 errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
                 errorMessage: "Validation criteria not met",
@@ -896,8 +971,10 @@ export function createFridayAgentRuntime(
                 costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
                 actualExecution,
                 testResults: testResults as unknown as FridayAgentTestResult[],
+                artifacts: persistedArtifacts.artifacts,
                 responseText: responseText || undefined,
                 summary: summaryText || undefined,
+                artifactDir: persistedArtifacts.artifactDir,
               }),
             );
 
@@ -941,12 +1018,22 @@ export function createFridayAgentRuntime(
           const durationMs = Date.now() - startedAt;
           const failureResponse = `${outputClosureGap.userMessage} (${outputClosureGap.errorCode})`;
           const summaryText = deriveSummary(failureResponse);
+          const completedAt = nowIso();
+          const persistedArtifacts = persistRunArtifacts({
+            status: "failed",
+            response: failureResponse,
+            durationMs,
+            completedAt,
+            testResults,
+            artifacts: collectedArtifacts,
+            costUsd: latestCostUsd,
+          });
 
           db.withWriteTransaction((writer) =>
             repo.update(writer, {
               id: runId,
               status: "failed",
-              completedAt: nowIso(),
+              completedAt,
               durationMs,
               errorCode: outputClosureGap.errorCode,
               errorMessage: outputClosureGap.developerMessage,
@@ -955,9 +1042,10 @@ export function createFridayAgentRuntime(
               costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
               actualExecution,
               testResults: testResults as unknown as FridayAgentTestResult[],
-              artifacts: collectedArtifacts,
+              artifacts: persistedArtifacts.artifacts,
               responseText: failureResponse,
               summary: summaryText || undefined,
+              artifactDir: persistedArtifacts.artifactDir,
             }),
           );
 
@@ -987,56 +1075,36 @@ export function createFridayAgentRuntime(
           };
         }
 
-        // ─── IMPL-7: Artifact writer ───
-        let artifactDir: string | undefined;
-        let writtenArtifacts: FridayAgentArtifact[] = collectedArtifacts;
-        if (artifactWriter) {
-          try {
-            const writerResult = artifactWriter.writeRunArtifacts({
-              runId,
-              task: params.task,
-              status: "completed",
-              response: responseText,
-              toolCalls: allToolCalls,
-              testResults: testResults as unknown as FridayAgentTestResult[],
-              artifacts: collectedArtifacts,
-              durationMs: Date.now() - startedAt,
-              usageInput: totalInputTokens,
-              usageOutput: totalOutputTokens,
-              costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
-              completedAt: nowIso(),
-            });
-            artifactDir = writerResult.artifactDir;
-            writtenArtifacts = writerResult.artifacts;
-          } catch (error) {
-            // Non-fatal: artifact writing failure should not kill the run.
-            console.warn(
-              `[friday][W-AG-ARTIFACT-WRITE-001] Failed to persist run artifacts for run ${runId}:`,
-              error instanceof Error ? error.message : String(error),
-            );
-          }
-        }
-
         // ─── Derive summary from response (IMPL-6) ───
         const summaryText = deriveSummary(responseText);
 
         // 8. Finalize — success
         const durationMs = Date.now() - startedAt;
+        const completedAt = nowIso();
+        const persistedArtifacts = persistRunArtifacts({
+          status: "completed",
+          response: responseText,
+          durationMs,
+          completedAt,
+          testResults,
+          artifacts: collectedArtifacts,
+          costUsd: latestCostUsd,
+        });
         db.withWriteTransaction((writer) =>
           repo.update(writer, {
             id: runId,
             status: "completed",
-            completedAt: nowIso(),
+            completedAt,
             durationMs,
             usageInput: totalInputTokens,
             usageOutput: totalOutputTokens,
             costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
             actualExecution,
             testResults: testResults as unknown as FridayAgentTestResult[],
-            artifacts: writtenArtifacts,
+            artifacts: persistedArtifacts.artifacts,
             responseText: responseText || undefined,
             summary: summaryText || undefined,
-            artifactDir,
+            artifactDir: persistedArtifacts.artifactDir,
           }),
         );
 
@@ -1045,7 +1113,7 @@ export function createFridayAgentRuntime(
           durationMs,
           toolCallCount: allToolCalls.length,
           testsPassed,
-          artifacts: writtenArtifacts.map((a) => ({ type: a.type, path: a.path })),
+          artifacts: persistedArtifacts.artifacts.map((a) => ({ type: a.type, path: a.path })),
         }, runId);
 
         // ─── IMPL-6: Session mirror ───
@@ -1085,19 +1153,34 @@ export function createFridayAgentRuntime(
           : FRIDAY_AGENT_ERROR_CODES.LLM_ERROR;
 
         const summaryText = deriveSummary(responseText);
+        const completedAt = nowIso();
+        const persistedArtifacts = persistRunArtifacts({
+          status: "failed",
+          response: responseText || errorMessage,
+          durationMs,
+          completedAt,
+          testResults: latestTestResults,
+          artifacts: latestArtifacts.length > 0 ? latestArtifacts : deriveArtifactsFromToolCalls(allToolCalls),
+          costUsd: latestCostUsd,
+        });
 
         db.withWriteTransaction((writer) =>
           repo.update(writer, {
             id: runId,
             status: "failed",
-            completedAt: nowIso(),
+            completedAt,
             durationMs,
             errorCode,
             errorMessage,
             usageInput: totalInputTokens,
             usageOutput: totalOutputTokens,
+            costUsd: latestCostUsd,
+            actualExecution: latestActualExecution,
+            testResults: latestTestResults,
+            artifacts: persistedArtifacts.artifacts,
             responseText: responseText || undefined,
             summary: summaryText || undefined,
+            artifactDir: persistedArtifacts.artifactDir,
           }),
         );
 
@@ -1263,6 +1346,57 @@ interface OutputClosureGap {
   developerMessage: string;
   attemptedImageToolCalls: number;
   failedImageToolCalls: number;
+}
+
+const READ_ONLY_DIAGNOSTIC_SKILL_IDS = new Set([
+  "repo-health-check",
+  "workspace-change-risk-review",
+  "release-readiness-check",
+  "log-error-triage",
+  "local-service-diagnose",
+  "incident-brief-generator",
+  "system-health-snapshot",
+  "review-open-issues",
+  "autofix-readiness-review",
+  "failed-deploy-recovery-brief",
+]);
+
+function normalizeDefaultRouteSentinel(value?: string): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim();
+  if (normalized.length === 0 || normalized === "default") {
+    return undefined;
+  }
+  return normalized;
+}
+
+function hasSafeDiagnosticCompletionEvidence(params: {
+  task: string;
+  responseText: string;
+  toolCalls: FridayAgentToolCallRecord[];
+}): boolean {
+  if (params.responseText.trim().length === 0) {
+    return false;
+  }
+
+  return params.toolCalls.some((call) => {
+    if (call.result.isError) {
+      return false;
+    }
+    if (call.toolName === "skill_run") {
+      const skillId = typeof call.args.skillId === "string" ? call.args.skillId : "";
+      return READ_ONLY_DIAGNOSTIC_SKILL_IDS.has(skillId);
+    }
+    if (call.toolName === "system") {
+      return call.args.action === "snapshot";
+    }
+    if (call.toolName === "skills_list") {
+      return true;
+    }
+    return false;
+  });
 }
 
 function detectOutputClosureGap(params: {
@@ -1872,6 +2006,7 @@ interface ExecuteToolCallParams {
   signal: AbortSignal;
   runId: string;
   sessionKey: string;
+  readOnly: boolean;
   principalId?: string;
   executionContext?: FridayAgentExecutionContext;
   nowIso: () => string;
@@ -2044,7 +2179,12 @@ async function executeToolCall(
   }
 
   try {
-    const rawResult = await tool.execute(toolArgs, toolAbortController.signal);
+    const toolSignal = attachFridayAgentToolExecutionContext(toolAbortController.signal, {
+      runId,
+      sessionKey,
+      readOnly: params.readOnly,
+    });
+    const rawResult = await tool.execute(toolArgs, toolSignal);
     const durationMs = Date.now() - startedAt;
 
     // OC-007: Cap oversized tool result content to prevent context bloat

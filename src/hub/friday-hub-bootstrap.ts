@@ -195,7 +195,11 @@ import {
   createFridayWorkflowCronTriggerJob,
   createFridayWorkflowTimeoutJob,
 } from "#jobs";
-import type { FridayJobSchedulerService, FridayScheduledJobDefinition } from "#jobs";
+import type {
+  FridayJobSchedulerRepository,
+  FridayJobSchedulerService,
+  FridayScheduledJobDefinition,
+} from "#jobs";
 import { createFridayBrowserManager } from "#browser";
 import { createXhsPageInteractions, createXhsSessionManager } from "#xhs";
 import {
@@ -761,6 +765,7 @@ export async function createFridayHub(
         : params.model;
       const { result: events, route } = await providerService.runWithFallback({
         requestedModel: resolvedModel,
+        requestedProviderId: params.providerId,
         run: async (_route, credential) => {
           const innerClient = createFridayAgentLlmClient({
             baseUrl: _route.provider.baseUrl,
@@ -1746,6 +1751,23 @@ export async function createFridayHub(
       version: FRIDAY_VERSION,
       workspaceContext,
       starterSkills,
+      runtimeCapabilities: {
+        messagingEnabled: toolNames.includes("message")
+          && typeof channelRegistry !== "undefined"
+          && channelRegistry.list().some((kind) => channelRegistry.status(kind) === "connected"),
+        messagingKinds: typeof channelRegistry !== "undefined"
+          ? channelRegistry.list().filter((kind) => channelRegistry.status(kind) === "connected")
+          : [],
+        mcpEnabled: toolNames.includes("mcp")
+          && typeof mcpAdapter !== "undefined"
+          && !!mcpAdapter
+          && mcpAdapter.listServers().length > 0,
+        mcpServerCount: mcpAdapter?.listServers().length ?? 0,
+        cronEnabled: toolNames.includes("cron") && !!jobScheduler && !!schedulerRepo,
+        subagentsEnabled: toolNames.includes("spawn_subagent"),
+        marketplaceEnabled: !!marketplaceRuntime,
+        selfLearningEnabled: toolNames.includes("feedback"),
+      },
     });
   };
 
@@ -1817,20 +1839,41 @@ export async function createFridayHub(
   const subagentRegistry = createFridaySubagentRegistry({
     db: stateRuntime!.sqlite,
     createChildRuntime: (params) => {
+      let childRuntimeRef: FridayAgentRuntime | undefined;
+      const childRuntimeGetter = () => childRuntimeRef;
       const childTools = createFridayAgentToolRegistry({
         workdir: workspaceRoot,
+        skillExecutor: executor,
         skillRegistry: registry,
+        workflowExecutionService: workflowRuntime.execution,
         memoryService,
+        subagentRegistry,
+        subagentContext: {
+          depth: params.depth,
+          parentRunId: "subagent-parent",
+          parentSessionKey: "agent:run:subagent-parent",
+          rootRunId: params.rootRunId,
+        },
         browserManager,
         xhsPageInteractions,
         xhsSessionManager,
         desktopSessionManager,
         systemService,
         ssrfGuard: agentSsrfGuard,
+        sessionService: hubSessionService,
+        agentRuntimeGetter: childRuntimeGetter,
+        analyzeImages,
+        gatewayService,
+        channelRegistry,
+        schedulerRepository: schedulerRepo,
+        schedulerService: jobScheduler,
         mcpAdapter,
+        extractionService: sessionExtractionService,
         providerService,
+        webSearchProvider: process.env.FRIDAY_SEARCH_PROVIDER,
+        webSearchApiKey: process.env.FRIDAY_SERPER_API_KEY ?? process.env.FRIDAY_TAVILY_API_KEY,
       });
-      return createFridayAgentRuntime({
+      const childRuntime = createFridayAgentRuntime({
         db: stateRuntime!.sqlite,
         llmClient: agentLlmClient,
         model: params.model ?? agentDefaultModel,
@@ -1868,6 +1911,17 @@ export async function createFridayHub(
           });
         },
       });
+      childRuntimeRef = childRuntime;
+
+      const feedbackTool = createFridayAgentFeedbackTool({
+        learningEventWriter,
+        idGenerator,
+        nowIso,
+        defaultUserId: learningDefaultUserId,
+      });
+      childRuntime.registerTool(feedbackTool);
+
+      return childRuntime;
     },
     eventEmitter: agentEventEmitter,
     idGenerator,
@@ -2902,8 +2956,10 @@ export async function createFridayHub(
   // ─── Unified Job Scheduler (F10: register ALL job modules) ───
 
   let jobScheduler: FridayJobSchedulerService | undefined;
+  let schedulerRepo: FridayJobSchedulerRepository | undefined;
   if (stateRuntime) {
-    const schedulerRepo = createFridayJobSchedulerRepository({ db: stateRuntime.sqlite });
+    schedulerRepo = createFridayJobSchedulerRepository({ db: stateRuntime.sqlite });
+    const schedulerRepoRef = schedulerRepo;
 
     // Build workflow cron trigger job
     const cronTriggerJob = createFridayWorkflowCronTriggerJob({
@@ -3103,7 +3159,7 @@ export async function createFridayHub(
     });
 
     jobScheduler = createFridayJobSchedulerService({
-      repository: schedulerRepo,
+      repository: schedulerRepoRef,
       nowIso,
       jobs: schedulerJobs,
     });
@@ -3120,7 +3176,7 @@ export async function createFridayHub(
           const jobId = toAutomationJobId(automation.id);
 
           if (!automation.enabled || !automation.schedule || automation.schedule.type !== "cron") {
-            schedulerRepo.disableJob(jobId, now);
+            schedulerRepoRef.disableJob(jobId, now);
             return;
           }
 
@@ -3133,11 +3189,11 @@ export async function createFridayHub(
             Date.now(),
           );
           if (nextRunAtMs == null) {
-            schedulerRepo.disableJob(jobId, now);
+            schedulerRepoRef.disableJob(jobId, now);
             throw new Error(`Invalid cron schedule for automation ${automation.id}`);
           }
 
-          schedulerRepo.upsert({
+          schedulerRepoRef.upsert({
             id: jobId,
             intervalMs: 0,
             timeoutMs: 900_000,
@@ -3147,8 +3203,8 @@ export async function createFridayHub(
             scheduleCronExpr: automation.schedule.cron,
             scheduleTz: automation.schedule.timezone ?? null,
           });
-          schedulerRepo.enableJob(jobId, now);
-          schedulerRepo.setNextRunAt(jobId, new Date(nextRunAtMs).toISOString(), now);
+          schedulerRepoRef.enableJob(jobId, now);
+          schedulerRepoRef.setNextRunAt(jobId, new Date(nextRunAtMs).toISOString(), now);
 
           schedulerService.registerDynamicJob({
             id: jobId,
@@ -3178,7 +3234,7 @@ export async function createFridayHub(
 
         remove(automation) {
           const now = nowIso();
-          schedulerRepo.disableJob(toAutomationJobId(automation.id), now);
+          schedulerRepoRef.disableJob(toAutomationJobId(automation.id), now);
         },
       });
 
@@ -3189,7 +3245,7 @@ export async function createFridayHub(
     // Register in both the array (for LLM schema) AND runtime toolMap (for execution).
     {
       const cronTool = createFridayAgentCronTool({
-        schedulerRepository: schedulerRepo,
+        schedulerRepository: schedulerRepoRef,
         schedulerService: jobScheduler,
         dynamicJobRunner: (jobId, payload) => {
           // Return an async function that the scheduler invokes on each cron tick.
@@ -3221,24 +3277,12 @@ export async function createFridayHub(
     agentTools.push(agentsListTool);
     agentRuntime.registerTool(agentsListTool);
 
-    // Mutable subagent context for the top-level agent runtime.
-    // Updated at each run start via the event emitter so spawn_subagent
-    // always references the current run as its parent.
     const topLevelSubagentContext = {
       depth: 0,
       parentRunId: "root",
-      parentSessionKey: "root",
+      parentSessionKey: "agent:run:root",
       rootRunId: "root",
     };
-
-    agentEventEmitter.on("agent.run.started", (payload) => {
-      const p = payload as { runId?: string };
-      if (typeof p.runId === "string") {
-        topLevelSubagentContext.parentRunId = p.runId;
-        topLevelSubagentContext.rootRunId = p.runId;
-        topLevelSubagentContext.parentSessionKey = `agent:run:${p.runId}`;
-      }
-    });
 
     const subagentTools = createFridayAgentSubagentTools({
       registry: subagentRegistry,
@@ -3481,10 +3525,11 @@ export async function createFridayHub(
   // Same principle: don't register tools that can't work.
 
   // 6. gateway — OC-011: real process info instead of stubs
+  let gatewayService: ReturnType<typeof createFridayGatewayService> | undefined;
   {
     const gatewayHost = config.host ?? "127.0.0.1";
     const gatewayPort = config.port ?? 3141;
-    const gatewayService = createFridayGatewayService({
+    gatewayService = createFridayGatewayService({
       async statusFn() {
         return {
           healthy: hubState === "running",
