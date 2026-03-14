@@ -211,7 +211,7 @@ describe("FridayAgentLlmClient", () => {
     const fetchImpl = createMockFetch(200, createSSEStream(sseEvents));
     const client = createFridayAgentLlmClient({
       baseUrl: "https://api.anthropic.com",
-      apiKey: "oauth-access-token",
+      apiKey: "oauth-access-token", // pragma: allowlist secret
       api: "anthropic-messages",
       authMode: "oauth",
       fetchImpl,
