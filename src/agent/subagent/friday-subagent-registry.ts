@@ -135,6 +135,7 @@ export function createFridaySubagentRegistry(
         task: input.task,
         runId: childRunId,
         sessionKey: childSessionKey,
+        timezone: input.timezone,
         timeoutMs,
         signal: input.signal,
         constraints: input.constraints,
@@ -227,11 +228,19 @@ export function createFridaySubagentRegistry(
         detachedInputs.delete(subagentRecordId);
       });
 
+      const record = db.withReadConnection((reader) =>
+        repo.getById(reader, subagentRecordId),
+      );
+
       return {
         subagentId: subagentRecordId,
         childRunId,
         childSessionKey,
         status: "accepted",
+        statusSnapshot: record?.status ?? "pending",
+        outcome: record?.outcome,
+        detached: true,
+        awaited: false,
       };
     },
 

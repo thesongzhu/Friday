@@ -65,10 +65,12 @@ export function createFridayChannelInboundDebouncer(
     const last = messages[messages.length - 1]!;
     const combinedText = messages.map((m) => m.text).join("\n");
     const combinedImages = messages.flatMap((m) => m.images ?? []);
+    const timezone = [...messages].reverse().find((m) => typeof m.timezone === "string" && m.timezone.trim().length > 0)?.timezone;
     return {
       ...last,
       text: combinedText,
       images: combinedImages.length > 0 ? combinedImages : undefined,
+      timezone,
     };
   }
 

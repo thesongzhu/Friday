@@ -80,6 +80,20 @@ describe("FridayAutonomousEngine", () => {
       expect(firstCall.task).toContain("Set up Discord bot");
     });
 
+    it("passes timezone through every agent runtime planning call", async () => {
+      await engine.executeGoal({
+        description: "Find the latest Iran news",
+        timezone: "America/Los_Angeles",
+        signal: signal(),
+      });
+
+      expect(deps.agentRuntime.executeRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          timezone: "America/Los_Angeles",
+        }),
+      );
+    });
+
     it("should use VLM for visual analysis when screenshots are available", async () => {
       const vlmFn = vi.fn().mockResolvedValue({
         text: JSON.stringify({ kind: "complete", summary: "Done" }),

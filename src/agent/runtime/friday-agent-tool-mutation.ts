@@ -85,6 +85,7 @@ const READ_ONLY_TOOLS = new Set([
   "list_subagents",
   "agents_list",
   "skills_list",
+  "capabilities",
   "image_analysis",
 ]);
 

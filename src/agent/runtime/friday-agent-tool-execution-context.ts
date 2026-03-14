@@ -2,6 +2,7 @@ export interface FridayAgentToolExecutionContext {
   runId: string;
   sessionKey: string;
   readOnly: boolean;
+  timezone?: string;
 }
 
 const FRIDAY_AGENT_TOOL_EXECUTION_CONTEXT = Symbol.for("friday.agent.toolExecutionContext");
@@ -30,6 +31,7 @@ export function getFridayAgentToolExecutionContext(
     typeof candidate.runId !== "string"
     || typeof candidate.sessionKey !== "string"
     || typeof candidate.readOnly !== "boolean"
+    || (candidate.timezone !== undefined && typeof candidate.timezone !== "string")
   ) {
     return null;
   }
@@ -37,5 +39,6 @@ export function getFridayAgentToolExecutionContext(
     runId: candidate.runId,
     sessionKey: candidate.sessionKey,
     readOnly: candidate.readOnly,
+    timezone: candidate.timezone,
   };
 }

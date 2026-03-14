@@ -215,6 +215,7 @@ export function createFridayAutonomousEngine(
     goal: FridayAutonomousGoal,
     step: FridayAutonomousStep,
     observations: readonly FridayAutonomousObservation[],
+    timezone: string | undefined,
     signal: AbortSignal,
   ): Promise<{
     reasoning: string;
@@ -274,6 +275,7 @@ export function createFridayAutonomousEngine(
     const result = await agentRuntime.executeRun({
       task: fullPrompt,
       sessionKey: `autonomous-${goal.id}`,
+      timezone,
       timeoutMs: 30_000,
       signal,
     });
@@ -350,6 +352,7 @@ export function createFridayAutonomousEngine(
   async function executeAction(
     decision: Extract<FridayAutonomousDecision, { kind: "act" }>,
     domain: string,
+    timezone: string | undefined,
     signal: AbortSignal,
   ): Promise<FridayAutonomousActionResult> {
     const { action } = decision;
@@ -360,6 +363,7 @@ export function createFridayAutonomousEngine(
       const result = await agentRuntime.executeRun({
         task: `Execute the following tool call and return the result:\nTool: ${action.toolName}\nArguments: ${JSON.stringify(action.args)}\n\nRationale: ${action.rationale ?? "N/A"}`,
         sessionKey: `autonomous-action-${idGenerator()}`,
+        timezone,
         timeoutMs: 60_000,
         signal,
       });
@@ -394,6 +398,7 @@ export function createFridayAutonomousEngine(
   async function verifyStep(
     step: FridayAutonomousStep,
     observations: readonly FridayAutonomousObservation[],
+    timezone: string | undefined,
     signal: AbortSignal,
   ): Promise<{ passed: boolean; actual: string }> {
     if (!step.verification) {
@@ -447,6 +452,7 @@ export function createFridayAutonomousEngine(
       // Text-only fallback
       const result = await agentRuntime.executeRun({
         task: prompt + textContext,
+        timezone,
         timeoutMs: 30_000,
         signal,
       });
@@ -470,6 +476,7 @@ export function createFridayAutonomousEngine(
    */
   async function planGoal(
     goal: FridayAutonomousGoal,
+    timezone: string | undefined,
     signal: AbortSignal,
   ): Promise<FridayAutonomousStep[]> {
     // If recipe context provides step hints, use those directly
@@ -480,6 +487,7 @@ export function createFridayAutonomousEngine(
     const planResult = await agentRuntime.executeRun({
       task: PLANNING_PROMPT_PREFIX + goal.description,
       sessionKey: `autonomous-plan-${goal.id}`,
+      timezone,
       timeoutMs: 60_000,
       signal,
     });
@@ -570,6 +578,7 @@ export function createFridayAutonomousEngine(
 
   async function runGoal(
     goal: FridayAutonomousGoal,
+    timezone: string | undefined,
     signal: AbortSignal,
   ): Promise<FridayAutonomousGoalResult> {
     const startedAt = Date.now();
@@ -583,7 +592,7 @@ export function createFridayAutonomousEngine(
       currentGoal = updateGoal(goal.id, { status: "planning", startedAt: nowIso() });
       emit("autonomous.goal.started", { goalId: goal.id, description: goal.description });
 
-      const plannedSteps = await planGoal(currentGoal, signal);
+      const plannedSteps = await planGoal(currentGoal, timezone, signal);
       const stepIds = plannedSteps.map((s) => s.id);
       currentGoal = updateGoal(goal.id, {
         status: "executing",
@@ -645,6 +654,7 @@ export function createFridayAutonomousEngine(
             currentGoal,
             currentStep,
             observations,
+            timezone,
             signal,
           );
           totalUsageInput += usageInput;
@@ -657,7 +667,7 @@ export function createFridayAutonomousEngine(
 
           switch (decision.kind) {
             case "act": {
-              actionResult = await executeAction(decision, currentStep.domain, signal);
+              actionResult = await executeAction(decision, currentStep.domain, timezone, signal);
               emit("autonomous.action.executed", {
                 goalId: goal.id,
                 stepId,
@@ -675,7 +685,7 @@ export function createFridayAutonomousEngine(
             case "verify": {
               // Capture fresh observations for verification
               const verifyObs = await gatherObservations(stepId, currentStep.domain, signal);
-              const verifyResult = await verifyStep(currentStep, verifyObs, signal);
+              const verifyResult = await verifyStep(currentStep, verifyObs, timezone, signal);
               emit("autonomous.verification.completed", {
                 goalId: goal.id,
                 stepId,
@@ -720,6 +730,7 @@ export function createFridayAutonomousEngine(
                   source: "assistant",
                   parentGoalId: goal.id,
                 }),
+                timezone,
                 signal,
               );
               totalUsageInput += subResult.usageInput;
@@ -984,7 +995,7 @@ export function createFridayAutonomousEngine(
       }
 
       try {
-        return await runGoal(goal, abortController.signal);
+        return await runGoal(goal, params.timezone, abortController.signal);
       } finally {
         externalSignalCleanup?.();
       }

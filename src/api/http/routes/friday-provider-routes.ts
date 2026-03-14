@@ -21,6 +21,10 @@ import type {
 import type { FridayProviderService } from "#providers";
 import { FRIDAY_PROVIDER_APIS, FRIDAY_PROVIDER_KINDS } from "#providers";
 import { FridayDomainError } from "#errors";
+import {
+  resolveExistingOAuthProvider,
+  resolveOrProvisionOAuthProvider,
+} from "../../../providers/services/friday-provider-oauth-selection.js";
 
 // ─── Validation helpers ───
 
@@ -303,15 +307,13 @@ export function createFridayProviderRoutes(
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayInitiateAnthropicOAuthResponse> {
         const body = ctx.body as Record<string, unknown> | null;
-        if (!body || typeof body.providerId !== "string" || body.providerId.trim() === "") {
-          throw new FridayDomainError(
-            "VALIDATION_ERROR",
-            "providerId is required and must be a non-empty string",
-            { httpStatus: 400 },
-          );
-        }
-        const providerId = body.providerId;
-        const oauth = await deps.providerService.initiateOAuthLogin({ providerId });
+        const selection = await resolveOrProvisionOAuthProvider(
+          deps.providerService,
+          readOAuthSelectionInput(body),
+        );
+        const oauth = await deps.providerService.initiateOAuthLogin({
+          providerId: selection.provider.id,
+        });
         return { oauth };
       },
     },
@@ -325,10 +327,10 @@ export function createFridayProviderRoutes(
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayCompleteAnthropicOAuthCallbackResponse> {
         const body = ctx.body as Record<string, unknown> | null;
-        if (!body || typeof body.providerId !== "string" || body.providerId.trim() === "") {
+        if (!body || typeof body !== "object") {
           throw new FridayDomainError(
             "VALIDATION_ERROR",
-            "providerId is required and must be a non-empty string",
+            "Request body is required",
             { httpStatus: 400 },
           );
         }
@@ -339,7 +341,12 @@ export function createFridayProviderRoutes(
             { httpStatus: 400 },
           );
         }
-        const providerId = body.providerId;
+        const selection = await resolveExistingOAuthProvider(
+          deps.providerService,
+          readOAuthSelectionInput(body),
+          "oauth_complete",
+        );
+        const providerId = selection.provider.id;
         const authorizationCode = body.authorizationCode;
         const state = typeof body.state === "string" ? body.state : undefined;
         const oauth = await deps.providerService.completeOAuthLogin({
@@ -351,4 +358,26 @@ export function createFridayProviderRoutes(
       },
     },
   ];
+}
+
+function readOAuthSelectionInput(body: Record<string, unknown> | null): {
+  providerId?: string;
+  kind?: "anthropic";
+  name?: string;
+  defaultModel?: string;
+} {
+  return {
+    providerId: typeof body?.providerId === "string" && body.providerId.trim().length > 0
+      ? body.providerId.trim()
+      : undefined,
+    kind: typeof body?.kind === "string" && body.kind.trim().length > 0
+      ? body.kind.trim() as "anthropic"
+      : undefined,
+    name: typeof body?.name === "string" && body.name.trim().length > 0
+      ? body.name.trim()
+      : undefined,
+    defaultModel: typeof body?.defaultModel === "string" && body.defaultModel.trim().length > 0
+      ? body.defaultModel.trim()
+      : undefined,
+  };
 }

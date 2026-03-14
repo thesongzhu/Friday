@@ -15,12 +15,15 @@ function signal(): AbortSignal {
   return new AbortController().signal;
 }
 
-function signalWithContext(overrides?: Partial<{ runId: string; sessionKey: string; readOnly: boolean }>): AbortSignal {
+function signalWithContext(
+  overrides?: Partial<{ runId: string; sessionKey: string; readOnly: boolean; timezone: string }>,
+): AbortSignal {
   const controller = new AbortController();
   return attachFridayAgentToolExecutionContext(controller.signal, {
     runId: overrides?.runId ?? "live-run-1",
     sessionKey: overrides?.sessionKey ?? "agent:run:live-run-1",
     readOnly: overrides?.readOnly ?? false,
+    timezone: overrides?.timezone,
   });
 }
 
@@ -69,6 +72,9 @@ function makeDetachedResult(overrides?: Partial<FridaySubagentDetachedResult>): 
     childRunId: "child-run-detached-1",
     childSessionKey: buildFridaySubagentSessionKey("agent:run:parent-run-1", "child-run-detached-1"),
     status: "accepted",
+    statusSnapshot: "pending",
+    detached: true,
+    awaited: false,
     ...overrides,
   };
 }
@@ -109,11 +115,41 @@ describe("FridayAgentSubagentTools", () => {
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.content) as Record<string, unknown>;
       expect(parsed.status).toBe("accepted");
+      expect(parsed.detached).toBe(true);
+      expect(parsed.awaited).toBe(false);
+      expect(parsed.statusSnapshot).toBe("pending");
       expect(parsed.subagentId).toBe("sub-detached-1");
       expect(parsed.childRunId).toBe("child-run-detached-1");
       expect(parsed.childSessionKey).toBeTruthy();
       expect(registry.spawnDetached).toHaveBeenCalled();
       expect(registry.spawn).not.toHaveBeenCalled();
+    });
+
+    it("returns a completed snapshot when the detached child is already done", async () => {
+      const completedRecord = makeRecord({
+        id: "sub-detached-1",
+        childRunId: "child-run-detached-1",
+        status: "completed",
+        outcome: makeOutcome({ response: "CHILD_OK" }),
+      });
+      const registry = mockRegistry({
+        spawnDetached: vi.fn().mockReturnValue(makeDetachedResult()),
+        getById: vi.fn().mockReturnValue(completedRecord),
+      });
+
+      const tools = createFridayAgentSubagentTools({
+        registry,
+        subagentContext: makeContext(),
+      });
+
+      const spawnTool = tools.find((t) => t.name === "spawn_subagent")!;
+      const result = await spawnTool.execute({ task: "Reply CHILD_OK" }, signal());
+
+      const parsed = JSON.parse(result.content) as Record<string, unknown>;
+      expect(parsed.status).toBe("accepted");
+      expect(parsed.statusSnapshot).toBe("completed");
+      expect(parsed.outcome).toMatchObject({ response: "CHILD_OK" });
+      expect(String(parsed.message)).toContain("completion snapshot");
     });
 
     it("returns completed result when wait=true (blocking)", async () => {
@@ -266,6 +302,28 @@ describe("FridayAgentSubagentTools", () => {
           parentSessionKey: "agent:run:live-run-1",
           rootRunId: "live-run-1",
           constraints: { readOnly: true },
+        }),
+      );
+    });
+
+    it("inherits timezone from the current run context", async () => {
+      const spawnDetachedFn = vi.fn().mockReturnValue(makeDetachedResult());
+      const registry = mockRegistry({ spawnDetached: spawnDetachedFn });
+
+      const tools = createFridayAgentSubagentTools({
+        registry,
+        subagentContext: makeContext({ timezone: "UTC" }),
+      });
+
+      const spawnTool = tools.find((t) => t.name === "spawn_subagent")!;
+      await spawnTool.execute(
+        { task: "Inspect latest headlines" },
+        signalWithContext({ timezone: "America/New_York" }),
+      );
+
+      expect(spawnDetachedFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          timezone: "America/New_York",
         }),
       );
     });

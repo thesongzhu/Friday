@@ -203,6 +203,14 @@ export { createFridayAgentMcpTool } from "./tools/friday-agent-mcp-tool.js";
 export type { CreateFridayAgentSystemToolOptions } from "./tools/friday-agent-system-tool.js";
 export { createFridayAgentSystemTool } from "./tools/friday-agent-system-tool.js";
 
+// ─── Capabilities tool ───
+
+export type {
+  CreateFridayAgentCapabilitiesToolOptions,
+  FridayAgentCapabilitiesSnapshot,
+} from "./tools/friday-agent-capabilities-tool.js";
+export { createFridayAgentCapabilitiesTool } from "./tools/friday-agent-capabilities-tool.js";
+
 // ─── MCP adapter ───
 
 export type {

@@ -3,7 +3,6 @@ import {
   errorResult,
   readNumberParam,
   readStringParam,
-  truncateOutput,
 } from "./friday-agent-tool-helpers.js";
 
 // ─── Constants ───
@@ -11,6 +10,12 @@ import {
 const DEFAULT_NUM_RESULTS = 5;
 const MAX_NUM_RESULTS = 20;
 const SEARCH_TIMEOUT_MS = 15_000;
+const DUCKDUCKGO_TIMELINESS_WARNING =
+  "DuckDuckGo HTML search does not provide verified recency filtering or stable publication dates; latest-ness is unverified.";
+const SERPER_KEY_MISSING_WARNING =
+  'web_search provider "serper" requires FRIDAY_SERPER_API_KEY; refusing to silently fall back to DuckDuckGo for time-sensitive lookups.';
+const TAVILY_KEY_MISSING_WARNING =
+  'web_search provider "tavily" requires FRIDAY_TAVILY_API_KEY; refusing to silently fall back to DuckDuckGo for time-sensitive lookups.';
 
 // ─── Options ───
 
@@ -30,12 +35,22 @@ interface WebSearchResult {
   date?: string;
 }
 
+type WebSearchProvider = "serper" | "tavily" | "duckduckgo";
+
+type WebSearchMetadata = Record<string, unknown> & {
+  provider: WebSearchProvider;
+  freshnessRequested: string | null;
+  freshnessApplied: boolean;
+  hasDates: boolean;
+  warning: string | null;
+};
+
 // ─── Factory ───
 
 export function createFridayAgentWebSearchTool(
   options?: CreateFridayAgentWebSearchToolOptions,
 ): FridayAgentToolDefinition {
-  const provider = (options?.provider ?? "duckduckgo").toLowerCase();
+  const provider = normalizeProvider(options?.provider);
   const apiKey = options?.apiKey;
 
   return {
@@ -80,17 +95,61 @@ export function createFridayAgentWebSearchTool(
 
       try {
         let results: WebSearchResult[];
+        let warning: string | null = null;
+        let freshnessApplied = false;
 
-        if (provider === "serper" && apiKey) {
+        if (provider === "serper") {
+          if (!apiKey) {
+            return {
+              ...errorResult(SERPER_KEY_MISSING_WARNING),
+              metadata: buildSearchMetadata({
+                provider,
+                freshnessRequested: freshness,
+                freshnessApplied: false,
+                hasDates: false,
+                warning: SERPER_KEY_MISSING_WARNING,
+              }),
+            };
+          }
           results = await searchSerper(query, numResults, freshness, apiKey, timeoutController.signal);
-        } else if (provider === "tavily" && apiKey) {
+          freshnessApplied = Boolean(freshness);
+        } else if (provider === "tavily") {
+          if (!apiKey) {
+            return {
+              ...errorResult(TAVILY_KEY_MISSING_WARNING),
+              metadata: buildSearchMetadata({
+                provider,
+                freshnessRequested: freshness,
+                freshnessApplied: false,
+                hasDates: false,
+                warning: TAVILY_KEY_MISSING_WARNING,
+              }),
+            };
+          }
           results = await searchTavily(query, numResults, freshness, apiKey, timeoutController.signal);
+          freshnessApplied = Boolean(freshness);
         } else {
           results = await searchDuckDuckGo(query, numResults, timeoutController.signal);
+          warning = DUCKDUCKGO_TIMELINESS_WARNING;
         }
 
+        const hasDates = results.some((result) => typeof result.date === "string" && result.date.trim().length > 0);
+        if (!warning && (provider === "serper" || provider === "tavily") && freshnessApplied && !hasDates) {
+          warning = "Search results did not include verifiable publication dates; latest-ness remains unverified.";
+        }
+        const metadata = buildSearchMetadata({
+          provider,
+          freshnessRequested: freshness,
+          freshnessApplied,
+          hasDates,
+          warning,
+        });
+
         if (results.length === 0) {
-          return { content: "No results found.", isError: undefined };
+          const content = warning
+            ? `Warning: ${warning}\n\nNo results found.`
+            : "No results found.";
+          return { content, isError: undefined, metadata };
         }
 
         const formatted = results.map((r, i) => {
@@ -103,7 +162,10 @@ export function createFridayAgentWebSearchTool(
           return parts.join("\n");
         });
 
-        return { content: formatted.join("\n\n"), isError: undefined };
+        const sections = warning
+          ? [`Warning: ${warning}`, formatted.join("\n\n")]
+          : [formatted.join("\n\n")];
+        return { content: sections.join("\n\n"), isError: undefined, metadata };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (message.includes("abort")) {
@@ -115,6 +177,30 @@ export function createFridayAgentWebSearchTool(
         signal.removeEventListener("abort", onParentAbort);
       }
     },
+  };
+}
+
+function normalizeProvider(provider: string | undefined): WebSearchProvider {
+  const normalized = provider?.trim().toLowerCase();
+  if (normalized === "serper" || normalized === "tavily" || normalized === "duckduckgo") {
+    return normalized;
+  }
+  return "duckduckgo";
+}
+
+function buildSearchMetadata(input: {
+  provider: WebSearchProvider;
+  freshnessRequested: string | undefined;
+  freshnessApplied: boolean;
+  hasDates: boolean;
+  warning: string | null;
+}): WebSearchMetadata {
+  return {
+    provider: input.provider,
+    freshnessRequested: input.freshnessRequested ?? null,
+    freshnessApplied: input.freshnessApplied,
+    hasDates: input.hasDates,
+    warning: input.warning,
   };
 }
 

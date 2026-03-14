@@ -21,6 +21,13 @@ export interface FridayAgentExecutionContext {
   browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
 }
 
+export interface FridayAgentSystemPromptContext {
+  toolNames: string[];
+  nowIso: string;
+  timezone: string;
+  localDate: string;
+}
+
 // ─── Runtime interface ───
 
 export interface FridayAgentRuntime {
@@ -34,6 +41,7 @@ export interface FridayAgentRuntime {
     runId?: string;
     providerId?: string;
     model?: string;
+    timezone?: string;
     maxAttempts?: number;
     timeoutMs?: number;
     signal?: AbortSignal;
@@ -107,7 +115,7 @@ export interface CreateFridayAgentRuntimeDeps {
    * current tool names.  Ensures the system prompt always lists exactly
    * the tools registered at run time — no stale tool lists.
    */
-  systemPromptBuilder?: (toolNames: string[]) => string | Promise<string>;
+  systemPromptBuilder?: (context: FridayAgentSystemPromptContext) => string | Promise<string>;
   tools: FridayAgentToolDefinition[];
   eventEmitter: FridayAgentEventEmitter;
   idGenerator: () => string;

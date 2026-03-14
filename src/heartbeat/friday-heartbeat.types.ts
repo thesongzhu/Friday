@@ -17,6 +17,7 @@ export interface FridayHeartbeatConfig {
   promptPath?: string;
   fallbackPrompt: string;
   sessionKey: string;
+  timezone?: string;
   timeoutMs?: number;
 }
 
@@ -63,6 +64,7 @@ export interface FridayHeartbeatAgentRuntimeLike {
     task: string;
     sessionKey?: string;
     historyMessages?: FridayHeartbeatContextMessage[];
+    timezone?: string;
     timeoutMs?: number;
   }): Promise<{ runId: string; status: "completed" | "failed" | "cancelled"; response?: string }>;
 }

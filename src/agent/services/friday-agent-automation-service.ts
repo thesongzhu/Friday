@@ -177,6 +177,7 @@ export function createFridayAgentAutomationService(
         task,
         providerId: input?.providerId,
         model: input?.model,
+        timezone: input?.timezone ?? automation.schedule?.timezone,
         timeoutMs: input?.timeoutMs,
       });
 

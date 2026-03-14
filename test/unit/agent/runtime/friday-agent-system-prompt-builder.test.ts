@@ -160,6 +160,7 @@ describe("buildFridayAgentSystemPrompt", () => {
 
     expect(withRuntimeSupport).toContain("Multi-channel messaging (discord, telegram)");
     expect(withRuntimeSupport).toContain("MCP: connect to external Model Context Protocol servers (2 configured)");
+    expect(withRuntimeSupport).toContain("use capabilities first");
   });
 
   it("describes cron, subagents, marketplace, and self-learning truthfully", () => {
@@ -179,5 +180,25 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("Sub-agents are not enabled in this deployment.");
     expect(prompt).toContain("Skill marketplace is not enabled in this deployment.");
     expect(prompt).toContain("Self-learning feedback capture is not enabled in this deployment.");
+  });
+
+  it("injects current time context and news timeliness rules", () => {
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["web_search", "web_fetch"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+      currentTime: {
+        nowIso: "2026-03-14T17:30:00.000Z",
+        timezone: "America/Los_Angeles",
+        localDate: "2026-03-14",
+      },
+    });
+
+    expect(prompt).toContain("Current time context:");
+    expect(prompt).toContain("nowIso: 2026-03-14T17:30:00.000Z");
+    expect(prompt).toContain("timezone: America/Los_Angeles");
+    expect(prompt).toContain("localDate: 2026-03-14");
+    expect(prompt).toContain("absolute dates plus source URLs");
+    expect(prompt).toContain("latestness is unverified");
   });
 });

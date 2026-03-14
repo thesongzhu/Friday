@@ -222,6 +222,23 @@ describe("FridayChannelInboundDebouncer", () => {
     expect(combined.images).toEqual(["img1.png", "img2.png"]);
   });
 
+  it("preserves the most recent non-empty timezone across buffered messages", () => {
+    const handler = vi.fn();
+    const debouncer = createFridayChannelInboundDebouncer({
+      handler,
+      windowMs: 500,
+    });
+
+    debouncer.submit(makeMsg({ id: "m1", text: "First", timezone: "America/Los_Angeles" }));
+    debouncer.submit(makeMsg({ id: "m2", text: "Second" }));
+
+    vi.advanceTimersByTime(500);
+
+    const combined = handler.mock.calls[0][0] as FridayChannelMessage;
+    expect(combined.text).toBe("First\nSecond");
+    expect(combined.timezone).toBe("America/Los_Angeles");
+  });
+
   it("returns single message unchanged when only one in buffer", () => {
     const handler = vi.fn();
     const debouncer = createFridayChannelInboundDebouncer({

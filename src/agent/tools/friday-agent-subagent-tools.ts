@@ -47,6 +47,7 @@ function resolveSubagentContext(
     parentRunId: executionContext.runId,
     parentSessionKey: executionContext.sessionKey,
     rootRunId: fallback.depth === 0 ? executionContext.runId : fallback.rootRunId,
+    timezone: executionContext.timezone ?? fallback.timezone,
   };
 }
 
@@ -60,7 +61,7 @@ function createSpawnSubagentTool(
     description:
       "Spawn an isolated sub-agent to handle a focused task. " +
       "The sub-agent runs asynchronously in the background. " +
-      "Returns immediately with a subagentId that can be used to check status. " +
+      "Returns a delegated status snapshot plus a subagentId that can be used to check status. " +
       "Use list_subagents or get_subagent to poll for completion.",
     parameters: {
       properties: {
@@ -100,6 +101,7 @@ function createSpawnSubagentTool(
           task,
           label,
           model,
+          timezone: subagentContext.timezone,
           timeoutMs,
           parentRunId: subagentContext.parentRunId,
           parentSessionKey: subagentContext.parentSessionKey,
@@ -136,13 +138,25 @@ function createSpawnSubagentTool(
 
         // Non-blocking (detached) mode — default
         const detached = deps.registry.spawnDetached(spawnInput);
+        const latestRecord = deps.registry.getById(detached.subagentId);
+        const statusSnapshot = latestRecord?.status ?? detached.statusSnapshot;
+        const outcome = statusSnapshot === "completed" || statusSnapshot === "failed" || statusSnapshot === "cancelled"
+          ? latestRecord?.outcome ?? detached.outcome
+          : undefined;
+        const message = outcome
+          ? "Sub-agent delegation resolved before the detached hand-off returned. This payload is a completion snapshot."
+          : "Sub-agent delegated. This payload is a status snapshot at hand-off time, not a guaranteed final result. Use get_subagent or list_subagents to check the terminal state, or rerun with wait=true if you need the final result now.";
 
         return jsonResult({
           status: "accepted",
+          detached: true,
+          awaited: false,
           subagentId: detached.subagentId,
           childRunId: detached.childRunId,
           childSessionKey: detached.childSessionKey,
-          message: "Sub-agent delegated and still running. Use get_subagent or list_subagents to check status.",
+          statusSnapshot,
+          ...(outcome ? { outcome } : {}),
+          message,
         });
       } catch (error) {
         if (error instanceof FridayDomainError) {

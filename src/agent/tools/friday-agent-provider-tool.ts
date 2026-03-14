@@ -9,11 +9,14 @@
 
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
 import type { FridayProviderService } from "../../providers/services/friday-provider-service.types.js";
+import {
+  resolveExistingOAuthProvider,
+  resolveOrProvisionOAuthProvider,
+} from "../../providers/services/friday-provider-oauth-selection.js";
 import type {
   FridayProviderApi,
   FridayProviderAuthMode,
   FridayProviderKind,
-  FridayProviderProfile,
 } from "../../providers/model/friday-provider.types.js";
 import {
   errorResult,
@@ -75,8 +78,6 @@ const VALID_APIS = new Set<FridayProviderApi>([
   "google-generative-ai",
   "ollama",
 ]);
-
-const DEFAULT_OAUTH_PROVIDER_KIND: FridayProviderKind = "anthropic";
 
 // ─── Factory ───
 
@@ -302,7 +303,7 @@ export function createFridayAgentProviderTool(
   }
 
   async function handleOAuthInit(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
-    const selection = await resolveOrProvisionOAuthProvider(args);
+    const selection = await resolveOrProvisionOAuthProvider(providerService, readOAuthSelectionInput(args));
     const result = await providerService.initiateOAuthLogin({ providerId: selection.provider.id });
 
     return jsonResult({
@@ -323,7 +324,11 @@ export function createFridayAgentProviderTool(
   }
 
   async function handleOAuthComplete(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
-    const selection = await resolveExistingOAuthProvider(args, "oauth_complete");
+    const selection = await resolveExistingOAuthProvider(
+      providerService,
+      readOAuthSelectionInput(args),
+      "oauth_complete",
+    );
     const providerId = selection.provider.id;
     const code = readStringParam(args, "code", { required: true });
     const state = readStringParam(args, "state");
@@ -428,186 +433,29 @@ export function createFridayAgentProviderTool(
     };
   }
 
-  async function resolveOrProvisionOAuthProvider(
-    args: Record<string, unknown>,
-  ): Promise<{ provider: FridayProviderProfile; resolution: string }> {
-    const explicitProviderId = readStringParam(args, "providerId");
-    if (explicitProviderId) {
-      const provider = await requireProviderById(explicitProviderId, "oauth_init");
-      assertOAuthReadyProvider(provider, "oauth_init");
-      return { provider, resolution: "explicit" };
-    }
-
-    const kind = readOAuthProviderKind(args);
-    const existing = await selectReusableOAuthProvider(args, kind);
-    if (existing) {
-      return { provider: existing.provider, resolution: existing.resolution };
-    }
-
-    const requestedName = readStringParam(args, "name");
-    const requestedModels = Array.isArray(args.supportedModels)
-      ? (args.supportedModels as string[]).filter((model): model is string => typeof model === "string")
+  function readOAuthSelectionInput(args: Record<string, unknown>): {
+    providerId?: string;
+    kind?: FridayProviderKind;
+    name?: string;
+    baseUrl?: string;
+    api?: FridayProviderApi;
+    supportedModels?: string[];
+    defaultModel?: string;
+    enabled?: boolean;
+  } {
+    const supportedModels = Array.isArray(args.supportedModels)
+      ? (args.supportedModels as unknown[]).filter((model): model is string => typeof model === "string")
       : undefined;
-    const supportedModels = requestedModels && requestedModels.length > 0
-      ? requestedModels
-      : getDefaultModels(kind);
-    const defaultModel = readStringParam(args, "defaultModel") ?? supportedModels[0];
-    const enabled = readBooleanParam(args, "enabled") ?? true;
-
-    const provider = await providerService.createProvider({
-      kind,
-      name: requestedName ?? getDefaultOAuthProviderName(kind),
-      baseUrl: readStringParam(args, "baseUrl") ?? getDefaultBaseUrl(kind),
-      authMode: "oauth",
-      api: (readStringParam(args, "api") as FridayProviderApi | undefined) ?? getDefaultApi(kind),
+    return {
+      providerId: readStringParam(args, "providerId"),
+      kind: readStringParam(args, "kind") as FridayProviderKind | undefined,
+      name: readStringParam(args, "name"),
+      baseUrl: readStringParam(args, "baseUrl"),
+      api: readStringParam(args, "api") as FridayProviderApi | undefined,
       supportedModels,
-      defaultModel,
-      enabled,
-      validateOnSave: false,
-    });
-    return { provider, resolution: "auto-created" };
-  }
-
-  async function resolveExistingOAuthProvider(
-    args: Record<string, unknown>,
-    actionLabel: "oauth_complete",
-  ): Promise<{ provider: FridayProviderProfile; resolution: string }> {
-    const explicitProviderId = readStringParam(args, "providerId");
-    if (explicitProviderId) {
-      const provider = await requireProviderById(explicitProviderId, actionLabel);
-      assertOAuthReadyProvider(provider, actionLabel);
-      return { provider, resolution: "explicit" };
-    }
-
-    const kind = readOAuthProviderKind(args);
-    const existing = await selectReusableOAuthProvider(args, kind);
-    if (!existing) {
-      throw new Error(
-        `No ${kind} OAuth provider is configured yet. Run oauth_init first or specify providerId.`,
-      );
-    }
-    return existing;
-  }
-
-  async function selectReusableOAuthProvider(
-    args: Record<string, unknown>,
-    kind: FridayProviderKind,
-  ): Promise<{ provider: FridayProviderProfile; resolution: string } | null> {
-    const candidates = (await providerService.listProviders()).filter((provider) =>
-      provider.kind === kind && provider.config.authMode === "oauth"
-    );
-
-    if (candidates.length === 0) {
-      return null;
-    }
-    if (candidates.length === 1) {
-      return { provider: candidates[0]!, resolution: "reused-existing" };
-    }
-
-    const requestedName = readStringParam(args, "name");
-    if (requestedName) {
-      const namedMatches = candidates.filter((provider) =>
-        provider.name.localeCompare(requestedName, undefined, { sensitivity: "accent" }) === 0
-      );
-      if (namedMatches.length === 1) {
-        return { provider: namedMatches[0]!, resolution: "reused-by-name" };
-      }
-      if (namedMatches.length > 1) {
-        throw new Error(
-          `Multiple ${kind} OAuth providers match name "${requestedName}". Specify providerId.`,
-        );
-      }
-    }
-
-    const requestedDefaultModel = readStringParam(args, "defaultModel");
-    if (requestedDefaultModel) {
-      const modelMatches = candidates.filter((provider) =>
-        provider.defaultModel === requestedDefaultModel
-      );
-      if (modelMatches.length === 1) {
-        return { provider: modelMatches[0]!, resolution: "reused-by-default-model" };
-      }
-      if (modelMatches.length > 1) {
-        throw new Error(
-          `Multiple ${kind} OAuth providers use default model "${requestedDefaultModel}". Specify providerId.`,
-        );
-      }
-    }
-
-    const routing = await safeGetRoutingConfig();
-    if (routing?.defaultProviderId) {
-      const routed = candidates.find((provider) => provider.id === routing.defaultProviderId);
-      if (routed) {
-        return { provider: routed, resolution: "reused-routing-default" };
-      }
-    }
-
-    const enabledCandidates = candidates.filter((provider) => provider.enabled);
-    if (enabledCandidates.length === 1) {
-      return { provider: enabledCandidates[0]!, resolution: "reused-enabled" };
-    }
-
-    throw new Error(
-      `Multiple ${kind} OAuth providers are available. Specify providerId. Candidates: ${candidates.map(formatProviderCandidate).join("; ")}`,
-    );
-  }
-
-  async function requireProviderById(
-    providerId: string,
-    actionLabel: string,
-  ): Promise<FridayProviderProfile> {
-    const provider = await providerService.getProvider(providerId);
-    if (!provider) {
-      throw new Error(`Provider "${providerId}" not found for ${actionLabel}.`);
-    }
-    return provider;
-  }
-
-  function assertOAuthReadyProvider(
-    provider: FridayProviderProfile,
-    actionLabel: string,
-  ): void {
-    if (provider.config.authMode !== "oauth") {
-      throw new Error(
-        `Provider "${provider.id}" uses ${provider.config.authMode} auth, not oauth, so ${actionLabel} cannot use it.`,
-      );
-    }
-    if (provider.kind !== DEFAULT_OAUTH_PROVIDER_KIND) {
-      throw new Error(
-        `OAuth automation currently supports ${DEFAULT_OAUTH_PROVIDER_KIND} providers only. Provider "${provider.id}" is kind "${provider.kind}".`,
-      );
-    }
-  }
-
-  function readOAuthProviderKind(args: Record<string, unknown>): FridayProviderKind {
-    const kind = (readStringParam(args, "kind") as FridayProviderKind | undefined) ?? DEFAULT_OAUTH_PROVIDER_KIND;
-    if (kind !== DEFAULT_OAUTH_PROVIDER_KIND) {
-      throw new Error(
-        `OAuth automation currently supports ${DEFAULT_OAUTH_PROVIDER_KIND} providers only.`,
-      );
-    }
-    return kind;
-  }
-
-  async function safeGetRoutingConfig(): Promise<{ defaultProviderId: string } | null> {
-    try {
-      return await providerService.getRoutingConfig();
-    } catch {
-      return null;
-    }
-  }
-
-  function formatProviderCandidate(provider: FridayProviderProfile): string {
-    return `${provider.id} (${provider.name}${provider.defaultModel ? `, defaultModel=${provider.defaultModel}` : ""})`;
-  }
-
-  function getDefaultOAuthProviderName(kind: FridayProviderKind): string {
-    switch (kind) {
-      case "anthropic":
-        return "Claude OAuth";
-      default:
-        return `${kind} OAuth`;
-    }
+      defaultModel: readStringParam(args, "defaultModel"),
+      enabled: readBooleanParam(args, "enabled"),
+    };
   }
 
   function getDefaultBaseUrl(kind: FridayProviderKind): string {

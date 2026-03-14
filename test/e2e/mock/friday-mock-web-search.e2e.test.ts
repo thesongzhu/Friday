@@ -34,6 +34,32 @@ async function apiFetch<T>(
   return { status: res.status, json };
 }
 
+async function withSearchEnv<T>(
+  envVars: Record<string, string | undefined>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(envVars)) {
+    previous.set(key, process.env[key]);
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  try {
+    return await run();
+  } finally {
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
 interface AgentRunResult {
   ok: boolean;
   data: {
@@ -327,5 +353,129 @@ describe("Friday Mock Web Search E2E", () => {
     // The second LLM call contains the tool result in messages
     const callBody = mock.calls[1]?.bodyJson as Record<string, unknown> | undefined;
     expect(callBody).toBeDefined();
+  });
+
+  it("latest news flow with Serper keeps absolute dates and URLs", async () => {
+    await withSearchEnv(
+      {
+        FRIDAY_SEARCH_PROVIDER: "serper",
+        FRIDAY_SERPER_API_KEY: "test-serper-key",
+      },
+      async () => {
+        const localEnv = await createMockHubEnv({ providerKinds: ["anthropic"] });
+        const router = globalThis.fetch as unknown as MockFetchRouter;
+        const route = {
+          urlPrefix: "https://google.serper.dev",
+          api: "anthropic-messages" as FridayProviderApi,
+          mockFetch: async () =>
+            new Response(JSON.stringify({
+              organic: [
+                {
+                  title: "Headline A",
+                  link: "https://example.com/a",
+                  snippet: "A summary",
+                  date: "2026-03-14",
+                },
+                {
+                  title: "Headline B",
+                  link: "https://example.com/b",
+                  snippet: "B summary",
+                  date: "2026-03-13",
+                },
+                {
+                  title: "Headline C",
+                  link: "https://example.com/c",
+                  snippet: "C summary",
+                  date: "2026-03-12",
+                },
+              ],
+            }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+        };
+        router.routes.unshift(route);
+
+        try {
+          const mock = localEnv.mockFor("anthropic");
+          mock.enqueue({
+            type: "tool_use",
+            toolName: "web_search",
+            toolInput: { query: "Iran latest news", freshness: "day", numResults: 3 },
+          });
+          mock.enqueue({
+            type: "text",
+            text:
+              "1. Headline A (2026-03-14) https://example.com/a\n" +
+              "2. Headline B (2026-03-13) https://example.com/b\n" +
+              "3. Headline C (2026-03-12) https://example.com/c",
+          });
+
+          const res = await apiFetch<AgentRunResult>(
+            localEnv.baseUrl,
+            localEnv.accessToken,
+            "POST",
+            "/v1/agent/runs",
+            {
+              task: "Give me the latest Iran news",
+              providerId: localEnv.providers.anthropic!.providerId,
+              model: localEnv.providers.anthropic!.model,
+              timeoutMs: 15_000,
+              timezone: "America/Los_Angeles",
+            },
+          );
+
+          expect(res.json.data.status).toBe("completed");
+          expect(res.json.data.response).toContain("2026-03-14");
+          expect(res.json.data.response).toContain("https://example.com/a");
+          expect(res.json.data.response.indexOf("2026-03-14")).toBeLessThan(
+            res.json.data.response.indexOf("2026-03-13"),
+          );
+          expect(mock.calls.length).toBe(2);
+          const secondCallBody = mock.calls[1]!.bodyJson as { messages?: unknown };
+          expect(JSON.stringify(secondCallBody.messages)).toContain("Date: 2026-03-14");
+        } finally {
+          await localEnv.cleanup();
+        }
+      },
+    );
+  });
+
+  it("default DuckDuckGo latest news flow downgrades to unverified latestness", async () => {
+    const mock = env.mockFor("anthropic");
+
+    injectRoute("https://html.duckduckgo.com", async () =>
+      new Response(MOCK_DDG_HTML_3_RESULTS, {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+
+    mock.enqueue({
+      type: "tool_use",
+      toolName: "web_search",
+      toolInput: { query: "Iran latest news", freshness: "day", numResults: 3 },
+    });
+    mock.enqueue({
+      type: "text",
+      text: "以下是关于伊朗的三条最新新闻。",
+    });
+    mock.enqueue({
+      type: "text",
+      text: "这些是我找到的搜索结果。",
+    });
+
+    const res = await apiFetch<AgentRunResult>(
+      env.baseUrl,
+      env.accessToken,
+      "POST",
+      "/v1/agent/runs",
+      { task: "Give me the latest Iran news", providerId, model, timeoutMs: 15_000, timezone: "UTC" },
+    );
+
+    expect(res.json.data.status).toBe("completed");
+    expect(res.json.data.response).toContain("could not verify");
+    expect(res.json.data.response).toContain("(UTC)");
+    expect(mock.calls.length).toBe(3);
   });
 });

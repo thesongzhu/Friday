@@ -134,6 +134,25 @@ describe("Friday Mock System Prompt E2E", () => {
     expect(prompt).toMatch(/web_search.*web_fetch.*browser/s);
   });
 
+  it("system prompt includes current time context and latest-news guidance", async () => {
+    const mock = env.mockFor("anthropic");
+    mock.setDefault({ type: "text", text: "ok" });
+
+    await apiFetch(env.baseUrl, env.accessToken, "POST", "/v1/agent/runs", {
+      task: "Latest news please",
+      providerId,
+      model,
+      timeoutMs: 10_000,
+      timezone: "America/Los_Angeles",
+    });
+
+    const prompt = extractSystemPrompt(mock.calls);
+    expect(prompt).toContain("Current time context:");
+    expect(prompt).toContain("timezone: America/Los_Angeles");
+    expect(prompt).toContain("absolute dates plus source URLs");
+    expect(prompt).toContain("latestness is unverified");
+  });
+
   it("system prompt includes error handling guidance", async () => {
     const mock = env.mockFor("anthropic");
     mock.setDefault({ type: "text", text: "ok" });
