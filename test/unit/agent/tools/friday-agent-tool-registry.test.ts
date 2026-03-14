@@ -7,6 +7,7 @@ import type { FridayJobSchedulerRepository } from "../../../../src/jobs/schedule
 import type { FridayJobSchedulerService } from "../../../../src/jobs/scheduler/friday-job-scheduler.types.js";
 import type { FridayChannelRegistry } from "../../../../src/channels/friday-channel-registry.js";
 import type { FridayMcpAdapter } from "../../../../src/agent/mcp/friday-mcp-adapter.types.js";
+import type { FridayProviderService } from "../../../../src/providers/services/friday-provider-service.types.js";
 
 function stubSessionService(): FridaySessionService {
   return {
@@ -58,6 +59,24 @@ function stubSkillRegistry(): FridaySkillRegistry {
     stopWatching: vi.fn(),
     close: vi.fn(),
   } as unknown as FridaySkillRegistry;
+}
+
+function stubProviderService(): FridayProviderService {
+  return {
+    listProviders: vi.fn(),
+    getProvider: vi.fn(),
+    createProvider: vi.fn(),
+    updateProvider: vi.fn(),
+    deleteProvider: vi.fn(),
+    initOAuth: vi.fn(),
+    completeOAuth: vi.fn(),
+    setDefaultRoute: vi.fn(),
+    validateProvider: vi.fn(),
+    getRoutingConfig: vi.fn(),
+    resolveRoute: vi.fn(),
+    runWithFallback: vi.fn(),
+    recordUsage: vi.fn(),
+  } as unknown as FridayProviderService;
 }
 
 describe("createFridayAgentToolRegistry", () => {
@@ -156,5 +175,13 @@ describe("createFridayAgentToolRegistry", () => {
     const names = tools.map((t) => t.name);
     expect(names).toContain("skills_list");
     expect(names).toContain("skill_run");
+  });
+
+  it("includes provider tool when providerService is provided", () => {
+    const tools = createFridayAgentToolRegistry({
+      providerService: stubProviderService(),
+    });
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("provider");
   });
 });
