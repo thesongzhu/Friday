@@ -543,29 +543,71 @@ export function createFridayWorkflowGeneratorService(
           availableSkills,
           requestedModel,
         );
+      } catch (err) {
+        allIssues = [
+          {
+            code: "GENERATION_ERROR",
+            stage: "spec",
+            severity: "error" as const,
+            message: err instanceof Error ? err.message : String(err),
+          },
+        ];
+        const hasErrors = allIssues.some((i) => i.severity === "error");
+        if (!hasErrors) break;
 
-        // Step 2: Generate visual layout
+        if (attempt < MAX_REPAIR_ATTEMPTS) {
+          repairAttempts++;
+        }
+        continue;
+      }
+
+      const nonBlockingIssues: FridayGeneratedWorkflowValidationIssue[] = [];
+
+      // Step 2: Generate visual layout. Fall back to deterministic layout if the model
+      // refuses or returns an unusable auxiliary response.
+      try {
         generatedVisual = await generateVisual(generatedSpec, requestedModel);
+      } catch (err) {
+        generatedVisual = buildFallbackVisualLayout(generatedSpec);
+        nonBlockingIssues.push({
+          code: "VISUAL_FALLBACK",
+          stage: "visual",
+          severity: "warning",
+          message: `Visual generation fell back to deterministic layout: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
 
-        // Step 3: Generate tests
+      // Step 3: Generate tests. Fall back to smoke tests if the provider refuses or
+      // returns no structured output, so a valid draft can still be reviewed/saved.
+      try {
         generatedTests = await generateTests(generatedSpec, requestedModel);
+      } catch (err) {
+        generatedTests = buildFallbackTests(generatedSpec);
+        nonBlockingIssues.push({
+          code: "TESTS_FALLBACK",
+          stage: "tests",
+          severity: "warning",
+          message: `Test generation fell back to smoke tests: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
 
-        // Merge tests into spec
-        generatedSpec.tests = generatedTests;
+      // Merge tests into spec
+      generatedSpec.tests = generatedTests;
 
+      try {
         // Step 4: Validate all artifacts
         compiledGraphResult = generatedValidator.validate({
           spec: generatedSpec,
           visual: generatedVisual,
           tests: generatedTests,
         });
-
-        allIssues = compiledGraphResult.issues;
+        allIssues = [...nonBlockingIssues, ...compiledGraphResult.issues];
       } catch (err) {
         allIssues = [
+          ...nonBlockingIssues,
           {
             code: "GENERATION_ERROR",
-            stage: "spec",
+            stage: "compile",
             severity: "error" as const,
             message: err instanceof Error ? err.message : String(err),
           },
