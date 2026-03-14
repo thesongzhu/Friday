@@ -31,7 +31,7 @@ describe("FridayAgentWebSearchTool", () => {
 
     const tool = createFridayAgentWebSearchTool({
       provider: "serper",
-      apiKey: "serper-key",
+      apiKey: "serper-key", // pragma: allowlist secret
     });
 
     const result = await tool.execute(
@@ -68,7 +68,7 @@ describe("FridayAgentWebSearchTool", () => {
 
     const tool = createFridayAgentWebSearchTool({
       provider: "tavily",
-      apiKey: "tavily-key",
+      apiKey: "tavily-key", // pragma: allowlist secret
     });
 
     const result = await tool.execute(

@@ -359,7 +359,7 @@ describe("Friday Mock Web Search E2E", () => {
     await withSearchEnv(
       {
         FRIDAY_SEARCH_PROVIDER: "serper",
-        FRIDAY_SERPER_API_KEY: "test-serper-key",
+        FRIDAY_SERPER_API_KEY: "test-serper-key", // pragma: allowlist secret
       },
       async () => {
         const localEnv = await createMockHubEnv({ providerKinds: ["anthropic"] });
