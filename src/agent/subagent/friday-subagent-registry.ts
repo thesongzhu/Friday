@@ -1,4 +1,5 @@
 import { FridayDomainError } from "#errors";
+import { buildFridaySubagentSessionKey } from "#sessions";
 
 import type {
   CreateFridaySubagentRegistryDeps,
@@ -14,7 +15,6 @@ import {
   FRIDAY_SUBAGENT_ERROR_CODES,
   FRIDAY_SUBAGENT_MAX_CONCURRENT,
   FRIDAY_SUBAGENT_MAX_DEPTH,
-  FRIDAY_SUBAGENT_SESSION_KEY_SEPARATOR,
 } from "./friday-subagent-constants.js";
 import { buildFridaySubagentSystemPrompt } from "./friday-subagent-system-prompt.js";
 import { createFridaySubagentRunRepository } from "../persistence/friday-subagent-run-repository.js";
@@ -36,6 +36,7 @@ export function createFridaySubagentRegistry(
   /** Shared validation + record creation for both spawn() and spawnDetached(). */
   function prepareSpawn(input: FridaySubagentRegistrySpawnInput): {
     subagentRecordId: string;
+    childRunId: string;
     childSessionKey: string;
   } {
     // 1. Validate depth
@@ -61,7 +62,8 @@ export function createFridaySubagentRegistry(
 
     // 3. Generate IDs
     const subagentRecordId = idGenerator();
-    const childSessionKey = `${input.parentSessionKey}${FRIDAY_SUBAGENT_SESSION_KEY_SEPARATOR}${subagentRecordId}`;
+    const childRunId = idGenerator();
+    const childSessionKey = buildFridaySubagentSessionKey(input.parentSessionKey, childRunId);
 
     // 4. Create subagent record
     db.withWriteTransaction((writer) =>
@@ -69,7 +71,7 @@ export function createFridaySubagentRegistry(
         id: subagentRecordId,
         parentRunId: input.parentRunId,
         parentSessionKey: input.parentSessionKey,
-        childRunId: "",
+        childRunId,
         childSessionKey,
         task: input.task,
         label: input.label,
@@ -84,18 +86,20 @@ export function createFridaySubagentRegistry(
     // 5. Emit spawned event
     eventEmitter.emit("agent.subagent.spawned", {
       subagentId: subagentRecordId,
+      childRunId,
       parentRunId: input.parentRunId,
       task: input.task,
       label: input.label,
       depth: input.depth + 1,
     });
 
-    return { subagentRecordId, childSessionKey };
+    return { subagentRecordId, childRunId, childSessionKey };
   }
 
   /** Execute the child run and finalize the record. Shared by spawn() and startRun(). */
   async function executeChild(
     subagentRecordId: string,
+    childRunId: string,
     input: FridaySubagentRegistrySpawnInput,
     childSessionKey: string,
   ): Promise<FridaySubagentOutcome> {
@@ -112,6 +116,7 @@ export function createFridaySubagentRegistry(
       model: input.model,
       systemPrompt,
       depth: input.depth + 1,
+      rootRunId: input.rootRunId,
     });
 
     // Transition to running
@@ -128,18 +133,12 @@ export function createFridaySubagentRegistry(
       const timeoutMs = input.timeoutMs ?? FRIDAY_SUBAGENT_DEFAULT_TIMEOUT_MS;
       const result = await childRuntime.executeRun({
         task: input.task,
+        runId: childRunId,
         sessionKey: childSessionKey,
         timeoutMs,
         signal: input.signal,
+        constraints: input.constraints,
       });
-
-      // Update child run ID
-      db.withWriteTransaction((writer) =>
-        repo.update(writer, {
-          id: subagentRecordId,
-          childRunId: result.runId,
-        }),
-      );
 
       // Build outcome
       const outcome: FridaySubagentOutcome = {
@@ -170,7 +169,7 @@ export function createFridaySubagentRegistry(
       eventEmitter.emit("agent.subagent.completed", {
         subagentId: subagentRecordId,
         parentRunId: input.parentRunId,
-        childRunId: result.runId,
+        childRunId,
         outcome,
       });
 
@@ -200,7 +199,7 @@ export function createFridaySubagentRegistry(
       eventEmitter.emit("agent.subagent.completed", {
         subagentId: subagentRecordId,
         parentRunId: input.parentRunId,
-        childRunId: "",
+        childRunId,
         outcome: failedOutcome,
       });
 
@@ -213,23 +212,24 @@ export function createFridaySubagentRegistry(
 
   return {
     async spawn(input: FridaySubagentRegistrySpawnInput): Promise<FridaySubagentOutcome> {
-      const { subagentRecordId, childSessionKey } = prepareSpawn(input);
-      return executeChild(subagentRecordId, input, childSessionKey);
+      const { subagentRecordId, childRunId, childSessionKey } = prepareSpawn(input);
+      return executeChild(subagentRecordId, childRunId, input, childSessionKey);
     },
 
     spawnDetached(input: FridaySubagentRegistrySpawnInput): FridaySubagentDetachedResult {
-      const { subagentRecordId, childSessionKey } = prepareSpawn(input);
+      const { subagentRecordId, childRunId, childSessionKey } = prepareSpawn(input);
 
       // Store input for later startRun()
       detachedInputs.set(subagentRecordId, { input, childSessionKey });
 
       // Fire-and-forget the child execution
-      void executeChild(subagentRecordId, input, childSessionKey).finally(() => {
+      void executeChild(subagentRecordId, childRunId, input, childSessionKey).finally(() => {
         detachedInputs.delete(subagentRecordId);
       });
 
       return {
         subagentId: subagentRecordId,
+        childRunId,
         childSessionKey,
         status: "accepted",
       };

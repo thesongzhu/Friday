@@ -201,4 +201,48 @@ describe("createFridayAgentProviderTool", () => {
       defaultModel: "claude-sonnet-4-20250514",
     });
   });
+
+  it("set_default reuses the provider defaultModel when none is supplied", async () => {
+    const provider = makeProvider({ id: "anthropic-oauth-1" });
+    const providerService = createMockProviderService({
+      getProvider: vi.fn().mockResolvedValue(provider),
+      setRoutingConfig: vi.fn().mockResolvedValue({
+        defaultProviderId: provider.id,
+        defaultModel: provider.defaultModel,
+        fallbackProviderIds: [],
+      }),
+    });
+    const tool = createFridayAgentProviderTool({ providerService });
+
+    const result = await tool.execute(
+      { action: "set_default", providerId: provider.id },
+      signal(),
+    );
+    const parsed = JSON.parse(result.content) as Record<string, unknown>;
+
+    expect(result.isError).toBeUndefined();
+    expect(providerService.getProvider).toHaveBeenCalledWith("anthropic-oauth-1");
+    expect(providerService.setRoutingConfig).toHaveBeenCalledWith({
+      defaultProviderId: "anthropic-oauth-1",
+      defaultModel: "claude-sonnet-4-20250514",
+      fallbackProviderIds: [],
+    });
+    expect(parsed.routing.defaultModel).toBe("claude-sonnet-4-20250514");
+  });
+
+  it("set_default returns a clear error when the provider is missing", async () => {
+    const providerService = createMockProviderService({
+      getProvider: vi.fn().mockResolvedValue(null),
+    });
+    const tool = createFridayAgentProviderTool({ providerService });
+
+    const result = await tool.execute(
+      { action: "set_default", providerId: "missing-provider" },
+      signal(),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain('Provider "missing-provider" not found');
+    expect(providerService.setRoutingConfig).not.toHaveBeenCalled();
+  });
 });

@@ -395,6 +395,39 @@ describe("FridayAgentRuntime", () => {
     expect(result.usageOutput).toBe(5);
   });
 
+  it("does not forward the internal default route sentinel as a pinned provider", async () => {
+    const streamSpy = vi.fn(async function* (params: {
+      providerId?: string;
+      model?: string;
+    }) {
+      yield { type: "text_delta" as const, text: "ok" };
+      yield { type: "message_end" as const, stopReason: "end_turn", inputTokens: 1, outputTokens: 1 };
+    });
+    const llmClient: FridayAgentLlmClient = { stream: streamSpy };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "default",
+      providerId: "default",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({ task: "Say hello" });
+
+    expect(result.status).toBe("completed");
+    expect(streamSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerId: undefined,
+        model: "default",
+      }),
+    );
+  });
+
   it("prepends provided history messages before the new task", async () => {
     let capturedMessages: FridayAgentMessage[] | undefined;
 
@@ -2319,6 +2352,58 @@ describe("FridayAgentRuntime", () => {
     expect(result.status).toBe("failed");
   });
 
+  it("allows readonly diagnosis skill summaries to complete even when llm_eval asks for more action", async () => {
+    const skillTool: FridayAgentToolDefinition = {
+      name: "skill_run",
+      description: "Run a skill",
+      parameters: { properties: { skillId: { type: "string" } }, required: ["skillId"] },
+      execute: vi.fn(async () => ({
+        content: JSON.stringify({
+          summary: "System snapshot captured",
+          nextStep: "Review open issues if needed",
+        }),
+      })),
+    };
+
+    const llmClient = createMockLlmClient([
+      [
+        { type: "tool_use", id: "call-1", name: "skill_run", input: { skillId: "system-health-snapshot" } },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 5, outputTokens: 3 },
+      ],
+      [
+        { type: "text_delta", text: "The system snapshot shows the browser runtime is healthy." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 3 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [skillTool],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      selfTestService: {
+        async runTests() {
+          return [{
+            strategy: "llm_eval",
+            passed: false,
+            errors: [{ message: "Agent should take another action", severity: "error" }],
+            durationMs: 10,
+          }];
+        },
+      },
+    });
+
+    const result = await runtime.executeRun({ task: "Run system-health-snapshot and summarize it" });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("browser runtime is healthy");
+  });
+
   // ─── IMPL-5: Passing self-test emits completed with real testsPassed ───
 
   it("passing self-test emits completed with testsPassed from real result", async () => {
@@ -2466,6 +2551,62 @@ describe("FridayAgentRuntime", () => {
     expect(run?.artifactDir).toBe("/tmp/.friday/agent-runs/test-run");
     expect(run?.artifacts).toBeDefined();
     expect(run!.artifacts!.length).toBeGreaterThan(0);
+  });
+
+  it("runtime stores artifactDir and testResults when validation fails", async () => {
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "Captured diagnostic summary" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 3 },
+      ],
+    ]);
+
+    const mockWriter = {
+      writeRunArtifacts: vi.fn().mockReturnValue({
+        artifactDir: "/tmp/.friday/agent-runs/failed-run",
+        artifacts: [{ type: "run_record", path: "/tmp/.friday/agent-runs/failed-run/run.json" }],
+      }),
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      artifactWriter: mockWriter,
+      selfTestService: {
+        async runTests() {
+          return [{
+            strategy: "llm_eval",
+            passed: false,
+            errors: [{ message: "Need stronger evidence", severity: "error" }],
+            durationMs: 25,
+          }];
+        },
+      },
+    });
+
+    const result = await runtime.executeRun({ task: "Validation fail with evidence" });
+
+    expect(result.status).toBe("failed");
+    expect(mockWriter.writeRunArtifacts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        response: "Captured diagnostic summary",
+      }),
+    );
+
+    const repo = createFridayAgentRunRepository();
+    const run = db.withReadConnection((reader) => repo.getById(reader, result.runId));
+
+    expect(run?.artifactDir).toBe("/tmp/.friday/agent-runs/failed-run");
+    expect(run?.testResults?.[0]?.passed).toBe(false);
+    expect(run?.artifacts?.length).toBeGreaterThan(0);
   });
 
   // ─── IMPL-2: Actual execution metadata persisted ───

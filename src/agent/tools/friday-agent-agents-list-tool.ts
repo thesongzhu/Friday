@@ -81,6 +81,7 @@ export function createFridayAgentAgentsListTool(
               status: r.status,
               depth: r.depth,
               parentRunId: r.parentRunId,
+              childRunId: r.childRunId,
               parentSessionKey: r.parentSessionKey,
               childSessionKey: r.childSessionKey,
               durationMs: r.durationMs,
@@ -106,6 +107,7 @@ export function createFridayAgentAgentsListTool(
           count: filtered.length,
           agents: filtered.map((r) => ({
             id: r.id,
+            childRunId: r.childRunId,
             task: r.task.slice(0, 120),
             label: r.label,
             status: r.status,

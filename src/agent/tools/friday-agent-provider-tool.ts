@@ -358,7 +358,12 @@ export function createFridayAgentProviderTool(
 
   async function handleSetDefault(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
     const providerId = readStringParam(args, "providerId", { required: true });
-    const defaultModel = readStringParam(args, "defaultModel");
+    const requestedDefaultModel = readStringParam(args, "defaultModel");
+    const provider = await providerService.getProvider(providerId);
+    if (!provider) {
+      return errorResult(`Provider "${providerId}" not found.`);
+    }
+    const defaultModel = requestedDefaultModel ?? provider.defaultModel;
 
     const routing = await providerService.setRoutingConfig({
       defaultProviderId: providerId,

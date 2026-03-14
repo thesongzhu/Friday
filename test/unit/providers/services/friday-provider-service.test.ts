@@ -571,6 +571,131 @@ describe("FridayProviderService", () => {
         code: "PROVIDER_NO_CANDIDATES",
       });
     });
+
+    it("honors a requestedProviderId pin for route resolution", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await service.createProvider({
+        kind: "anthropic",
+        name: "Claude",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "api-key",
+        api: "anthropic-messages",
+        supportedModels: ["claude-sonnet-4-20250514"],
+        defaultModel: "claude-sonnet-4-20250514",
+        validateOnSave: false,
+      });
+
+      await service.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: ["test-id-0002"],
+      });
+
+      const route = await service.resolveRoute(undefined, "test-id-0002");
+      expect(route.provider.id).toBe("test-id-0002");
+      expect(route.model).toBe("claude-sonnet-4-20250514");
+    });
+
+    it("rejects a pinned route when the provider is disabled", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await service.createProvider({
+        kind: "anthropic",
+        name: "Claude",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "api-key",
+        api: "anthropic-messages",
+        supportedModels: ["claude-sonnet-4-20250514"],
+        defaultModel: "claude-sonnet-4-20250514",
+        validateOnSave: false,
+      });
+
+      await service.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: ["test-id-0002"],
+      });
+
+      await service.updateProvider("test-id-0002", {
+        enabled: false,
+        validateOnSave: false,
+      });
+
+      await expect(service.resolveRoute(undefined, "test-id-0002")).rejects.toMatchObject({
+        code: "PROVIDER_DISABLED",
+      });
+    });
+
+    it("rejects a pinned route when the provider does not exist", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+
+      await service.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: [],
+      });
+
+      await expect(service.resolveRoute(undefined, "missing-provider")).rejects.toMatchObject({
+        code: "PROVIDER_NOT_FOUND",
+      });
+    });
+
+    it("rejects a pinned route when the provider does not support the requested model", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await service.createProvider({
+        kind: "anthropic",
+        name: "Claude",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "api-key",
+        api: "anthropic-messages",
+        supportedModels: ["claude-sonnet-4-20250514"],
+        defaultModel: "claude-sonnet-4-20250514",
+        validateOnSave: false,
+      });
+
+      await service.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: ["test-id-0002"],
+      });
+
+      await expect(
+        service.resolveRoute("claude-opus-4-20250514", "test-id-0002"),
+      ).rejects.toMatchObject({
+        code: "PROVIDER_NO_CANDIDATES",
+      });
+    });
   });
 
   describe("runWithFallback", () => {
@@ -637,6 +762,110 @@ describe("FridayProviderService", () => {
       ).rejects.toThrow(
         'No enabled providers available for routing: defaultProviderId "claude" not found',
       );
+    });
+
+    it("pins execution to the requested provider without falling back", async () => {
+      process.env.OPENAI_KEY = "sk-openai";
+      process.env.ANTHROPIC_KEY = "sk-anthropic";
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$OPENAI_KEY",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
+        await service.createProvider({
+          kind: "anthropic",
+          name: "Claude",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "api-key",
+          api: "anthropic-messages",
+          apiKey: "$ANTHROPIC_KEY",
+          supportedModels: ["claude-sonnet-4-20250514"],
+          defaultModel: "claude-sonnet-4-20250514",
+          validateOnSave: false,
+        });
+
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: ["test-id-0002"],
+        });
+
+        const run = vi.fn(async (_route, credential) => credential);
+        const { result, route, attempts } = await service.runWithFallback({
+          requestedProviderId: "test-id-0002",
+          run,
+        });
+
+        expect(result).toBe("sk-anthropic");
+        expect(route.provider.id).toBe("test-id-0002");
+        expect(attempts).toHaveLength(0);
+        expect(run).toHaveBeenCalledTimes(1);
+      } finally {
+        delete process.env.OPENAI_KEY;
+        delete process.env.ANTHROPIC_KEY;
+      }
+    });
+
+    it("does not fall back to the default provider when a pinned provider run fails", async () => {
+      process.env.OPENAI_KEY = "sk-openai";
+      process.env.ANTHROPIC_KEY = "sk-anthropic";
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$OPENAI_KEY",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
+        await service.createProvider({
+          kind: "anthropic",
+          name: "Claude",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "api-key",
+          api: "anthropic-messages",
+          apiKey: "$ANTHROPIC_KEY",
+          supportedModels: ["claude-sonnet-4-20250514"],
+          defaultModel: "claude-sonnet-4-20250514",
+          validateOnSave: false,
+        });
+
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: ["test-id-0002"],
+        });
+
+        const run = vi.fn(async (route: { provider: { id: string } }) => {
+          throw new Error(`forced failure for ${route.provider.id}`);
+        });
+
+        await expect(
+          service.runWithFallback({
+            requestedProviderId: "test-id-0002",
+            run,
+          }),
+        ).rejects.toThrow("forced failure for test-id-0002");
+
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(run).toHaveBeenCalledWith(
+          expect.objectContaining({
+            provider: expect.objectContaining({ id: "test-id-0002" }),
+          }),
+          "sk-anthropic",
+        );
+      } finally {
+        delete process.env.OPENAI_KEY;
+        delete process.env.ANTHROPIC_KEY;
+      }
     });
   });
 

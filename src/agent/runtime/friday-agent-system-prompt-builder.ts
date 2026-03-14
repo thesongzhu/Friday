@@ -21,12 +21,22 @@ export interface BuildFridayAgentSystemPromptParams {
     triggerPhrases: string[];
     tags?: string[];
   }>;
+  runtimeCapabilities?: {
+    messagingEnabled?: boolean;
+    messagingKinds?: string[];
+    mcpEnabled?: boolean;
+    mcpServerCount?: number;
+    cronEnabled?: boolean;
+    subagentsEnabled?: boolean;
+    marketplaceEnabled?: boolean;
+    selfLearningEnabled?: boolean;
+  };
 }
 
 export function buildFridayAgentSystemPrompt(
   params: BuildFridayAgentSystemPromptParams,
 ): string {
-  const { toolNames, modelIdentity, version, workspaceContext, starterSkills } = params;
+  const { toolNames, modelIdentity, version, workspaceContext, starterSkills, runtimeCapabilities } = params;
   const toolList = toolNames.join(", ");
   const toolSet = new Set(toolNames);
   const hasTool = (name: string) => toolSet.has(name);
@@ -34,6 +44,14 @@ export function buildFridayAgentSystemPrompt(
   const hasSystemTool = hasTool("system");
   const hasFileTools = hasTool("read") || hasTool("write") || hasTool("edit");
   const hasBrowserTools = hasTool("browser") || hasTool("canvas");
+  const messagingEnabled = runtimeCapabilities?.messagingEnabled ?? hasTool("message");
+  const mcpEnabled = runtimeCapabilities?.mcpEnabled ?? hasTool("mcp");
+  const cronEnabled = runtimeCapabilities?.cronEnabled ?? hasTool("cron");
+  const subagentsEnabled = runtimeCapabilities?.subagentsEnabled ?? hasTool("spawn_subagent");
+  const marketplaceEnabled = runtimeCapabilities?.marketplaceEnabled ?? false;
+  const selfLearningEnabled = runtimeCapabilities?.selfLearningEnabled ?? hasTool("feedback");
+  const messagingKinds = (runtimeCapabilities?.messagingKinds ?? []).filter((kind) => kind.trim().length > 0);
+  const mcpServerCount = runtimeCapabilities?.mcpServerCount ?? 0;
 
   const capabilityLines = [
     `- Tools: ${toolList}`,
@@ -52,14 +70,26 @@ export function buildFridayAgentSystemPrompt(
     hasFileTools
       ? "- File read/write/edit within the configured workspace sandbox"
       : "- File read/write/edit tools are not enabled in this deployment.",
-    "- Skill marketplace: discover, install, and execute third-party skills",
+    marketplaceEnabled
+      ? "- Skill marketplace: discover, install, and execute third-party skills"
+      : "- Skill marketplace is not enabled in this deployment.",
     "- Workflow engine: DAG-based multi-step orchestration with triggers and approval gates",
-    "- Multi-channel messaging: Discord, Slack, Telegram, WhatsApp, and more",
-    "- Scheduled tasks (cron jobs)",
+    messagingEnabled
+      ? `- Multi-channel messaging${messagingKinds.length > 0 ? ` (${messagingKinds.join(", ")})` : ""}`
+      : "- Multi-channel messaging is not enabled in this deployment.",
+    cronEnabled
+      ? "- Scheduled tasks (cron jobs)"
+      : "- Scheduled tasks are not enabled in this deployment.",
     "- Memory: embedding-based long-term memory with recall",
-    "- Sub-agents: delegate complex sub-tasks to specialized agents",
-    "- MCP: connect to external Model Context Protocol servers",
-    "- Self-learning: errors, corrections, and preferences are recorded automatically to improve over time",
+    subagentsEnabled
+      ? "- Sub-agents: delegate complex sub-tasks to specialized agents"
+      : "- Sub-agents are not enabled in this deployment.",
+    mcpEnabled
+      ? `- MCP: connect to external Model Context Protocol servers${mcpServerCount > 0 ? ` (${String(mcpServerCount)} configured)` : ""}`
+      : "- MCP is not enabled in this deployment.",
+    selfLearningEnabled
+      ? "- Self-learning: errors, corrections, and preferences are recorded automatically to improve over time"
+      : "- Self-learning feedback capture is not enabled in this deployment.",
   ].join("\n");
 
   const diagnosisRecoverySkills = (starterSkills ?? []).filter((skill) =>
@@ -106,10 +136,18 @@ export function buildFridayAgentSystemPrompt(
     "- Friday skills: use skills_list first to discover currently available skills, then use skill_run with the chosen skill ID\n" +
     "- Diagnosis, recovery, and self-healing review requests: prefer existing starter skills such as issue review, runtime snapshot, and repair-readiness summaries before generating anything new\n" +
     "- For OAuth providers like Claude Max/Pro: use provider oauth_init (it can auto-create or reuse the Anthropic OAuth provider), return URL to user, then provider oauth_complete; if the user asked to switch Friday to Claude, follow with provider set_default\n" +
-    "- Send messages to users on other platforms: use message\n" +
-    "- Schedule recurring or delayed tasks: use cron\n" +
-    "- Complex multi-step tasks that benefit from delegation: use spawn_subagent\n" +
-    "- Record user corrections or stated preferences: use feedback\n" +
+    (messagingEnabled
+      ? "- Send messages to users on other platforms: use message\n"
+      : "- Multi-channel messaging is unavailable in this deployment, so suggest local alternatives when users ask for cross-platform sends.\n") +
+    (cronEnabled
+      ? "- Schedule recurring or delayed tasks: use cron\n"
+      : "- Scheduled or delayed execution is unavailable in this deployment.\n") +
+    (subagentsEnabled
+      ? "- Complex multi-step tasks that benefit from delegation: use spawn_subagent\n"
+      : "- Sub-agent delegation is unavailable in this deployment.\n") +
+    (selfLearningEnabled
+      ? "- Record user corrections or stated preferences: use feedback\n"
+      : "- Feedback persistence is unavailable in this deployment.\n") +
     "\n\n" +
     "Behavior rules:\n" +
     "- Be direct and action-oriented. Use tools immediately when a task requires them.\n" +

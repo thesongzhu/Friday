@@ -130,4 +130,54 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("Other Starter Skills:");
     expect(prompt).toContain("repo-health-check");
   });
+
+  it("describes messaging and MCP truthfully from runtime capabilities", () => {
+    const withoutRuntimeSupport = buildFridayAgentSystemPrompt({
+      toolNames: ["message", "mcp"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+      runtimeCapabilities: {
+        messagingEnabled: false,
+        mcpEnabled: false,
+      },
+    });
+
+    expect(withoutRuntimeSupport).toContain("Multi-channel messaging is not enabled in this deployment.");
+    expect(withoutRuntimeSupport).toContain("MCP is not enabled in this deployment.");
+    expect(withoutRuntimeSupport).toContain("Multi-channel messaging is unavailable in this deployment");
+
+    const withRuntimeSupport = buildFridayAgentSystemPrompt({
+      toolNames: ["message", "mcp"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+      runtimeCapabilities: {
+        messagingEnabled: true,
+        messagingKinds: ["discord", "telegram"],
+        mcpEnabled: true,
+        mcpServerCount: 2,
+      },
+    });
+
+    expect(withRuntimeSupport).toContain("Multi-channel messaging (discord, telegram)");
+    expect(withRuntimeSupport).toContain("MCP: connect to external Model Context Protocol servers (2 configured)");
+  });
+
+  it("describes cron, subagents, marketplace, and self-learning truthfully", () => {
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["cron", "spawn_subagent", "feedback"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+      runtimeCapabilities: {
+        cronEnabled: false,
+        subagentsEnabled: false,
+        marketplaceEnabled: false,
+        selfLearningEnabled: false,
+      },
+    });
+
+    expect(prompt).toContain("Scheduled tasks are not enabled in this deployment.");
+    expect(prompt).toContain("Sub-agents are not enabled in this deployment.");
+    expect(prompt).toContain("Skill marketplace is not enabled in this deployment.");
+    expect(prompt).toContain("Self-learning feedback capture is not enabled in this deployment.");
+  });
 });

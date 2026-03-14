@@ -98,6 +98,8 @@ export function useAgentRunEvents(
   const abortRef = React.useRef<AbortController | null>(null);
   const retryCountRef = React.useRef(0);
   const terminalRef = React.useRef(false);
+  const seenSeqRef = React.useRef<Set<number>>(new Set());
+  const lastSeqRef = React.useRef(0);
   const onTerminalRef = React.useRef(onTerminal);
   onTerminalRef.current = onTerminal;
 
@@ -127,7 +129,8 @@ export function useAgentRunEvents(
       }
 
       try {
-        const res = await fetch(`/v1/agent/runs/${encodeURIComponent(runId!)}/events`, {
+        const afterSeq = lastSeqRef.current > 0 ? `?afterSeq=${String(lastSeqRef.current)}` : "";
+        const res = await fetch(`/v1/agent/runs/${encodeURIComponent(runId!)}/events${afterSeq}`, {
           headers,
           signal: controller.signal,
         });
@@ -174,9 +177,18 @@ export function useAgentRunEvents(
             continue;
           }
 
+          if (typeof parsed.seq === "number") {
+            if (seenSeqRef.current.has(parsed.seq)) {
+              continue;
+            }
+            seenSeqRef.current.add(parsed.seq);
+            lastSeqRef.current = Math.max(lastSeqRef.current, parsed.seq);
+          }
+
           setEvents((prev) => [...prev, parsed]);
 
           const eventType = parsed.type;
+          const eventTime = parsed.emittedAt ?? parsed.timestamp ?? new Date().toISOString();
 
           // Text delta
           if (eventType === "agent.run.text_delta" && parsed.delta) {
@@ -197,53 +209,71 @@ export function useAgentRunEvents(
           // Tool start
           if (eventType === "agent.run.tool_start" && parsed.toolCallId) {
             const params = asRecord(parsed.params);
-            setToolCalls((prev) => [
-              ...prev,
-              {
-                id: parsed.toolCallId!,
-                toolName: parsed.toolName ?? "unknown",
-                startedAt: parsed.timestamp ?? new Date().toISOString(),
-                params,
-                targetUrl: readBrowserTargetUrl(params),
-                status: "running",
-              },
-            ]);
+            setToolCalls((prev) => {
+              if (prev.some((tc) => tc.id === parsed.toolCallId)) {
+                return prev;
+              }
+              return [
+                ...prev,
+                {
+                  id: parsed.toolCallId!,
+                  toolName: parsed.toolName ?? "unknown",
+                  startedAt: eventTime,
+                  params,
+                  targetUrl: readBrowserTargetUrl(params),
+                  status: "running",
+                },
+              ];
+            });
           }
 
           // Tool end
           if (eventType === "agent.run.tool_end" && parsed.toolCallId) {
-            setToolCalls((prev) =>
-              prev.map((tc) =>
-                tc.id === parsed.toolCallId
-                  ? {
-                      ...tc,
-                      endedAt: parsed.timestamp,
-                      durationMs: parsed.durationMs,
-                      summary: parsed.summary,
-                      status: parsed.isError ? "failed" as const : "completed" as const,
-                      presentationMode: parsed.presentationMode,
-                      targetBrowser: parsed.targetBrowser,
-                      browserTarget: parsed.browserTarget ?? parsed.targetBrowser,
-                      sessionId: parsed.sessionId,
-                      tabId: parsed.tabId,
-                      fallbackReason: parsed.fallbackReason,
-                    }
-                  : tc,
-              ),
-            );
+            setToolCalls((prev) => {
+              const existing = prev.find((tc) => tc.id === parsed.toolCallId);
+              const nextTool = {
+                ...(existing ?? {
+                  id: parsed.toolCallId!,
+                  toolName: parsed.toolName ?? "unknown",
+                  startedAt: eventTime,
+                  status: "running" as const,
+                }),
+                endedAt: eventTime,
+                durationMs: parsed.durationMs,
+                summary: parsed.summary,
+                status: parsed.isError ? "failed" as const : "completed" as const,
+                presentationMode: parsed.presentationMode,
+                targetBrowser: parsed.targetBrowser,
+                browserTarget: parsed.browserTarget ?? parsed.targetBrowser,
+                sessionId: parsed.sessionId,
+                tabId: parsed.tabId,
+                fallbackReason: parsed.fallbackReason,
+              };
+
+              if (!existing) {
+                return [...prev, nextTool];
+              }
+
+              return prev.map((tc) => (tc.id === parsed.toolCallId ? nextTool : tc));
+            });
           }
 
           // Subagent spawned
           if (eventType === "agent.subagent.spawned" && parsed.subagentId) {
-            setSubagents((prev) => [
-              ...prev,
-              {
-                id: parsed.subagentId!,
-                task: parsed.subagentTask ?? "",
-                status: "running",
-                startedAt: parsed.timestamp ?? new Date().toISOString(),
-              },
-            ]);
+            setSubagents((prev) => {
+              if (prev.some((sa) => sa.id === parsed.subagentId)) {
+                return prev;
+              }
+              return [
+                ...prev,
+                {
+                  id: parsed.subagentId!,
+                  task: parsed.subagentTask ?? ((parsed as { task?: string }).task ?? ""),
+                  status: "running",
+                  startedAt: eventTime,
+                },
+              ];
+            });
           }
 
           // Subagent completed
@@ -254,7 +284,7 @@ export function useAgentRunEvents(
                   ? {
                       ...sa,
                       status: parsed.status ?? "completed",
-                      completedAt: parsed.timestamp,
+                      completedAt: eventTime,
                       durationMs: parsed.durationMs,
                     }
                   : sa,
@@ -302,6 +332,8 @@ export function useAgentRunEvents(
     setSubagents([]);
     setStatus(null);
     setErrorMessage(undefined);
+    seenSeqRef.current = new Set();
+    lastSeqRef.current = 0;
 
     connect();
 

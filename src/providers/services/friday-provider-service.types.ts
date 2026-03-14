@@ -70,10 +70,12 @@ export interface FridayProviderService {
 
   resolveRoute(
     requestedModel?: string,
+    requestedProviderId?: string,
   ): Promise<FridayResolvedProviderRoute>;
 
   runWithFallback<T>(params: {
     requestedModel?: string;
+    requestedProviderId?: string;
     routingContext?: {
       estimatedInputTokens: number;
       complexity: FridayTaskComplexity;

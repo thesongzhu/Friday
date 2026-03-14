@@ -69,6 +69,34 @@ function describeRoutingReference(
   return `${label} "${providerId}" is enabled but was not selected`;
 }
 
+function assertRequestedProviderAvailable(
+  providers: FridayProviderProfile[],
+  requestedProviderId: string,
+): FridayProviderProfile {
+  const provider = providers.find((candidate) => candidate.id === requestedProviderId);
+  if (!provider) {
+    throw new FridayDomainError("PROVIDER_NOT_FOUND", `Provider "${requestedProviderId}" not found`, {
+      httpStatus: 404,
+    });
+  }
+  if (!provider.enabled) {
+    throw new FridayDomainError("PROVIDER_DISABLED", `Provider "${requestedProviderId}" is disabled`, {
+      httpStatus: 400,
+    });
+  }
+  return provider;
+}
+
+function explainPinnedProviderNoCandidates(
+  provider: FridayProviderProfile,
+  requestedModel?: string,
+): string {
+  if (requestedModel && requestedModel.trim().length > 0) {
+    return `Provider "${provider.id}" does not support requested model "${requestedModel}".`;
+  }
+  return `Provider "${provider.id}" does not have any eligible models for routing.`;
+}
+
 // ─── Factory ───
 
 export function createFridayProviderService(
@@ -771,7 +799,7 @@ export function createFridayProviderService(
       return validated;
     },
 
-    async resolveRoute(requestedModel) {
+    async resolveRoute(requestedModel, requestedProviderId) {
       const routing = loadRoutingConfig();
       if (!routing || !routing.defaultProviderId) {
         throw new FridayDomainError(
@@ -783,15 +811,25 @@ export function createFridayProviderService(
       const providers = deps.db.withReadConnection((db) =>
         profileRepo.list(db),
       );
+      const pinnedProvider = requestedProviderId
+        ? assertRequestedProviderAvailable(providers, requestedProviderId)
+        : undefined;
       const candidates = fallback.resolveCandidates({
-        routing,
+        routing: pinnedProvider
+          ? {
+              defaultProviderId: pinnedProvider.id,
+              fallbackProviderIds: [],
+            }
+          : routing,
         providers,
         requestedModel,
       });
       if (candidates.length === 0) {
         throw new FridayDomainError(
           "PROVIDER_NO_CANDIDATES",
-          explainNoCandidates(routing, providers),
+          pinnedProvider
+            ? explainPinnedProviderNoCandidates(pinnedProvider, requestedModel)
+            : explainNoCandidates(routing, providers),
           { httpStatus: 400 },
         );
       }
@@ -800,6 +838,7 @@ export function createFridayProviderService(
 
     async runWithFallback<T>(params: {
       requestedModel?: string;
+      requestedProviderId?: string;
       routingContext?: {
         estimatedInputTokens: number;
         complexity: "simple" | "medium" | "complex";
@@ -825,15 +864,25 @@ export function createFridayProviderService(
       const providers = deps.db.withReadConnection((db) =>
         profileRepo.list(db),
       );
+      const pinnedProvider = params.requestedProviderId
+        ? assertRequestedProviderAvailable(providers, params.requestedProviderId)
+        : undefined;
       let candidates = fallback.resolveCandidates({
-        routing,
+        routing: pinnedProvider
+          ? {
+              defaultProviderId: pinnedProvider.id,
+              fallbackProviderIds: [],
+            }
+          : routing,
         providers,
         requestedModel: params.requestedModel,
       });
       if (candidates.length === 0) {
         throw new FridayDomainError(
           "PROVIDER_NO_CANDIDATES",
-          explainNoCandidates(routing, providers),
+          pinnedProvider
+            ? explainPinnedProviderNoCandidates(pinnedProvider, params.requestedModel)
+            : explainNoCandidates(routing, providers),
           { httpStatus: 400 },
         );
       }
@@ -854,7 +903,7 @@ export function createFridayProviderService(
       // requested, skip cost-routing overrides to prevent model drift.
       const enforcePin = routing.enforceRequestedModel === true && !!params.requestedModel;
 
-      if (routingDecision.strategy === "budget_local_only" && !enforcePin) {
+      if (routingDecision.strategy === "budget_local_only" && !enforcePin && !pinnedProvider) {
         // Budget exceeded — filter candidates to local/free providers only
         const localOnly = candidates.filter((c) => c.provider.kind === "ollama");
         if (localOnly.length === 0) {
@@ -865,7 +914,7 @@ export function createFridayProviderService(
           );
         }
         candidates = localOnly;
-      } else if (!params.requestedModel && !enforcePin) {
+      } else if (!params.requestedModel && !enforcePin && !pinnedProvider) {
         // Use cost-reordered candidates when no specific model was requested
         candidates = routingDecision.orderedCandidates;
       }

@@ -15,6 +15,7 @@ import type {
   CreateChildRuntimeParams,
   FridaySubagentRegistrySpawnInput,
 } from "#agent";
+import { buildFridaySubagentSessionKey } from "#sessions";
 import { FridayDomainError } from "#errors";
 
 describe("FridaySubagentRegistry", () => {
@@ -112,6 +113,10 @@ describe("FridaySubagentRegistry", () => {
       expect(records[0].startedAt).toBe(NOW);
       expect(records[0].completedAt).toBe(NOW);
       expect(records[0].depth).toBe(1);
+      expect(records[0].childRunId).toBeTruthy();
+      expect(records[0].childSessionKey).toBe(
+        buildFridaySubagentSessionKey("agent:run:parent-run-1", records[0].childRunId),
+      );
     });
 
     it("emits spawned and completed events", async () => {
@@ -159,8 +164,8 @@ describe("FridaySubagentRegistry", () => {
             id,
             parentRunId: "parent-run-1",
             parentSessionKey: "agent:run:parent-run-1",
-            childRunId: "",
-            childSessionKey: `agent:run:parent-run-1:sub:${id}`,
+            childRunId: `child-${id}`,
+            childSessionKey: buildFridaySubagentSessionKey("agent:run:parent-run-1", `child-${id}`),
             task: `Active task ${String(i)}`,
             depth: 1,
             nowIso: NOW,
@@ -280,7 +285,11 @@ describe("FridaySubagentRegistry", () => {
 
       expect(result.status).toBe("accepted");
       expect(result.subagentId).toBeTruthy();
+      expect(result.childRunId).toBeTruthy();
       expect(result.childSessionKey).toBeTruthy();
+      expect(result.childSessionKey).toBe(
+        buildFridaySubagentSessionKey("agent:run:parent-run-1", result.childRunId),
+      );
     });
 
     it("creates a pending/running record in DB", () => {
@@ -393,8 +402,8 @@ describe("FridaySubagentRegistry", () => {
           id: "stuck-1",
           parentRunId: "parent-run-1",
           parentSessionKey: "agent:run:parent-run-1",
-          childRunId: "",
-          childSessionKey: "agent:run:parent-run-1:sub:stuck-1",
+          childRunId: "child-run-stuck-1",
+          childSessionKey: buildFridaySubagentSessionKey("agent:run:parent-run-1", "child-run-stuck-1"),
           task: "Stuck task",
           depth: 1,
           nowIso: NOW,

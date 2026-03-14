@@ -300,6 +300,7 @@ export interface FridayAgentRunCancelledPayload {
 
 export interface FridaySubagentSpawnedPayload {
   subagentId: string;
+  childRunId: string;
   parentRunId: string;
   task: string;
   label?: string;
