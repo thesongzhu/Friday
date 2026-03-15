@@ -1870,28 +1870,26 @@ function hasTimeSensitiveNewsIntent(
 function textHasTimeSensitiveNewsIntent(text: string): boolean {
   const normalized = text.trim();
   if (normalized.length === 0) return false;
-  const newsWords =
-    /\b(news|headline|headlines|article|articles|breaking|report|reports)\b/i;
+  const newsTopicWords =
+    /\b(news|headline|headlines|article|articles|report|reports|story|stories)\b/i;
   const timelinessWords =
-    /\b(latest|current|today'?s|recent|newest)\b/i;
+    /\b(latest|current|today'?s|recent|newest|breaking)\b/i;
   const capabilityWords =
     /\b(capabilities?|what can\b|can (?:friday|you)\b.*\bdo\b|runtime facts?|deployment|enabled|disabled|connected|read[- ]?only|desktop companion|provider mutations?|mcp)\b/i;
-  const chineseNewsWords =
-    /(新闻|头条|报道|快讯)/;
+  const chineseNewsTopicWords =
+    /(新闻|头条|报道|文章|快讯|消息)/;
   const chineseTimelinessWords =
-    /(最新|当前|目前|现在|今天|最近)/;
+    /(最新|当前|目前|今天|最近|快讯)/;
   const chineseCapabilityWords =
     /(能力|能做什么|运行时|部署|启用|禁用|连接|只读|桌面伴侣|提供者修改|MCP)/;
-  if (!newsWords.test(normalized) && !chineseNewsWords.test(normalized)) {
+  if (!newsTopicWords.test(normalized) && !chineseNewsTopicWords.test(normalized)) {
     if (capabilityWords.test(normalized) || chineseCapabilityWords.test(normalized)) {
       return false;
     }
   }
   return (
-    newsWords.test(normalized)
-    || timelinessWords.test(normalized)
-    || chineseNewsWords.test(normalized)
-    || chineseTimelinessWords.test(normalized)
+    (timelinessWords.test(normalized) && newsTopicWords.test(normalized))
+    || (chineseTimelinessWords.test(normalized) && chineseNewsTopicWords.test(normalized))
   );
 }
 

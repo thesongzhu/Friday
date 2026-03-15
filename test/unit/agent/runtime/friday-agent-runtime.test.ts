@@ -980,6 +980,69 @@ describe("FridayAgentRuntime", () => {
     expect(result.response).not.toContain("I could not verify that these are the latest results");
   });
 
+  it("does not treat a plain article read as time-sensitive news", async () => {
+    let callCount = 0;
+    const webFetchSpy = vi.fn();
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        callCount++;
+        if (callCount === 1) {
+          yield {
+            type: "tool_use",
+            id: "call-1",
+            name: "web_fetch",
+            input: { url: "https://example.com/article/123" },
+          };
+          yield { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 };
+          return;
+        }
+        yield { type: "text_delta", text: "The article discusses AI agents transforming software development." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 7 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [
+        {
+          name: "web_fetch",
+          description: "Successful web fetch tool",
+          parameters: {
+            properties: {
+              url: { type: "string" },
+            },
+            required: ["url"],
+          },
+          async execute(args) {
+            webFetchSpy(args);
+            return {
+              content:
+                "HTTP 200\nContent-Type: text/html; charset=utf-8\n(HTML parsed to plain text)\nAI Agents in 2026\n\nAI Agents Transform Software Development...",
+            };
+          },
+        },
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Read this article: https://example.com/article/123",
+      timezone: "UTC",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(callCount).toBe(2);
+    expect(webFetchSpy).toHaveBeenCalledWith({ url: "https://example.com/article/123" });
+    expect(result.response).toContain("The article discusses AI agents");
+    expect(result.response).not.toContain("latest results");
+  });
+
   it("adds a caveat when latest news evidence remains unverified after retry", async () => {
     let callCount = 0;
     const llmClient: FridayAgentLlmClient = {
