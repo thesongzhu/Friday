@@ -109,6 +109,7 @@ import {
   createFridayAgentMessageTool,
   createFridayAgentReviewGate,
   createFridayAgentRunEventRepository,
+  createFridayAgentRunRepository,
   createFridayAgentRuntime,
   createFridayAgentSelfTestService,
   createFridayAgentSkillGeneratorTool,
@@ -130,6 +131,7 @@ import type {
   FridayAgentMessage,
   FridayAgentReviewMode,
   FridayAgentRuntime,
+  FridayAgentTaskStatusSnapshot,
 } from "#agent";
 import {
   createDiscordGatewayService,
@@ -747,6 +749,7 @@ export async function createFridayHub(
 
   // IMPL-3: Durable run event repository
   const agentRunEventRepository = createFridayAgentRunEventRepository();
+  const agentRunRepo = createFridayAgentRunRepository();
 
   // IMPL-4: SSRF guard
   const agentSsrfGuard = createFridayAgentSsrfGuard();
@@ -1235,6 +1238,7 @@ export async function createFridayHub(
   // receives a deferred reference that resolves once runtime is wired up.
   let _agentRuntimeRef: FridayAgentRuntime | undefined;
   const agentRuntimeGetter = () => _agentRuntimeRef;
+  let subagentRegistry!: ReturnType<typeof createFridaySubagentRegistry>;
 
   // Optional MCP adapter (JSON config from FRIDAY_MCP_SERVERS).
   // Example:
@@ -1308,6 +1312,95 @@ export async function createFridayHub(
     };
   };
 
+  const getAgentTaskStatusSnapshot = async (input: {
+    runId?: string;
+    sessionKey?: string;
+    readOnly: boolean;
+  }): Promise<FridayAgentTaskStatusSnapshot> => {
+    const focusState = input.sessionKey
+      ? await hubSessionService.getConversationFocus(input.sessionKey).catch(() => null)
+      : null;
+    const trackedRunId = focusState?.activeRunId ?? input.runId ?? focusState?.lastRunId;
+    const trackedRun = trackedRunId
+      ? stateRuntime!.sqlite.withReadConnection((reader) => agentRunRepo.getById(reader, trackedRunId))
+      : null;
+    const trackedEvents = trackedRunId
+      ? stateRuntime!.sqlite.withReadConnection((reader) => agentRunEventRepository.list(reader, trackedRunId))
+      : [];
+
+    let latestPhase: string | undefined;
+    let latestTool: string | undefined;
+    for (const event of trackedEvents) {
+      if (event.eventName === "agent.run.progress" && typeof event.payload.phase === "string") {
+        latestPhase = event.payload.phase;
+      }
+      if (event.eventName === "agent.run.tool_start" && typeof event.payload.toolName === "string") {
+        latestTool = event.payload.toolName;
+      }
+      if (
+        event.eventName === "agent.run.tool_end"
+        && typeof event.payload.toolName === "string"
+        && event.payload.toolName === latestTool
+      ) {
+        latestTool = undefined;
+      }
+    }
+
+    const activeSubagentIds = focusState?.activeSubagentIds ?? [];
+    const activeSubagents = activeSubagentIds
+      .map((subagentId) => subagentRegistry.getById(subagentId))
+      .filter((record): record is NonNullable<typeof record> => record !== null)
+      .map((record) => ({
+        id: record.id,
+        childRunId: record.childRunId,
+        childSessionKey: record.childSessionKey,
+        status: record.status,
+        task: record.task,
+        label: record.label,
+        createdAt: record.createdAt,
+        startedAt: record.startedAt,
+        completedAt: record.completedAt,
+        durationMs: record.durationMs,
+      }));
+
+    const blockers: string[] = [];
+    if (trackedRun?.status === "failed" && trackedRun.errorMessage) {
+      blockers.push(trackedRun.errorMessage);
+    }
+    if (focusState?.pendingPlanRunId) {
+      blockers.push(`Awaiting plan approval for run ${focusState.pendingPlanRunId}.`);
+    }
+
+    const elapsedMs = trackedRun?.startedAt
+      ? Math.max(0, Date.now() - new Date(trackedRun.startedAt).getTime())
+      : undefined;
+
+    return {
+      readOnly: input.readOnly,
+      sessionKey: input.sessionKey,
+      trackedRunId: trackedRun?.id,
+      task: trackedRun?.task,
+      runStatus: trackedRun?.status,
+      phase: latestPhase ?? trackedRun?.status,
+      elapsedMs,
+      latestTool,
+      activeSubagents,
+      blockers,
+      pendingPlanRunId: focusState?.pendingPlanRunId,
+      terminalOutcome: trackedRun && (
+        trackedRun.status === "completed"
+        || trackedRun.status === "failed"
+        || trackedRun.status === "cancelled"
+      )
+        ? {
+            status: trackedRun.status,
+            summary: trackedRun.summary,
+            responseText: trackedRun.responseText,
+          }
+        : undefined,
+    };
+  };
+
   const agentTools = createFridayAgentToolRegistry({
     workdir: workspaceRoot,
     skillExecutor: executor,
@@ -1327,6 +1420,7 @@ export async function createFridayHub(
     webSearchProvider: process.env.FRIDAY_SEARCH_PROVIDER,
     webSearchApiKey: process.env.FRIDAY_SERPER_API_KEY ?? process.env.FRIDAY_TAVILY_API_KEY,
     capabilitySnapshotGetter: getAgentCapabilitySnapshot,
+    taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
   });
 
   const mcpServer = (() => {
@@ -1890,6 +1984,31 @@ export async function createFridayHub(
       });
       return buildFridayCommunicationPromptFragment(persona);
     },
+    delegationHandler: async (input) => {
+      const detached = subagentRegistry.spawnDetached({
+        task: input.task,
+        timezone: input.timezone,
+        timeoutMs: input.timeoutMs,
+        parentRunId: input.runId,
+        parentSessionKey: input.sessionKey,
+        depth: 0,
+        rootRunId: input.runId,
+        constraints: input.constraints,
+        signal: input.signal,
+      });
+
+      const outcome = await subagentRegistry.waitForCompletion(detached.subagentId, input.timeoutMs);
+      const completedRecord = subagentRegistry.getById(detached.subagentId);
+
+      return {
+        delegated: true,
+        subagentId: detached.subagentId,
+        childRunId: detached.childRunId,
+        childSessionKey: detached.childSessionKey,
+        statusSnapshot: completedRecord?.status ?? detached.statusSnapshot,
+        outcome,
+      };
+    },
     usageRecorder: async (usage) => {
       await providerService.recordUsage({
         providerId: usage.providerId,
@@ -1915,7 +2034,7 @@ export async function createFridayHub(
 
   // ─── Sub-agent registry ───
 
-  const subagentRegistry = createFridaySubagentRegistry({
+  subagentRegistry = createFridaySubagentRegistry({
     db: stateRuntime!.sqlite,
     createChildRuntime: (params) => {
       let childRuntimeRef: FridayAgentRuntime | undefined;
@@ -1952,6 +2071,7 @@ export async function createFridayHub(
         webSearchProvider: process.env.FRIDAY_SEARCH_PROVIDER,
         webSearchApiKey: process.env.FRIDAY_SERPER_API_KEY ?? process.env.FRIDAY_TAVILY_API_KEY,
         capabilitySnapshotGetter: getAgentCapabilitySnapshot,
+        taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
       });
       const childRuntime = createFridayAgentRuntime({
         db: stateRuntime!.sqlite,
@@ -2015,6 +2135,75 @@ export async function createFridayHub(
   const lineWebhookRelay = createLineWebhookListenerService();
   const whatsappWebhookRelay = createWhatsappWebhookService();
   const larkWebhookRelay = createLarkWebhookRelayService();
+
+  const updateConversationFocus = (
+    sessionKey: string,
+    updater: (current: Awaited<ReturnType<typeof hubSessionService.getConversationFocus>>) =>
+      Awaited<ReturnType<typeof hubSessionService.getConversationFocus>>,
+  ): void => {
+    void (async () => {
+      const current = await hubSessionService.getConversationFocus(sessionKey).catch(() => null);
+      const next = updater(current);
+      await hubSessionService.setConversationFocus(sessionKey, next).catch(() => undefined);
+    })();
+  };
+
+  const resolveAgentRun = (runId: string) =>
+    stateRuntime!.sqlite.withReadConnection((reader) => agentRunRepo.getById(reader, runId));
+
+  const clearActiveRun = (runId: string): void => {
+    const run = resolveAgentRun(runId);
+    if (!run) return;
+    updateConversationFocus(run.sessionKey, (current) => ({
+      ...(current ?? { updatedAt: nowIso() }),
+      activeRunId: current?.activeRunId === runId ? undefined : current?.activeRunId,
+      updatedAt: nowIso(),
+    }));
+  };
+
+  agentEventEmitter.on("agent.run.completed", (payload) => {
+    clearActiveRun(payload.runId);
+  });
+  agentEventEmitter.on("agent.run.failed", (payload) => {
+    clearActiveRun(payload.runId);
+  });
+  agentEventEmitter.on("agent.run.cancelled", (payload) => {
+    clearActiveRun(payload.runId);
+  });
+
+  agentEventEmitter.on("agent.subagent.spawned", (payload) => {
+    const record = subagentRegistry.getById(payload.subagentId);
+    if (!record) return;
+    updateConversationFocus(record.parentSessionKey, (current) => ({
+      ...(current ?? { updatedAt: nowIso() }),
+      activeRunId: record.childRunId,
+      activeSubagentIds: current?.activeSubagentIds?.includes(record.id)
+        ? current.activeSubagentIds
+        : [...(current?.activeSubagentIds ?? []), record.id],
+      updatedAt: nowIso(),
+    }));
+    updateConversationFocus(record.childSessionKey, (current) => ({
+      ...(current ?? { updatedAt: nowIso() }),
+      activeRunId: record.childRunId,
+      updatedAt: nowIso(),
+    }));
+  });
+
+  agentEventEmitter.on("agent.subagent.completed", (payload) => {
+    const record = subagentRegistry.getById(payload.subagentId);
+    if (!record) return;
+    updateConversationFocus(record.parentSessionKey, (current) => ({
+      ...(current ?? { updatedAt: nowIso() }),
+      activeRunId: current?.activeRunId === record.childRunId ? undefined : current?.activeRunId,
+      activeSubagentIds: (current?.activeSubagentIds ?? []).filter((id) => id !== record.id),
+      updatedAt: nowIso(),
+    }));
+    updateConversationFocus(record.childSessionKey, (current) => ({
+      ...(current ?? { updatedAt: nowIso() }),
+      activeRunId: current?.activeRunId === record.childRunId ? undefined : current?.activeRunId,
+      updatedAt: nowIso(),
+    }));
+  });
 
   // Parse channel config and register channel plugins via loader.
   // Precedence: explicit config (CLI/env) > setup wizard persisted state.
@@ -3804,6 +3993,38 @@ export async function createFridayHub(
               runId,
               publicRunUrl: resolveFridayPublicRunUrl(runId),
             });
+            let delegatedNoticeSent = false;
+            const onSubagentSpawnedForChannel = (payload: {
+              parentRunId: string;
+              subagentId: string;
+              childRunId: string;
+            }): void => {
+              if (payload.parentRunId !== runId || delegatedNoticeSent) {
+                return;
+              }
+              delegatedNoticeSent = true;
+              const liveUrl = resolveFridayPublicRunUrl(payload.childRunId) ?? resolveFridayPublicRunUrl(runId);
+              channelRegistry.send(msg.channelKind, {
+                chatId: msg.chatId,
+                text: [
+                  "I delegated this task to a worker and I am tracking it.",
+                  `runId: ${runId}`,
+                  `subagentId: ${payload.subagentId}`,
+                  `childRunId: ${payload.childRunId}`,
+                  liveUrl ? `watch: ${liveUrl}` : "watch: use the runId to query status",
+                ].join("\n"),
+                replyTo: msg.id,
+              }).catch((err) => {
+                logChannelIssue({
+                  level: "warn",
+                  code: "W-CH-OUTBOUND-002",
+                  routeId: "hub.channel.delivery.delegated_notice",
+                  runId,
+                  error: err,
+                });
+              });
+            };
+            agentEventEmitter.on("agent.subagent.spawned", onSubagentSpawnedForChannel);
             try {
               const inboundMessage = await hubSessionService.addMessage(sessionKey, {
                 role: "user",
@@ -3858,6 +4079,21 @@ export async function createFridayHub(
                   };
                 });
 
+              if (preparedTurn.turnKind !== "status_check" && preparedTurn.turnKind !== "clarification") {
+                await hubSessionService.setConversationFocus(sessionKey, {
+                  ...(focusState ?? { updatedAt: nowIso() }),
+                  activeRunId: runId,
+                  updatedAt: nowIso(),
+                }).catch((err) => {
+                  logChannelIssue({
+                    level: "warn",
+                    code: "W-CH-FOCUS-WRITE-001",
+                    routeId: "hub.channel.focus.active_run",
+                    error: err,
+                  });
+                });
+              }
+
               const result = await agentRuntime.executeRun({
                 task: text,
                 runId,
@@ -3870,6 +4106,7 @@ export async function createFridayHub(
                   previousTopicSummary: preparedTurn.previousTopicSummary,
                   currentTopicSummary: preparedTurn.currentTopicSummary,
                 },
+                constraints: preparedTurn.turnKind === "status_check" ? { readOnly: true } : undefined,
                 principalId: msg.senderId,
                 timezone: msg.timezone,
               });
@@ -3881,7 +4118,7 @@ export async function createFridayHub(
                   responseText: result.response,
                   runId: result.runId,
                   turnKind: preparedTurn.turnKind,
-                  focusState,
+                  focusState: await hubSessionService.getConversationFocus(sessionKey).catch(() => focusState),
                   currentUserSequence: inboundMessage?.sequence,
                   nowIso: nowIso(),
                 }),
@@ -3988,6 +4225,7 @@ export async function createFridayHub(
                   });
                 });
             } finally {
+              agentEventEmitter.off("agent.subagent.spawned", onSubagentSpawnedForChannel);
               slowTaskNotifier.stop();
               typingController.stopDispatch();
             }

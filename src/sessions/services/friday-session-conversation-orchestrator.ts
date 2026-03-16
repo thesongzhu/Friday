@@ -207,6 +207,8 @@ function buildTaskPrompt(input: {
       previousTopicSummary
         ? `Active topic reference: ${previousTopicSummary}`
         : "No active topic summary is available.",
+      "Use the task_status tool before answering.",
+      "Do not retry, resume, or reconstruct the original task in this turn unless the user explicitly asked for a new action.",
       "Do not answer the content of the previous task unless the user explicitly asked for that content.",
       "If you do not have deterministic status evidence in this turn, say that clearly instead of assuming.",
     ].join("\n");
@@ -287,7 +289,9 @@ export function finalizeFridayConversationFocus(
     lastAnsweredQuestion: summarizeTopic(input.task),
     lastAssistantAskedQuestion: assistantAskedQuestion,
     lastRunId: input.runId,
-    activeRunId: undefined,
+    activeRunId: previous?.activeRunId && previous.activeRunId !== input.runId
+      ? previous.activeRunId
+      : undefined,
     activeSubagentIds: activeSubagentIds && activeSubagentIds.length > 0 ? activeSubagentIds : undefined,
     pendingPlanRunId: input.pendingPlanRunId ?? previous?.pendingPlanRunId,
     lastTurnKind: input.turnKind,

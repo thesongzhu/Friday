@@ -100,6 +100,7 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.turnKind).toBe("status_check");
     expect(prepared.historyMessages).toHaveLength(2);
     expect(prepared.taskPrompt).toContain("asking for a status update");
+    expect(prepared.taskPrompt).toContain("Use the task_status tool before answering.");
   });
 
   it("persists new-topic focus state with the current sequence", () => {
@@ -117,5 +118,24 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(focus.currentTopicStartSequence).toBe(9);
     expect(focus.lastRunId).toBe("run-2");
     expect(focus.lastTurnKind).toBe("new_topic");
+  });
+
+  it("preserves another active run when a status-check turn finishes", () => {
+    const focus = finalizeFridayConversationFocus({
+      task: "刚才那个任务现在怎么样？",
+      responseText: "It is still running in a delegated subagent.",
+      runId: "run-status-check",
+      turnKind: "status_check",
+      focusState: {
+        ...baseFocusState,
+        activeRunId: "run-long-task",
+        activeSubagentIds: ["sub-1"],
+      },
+      currentUserSequence: 10,
+      nowIso: "2026-03-15T11:00:00.000Z",
+    });
+
+    expect(focus.activeRunId).toBe("run-long-task");
+    expect(focus.activeSubagentIds).toEqual(["sub-1"]);
   });
 });
