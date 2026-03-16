@@ -38,6 +38,7 @@ import type {
 } from "./friday-agent-runtime.types.js";
 import { evaluateFridayAnswerAlignment } from "./friday-agent-answer-alignment.js";
 import { attachFridayAgentToolExecutionContext } from "./friday-agent-tool-execution-context.js";
+import { shouldDelegateFridayAgentTask } from "./friday-agent-delegation-policy.js";
 import { isMutatingToolCall } from "./friday-agent-tool-mutation.js";
 import { getApprovalRequiredReasonForToolCall } from "./friday-agent-tool-risk.js";
 
@@ -69,6 +70,7 @@ export function createFridayAgentRuntime(
     evaluateRules,
     learningContextBuilder,
     communicationPromptBuilder,
+    delegationHandler,
   } = deps;
 
   // Clone the tools array so registerTool does not mutate the caller's array.
@@ -534,6 +536,132 @@ export function createFridayAgentRuntime(
           runId,
           message: `Planning approach (${String(planSummary.stepCount)} step(s))`,
         });
+
+        if (
+          delegationHandler
+          && shouldDelegateFridayAgentTask({
+            task: params.task,
+            conversationContext,
+          })
+        ) {
+          handleTrackedEvent("agent.run.executing", {
+            runId,
+            step: 1,
+            description: "Delegating task to sub-agent",
+          });
+
+          const delegated = await delegationHandler({
+            runId,
+            sessionKey,
+            task: params.task,
+            timezone: params.timezone,
+            timeoutMs,
+            signal: runAbortController.signal,
+            constraints,
+            principalId,
+            conversationContext,
+          });
+
+          if (delegated) {
+            responseText = delegated.outcome.response;
+            const durationMs = Date.now() - startedAt;
+            const completedAt = nowIso();
+            const summaryText = deriveSummary(responseText);
+            const terminalStatus = delegated.outcome.status;
+            const terminalResponse = responseText.trim().length > 0
+              ? responseText
+              : terminalStatus === "completed"
+                ? `Delegated sub-agent ${delegated.subagentId} completed without a response.`
+                : `Delegated sub-agent ${delegated.subagentId} ${terminalStatus}.`;
+            const persistedArtifacts = persistRunArtifacts({
+              status: terminalStatus,
+              response: terminalResponse,
+              durationMs,
+              completedAt,
+              testResults: [],
+              artifacts: [],
+            });
+
+            db.withWriteTransaction((writer) =>
+              repo.update(writer, {
+                id: runId,
+                status: terminalStatus,
+                completedAt,
+                durationMs,
+                usageInput: 0,
+                usageOutput: 0,
+                artifacts: persistedArtifacts.artifacts,
+                responseText: terminalResponse,
+                summary: summaryText || undefined,
+                artifactDir: persistedArtifacts.artifactDir,
+              }),
+            );
+
+            if (terminalStatus === "completed") {
+              handleTrackedEvent("agent.run.completed", {
+                runId,
+                durationMs,
+                toolCallCount: 0,
+                testsPassed: true,
+                artifacts: persistedArtifacts.artifacts.map((a) => ({ type: a.type, path: a.path })),
+              });
+
+              if (sessionMirror && terminalResponse) {
+                try {
+                  await sessionMirror(sessionKey, {
+                    role: "assistant",
+                    content: terminalResponse,
+                    contentText: terminalResponse,
+                    idempotencyKey: `agent-run:${runId}:response`,
+                  });
+                } catch (error) {
+                  console.warn(
+                    `[friday][W-AG-SESSION-MIRROR-001] Failed to mirror assistant response for delegated run ${runId}:`,
+                    error instanceof Error ? error.message : String(error),
+                  );
+                }
+              }
+
+              return {
+                runId,
+                status: "completed",
+                response: terminalResponse,
+                toolCallCount: 0,
+                durationMs,
+                usageInput: 0,
+                usageOutput: 0,
+              };
+            }
+
+            if (terminalStatus === "cancelled") {
+              handleTrackedEvent("agent.run.cancelled", {
+                runId,
+                reason: terminalResponse,
+              });
+            } else {
+              handleTrackedEvent("agent.run.failed", {
+                runId,
+                error: {
+                  code: FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
+                  message: terminalResponse,
+                },
+                durationMs,
+                routeId: "agent.execute.run.delegated",
+                correlationId: delegated.childRunId,
+              });
+            }
+
+            return {
+              runId,
+              status: terminalStatus,
+              response: terminalResponse,
+              toolCallCount: 0,
+              durationMs,
+              usageInput: 0,
+              usageOutput: 0,
+            };
+          }
+        }
 
         // 3. Add user message (with optional inline images for vision)
         if (params.images && params.images.length > 0) {

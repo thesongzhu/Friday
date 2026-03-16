@@ -27,6 +27,34 @@ export interface FridayAgentConversationContext {
   currentTopicSummary?: string;
 }
 
+export interface FridayAgentDelegationRequest {
+  runId: string;
+  sessionKey: string;
+  task: string;
+  timezone?: string;
+  timeoutMs: number;
+  signal: AbortSignal;
+  constraints?: FridayAgentRunConstraints;
+  principalId?: string;
+  conversationContext?: FridayAgentConversationContext;
+}
+
+export interface FridayAgentDelegationResult {
+  delegated: true;
+  subagentId: string;
+  childRunId: string;
+  childSessionKey: string;
+  statusSnapshot: "pending" | "running" | "completed" | "failed" | "cancelled";
+  outcome: {
+    status: "completed" | "failed" | "cancelled";
+    response: string;
+    toolCallCount: number;
+    durationMs: number;
+    usageInput: number;
+    usageOutput: number;
+  };
+}
+
 export interface FridayAgentSystemPromptContext {
   toolNames: string[];
   nowIso: string;
@@ -158,4 +186,7 @@ export interface CreateFridayAgentRuntimeDeps {
   learningContextBuilder?: (input: { userId: string; nowIso: string }) => { preferences: Record<string, unknown> };
   /** Optional callback that returns a communication persona prompt fragment for the current user. */
   communicationPromptBuilder?: (input: { userId: string; nowIso: string }) => string | null;
+  /** Optional deterministic delegation hook for top-level coordinator runs. */
+  delegationHandler?: (input: FridayAgentDelegationRequest) =>
+    Promise<FridayAgentDelegationResult | null>;
 }
