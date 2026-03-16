@@ -21,6 +21,12 @@ export interface FridayAgentExecutionContext {
   browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
 }
 
+export interface FridayAgentConversationContext {
+  turnKind?: "new_topic" | "follow_up" | "clarification" | "status_check" | "continue_active_task";
+  previousTopicSummary?: string;
+  currentTopicSummary?: string;
+}
+
 export interface FridayAgentSystemPromptContext {
   toolNames: string[];
   nowIso: string;
@@ -37,6 +43,10 @@ export interface FridayAgentRuntime {
     images?: string[];
     /** Optional prior conversation history to prepend before the new task. */
     historyMessages?: FridayAgentMessage[];
+    /** Optional prompt variant for the current turn. Stored task stays unchanged. */
+    taskPrompt?: string;
+    /** Optional current-turn metadata for answer alignment and context gating. */
+    conversationContext?: FridayAgentConversationContext;
     sessionKey?: string;
     runId?: string;
     providerId?: string;
@@ -85,6 +95,8 @@ export interface FridayAgentRuntimeResult {
   usageOutput: number;
   /** Image file paths extracted from tool call results (e.g. browser screenshots). */
   images?: string[];
+  /** Final answer after any alignment retry/correction. */
+  finalResponse?: string;
 }
 
 export interface FridayAgentUsageTurn {

@@ -31,8 +31,10 @@ export type {
   FridaySessionStatus,
   FridaySessionRole,
   FridaySessionChatKind,
+  FridayConversationTurnKind,
   FridaySessionKeyParts,
   FridaySessionSendPolicy,
+  FridaySessionConversationFocusState,
   FridaySessionRecord,
   FridaySessionMessageRecord,
   FridaySessionMessageInput,
@@ -89,6 +91,16 @@ export {
 
 export type { FridaySessionService, FridaySessionSweepResult, CreateFridaySessionServiceDeps } from "./services/friday-session-service.types.js";
 export { createFridaySessionService } from "./services/friday-session-service.js";
+export type {
+  FridayPreparedConversationTurn,
+  PrepareFridayConversationTurnInput,
+  FinalizeFridayConversationFocusInput,
+} from "./services/friday-session-conversation-orchestrator.js";
+export {
+  classifyFridayConversationTurn,
+  prepareFridayConversationTurn,
+  finalizeFridayConversationFocus,
+} from "./services/friday-session-conversation-orchestrator.js";
 
 // ─── Memory extraction constants ───
 

@@ -1,6 +1,12 @@
 export type FridaySessionStatus = "active" | "idle" | "archived" | "pruned";
 export type FridaySessionRole = "system" | "user" | "assistant" | "tool";
 export type FridaySessionChatKind = "dm" | "group" | "channel" | "thread";
+export type FridayConversationTurnKind =
+  | "new_topic"
+  | "follow_up"
+  | "clarification"
+  | "status_check"
+  | "continue_active_task";
 
 /**
  * Send policy controls whether outbound messages are allowed for a session.
@@ -46,6 +52,20 @@ export interface FridaySessionRecord {
   idleAt?: string;
   archivedAt?: string;
   prunedAt?: string;
+}
+
+export interface FridaySessionConversationFocusState {
+  currentTopicFingerprint?: string;
+  currentTopicSummary?: string;
+  currentTopicStartSequence?: number;
+  lastAnsweredQuestion?: string;
+  lastAssistantAskedQuestion?: boolean;
+  lastRunId?: string;
+  activeRunId?: string;
+  activeSubagentIds?: string[];
+  pendingPlanRunId?: string;
+  lastTurnKind?: FridayConversationTurnKind;
+  updatedAt: string;
 }
 
 export interface FridaySessionMessageRecord {

@@ -1,6 +1,7 @@
 import type { FridaySqliteLayer } from "#state";
 
 import type {
+  FridaySessionConversationFocusState,
   FridaySessionCreateInput,
   FridaySessionForkCreateInput,
   FridaySessionForkCreateResult,
@@ -35,6 +36,13 @@ export interface FridaySessionService {
   setSendPolicy(key: string, policy: FridaySessionSendPolicy | null): Promise<FridaySessionRecord>;
   /** Resolve the effective send policy for a session (session override > default "allow"). */
   evaluateSendPolicy(key: string): Promise<FridaySessionSendPolicy>;
+  /** Read the persisted conversation focus state for a session. */
+  getConversationFocus(key: string): Promise<FridaySessionConversationFocusState | null>;
+  /** Persist or clear the conversation focus state for a session. */
+  setConversationFocus(
+    key: string,
+    focusState: FridaySessionConversationFocusState | null,
+  ): Promise<FridaySessionRecord>;
 }
 
 export interface FridaySessionSweepResult {

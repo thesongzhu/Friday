@@ -29,10 +29,12 @@ import { createFridayAgentRunRepository } from "../persistence/friday-agent-run-
 import type { FridayAgentLlmStreamEvent } from "./friday-agent-llm-client.types.js";
 import type {
   CreateFridayAgentRuntimeDeps,
+  FridayAgentConversationContext,
   FridayAgentExecutionContext,
   FridayAgentRuntime,
   FridayAgentRuntimeResult,
 } from "./friday-agent-runtime.types.js";
+import { evaluateFridayAnswerAlignment } from "./friday-agent-answer-alignment.js";
 import { attachFridayAgentToolExecutionContext } from "./friday-agent-tool-execution-context.js";
 import { isMutatingToolCall } from "./friday-agent-tool-mutation.js";
 import { getApprovalRequiredReasonForToolCall } from "./friday-agent-tool-risk.js";
@@ -167,6 +169,7 @@ export function createFridayAgentRuntime(
       const isReadOnly = constraints?.readOnly === true;
       const disabledToolNames = normalizeToolNameSet(params.disabledToolNames);
       const executionContext = params.executionContext;
+      const conversationContext = params.conversationContext;
       const principalId =
         typeof params.principalId === "string" && params.principalId.trim().length > 0
           ? params.principalId
@@ -210,6 +213,9 @@ export function createFridayAgentRuntime(
       }
 
       const messages: FridayAgentMessage[] = normalizeHistoryMessages(params.historyMessages);
+      const llmTask = typeof params.taskPrompt === "string" && params.taskPrompt.trim().length > 0
+        ? params.taskPrompt.trim()
+        : params.task;
       let learnedPreferences: Record<string, unknown> = {};
       if (learningContextBuilder && principalId) {
         try {
@@ -439,7 +445,7 @@ export function createFridayAgentRuntime(
         // 3. Add user message (with optional inline images for vision)
         if (params.images && params.images.length > 0) {
           const userContent: FridayAgentContentBlock[] = [
-            { type: "text", text: params.task },
+            { type: "text", text: llmTask },
             ...params.images.map((url): FridayAgentImageBlock => ({
               type: "image",
               source: { type: "url", url },
@@ -447,7 +453,7 @@ export function createFridayAgentRuntime(
           ];
           messages.push({ role: "user", content: userContent });
         } else {
-          messages.push({ role: "user", content: params.task });
+          messages.push({ role: "user", content: llmTask });
         }
 
         // 4. Transition to executing and enter LLM loop
@@ -486,6 +492,7 @@ export function createFridayAgentRuntime(
         let iterations = 0;
         let evidenceEnforcementRetries = 0;
         let timelinessEnforcementRetries = 0;
+        let answerAlignmentRetries = 0;
 
         while (iterations < FRIDAY_AGENT_MAX_LOOP_ITERATIONS) {
           if (runAbortController.signal.aborted) {
@@ -614,7 +621,27 @@ export function createFridayAgentRuntime(
               continue;
             }
 
-            responseText = timelinessDecision.responseText;
+            const alignedResponse = timelinessDecision.responseText;
+            const alignmentDecision = evaluateFridayAnswerAlignment({
+              task: params.task,
+              responseText: alignedResponse,
+              historyMessages: normalizeHistoryMessages(params.historyMessages),
+              conversationContext,
+            });
+            if (
+              alignmentDecision.retryPrompt &&
+              alignedResponse.trim().length > 0 &&
+              answerAlignmentRetries < 1
+            ) {
+              answerAlignmentRetries++;
+              messages.push({
+                role: "user",
+                content: alignmentDecision.retryPrompt,
+              });
+              continue;
+            }
+
+            responseText = alignedResponse;
             break;
           }
 

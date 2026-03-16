@@ -109,6 +109,42 @@ describe("Friday Mock Multi-Turn E2E", () => {
     }
   });
 
+  it("treats an unrelated second turn as a new topic instead of replaying the prior answer", async () => {
+    const mock = env.mockFor("anthropic");
+    const sessionKey = "api:e2e:multi-turn-new-topic";
+
+    mock.setDefault({ type: "text", text: "Paris is the capital of France." });
+    const r1 = await apiFetch<AgentRunResult>(
+      env.baseUrl,
+      env.accessToken,
+      "POST",
+      "/v1/agent/runs",
+      { task: "What is the capital of France?", providerId, model, timeoutMs: 10_000, sessionKey },
+    );
+    expect(r1.json.data.status).toBe("completed");
+
+    mock.reset();
+    resetMockCounters();
+
+    mock.setDefault({ type: "text", text: "Use a starter and let the dough ferment overnight." });
+    const r2 = await apiFetch<AgentRunResult>(
+      env.baseUrl,
+      env.accessToken,
+      "POST",
+      "/v1/agent/runs",
+      { task: "How do I bake sourdough bread?", providerId, model, timeoutMs: 10_000, sessionKey },
+    );
+    expect(r2.json.data.status).toBe("completed");
+
+    const r2Body = mock.calls[0]?.bodyJson as { messages?: Array<{ role: string; content?: string }> } | undefined;
+    expect(r2Body?.messages).toBeDefined();
+    if (r2Body?.messages) {
+      const joined = r2Body.messages.map((message) => message.content ?? "").join(" ");
+      expect(joined).not.toContain("Paris is the capital of France.");
+      expect(joined).toContain("How do I bake sourdough bread?");
+    }
+  });
+
   it("three-turn accumulation: by round 3, LLM receives history from rounds 1 and 2", async () => {
     const mock = env.mockFor("anthropic");
     const sessionKey = "api:e2e:multi-turn-three-turns";

@@ -1114,4 +1114,46 @@ describe("FridaySessionService", () => {
       expect(resetResult.messageCount).toBe(0);
     });
   });
+
+  describe("conversation focus", () => {
+    it("persists and reads conversation focus state", async () => {
+      await service.createSession({ channel: "discord", chatId: "focus-1" });
+
+      await service.setConversationFocus("discord:default:focus-1", {
+        currentTopicFingerprint: "topic-1",
+        currentTopicSummary: "How do I bake sourdough bread?",
+        currentTopicStartSequence: 3,
+        lastAnsweredQuestion: "How do I bake sourdough bread?",
+        lastAssistantAskedQuestion: false,
+        lastRunId: "run-1",
+        lastTurnKind: "new_topic",
+        updatedAt: NOW,
+      });
+
+      const focus = await service.getConversationFocus("discord:default:focus-1");
+      expect(focus).toEqual({
+        currentTopicFingerprint: "topic-1",
+        currentTopicSummary: "How do I bake sourdough bread?",
+        currentTopicStartSequence: 3,
+        lastAnsweredQuestion: "How do I bake sourdough bread?",
+        lastAssistantAskedQuestion: false,
+        lastRunId: "run-1",
+        lastTurnKind: "new_topic",
+        updatedAt: NOW,
+      });
+    });
+
+    it("clears conversation focus on resetSession", async () => {
+      await service.createSession({ channel: "discord", chatId: "focus-reset" });
+      await service.setConversationFocus("discord:default:focus-reset", {
+        currentTopicSummary: "Existing topic",
+        updatedAt: NOW,
+      });
+
+      await service.resetSession("discord:default:focus-reset");
+
+      const focus = await service.getConversationFocus("discord:default:focus-reset");
+      expect(focus).toBeNull();
+    });
+  });
 });
