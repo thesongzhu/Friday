@@ -107,6 +107,7 @@ import {
   createFridayAgentLlmClient,
   createFridayAgentMemoryExtractTool,
   createFridayAgentMessageTool,
+  createFridayAgentPlanningGateService,
   createFridayAgentReviewGate,
   createFridayAgentRunEventRepository,
   createFridayAgentRunRepository,
@@ -130,6 +131,7 @@ import type {
   FridayAgentLlmStreamEvent,
   FridayAgentMessage,
   FridayAgentReviewMode,
+  FridayAgentRunStatus,
   FridayAgentRuntime,
   FridayAgentTaskStatusSnapshot,
 } from "#agent";
@@ -2031,6 +2033,32 @@ export async function createFridayHub(
 
   // Wire the lazy agentRuntime reference now that runtime is created (Issue 2 fix)
   _agentRuntimeRef = agentRuntime;
+
+  const agentPlanningGate = createFridayAgentPlanningGateService({
+    repo: agentRunRepo,
+    runEventRepository: agentRunEventRepository,
+    runtime: agentRuntime,
+    eventEmitter: agentEventEmitter,
+    db: stateRuntime!.sqlite,
+    idGenerator,
+    nowIso,
+  });
+
+  const resolveAgentMirrorIdempotencyKey = (input: {
+    runId: string;
+    kind: "planning" | "assistant" | "planning-reject";
+    status?: FridayAgentRunStatus;
+  }): string => {
+    if (input.kind === "planning-reject") {
+      return `agent-run:${input.runId}:${input.kind}`;
+    }
+    const run = stateRuntime!.sqlite.withReadConnection((reader) =>
+      agentRunRepo.getById(reader, input.runId));
+    const gateState = run?.planReview?.gate?.state ?? "none";
+    const answerCount = run?.planReview?.gate?.answers?.length ?? 0;
+    const status = input.status ?? run?.status ?? "unknown";
+    return `agent-run:${input.runId}:${input.kind}:${status}:${gateState}:${String(answerCount)}`;
+  };
 
   // ─── Sub-agent registry ───
 
@@ -3993,38 +4021,6 @@ export async function createFridayHub(
               runId,
               publicRunUrl: resolveFridayPublicRunUrl(runId),
             });
-            let delegatedNoticeSent = false;
-            const onSubagentSpawnedForChannel = (payload: {
-              parentRunId: string;
-              subagentId: string;
-              childRunId: string;
-            }): void => {
-              if (payload.parentRunId !== runId || delegatedNoticeSent) {
-                return;
-              }
-              delegatedNoticeSent = true;
-              const liveUrl = resolveFridayPublicRunUrl(payload.childRunId) ?? resolveFridayPublicRunUrl(runId);
-              channelRegistry.send(msg.channelKind, {
-                chatId: msg.chatId,
-                text: [
-                  "I delegated this task to a worker and I am tracking it.",
-                  `runId: ${runId}`,
-                  `subagentId: ${payload.subagentId}`,
-                  `childRunId: ${payload.childRunId}`,
-                  liveUrl ? `watch: ${liveUrl}` : "watch: use the runId to query status",
-                ].join("\n"),
-                replyTo: msg.id,
-              }).catch((err) => {
-                logChannelIssue({
-                  level: "warn",
-                  code: "W-CH-OUTBOUND-002",
-                  routeId: "hub.channel.delivery.delegated_notice",
-                  runId,
-                  error: err,
-                });
-              });
-            };
-            agentEventEmitter.on("agent.subagent.spawned", onSubagentSpawnedForChannel);
             try {
               const inboundMessage = await hubSessionService.addMessage(sessionKey, {
                 role: "user",
@@ -4079,7 +4075,25 @@ export async function createFridayHub(
                   };
                 });
 
-              if (preparedTurn.turnKind !== "status_check" && preparedTurn.turnKind !== "clarification") {
+              const conversationContext = {
+                turnKind: preparedTurn.turnKind,
+                previousTopicSummary: preparedTurn.previousTopicSummary,
+                currentTopicSummary: preparedTurn.currentTopicSummary,
+              };
+              const planningDecision = agentPlanningGate.handleTurn({
+                runId,
+                task: text,
+                sessionKey,
+                constraints: preparedTurn.turnKind === "status_check" ? { readOnly: true } : undefined,
+                conversationContext,
+                focusState,
+              });
+
+              if (
+                planningDecision.action === "pass_through"
+                && preparedTurn.turnKind !== "status_check"
+                && preparedTurn.turnKind !== "clarification"
+              ) {
                 await hubSessionService.setConversationFocus(sessionKey, {
                   ...(focusState ?? { updatedAt: nowIso() }),
                   activeRunId: runId,
@@ -4094,22 +4108,108 @@ export async function createFridayHub(
                 });
               }
 
-              const result = await agentRuntime.executeRun({
-                task: text,
-                runId,
-                taskPrompt: preparedTurn.taskPrompt,
-                images: msg.images,
-                sessionKey,
-                historyMessages: preparedTurn.historyMessages,
-                conversationContext: {
-                  turnKind: preparedTurn.turnKind,
-                  previousTopicSummary: preparedTurn.previousTopicSummary,
-                  currentTopicSummary: preparedTurn.currentTopicSummary,
-                },
-                constraints: preparedTurn.turnKind === "status_check" ? { readOnly: true } : undefined,
-                principalId: msg.senderId,
-                timezone: msg.timezone,
-              });
+              let result;
+              if (planningDecision.action === "return") {
+                result = planningDecision.result;
+                await hubSessionService.addMessage(sessionKey, {
+                  role: "assistant",
+                  content: result.response,
+                  contentText: result.response,
+                  idempotencyKey: resolveAgentMirrorIdempotencyKey({
+                    runId: result.runId,
+                    kind: "planning",
+                    status: result.status,
+                  }),
+                }).catch((err) => {
+                  logChannelIssue({
+                    level: "warn",
+                    code: "W-CH-SESSION-MIRROR-001",
+                    routeId: "hub.channel.session.mirror.planning",
+                    error: err,
+                  });
+                });
+              } else if (planningDecision.action === "approve") {
+                result = await agentPlanningGate.approvePlan({
+                  runId: planningDecision.runId,
+                  sessionKey,
+                  timezone: msg.timezone,
+                  historyMessages: preparedTurn.historyMessages,
+                  conversationContext,
+                  executionContext: {
+                    surface: "channel",
+                    interactive: true,
+                  },
+                  constraints: preparedTurn.turnKind === "status_check" ? { readOnly: true } : undefined,
+                  principalId: msg.senderId,
+                });
+                await hubSessionService.addMessage(sessionKey, {
+                  role: "assistant",
+                  content: result.response,
+                  contentText: result.response,
+                  idempotencyKey: resolveAgentMirrorIdempotencyKey({
+                    runId: result.runId,
+                    kind: "assistant",
+                    status: result.status,
+                  }),
+                }).catch((err) => {
+                  logChannelIssue({
+                    level: "warn",
+                    code: "W-CH-SESSION-MIRROR-001",
+                    routeId: "hub.channel.session.mirror.assistant",
+                    error: err,
+                  });
+                });
+              } else if (planningDecision.action === "reject") {
+                result = agentPlanningGate.rejectPlan({
+                  runId: planningDecision.runId,
+                });
+                await hubSessionService.addMessage(sessionKey, {
+                  role: "assistant",
+                  content: result.response,
+                  contentText: result.response,
+                  idempotencyKey: resolveAgentMirrorIdempotencyKey({
+                    runId: result.runId,
+                    kind: "planning-reject",
+                  }),
+                }).catch((err) => {
+                  logChannelIssue({
+                    level: "warn",
+                    code: "W-CH-SESSION-MIRROR-001",
+                    routeId: "hub.channel.session.mirror.planning_reject",
+                    error: err,
+                  });
+                });
+              } else {
+                result = await agentRuntime.executeRun({
+                  task: text,
+                  runId,
+                  taskPrompt: preparedTurn.taskPrompt,
+                  images: msg.images,
+                  sessionKey,
+                  historyMessages: preparedTurn.historyMessages,
+                  conversationContext,
+                  constraints: preparedTurn.turnKind === "status_check" ? { readOnly: true } : undefined,
+                  principalId: msg.senderId,
+                  timezone: msg.timezone,
+                });
+                await hubSessionService.addMessage(sessionKey, {
+                  role: "assistant",
+                  content: result.response,
+                  contentText: result.response,
+                  idempotencyKey: resolveAgentMirrorIdempotencyKey({
+                    runId: result.runId,
+                    kind: "assistant",
+                    status: result.status,
+                  }),
+                }).catch((err) => {
+                  logChannelIssue({
+                    level: "warn",
+                    code: "W-CH-SESSION-MIRROR-001",
+                    routeId: "hub.channel.session.mirror.assistant",
+                    error: err,
+                  });
+                });
+              }
 
               await hubSessionService.setConversationFocus(
                 sessionKey,
@@ -4120,6 +4220,14 @@ export async function createFridayHub(
                   turnKind: preparedTurn.turnKind,
                   focusState: await hubSessionService.getConversationFocus(sessionKey).catch(() => focusState),
                   currentUserSequence: inboundMessage?.sequence,
+                  pendingPlanRunId:
+                    planningDecision.action === "return"
+                      ? (planningDecision.pendingPlanRunId ?? null)
+                      : (
+                        result.status === "awaiting_clarification" || result.status === "awaiting_plan_approval"
+                          ? result.runId
+                          : null
+                      ),
                   nowIso: nowIso(),
                 }),
               ).catch((err) => {
@@ -4140,11 +4248,17 @@ export async function createFridayHub(
                 ? result.images
                 : undefined;
 
-              const outboundText = resolveFridayChannelTerminalText({
-                status: result.status,
-                response: result.response,
-                imageCount: outboundImages?.length ?? 0,
-              });
+              const outboundText = result.status === "awaiting_clarification" || result.status === "awaiting_plan_approval"
+                ? result.response
+                : resolveFridayChannelTerminalText({
+                  status: result.status === "completed"
+                    ? "completed"
+                    : result.status === "cancelled"
+                      ? "cancelled"
+                      : "failed",
+                  response: result.response,
+                  imageCount: outboundImages?.length ?? 0,
+                });
 
               console.log(
                 `[friday] Channel run terminal (${msg.channelKind}): ` +
@@ -4225,7 +4339,6 @@ export async function createFridayHub(
                   });
                 });
             } finally {
-              agentEventEmitter.off("agent.subagent.spawned", onSubagentSpawnedForChannel);
               slowTaskNotifier.stop();
               typingController.stopDispatch();
             }

@@ -74,14 +74,16 @@ describe("FridayAgentRoutes", () => {
       listRuns: vi.fn().mockReturnValue([]),
       listRunEvents: vi.fn().mockReturnValue([]),
       cancelRun: vi.fn(),
+      approvePlan: vi.fn<[string], Promise<FridayAgentRuntimeResult>>().mockResolvedValue(createStubResult()),
+      rejectPlan: vi.fn<[string], Promise<FridayAgentRuntimeResult>>().mockResolvedValue(createStubResult({ status: "cancelled" })),
       eventEmitter: createStubEventEmitter(),
       automationService: createStubAutomationService(),
     };
   });
 
-  it("registers 11 agent routes", () => {
+  it("registers 13 agent routes", () => {
     const routes = createFridayAgentRoutes(stubDeps);
-    expect(routes).toHaveLength(11);
+    expect(routes).toHaveLength(13);
   });
 
   it("POST /v1/agent/runs requires agent.run scope with workflow.run compatibility", () => {
@@ -639,8 +641,8 @@ describe("FridayAgentRoutes", () => {
 
       await route.handler(ctx);
 
-      // Should subscribe to 11 event types (9 run events + 2 subagent events)
-      expect(emitter.on).toHaveBeenCalledTimes(11);
+      // Should subscribe to 14 event types (12 run events + 2 subagent events)
+      expect(emitter.on).toHaveBeenCalledTimes(14);
       // Should register close handler
       expect(mockRes.on).toHaveBeenCalledWith("close", expect.any(Function));
     });
@@ -695,7 +697,47 @@ describe("FridayAgentRoutes", () => {
       expect(mockRes.write).toHaveBeenCalledWith(
         expect.stringContaining('"replayed":true'),
       );
-      expect(emitter.on).toHaveBeenCalledTimes(11);
+      expect(emitter.on).toHaveBeenCalledTimes(14);
+    });
+  });
+
+  describe("plan approval handlers", () => {
+    it("approves a pending plan by run id", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.approve.plan")!;
+      const ctx = {
+        body: {},
+        params: { runId: "run-1" },
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      const result = await route.handler(ctx);
+
+      expect(stubDeps.approvePlan).toHaveBeenCalledWith("run-1");
+      expect(result).toEqual(createStubResult());
+    });
+
+    it("rejects a pending plan by run id", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.reject.plan")!;
+      const ctx = {
+        body: {},
+        params: { runId: "run-1" },
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      const result = await route.handler(ctx);
+
+      expect(stubDeps.rejectPlan).toHaveBeenCalledWith("run-1");
+      expect(result).toEqual(createStubResult({ status: "cancelled" }));
     });
   });
 

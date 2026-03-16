@@ -1,4 +1,5 @@
 import type { FridaySqliteLayer } from "#state";
+import type { FridayAgentRunStatus } from "#agent";
 
 export type FridayHeartbeatRunStatus = "ok" | "skipped" | "error";
 
@@ -66,7 +67,7 @@ export interface FridayHeartbeatAgentRuntimeLike {
     historyMessages?: FridayHeartbeatContextMessage[];
     timezone?: string;
     timeoutMs?: number;
-  }): Promise<{ runId: string; status: "completed" | "failed" | "cancelled"; response?: string }>;
+  }): Promise<{ runId: string; status: FridayAgentRunStatus; response?: string }>;
 }
 
 export interface FridayHeartbeatRunner {

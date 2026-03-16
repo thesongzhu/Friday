@@ -64,6 +64,8 @@ export interface AuthBootstrapResponse {
 export type AgentRunStatus =
   | "pending"
   | "planning"
+  | "awaiting_clarification"
+  | "awaiting_plan_approval"
   | "executing"
   | "testing"
   | "fixing"
@@ -98,6 +100,29 @@ export interface AgentRunRecord {
       task: string;
       stepCount: number;
       description: string;
+    };
+    gate?: {
+      kind:
+        | "generate_skill"
+        | "generate_workflow"
+        | "deploy_workflow"
+        | "export_workflow_bundle"
+        | "major_decision";
+      state:
+        | "awaiting_clarification"
+        | "awaiting_plan_approval"
+        | "approved"
+        | "rejected"
+        | "bypassed";
+      clarificationQuestions?: string[];
+      answers?: Array<{
+        question?: string;
+        answer: string;
+      }>;
+      planMarkdown?: string;
+      planSummary?: string;
+      approvalPrompt?: string;
+      approvalUpdatedAt?: string;
     };
     decision?: {
       approved: boolean;
@@ -185,7 +210,7 @@ export interface AgentAutomationRecord {
 
 export interface AgentRuntimeResult {
   runId: string;
-  status: "completed" | "failed" | "cancelled";
+  status: AgentRunStatus;
   response: string;
   toolCallCount: number;
   durationMs: number;
@@ -674,6 +699,16 @@ export interface AgentRunStreamEvent {
   childRunId?: string;
   subagentTask?: string;
   status?: AgentRunStatus;
+  message?: string;
+  questions?: string[];
+  planMarkdown?: string;
+  planSummary?: string;
+  planKind?:
+    | "generate_skill"
+    | "generate_workflow"
+    | "deploy_workflow"
+    | "export_workflow_bundle"
+    | "major_decision";
   // status events
   output?: string;
   error?: string;

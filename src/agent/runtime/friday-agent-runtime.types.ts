@@ -3,7 +3,9 @@ import type { FridayEvaluationContext, FridayEvaluationResult } from "#rules";
 
 import type {
   FridayAgentMessage,
+  FridayAgentPlanReviewPayload,
   FridayAgentRunConstraints,
+  FridayAgentRunStatus,
   FridayAgentTestResult,
   FridayAgentToolCallRecord,
   FridayAgentToolDefinition,
@@ -52,6 +54,7 @@ export interface FridayAgentDelegationResult {
     durationMs: number;
     usageInput: number;
     usageOutput: number;
+    images?: string[];
   };
 }
 
@@ -95,6 +98,12 @@ export interface FridayAgentRuntime {
     disabledToolNames?: string[];
     /** Optional surface/runtime context for tool routing decisions. */
     executionContext?: FridayAgentExecutionContext;
+    /** Resume an existing awaiting-plan run instead of creating a new record. */
+    resumeExistingRun?: boolean;
+    /** Skip re-entering the planning review gate because the plan was already approved. */
+    skipPlanningReview?: boolean;
+    /** Optional precomputed/updated plan review payload to persist before execution resumes. */
+    planReviewOverride?: FridayAgentPlanReviewPayload;
   }): Promise<FridayAgentRuntimeResult>;
 
   /**
@@ -115,7 +124,7 @@ export interface FridayAgentRuntime {
 
 export interface FridayAgentRuntimeResult {
   runId: string;
-  status: "completed" | "failed" | "cancelled";
+  status: FridayAgentRunStatus;
   response: string;
   toolCallCount: number;
   durationMs: number;
@@ -134,6 +143,25 @@ export interface FridayAgentUsageTurn {
   inputTokens: number;
   outputTokens: number;
   costUsd?: number;
+}
+
+export interface FridayAgentResumeRunParams {
+  runId: string;
+  task?: string;
+  taskPrompt?: string;
+  sessionKey?: string;
+  providerId?: string;
+  model?: string;
+  timezone?: string;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  constraints?: FridayAgentRunConstraints;
+  principalId?: string;
+  scopes?: string[];
+  executionContext?: FridayAgentExecutionContext;
+  historyMessages?: FridayAgentMessage[];
+  conversationContext?: FridayAgentConversationContext;
+  planReviewOverride?: FridayAgentPlanReviewPayload;
 }
 
 // ─── Factory deps ───

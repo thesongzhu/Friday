@@ -72,7 +72,21 @@ function makeCodeFiles(): FridayGeneratedSkillFile[] {
 
 // ─── Mock factories ───
 
-function makeMockDb(): FridaySqliteLayer {
+function makeMockDb(options?: {
+  onUpsert?: (input: {
+    namespace: string;
+    key: string;
+    store: Map<string, {
+      id: string;
+      namespace: string;
+      key: string;
+      value_json: string;
+      tags_json: string;
+      created_at: string;
+      updated_at: string;
+    }>;
+  }) => void;
+}): FridaySqliteLayer {
   // In-memory store keyed by "namespace:key"
   const store = new Map<string, {
     id: string;
@@ -110,6 +124,7 @@ function makeMockDb(): FridaySqliteLayer {
                   created_at: existing ? existing.created_at : createdAt,
                   updated_at: updatedAt,
                 });
+                options?.onUpsert?.({ namespace, key, store });
               },
             ),
           };
@@ -576,6 +591,51 @@ describe("FridaySkillGeneratorService", () => {
         expect(result.errors).toBeDefined();
         expect(result.errors!.length).toBeGreaterThan(0);
         expect(result.session.status).toBe("failed");
+      } finally {
+        restoreFetch();
+      }
+    });
+
+    it("self-heals if the persisted session row disappears before the final status update", async () => {
+      const analyzerResponse = {
+        state: "ready_for_generation",
+        questions: [],
+        spec: {
+          goal: "Simple echo",
+          inputs: [{ key: "query", type: "string", required: true, label: "Query" }],
+          outputs: [{ key: "result", type: "string", description: "Result" }],
+          runtimeKind: "node",
+        },
+      };
+      const manifest = makeManifest();
+      const files = makeCodeFiles();
+      const uiSchema = makeUiSchema();
+      let droppedOnce = false;
+
+      deps = {
+        ...deps,
+        db: makeMockDb({
+          onUpsert: ({ namespace, key, store }) => {
+            if (namespace === "skill-generator-draft" && !droppedOnce) {
+              store.delete(`skill-generator-session:${key}`);
+              droppedOnce = true;
+            }
+          },
+        }),
+      };
+      service = createFridaySkillGeneratorService(deps);
+      mockFetchForLlm([analyzerResponse, manifest, files, uiSchema]);
+
+      try {
+        const result = await service.startSession({
+          goal: "Simple echo skill",
+          userId: "user-1",
+          channel: "discord",
+        });
+
+        expect(result.mode).toBe("preview_ready");
+        const sessionData = await service.getSession(result.session.sessionId);
+        expect(sessionData?.session.status).toBe("ready_for_review");
       } finally {
         restoreFetch();
       }

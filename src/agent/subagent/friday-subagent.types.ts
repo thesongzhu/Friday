@@ -21,6 +21,7 @@ export interface FridaySubagentOutcome {
   durationMs: number;
   usageInput: number;
   usageOutput: number;
+  images?: string[];
 }
 
 // ─── Sub-agent spawn input (from tool) ───

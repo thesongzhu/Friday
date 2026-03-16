@@ -118,7 +118,7 @@ describe("Friday Mock System Prompt E2E", () => {
     mock.setDefault({ type: "text", text: "ok" });
 
     await apiFetch(env.baseUrl, env.accessToken, "POST", "/v1/agent/runs", {
-      task: "Test",
+      task: "Say hi",
       providerId,
       model,
       timeoutMs: 10_000,
@@ -158,7 +158,7 @@ describe("Friday Mock System Prompt E2E", () => {
     mock.setDefault({ type: "text", text: "ok" });
 
     await apiFetch(env.baseUrl, env.accessToken, "POST", "/v1/agent/runs", {
-      task: "Test",
+      task: "Say hi",
       providerId,
       model,
       timeoutMs: 10_000,
@@ -177,7 +177,7 @@ describe("Friday Mock System Prompt E2E", () => {
     mock.setDefault({ type: "text", text: "ok" });
 
     await apiFetch(env.baseUrl, env.accessToken, "POST", "/v1/agent/runs", {
-      task: "Test",
+      task: "Say hi",
       providerId,
       model,
       timeoutMs: 10_000,

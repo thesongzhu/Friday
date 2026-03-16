@@ -173,6 +173,8 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("use task_status first");
     expect(prompt).toContain("Default to delegation for non-trivial operational work");
     expect(prompt).toContain("use deterministic state from task_status or get_subagent instead of guessing");
+    expect(prompt).toContain("generating/deploying/exporting workflows, architecture choices, large implementation plans");
+    expect(prompt).toContain("treat approve/reject replies as control commands for that stored plan");
   });
 
   it("describes cron, subagents, marketplace, and self-learning truthfully", () => {

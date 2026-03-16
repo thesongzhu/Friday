@@ -458,6 +458,15 @@ export function createFridaySkillGeneratorService(
     return turns.slice(turns.length - MAX_RECENT_TURNS);
   }
 
+  function persistSession(session: FridaySkillGenerationSession): void {
+    const existing = repo.getSession(session.sessionId);
+    if (existing) {
+      repo.updateSession(session);
+      return;
+    }
+    repo.createSession(session);
+  }
+
   async function runRequirementsAnalyzer(
     session: FridaySkillGenerationSession,
     turns: FridaySkillGenerationTurn[],
@@ -789,7 +798,7 @@ export function createFridaySkillGeneratorService(
         updatedAt: now,
       };
 
-      repo.createSession(session);
+      persistSession(session);
 
       // Add the initial user turn
       const userTurn: FridaySkillGenerationTurn = {
@@ -822,7 +831,7 @@ export function createFridaySkillGeneratorService(
         updatedAt: deps.nowIso(),
       };
 
-      repo.updateSession(updatedSession);
+      persistSession(updatedSession);
 
       // Add assistant turn with questions or spec
       const assistantContent =
@@ -854,7 +863,7 @@ export function createFridaySkillGeneratorService(
             draftSkillId: draft.manifest.id,
             updatedAt: deps.nowIso(),
           };
-          repo.updateSession(finalSession);
+          persistSession(finalSession);
 
           return buildTurnResponse(finalSession, analyzerResult, draft);
         } catch (err) {
@@ -863,7 +872,7 @@ export function createFridaySkillGeneratorService(
             status: "failed",
             updatedAt: deps.nowIso(),
           };
-          repo.updateSession(failedSession);
+          persistSession(failedSession);
 
           return {
             session: failedSession,
@@ -943,7 +952,7 @@ export function createFridaySkillGeneratorService(
         updatedAt: deps.nowIso(),
       };
 
-      repo.updateSession(updatedSession);
+      persistSession(updatedSession);
 
       // Add assistant turn
       const assistantContent =
@@ -975,7 +984,7 @@ export function createFridaySkillGeneratorService(
             draftSkillId: draft.manifest.id,
             updatedAt: deps.nowIso(),
           };
-          repo.updateSession(finalSession);
+          persistSession(finalSession);
 
           return buildTurnResponse(finalSession, analyzerResult, draft);
         } catch (err) {
@@ -984,7 +993,7 @@ export function createFridaySkillGeneratorService(
             status: "failed",
             updatedAt: deps.nowIso(),
           };
-          repo.updateSession(failedSession);
+          persistSession(failedSession);
 
           return {
             session: failedSession,
@@ -1058,7 +1067,7 @@ export function createFridaySkillGeneratorService(
         status: "generating",
         updatedAt: deps.nowIso(),
       };
-      repo.updateSession(generatingSession);
+      persistSession(generatingSession);
 
       try {
         const draft = await runGenerationPipeline(
@@ -1073,7 +1082,7 @@ export function createFridaySkillGeneratorService(
           draftSkillId: draft.manifest.id,
           updatedAt: deps.nowIso(),
         };
-        repo.updateSession(finalSession);
+        persistSession(finalSession);
 
         return draft;
       } catch (err) {
@@ -1082,7 +1091,7 @@ export function createFridaySkillGeneratorService(
           status: "failed",
           updatedAt: deps.nowIso(),
         };
-        repo.updateSession(failedSession);
+        persistSession(failedSession);
         throw err;
       }
     },
@@ -1237,7 +1246,7 @@ export function createFridaySkillGeneratorService(
         status: "approved",
         updatedAt: deps.nowIso(),
       };
-      repo.updateSession(approvedSession);
+      persistSession(approvedSession);
 
       // Update lifecycle status to "installed"
       await deps.memoryStateService.updateSkillStatus(
@@ -1251,7 +1260,7 @@ export function createFridaySkillGeneratorService(
         status: "saved",
         updatedAt: deps.nowIso(),
       };
-      repo.updateSession(savedSession);
+      persistSession(savedSession);
 
       // Refresh the skill registry
       let registryRefreshed = false;
@@ -1286,7 +1295,7 @@ export function createFridaySkillGeneratorService(
         status: "cancelled",
         updatedAt: deps.nowIso(),
       };
-      repo.updateSession(cancelledSession);
+      persistSession(cancelledSession);
 
       // Clean up persisted draft
       deleteDraft(sessionId);

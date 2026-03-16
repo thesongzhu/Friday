@@ -103,6 +103,44 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.taskPrompt).toContain("Use the task_status tool before answering.");
   });
 
+  it("does not treat workflow requirements containing release status as a status check", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "Generate a workflow that runs every Friday, collects workspace release status, posts the summary to Slack, keeps the execution read-only, and reports blockers before deployment.",
+      focusState: undefined,
+      currentUserSequence: 5,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "What is the capital of France?" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "Paris is the capital of France." }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("new_topic");
+    expect(prepared.taskPrompt).toContain("Generate a workflow that runs every Friday");
+    expect(prepared.taskPrompt).not.toContain("asking for a status update");
+  });
+
+  it("keeps recent cross-topic history for recap-style follow ups", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "Summarize your recommendations",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "What test runner do you recommend?",
+        currentTopicStartSequence: 3,
+      },
+      currentUserSequence: 6,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "What language do you prefer?" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "I like TypeScript." }),
+        makeMessage({ sequence: 3, role: "user", contentText: "What test runner do you recommend?" }),
+        makeMessage({ sequence: 4, role: "assistant", contentText: "Vitest is my recommended test runner." }),
+        makeMessage({ sequence: 5, role: "user", contentText: "Thanks." }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.historyMessages).toHaveLength(5);
+  });
+
   it("persists new-topic focus state with the current sequence", () => {
     const focus = finalizeFridayConversationFocus({
       task: "How do I bake sourdough bread?",
@@ -137,5 +175,23 @@ describe("friday-session-conversation-orchestrator", () => {
 
     expect(focus.activeRunId).toBe("run-long-task");
     expect(focus.activeSubagentIds).toEqual(["sub-1"]);
+  });
+
+  it("clears pending plan state when finalize receives an explicit null plan reference", () => {
+    const focus = finalizeFridayConversationFocus({
+      task: "approve",
+      responseText: "Plan approved and execution resumed.",
+      runId: "run-3",
+      turnKind: "clarification",
+      focusState: {
+        ...baseFocusState,
+        pendingPlanRunId: "run-plan-1",
+      },
+      currentUserSequence: 11,
+      pendingPlanRunId: null,
+      nowIso: "2026-03-15T11:05:00.000Z",
+    });
+
+    expect(focus.pendingPlanRunId).toBeUndefined();
   });
 });

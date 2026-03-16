@@ -21,6 +21,13 @@ describe("shouldDelegateFridayAgentTask", () => {
     })).toBe(false);
   });
 
+  it("keeps follow-up synthesis requests on the main agent when they do not require tools", () => {
+    expect(shouldDelegateFridayAgentTask({
+      task: "Summarize your recommendations",
+      conversationContext: { turnKind: "follow_up" },
+    })).toBe(false);
+  });
+
   it("delegates operational or multi-step work", () => {
     expect(shouldDelegateFridayAgentTask({
       task: "Open Facebook in the browser and tell me what is on the page.",
