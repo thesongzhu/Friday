@@ -1,7 +1,12 @@
 import { FridayDomainError } from "#errors";
 import { createFridayMemoryGuardServiceFactory } from "#memory";
 import { createFridaySecretAdminService } from "#providers";
-import { createFridaySessionMemoryExtractionService, createFridaySessionService } from "#sessions";
+import {
+  createFridaySessionMemoryExtractionService,
+  createFridaySessionService,
+  finalizeFridayConversationFocus,
+  prepareFridayConversationTurn,
+} from "#sessions";
 import type { FridaySessionMessageRecord } from "#sessions";
 import {
   createFridayWorkflowBuilderRuntime,
@@ -156,28 +161,6 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
-}
-
-function mapSessionMessageToAgentMessage(
-  message: FridaySessionMessageRecord,
-): FridayAgentMessage | null {
-  if (message.role !== "user" && message.role !== "assistant") {
-    return null;
-  }
-
-  if (typeof message.content === "string") {
-    const content = message.content.trim();
-    if (content.length > 0) {
-      return { role: message.role, content };
-    }
-  }
-
-  const fallbackText = message.contentText.trim();
-  if (fallbackText.length > 0) {
-    return { role: message.role, content: fallbackText };
-  }
-
-  return null;
 }
 
 function isPrivilegedRunEvidencePrincipal(principal: FridayAuthPrincipal | null): boolean {
@@ -1550,22 +1533,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     nowIso: deps.nowIso,
   });
 
-  async function loadSessionHistoryMessages(
-    sessionKey: string,
-    excludeIdempotencyKey?: string,
-  ): Promise<FridayAgentMessage[]> {
-    const records = await sessionService
-      .getMessages(sessionKey, SESSION_CONTEXT_HISTORY_LIMIT + 1)
+  async function loadSessionHistoryMessages(sessionKey: string): Promise<FridaySessionMessageRecord[]> {
+    return sessionService
+      .getMessages(sessionKey, SESSION_CONTEXT_HISTORY_LIMIT * 2)
       .catch(() => [] as FridaySessionMessageRecord[]);
-    const mapped = records
-      .filter((message) =>
-        !excludeIdempotencyKey || message.idempotencyKey !== excludeIdempotencyKey)
-      .map(mapSessionMessageToAgentMessage)
-      .filter((message): message is FridayAgentMessage => message !== null);
-    if (mapped.length <= SESSION_CONTEXT_HISTORY_LIMIT) {
-      return mapped;
-    }
-    return mapped.slice(mapped.length - SESSION_CONTEXT_HISTORY_LIMIT);
   }
 
   const executeAgentRunWithSessionContext = deps.agentRuntime
@@ -1590,35 +1561,60 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       const task = input.task.trim();
       const shouldPersistUserMessage = input.sessionKey && input.persistTaskMessage !== false;
       let inboundIdempotencyKey: string | undefined;
+      let currentUserSequence: number | undefined;
+      let focusState = input.sessionKey
+        ? await sessionService.getConversationFocus(input.sessionKey).catch(() => null)
+        : null;
 
       if (input.sessionKey && shouldPersistUserMessage) {
         inboundIdempotencyKey = `${input.idempotencyPrefix}:${input.runId}:user`;
-        await sessionService.addMessage(input.sessionKey, {
+        const inboundMessage = await sessionService.addMessage(input.sessionKey, {
           role: "user",
           content: task,
           contentText: task,
           idempotencyKey: inboundIdempotencyKey,
         });
+        currentUserSequence = inboundMessage.sequence;
       }
 
       let historyMessages: FridayAgentMessage[] | undefined;
-      if (input.sessionKey) {
-        historyMessages = await loadSessionHistoryMessages(
-          input.sessionKey,
-          inboundIdempotencyKey,
-        );
-        if (input.taskAlreadyInHistory && !shouldPersistUserMessage && historyMessages.length > 0) {
-          const lastMessage = historyMessages[historyMessages.length - 1];
-          if (lastMessage?.role === "user" && typeof lastMessage.content === "string") {
-            if (lastMessage.content.trim() === task) {
-              historyMessages = historyMessages.slice(0, historyMessages.length - 1);
-            }
-          }
+      let taskPrompt = task;
+      let conversationContext:
+        | {
+          turnKind?: "new_topic" | "follow_up" | "clarification" | "status_check" | "continue_active_task";
+          previousTopicSummary?: string;
+          currentTopicSummary?: string;
         }
+        | undefined;
+      if (input.sessionKey) {
+        const historyRecords = await loadSessionHistoryMessages(input.sessionKey);
+        if (input.taskAlreadyInHistory && !shouldPersistUserMessage) {
+          const lastMatchingUserMessage = [...historyRecords]
+            .reverse()
+            .find((message) => message.role === "user" && message.contentText.trim() === task);
+          currentUserSequence = lastMatchingUserMessage?.sequence;
+        }
+
+        const preparedTurn = prepareFridayConversationTurn({
+          task,
+          historyRecords: historyRecords.filter((message) =>
+            !inboundIdempotencyKey || message.idempotencyKey !== inboundIdempotencyKey),
+          focusState,
+          currentUserSequence,
+        });
+        historyMessages = preparedTurn.historyMessages;
+        taskPrompt = preparedTurn.taskPrompt;
+        conversationContext = {
+          turnKind: preparedTurn.turnKind,
+          previousTopicSummary: preparedTurn.previousTopicSummary,
+          currentTopicSummary: preparedTurn.currentTopicSummary,
+        };
       }
 
-      return deps.agentRuntime!.executeRun({
+      const result = await deps.agentRuntime!.executeRun({
         task,
+        taskPrompt,
+        conversationContext,
         sessionKey: input.sessionKey,
         runId: input.runId,
         providerId: input.providerId,
@@ -1633,6 +1629,23 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         executionContext: input.executionContext,
         historyMessages,
       });
+
+      if (input.sessionKey && conversationContext?.turnKind) {
+        await sessionService.setConversationFocus(
+          input.sessionKey,
+          finalizeFridayConversationFocus({
+            task,
+            responseText: result.response,
+            runId: result.runId,
+            turnKind: conversationContext.turnKind,
+            focusState,
+            currentUserSequence,
+            nowIso: deps.nowIso(),
+          }),
+        ).catch(() => undefined);
+      }
+
+      return result;
     }
     : undefined;
 
