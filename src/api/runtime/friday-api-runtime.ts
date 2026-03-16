@@ -1566,6 +1566,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         ? await sessionService.getConversationFocus(input.sessionKey).catch(() => null)
         : null;
 
+      if (input.sessionKey) {
+        focusState = await sessionService.getConversationFocus(input.sessionKey).catch(() => focusState);
+      }
+
       if (input.sessionKey && shouldPersistUserMessage) {
         inboundIdempotencyKey = `${input.idempotencyPrefix}:${input.runId}:user`;
         const inboundMessage = await sessionService.addMessage(input.sessionKey, {
@@ -1602,6 +1606,18 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           focusState,
           currentUserSequence,
         });
+        if (
+          input.sessionKey
+          && preparedTurn.turnKind !== "status_check"
+          && preparedTurn.turnKind !== "clarification"
+        ) {
+          await sessionService.setConversationFocus(input.sessionKey, {
+            ...(focusState ?? { updatedAt: deps.nowIso() }),
+            activeRunId: input.runId,
+            updatedAt: deps.nowIso(),
+          }).catch(() => undefined);
+          focusState = await sessionService.getConversationFocus(input.sessionKey).catch(() => focusState);
+        }
         historyMessages = preparedTurn.historyMessages;
         taskPrompt = preparedTurn.taskPrompt;
         conversationContext = {
@@ -1623,7 +1639,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         timeoutMs: input.timeoutMs,
         signal: input.signal,
         reviewRequired: input.reviewRequired,
-        constraints: input.constraints,
+        constraints: conversationContext?.turnKind === "status_check"
+          ? { ...(input.constraints ?? {}), readOnly: true }
+          : input.constraints,
         principalId: input.principalId,
         scopes: input.scopes,
         executionContext: input.executionContext,
@@ -1631,6 +1649,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       });
 
       if (input.sessionKey && conversationContext?.turnKind) {
+        const latestFocusState = await sessionService
+          .getConversationFocus(input.sessionKey)
+          .catch(() => focusState);
         await sessionService.setConversationFocus(
           input.sessionKey,
           finalizeFridayConversationFocus({
@@ -1638,7 +1659,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             responseText: result.response,
             runId: result.runId,
             turnKind: conversationContext.turnKind,
-            focusState,
+            focusState: latestFocusState,
             currentUserSequence,
             nowIso: deps.nowIso(),
           }),

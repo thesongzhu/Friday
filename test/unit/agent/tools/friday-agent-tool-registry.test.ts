@@ -201,4 +201,17 @@ describe("createFridayAgentToolRegistry", () => {
     const names = tools.map((t) => t.name);
     expect(names).toContain("capabilities");
   });
+
+  it("includes task_status tool when taskStatusSnapshotGetter is provided", () => {
+    const tools = createFridayAgentToolRegistry({
+      taskStatusSnapshotGetter: () => ({
+        readOnly: false,
+        trackedRunId: "run-1",
+        activeSubagents: [],
+        blockers: [],
+      }),
+    });
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("task_status");
+  });
 });

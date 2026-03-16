@@ -50,6 +50,10 @@ import {
   createFridayAgentCapabilitiesTool,
   type FridayAgentCapabilitiesSnapshot,
 } from "./friday-agent-capabilities-tool.js";
+import {
+  createFridayAgentTaskStatusTool,
+  type FridayAgentTaskStatusSnapshot,
+} from "./friday-agent-task-status-tool.js";
 
 // ─── Registry options ───
 
@@ -107,6 +111,9 @@ export interface CreateFridayAgentToolRegistryOptions {
   /** Deterministic runtime capability snapshot getter for the capabilities tool. */
   capabilitySnapshotGetter?: (input: { readOnly: boolean }) =>
     Promise<FridayAgentCapabilitiesSnapshot> | FridayAgentCapabilitiesSnapshot;
+  /** Deterministic task status snapshot getter for coordinator/status questions. */
+  taskStatusSnapshotGetter?: (input: { runId?: string; sessionKey?: string; readOnly: boolean }) =>
+    Promise<FridayAgentTaskStatusSnapshot> | FridayAgentTaskStatusSnapshot;
 }
 
 // ─── Factory ───
@@ -269,6 +276,12 @@ export function createFridayAgentToolRegistry(
   if (options?.capabilitySnapshotGetter) {
     tools.push(
       createFridayAgentCapabilitiesTool({ getSnapshot: options.capabilitySnapshotGetter }),
+    );
+  }
+
+  if (options?.taskStatusSnapshotGetter) {
+    tools.push(
+      createFridayAgentTaskStatusTool({ getSnapshot: options.taskStatusSnapshotGetter }),
     );
   }
 

@@ -148,6 +148,7 @@ export function buildFridayAgentSystemPrompt(
     "- If web_fetch returns unreadable/empty content for a URL, IMMEDIATELY retry with browser instead\n" +
     `- For time-sensitive requests (latest/current/today/news/最新/今天/最近): ${timelinessReference} Use recency-filtered search when available, verify publication dates, and include absolute dates plus source URLs in the answer. If verifiable dates are unavailable, explicitly say the latestness is unverified.\n` +
     "- When the user asks what Friday can do right now, which capabilities are enabled in this deployment, or whether messaging/MCP/provider mutations are currently available, use capabilities first\n" +
+    "- When the user asks what you are doing right now, whether a delegated task is still running, or what the latest task result/blocker is, use task_status first\n" +
     "- Local computer orchestration: use system first for snapshots, app/project handoff, approvals, and control leases; fall back to desktop only when system intent resolution is insufficient\n" +
     "- Provider/LLM management (switch model, add API key, configure OAuth): use provider tool\n" +
     "- Friday skills: use skills_list first to discover currently available skills, then use skill_run with the chosen skill ID\n" +
@@ -160,7 +161,7 @@ export function buildFridayAgentSystemPrompt(
       ? "- Schedule recurring or delayed tasks: use cron\n"
       : "- Scheduled or delayed execution is unavailable in this deployment.\n") +
     (subagentsEnabled
-      ? "- Complex multi-step tasks that benefit from delegation: use spawn_subagent. If the user needs the child result now, use wait=true or keep polling get_subagent until terminal state instead of treating the initial delegated snapshot as final.\n"
+      ? "- Complex multi-step tasks that benefit from delegation: use spawn_subagent. Default to delegation for non-trivial operational work. If the user needs the child result now, use wait=true or keep polling get_subagent until terminal state instead of treating the initial delegated snapshot as final.\n"
       : "- Sub-agent delegation is unavailable in this deployment.\n") +
     (selfLearningEnabled
       ? "- Record user corrections or stated preferences: use feedback\n"
@@ -168,6 +169,7 @@ export function buildFridayAgentSystemPrompt(
     "\n\n" +
     "Behavior rules:\n" +
     "- Be direct and action-oriented. Use tools immediately when a task requires them.\n" +
+    "- For status/progress answers, use deterministic state from task_status or get_subagent instead of guessing.\n" +
     "- Never say you cannot do something that your currently registered tools support.\n" +
     "- If a capability is not available in this deployment, explain that clearly and suggest the closest available alternative.\n" +
     "- When asked about your current deployment capabilities, use capabilities before answering. Use the prompt for model/version framing, not for guessing runtime state.\n" +
