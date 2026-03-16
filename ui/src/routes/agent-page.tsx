@@ -25,6 +25,7 @@ import {
 import { toast } from "sonner";
 import { agentApi } from "@/lib/api/agent";
 import { skillsApi } from "@/lib/api/skills";
+import { authStorage } from "@/lib/storage/auth-storage";
 import { systemApi } from "@/lib/api/system";
 import type {
   FridaySystemApprovalRule,
@@ -158,6 +159,8 @@ export function AgentPage() {
   const [remoteLabel, setRemoteLabel] = useState("");
   const [remoteFingerprint, setRemoteFingerprint] = useState("");
   const passkeysSupported = typeof PublicKeyCredential !== "undefined";
+  const operatorUserId = authStorage.getUser()?.id?.trim() || "anonymous";
+  const commandCenterSessionKey = `ui:command-center:${operatorUserId}`;
 
   const { data: session, error: sessionError } = useQuery({
     queryKey: systemKeys.session(),
@@ -276,6 +279,7 @@ export function AgentPage() {
         task: input.task,
         readOnly: input.readOnly,
         requireReview: false,
+        sessionKey: commandCenterSessionKey,
         executionContext: {
           surface: "agent_page",
           interactive: true,

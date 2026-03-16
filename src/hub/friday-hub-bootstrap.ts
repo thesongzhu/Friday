@@ -88,7 +88,11 @@ import {
 } from "#plugins";
 import type { FridayPluginService } from "#plugins";
 import { createFridayMemoryFileSyncRepository, createFridayMemoryFileSyncService, createFridayMemoryService } from "#memory";
-import { createFridaySessionMemoryExtractionService } from "#sessions";
+import {
+  createFridaySessionMemoryExtractionService,
+  finalizeFridayConversationFocus,
+  prepareFridayConversationTurn,
+} from "#sessions";
 import type { FridayMemoryFileSyncService, FridayMemoryService } from "#memory";
 import {
   buildFridayAgentSystemPrompt,
@@ -3789,7 +3793,7 @@ export async function createFridayHub(
 
           void (async () => {
             try {
-              await hubSessionService.addMessage(sessionKey, {
+              const inboundMessage = await hubSessionService.addMessage(sessionKey, {
                 role: "user",
                 content: text,
                 contentText: text,
@@ -3802,20 +3806,30 @@ export async function createFridayHub(
                   routeId: "hub.channel.session.mirror",
                   error: err,
                 });
+                return undefined;
               });
 
-              const historyMessages = await hubSessionService
-                .getMessages(sessionKey, FRIDAY_CHANNEL_CONTEXT_HISTORY_LIMIT + 1)
-                .then((messages) => {
-                  const mapped = messages
-                    .filter((message) => message.idempotencyKey !== inboundIdempotencyKey)
-                    .map(mapSessionMessageToAgentMessage)
-                    .filter((message): message is FridayAgentMessage => message !== null);
-                  if (mapped.length <= FRIDAY_CHANNEL_CONTEXT_HISTORY_LIMIT) {
-                    return mapped;
-                  }
-                  return mapped.slice(mapped.length - FRIDAY_CHANNEL_CONTEXT_HISTORY_LIMIT);
-                })
+              const focusState = await hubSessionService
+                .getConversationFocus(sessionKey)
+                .catch((err) => {
+                  logChannelIssue({
+                    level: "warn",
+                    code: "W-CH-HISTORY-001",
+                    routeId: "hub.channel.focus.read",
+                    error: err,
+                  });
+                  return null;
+                });
+
+              const preparedTurn = await hubSessionService
+                .getMessages(sessionKey, FRIDAY_CHANNEL_CONTEXT_HISTORY_LIMIT * 2)
+                .then((messages) =>
+                  prepareFridayConversationTurn({
+                    task: text,
+                    historyRecords: messages.filter((message) => message.idempotencyKey !== inboundIdempotencyKey),
+                    focusState,
+                    currentUserSequence: inboundMessage?.sequence,
+                  }))
                 .catch((err) => {
                   logChannelIssue({
                     level: "warn",
@@ -3823,16 +3837,48 @@ export async function createFridayHub(
                     routeId: "hub.channel.history.read",
                     error: err,
                   });
-                  return [] as FridayAgentMessage[];
+                  return {
+                    turnKind: "new_topic" as const,
+                    historyMessages: [] as FridayAgentMessage[],
+                    taskPrompt: text,
+                    previousTopicSummary: undefined,
+                    currentTopicSummary: text,
+                  };
                 });
 
               const result = await agentRuntime.executeRun({
                 task: text,
+                taskPrompt: preparedTurn.taskPrompt,
                 images: msg.images,
                 sessionKey,
-                historyMessages,
+                historyMessages: preparedTurn.historyMessages,
+                conversationContext: {
+                  turnKind: preparedTurn.turnKind,
+                  previousTopicSummary: preparedTurn.previousTopicSummary,
+                  currentTopicSummary: preparedTurn.currentTopicSummary,
+                },
                 principalId: msg.senderId,
                 timezone: msg.timezone,
+              });
+
+              await hubSessionService.setConversationFocus(
+                sessionKey,
+                finalizeFridayConversationFocus({
+                  task: text,
+                  responseText: result.response,
+                  runId: result.runId,
+                  turnKind: preparedTurn.turnKind,
+                  focusState,
+                  currentUserSequence: inboundMessage?.sequence,
+                  nowIso: nowIso(),
+                }),
+              ).catch((err) => {
+                logChannelIssue({
+                  level: "warn",
+                  code: "W-CH-FOCUS-WRITE-001",
+                  routeId: "hub.channel.focus.write",
+                  error: err,
+                });
               });
 
               typingController.stopRun();

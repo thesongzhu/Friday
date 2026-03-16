@@ -495,6 +495,71 @@ describe("FridayAgentRuntime", () => {
     ]);
   });
 
+  it("uses taskPrompt for the current turn and retries when the answer matches the previous topic", async () => {
+    const capturedCalls: FridayAgentMessage[][] = [];
+    let callIndex = 0;
+
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedCalls.push(params.messages.map((message) => ({
+          role: message.role,
+          content: typeof message.content === "string"
+            ? message.content
+            : JSON.parse(JSON.stringify(message.content)),
+        })));
+        if (callIndex === 0) {
+          callIndex++;
+          yield { type: "text_delta", text: "Paris is the capital of France." };
+          yield { type: "message_end", stopReason: "end_turn", inputTokens: 6, outputTokens: 4 };
+          return;
+        }
+        yield { type: "text_delta", text: "Use a sourdough starter and let the dough ferment overnight." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 7 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "How do I bake sourdough bread?",
+      taskPrompt: "This is a new question. Ignore the previous France topic.\nCurrent question: How do I bake sourdough bread?",
+      historyMessages: [
+        { role: "user", content: "What is the capital of France?" },
+        { role: "assistant", content: "Paris is the capital of France." },
+      ],
+      conversationContext: {
+        turnKind: "new_topic",
+        previousTopicSummary: "What is the capital of France?",
+        currentTopicSummary: "How do I bake sourdough bread?",
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("sourdough starter");
+    expect(capturedCalls).toHaveLength(2);
+    expect(capturedCalls[0]).toEqual([
+      { role: "user", content: "What is the capital of France?" },
+      { role: "assistant", content: "Paris is the capital of France." },
+      { role: "user", content: "This is a new question. Ignore the previous France topic.\nCurrent question: How do I bake sourdough bread?" },
+    ]);
+    expect(capturedCalls[1]![capturedCalls[1]!.length - 1]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("You answered the previous topic instead"),
+      }),
+    );
+  });
+
   it("records usage metadata when LLM reports actual provider fields", async () => {
     const llmClient = createMockLlmClient([
       [

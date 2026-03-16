@@ -127,6 +127,11 @@ export interface FridaySessionRepository {
     db: Database.Database,
     input: { key: string; sendPolicy: string | null; nowIso: string },
   ): FridaySessionRecord | null;
+
+  updateMetadata(
+    db: Database.Database,
+    input: { key: string; metadata: Record<string, unknown>; nowIso: string },
+  ): FridaySessionRecord | null;
 }
 
 // ─── Factory ───
@@ -426,6 +431,18 @@ export function createFridaySessionRepository(): FridaySessionRepository {
       const result = db.prepare(
         `UPDATE sessions SET send_policy = ?, updated_at = ? WHERE session_key = ?`,
       ).run(input.sendPolicy, input.nowIso, input.key);
+
+      if (result.changes === 0) {
+        return null;
+      }
+
+      return this.getByKey(db, input.key);
+    },
+
+    updateMetadata(db, input) {
+      const result = db.prepare(
+        `UPDATE sessions SET metadata_json = ?, updated_at = ? WHERE session_key = ?`,
+      ).run(JSON.stringify(input.metadata), input.nowIso, input.key);
 
       if (result.changes === 0) {
         return null;
