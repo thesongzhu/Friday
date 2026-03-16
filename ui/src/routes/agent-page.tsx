@@ -10,7 +10,7 @@ import {
   startAuthentication,
   startRegistration,
 } from "@simplewebauthn/browser";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   AppWindow,
@@ -78,6 +78,17 @@ function formatRelative(value?: string): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+function formatDuration(valueMs?: number): string {
+  if (typeof valueMs !== "number" || !Number.isFinite(valueMs) || valueMs < 0) return "0s";
+  const totalSeconds = Math.floor(valueMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 1) return `${seconds}s`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 1) return `${minutes}m ${seconds}s`;
+  return `${hours}h ${minutes % 60}m`;
 }
 
 function mapTone(status?: string): "neutral" | "success" | "warning" | "danger" {
@@ -152,6 +163,7 @@ function scoreStarterSkill(input: {
 
 export function AgentPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [task, setTask] = useState("");
   const [readOnly, setReadOnly] = useState(false);
@@ -161,6 +173,7 @@ export function AgentPage() {
   const passkeysSupported = typeof PublicKeyCredential !== "undefined";
   const operatorUserId = authStorage.getUser()?.id?.trim() || "anonymous";
   const commandCenterSessionKey = `ui:command-center:${operatorUserId}`;
+  const runIdFromUrl = searchParams.get("runId");
 
   const { data: session, error: sessionError } = useQuery({
     queryKey: systemKeys.session(),
@@ -200,7 +213,7 @@ export function AgentPage() {
   const { data: runs = [], refetch: refetchRuns } = useQuery({
     queryKey: ["agent-os", "runs"],
     queryFn: () => agentApi.listRuns({ limit: 8 }),
-    refetchInterval: 20_000,
+    refetchInterval: 5_000,
   });
 
   const { data: starterSkills = [] } = useQuery({
@@ -253,6 +266,21 @@ export function AgentPage() {
       .slice(0, 3),
     [approvalCards.length, blockedApprovalEvents.length, starterSkills, task, state?.health.status],
   );
+
+  useEffect(() => {
+    if (runIdFromUrl && runIdFromUrl !== currentRunId) {
+      setCurrentRunId(runIdFromUrl);
+    }
+  }, [currentRunId, runIdFromUrl]);
+
+  useEffect(() => {
+    if (!currentRunId || currentRunId === runIdFromUrl) return;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("runId", currentRunId);
+      return next;
+    }, { replace: true });
+  }, [currentRunId, runIdFromUrl, setSearchParams]);
 
   useEffect(() => {
     if (currentRunId) return;
@@ -566,6 +594,40 @@ export function AgentPage() {
             </StatusPill>
           ) : undefined}
         >
+          <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <Metric
+              label="Phase"
+              value={runEvents.progress.phase ?? runEvents.status ?? "idle"}
+              tone={mapTone(runEvents.progress.phase ?? runEvents.status ?? "neutral")}
+            />
+            <Metric
+              label="Elapsed"
+              value={formatDuration(runEvents.progress.elapsedMs)}
+              tone={runEvents.progress.elapsedMs >= 30_000 ? "warning" : "neutral"}
+            />
+            <Metric
+              label="ETA"
+              value={
+                typeof runEvents.progress.eta === "number"
+                  ? `up to ${formatDuration(runEvents.progress.eta)}`
+                  : "ETA unavailable"
+              }
+            />
+            <Metric
+              label="Active Tool"
+              value={runEvents.progress.activeTool ?? "none"}
+            />
+            <Metric
+              label="Subagents"
+              value={String(runEvents.progress.subagentCount)}
+              tone={runEvents.progress.subagentCount > 0 ? "success" : "neutral"}
+            />
+            <Metric
+              label="Run Link"
+              value={currentRunId ? `/command-center?runId=${currentRunId}` : "no active run"}
+              mono
+            />
+          </div>
           <div className="grid gap-4 lg:grid-cols-[1.25fr_0.75fr]">
             <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
@@ -593,12 +655,13 @@ export function AgentPage() {
             <div className="space-y-3">
               <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">
-                  Tools
+                  Tools and Subagents
                 </p>
                 <div className="mt-3 space-y-2">
-                  {runEvents.toolCalls.length === 0 ? (
+                  {runEvents.toolCalls.length === 0 && runEvents.subagents.length === 0 ? (
                     <p className="text-sm text-white/50">No tool activity yet.</p>
-                  ) : runEvents.toolCalls.slice(-4).map((tool) => (
+                  ) : null}
+                  {runEvents.toolCalls.slice(-4).map((tool) => (
                     <div key={tool.id} className="rounded-2xl border border-white/[0.08] bg-white/[0.04] p-3">
                       <div className="flex items-center justify-between gap-3">
                         <span className="font-medium text-white">{tool.toolName}</span>
@@ -627,6 +690,19 @@ export function AgentPage() {
                           Fallback: {tool.fallbackReason}
                         </p>
                       ) : null}
+                    </div>
+                  ))}
+                  {runEvents.subagents.slice(-4).map((subagent) => (
+                    <div key={subagent.id} className="rounded-2xl border border-emerald-300/10 bg-emerald-300/[0.05] p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-medium text-white">subagent</span>
+                        <StatusPill tone={mapTone(subagent.status)}>{subagent.status}</StatusPill>
+                      </div>
+                      <p className="mt-2 text-xs text-white/50">{subagent.task || subagent.id}</p>
+                      <p className="mt-2 text-[11px] text-white/35">
+                        Started {formatTimestamp(subagent.startedAt)}
+                        {subagent.durationMs ? ` · ${formatDuration(subagent.durationMs)}` : ""}
+                      </p>
                     </div>
                   ))}
                 </div>

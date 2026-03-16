@@ -17,6 +17,8 @@ import {
   Waypoints,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAgentRunEvents } from "@/hooks/use-agent-run-events";
+import { agentApi } from "@/lib/api/agent";
 import { fleetApi } from "@/lib/api/fleet";
 import {
   marketplaceApi,
@@ -42,6 +44,7 @@ import type {
   FridayWorkflowOverview,
 } from "@/lib/api/system-types";
 import type {
+  AgentRunRecord,
   FridayFleetOverviewResponse,
   FridayFleetSatelliteCard,
   FridayPendingSatellitePairingRequest,
@@ -127,6 +130,17 @@ function formatRelative(value?: string): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+function formatRunDuration(valueMs?: number): string {
+  if (typeof valueMs !== "number" || !Number.isFinite(valueMs) || valueMs < 0) return "0s";
+  const totalSeconds = Math.floor(valueMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 1) return `${seconds}s`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 1) return `${minutes}m ${seconds}s`;
+  return `${hours}h ${minutes % 60}m`;
 }
 
 function mapTone(
@@ -279,6 +293,12 @@ export function AssistantPage() {
     queryKey: ["assistant-shell", "loop-runs"],
     queryFn: () => systemApi.listAgentLoopRuns({ limit: 8 }),
     refetchInterval: 20_000,
+  });
+
+  const agentRunsQuery = useQuery({
+    queryKey: ["assistant-shell", "agent-runs"],
+    queryFn: () => agentApi.listRuns({ limit: 8 }),
+    refetchInterval: 5_000,
   });
 
   const workflowsQuery = useQuery({
@@ -604,6 +624,16 @@ export function AssistantPage() {
   const marketplaceAssets = marketplaceAssetsQuery.data ?? [];
   const marketplaceCreators = marketplaceCreatorsQuery.data ?? [];
   const marketplaceRequests = marketplaceRequestsQuery.data ?? [];
+  const activeAssistantRun = useMemo(
+    () =>
+      (agentRunsQuery.data ?? []).find((run) =>
+        ["pending", "planning", "executing", "testing", "fixing"].includes(run.status),
+      ) ?? null,
+    [agentRunsQuery.data],
+  );
+  const assistantRunEvents = useAgentRunEvents(activeAssistantRun?.id ?? null, {
+    enabled: activeAssistantRun !== null,
+  });
 
   const degradedSatellites = useMemo(
     () =>
@@ -820,6 +850,11 @@ export function AssistantPage() {
           </div>
 
           <div className="space-y-6">
+            <AssistantRunPulseCard
+              run={activeAssistantRun}
+              progress={assistantRunEvents.progress}
+            />
+
             <RecoveryCommandCenterSection paths={recoveryPaths} />
 
             <IssueInboxSection
@@ -848,6 +883,51 @@ export function AssistantPage() {
         </div>
       </ShellCard>
     </div>
+  );
+}
+
+function AssistantRunPulseCard(props: {
+  run: AgentRunRecord | null;
+  progress: {
+    phase?: string;
+    elapsedMs: number;
+    subagentCount: number;
+    activeTool?: string;
+    eta?: number;
+  };
+}) {
+  if (!props.run) {
+    return (
+      <ShellCard eyebrow="Live task pulse" title="No operator run is active right now">
+        <p className="text-sm text-white/58">
+          Assistant will surface active operator work here once a long-running task is in flight.
+        </p>
+      </ShellCard>
+    );
+  }
+
+  return (
+    <ShellCard
+      eyebrow="Live task pulse"
+      title="Assistant keeps the operator run visible while work is in progress"
+      aside={<StatusPill tone={mapTone(props.progress.phase ?? props.run.status)}>{props.progress.phase ?? props.run.status}</StatusPill>}
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <MetricStat label="Elapsed" value={formatRunDuration(props.progress.elapsedMs)} tone={props.progress.elapsedMs >= 30_000 ? "warning" : "neutral"} />
+        <MetricStat label="ETA" value={typeof props.progress.eta === "number" ? `up to ${formatRunDuration(props.progress.eta)}` : "unknown"} />
+        <MetricStat label="Subagents" value={String(props.progress.subagentCount)} tone={props.progress.subagentCount > 0 ? "success" : "neutral"} />
+        <MetricStat label="Active tool" value={props.progress.activeTool ?? "none"} />
+      </div>
+      <p className="mt-4 text-sm leading-6 text-white/62">{props.run.task}</p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Link
+          className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+          to={`/command-center?runId=${encodeURIComponent(props.run.id)}`}
+        >
+          Open live run
+        </Link>
+      </div>
+    </ShellCard>
   );
 }
 

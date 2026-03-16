@@ -244,6 +244,20 @@ export interface FridayAgentRunExecutingPayload {
   description: string;
 }
 
+export type FridayAgentEtaConfidence = "low" | "medium" | "high" | "unavailable";
+
+export interface FridayAgentRunProgressPayload {
+  runId: string;
+  phase: FridayAgentRunStatus;
+  elapsedMs: number;
+  activeTool?: string;
+  subagentCount: number;
+  latestSubagentId?: string;
+  activeSubagentIds?: string[];
+  eta?: number;
+  etaConfidence: FridayAgentEtaConfidence;
+}
+
 export interface FridayAgentToolStartPayload {
   runId: string;
   toolName: string;
@@ -327,6 +341,7 @@ export interface FridayAgentEventMap {
   "agent.run.started": FridayAgentRunStartedPayload;
   "agent.run.planning": FridayAgentRunPlanningPayload;
   "agent.run.executing": FridayAgentRunExecutingPayload;
+  "agent.run.progress": FridayAgentRunProgressPayload;
   "agent.run.tool_start": FridayAgentToolStartPayload;
   "agent.run.tool_end": FridayAgentToolEndPayload;
   "agent.run.completed": FridayAgentRunCompletedPayload;
