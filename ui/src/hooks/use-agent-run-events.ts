@@ -33,6 +33,18 @@ export interface SubagentNodeViewModel {
   durationMs?: number;
 }
 
+export interface RunProgressViewModel {
+  phase?: AgentRunStatus;
+  startedAt?: string;
+  elapsedMs: number;
+  activeTool?: string;
+  subagentCount: number;
+  latestSubagentId?: string;
+  activeSubagentIds: string[];
+  eta?: number;
+  etaConfidence: "low" | "medium" | "high" | "unavailable";
+}
+
 // ─── Options + Result ───
 
 export interface UseAgentRunEventsOptions {
@@ -49,6 +61,7 @@ export interface UseAgentRunEventsResult {
   events: AgentRunStreamEvent[];
   toolCalls: ToolCallViewModel[];
   subagents: SubagentNodeViewModel[];
+  progress: RunProgressViewModel;
   errorMessage?: string;
   reconnect: () => void;
 }
@@ -92,6 +105,12 @@ export function useAgentRunEvents(
   const [events, setEvents] = React.useState<AgentRunStreamEvent[]>([]);
   const [toolCalls, setToolCalls] = React.useState<ToolCallViewModel[]>([]);
   const [subagents, setSubagents] = React.useState<SubagentNodeViewModel[]>([]);
+  const [progress, setProgress] = React.useState<RunProgressViewModel>({
+    elapsedMs: 0,
+    subagentCount: 0,
+    activeSubagentIds: [],
+    etaConfidence: "unavailable",
+  });
   const [errorMessage, setErrorMessage] = React.useState<string | undefined>();
   const [reconnectTrigger, setReconnectTrigger] = React.useState(0);
 
@@ -106,6 +125,21 @@ export function useAgentRunEvents(
   const reconnect = React.useCallback(() => {
     setReconnectTrigger((n) => n + 1);
   }, []);
+
+  React.useEffect(() => {
+    if (!progress.startedAt) return;
+    if (isTerminalStatus(status)) return;
+    const interval = window.setInterval(() => {
+      setProgress((prev) => {
+        if (!prev.startedAt) return prev;
+        return {
+          ...prev,
+          elapsedMs: Math.max(prev.elapsedMs, Date.now() - new Date(prev.startedAt).getTime()),
+        };
+      });
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [progress.startedAt, status]);
 
   React.useEffect(() => {
     if (!runId || !enabled) {
@@ -190,6 +224,14 @@ export function useAgentRunEvents(
           const eventType = parsed.type;
           const eventTime = parsed.emittedAt ?? parsed.timestamp ?? new Date().toISOString();
 
+          if (eventType === "agent.run.started") {
+            setProgress((prev) => ({
+              ...prev,
+              startedAt: eventTime,
+              elapsedMs: 0,
+            }));
+          }
+
           // Text delta
           if (eventType === "agent.run.text_delta" && parsed.delta) {
             setOutputText((prev) => prev + parsed.delta);
@@ -204,6 +246,21 @@ export function useAgentRunEvents(
               onTerminalRef.current?.(parsed.status);
               return;
             }
+          }
+
+          if (eventType === "agent.run.progress") {
+            setProgress((prev) => ({
+              ...prev,
+              ...(parsed.phase ? { phase: parsed.phase } : {}),
+              ...(typeof parsed.elapsedMs === "number" ? { elapsedMs: parsed.elapsedMs } : {}),
+              ...(typeof parsed.activeTool === "string" ? { activeTool: parsed.activeTool } : { activeTool: undefined }),
+              ...(typeof parsed.subagentCount === "number" ? { subagentCount: parsed.subagentCount } : {}),
+              ...(typeof parsed.latestSubagentId === "string" ? { latestSubagentId: parsed.latestSubagentId } : {}),
+              ...(Array.isArray(parsed.activeSubagentIds) ? { activeSubagentIds: parsed.activeSubagentIds } : {}),
+              ...(typeof parsed.eta === "number" ? { eta: parsed.eta } : { eta: undefined }),
+              etaConfidence: parsed.etaConfidence ?? prev.etaConfidence,
+              startedAt: prev.startedAt ?? eventTime,
+            }));
           }
 
           // Tool start
@@ -274,6 +331,14 @@ export function useAgentRunEvents(
                 },
               ];
             });
+            setProgress((prev) => ({
+              ...prev,
+              subagentCount: Math.max(prev.subagentCount, prev.activeSubagentIds.length + 1),
+              latestSubagentId: parsed.subagentId,
+              activeSubagentIds: prev.activeSubagentIds.includes(parsed.subagentId!)
+                ? prev.activeSubagentIds
+                : [...prev.activeSubagentIds, parsed.subagentId!],
+            }));
           }
 
           // Subagent completed
@@ -290,6 +355,12 @@ export function useAgentRunEvents(
                   : sa,
               ),
             );
+            setProgress((prev) => ({
+              ...prev,
+              latestSubagentId: parsed.subagentId,
+              activeSubagentIds: prev.activeSubagentIds.filter((id) => id !== parsed.subagentId),
+              subagentCount: Math.max(0, prev.activeSubagentIds.filter((id) => id !== parsed.subagentId).length),
+            }));
           }
 
           // Terminal events
@@ -330,6 +401,12 @@ export function useAgentRunEvents(
     setEvents([]);
     setToolCalls([]);
     setSubagents([]);
+    setProgress({
+      elapsedMs: 0,
+      subagentCount: 0,
+      activeSubagentIds: [],
+      etaConfidence: "unavailable",
+    });
     setStatus(null);
     setErrorMessage(undefined);
     seenSeqRef.current = new Set();
@@ -349,6 +426,7 @@ export function useAgentRunEvents(
     events,
     toolCalls,
     subagents,
+    progress,
     errorMessage,
     reconnect,
   };
