@@ -163,6 +163,18 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(withRuntimeSupport).toContain("use capabilities first");
   });
 
+  it("documents deterministic task status guidance", () => {
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["task_status", "spawn_subagent"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+    });
+
+    expect(prompt).toContain("use task_status first");
+    expect(prompt).toContain("Default to delegation for non-trivial operational work");
+    expect(prompt).toContain("use deterministic state from task_status or get_subagent instead of guessing");
+  });
+
   it("describes cron, subagents, marketplace, and self-learning truthfully", () => {
     const prompt = buildFridayAgentSystemPrompt({
       toolNames: ["cron", "spawn_subagent", "feedback"],

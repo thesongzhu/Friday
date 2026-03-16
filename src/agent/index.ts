@@ -62,11 +62,14 @@ export type {
   FridayAgentRuntime,
   FridayAgentRuntimeResult,
   FridayAgentConversationContext,
+  FridayAgentDelegationRequest,
+  FridayAgentDelegationResult,
   FridayAgentExecutionContext,
   CreateFridayAgentRuntimeDeps,
 } from "./runtime/friday-agent-runtime.types.js";
 export { createFridayAgentRuntime } from "./runtime/friday-agent-runtime.js";
 export { resolveFridayPublicRunUrl } from "./runtime/friday-public-run-url.js";
+export { shouldDelegateFridayAgentTask } from "./runtime/friday-agent-delegation-policy.js";
 
 // ─── System prompt builder ───
 
@@ -214,6 +217,15 @@ export type {
   FridayAgentCapabilitiesSnapshot,
 } from "./tools/friday-agent-capabilities-tool.js";
 export { createFridayAgentCapabilitiesTool } from "./tools/friday-agent-capabilities-tool.js";
+
+// ─── Task status tool ───
+
+export type {
+  CreateFridayAgentTaskStatusToolOptions,
+  FridayAgentTaskStatusSnapshot,
+  FridayAgentTaskStatusSubagentSnapshot,
+} from "./tools/friday-agent-task-status-tool.js";
+export { createFridayAgentTaskStatusTool } from "./tools/friday-agent-task-status-tool.js";
 
 // ─── MCP adapter ───
 
