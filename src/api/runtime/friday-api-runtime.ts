@@ -1533,7 +1533,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     nowIso: deps.nowIso,
   });
 
-  async function loadSessionHistoryRecords(sessionKey: string): Promise<FridaySessionMessageRecord[]> {
+  async function loadSessionHistoryMessages(sessionKey: string): Promise<FridaySessionMessageRecord[]> {
     return sessionService
       .getMessages(sessionKey, SESSION_CONTEXT_HISTORY_LIMIT * 2)
       .catch(() => [] as FridaySessionMessageRecord[]);
@@ -1587,7 +1587,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         }
         | undefined;
       if (input.sessionKey) {
-        const historyRecords = await loadSessionHistoryRecords(input.sessionKey);
+        const historyRecords = await loadSessionHistoryMessages(input.sessionKey);
         if (input.taskAlreadyInHistory && !shouldPersistUserMessage) {
           const lastMatchingUserMessage = [...historyRecords]
             .reverse()
