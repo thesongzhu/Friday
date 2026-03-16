@@ -1695,6 +1695,62 @@ describe("FridayAgentRuntime", () => {
     expect(events[1].event).toBe("completed");
   });
 
+  it("emits progress events with phase, active tool, and ETA metadata", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+    try {
+      const llmClient = createMockLlmClient([
+        [
+          { type: "tool_use", id: "call-1", name: "echo", input: { message: "hello" } },
+          { type: "message_end", stopReason: "tool_use", inputTokens: 5, outputTokens: 3 },
+        ],
+        [
+          { type: "text_delta", text: "done" },
+          { type: "message_end", stopReason: "end_turn", inputTokens: 7, outputTokens: 4 },
+        ],
+      ]);
+
+      const emitter = createFridayAgentEventEmitter();
+      const progressEvents: Array<{
+        phase: string;
+        activeTool?: string;
+        subagentCount: number;
+        etaConfidence: string;
+      }> = [];
+      emitter.on("agent.run.progress", (payload) => {
+        progressEvents.push({
+          phase: payload.phase,
+          activeTool: payload.activeTool,
+          subagentCount: payload.subagentCount,
+          etaConfidence: payload.etaConfidence,
+        });
+      });
+
+      const runtime = createFridayAgentRuntime({
+        db,
+        llmClient,
+        model: "test-model",
+        providerId: "test-provider",
+        systemPrompt: "You are a test agent.",
+        tools: [createEchoTool()],
+        eventEmitter: emitter,
+        idGenerator,
+        nowIso: () => NOW,
+      });
+
+      await runtime.executeRun({ task: "Progress test" });
+
+      expect(progressEvents.length).toBeGreaterThan(0);
+      expect(progressEvents.some((event) => event.phase === "executing")).toBe(true);
+      expect(progressEvents.some((event) => event.activeTool === "echo")).toBe(true);
+      expect(progressEvents.at(-1)?.phase).toBe("completed");
+      expect(progressEvents.every((event) => event.subagentCount === 0)).toBe(true);
+      expect(progressEvents.every((event) => event.etaConfidence === "low" || event.etaConfidence === "unavailable")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // ─── Unknown tool ───
 
   it("returns error for unknown tool calls", async () => {

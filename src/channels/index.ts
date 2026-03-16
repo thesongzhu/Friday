@@ -97,6 +97,14 @@ export { createFridayChannelTypingController } from "./friday-channel-typing-con
 export type { FridayChannelInboundDebouncer, CreateInboundDebouncerOptions } from "./friday-channel-inbound-debouncer.js";
 export { createFridayChannelInboundDebouncer } from "./friday-channel-inbound-debouncer.js";
 
+// ─── Slow Task Notifier ───
+
+export type {
+  FridayChannelSlowTaskNotifier,
+  FridayChannelSlowTaskNotifierOptions,
+} from "./friday-channel-slow-task-notifier.js";
+export { createFridayChannelSlowTaskNotifier } from "./friday-channel-slow-task-notifier.js";
+
 // ─── Channel Implementations ───
 
 export { createFridayQqChannel } from "./qq/friday-qq-channel.js";

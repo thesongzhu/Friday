@@ -44,6 +44,8 @@ export type {
   FridayAgentRunStartedPayload,
   FridayAgentRunPlanningPayload,
   FridayAgentRunExecutingPayload,
+  FridayAgentEtaConfidence,
+  FridayAgentRunProgressPayload,
   FridayAgentToolStartPayload,
   FridayAgentToolEndPayload,
   FridayAgentRunCompletedPayload,
@@ -64,6 +66,7 @@ export type {
   CreateFridayAgentRuntimeDeps,
 } from "./runtime/friday-agent-runtime.types.js";
 export { createFridayAgentRuntime } from "./runtime/friday-agent-runtime.js";
+export { resolveFridayPublicRunUrl } from "./runtime/friday-public-run-url.js";
 
 // ─── System prompt builder ───
 
