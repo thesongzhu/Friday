@@ -16,6 +16,7 @@ import {
   FRIDAY_SESSION_PRUNE_TIMEOUT_MS,
 } from "../friday-session.constants.js";
 import type {
+  FridaySessionConversationFocusState,
   FridaySessionCreateInput,
   FridaySessionForkCreateInput,
   FridaySessionForkCreateResult,
@@ -42,6 +43,52 @@ export function createFridaySessionService(
 ): FridaySessionService {
   const sessionRepo = createFridaySessionRepository();
   const messageRepo = createFridaySessionMessageRepository();
+  const FOCUS_METADATA_KEY = "conversationFocus";
+
+  function readConversationFocus(
+    session: FridaySessionRecord | null,
+  ): FridaySessionConversationFocusState | null {
+    const raw = session?.metadata?.[FOCUS_METADATA_KEY];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return null;
+    }
+
+    const candidate = raw as Record<string, unknown>;
+    if (typeof candidate.updatedAt !== "string" || candidate.updatedAt.trim().length === 0) {
+      return null;
+    }
+
+    return {
+      currentTopicFingerprint:
+        typeof candidate.currentTopicFingerprint === "string" ? candidate.currentTopicFingerprint : undefined,
+      currentTopicSummary:
+        typeof candidate.currentTopicSummary === "string" ? candidate.currentTopicSummary : undefined,
+      currentTopicStartSequence:
+        typeof candidate.currentTopicStartSequence === "number" ? candidate.currentTopicStartSequence : undefined,
+      lastAnsweredQuestion:
+        typeof candidate.lastAnsweredQuestion === "string" ? candidate.lastAnsweredQuestion : undefined,
+      lastAssistantAskedQuestion:
+        typeof candidate.lastAssistantAskedQuestion === "boolean" ? candidate.lastAssistantAskedQuestion : undefined,
+      lastRunId:
+        typeof candidate.lastRunId === "string" ? candidate.lastRunId : undefined,
+      activeRunId:
+        typeof candidate.activeRunId === "string" ? candidate.activeRunId : undefined,
+      activeSubagentIds: Array.isArray(candidate.activeSubagentIds)
+        ? candidate.activeSubagentIds.filter((value): value is string => typeof value === "string")
+        : undefined,
+      pendingPlanRunId:
+        typeof candidate.pendingPlanRunId === "string" ? candidate.pendingPlanRunId : undefined,
+      lastTurnKind:
+        candidate.lastTurnKind === "new_topic"
+          || candidate.lastTurnKind === "follow_up"
+          || candidate.lastTurnKind === "clarification"
+          || candidate.lastTurnKind === "status_check"
+          || candidate.lastTurnKind === "continue_active_task"
+          ? candidate.lastTurnKind
+          : undefined,
+      updatedAt: candidate.updatedAt,
+    };
+  }
 
   /** Walk parent chain to find rootSessionKey. */
   function resolveRootSessionKey(parentKey: string): string {
@@ -733,6 +780,9 @@ export function createFridaySessionService(
           );
         }
 
+        const metadata = { ...session.metadata };
+        delete metadata[FOCUS_METADATA_KEY];
+
         // Delete all messages for this session
         db.prepare("DELETE FROM session_messages WHERE session_key = ?").run(key);
 
@@ -743,12 +793,13 @@ export function createFridaySessionService(
             context_output_tokens = 0,
             context_total_tokens = 0,
             message_count = 0,
+            metadata_json = ?,
             status = 'active',
             status_changed_at = ?,
             last_activity_at = ?,
             updated_at = ?
           WHERE session_key = ?`,
-        ).run(now, now, now, key);
+        ).run(JSON.stringify(metadata), now, now, now, key);
 
         const updated = sessionRepo.getByKey(db, key);
         if (!updated) {
@@ -761,6 +812,56 @@ export function createFridaySessionService(
 
         return updated;
       });
+    },
+
+    async getConversationFocus(key) {
+      key = canonicalizeFridaySessionKey(key);
+
+      const session = deps.db.withReadConnection((db) => sessionRepo.getByKey(db, key));
+      if (!session) {
+        throw new FridayDomainError(
+          FRIDAY_SESSION_ERROR_CODES.NOT_FOUND,
+          `Session '${key}' not found`,
+          { httpStatus: 404 },
+        );
+      }
+
+      return readConversationFocus(session);
+    },
+
+    async setConversationFocus(key, focusState) {
+      key = canonicalizeFridaySessionKey(key);
+
+      const now = deps.nowIso();
+      const updated = deps.db.withWriteTransaction((db) => {
+        const session = sessionRepo.getByKey(db, key);
+        if (!session) {
+          return null;
+        }
+
+        const metadata = { ...session.metadata };
+        if (focusState) {
+          metadata[FOCUS_METADATA_KEY] = focusState;
+        } else {
+          delete metadata[FOCUS_METADATA_KEY];
+        }
+
+        return sessionRepo.updateMetadata(db, {
+          key,
+          metadata,
+          nowIso: now,
+        });
+      });
+
+      if (!updated) {
+        throw new FridayDomainError(
+          FRIDAY_SESSION_ERROR_CODES.NOT_FOUND,
+          `Session '${key}' not found`,
+          { httpStatus: 404 },
+        );
+      }
+
+      return updated;
     },
 
     async setSendPolicy(key, policy) {
