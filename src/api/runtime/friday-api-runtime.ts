@@ -79,6 +79,7 @@ import { createFridayChannelWebhookRoutes } from "../http/routes/friday-channel-
 import {
   createFridayAgentAutomationRepository,
   createFridayAgentAutomationService,
+  createFridayAgentPlanningGateService,
   createFridayAgentRunEventRepository,
   createFridayAgentRunRepository,
 } from "#agent";
@@ -86,6 +87,7 @@ import type {
   FridayAgentAutomationService,
   FridayAgentExecutionContext,
   FridayAgentMessage,
+  FridayAgentRunStatus,
 } from "#agent";
 import { createFridayHealthRoutes } from "../http/routes/friday-health-routes.js";
 import { createFridayApiTokenRepository } from "../persistence/friday-api-token-repository.js";
@@ -1539,6 +1541,35 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       .catch(() => [] as FridaySessionMessageRecord[]);
   }
 
+  const agentRepo = deps.agentRuntime ? createFridayAgentRunRepository() : undefined;
+  const agentRunEventRepo = deps.agentRuntime ? createFridayAgentRunEventRepository() : undefined;
+  const agentPlanningGate = deps.agentRuntime && deps.agentEventEmitter && agentRepo
+    ? createFridayAgentPlanningGateService({
+      repo: agentRepo,
+      runEventRepository: agentRunEventRepo,
+      runtime: deps.agentRuntime,
+      eventEmitter: deps.agentEventEmitter,
+      db: deps.db,
+      idGenerator: deps.idGenerator,
+      nowIso: deps.nowIso,
+    })
+    : undefined;
+
+  const resolveAgentMirrorIdempotencyKey = (input: {
+    runId: string;
+    kind: "planning" | "assistant" | "planning-reject";
+    status?: FridayAgentRunStatus;
+  }): string => {
+    if (input.kind === "planning-reject" || !agentRepo) {
+      return `agent-run:${input.runId}:${input.kind}`;
+    }
+    const run = deps.db.withReadConnection((reader) => agentRepo.getById(reader, input.runId));
+    const gateState = run?.planReview?.gate?.state ?? "none";
+    const answerCount = run?.planReview?.gate?.answers?.length ?? 0;
+    const status = input.status ?? run?.status ?? "unknown";
+    return `agent-run:${input.runId}:${input.kind}:${status}:${gateState}:${String(answerCount)}`;
+  };
+
   const executeAgentRunWithSessionContext = deps.agentRuntime
     ? async (input: {
       task: string;
@@ -1590,6 +1621,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           currentTopicSummary?: string;
         }
         | undefined;
+      let planningDecision: ReturnType<NonNullable<typeof agentPlanningGate>["handleTurn"]> | undefined;
       if (input.sessionKey) {
         const historyRecords = await loadSessionHistoryMessages(input.sessionKey);
         if (input.taskAlreadyInHistory && !shouldPersistUserMessage) {
@@ -1625,6 +1657,158 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           previousTopicSummary: preparedTurn.previousTopicSummary,
           currentTopicSummary: preparedTurn.currentTopicSummary,
         };
+
+        if (agentPlanningGate) {
+          planningDecision = agentPlanningGate.handleTurn({
+            runId: input.runId,
+            task,
+            sessionKey: input.sessionKey,
+            providerId: input.providerId,
+            model: input.model,
+            constraints: input.constraints,
+            reviewRequired: input.reviewRequired,
+            conversationContext,
+            focusState,
+          });
+
+          if (planningDecision.action === "return") {
+            await sessionService.addMessage(input.sessionKey, {
+              role: "assistant",
+              content: planningDecision.result.response,
+              contentText: planningDecision.result.response,
+              idempotencyKey: resolveAgentMirrorIdempotencyKey({
+                runId: planningDecision.result.runId,
+                kind: "planning",
+                status: planningDecision.result.status,
+              }),
+            }).catch(() => undefined);
+            await sessionService.setConversationFocus(
+              input.sessionKey,
+              finalizeFridayConversationFocus({
+                task,
+                responseText: planningDecision.result.response,
+                runId: planningDecision.result.runId,
+                turnKind: conversationContext.turnKind ?? "new_topic",
+                focusState,
+                currentUserSequence,
+                pendingPlanRunId: planningDecision.pendingPlanRunId ?? null,
+                nowIso: deps.nowIso(),
+              }),
+            ).catch(() => undefined);
+            return planningDecision.result;
+          }
+
+          if (planningDecision.action === "approve") {
+            const approved = await agentPlanningGate.approvePlan({
+              runId: planningDecision.runId,
+              sessionKey: input.sessionKey,
+              providerId: input.providerId,
+              model: input.model,
+              timezone: input.timezone,
+              timeoutMs: input.timeoutMs,
+              signal: input.signal,
+              constraints: input.constraints,
+              principalId: input.principalId,
+              scopes: input.scopes,
+              executionContext: input.executionContext,
+              historyMessages,
+              conversationContext,
+            });
+            await sessionService.addMessage(input.sessionKey, {
+              role: "assistant",
+              content: approved.response,
+              contentText: approved.response,
+              idempotencyKey: resolveAgentMirrorIdempotencyKey({
+                runId: approved.runId,
+                kind: "assistant",
+                status: approved.status,
+              }),
+            }).catch(() => undefined);
+            await sessionService.setConversationFocus(
+              input.sessionKey,
+              finalizeFridayConversationFocus({
+                task,
+                responseText: approved.response,
+                runId: approved.runId,
+                turnKind: conversationContext.turnKind ?? "new_topic",
+                focusState: await sessionService.getConversationFocus(input.sessionKey).catch(() => focusState),
+                currentUserSequence,
+                pendingPlanRunId:
+                  approved.status === "awaiting_clarification" || approved.status === "awaiting_plan_approval"
+                    ? approved.runId
+                    : null,
+                nowIso: deps.nowIso(),
+              }),
+            ).catch(() => undefined);
+            return approved;
+          }
+
+          if (planningDecision.action === "reject") {
+            const rejected = agentPlanningGate.rejectPlan({
+              runId: planningDecision.runId,
+            });
+            await sessionService.addMessage(input.sessionKey, {
+              role: "assistant",
+              content: rejected.response,
+              contentText: rejected.response,
+              idempotencyKey: resolveAgentMirrorIdempotencyKey({
+                runId: rejected.runId,
+                kind: "planning-reject",
+              }),
+            }).catch(() => undefined);
+            await sessionService.setConversationFocus(
+              input.sessionKey,
+              finalizeFridayConversationFocus({
+                task,
+                responseText: rejected.response,
+                runId: rejected.runId,
+                turnKind: conversationContext.turnKind ?? "new_topic",
+                focusState,
+                currentUserSequence,
+                pendingPlanRunId: null,
+                nowIso: deps.nowIso(),
+              }),
+            ).catch(() => undefined);
+            return rejected;
+          }
+        }
+      }
+
+      if (!input.sessionKey && agentPlanningGate) {
+        planningDecision = agentPlanningGate.handleTurn({
+          runId: input.runId,
+          task,
+          providerId: input.providerId,
+          model: input.model,
+          constraints: input.constraints,
+          reviewRequired: input.reviewRequired,
+          conversationContext,
+          focusState,
+        });
+        if (planningDecision.action === "return") {
+          return planningDecision.result;
+        }
+        if (planningDecision.action === "approve") {
+          return await agentPlanningGate.approvePlan({
+            runId: planningDecision.runId,
+            providerId: input.providerId,
+            model: input.model,
+            timezone: input.timezone,
+            timeoutMs: input.timeoutMs,
+            signal: input.signal,
+            constraints: input.constraints,
+            principalId: input.principalId,
+            scopes: input.scopes,
+            executionContext: input.executionContext,
+            historyMessages,
+            conversationContext,
+          });
+        }
+        if (planningDecision.action === "reject") {
+          return agentPlanningGate.rejectPlan({
+            runId: planningDecision.runId,
+          });
+        }
       }
 
       const result = await deps.agentRuntime!.executeRun({
@@ -1649,6 +1833,16 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       });
 
       if (input.sessionKey && conversationContext?.turnKind) {
+        await sessionService.addMessage(input.sessionKey, {
+          role: "assistant",
+          content: result.response,
+          contentText: result.response,
+          idempotencyKey: resolveAgentMirrorIdempotencyKey({
+            runId: result.runId,
+            kind: "assistant",
+            status: result.status,
+          }),
+        }).catch(() => undefined);
         const latestFocusState = await sessionService
           .getConversationFocus(input.sessionKey)
           .catch(() => focusState);
@@ -1661,6 +1855,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             turnKind: conversationContext.turnKind,
             focusState: latestFocusState,
             currentUserSequence,
+            pendingPlanRunId:
+              result.status === "awaiting_clarification" || result.status === "awaiting_plan_approval"
+                ? result.runId
+                : null,
             nowIso: deps.nowIso(),
           }),
         ).catch(() => undefined);
@@ -1739,9 +1937,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register agent routes (optional — only if runtime and emitter are provided)
   let agentAutomationService: FridayAgentAutomationService | undefined;
-  if (deps.agentRuntime && deps.agentEventEmitter) {
-    const agentRepo = createFridayAgentRunRepository();
-    const agentRunEventRepo = createFridayAgentRunEventRepository();
+  if (deps.agentRuntime && deps.agentEventEmitter && agentRepo && agentRunEventRepo) {
     const agentAbortControllers = new Map<string, AbortController>();
 
     const startRun = async (input: {
@@ -1823,6 +2019,47 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           controller.abort(new Error("Cancelled via API"));
           agentAbortControllers.delete(runId);
         }
+      },
+      approvePlan: async (runId) => {
+        if (!agentPlanningGate) {
+          throw new FridayDomainError("AGENT_PLAN_NOT_AVAILABLE", "Planning gate is not available", { httpStatus: 501 });
+        }
+        const result = await agentPlanningGate.approvePlan({ runId });
+        const run = deps.db.withReadConnection((db) => agentRepo.getById(db, runId));
+        if (run?.sessionKey) {
+          const currentFocus = await sessionService.getConversationFocus(run.sessionKey).catch(() => null);
+          await sessionService.setConversationFocus(run.sessionKey, {
+            ...(currentFocus ?? { updatedAt: deps.nowIso() }),
+            pendingPlanRunId: undefined,
+            updatedAt: deps.nowIso(),
+          }).catch(() => undefined);
+        }
+        return result;
+      },
+      rejectPlan: async (runId) => {
+        if (!agentPlanningGate) {
+          throw new FridayDomainError("AGENT_PLAN_NOT_AVAILABLE", "Planning gate is not available", { httpStatus: 501 });
+        }
+        const result = agentPlanningGate.rejectPlan({ runId });
+        const run = deps.db.withReadConnection((db) => agentRepo.getById(db, runId));
+        if (run?.sessionKey) {
+          await sessionService.addMessage(run.sessionKey, {
+            role: "assistant",
+            content: result.response,
+            contentText: result.response,
+            idempotencyKey: resolveAgentMirrorIdempotencyKey({
+              runId: result.runId,
+              kind: "planning-reject",
+            }),
+          }).catch(() => undefined);
+          const currentFocus = await sessionService.getConversationFocus(run.sessionKey).catch(() => null);
+          await sessionService.setConversationFocus(run.sessionKey, {
+            ...(currentFocus ?? { updatedAt: deps.nowIso() }),
+            pendingPlanRunId: undefined,
+            updatedAt: deps.nowIso(),
+          }).catch(() => undefined);
+        }
+        return result;
       },
       eventEmitter: deps.agentEventEmitter,
       automationService: agentAutomationService,

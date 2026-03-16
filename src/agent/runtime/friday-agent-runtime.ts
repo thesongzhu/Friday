@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { FridayDomainError } from "#errors";
 import type { FridayEvaluationContext, FridayEvaluationResult } from "#rules";
 
@@ -19,6 +22,8 @@ import type {
   FridayAgentEtaConfidence,
   FridayAgentImageBlock,
   FridayAgentMessage,
+  FridayAgentPlanReviewPayload,
+  FridayAgentRunRecord,
   FridayAgentRunStatus,
   FridayAgentTestResult,
   FridayAgentToolCallRecord,
@@ -86,7 +91,21 @@ export function createFridayAgentRuntime(
   const runSeqCounters = new Map<string, number>();
 
   function nextSeq(runId: string): number {
-    const current = runSeqCounters.get(runId) ?? 0;
+    let current = runSeqCounters.get(runId);
+    if (current === undefined) {
+      if (runEventRepository) {
+        try {
+          const existingEvents = db.withReadConnection((reader) =>
+            runEventRepository.list(reader, runId),
+          );
+          current = existingEvents.at(-1)?.seq ?? 0;
+        } catch {
+          current = 0;
+        }
+      } else {
+        current = 0;
+      }
+    }
     const next = current + 1;
     runSeqCounters.set(runId, next);
     return next;
@@ -166,6 +185,16 @@ export function createFridayAgentRuntime(
       const runId = params.runId ?? idGenerator();
       const runCorrelationId = runId;
       const sessionKey = params.sessionKey ?? `${FRIDAY_AGENT_SESSION_KEY_PREFIX}${runId}`;
+      const existingRun = params.resumeExistingRun
+        ? db.withReadConnection((reader) => repo.getById(reader, runId))
+        : null;
+      if (params.resumeExistingRun && !existingRun) {
+        throw new FridayDomainError(
+          FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+          `Cannot resume agent run '${runId}' because it does not exist`,
+          { httpStatus: 404 },
+        );
+      }
       const maxAttempts = params.maxAttempts ?? FRIDAY_AGENT_MAX_ATTEMPTS;
       const timeoutMs = params.timeoutMs ?? FRIDAY_AGENT_RUN_TIMEOUT_MS;
       const startedAt = Date.now();
@@ -224,6 +253,14 @@ export function createFridayAgentRuntime(
           case "agent.run.planning":
             currentPhase = "planning";
             break;
+          case "agent.run.awaiting_clarification":
+            currentPhase = "awaiting_clarification";
+            activeToolName = undefined;
+            break;
+          case "agent.run.awaiting_plan_approval":
+            currentPhase = "awaiting_plan_approval";
+            activeToolName = undefined;
+            break;
           case "agent.run.executing":
             currentPhase = "executing";
             break;
@@ -277,19 +314,21 @@ export function createFridayAgentRuntime(
         emitProgressEvent();
       }, 15_000);
 
-      // 1. Create run record
-      db.withWriteTransaction((writer) =>
-        repo.create(writer, {
-          id: runId,
-          task: params.task,
-          sessionKey,
-          providerId: requestedProviderId,
-          model: requestedModel,
-          maxAttempts,
-          nowIso: nowIso(),
-          constraints,
-        }),
-      );
+      // 1. Create run record unless we are resuming a previously gated run.
+      if (!existingRun) {
+        db.withWriteTransaction((writer) =>
+          repo.create(writer, {
+            id: runId,
+            task: params.task,
+            sessionKey,
+            providerId: requestedProviderId,
+            model: requestedModel,
+            maxAttempts,
+            nowIso: nowIso(),
+            constraints,
+          }),
+        );
+      }
 
       // Setup abort controller with timeout
       const runAbortController = new AbortController();
@@ -380,6 +419,77 @@ export function createFridayAgentRuntime(
         return { artifactDir, artifacts: writtenArtifacts };
       };
 
+      const transitionToAwaitingClarification = (input: {
+        kind: FridayPlanningGateKind;
+        questions: string[];
+        currentPlanReview?: FridayAgentPlanReviewPayload;
+      }): FridayAgentRuntimeResult => {
+        const durationMs = Date.now() - startedAt;
+        const totalCostUsd = actualTurns.reduce((sum, turn) => sum + (turn.costUsd ?? 0), 0);
+        const lastTurn = actualTurns[actualTurns.length - 1];
+        const actualExecution: FridayAgentActualExecution = {
+          actualProviderId: lastTurn?.providerId,
+          actualModel: lastTurn?.model,
+          totalCostUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
+          turns: actualTurns,
+        };
+        latestActualExecution = actualExecution;
+        latestCostUsd = totalCostUsd > 0 ? totalCostUsd : undefined;
+
+        const clarificationResponse = buildGeneratorClarificationResponse(input);
+        const clarificationPlanReview: FridayAgentPlanReviewPayload = {
+          ...(input.currentPlanReview ?? {
+            plan: {
+              task: params.task,
+              stepCount: 3,
+              description: summarizeTask(params.task),
+            },
+          }),
+          decision: undefined,
+          gate: {
+            ...(input.currentPlanReview?.gate ?? { kind: input.kind }),
+            kind: input.kind,
+            state: "awaiting_clarification",
+            clarificationQuestions: input.questions,
+            approvalUpdatedAt: nowIso(),
+          },
+        };
+
+        db.withWriteTransaction((writer) =>
+          repo.update(writer, {
+            id: runId,
+            status: "awaiting_clarification",
+            durationMs,
+            usageInput: totalInputTokens,
+            usageOutput: totalOutputTokens,
+            costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
+            actualExecution,
+            planReview: clarificationPlanReview,
+            responseText: clarificationResponse,
+            summary: deriveSummary(clarificationResponse),
+          }),
+        );
+
+        handleTrackedEvent("agent.run.awaiting_clarification", {
+          runId,
+          status: "awaiting_clarification",
+          message: clarificationResponse,
+          questions: input.questions,
+          planKind: input.kind,
+        });
+
+        return {
+          runId,
+          status: "awaiting_clarification",
+          response: clarificationResponse,
+          toolCallCount: allToolCalls.length,
+          durationMs,
+          usageInput: totalInputTokens,
+          usageOutput: totalOutputTokens,
+          finalResponse: clarificationResponse,
+        };
+      };
+
       try {
         // 2. Emit started event and transition to planning
         if (evaluateRules) {
@@ -454,20 +564,29 @@ export function createFridayAgentRuntime(
         );
 
         // Build plan summary
-        const planSummary = {
+        const planSummary = params.planReviewOverride?.plan ?? existingRun?.planReview?.plan ?? {
           task: params.task,
-          stepCount: 1, // Will be determined during execution
+          stepCount: 1,
           description: `Planning approach for: ${params.task.slice(0, 200)}`,
         };
 
-        // Persist plan review JSON (IMPL-1)
-        const planReview = {
-          plan: planSummary,
-          decision: undefined as { approved: boolean; mode: string; reason?: string; reviewedAt: string } | undefined,
-        };
+        const planReview = params.planReviewOverride
+          ? {
+            ...params.planReviewOverride,
+            plan: params.planReviewOverride.plan ?? planSummary,
+          }
+          : existingRun?.planReview
+            ? {
+              ...existingRun.planReview,
+              plan: existingRun.planReview.plan ?? planSummary,
+            }
+            : {
+              plan: planSummary,
+              decision: undefined as { approved: boolean; mode: string; reason?: string; reviewedAt: string } | undefined,
+            };
 
         // Review gate check (IMPL-1)
-        if (params.reviewRequired && reviewGate) {
+        if (!params.skipPlanningReview && params.reviewRequired && reviewGate) {
           const decision = reviewGate.review(planSummary, nowIso());
           planReview.decision = decision;
 
@@ -514,12 +633,12 @@ export function createFridayAgentRuntime(
               usageOutput: 0,
             };
           }
-        } else {
+        } else if (!planReview.decision) {
           // No review required — auto-approve silently
           planReview.decision = {
             approved: true,
-            mode: "off",
-            reason: "No review required",
+            mode: params.skipPlanningReview ? "manual-approve" : "off",
+            reason: params.skipPlanningReview ? "Plan already approved by user" : "No review required",
             reviewedAt: nowIso(),
           };
         }
@@ -544,6 +663,9 @@ export function createFridayAgentRuntime(
             conversationContext,
           })
         ) {
+          db.withWriteTransaction((writer) =>
+            repo.update(writer, { id: runId, status: "executing" }),
+          );
           handleTrackedEvent("agent.run.executing", {
             runId,
             step: 1,
@@ -563,7 +685,42 @@ export function createFridayAgentRuntime(
           });
 
           if (delegated) {
-            responseText = delegated.outcome.response;
+            const childRunRecord = db.withReadConnection((reader) =>
+              repo.getById(reader, delegated.childRunId),
+            );
+            const delegatedToolCalls = loadDelegatedToolCalls(childRunRecord);
+            const delegatedToolEvents = loadDelegatedToolEvents({
+              runId: delegated.childRunId,
+              db,
+              runEventRepository,
+            });
+            if (delegatedToolCalls.length > 0) {
+              allToolCalls.push(...delegatedToolCalls);
+            }
+            const delegatedToolCallCount = delegatedToolCalls.length > 0
+              ? delegatedToolCalls.length
+              : countDelegatedToolCalls({
+                runId: delegated.childRunId,
+                fallback: delegated.outcome.toolCallCount,
+                db,
+                runEventRepository,
+              });
+            const delegatedImages = delegated.outcome.images
+              ?? extractImagePathsFromToolCalls(delegatedToolCalls);
+            latestArtifacts = childRunRecord?.artifacts
+              ?? (delegatedToolCalls.length > 0 ? deriveArtifactsFromToolCalls(delegatedToolCalls) : []);
+            latestTestResults = childRunRecord?.testResults ?? [];
+            latestActualExecution = childRunRecord?.actualExecution;
+            latestCostUsd = childRunRecord?.costUsd;
+            totalInputTokens = childRunRecord?.usageInput ?? delegated.outcome.usageInput;
+            totalOutputTokens = childRunRecord?.usageOutput ?? delegated.outcome.usageOutput;
+            responseText = childRunRecord?.responseText ?? delegated.outcome.response;
+            replayDelegatedToolEvents({
+              parentRunId: runId,
+              parentCorrelationId: runId,
+              events: delegatedToolEvents,
+              emitRunEvent,
+            });
             const durationMs = Date.now() - startedAt;
             const completedAt = nowIso();
             const summaryText = deriveSummary(responseText);
@@ -578,8 +735,9 @@ export function createFridayAgentRuntime(
               response: terminalResponse,
               durationMs,
               completedAt,
-              testResults: [],
-              artifacts: [],
+              testResults: latestTestResults,
+              artifacts: latestArtifacts,
+              costUsd: latestCostUsd,
             });
 
             db.withWriteTransaction((writer) =>
@@ -588,8 +746,11 @@ export function createFridayAgentRuntime(
                 status: terminalStatus,
                 completedAt,
                 durationMs,
-                usageInput: 0,
-                usageOutput: 0,
+                usageInput: totalInputTokens,
+                usageOutput: totalOutputTokens,
+                costUsd: latestCostUsd,
+                actualExecution: latestActualExecution,
+                testResults: latestTestResults,
                 artifacts: persistedArtifacts.artifacts,
                 responseText: terminalResponse,
                 summary: summaryText || undefined,
@@ -601,8 +762,8 @@ export function createFridayAgentRuntime(
               handleTrackedEvent("agent.run.completed", {
                 runId,
                 durationMs,
-                toolCallCount: 0,
-                testsPassed: true,
+                toolCallCount: delegatedToolCallCount,
+                testsPassed: latestTestResults.every((result) => result.passed),
                 artifacts: persistedArtifacts.artifacts.map((a) => ({ type: a.type, path: a.path })),
               });
 
@@ -613,6 +774,7 @@ export function createFridayAgentRuntime(
                     content: terminalResponse,
                     contentText: terminalResponse,
                     idempotencyKey: `agent-run:${runId}:response`,
+                    toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
                   });
                 } catch (error) {
                   console.warn(
@@ -626,10 +788,11 @@ export function createFridayAgentRuntime(
                 runId,
                 status: "completed",
                 response: terminalResponse,
-                toolCallCount: 0,
+                toolCallCount: delegatedToolCallCount,
                 durationMs,
-                usageInput: 0,
-                usageOutput: 0,
+                usageInput: totalInputTokens,
+                usageOutput: totalOutputTokens,
+                images: delegatedImages.length > 0 ? delegatedImages : undefined,
               };
             }
 
@@ -655,10 +818,11 @@ export function createFridayAgentRuntime(
               runId,
               status: terminalStatus,
               response: terminalResponse,
-              toolCallCount: 0,
+              toolCallCount: delegatedToolCallCount,
               durationMs,
-              usageInput: 0,
-              usageOutput: 0,
+              usageInput: totalInputTokens,
+              usageOutput: totalOutputTokens,
+              images: delegatedImages.length > 0 ? delegatedImages : undefined,
             };
           }
         }
@@ -1114,6 +1278,14 @@ export function createFridayAgentRuntime(
                 is_error: true,
               });
             }
+          }
+
+          const generatorClarificationSignal = extractGeneratorClarificationSignal(allToolCalls);
+          if (generatorClarificationSignal) {
+            return transitionToAwaitingClarification({
+              ...generatorClarificationSignal,
+              currentPlanReview: planReview,
+            });
           }
 
           // 7. Add tool results as user message and re-prompt
@@ -2696,6 +2868,93 @@ function deriveArtifactsFromToolCalls(
   return artifacts;
 }
 
+function loadDelegatedToolCalls(
+  childRunRecord: FridayAgentRunRecord | null,
+): FridayAgentToolCallRecord[] {
+  const artifactDir = childRunRecord?.artifactDir;
+  if (!artifactDir || artifactDir.trim().length === 0) {
+    return [];
+  }
+
+  const toolCallsPath = join(artifactDir, "tool-calls.json");
+  if (!existsSync(toolCallsPath)) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(toolCallsPath, "utf-8")) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed as FridayAgentToolCallRecord[];
+  } catch {
+    return [];
+  }
+}
+
+function loadDelegatedToolEvents(input: {
+  runId: string;
+  db: CreateFridayAgentRuntimeDeps["db"];
+  runEventRepository?: CreateFridayAgentRuntimeDeps["runEventRepository"];
+}): Array<{ eventName: string; payload: Record<string, unknown> }> {
+  if (!input.runEventRepository) {
+    return [];
+  }
+
+  try {
+    const events = input.db.withReadConnection((reader) =>
+      input.runEventRepository!.list(reader, input.runId),
+    );
+    return events
+      .filter((event) => event.eventName === "agent.run.tool_start" || event.eventName === "agent.run.tool_end")
+      .map((event) => ({
+        eventName: event.eventName,
+        payload: event.payload,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function countDelegatedToolCalls(input: {
+  runId: string;
+  fallback: number;
+  db: CreateFridayAgentRuntimeDeps["db"];
+  runEventRepository?: CreateFridayAgentRuntimeDeps["runEventRepository"];
+}): number {
+  if (!input.runEventRepository) {
+    return input.fallback;
+  }
+
+  try {
+    const events = input.db.withReadConnection((reader) =>
+      input.runEventRepository!.list(reader, input.runId),
+    );
+    const toolEndCount = events.filter((event) => event.eventName === "agent.run.tool_end").length;
+    return toolEndCount > 0 ? toolEndCount : input.fallback;
+  } catch {
+    return input.fallback;
+  }
+}
+
+function replayDelegatedToolEvents(input: {
+  parentRunId: string;
+  parentCorrelationId: string;
+  events: Array<{ eventName: string; payload: Record<string, unknown> }>;
+  emitRunEvent: (eventName: string, payload: Record<string, unknown>, runId: string) => void;
+}): void {
+  for (const event of input.events) {
+    const payload: Record<string, unknown> = {
+      ...event.payload,
+      runId: input.parentRunId,
+    };
+    if (event.eventName === "agent.run.tool_end") {
+      payload.correlationId = input.parentCorrelationId;
+    }
+    input.emitRunEvent(event.eventName, payload, input.parentRunId);
+  }
+}
+
 // ─── Tool execution helper ───
 
 interface ExecuteToolCallParams {
@@ -3564,6 +3823,53 @@ function parseJsonObject(content: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function summarizeTask(task: string, max = 200): string {
+  const normalized = task.trim().replace(/\s+/g, " ");
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max - 1)}…`;
+}
+
+type FridayPlanningGateKind = NonNullable<FridayAgentPlanReviewPayload["gate"]>["kind"];
+
+function extractGeneratorClarificationSignal(
+  toolCalls: FridayAgentToolCallRecord[],
+): {
+  kind: FridayPlanningGateKind;
+  questions: string[];
+} | null {
+  for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
+    const call = toolCalls[index];
+    if (!call || call.result.isError) continue;
+    if (call.toolName !== "workflow_generate" && call.toolName !== "skill_generate") continue;
+    const parsed = parseJsonObject(call.result.content);
+    if (!parsed || parsed.mode !== "clarification_required") continue;
+    const questions = Array.isArray(parsed.questions)
+      ? parsed.questions.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [];
+    if (questions.length === 0) continue;
+    return {
+      kind: call.toolName === "workflow_generate" ? "generate_workflow" : "generate_skill",
+      questions,
+    };
+  }
+  return null;
+}
+
+function buildGeneratorClarificationResponse(input: {
+  kind: FridayPlanningGateKind;
+  questions: string[];
+}): string {
+  const label = input.kind === "generate_workflow" ? "workflow generation" : "skill generation";
+  return [
+    `I hit a real blocker while continuing ${label}: the downstream generator still needs a few specific details before it can proceed.`,
+    "",
+    "Please answer these questions in the same thread:",
+    ...input.questions.map((question, index) => `${String(index + 1)}. ${question}`),
+    "",
+    "After you answer them, Friday will update the plan and wait for confirmation again before continuing.",
+  ].join("\n");
 }
 
 // ─── OC-007: Tool result size capping ───

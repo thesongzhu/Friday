@@ -46,6 +46,9 @@ export type {
   FridayAgentRunExecutingPayload,
   FridayAgentEtaConfidence,
   FridayAgentRunProgressPayload,
+  FridayAgentRunAwaitingClarificationPayload,
+  FridayAgentRunPlanReadyPayload,
+  FridayAgentRunAwaitingPlanApprovalPayload,
   FridayAgentToolStartPayload,
   FridayAgentToolEndPayload,
   FridayAgentRunCompletedPayload,
@@ -64,12 +67,19 @@ export type {
   FridayAgentConversationContext,
   FridayAgentDelegationRequest,
   FridayAgentDelegationResult,
+  FridayAgentResumeRunParams,
   FridayAgentExecutionContext,
   CreateFridayAgentRuntimeDeps,
 } from "./runtime/friday-agent-runtime.types.js";
 export { createFridayAgentRuntime } from "./runtime/friday-agent-runtime.js";
 export { resolveFridayPublicRunUrl } from "./runtime/friday-public-run-url.js";
 export { shouldDelegateFridayAgentTask } from "./runtime/friday-agent-delegation-policy.js";
+export type {
+  FridayAgentPlanningGateDecision,
+  FridayAgentPlanningGateService,
+  FridayPlanningKind,
+} from "./runtime/friday-agent-planning-gate.js";
+export { createFridayAgentPlanningGateService } from "./runtime/friday-agent-planning-gate.js";
 
 // ─── System prompt builder ───
 

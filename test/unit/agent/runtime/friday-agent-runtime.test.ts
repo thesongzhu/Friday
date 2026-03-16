@@ -78,6 +78,33 @@ describe("FridayAgentRuntime", () => {
     };
   }
 
+  function createWorkflowGeneratorClarificationTool(): FridayAgentToolDefinition {
+    return {
+      name: "workflow_generate",
+      description: "Mock workflow generator that asks for clarification",
+      parameters: {
+        properties: {
+          action: { type: "string" },
+          goal: { type: "string" },
+        },
+        required: ["action"],
+      },
+      async execute() {
+        return {
+          content: JSON.stringify({
+            sessionId: "wf-session-1",
+            status: "needs_clarification",
+            mode: "clarification_required",
+            questions: [
+              "Which timezone should this workflow run in?",
+              "Which Slack destination should receive the summary?",
+            ],
+          }),
+        };
+      },
+    };
+  }
+
   function createExecTool(spy?: ReturnType<typeof vi.fn>): FridayAgentToolDefinition {
     return {
       name: "exec",
@@ -1751,6 +1778,84 @@ describe("FridayAgentRuntime", () => {
     }
   });
 
+  it("marks a delegated parent run as executing while the child is still in flight", async () => {
+    const eventEmitter = createFridayAgentEventEmitter();
+    const repo = createFridayAgentRunRepository();
+    let resolveDelegation: ((value: {
+      delegated: true;
+      subagentId: string;
+      childRunId: string;
+      childSessionKey: string;
+      statusSnapshot: "completed";
+      outcome: {
+        status: "completed";
+        response: string;
+        toolCallCount: number;
+        durationMs: number;
+        usageInput: number;
+        usageOutput: number;
+      };
+    }) => void) | null = null;
+    const delegationPromise = new Promise<{
+      delegated: true;
+      subagentId: string;
+      childRunId: string;
+      childSessionKey: string;
+      statusSnapshot: "completed";
+      outcome: {
+        status: "completed";
+        response: string;
+        toolCallCount: number;
+        durationMs: number;
+        usageInput: number;
+        usageOutput: number;
+      };
+    }>((resolve) => {
+      resolveDelegation = resolve;
+    });
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient: createMockLlmClient([]),
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createEchoTool()],
+      eventEmitter,
+      idGenerator,
+      nowIso: () => NOW,
+      delegationHandler: () => delegationPromise,
+    });
+
+    const runPromise = runtime.executeRun({
+      task: "Review the repository state and tell me the next action.",
+      sessionKey: "ui:delegation:test",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const inFlight = db.withReadConnection((reader) => repo.getById(reader, "test-id-0001"));
+    expect(inFlight?.status).toBe("executing");
+
+    resolveDelegation?.({
+      delegated: true,
+      subagentId: "sub-1",
+      childRunId: "child-1",
+      childSessionKey: "subagent:child-1",
+      statusSnapshot: "completed",
+      outcome: {
+        status: "completed",
+        response: "Delegated child done",
+        toolCallCount: 0,
+        durationMs: 50,
+        usageInput: 0,
+        usageOutput: 0,
+      },
+    });
+
+    const result = await runPromise;
+    expect(result.status).toBe("completed");
+  });
+
   // ─── Unknown tool ───
 
   it("returns error for unknown tool calls", async () => {
@@ -2886,6 +2991,81 @@ describe("FridayAgentRuntime", () => {
     const result = await runtime.executeRun({ task: "Empty response test" });
 
     expect(result.status).toBe("failed");
+  });
+
+  it("surfaces downstream workflow generator clarification as awaiting_clarification instead of failing", async () => {
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "workflow_generate",
+          input: {
+            action: "start",
+            goal: "Generate a weekly release workflow",
+          },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 5, outputTokens: 3 },
+      ],
+      [
+        { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 3 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [createWorkflowGeneratorClarificationTool()],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      selfTestService: {
+        async runTests() {
+          return [{ strategy: "llm_eval", passed: true, errors: [], durationMs: 0 }];
+        },
+      },
+    });
+
+    const result = await runtime.executeRun({
+      task: "Generate a workflow that runs every Friday and posts release status to Slack.",
+      reviewRequired: true,
+      skipPlanningReview: true,
+      planReviewOverride: {
+        plan: {
+          task: "Generate a workflow that runs every Friday and posts release status to Slack.",
+          stepCount: 3,
+          description: "Approved workflow generation plan",
+        },
+        decision: {
+          approved: true,
+          mode: "manual-approve",
+          reviewedAt: NOW,
+        },
+        gate: {
+          kind: "generate_workflow",
+          state: "approved",
+          planMarkdown: "# Proposed plan",
+          planSummary: "Approved workflow plan",
+        },
+      },
+    });
+
+    expect(result.status).toBe("awaiting_clarification");
+    expect(result.response).toContain("downstream generator still needs");
+    expect(result.response).toContain("Which timezone should this workflow run in?");
+
+    const repo = createFridayAgentRunRepository();
+    const run = db.withReadConnection((reader) => repo.getById(reader, result.runId));
+    expect(run?.status).toBe("awaiting_clarification");
+    expect(run?.planReview?.gate?.state).toBe("awaiting_clarification");
+    expect(run?.planReview?.decision).toBeUndefined();
+    expect(run?.planReview?.gate?.clarificationQuestions).toEqual([
+      "Which timezone should this workflow run in?",
+      "Which Slack destination should receive the summary?",
+    ]);
   });
 
   it("allows readonly diagnosis skill summaries to complete even when llm_eval asks for more action", async () => {

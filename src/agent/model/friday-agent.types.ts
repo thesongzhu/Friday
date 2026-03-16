@@ -3,6 +3,8 @@
 export type FridayAgentRunStatus =
   | "pending"
   | "planning"
+  | "awaiting_clarification"
+  | "awaiting_plan_approval"
   | "executing"
   | "testing"
   | "fixing"
@@ -165,6 +167,29 @@ export interface FridayAgentPlanReviewPayload {
     stepCount: number;
     description: string;
   };
+  gate?: {
+    kind:
+      | "generate_skill"
+      | "generate_workflow"
+      | "deploy_workflow"
+      | "export_workflow_bundle"
+      | "major_decision";
+    state:
+      | "awaiting_clarification"
+      | "awaiting_plan_approval"
+      | "approved"
+      | "rejected"
+      | "bypassed";
+    clarificationQuestions?: string[];
+    answers?: Array<{
+      question?: string;
+      answer: string;
+    }>;
+    planMarkdown?: string;
+    planSummary?: string;
+    approvalPrompt?: string;
+    approvalUpdatedAt?: string;
+  };
   decision?: {
     approved: boolean;
     mode: string;
@@ -258,6 +283,45 @@ export interface FridayAgentRunProgressPayload {
   etaConfidence: FridayAgentEtaConfidence;
 }
 
+export interface FridayAgentRunAwaitingClarificationPayload {
+  runId: string;
+  status: "awaiting_clarification";
+  message: string;
+  questions: string[];
+  planKind?:
+    | "generate_skill"
+    | "generate_workflow"
+    | "deploy_workflow"
+    | "export_workflow_bundle"
+    | "major_decision";
+}
+
+export interface FridayAgentRunPlanReadyPayload {
+  runId: string;
+  planMarkdown: string;
+  planSummary: string;
+  planKind?:
+    | "generate_skill"
+    | "generate_workflow"
+    | "deploy_workflow"
+    | "export_workflow_bundle"
+    | "major_decision";
+}
+
+export interface FridayAgentRunAwaitingPlanApprovalPayload {
+  runId: string;
+  status: "awaiting_plan_approval";
+  message: string;
+  planMarkdown: string;
+  planSummary: string;
+  planKind?:
+    | "generate_skill"
+    | "generate_workflow"
+    | "deploy_workflow"
+    | "export_workflow_bundle"
+    | "major_decision";
+}
+
 export interface FridayAgentToolStartPayload {
   runId: string;
   toolName: string;
@@ -340,6 +404,9 @@ export interface FridaySubagentCompletedPayload {
 export interface FridayAgentEventMap {
   "agent.run.started": FridayAgentRunStartedPayload;
   "agent.run.planning": FridayAgentRunPlanningPayload;
+  "agent.run.awaiting_clarification": FridayAgentRunAwaitingClarificationPayload;
+  "agent.run.plan_ready": FridayAgentRunPlanReadyPayload;
+  "agent.run.awaiting_plan_approval": FridayAgentRunAwaitingPlanApprovalPayload;
   "agent.run.executing": FridayAgentRunExecutingPayload;
   "agent.run.progress": FridayAgentRunProgressPayload;
   "agent.run.tool_start": FridayAgentToolStartPayload;

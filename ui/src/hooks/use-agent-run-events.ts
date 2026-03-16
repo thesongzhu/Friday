@@ -263,6 +263,30 @@ export function useAgentRunEvents(
             }));
           }
 
+          if (eventType === "agent.run.awaiting_clarification") {
+            setStatus("awaiting_clarification");
+            setOutputText(parsed.message ?? parsed.output ?? "");
+            setProgress((prev) => ({
+              ...prev,
+              phase: "awaiting_clarification",
+              startedAt: prev.startedAt ?? eventTime,
+            }));
+          }
+
+          if (eventType === "agent.run.plan_ready") {
+            setOutputText(parsed.planMarkdown ?? parsed.planSummary ?? parsed.message ?? "");
+          }
+
+          if (eventType === "agent.run.awaiting_plan_approval") {
+            setStatus("awaiting_plan_approval");
+            setOutputText(parsed.planMarkdown ?? parsed.message ?? parsed.output ?? "");
+            setProgress((prev) => ({
+              ...prev,
+              phase: "awaiting_plan_approval",
+              startedAt: prev.startedAt ?? eventTime,
+            }));
+          }
+
           // Tool start
           if (eventType === "agent.run.tool_start" && parsed.toolCallId) {
             const params = asRecord(parsed.params);

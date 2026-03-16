@@ -63,6 +63,16 @@ const STARTER_SKILL_PROMPTS: Record<string, string> = {
   "incident-brief-generator": "Run the incident-brief-generator starter skill and turn the current evidence into a concise incident brief.",
 };
 
+const ACTIVE_RUN_STATUSES = [
+  "pending",
+  "planning",
+  "awaiting_clarification",
+  "awaiting_plan_approval",
+  "executing",
+  "testing",
+  "fixing",
+] as const;
+
 function formatTimestamp(value?: string): string {
   if (!value) return "Never";
   return new Date(value).toLocaleString();
@@ -89,6 +99,10 @@ function formatDuration(valueMs?: number): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 1) return `${minutes}m ${seconds}s`;
   return `${hours}h ${minutes % 60}m`;
+}
+
+function isActiveRunStatus(status: string): status is (typeof ACTIVE_RUN_STATUSES)[number] {
+  return ACTIVE_RUN_STATUSES.includes(status as (typeof ACTIVE_RUN_STATUSES)[number]);
 }
 
 function mapTone(status?: string): "neutral" | "success" | "warning" | "danger" {
@@ -216,6 +230,13 @@ export function AgentPage() {
     refetchInterval: 5_000,
   });
 
+  const { data: currentRun } = useQuery({
+    queryKey: ["agent-os", "runs", currentRunId],
+    queryFn: () => agentApi.getRun(currentRunId!),
+    enabled: currentRunId !== null,
+    refetchInterval: 5_000,
+  });
+
   const { data: starterSkills = [] } = useQuery({
     queryKey: ["agent-os", "starter-skills"],
     queryFn: async () => {
@@ -284,9 +305,7 @@ export function AgentPage() {
 
   useEffect(() => {
     if (currentRunId) return;
-    const active = deferredRuns.find((run) =>
-      ["pending", "planning", "executing", "testing", "fixing"].includes(run.status),
-    );
+    const active = deferredRuns.find((run) => isActiveRunStatus(run.status));
     if (active) {
       setCurrentRunId(active.id);
     }
@@ -334,6 +353,36 @@ export function AgentPage() {
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Failed to cancel run");
+    },
+  });
+
+  const approvePlanMutation = useMutation({
+    mutationFn: (runId: string) => agentApi.approvePlan(runId),
+    onSuccess: async (result) => {
+      toast.success("Plan approved");
+      setCurrentRunId(result.runId);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["agent-os", "runs"] }),
+        queryClient.invalidateQueries({ queryKey: ["agent-os", "runs", result.runId] }),
+      ]);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to approve plan");
+    },
+  });
+
+  const rejectPlanMutation = useMutation({
+    mutationFn: (runId: string) => agentApi.rejectPlan(runId),
+    onSuccess: async (result) => {
+      toast.success("Plan rejected");
+      setCurrentRunId(result.runId);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["agent-os", "runs"] }),
+        queryClient.invalidateQueries({ queryKey: ["agent-os", "runs", result.runId] }),
+      ]);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to reject plan");
     },
   });
 
@@ -475,6 +524,11 @@ export function AgentPage() {
 
   const commandCenterError = sessionError ?? stateError;
   const approvalRules = approvalsResponse?.items ?? [];
+  const runOutputText = runEvents.outputText
+    || currentRun?.responseText
+    || currentRun?.planReview?.gate?.planMarkdown
+    || currentRun?.planReview?.gate?.planSummary
+    || "";
 
   return (
     <div className="grid gap-4 xl:grid-cols-[1.35fr_0.95fr]">
@@ -637,7 +691,24 @@ export function AgentPage() {
                     {currentRunId ? `Run ${currentRunId}` : "No active run selected"}
                   </p>
                 </div>
-                {currentRunId ? (
+                {currentRun?.status === "awaiting_plan_approval" ? (
+                  <div className="flex flex-wrap gap-2">
+                    <ActionButton
+                      tone="secondary"
+                      onClick={() => approvePlanMutation.mutate(currentRun.id)}
+                      disabled={approvePlanMutation.isPending || rejectPlanMutation.isPending}
+                    >
+                      Approve Plan
+                    </ActionButton>
+                    <ActionButton
+                      tone="danger"
+                      onClick={() => rejectPlanMutation.mutate(currentRun.id)}
+                      disabled={approvePlanMutation.isPending || rejectPlanMutation.isPending}
+                    >
+                      Reject Plan
+                    </ActionButton>
+                  </div>
+                ) : currentRunId ? (
                   <ActionButton
                     tone="danger"
                     onClick={() => cancelRunMutation.mutate(currentRunId)}
@@ -647,8 +718,18 @@ export function AgentPage() {
                   </ActionButton>
                 ) : null}
               </div>
+              {currentRun?.status === "awaiting_clarification" && currentRun.planReview?.gate?.clarificationQuestions?.length ? (
+                <div className="mb-3 rounded-2xl border border-amber-300/20 bg-amber-300/[0.08] p-3 text-sm text-amber-100">
+                  Waiting for clarification. Next question: {currentRun.planReview.gate.clarificationQuestions[0]}
+                </div>
+              ) : null}
+              {currentRun?.status === "awaiting_plan_approval" && currentRun.planReview?.gate?.approvalPrompt ? (
+                <div className="mb-3 rounded-2xl border border-emerald-300/20 bg-emerald-300/[0.08] p-3 text-sm text-emerald-100">
+                  {currentRun.planReview.gate.approvalPrompt}
+                </div>
+              ) : null}
               <pre className="agent-console">
-                {runEvents.outputText || "Start a run to stream live model output, tool activity, and terminal state here."}
+                {runOutputText || "Start a run to stream live model output, tool activity, and terminal state here."}
               </pre>
             </div>
 
@@ -726,7 +807,12 @@ export function AgentPage() {
                         <span className="line-clamp-1 font-medium text-white">{run.task}</span>
                         <StatusPill tone={mapTone(run.status)}>{run.status}</StatusPill>
                       </div>
-                      <p className="mt-2 text-xs text-white/50">{formatTimestamp(run.startedAt)}</p>
+                      <p className="mt-2 text-xs text-white/50">
+                        {formatTimestamp(run.startedAt)}
+                        {run.status === "awaiting_plan_approval" && run.planReview?.gate?.planSummary
+                          ? ` · ${run.planReview.gate.planSummary}`
+                          : ""}
+                      </p>
                     </button>
                   ))}
                 </div>

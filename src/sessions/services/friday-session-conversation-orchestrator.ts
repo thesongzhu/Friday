@@ -16,11 +16,14 @@ const FOLLOW_UP_HINTS =
 const CHINESE_FOLLOW_UP_HINTS = /(这个|那个|继续|还有|然后|刚才|上一个|同一个|总结|概括|再说|细讲)/;
 const ADVISORY_CONTINUATION_HINTS = /\b(prefer|preference|recommend|recommendation|recommendations|should i|best)\b/i;
 const STATUS_CHECK_HINTS =
-  /\b(status|progress|still working|what are you doing|what's happening|how long|eta|done yet|finished yet|running)\b/i;
+  /\b(status update|check status|current status|what(?:'s| is) (?:the )?status|progress|still working|still running|still executing|what are you doing|what's happening|how long|eta|done yet|finished yet)\b/i;
 const CHINESE_STATUS_CHECK_HINTS = /(状态|进度|还在|多久|完成了吗|现在在做什么|刚才那个任务|还没好|ETA)/;
 const CONTINUE_HINTS =
   /\b(continue|go ahead|proceed|keep going|do it|start it|carry on)\b/i;
 const CHINESE_CONTINUE_HINTS = /(继续|开始吧|继续做|接着做|往下做|执行吧)/;
+const CROSS_TOPIC_RECAP_HINTS =
+  /\b(summari[sz]e|summary|recap|wrap up|pull together|combine|roll up|recommendations|all recommendations|overall recommendation)\b/i;
+const CHINESE_CROSS_TOPIC_RECAP_HINTS = /(总结|概括|汇总|整体建议|全部建议|总的建议)/;
 const STOPWORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "can", "for", "from", "how", "i", "in",
   "is", "it", "me", "my", "of", "on", "one", "or", "please", "should", "short", "single",
@@ -50,7 +53,7 @@ export interface FinalizeFridayConversationFocusInput {
   turnKind: FridayConversationTurnKind;
   focusState?: FridaySessionConversationFocusState | null;
   currentUserSequence?: number;
-  pendingPlanRunId?: string;
+  pendingPlanRunId?: string | null;
   nowIso: string;
 }
 
@@ -157,6 +160,7 @@ function selectConversationRecords(input: {
   focusState?: FridaySessionConversationFocusState | null;
   turnKind: FridayConversationTurnKind;
   currentUserSequence?: number;
+  task: string;
 }): FridaySessionMessageRecord[] {
   const focusState = input.focusState ?? null;
   let records = [...input.historyRecords];
@@ -170,8 +174,15 @@ function selectConversationRecords(input: {
   }
 
   const topicStartSequence = focusState?.currentTopicStartSequence;
+  const useCrossTopicRecapWindow =
+    input.turnKind === "follow_up"
+    && (
+      CROSS_TOPIC_RECAP_HINTS.test(input.task)
+      || CHINESE_CROSS_TOPIC_RECAP_HINTS.test(input.task)
+    );
   if (
     (input.turnKind === "follow_up" || input.turnKind === "clarification" || input.turnKind === "continue_active_task")
+    && !useCrossTopicRecapWindow
     && typeof topicStartSequence === "number"
   ) {
     records = records.filter((record) => record.sequence >= topicStartSequence);
@@ -245,6 +256,7 @@ export function prepareFridayConversationTurn(
     focusState,
     turnKind,
     currentUserSequence: input.currentUserSequence,
+    task: input.task,
   });
   const historyMessages = selectedRecords
     .map(mapSessionMessageToAgentMessage)
@@ -293,7 +305,9 @@ export function finalizeFridayConversationFocus(
       ? previous.activeRunId
       : undefined,
     activeSubagentIds: activeSubagentIds && activeSubagentIds.length > 0 ? activeSubagentIds : undefined,
-    pendingPlanRunId: input.pendingPlanRunId ?? previous?.pendingPlanRunId,
+    pendingPlanRunId: input.pendingPlanRunId === null
+      ? undefined
+      : input.pendingPlanRunId ?? previous?.pendingPlanRunId,
     lastTurnKind: input.turnKind,
     updatedAt: input.nowIso,
   };

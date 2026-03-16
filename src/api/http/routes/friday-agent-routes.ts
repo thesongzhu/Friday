@@ -64,6 +64,8 @@ export interface FridayAgentRoutesDeps {
   }) => FridayAgentRunRecord[];
   listRunEvents: (runId: string, afterSeq?: number) => FridayAgentRunEventRecord[];
   cancelRun: (runId: string) => void;
+  approvePlan: (runId: string) => Promise<FridayAgentRuntimeResult>;
+  rejectPlan: (runId: string) => Promise<FridayAgentRuntimeResult>;
   eventEmitter: FridayAgentEventEmitter;
   automationService: FridayAgentAutomationService;
 }
@@ -294,6 +296,46 @@ export function createFridayAgentRoutes(
       },
     },
 
+    // ─── POST /v1/agent/runs/:runId/approve-plan ───
+    {
+      operationId: "agent.runs.approve.plan",
+      method: "POST",
+      path: "/v1/agent/runs/:runId/approve-plan",
+      auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
+      async handler(ctx) {
+        const { runId } = ctx.params as { runId: string };
+        const run = deps.getRun(runId);
+        if (!run) {
+          throw new FridayDomainError(
+            "AGENT_RUN_NOT_FOUND",
+            "Agent run not found",
+            { httpStatus: 404 },
+          );
+        }
+        return await deps.approvePlan(runId);
+      },
+    },
+
+    // ─── POST /v1/agent/runs/:runId/reject-plan ───
+    {
+      operationId: "agent.runs.reject.plan",
+      method: "POST",
+      path: "/v1/agent/runs/:runId/reject-plan",
+      auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
+      async handler(ctx) {
+        const { runId } = ctx.params as { runId: string };
+        const run = deps.getRun(runId);
+        if (!run) {
+          throw new FridayDomainError(
+            "AGENT_RUN_NOT_FOUND",
+            "Agent run not found",
+            { httpStatus: 404 },
+          );
+        }
+        return await deps.rejectPlan(runId);
+      },
+    },
+
     // ─── GET /v1/agent/runs/:runId/events (SSE) ───
     {
       operationId: "agent.runs.events",
@@ -348,6 +390,9 @@ export function createFridayAgentRoutes(
         const eventNames: FridayAgentEventName[] = [
           "agent.run.started",
           "agent.run.planning",
+          "agent.run.awaiting_clarification",
+          "agent.run.plan_ready",
+          "agent.run.awaiting_plan_approval",
           "agent.run.executing",
           "agent.run.tool_start",
           "agent.run.tool_end",

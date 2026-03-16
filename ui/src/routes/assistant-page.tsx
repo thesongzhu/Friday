@@ -75,6 +75,19 @@ import { buildSkillHref } from "@/lib/skills/view-models";
 import { buildWorkflowHref } from "@/lib/workflows/view-models";
 
 const OPERATOR_ID = "assistant-shell";
+const ACTIVE_ASSISTANT_RUN_STATUSES = [
+  "pending",
+  "planning",
+  "awaiting_clarification",
+  "awaiting_plan_approval",
+  "executing",
+  "testing",
+  "fixing",
+] as const;
+
+function isAssistantActiveRunStatus(status: string): status is (typeof ACTIVE_ASSISTANT_RUN_STATUSES)[number] {
+  return ACTIVE_ASSISTANT_RUN_STATUSES.includes(status as (typeof ACTIVE_ASSISTANT_RUN_STATUSES)[number]);
+}
 const QUICK_INTENTS = [
   "Help me figure out what I should do next.",
   "Generate and deploy a workflow for weekly reporting.",
@@ -410,6 +423,28 @@ export function AssistantPage() {
     },
   });
 
+  const approvePlanMutation = useMutation({
+    mutationFn: (runId: string) => agentApi.approvePlan(runId),
+    onSuccess: async () => {
+      toast.success("Plan approved.");
+      await invalidateAssistantShell(queryClient);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Plan approval failed");
+    },
+  });
+
+  const rejectPlanMutation = useMutation({
+    mutationFn: (runId: string) => agentApi.rejectPlan(runId),
+    onSuccess: async () => {
+      toast.success("Plan rejected.");
+      await invalidateAssistantShell(queryClient);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Plan rejection failed");
+    },
+  });
+
   const executeTemplateMutation = useMutation({
     mutationFn: (input: {
       templateId: string;
@@ -627,7 +662,7 @@ export function AssistantPage() {
   const activeAssistantRun = useMemo(
     () =>
       (agentRunsQuery.data ?? []).find((run) =>
-        ["pending", "planning", "executing", "testing", "fixing"].includes(run.status),
+        isAssistantActiveRunStatus(run.status),
       ) ?? null,
     [agentRunsQuery.data],
   );
@@ -853,6 +888,9 @@ export function AssistantPage() {
             <AssistantRunPulseCard
               run={activeAssistantRun}
               progress={assistantRunEvents.progress}
+              onApprovePlan={(runId) => approvePlanMutation.mutate(runId)}
+              onRejectPlan={(runId) => rejectPlanMutation.mutate(runId)}
+              planPending={approvePlanMutation.isPending || rejectPlanMutation.isPending}
             />
 
             <RecoveryCommandCenterSection paths={recoveryPaths} />
@@ -895,6 +933,9 @@ function AssistantRunPulseCard(props: {
     activeTool?: string;
     eta?: number;
   };
+  onApprovePlan: (runId: string) => void;
+  onRejectPlan: (runId: string) => void;
+  planPending: boolean;
 }) {
   if (!props.run) {
     return (
@@ -906,11 +947,13 @@ function AssistantRunPulseCard(props: {
     );
   }
 
+  const run = props.run;
+
   return (
     <ShellCard
       eyebrow="Live task pulse"
       title="Assistant keeps the operator run visible while work is in progress"
-      aside={<StatusPill tone={mapTone(props.progress.phase ?? props.run.status)}>{props.progress.phase ?? props.run.status}</StatusPill>}
+      aside={<StatusPill tone={mapTone(props.progress.phase ?? run.status)}>{props.progress.phase ?? run.status}</StatusPill>}
     >
       <div className="grid gap-3 sm:grid-cols-2">
         <MetricStat label="Elapsed" value={formatRunDuration(props.progress.elapsedMs)} tone={props.progress.elapsedMs >= 30_000 ? "warning" : "neutral"} />
@@ -918,14 +961,39 @@ function AssistantRunPulseCard(props: {
         <MetricStat label="Subagents" value={String(props.progress.subagentCount)} tone={props.progress.subagentCount > 0 ? "success" : "neutral"} />
         <MetricStat label="Active tool" value={props.progress.activeTool ?? "none"} />
       </div>
-      <p className="mt-4 text-sm leading-6 text-white/62">{props.run.task}</p>
+      <p className="mt-4 text-sm leading-6 text-white/62">{run.task}</p>
+      {run.status === "awaiting_clarification" && run.planReview?.gate?.clarificationQuestions?.length ? (
+        <p className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-300/[0.08] px-4 py-3 text-sm leading-6 text-amber-100">
+          Waiting for clarification: {run.planReview.gate.clarificationQuestions[0]}
+        </p>
+      ) : null}
+      {run.status === "awaiting_plan_approval" ? (
+        <div className="mt-4 space-y-3">
+          <p className="rounded-2xl border border-emerald-300/20 bg-emerald-300/[0.08] px-4 py-3 text-sm leading-6 text-emerald-100">
+            {run.planReview?.gate?.approvalPrompt ?? "This plan is waiting for approval before Friday executes it."}
+          </p>
+          {run.planReview?.gate?.planSummary ? (
+            <p className="text-sm leading-6 text-white/62">{run.planReview.gate.planSummary}</p>
+          ) : null}
+        </div>
+      ) : null}
       <div className="mt-4 flex flex-wrap gap-2">
         <Link
           className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
-          to={`/command-center?runId=${encodeURIComponent(props.run.id)}`}
+          to={`/command-center?runId=${encodeURIComponent(run.id)}`}
         >
           Open live run
         </Link>
+        {run.status === "awaiting_plan_approval" ? (
+          <>
+            <ActionButton disabled={props.planPending} onClick={() => props.onApprovePlan(run.id)}>
+              Approve Plan
+            </ActionButton>
+            <ActionButton tone="danger" disabled={props.planPending} onClick={() => props.onRejectPlan(run.id)}>
+              Reject Plan
+            </ActionButton>
+          </>
+        ) : null}
       </div>
     </ShellCard>
   );

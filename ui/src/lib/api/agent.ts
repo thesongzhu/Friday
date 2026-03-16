@@ -1,5 +1,5 @@
 import { apiClient } from "./client";
-import type { AgentRunRecord, AgentRunStatus, AgentAutomation, SubagentRecord } from "./types";
+import type { AgentRunRecord, AgentRunStatus, AgentAutomation, AgentRuntimeResult, SubagentRecord } from "./types";
 
 // ─── Request / Response shapes ───
 
@@ -90,6 +90,20 @@ export const agentApi = {
   async cancelRun(runId: string): Promise<CancelRunResponse> {
     return apiClient.post<Record<string, never>, CancelRunResponse>(
       `/v1/agent/runs/${encodeURIComponent(runId)}/cancel`,
+      {},
+    );
+  },
+
+  async approvePlan(runId: string): Promise<AgentRuntimeResult> {
+    return apiClient.post<Record<string, never>, AgentRuntimeResult>(
+      `/v1/agent/runs/${encodeURIComponent(runId)}/approve-plan`,
+      {},
+    );
+  },
+
+  async rejectPlan(runId: string): Promise<AgentRuntimeResult> {
+    return apiClient.post<Record<string, never>, AgentRuntimeResult>(
+      `/v1/agent/runs/${encodeURIComponent(runId)}/reject-plan`,
       {},
     );
   },

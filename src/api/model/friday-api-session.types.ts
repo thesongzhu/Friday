@@ -67,6 +67,8 @@ export interface FridaySessionMessageListResponse {
   items: FridaySessionMessageRecord[];
 }
 
+import type { FridayAgentRunStatus } from "#agent";
+
 // ─── Memory namespace ───
 
 export interface FridaySessionMemoryNamespaceResponse {
@@ -86,7 +88,7 @@ export interface FridaySessionRunRequest {
 export interface FridaySessionRunResponse {
   run: {
     runId: string;
-    status: "completed" | "failed" | "cancelled";
+    status: FridayAgentRunStatus;
     response: string;
     toolCallCount: number;
     durationMs: number;

@@ -142,24 +142,26 @@ export function createFridaySubagentRegistry(
       });
 
       // Build outcome
+      const terminalStatus: FridaySubagentOutcome["status"] = result.status === "completed"
+        ? "completed"
+        : result.status === "cancelled"
+          ? "cancelled"
+          : "failed";
       const outcome: FridaySubagentOutcome = {
-        status: result.status,
+        status: terminalStatus,
         response: result.response,
         toolCallCount: result.toolCallCount,
         durationMs: result.durationMs,
         usageInput: result.usageInput,
         usageOutput: result.usageOutput,
+        images: result.images,
       };
 
       // Finalize record
       db.withWriteTransaction((writer) =>
         repo.update(writer, {
           id: subagentRecordId,
-          status: result.status === "completed"
-            ? "completed"
-            : result.status === "cancelled"
-              ? "cancelled"
-              : "failed",
+          status: terminalStatus,
           outcome,
           completedAt: nowIso(),
           durationMs: result.durationMs,
@@ -185,6 +187,7 @@ export function createFridaySubagentRegistry(
         durationMs: 0,
         usageInput: 0,
         usageOutput: 0,
+        images: [],
       };
 
       db.withWriteTransaction((writer) =>
@@ -274,6 +277,7 @@ export function createFridaySubagentRegistry(
             durationMs: record.durationMs ?? 0,
             usageInput: 0,
             usageOutput: 0,
+            images: [],
           };
         }
 
@@ -323,6 +327,7 @@ export function createFridaySubagentRegistry(
           durationMs: 0,
           usageInput: 0,
           usageOutput: 0,
+          images: [],
         };
 
         db.withWriteTransaction((writer) =>
