@@ -168,6 +168,8 @@ import {
 } from "#channels";
 import type { FridayChannelMessage } from "#channels";
 import { createFridayChannelInboundDebouncer, createFridayChannelTypingController, sanitizeChannelInput } from "#channels";
+import { createFridayChannelSlowTaskNotifier } from "../channels/friday-channel-slow-task-notifier.js";
+import { resolveFridayPublicRunUrl } from "../agent/runtime/friday-public-run-url.js";
 import {
   createFridaySatelliteRepository,
   createFridaySatelliteRuntime,
@@ -3792,6 +3794,16 @@ export async function createFridayHub(
           typingController.start();
 
           void (async () => {
+            const runId = idGenerator();
+            const slowTaskNotifier = createFridayChannelSlowTaskNotifier({
+              eventEmitter: agentEventEmitter,
+              channelRegistry,
+              channelKind: msg.channelKind,
+              chatId: msg.chatId,
+              replyTo: msg.id,
+              runId,
+              publicRunUrl: resolveFridayPublicRunUrl(runId),
+            });
             try {
               const inboundMessage = await hubSessionService.addMessage(sessionKey, {
                 role: "user",
@@ -3848,6 +3860,7 @@ export async function createFridayHub(
 
               const result = await agentRuntime.executeRun({
                 task: text,
+                runId,
                 taskPrompt: preparedTurn.taskPrompt,
                 images: msg.images,
                 sessionKey,
@@ -3975,6 +3988,7 @@ export async function createFridayHub(
                   });
                 });
             } finally {
+              slowTaskNotifier.stop();
               typingController.stopDispatch();
             }
           })()

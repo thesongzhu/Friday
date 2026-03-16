@@ -16,8 +16,10 @@ import type {
   FridayAgentActualTurn,
   FridayAgentArtifact,
   FridayAgentContentBlock,
+  FridayAgentEtaConfidence,
   FridayAgentImageBlock,
   FridayAgentMessage,
+  FridayAgentRunStatus,
   FridayAgentTestResult,
   FridayAgentToolCallRecord,
   FridayAgentToolDefinition,
@@ -175,12 +177,103 @@ export function createFridayAgentRuntime(
           ? params.principalId
           : undefined;
       const scopes = normalizeScopes(params.scopes);
+      let currentPhase: FridayAgentRunStatus = "pending";
+      let activeToolName: string | undefined;
+      let latestSubagentId: string | undefined;
+      const activeSubagentIds = new Set<string>();
 
       // Resolve per-run overrides (FIX-1)
       const requestedProviderId = normalizeDefaultRouteSentinel(params.providerId)
         ?? normalizeDefaultRouteSentinel(providerId);
       const requestedModel = normalizeDefaultRouteSentinel(params.model)
         ?? normalizeDefaultRouteSentinel(model);
+
+      function deriveEta(elapsedMs: number): { eta?: number; etaConfidence: FridayAgentEtaConfidence } {
+        if (timeoutMs > elapsedMs) {
+          return {
+            eta: timeoutMs - elapsedMs,
+            etaConfidence: "low",
+          };
+        }
+        return { etaConfidence: "unavailable" };
+      }
+
+      const emitProgressEvent = (): void => {
+        const elapsedMs = Math.max(0, Date.now() - startedAt);
+        const eta = deriveEta(elapsedMs);
+        emitRunEvent("agent.run.progress", {
+          runId,
+          phase: currentPhase,
+          elapsedMs,
+          ...(activeToolName ? { activeTool: activeToolName } : {}),
+          subagentCount: activeSubagentIds.size,
+          ...(latestSubagentId ? { latestSubagentId } : {}),
+          ...(activeSubagentIds.size > 0 ? { activeSubagentIds: [...activeSubagentIds] } : {}),
+          ...(typeof eta.eta === "number" ? { eta: eta.eta } : {}),
+          etaConfidence: eta.etaConfidence,
+        }, runId);
+      };
+
+      const handleTrackedEvent = (eventName: string, payload: Record<string, unknown>): void => {
+        switch (eventName) {
+          case "agent.run.started":
+            currentPhase = "pending";
+            break;
+          case "agent.run.planning":
+            currentPhase = "planning";
+            break;
+          case "agent.run.executing":
+            currentPhase = "executing";
+            break;
+          case "agent.run.tool_start":
+            if (typeof payload.toolName === "string" && payload.toolName.trim().length > 0) {
+              activeToolName = payload.toolName;
+            }
+            break;
+          case "agent.run.tool_end":
+            if (typeof payload.toolName === "string" && payload.toolName === activeToolName) {
+              activeToolName = undefined;
+            }
+            break;
+          case "agent.run.completed":
+            currentPhase = "completed";
+            activeToolName = undefined;
+            break;
+          case "agent.run.failed":
+            currentPhase = "failed";
+            activeToolName = undefined;
+            break;
+          case "agent.run.cancelled":
+            currentPhase = "cancelled";
+            activeToolName = undefined;
+            break;
+        }
+
+        emitRunEvent(eventName, payload, runId);
+        if (eventName !== "agent.run.text_delta" && eventName !== "agent.run.progress") {
+          emitProgressEvent();
+        }
+      };
+
+      const onSubagentSpawned = (payload: { parentRunId: string; subagentId: string }): void => {
+        if (payload.parentRunId !== runId) return;
+        activeSubagentIds.add(payload.subagentId);
+        latestSubagentId = payload.subagentId;
+        emitProgressEvent();
+      };
+
+      const onSubagentCompleted = (payload: { parentRunId: string; subagentId: string }): void => {
+        if (payload.parentRunId !== runId) return;
+        activeSubagentIds.delete(payload.subagentId);
+        latestSubagentId = payload.subagentId;
+        emitProgressEvent();
+      };
+
+      eventEmitter.on("agent.subagent.spawned", onSubagentSpawned);
+      eventEmitter.on("agent.subagent.completed", onSubagentCompleted);
+      const progressTimer = setInterval(() => {
+        emitProgressEvent();
+      }, 15_000);
 
       // 1. Create run record
       db.withWriteTransaction((writer) =>
@@ -320,7 +413,7 @@ export function createFridayAgentRuntime(
               }),
             );
 
-            emitRunEvent("agent.run.failed", {
+            handleTrackedEvent("agent.run.failed", {
               runId,
               error: {
                 code: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
@@ -329,7 +422,7 @@ export function createFridayAgentRuntime(
               durationMs,
               routeId: "agent.execute.run.policy",
               correlationId: runCorrelationId,
-            }, runId);
+            });
 
             return {
               runId,
@@ -343,12 +436,12 @@ export function createFridayAgentRuntime(
           }
         }
 
-        emitRunEvent("agent.run.started", {
+        handleTrackedEvent("agent.run.started", {
           runId,
           task: params.task,
           model: requestedModel,
           providerId: requestedProviderId,
-        }, runId);
+        });
 
         db.withWriteTransaction((writer) =>
           repo.update(writer, {
@@ -398,7 +491,7 @@ export function createFridayAgentRuntime(
               }),
             );
 
-            emitRunEvent("agent.run.failed", {
+            handleTrackedEvent("agent.run.failed", {
               runId,
               error: {
                 code: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
@@ -407,7 +500,7 @@ export function createFridayAgentRuntime(
               durationMs,
               routeId: "agent.execute.run.review",
               correlationId: runCorrelationId,
-            }, runId);
+            });
 
             return {
               runId,
@@ -437,10 +530,10 @@ export function createFridayAgentRuntime(
           }),
         );
 
-        emitRunEvent("agent.run.planning", {
+        handleTrackedEvent("agent.run.planning", {
           runId,
           message: `Planning approach (${String(planSummary.stepCount)} step(s))`,
-        }, runId);
+        });
 
         // 3. Add user message (with optional inline images for vision)
         if (params.images && params.images.length > 0) {
@@ -502,11 +595,11 @@ export function createFridayAgentRuntime(
           iterations++;
 
           // Emit executing event per iteration (IMPL-3)
-          emitRunEvent("agent.run.executing", {
+          handleTrackedEvent("agent.run.executing", {
             runId,
             step: iterations,
             description: `LLM turn ${String(iterations)}`,
-          }, runId);
+          });
 
           const { assistantText, toolUseBlocks, inputTokens, outputTokens, turnMeta } =
             await streamLlmResponse({
@@ -519,7 +612,7 @@ export function createFridayAgentRuntime(
               signal: runAbortController.signal,
               eventEmitter,
               runId,
-              emitRunEvent: (name, payload) => emitRunEvent(name, payload, runId),
+              emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
             });
 
           totalInputTokens += inputTokens;
@@ -668,14 +761,14 @@ export function createFridayAgentRuntime(
               };
               allToolCalls.push(blockedRecord);
 
-              emitRunEvent("agent.run.tool_start", {
+              handleTrackedEvent("agent.run.tool_start", {
                 runId,
                 toolName: toolUse.name,
                 toolCallId: toolUse.id,
                 params: toolUse.input,
-              }, runId);
+              });
 
-              emitRunEvent("agent.run.tool_end", {
+              handleTrackedEvent("agent.run.tool_end", {
                 runId,
                 toolName: toolUse.name,
                 toolCallId: toolUse.id,
@@ -685,7 +778,7 @@ export function createFridayAgentRuntime(
                 errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
                 routeId: "agent.execute.tool.guard",
                 correlationId: runId,
-              }, runId);
+              });
 
               toolResultBlocks.push({
                 type: "tool_result",
@@ -728,14 +821,14 @@ export function createFridayAgentRuntime(
                 };
                 allToolCalls.push(blockedRecord);
 
-                emitRunEvent("agent.run.tool_start", {
+                handleTrackedEvent("agent.run.tool_start", {
                   runId,
                   toolName: toolUse.name,
                   toolCallId: toolUse.id,
                   params: toolUse.input,
-                }, runId);
+                });
 
-                emitRunEvent("agent.run.tool_end", {
+                handleTrackedEvent("agent.run.tool_end", {
                   runId,
                   toolName: toolUse.name,
                   toolCallId: toolUse.id,
@@ -745,7 +838,7 @@ export function createFridayAgentRuntime(
                   errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
                   routeId: "agent.execute.tool.policy",
                   correlationId: runId,
-                }, runId);
+                });
 
                 toolResultBlocks.push({
                   type: "tool_result",
@@ -773,14 +866,14 @@ export function createFridayAgentRuntime(
               };
               allToolCalls.push(blockedRecord);
 
-              emitRunEvent("agent.run.tool_start", {
+              handleTrackedEvent("agent.run.tool_start", {
                 runId,
                 toolName: toolUse.name,
                 toolCallId: toolUse.id,
                 params: toolUse.input,
-              }, runId);
+              });
 
-              emitRunEvent("agent.run.tool_end", {
+              handleTrackedEvent("agent.run.tool_end", {
                 runId,
                 toolName: toolUse.name,
                 toolCallId: toolUse.id,
@@ -790,7 +883,7 @@ export function createFridayAgentRuntime(
                 errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
                 routeId: "agent.execute.tool.readonly",
                 correlationId: runId,
-              }, runId);
+              });
 
               toolResultBlocks.push({
                 type: "tool_result",
@@ -817,14 +910,14 @@ export function createFridayAgentRuntime(
               };
               allToolCalls.push(blockedRecord);
 
-              emitRunEvent("agent.run.tool_start", {
+              handleTrackedEvent("agent.run.tool_start", {
                 runId,
                 toolName: toolUse.name,
                 toolCallId: toolUse.id,
                 params: toolUse.input,
-              }, runId);
+              });
 
-              emitRunEvent("agent.run.tool_end", {
+              handleTrackedEvent("agent.run.tool_end", {
                 runId,
                 toolName: toolUse.name,
                 toolCallId: toolUse.id,
@@ -834,7 +927,7 @@ export function createFridayAgentRuntime(
                 errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
                 routeId: "agent.execute.tool.approval_required",
                 correlationId: runId,
-              }, runId);
+              });
 
               toolResultBlocks.push({
                 type: "tool_result",
@@ -856,7 +949,7 @@ export function createFridayAgentRuntime(
               principalId,
               executionContext,
               nowIso,
-              emitRunEvent: (name, payload) => emitRunEvent(name, payload, runId),
+              emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
             });
 
             allToolCalls.push(toolCallRecord);
@@ -933,7 +1026,7 @@ export function createFridayAgentRuntime(
             }),
           );
 
-          emitRunEvent("agent.run.cancelled", { runId }, runId);
+          handleTrackedEvent("agent.run.cancelled", { runId });
 
           return {
             runId,
@@ -969,6 +1062,8 @@ export function createFridayAgentRuntime(
           db.withWriteTransaction((writer) =>
             repo.update(writer, { id: runId, status: "testing" }),
           );
+          currentPhase = "testing";
+          emitProgressEvent();
 
           try {
             testResults = await selfTestService.runTests({
@@ -1042,7 +1137,7 @@ export function createFridayAgentRuntime(
               }),
             );
 
-            emitRunEvent("agent.run.failed", {
+            handleTrackedEvent("agent.run.failed", {
               runId,
               error: {
                 code: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
@@ -1051,7 +1146,7 @@ export function createFridayAgentRuntime(
               durationMs,
               routeId: "agent.execute.run.validation",
               correlationId: runCorrelationId,
-            }, runId);
+            });
 
             return {
               runId,
@@ -1113,7 +1208,7 @@ export function createFridayAgentRuntime(
             }),
           );
 
-          emitRunEvent("agent.run.failed", {
+          handleTrackedEvent("agent.run.failed", {
             runId,
             error: {
               code: outputClosureGap.errorCode,
@@ -1126,7 +1221,7 @@ export function createFridayAgentRuntime(
             },
             routeId: "agent.execute.run.output_closure",
             correlationId: runCorrelationId,
-          }, runId);
+          });
 
           return {
             runId,
@@ -1172,13 +1267,13 @@ export function createFridayAgentRuntime(
           }),
         );
 
-        emitRunEvent("agent.run.completed", {
+        handleTrackedEvent("agent.run.completed", {
           runId,
           durationMs,
           toolCallCount: allToolCalls.length,
           testsPassed,
           artifacts: persistedArtifacts.artifacts.map((a) => ({ type: a.type, path: a.path })),
-        }, runId);
+        });
 
         // ─── IMPL-6: Session mirror ───
         if (sessionMirror && responseText) {
@@ -1248,13 +1343,13 @@ export function createFridayAgentRuntime(
           }),
         );
 
-        emitRunEvent("agent.run.failed", {
+        handleTrackedEvent("agent.run.failed", {
           runId,
           error: { code: errorCode, message: errorMessage },
           durationMs,
           routeId: "agent.execute.run.unhandled",
           correlationId: runCorrelationId,
-        }, runId);
+        });
 
         return {
           runId,
@@ -1268,6 +1363,9 @@ export function createFridayAgentRuntime(
       } finally {
         clearTimeout(abortTimer);
         params.signal?.removeEventListener("abort", onExternalAbort);
+        clearInterval(progressTimer);
+        eventEmitter.off("agent.subagent.spawned", onSubagentSpawned);
+        eventEmitter.off("agent.subagent.completed", onSubagentCompleted);
         runSeqCounters.delete(runId);
       }
     },

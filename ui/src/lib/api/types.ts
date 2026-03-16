@@ -646,6 +646,14 @@ export interface AgentRunStreamEvent {
   seq?: number;
   emittedAt?: string;
   replayed?: boolean;
+  phase?: AgentRunStatus;
+  elapsedMs?: number;
+  activeTool?: string;
+  subagentCount?: number;
+  latestSubagentId?: string;
+  activeSubagentIds?: string[];
+  eta?: number;
+  etaConfidence?: "low" | "medium" | "high" | "unavailable";
   // text_delta
   delta?: string;
   // tool events
