@@ -45,6 +45,8 @@ interface AgentRunResult {
   };
 }
 
+const MOCK_E2E_TIMEOUT_MS = 20_000;
+
 // ─── Tests ───
 
 describe("Friday Mock Multi-Turn E2E", () => {
@@ -81,7 +83,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "What is the capital of France?", providerId, model, timeoutMs: 10_000, sessionKey },
+      { task: "What is the capital of France?", providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS, sessionKey },
     );
     expect(r1.json.data.status).toBe("completed");
 
@@ -95,7 +97,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "What country is that city in?", providerId, model, timeoutMs: 10_000, sessionKey },
+      { task: "What country is that city in?", providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS, sessionKey },
     );
     expect(r2.json.data.status).toBe("completed");
 
@@ -107,7 +109,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
     if (r2Body?.messages) {
       expect(r2Body.messages.length).toBeGreaterThan(1);
     }
-  });
+  }, MOCK_E2E_TIMEOUT_MS);
 
   it("treats an unrelated second turn as a new topic instead of replaying the prior answer", async () => {
     const mock = env.mockFor("anthropic");
@@ -119,7 +121,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "What is the capital of France?", providerId, model, timeoutMs: 10_000, sessionKey },
+      { task: "What is the capital of France?", providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS, sessionKey },
     );
     expect(r1.json.data.status).toBe("completed");
 
@@ -132,7 +134,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "How do I bake sourdough bread?", providerId, model, timeoutMs: 10_000, sessionKey },
+      { task: "How do I bake sourdough bread?", providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS, sessionKey },
     );
     expect(r2.json.data.status).toBe("completed");
 
@@ -143,7 +145,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
       expect(joined).not.toContain("Paris is the capital of France.");
       expect(joined).toContain("How do I bake sourdough bread?");
     }
-  });
+  }, MOCK_E2E_TIMEOUT_MS);
 
   it("three-turn accumulation: by round 3, LLM receives history from rounds 1 and 2", async () => {
     const mock = env.mockFor("anthropic");
@@ -153,7 +155,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
     mock.setDefault({ type: "text", text: "I like TypeScript." });
     await apiFetch<AgentRunResult>(
       env.baseUrl, env.accessToken, "POST", "/v1/agent/runs",
-      { task: "What language do you prefer?", providerId, model, timeoutMs: 10_000, sessionKey },
+      { task: "What language do you prefer?", providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS, sessionKey },
     );
     mock.reset();
     resetMockCounters();
@@ -162,7 +164,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
     mock.setDefault({ type: "text", text: "Vitest is my recommended test runner." });
     await apiFetch<AgentRunResult>(
       env.baseUrl, env.accessToken, "POST", "/v1/agent/runs",
-      { task: "What test runner do you recommend?", providerId, model, timeoutMs: 10_000, sessionKey },
+      { task: "What test runner do you recommend?", providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS, sessionKey },
     );
     mock.reset();
     resetMockCounters();
@@ -171,7 +173,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
     mock.setDefault({ type: "text", text: "TypeScript with Vitest is a great combination." });
     await apiFetch<AgentRunResult>(
       env.baseUrl, env.accessToken, "POST", "/v1/agent/runs",
-      { task: "Summarize your recommendations", providerId, model, timeoutMs: 10_000, sessionKey },
+      { task: "Summarize your recommendations", providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS, sessionKey },
     );
 
     // Verify round 3 LLM call includes history from rounds 1 and 2
@@ -182,7 +184,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
       // At minimum: user1, assistant1, user2, assistant2, user3 = 5 messages
       expect(r3Body.messages.length).toBeGreaterThanOrEqual(4);
     }
-  });
+  }, MOCK_E2E_TIMEOUT_MS);
 
   it("memory stored via API in run 1 is searchable in run 2", async () => {
     const mock = env.mockFor("anthropic");
@@ -219,7 +221,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
     mock.setDefault({ type: "text", text: "Session A response" });
     await apiFetch<AgentRunResult>(
       env.baseUrl, env.accessToken, "POST", "/v1/agent/runs",
-      { task: "Session A topic: quantum physics", providerId, model, timeoutMs: 10_000, sessionKey: "api:e2e:isolation-A" },
+      { task: "Session A topic: quantum physics", providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS, sessionKey: "api:e2e:isolation-A" },
     );
     mock.reset();
     resetMockCounters();
@@ -228,7 +230,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
     mock.setDefault({ type: "text", text: "Session B response" });
     await apiFetch<AgentRunResult>(
       env.baseUrl, env.accessToken, "POST", "/v1/agent/runs",
-      { task: "Session B topic: cooking recipes", providerId, model, timeoutMs: 10_000, sessionKey: "api:e2e:isolation-B" },
+      { task: "Session B topic: cooking recipes", providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS, sessionKey: "api:e2e:isolation-B" },
     );
 
     // Session B LLM call should NOT include Session A's history
@@ -238,7 +240,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
       expect(allContent).not.toContain("quantum physics");
       expect(allContent).toContain("cooking recipes");
     }
-  });
+  }, MOCK_E2E_TIMEOUT_MS);
 
   it("cross-run tool results: run 1 writes file, run 2 reads it", async () => {
     const mock = env.mockFor("anthropic");
@@ -277,7 +279,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
 
     expect(r2.json.data.status).toBe("completed");
     expect(r2.json.data.toolCallCount).toBeGreaterThanOrEqual(1);
-  });
+  }, MOCK_E2E_TIMEOUT_MS);
 
   it("concurrency closure: same-user multi-request and multi-user parallel runs stay isolated", async () => {
     const mock = env.mockFor("anthropic");

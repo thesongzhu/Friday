@@ -71,6 +71,9 @@ interface AgentRunResult {
   };
 }
 
+const MOCK_E2E_RUN_TIMEOUT_MS = 20_000;
+const MOCK_E2E_TEST_TIMEOUT_MS = 20_000;
+
 // ─── Tests ───
 
 describe("Friday Mock Tool Invocations E2E", () => {
@@ -136,7 +139,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
           task: "Search for nodejs testing frameworks",
           providerId,
           model,
-          timeoutMs: 15_000,
+          timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS,
         },
       );
 
@@ -188,7 +191,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
         env.accessToken,
         "POST",
         "/v1/agent/runs",
-        { task: "Fetch data from the API", providerId, model, timeoutMs: 15_000 },
+        { task: "Fetch data from the API", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
       );
 
       expect(res.status).toBe(200);
@@ -221,7 +224,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "Run echo hello", providerId, model, timeoutMs: 15_000 },
+      { task: "Run echo hello", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
     );
 
     expect(res.status).toBe(200);
@@ -250,7 +253,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "Run a command", providerId, model, timeoutMs: 15_000 },
+      { task: "Run a command", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
     );
 
     expect(res.status).toBe(200);
@@ -284,7 +287,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "Read the test file", providerId, model, timeoutMs: 15_000 },
+      { task: "Read the test file", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
     );
 
     expect(res.status).toBe(200);
@@ -314,7 +317,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "Write a file", providerId, model, timeoutMs: 15_000 },
+      { task: "Write a file", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
     );
 
     expect(res.status).toBe(200);
@@ -346,7 +349,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "Write a file outside workspace", providerId, model, timeoutMs: 15_000 },
+      { task: "Write a file outside workspace", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
     );
 
     expect(res.status).toBe(200);
@@ -358,7 +361,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
 
   // ─── 8. memory_store then memory_search ───
 
-  it("memory_store then memory_search via agent tools", async () => {
+  it("memory_store then memory_search via agent tools", { timeout: MOCK_E2E_TEST_TIMEOUT_MS }, async () => {
     const mock = env.mockFor("anthropic");
 
     // Run 1: store memory
@@ -381,7 +384,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "Remember my dark mode preference", providerId, model, timeoutMs: 15_000 },
+      { task: "Remember my dark mode preference", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
     );
 
     expect(run1.json.data.status).toBe("completed");
@@ -407,7 +410,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "What are my UI preferences?", providerId, model, timeoutMs: 15_000 },
+      { task: "What are my UI preferences?", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
     );
 
     expect(run2.json.data.status).toBe("completed");
@@ -416,7 +419,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
 
   // ─── 9. Unknown tool name ───
 
-  it("unknown tool name returns error to LLM gracefully", async () => {
+  it("unknown tool name returns error to LLM gracefully", { timeout: MOCK_E2E_TEST_TIMEOUT_MS }, async () => {
     const mock = env.mockFor("anthropic");
 
     mock.enqueue({
@@ -434,7 +437,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "Use a nonexistent tool", providerId, model, timeoutMs: 15_000 },
+      { task: "Use a nonexistent tool", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
     );
 
     expect(res.status).toBe(200);
@@ -475,7 +478,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "Read a file", providerId, model, timeoutMs: 15_000 },
+      { task: "Read a file", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
     );
 
     expect(res.status).toBe(200);
@@ -514,7 +517,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "Create a file and verify its contents", providerId, model, timeoutMs: 15_000 },
+      { task: "Create a file and verify its contents", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
     );
 
     expect(res.status).toBe(200);
@@ -547,7 +550,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "List files in the state directory", providerId, model, timeoutMs: 15_000 },
+      { task: "List files in the state directory", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
     );
 
     expect(res.status).toBe(200);

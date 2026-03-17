@@ -99,6 +99,8 @@ export interface FridaySubagentRegistry {
   spawn(input: FridaySubagentRegistrySpawnInput): Promise<FridaySubagentOutcome>;
   /** Spawn a child run in detached mode. Returns immediately with accepted metadata. */
   spawnDetached(input: FridaySubagentRegistrySpawnInput): FridaySubagentDetachedResult;
+  /** Wait for in-flight detached children to settle before shutdown. */
+  drain(timeoutMs?: number): Promise<void>;
   /** Start a detached child run (called internally after spawnDetached). */
   startRun(subagentId: string): Promise<FridaySubagentOutcome>;
   /** Wait for a sub-agent to complete (poll until terminal status). */
