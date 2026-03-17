@@ -141,4 +141,53 @@ describe("friday-agent-evidence-blocks", () => {
     expect(planning?.summary).toContain("pending plan run plan-2");
     expect(planning?.summary).toContain("planning state awaiting_clarification");
   });
+
+  it("does not inject status evidence for imperative tasks that merely mention git status or reporting a result", () => {
+    const blocks = buildFridayEvidenceBlocks({
+      task: "Create a workflow that summarizes git status and report the result in the workflow response.",
+      turnKind: "follow_up",
+      focusState,
+      taskStatusSnapshot,
+    });
+
+    expect(blocks.some((block) => block.source === "task_status_block")).toBe(false);
+    expect(blocks.some((block) => block.source === "plan_block")).toBe(false);
+  });
+
+  it("surfaces the latest completed delegated outcome for status/result follow-ups", () => {
+    const blocks = buildFridayEvidenceBlocks({
+      task: "What is the final result now?",
+      turnKind: "status_check",
+      taskStatusSnapshot: {
+        ...taskStatusSnapshot,
+        runStatus: "completed",
+        phase: "completed",
+        activeSubagents: [],
+        recentCompletedSubagents: [
+          {
+            id: "sub-final",
+            childRunId: "child-run-final",
+            childSessionKey: "subagent:child-final",
+            status: "completed",
+            task: "say CHILD_OK",
+            createdAt: "2026-03-17T10:00:00.000Z",
+            completedAt: "2026-03-17T10:00:10.000Z",
+            outcomeStatus: "completed",
+            outcomeResponse: "CHILD_OK",
+          },
+        ],
+        terminalOutcome: {
+          status: "completed",
+          summary: "CHILD_OK",
+          responseText: "CHILD_OK",
+        },
+      },
+    });
+
+    expect(blocks.find((block) => block.source === "task_status_block")?.summary)
+      .toContain("latest completed subagent sub-final response CHILD_OK");
+    expect(blocks.some((block) =>
+      block.source === "delegated_task_block"
+      && block.summary.includes("response CHILD_OK"))).toBe(true);
+  });
 });

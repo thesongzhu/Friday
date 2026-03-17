@@ -52,6 +52,16 @@ describe("friday-session-conversation-orchestrator", () => {
     })).toBe("new_topic");
   });
 
+  it("classifies explicit final-result questions as status checks", () => {
+    expect(classifyFridayConversationTurn({
+      task: "What is the final result now?",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "Use a subagent to say exactly CHILD_OK and then report the result.",
+      },
+    })).toBe("status_check");
+  });
+
   it("keeps only the active topic window for follow-up turns", () => {
     const prepared = prepareFridayConversationTurn({
       task: "What country is that city in?",
@@ -523,6 +533,23 @@ describe("friday-session-conversation-orchestrator", () => {
 
     expect(focus.activeRunId).toBe("run-long-task");
     expect(focus.activeSubagentIds).toEqual(["sub-1"]);
+  });
+
+  it("preserves the tracked root run when a status-check turn finishes", () => {
+    const focus = finalizeFridayConversationFocus({
+      task: "那个任务结果呢？",
+      responseText: "The delegated child has completed with CHILD_OK.",
+      runId: "run-status-followup",
+      turnKind: "status_check",
+      focusState: {
+        ...baseFocusState,
+        lastRunId: "run-root-task",
+      },
+      currentUserSequence: 10,
+      nowIso: "2026-03-15T11:00:00.000Z",
+    });
+
+    expect(focus.lastRunId).toBe("run-root-task");
   });
 
   it("clears pending plan state when finalize receives an explicit null plan reference", () => {
