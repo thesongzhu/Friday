@@ -238,6 +238,63 @@ describe("FridayAgentRuntime", () => {
     };
   }
 
+  function createSystemTool(spy?: ReturnType<typeof vi.fn>): FridayAgentToolDefinition {
+    return {
+      name: "system",
+      description: "Mock system tool",
+      parameters: {
+        properties: {
+          action: { type: "string" },
+          appIdentifier: { type: "string" },
+        },
+        required: ["action"],
+      },
+      async execute(args) {
+        spy?.(args);
+        const action = typeof args.action === "string" ? args.action : "";
+        if (action === "snapshot") {
+          return {
+            content: JSON.stringify({
+              id: "system-snapshot-1",
+              action: "snapshot",
+              status: "completed",
+              message: "System snapshot captured",
+              payload: {
+                snapshot: {
+                  health: {
+                    status: "safe_mode",
+                    desktopConnected: false,
+                    companionConnected: false,
+                    reasons: ["desktop_session_unavailable"],
+                  },
+                  notifications: [],
+                },
+              },
+            }),
+          };
+        }
+        if (action === "open") {
+          return {
+            content: JSON.stringify({
+              id: "system-open-1",
+              action: "launch_app",
+              status: "completed",
+              message: `Launched ${String(args.appIdentifier ?? "app")}`,
+            }),
+          };
+        }
+        return {
+          content: JSON.stringify({
+            id: `system-${action || "unknown"}`,
+            action,
+            status: "completed",
+            message: `Ran ${action || "unknown"}`,
+          }),
+        };
+      },
+    };
+  }
+
   function createFailingDesktopTool(
     errorMessage = "Desktop session is not connected.",
     spy?: ReturnType<typeof vi.fn>,
@@ -1995,6 +2052,209 @@ describe("FridayAgentRuntime", () => {
     expect(result.toolCallCount).toBe(1);
     expect(execSpy).toHaveBeenCalledTimes(1);
     expect(result.response).toContain("可验证结果");
+  });
+
+  it("blocks app-launch tool calls for desktop content inspection tasks and retries with read-only evidence", async () => {
+    const systemSpy = vi.fn();
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-open",
+          name: "system",
+          input: { action: "open", appIdentifier: "codex app" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-snapshot",
+          name: "system",
+          input: { action: "snapshot" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "我目前只能确认桌面未连接，所以还看不到 Codex 回复。" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const emitter = createFridayAgentEventEmitter();
+    const toolEndEvents: Array<Record<string, unknown>> = [];
+    emitter.on("agent.run.tool_end", (payload) => {
+      toolEndEvents.push(payload as Record<string, unknown>);
+    });
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createSystemTool(systemSpy)],
+      eventEmitter: emitter,
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "看一下我桌面上的codex app给我的回复是什么",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(2);
+    expect(systemSpy).toHaveBeenCalledTimes(1);
+    expect(systemSpy.mock.calls[0]?.[0]).toMatchObject({ action: "snapshot" });
+    expect(result.response).toContain("桌面未连接");
+    expect(toolEndEvents[0]?.toolName).toBe("system");
+    expect(toolEndEvents[0]?.isError).toBe(true);
+    expect(String(toolEndEvents[0]?.summary ?? "")).toContain("inspect existing desktop/app content");
+  });
+
+  it("allows app-launch tool calls when the task explicitly asks to open the app", async () => {
+    const systemSpy = vi.fn();
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-open",
+          name: "system",
+          input: { action: "open", appIdentifier: "codex app" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "已打开 Codex。" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 6, outputTokens: 4 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createSystemTool(systemSpy)],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "打开 codex app",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(1);
+    expect(systemSpy).toHaveBeenCalledTimes(1);
+    expect(systemSpy.mock.calls[0]?.[0]).toMatchObject({ action: "open", appIdentifier: "codex app" });
+    expect(result.response).toContain("已打开 Codex");
+  });
+
+  it("blocks file-search tool calls for desktop content inspection tasks and retries with snapshot evidence", async () => {
+    const systemSpy = vi.fn();
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-search",
+          name: "system",
+          input: { action: "search_file", query: "codex app" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-snapshot",
+          name: "system",
+          input: { action: "snapshot" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "我目前只能确认桌面不可用，所以还看不到 Codex 回复。" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const emitter = createFridayAgentEventEmitter();
+    const toolEndEvents: Array<Record<string, unknown>> = [];
+    emitter.on("agent.run.tool_end", (payload) => {
+      toolEndEvents.push(payload as Record<string, unknown>);
+    });
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createSystemTool(systemSpy)],
+      eventEmitter: emitter,
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "看一下我桌面上的codex app给我的回复是什么",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(2);
+    expect(systemSpy).toHaveBeenCalledTimes(1);
+    expect(systemSpy.mock.calls[0]?.[0]).toMatchObject({ action: "snapshot" });
+    expect(result.response).toContain("桌面不可用");
+    expect(toolEndEvents[0]?.isError).toBe(true);
+    expect(String(toolEndEvents[0]?.summary ?? "")).toContain("not to mutate the desktop");
+  });
+
+  it("re-prompts desktop content inspection answers that only list environment status without a visibility verdict", async () => {
+    const systemSpy = vi.fn();
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-snapshot",
+          name: "system",
+          input: { action: "snapshot" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "系统快照已成功捕获。当前前台应用是 Codex，处于安全模式。" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "我现在只能确认 Codex 在前台运行，但还没有看到你要的回复内容；当前快照也提示桌面不可用/安全模式，所以内容暂时无法验证。" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createSystemTool(systemSpy)],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "看一下我桌面上的codex app给我的回复是什么",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(1);
+    expect(systemSpy).toHaveBeenCalledTimes(1);
+    expect(result.response).toContain("没有看到你要的回复内容");
+    expect(result.response).toContain("无法验证");
   });
 
   it("retries desktop evidence path when prior desktop tools all failed", async () => {
