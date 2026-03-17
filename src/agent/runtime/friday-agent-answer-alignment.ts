@@ -33,6 +33,12 @@ const POSITIVE_ACTION_CLAIM_TERMS =
   /\b(successfully|completed|done|finished|opened|launched|focused|connected|transferred|switched|navigated|now you can|you can now)\b/i;
 const CHINESE_POSITIVE_ACTION_CLAIM_TERMS =
   /(成功|已成功|已经成功|已完成|已经完成|已打开|已经打开|已启动|已经启动|已聚焦|已经聚焦|已连接|已经连接|已切换|已经切换|现在你可以)/;
+const DEICTIC_LITERAL_FOLLOW_UP_TERMS =
+  /^(?:here|there|that one|this one|same one|same issue|that issue|this issue|that part|this part|这里|这儿|这个|那个|同一个问题)$/i;
+const ENGLISH_DEICTIC_LITERAL_ECHO_TERMS =
+  /\b(?:about|regarding|for)\s+(?:the\s+)?(?:"|“)?(?:here|there|that one|this one)(?:"|”)?\s+(?:question|issue|part)\b/i;
+const CHINESE_DEICTIC_LITERAL_ECHO_TERMS =
+  /关于您提到的[“"]?(?:这里|这儿|这个|那个)[”"]?问题|关于[“"]?(?:这里|这儿|这个|那个)[”"]?问题/;
 
 export interface FridayAnswerAlignmentDecision {
   retryPrompt?: string;
@@ -239,6 +245,10 @@ function isShortReplyFollowUp(task: string): boolean {
   return normalized.length <= 48
     || /\b(why|what|that|this|here|it|connect|open)\b/i.test(normalized)
     || /(为什么|什么|这里|这个|那个|连接|打不开|打开)/.test(normalized);
+}
+
+function isPureDeicticLiteralTask(task: string): boolean {
+  return DEICTIC_LITERAL_FOLLOW_UP_TERMS.test(normalizeText(task));
 }
 
 function hasAnchoredAssistantFact(
@@ -460,6 +470,28 @@ export function evaluateFridayAnswerAlignment(params: {
           .join("\n")}`,
         "Explain the referenced earlier fact directly before adding any broader caveat.",
         "If the deeper cause is unknown, say that explicitly after restating the anchored fact.",
+      ].join("\n"),
+    };
+  }
+
+  if (
+    hasAssistantFactAnchor
+    && isPureDeicticLiteralTask(params.task)
+    && (
+      ENGLISH_DEICTIC_LITERAL_ECHO_TERMS.test(responseText)
+      || CHINESE_DEICTIC_LITERAL_ECHO_TERMS.test(responseText)
+    )
+  ) {
+    return {
+      retryPrompt: [
+        "The user used a pure deictic follow-up such as '这里/that one', but you echoed that literal token as if it were a new standalone issue.",
+        `Current follow-up: ${params.task}`,
+        `Reply/assistant anchor(s):\n${anchorBlocks
+          .map((block) => `- ${block.summary}`)
+          .join("\n")}`,
+        "Treat the deictic phrase only as a pointer to the anchored earlier fact.",
+        "Do not add a separate sentence like 'the issue about here/that one is unknown'.",
+        "Answer the anchored fact directly and, if needed, say only whether the deeper cause is known or unknown.",
       ].join("\n"),
     };
   }
