@@ -22,6 +22,13 @@ export interface FridaySessionService {
   getSession(key: string): Promise<FridaySessionRecord | null>;
   getOrCreateSession(key: string): Promise<FridaySessionRecord>;
   addMessage(key: string, message: FridaySessionMessageInput): Promise<FridaySessionMessageRecord>;
+  updateMessageMetadataByIdempotency(
+    key: string,
+    input: {
+      idempotencyKey: string;
+      metadataPatch: Record<string, unknown>;
+    },
+  ): Promise<FridaySessionMessageRecord | null>;
   getMessages(key: string, limit?: number, before?: string): Promise<FridaySessionMessageRecord[]>;
   archiveSession(key: string): Promise<FridaySessionRecord>;
   pruneOldSessions(olderThan: string): Promise<FridaySessionPruneResult>;

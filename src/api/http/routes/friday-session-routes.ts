@@ -49,6 +49,7 @@ export interface FridaySessionRoutesDeps {
     task: string;
     providerId?: string;
     model?: string;
+    replyToMessageId?: string;
     timezone?: string;
     timeoutMs?: number;
     principalId?: string;
@@ -188,6 +189,9 @@ function validateRunBody(body: unknown): asserts body is FridaySessionRunRequest
   }
   if (b.model !== undefined && (typeof b.model !== "string" || b.model.trim() === "")) {
     errors.push("model must be a non-empty string when provided");
+  }
+  if (b.replyToMessageId !== undefined && (typeof b.replyToMessageId !== "string" || b.replyToMessageId.trim() === "")) {
+    errors.push("replyToMessageId must be a non-empty string when provided");
   }
   if (b.timezone !== undefined) {
     if (typeof b.timezone !== "string" || b.timezone.trim() === "") {
@@ -674,6 +678,7 @@ export function createFridaySessionRoutes(
           task,
           providerId: body.providerId,
           model: body.model,
+          replyToMessageId: body.replyToMessageId,
           timezone: body.timezone?.trim(),
           timeoutMs: body.timeoutMs,
           persistTaskMessage: Boolean(taskFromBody),

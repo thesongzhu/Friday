@@ -44,6 +44,7 @@ export interface FridayAgentRoutesDeps {
     sessionKey?: string;
     providerId?: string;
     model?: string;
+    replyToMessageId?: string;
     timezone?: string;
     timeoutMs?: number;
     requireReview?: boolean;
@@ -129,6 +130,14 @@ export function createFridayAgentRoutes(
         }
 
         const providerId = typeof body.providerId === "string" ? body.providerId : undefined;
+        const replyToMessageId = typeof body.replyToMessageId === "string" ? body.replyToMessageId : undefined;
+        if (body.replyToMessageId !== undefined && (!replyToMessageId || replyToMessageId.trim() === "")) {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "replyToMessageId must be a non-empty string when provided",
+            { httpStatus: 400 },
+          );
+        }
         const sessionKey = typeof body.sessionKey === "string" ? body.sessionKey : undefined;
         if (body.sessionKey !== undefined && (!sessionKey || sessionKey.trim() === "")) {
           throw new FridayDomainError(
@@ -208,6 +217,7 @@ export function createFridayAgentRoutes(
           sessionKey,
           providerId,
           model,
+          replyToMessageId,
           timezone,
           timeoutMs,
           requireReview,

@@ -1,8 +1,12 @@
+import type { FridayAgentConversationContext } from "./friday-agent-runtime.types.js";
+
 export interface FridayAgentToolExecutionContext {
   runId: string;
   sessionKey: string;
   readOnly: boolean;
   timezone?: string;
+  taskPrompt?: string;
+  conversationContext?: FridayAgentConversationContext;
 }
 
 const FRIDAY_AGENT_TOOL_EXECUTION_CONTEXT = Symbol.for("friday.agent.toolExecutionContext");
@@ -32,6 +36,11 @@ export function getFridayAgentToolExecutionContext(
     || typeof candidate.sessionKey !== "string"
     || typeof candidate.readOnly !== "boolean"
     || (candidate.timezone !== undefined && typeof candidate.timezone !== "string")
+    || (candidate.taskPrompt !== undefined && typeof candidate.taskPrompt !== "string")
+    || (
+      candidate.conversationContext !== undefined
+      && (typeof candidate.conversationContext !== "object" || candidate.conversationContext === null || Array.isArray(candidate.conversationContext))
+    )
   ) {
     return null;
   }
@@ -40,5 +49,7 @@ export function getFridayAgentToolExecutionContext(
     sessionKey: candidate.sessionKey,
     readOnly: candidate.readOnly,
     timezone: candidate.timezone,
+    taskPrompt: candidate.taskPrompt,
+    conversationContext: candidate.conversationContext as FridayAgentConversationContext | undefined,
   };
 }

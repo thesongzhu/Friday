@@ -95,19 +95,22 @@ function createSpawnSubagentTool(
       const model = readStringParam(args, "model");
       const timeoutMs = readNumberParam(args, "timeoutMs", { integer: true });
       const wait = args.wait === true;
+      const toolExecutionContext = getFridayAgentToolExecutionContext(signal);
 
       try {
         const spawnInput = {
           task,
+          taskPrompt: toolExecutionContext?.taskPrompt,
           label,
           model,
           timezone: subagentContext.timezone,
           timeoutMs,
+          conversationContext: toolExecutionContext?.conversationContext,
           parentRunId: subagentContext.parentRunId,
           parentSessionKey: subagentContext.parentSessionKey,
           depth: subagentContext.depth,
           rootRunId: subagentContext.rootRunId,
-          constraints: getFridayAgentToolExecutionContext(signal)?.readOnly
+          constraints: toolExecutionContext?.readOnly
             ? { readOnly: true }
             : undefined,
           signal,

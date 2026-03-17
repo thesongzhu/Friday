@@ -64,6 +64,7 @@ function createMockService(): FridaySessionService {
     getSession: vi.fn(),
     getOrCreateSession: vi.fn(),
     addMessage: vi.fn(),
+    updateMessageMetadataByIdempotency: vi.fn(),
     getMessages: vi.fn(),
     archiveSession: vi.fn(),
     pruneOldSessions: vi.fn(),
@@ -73,6 +74,10 @@ function createMockService(): FridaySessionService {
     listForks: vi.fn(),
     mergeForkSummary: vi.fn(),
     resetSession: vi.fn(),
+    setSendPolicy: vi.fn(),
+    evaluateSendPolicy: vi.fn(),
+    getConversationFocus: vi.fn(),
+    setConversationFocus: vi.fn(),
   };
 }
 
@@ -785,10 +790,47 @@ describe("FridaySessionRoutes", () => {
         task: "do this now",
         providerId: undefined,
         model: undefined,
+        replyToMessageId: undefined,
         timeoutMs: undefined,
         persistTaskMessage: true,
         taskAlreadyInHistory: false,
       });
+    });
+
+    it("forwards replyToMessageId to runSession", async () => {
+      const svc = createMockService();
+      const runSession = vi.fn().mockResolvedValue({
+        runId: "run-2",
+        status: "completed",
+        response: "ok",
+        toolCallCount: 0,
+        durationMs: 50,
+        usageInput: 1,
+        usageOutput: 1,
+      });
+
+      vi.mocked(svc.getMessages).mockResolvedValue([
+        makeMockMessage({ role: "user", contentText: "hello" }),
+      ]);
+
+      const routes = createFridaySessionRoutes({
+        sessionService: svc,
+        runSession,
+      });
+      const route = routes.find((r) => r.operationId === "sessions.run")!;
+
+      await route.handler(
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          body: { task: "do this now", replyToMessageId: "msg-42" },
+        }) as never,
+      );
+
+      expect(runSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          replyToMessageId: "msg-42",
+        }),
+      );
     });
 
     it("forwards principal context to runSession", async () => {
