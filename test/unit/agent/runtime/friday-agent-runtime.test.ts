@@ -833,6 +833,157 @@ describe("FridayAgentRuntime", () => {
     );
   });
 
+  it("retries when an implicit assistant-anchor follow-up invents a new successful state", async () => {
+    const capturedCalls: FridayAgentMessage[][] = [];
+    let callIndex = 0;
+
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedCalls.push(params.messages.map((message) => ({
+          role: message.role,
+          content: typeof message.content === "string"
+            ? message.content
+            : JSON.parse(JSON.stringify(message.content)),
+        })));
+        if (callIndex === 0) {
+          callIndex++;
+          yield {
+            type: "text_delta",
+            text: "我已经成功将焦点转移到 Codex 应用。现在你可以查看消息了。",
+          };
+          yield { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 18 };
+          return;
+        }
+        yield {
+          type: "text_delta",
+          text: "前面那次并不是已经连上了，而是桌面伴侣没有连接，所以 Friday 当时无法查看桌面内容。更深一层的原因我现在没有可验证证据。",
+        };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 24 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "为什么没有connect",
+      taskPrompt: [
+        "Continue the current topic: 看一下我桌面上的codex app给我的回复是什么",
+        "Referenced assistant fact: The desktop companion is not connected.",
+        "Relevant anchors:",
+        "- [assistant_anchor] The desktop companion is not connected.",
+        "Treat this short follow-up as referring to the referenced assistant fact even if the user uses deictic wording like “这里/这个/that one/why didn’t it connect”.",
+        "Latest user turn: 为什么没有connect",
+        "Explain the referenced assistant fact directly before adding any broader caveat.",
+        "Do not claim a new action, a new success state, or a new result unless this turn produced new deterministic evidence.",
+      ].join("\n"),
+      historyMessages: [
+        { role: "user", content: "看一下我桌面上的codex app给我的回复是什么" },
+        { role: "assistant", content: "The desktop companion is not connected." },
+      ],
+      conversationContext: {
+        turnKind: "follow_up",
+        previousTopicSummary: "看一下我桌面上的codex app给我的回复是什么",
+        currentTopicSummary: "看一下我桌面上的codex app给我的回复是什么",
+        selectedBlocks: [
+          {
+            id: "assistant:msg-2",
+            source: "assistant_anchor",
+            summary: "The desktop companion is not connected.",
+            score: 42,
+            reason: "Latest assistant answer is a plausible short-follow-up anchor.",
+            messageIds: ["msg-2"],
+          },
+          {
+            id: "focus:current-topic",
+            source: "focus_topic",
+            summary: "看一下我桌面上的codex app给我的回复是什么",
+            score: 12,
+            reason: "Persisted focus topic kept as a low-weight context block.",
+          },
+        ],
+        selectionReasons: ["assistant_anchor → Latest assistant answer is a plausible short-follow-up anchor."],
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("没有连接");
+    expect(capturedCalls).toHaveLength(2);
+    expect(capturedCalls[1]![capturedCalls[1]!.length - 1]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("contradicts the earlier anchored fact"),
+      }),
+    );
+  });
+
+  it("falls back deterministically for implicit assistant-anchor follow-ups after exhausting retries", async () => {
+    let callIndex = 0;
+
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        callIndex++;
+        if (callIndex === 1) {
+          yield { type: "text_delta", text: "我已经成功将焦点转移到 Codex 应用。现在你可以查看消息了。" };
+        } else if (callIndex === 2) {
+          yield { type: "text_delta", text: "常见原因包括网络、权限或者程序设置问题。" };
+        } else {
+          yield { type: "text_delta", text: "Generic troubleshooting still applies here." };
+        }
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 7, outputTokens: 12 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "这里",
+      historyMessages: [
+        { role: "user", content: "看一下我桌面上的codex app给我的回复是什么" },
+        { role: "assistant", content: "The desktop companion is not connected." },
+      ],
+      conversationContext: {
+        turnKind: "follow_up",
+        currentTopicSummary: "看一下我桌面上的codex app给我的回复是什么",
+        selectedBlocks: [
+          {
+            id: "assistant:msg-2",
+            source: "assistant_anchor",
+            summary: "The desktop companion is not connected.",
+            score: 42,
+            reason: "Latest assistant answer is a plausible short-follow-up anchor.",
+            messageIds: ["msg-2"],
+          },
+        ],
+        selectionReasons: ["assistant_anchor → Latest assistant answer is a plausible short-follow-up anchor."],
+      },
+    });
+
+    expect(callIndex).toBe(3);
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("The desktop companion is not connected.");
+    expect(result.response).toContain("不做额外假设");
+  });
+
   it("allows up to two alignment retries for reply-anchor follow ups", async () => {
     let callIndex = 0;
     const capturedCalls: FridayAgentMessage[][] = [];
