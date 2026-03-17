@@ -37,6 +37,20 @@ export interface FridayContextCompactionSummary {
   fileOperations: string[];
 }
 
+export type FridayContextCompactionBlockKind =
+  | "topic_block"
+  | "plan_block"
+  | "task_status_block"
+  | "tool_failure_block"
+  | "delegated_task_block"
+  | "conversation_block";
+
+export interface FridayContextCompactionBlockSummary extends FridayContextCompactionSummary {
+  id: string;
+  kind: FridayContextCompactionBlockKind;
+  messageIds: string[];
+}
+
 // ─── Result of compaction pass ───
 
 export interface FridayContextCompactionResult {
@@ -47,6 +61,7 @@ export interface FridayContextCompactionResult {
   droppedMessages: FridayProviderContextMessage[];
   prunedMessageCount: number;
   summary?: FridayContextCompactionSummary;
+  blocks?: FridayContextCompactionBlockSummary[];
 }
 
 // ─── Cache hint configuration per provider ───
