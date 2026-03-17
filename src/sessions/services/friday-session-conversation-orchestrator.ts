@@ -38,6 +38,37 @@ const STOPWORDS = new Set([
   "sentence", "answer", "brief", "that", "the", "this", "to", "what", "when", "where",
   "which", "who", "why", "you", "your",
 ]);
+const GENERIC_FOLLOW_UP_TOKENS = new Set([
+  "again",
+  "connect",
+  "continue",
+  "didnt",
+  "failed",
+  "fail",
+  "here",
+  "issue",
+  "open",
+  "part",
+  "recap",
+  "same",
+  "summary",
+  "there",
+  "thing",
+  "wrong",
+  "为什么",
+  "这里",
+  "这个",
+  "那个",
+  "同一个",
+  "连接",
+  "打开",
+  "失败",
+  "原因",
+]);
+
+function hasSpecificFollowUpTokens(task: string): boolean {
+  return tokenize(task).some((token) => !GENERIC_FOLLOW_UP_TOKENS.has(token));
+}
 
 function isShortContextualFollowUpTask(task: string): boolean {
   const normalized = normalizeText(task);
@@ -93,6 +124,8 @@ export interface FinalizeFridayConversationFocusInput {
 interface FridayConversationBlockCandidate {
   block: FridayConversationBlock;
   messages: FridayAgentMessage[];
+  taskOverlap?: number;
+  fallbackOnly?: boolean;
 }
 
 interface FridayConversationHistoryBlockCandidate {
@@ -100,6 +133,7 @@ interface FridayConversationHistoryBlockCandidate {
   score: number;
   reason: string;
   messages: FridayAgentMessage[];
+  taskOverlap: number;
 }
 
 function normalizeText(text: string): string {
@@ -500,12 +534,14 @@ function createHistoryBlockCandidate(input: {
   score: number;
   reason: string;
   records: readonly FridaySessionMessageRecord[];
+  taskOverlap: number;
 }): FridayConversationHistoryBlockCandidate {
   return {
     summary: input.summary,
     score: input.score,
     reason: input.reason,
     messages: rehydrateConversationHistoryBlockMessages(input.summary, input.records),
+    taskOverlap: input.taskOverlap,
   };
 }
 
@@ -572,6 +608,9 @@ function buildConversationBlockSelection(input: {
 }): FridayContextSelectionResult & { historyMessages: FridayAgentMessage[]; replyAnchorMessageId?: string; replyAnchorSequence?: number } {
   const taskTokens = tokenize(input.task);
   const taskLower = normalizeText(input.task).toLowerCase();
+  const taskHasSpecificFollowUpTokens = hasSpecificFollowUpTokens(input.task);
+  const shortContextualFollowUp = isShortContextualFollowUpTask(input.task) && !taskHasSpecificFollowUpTokens;
+  const shortAssistantAnchorFollowUp = isShortAssistantAnchorFollowUpTask(input.task) && !taskHasSpecificFollowUpTokens;
   const focusState = input.focusState ?? null;
   const records = input.historyRecords;
   const candidates: FridayConversationBlockCandidate[] = [];
@@ -586,6 +625,11 @@ function buildConversationBlockSelection(input: {
   };
 
   const replyAnchor = resolveReplyAnchorRecord(records, input.replyToMessageId);
+  const replyAnchorInCurrentTopicWindow = Boolean(
+    replyAnchor
+    && typeof focusState?.currentTopicStartSequence === "number"
+    && replyAnchor.sequence >= focusState.currentTopicStartSequence,
+  );
   if (replyAnchor) {
     registerCandidate(createMessageBlockCandidate({
       id: `reply:${replyAnchor.id}`,
@@ -602,45 +646,74 @@ function buildConversationBlockSelection(input: {
     const assistantOverlap = countOverlap(taskTokens, tokenize(latestAssistant.contentText));
     const assistantScore = (assistantOverlap * 20)
       + (
-        FOLLOW_UP_HINTS.test(taskLower)
-        || DEICTIC_FOLLOW_UP_HINTS.test(taskLower)
-        || CHINESE_FOLLOW_UP_HINTS.test(input.task)
+        !replyAnchor
+        && (
+          FOLLOW_UP_HINTS.test(taskLower)
+          || DEICTIC_FOLLOW_UP_HINTS.test(taskLower)
+          || CHINESE_FOLLOW_UP_HINTS.test(input.task)
+        )
         ? 18
         : 0
       )
-      + (input.turnKind === "follow_up" || input.turnKind === "clarification" ? 10 : 0);
-    registerCandidate(createMessageBlockCandidate({
-      id: `assistant:${latestAssistant.id}`,
-      source: "assistant_anchor",
-      summary: latestAssistant.contentText,
-      score: assistantScore,
-      reason: assistantOverlap > 0
-        ? `Current turn overlaps the latest assistant answer (${String(assistantOverlap)} token match(es)).`
-        : "Latest assistant answer is a plausible short-follow-up anchor.",
-      records: buildAnchorWindow(records, latestAssistant),
-    }));
+      + (
+        (input.turnKind === "follow_up" || input.turnKind === "clarification")
+        && (assistantOverlap > 0 || (!replyAnchor && shortAssistantAnchorFollowUp) || replyAnchorInCurrentTopicWindow)
+        ? 10
+        : 0
+      );
+    registerCandidate({
+      ...createMessageBlockCandidate({
+        id: `assistant:${latestAssistant.id}`,
+        source: "assistant_anchor",
+        summary: latestAssistant.contentText,
+        score: assistantScore,
+        reason: assistantOverlap > 0
+          ? `Current turn overlaps the latest assistant answer (${String(assistantOverlap)} token match(es)).`
+          : "Latest assistant answer is a plausible short-follow-up anchor.",
+        records: buildAnchorWindow(records, latestAssistant),
+      }),
+      taskOverlap: assistantOverlap,
+      fallbackOnly: assistantOverlap === 0,
+    });
   }
 
   const latestUser = findLatestRecord(records, "user");
   if (latestUser) {
     const userOverlap = countOverlap(taskTokens, tokenize(latestUser.contentText));
-    const userScore = (userOverlap * 14) + (input.turnKind === "follow_up" ? 8 : 0);
-    registerCandidate(createMessageBlockCandidate({
-      id: `user:${latestUser.id}`,
-      source: "recent_user",
-      summary: latestUser.contentText,
-      score: userScore,
-      reason: userOverlap > 0
-        ? `Current turn overlaps the most recent user turn (${String(userOverlap)} token match(es)).`
-        : "Most recent user turn is a fallback short-context anchor.",
-      records: [latestUser],
-    }));
+    const userScore = (userOverlap * 14)
+      + (
+        input.turnKind === "follow_up"
+        && (!replyAnchor || replyAnchorInCurrentTopicWindow || userOverlap > 0)
+        ? 8
+        : 0
+      );
+    registerCandidate({
+      ...createMessageBlockCandidate({
+        id: `user:${latestUser.id}`,
+        source: "recent_user",
+        summary: latestUser.contentText,
+        score: userScore,
+        reason: userOverlap > 0
+          ? `Current turn overlaps the most recent user turn (${String(userOverlap)} token match(es)).`
+          : "Most recent user turn is a fallback short-context anchor.",
+        records: [latestUser],
+      }),
+      taskOverlap: userOverlap,
+      fallbackOnly: userOverlap === 0,
+    });
   }
 
   if (focusState?.currentTopicSummary) {
     const focusOverlap = countOverlap(taskTokens, tokenize(focusState.currentTopicSummary));
     const focusScore = (focusOverlap * 12)
-      + (input.turnKind === "follow_up" || input.turnKind === "clarification" ? 8 : 0);
+      + (
+        !replyAnchor
+        && (input.turnKind === "follow_up" || input.turnKind === "clarification")
+        ? 8
+        : replyAnchorInCurrentTopicWindow
+        ? 8
+        : 0
+      );
     registerCandidate({
       block: {
         id: "focus:current-topic",
@@ -652,6 +725,8 @@ function buildConversationBlockSelection(input: {
           : "Persisted focus topic kept as a low-weight context block.",
       },
       messages: [],
+      taskOverlap: focusOverlap,
+      fallbackOnly: focusOverlap === 0,
     });
   }
 
@@ -672,7 +747,11 @@ function buildConversationBlockSelection(input: {
     const topicWindowSummary = topicWindowRecords
       .map((record) => `${record.role}: ${record.contentText}`)
       .join("\n");
-    const topicWindowScore = 36 + (countOverlap(taskTokens, tokenize(topicWindowSummary)) * 10);
+    const topicWindowOverlap = countOverlap(taskTokens, tokenize(topicWindowSummary));
+    const topicWindowBaseScore = replyAnchor
+      ? (replyAnchorInCurrentTopicWindow ? 24 : 0)
+      : 36;
+    const topicWindowScore = topicWindowBaseScore + (topicWindowOverlap * 10);
     if (topicWindowRecords.length > MAX_FOLLOW_UP_HISTORY) {
       registerCandidate({
         block: {
@@ -685,16 +764,22 @@ function buildConversationBlockSelection(input: {
           sequenceEnd: topicWindowRecords[topicWindowRecords.length - 1]?.sequence,
         },
         messages: [],
+        taskOverlap: topicWindowOverlap,
+        fallbackOnly: topicWindowOverlap === 0,
       });
     } else {
-      registerCandidate(createMessageBlockCandidate({
-        id: `topic-window:${String(focusState?.currentTopicStartSequence)}`,
-        source: "focus_topic",
-        summary: topicWindowSummary,
-        score: topicWindowScore,
-        reason: "Current turn is still inside the persisted topic window.",
-        records: topicWindowRecords,
-      }));
+      registerCandidate({
+        ...createMessageBlockCandidate({
+          id: `topic-window:${String(focusState?.currentTopicStartSequence)}`,
+          source: "focus_topic",
+          summary: topicWindowSummary,
+          score: topicWindowScore,
+          reason: "Current turn is still inside the persisted topic window.",
+          records: topicWindowRecords,
+        }),
+        taskOverlap: topicWindowOverlap,
+        fallbackOnly: topicWindowOverlap === 0,
+      });
     }
   }
 
@@ -728,9 +813,13 @@ function buildConversationBlockSelection(input: {
     historyBlockCandidates.push(candidate);
   };
 
-  const candidateHistoryRecords = useCrossTopicRecapWindow
+  const candidateHistoryRecords = replyAnchor
+    ? []
+    : useCrossTopicRecapWindow
     ? records
-    : topicWindowRecords;
+    : topicWindowRecords.length > MAX_FOLLOW_UP_HISTORY
+      ? topicWindowRecords
+      : records;
   if (
     candidateHistoryRecords.length > MAX_FOLLOW_UP_HISTORY
     && input.turnKind !== "new_topic"
@@ -776,12 +865,15 @@ function buildConversationBlockSelection(input: {
           ? `Compacted ${block.kind} matched the current turn (${String(taskOverlap)} task token match(es), ${String(focusOverlap)} focus token match(es)).`
           : `Compacted ${block.kind} kept as a recency-weighted history block.`,
         records: candidateHistoryRecords,
+        taskOverlap,
       }));
     });
   }
 
   const scoreThreshold = input.turnKind === "new_topic" ? 60 : 1;
+  const hasMatchedHistoryBlock = !replyAnchor && historyBlockCandidates.some((candidate) => candidate.taskOverlap > 0);
   const selectedCandidates = candidates
+    .filter((candidate) => !hasMatchedHistoryBlock || !candidate.fallbackOnly || candidate.block.source === "reply_anchor")
     .filter((candidate) => candidate.block.score >= scoreThreshold || candidate.block.source === "reply_anchor")
     .sort((left, right) => right.block.score - left.block.score || left.block.id.localeCompare(right.block.id))
     .slice(0, input.turnKind === "status_check" ? 3 : 4);
@@ -892,6 +984,8 @@ function buildTaskPrompt(input: {
       .map((block) => `- [${block.source}] ${block.summary}`)
       .join("\n")
     : undefined;
+  const hasHistoryOnlySelection = input.selectedBlocks.length > 0
+    && input.selectedBlocks.every((block) => block.source.endsWith("_block"));
 
   if (input.turnKind === "new_topic" && previousTopicSummary) {
     return [
@@ -938,6 +1032,30 @@ function buildTaskPrompt(input: {
     ].filter((value): value is string => Boolean(value)).join("\n");
   }
 
+  if ((input.turnKind === "follow_up" || input.turnKind === "continue_active_task") && hasExplicitReplyAnchor) {
+    return [
+      "The user is following up on a specifically referenced earlier exchange.",
+      assistantFactSummary ? `Referenced assistant fact: ${assistantFactSummary}` : undefined,
+      selectedBlockSummary ? `Relevant anchors:\n${selectedBlockSummary}` : undefined,
+      `Latest user turn: ${task}`,
+      "An explicit reply anchor was selected. Answer the referenced point directly from the anchored context.",
+      "Do not reinterpret this as a generic troubleshooting or research request unless the user explicitly broadens the scope.",
+      "Do not ask what 'this/that/here' refers to unless the reply anchor itself is ambiguous.",
+      "Explain the referenced assistant fact directly before adding any broader caveat.",
+      "Do not claim a new action, a new success state, or a new result unless this turn produced new deterministic evidence.",
+    ].filter((value): value is string => Boolean(value)).join("\n");
+  }
+
+  if ((input.turnKind === "follow_up" || input.turnKind === "continue_active_task") && hasHistoryOnlySelection) {
+    return [
+      "The user is following up on an earlier referenced session context, not necessarily the most recent topic.",
+      selectedBlockSummary ? `Relevant anchors:\n${selectedBlockSummary}` : undefined,
+      `Latest user turn: ${task}`,
+      "Answer from the relevant anchors directly.",
+      "Do not prepend or restate the most recent topic unless one of the selected anchors actually references it.",
+    ].filter((value): value is string => Boolean(value)).join("\n");
+  }
+
   if (isShortAssistantFactFollowUp && assistantFactSummary) {
     return [
       previousTopicSummary
@@ -969,11 +1087,14 @@ function buildTaskPrompt(input: {
   if ((input.turnKind === "follow_up" || input.turnKind === "continue_active_task") && hasExplicitReplyAnchor) {
     return [
       "The user is following up on a specifically referenced earlier exchange.",
+      assistantFactSummary ? `Referenced assistant fact: ${assistantFactSummary}` : undefined,
       selectedBlockSummary ? `Relevant anchors:\n${selectedBlockSummary}` : undefined,
       `Latest user turn: ${task}`,
       "An explicit reply anchor was selected. Answer the referenced point directly from the anchored context.",
       "Do not reinterpret this as a generic troubleshooting or research request unless the user explicitly broadens the scope.",
       "Do not ask what 'this/that/here' refers to unless the reply anchor itself is ambiguous.",
+      "Explain the referenced assistant fact directly before adding any broader caveat.",
+      "Do not claim a new action, a new success state, or a new result unless this turn produced new deterministic evidence.",
     ].filter((value): value is string => Boolean(value)).join("\n");
   }
 

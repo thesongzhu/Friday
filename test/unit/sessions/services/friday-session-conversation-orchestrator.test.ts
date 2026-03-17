@@ -189,7 +189,7 @@ describe("friday-session-conversation-orchestrator", () => {
     });
 
     expect(prepared.turnKind).toBe("follow_up");
-    expect(prepared.taskPrompt).toContain("following up on the latest assistant-stated fact");
+    expect(prepared.taskPrompt).toContain("following up on a specifically referenced earlier exchange");
     expect(prepared.taskPrompt).toContain("Referenced assistant fact: I could not open GitHub because the browser session was not connected.");
     expect(prepared.taskPrompt).toContain("Relevant anchors");
     expect(prepared.taskPrompt).toContain("Do not claim a new action, a new success state, or a new result");
@@ -318,6 +318,96 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.historyMessages).toEqual([]);
     expect(prepared.taskPrompt).toContain("Current question: How do I bake sourdough bread?");
     expect(prepared.taskPrompt).toContain("Previous topic");
+  });
+
+  it("prefers the relevant older compacted block over the latest topic window when a long follow-up names an older entity", () => {
+    const historyRecords: FridaySessionMessageRecord[] = [
+      makeMessage({ sequence: 1, role: "user", contentText: "Answer exactly: The GitHub issue was browser not connected." }),
+      makeMessage({ sequence: 2, role: "assistant", contentText: "The GitHub issue was browser not connected." }),
+      ...Array.from({ length: 20 }, (_, index) => {
+        const sequence = index + 3;
+        return makeMessage({
+          sequence,
+          role: sequence % 2 === 1 ? "user" : "assistant",
+          contentText: sequence % 2 === 1
+            ? `Reply with exactly FILLER_${String(Math.ceil((sequence - 2) / 2)).padStart(2, "0")}.`
+            : `FILLER_${String(Math.ceil((sequence - 2) / 2)).padStart(2, "0")}.`,
+        });
+      }),
+      makeMessage({ sequence: 23, role: "user", contentText: "Answer exactly: Oranges are orange." }),
+      makeMessage({ sequence: 24, role: "assistant", contentText: "Oranges are orange." }),
+    ];
+
+    const prepared = prepareFridayConversationTurn({
+      task: "What was wrong with that GitHub thing? Answer in one short sentence.",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "Answer exactly: Oranges are orange.",
+        currentTopicStartSequence: 23,
+        assistantAnchorSummary: "Oranges are orange.",
+      },
+      currentUserSequence: 25,
+      historyRecords,
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.historyMessages.some((message) =>
+      message.role === "assistant"
+      && typeof message.content === "string"
+      && message.content.includes("GitHub issue was browser not connected"))).toBe(true);
+    expect(prepared.selectedBlocks.some((block) =>
+      (block.source === "tool_failure_block" || block.source === "topic_block" || block.source === "conversation_block")
+      && block.summary.includes("GitHub issue was browser not connected"))).toBe(true);
+    expect(prepared.selectedBlocks.some((block) =>
+      block.source === "focus_topic" && block.summary.includes("Oranges are orange"))).toBe(false);
+    expect(prepared.taskPrompt).not.toContain("Continue the current topic: Answer exactly: Oranges are orange.");
+    expect(prepared.taskPrompt).toContain("earlier referenced session context");
+  });
+
+  it("does not let the current topic window pollute an explicit reply anchor follow-up", () => {
+    const historyRecords: FridaySessionMessageRecord[] = [
+      makeMessage({ sequence: 1, role: "user", contentText: "Answer exactly: The GitHub issue was browser not connected." }),
+      makeMessage({
+        sequence: 2,
+        role: "assistant",
+        contentText: "The GitHub issue was browser not connected.",
+        metadata: { sourceMessageId: "discord-msg-2" },
+      }),
+      ...Array.from({ length: 24 }, (_, index) => {
+        const sequence = index + 3;
+        return makeMessage({
+          sequence,
+          role: sequence % 2 === 1 ? "user" : "assistant",
+          contentText: sequence === 27
+            ? "How do I bake sourdough bread? Answer in one short sentence."
+            : sequence === 28
+              ? "To bake sourdough bread, combine flour, water, salt, and your active sourdough starter, then ferment, shape, and bake the dough."
+              : sequence % 2 === 1
+                ? `Reply with exactly FILLER_${String(Math.ceil((sequence - 2) / 2)).padStart(2, "0")}.`
+                : `FILLER_${String(Math.ceil((sequence - 2) / 2)).padStart(2, "0")}.`,
+        });
+      }),
+    ];
+
+    const prepared = prepareFridayConversationTurn({
+      task: "that one",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "How do I bake sourdough bread? Answer in one short sentence.",
+        currentTopicStartSequence: 27,
+        assistantAnchorSummary: "To bake sourdough bread, combine flour, water, salt, and your active sourdough starter, then ferment, shape, and bake the dough.",
+      },
+      currentUserSequence: 29,
+      historyRecords,
+      replyToMessageId: "discord-msg-2",
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.selectedBlocks[0]?.source).toBe("reply_anchor");
+    expect(prepared.selectedBlocks.some((block) => block.summary.includes("sourdough bread"))).toBe(false);
+    expect(prepared.taskPrompt).not.toContain("Continue the current topic: How do I bake sourdough bread");
+    expect(prepared.taskPrompt).toContain("Referenced assistant fact: The GitHub issue was browser not connected.");
+    expect(prepared.taskPrompt).toContain("explicit reply anchor");
   });
 
   it("does not treat a new topic as follow-up when the only overlap is a weak assistant token", () => {
