@@ -2004,12 +2004,27 @@ async function runLocalStage(ledger) {
       });
     }
   } finally {
-    server.kill("SIGTERM");
     await new Promise((resolve) => {
-      server.on("close", resolve);
-      setTimeout(() => {
-        if (!server.killed) server.kill("SIGKILL");
+      if (server.exitCode !== null || server.signalCode !== null) {
+        resolve();
+        return;
+      }
+      let settled = false;
+      const settle = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(forceKillTimer);
+        resolve();
+      };
+      const forceKillTimer = setTimeout(() => {
+        if (server.exitCode === null && server.signalCode === null) {
+          server.kill("SIGKILL");
+        }
       }, 5_000);
+      server.once("close", settle);
+      server.kill("SIGTERM");
     });
     serverLogStream.end();
   }

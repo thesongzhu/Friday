@@ -93,6 +93,7 @@ function mockRegistry(overrides?: Partial<FridaySubagentRegistry>): FridaySubage
   return {
     spawn: vi.fn().mockResolvedValue(makeOutcome()),
     spawnDetached: vi.fn().mockReturnValue(makeDetachedResult()),
+    drain: vi.fn().mockResolvedValue(undefined),
     startRun: vi.fn().mockResolvedValue(makeOutcome()),
     waitForCompletion: vi.fn().mockResolvedValue(makeOutcome()),
     finalize: vi.fn(),

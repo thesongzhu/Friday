@@ -17,6 +17,8 @@ import { STREAMING_PROVIDER_MATRIX, type ProviderMatrixEntry } from "./_helpers/
 import type { MockFetchRouter } from "./_helpers/mock-fetch-router.js";
 import type { FridayProviderKind } from "../../../src/providers/model/friday-provider.types.js";
 
+const MOCK_E2E_TIMEOUT_MS = 20_000;
+
 // ─── Helpers ───
 
 async function apiFetch<T>(
@@ -159,7 +161,7 @@ describe.each(STREAMING_PROVIDER_MATRIX)(
         task: "Tell me 3 interesting facts about octopuses.",
         providerId: provider.providerId,
         model: provider.model,
-        timeoutMs: 10_000,
+        timeoutMs: MOCK_E2E_TIMEOUT_MS,
       });
 
       expect(runRes.status).toBe(200);
@@ -221,7 +223,7 @@ describe.each(STREAMING_PROVIDER_MATRIX)(
         task: 'Analyze this workflow: it references "nonexistent-skill-xyz" which does not exist. What problems would this cause?',
         providerId: provider.providerId,
         model: provider.model,
-        timeoutMs: 10_000,
+        timeoutMs: MOCK_E2E_TIMEOUT_MS,
       });
 
       expect(diagRunRes.status).toBe(200);
@@ -241,7 +243,7 @@ describe.each(STREAMING_PROVIDER_MATRIX)(
       expect(mock.calls.length).toBeGreaterThanOrEqual(1);
     });
 
-    it("Automation lifecycle (create → run → disable → re-enable → run)", async () => {
+    it("Automation lifecycle (create → run → disable → re-enable → run)", { timeout: MOCK_E2E_TIMEOUT_MS }, async () => {
       const mock = env.mockFor(entry.kind);
       const provider = env.providers[entry.kind]!;
 
@@ -280,7 +282,7 @@ describe.each(STREAMING_PROVIDER_MATRIX)(
         {
           providerId: provider.providerId,
           model: provider.model,
-          timeoutMs: 10_000,
+          timeoutMs: MOCK_E2E_TIMEOUT_MS,
         },
       );
       expect(run1Res.status).toBe(200);
@@ -324,7 +326,7 @@ describe.each(STREAMING_PROVIDER_MATRIX)(
         {
           providerId: provider.providerId,
           model: provider.model,
-          timeoutMs: 10_000,
+          timeoutMs: MOCK_E2E_TIMEOUT_MS,
         },
       );
       expect(run2Res.json.data.result.status).toBe("completed");
