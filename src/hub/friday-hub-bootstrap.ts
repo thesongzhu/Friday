@@ -1325,10 +1325,47 @@ export async function createFridayHub(
     const focusState = input.sessionKey
       ? await hubSessionService.getConversationFocus(input.sessionKey).catch(() => null)
       : null;
-    const trackedRunId = focusState?.activeRunId
-      ?? input.runId
-      ?? focusState?.pendingPlanRunId
-      ?? focusState?.lastRunId;
+
+    const resolveExistingRunId = (...candidates: Array<string | undefined>): string | undefined => {
+      for (const candidate of candidates) {
+        if (!candidate) {
+          continue;
+        }
+        const existing = stateRuntime!.sqlite.withReadConnection((reader) => agentRunRepo.getById(reader, candidate));
+        if (existing) {
+          return candidate;
+        }
+      }
+      return undefined;
+    };
+
+    const collectSubagentTree = (parentRunId: string): ReturnType<typeof subagentRegistry.listByParentRunId> => {
+      const queue = [parentRunId];
+      const seen = new Set<string>();
+      const records: ReturnType<typeof subagentRegistry.listByParentRunId> = [];
+      while (queue.length > 0) {
+        const currentParentRunId = queue.shift();
+        if (!currentParentRunId) {
+          continue;
+        }
+        for (const record of subagentRegistry.listByParentRunId(currentParentRunId)) {
+          if (seen.has(record.id)) {
+            continue;
+          }
+          seen.add(record.id);
+          records.push(record);
+          queue.push(record.childRunId);
+        }
+      }
+      return records;
+    };
+
+    const trackedRunId = resolveExistingRunId(
+      focusState?.activeRunId,
+      focusState?.pendingPlanRunId,
+      focusState?.lastRunId,
+      input.runId,
+    );
     const trackedRun = trackedRunId
       ? stateRuntime!.sqlite.withReadConnection((reader) => agentRunRepo.getById(reader, trackedRunId))
       : null;
@@ -1354,10 +1391,10 @@ export async function createFridayHub(
       }
     }
 
-    const activeSubagentIds = focusState?.activeSubagentIds ?? [];
-    const activeSubagents = activeSubagentIds
-      .map((subagentId) => subagentRegistry.getById(subagentId))
-      .filter((record): record is NonNullable<typeof record> => record !== null)
+    const subagentRecords = trackedRunId ? collectSubagentTree(trackedRunId) : [];
+    const activeSubagents = subagentRecords
+      .filter((record) => record.status === "pending" || record.status === "running")
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .map((record) => ({
         id: record.id,
         childRunId: record.childRunId,
@@ -1369,6 +1406,30 @@ export async function createFridayHub(
         startedAt: record.startedAt,
         completedAt: record.completedAt,
         durationMs: record.durationMs,
+        outcomeStatus: record.outcome?.status,
+        outcomeResponse: record.outcome?.response,
+      }));
+
+    const recentCompletedSubagents = subagentRecords
+      .filter((record) => record.status === "completed" || record.status === "failed" || record.status === "cancelled")
+      .sort((left, right) => {
+        const leftTime = left.completedAt ?? left.createdAt;
+        const rightTime = right.completedAt ?? right.createdAt;
+        return rightTime.localeCompare(leftTime);
+      })
+      .map((record) => ({
+        id: record.id,
+        childRunId: record.childRunId,
+        childSessionKey: record.childSessionKey,
+        status: record.status,
+        task: record.task,
+        label: record.label,
+        createdAt: record.createdAt,
+        startedAt: record.startedAt,
+        completedAt: record.completedAt,
+        durationMs: record.durationMs,
+        outcomeStatus: record.outcome?.status,
+        outcomeResponse: record.outcome?.response,
       }));
 
     const blockers: string[] = [];
@@ -1389,6 +1450,39 @@ export async function createFridayHub(
       ? Math.max(0, Date.now() - new Date(trackedRun.startedAt).getTime())
       : undefined;
 
+    const latestCompletedSubagent = recentCompletedSubagents[0];
+    const trackedRunCompletedAt = trackedRun?.completedAt;
+    const latestSubagentCompletedAfterTrackedRun = Boolean(
+      latestCompletedSubagent?.completedAt
+        && trackedRunCompletedAt
+        && latestCompletedSubagent.completedAt > trackedRunCompletedAt,
+    );
+    const trackedRunLooksStale = Boolean(
+      trackedRun?.responseText
+      && /still running|currently executing|accepted|delegated snapshot/i.test(trackedRun.responseText),
+    );
+    const terminalOutcome = trackedRun && (
+      trackedRun.status === "completed"
+      || trackedRun.status === "failed"
+      || trackedRun.status === "cancelled"
+    )
+      ? (
+          latestCompletedSubagent?.outcomeStatus
+            && latestCompletedSubagent.outcomeResponse
+            && (latestSubagentCompletedAfterTrackedRun || trackedRunLooksStale)
+        )
+          ? {
+              status: latestCompletedSubagent.outcomeStatus,
+              summary: latestCompletedSubagent.outcomeResponse,
+              responseText: latestCompletedSubagent.outcomeResponse,
+            }
+          : {
+              status: trackedRun.status,
+              summary: trackedRun.summary,
+              responseText: trackedRun.responseText,
+            }
+      : undefined;
+
     return {
       readOnly: input.readOnly,
       sessionKey: input.sessionKey,
@@ -1399,19 +1493,10 @@ export async function createFridayHub(
       elapsedMs,
       latestTool,
       activeSubagents,
+      recentCompletedSubagents: recentCompletedSubagents.slice(0, 3),
       blockers,
       pendingPlanRunId: focusState?.pendingPlanRunId,
-      terminalOutcome: trackedRun && (
-        trackedRun.status === "completed"
-        || trackedRun.status === "failed"
-        || trackedRun.status === "cancelled"
-      )
-        ? {
-            status: trackedRun.status,
-            summary: trackedRun.summary,
-            responseText: trackedRun.responseText,
-          }
-        : undefined,
+      terminalOutcome,
     };
   };
 

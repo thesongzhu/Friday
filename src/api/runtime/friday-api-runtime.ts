@@ -2091,12 +2091,31 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         const result = await agentPlanningGate.approvePlan({ runId });
         const run = deps.db.withReadConnection((db) => agentRepo.getById(db, runId));
         if (run?.sessionKey) {
-          const currentFocus = await sessionService.getConversationFocus(run.sessionKey).catch(() => null);
-          await sessionService.setConversationFocus(run.sessionKey, {
-            ...(currentFocus ?? { updatedAt: deps.nowIso() }),
-            pendingPlanRunId: undefined,
-            updatedAt: deps.nowIso(),
+          await sessionService.addMessage(run.sessionKey, {
+            role: "assistant",
+            content: result.response,
+            contentText: result.response,
+            idempotencyKey: `agent-run:${result.runId}:response`,
           }).catch(() => undefined);
+          const currentFocus = await sessionService.getConversationFocus(run.sessionKey).catch(() => null);
+          const nextPendingPlanRunId = result.status === "awaiting_clarification"
+            || result.status === "awaiting_plan_approval"
+            ? result.runId
+            : null;
+          await sessionService.setConversationFocus(
+            run.sessionKey,
+            finalizeFridayConversationFocus({
+              task: run.task,
+              responseText: result.response,
+              runId: result.runId,
+              turnKind: result.status === "awaiting_clarification"
+                ? "clarification"
+                : "continue_active_task",
+              focusState: currentFocus,
+              pendingPlanRunId: nextPendingPlanRunId,
+              nowIso: deps.nowIso(),
+            }),
+          ).catch(() => undefined);
         }
         return result;
       },

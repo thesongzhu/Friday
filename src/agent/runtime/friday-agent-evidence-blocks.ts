@@ -8,9 +8,19 @@ import type { FridayAgentCapabilitiesSnapshot } from "../tools/friday-agent-capa
 import type { FridayAgentTaskStatusSnapshot } from "../tools/friday-agent-task-status-tool.js";
 
 const STATUS_HINTS =
-  /\b(status|progress|running|waiting|completed|failed|blocked|doing|doing right now|result|results|latest result|eta|done yet|finished yet|what are you doing|what happened|what was the issue|why failed)\b/i;
+  /\b(status|progress|running|waiting|completed|failed|blocked|doing|doing right now|latest result|eta|done yet|finished yet|what are you doing|what happened|what was the issue|why failed)\b/i;
 const CHINESE_STATUS_HINTS =
   /(状态|进度|还在|等待|完成了吗|失败|为什么failed|为什么失败|现在在做什么|那个任务结果呢|结果呢|怎么了|发生了什么)/;
+const STATUS_QUESTION_PREFIX_HINTS =
+  /^(?:what(?:'s| is)?|why|how|when|did|does|is|are|where|status|progress|result|results|latest result|what are you doing|what happened|what was the issue|why failed)\b/i;
+const CHINESE_STATUS_QUESTION_PREFIX_HINTS =
+  /^(?:状态|进度|还在|等待|完成了吗|失败|为什么failed|为什么失败|现在在做什么|那个任务结果呢|结果呢|怎么了|发生了什么)/;
+const STATUS_REFERENCE_HINTS =
+  /^(?:that task|that run|that result|that one|the result|what is the final result now|what's the final result now|what is the result now|what's the result now)$/i;
+const CHINESE_STATUS_REFERENCE_HINTS =
+  /^(?:那个任务结果呢|结果呢|这里|那个|同一个问题)$/;
+const STATUS_FALSE_POSITIVES =
+  /\bgit status\b|\breport the result\b|\bworkflow response\b|\brepo-health-check\b/i;
 const CAPABILITY_HINTS =
   /\b(capabilities?|what can\b|can (?:friday|you)\b.*\bdo\b|enabled|disabled|deployment|runtime facts?|messaging|discord|mcp|desktop companion|provider mutations?|read[- ]?only)\b/i;
 const CHINESE_CAPABILITY_HINTS =
@@ -103,16 +113,43 @@ function formatTaskStatusSummary(snapshot: FridayAgentTaskStatusSnapshot): strin
   } else if (snapshot.terminalOutcome?.responseText) {
     parts.push(`response ${snapshot.terminalOutcome.responseText}`);
   }
+  const latestCompletedSubagent = snapshot.recentCompletedSubagents?.[0];
+  if (latestCompletedSubagent?.outcomeResponse) {
+    parts.push(`latest completed subagent ${latestCompletedSubagent.id} response ${latestCompletedSubagent.outcomeResponse}`);
+  }
   return normalizeText(parts.join("; "));
 }
 
 function shouldIncludeStatusEvidence(input: BuildFridayEvidenceBlocksInput): boolean {
-  return input.turnKind === "status_check"
-    || STATUS_HINTS.test(input.task)
-    || CHINESE_STATUS_HINTS.test(input.task)
-    || Boolean(input.focusState?.pendingPlanRunId)
-    || Boolean(input.focusState?.activeRunId)
-    || Boolean(input.focusState?.activeSubagentIds?.length);
+  if (input.turnKind === "status_check") {
+    return true;
+  }
+
+  const task = normalizeText(input.task);
+  if (task.length === 0) {
+    return false;
+  }
+
+  if (STATUS_FALSE_POSITIVES.test(task)) {
+    return false;
+  }
+
+  if (STATUS_QUESTION_PREFIX_HINTS.test(task) || CHINESE_STATUS_QUESTION_PREFIX_HINTS.test(task)) {
+    return true;
+  }
+
+  if (/[?？]/.test(task) && (STATUS_HINTS.test(task) || CHINESE_STATUS_HINTS.test(task))) {
+    return true;
+  }
+
+  if (
+    (input.focusState?.pendingPlanRunId || input.focusState?.activeRunId || input.focusState?.activeSubagentIds?.length)
+    && (STATUS_REFERENCE_HINTS.test(task) || CHINESE_STATUS_REFERENCE_HINTS.test(task))
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function shouldIncludeCapabilitiesEvidence(input: BuildFridayEvidenceBlocksInput): boolean {
@@ -172,6 +209,23 @@ export function buildFridayEvidenceBlocks(
         ].filter((value): value is string => Boolean(value)).join("; ")),
         score: input.turnKind === "status_check" ? 112 : 82,
         reason: "Active delegated subagent selected as deterministic status evidence.",
+      });
+    }
+
+    for (const subagent of (input.taskStatusSnapshot.recentCompletedSubagents ?? []).slice(0, 2)) {
+      blocks.push({
+        id: `evidence:completed-subagent:${subagent.id}`,
+        source: "delegated_task_block",
+        summary: normalizeText([
+          `subagent ${subagent.id}`,
+          subagent.label ? `label ${subagent.label}` : undefined,
+          `status ${subagent.status}`,
+          `task ${subagent.task}`,
+          subagent.childRunId ? `child run ${subagent.childRunId}` : undefined,
+          subagent.outcomeResponse ? `response ${subagent.outcomeResponse}` : undefined,
+        ].filter((value): value is string => Boolean(value)).join("; ")),
+        score: input.turnKind === "status_check" ? 111 : 81,
+        reason: "Latest completed delegated subagent selected as deterministic result evidence.",
       });
     }
 
