@@ -484,8 +484,9 @@ describe("createFridayProviderInferenceClient", () => {
         sessionContext,
       });
 
-      // Should have at least 2 fetch calls: compaction summarize + main inference
-      expect(allFetchCalls.length).toBeGreaterThanOrEqual(2);
+      // Block compaction can now preserve enough relevant context to avoid a separate
+      // summarization round-trip, but every provider fetch must still carry OAuth headers.
+      expect(allFetchCalls.length).toBeGreaterThanOrEqual(1);
 
       // Verify EVERY fetch call has OAuth headers and system prefix
       for (const call of allFetchCalls) {
