@@ -248,7 +248,7 @@ describe("FridayProviderFallback", () => {
 
     it("treats blank requestedModel as no requested model", () => {
       const fb = createFridayProviderFallback();
-      const providers = [makeProvider("p1", "openai", true, "provider-default", ["model-a", "model-b"])];
+      const providers = [makeProvider("p1", "openai", true, "model-b", ["model-a", "model-b"])];
       const routing: FridayModelRoutingConfig = {
         defaultProviderId: "p1",
         defaultModel: "routing-default",
@@ -262,12 +262,14 @@ describe("FridayProviderFallback", () => {
       });
 
       expect(candidates).toHaveLength(1);
-      expect(candidates[0].model).toBe("routing-default");
+      expect(candidates[0].model).toBe("model-b");
     });
 
-    it("falls back to routing.defaultModel when no requestedModel", () => {
+    it("uses routing.defaultModel when the current provider supports it", () => {
       const fb = createFridayProviderFallback();
-      const providers = [makeProvider("p1")];
+      const providers = [
+        makeProvider("p1", "openai", true, "gpt-4o", ["gpt-4o", "gpt-4-turbo"]),
+      ];
       const routing: FridayModelRoutingConfig = {
         defaultProviderId: "p1",
         defaultModel: "gpt-4-turbo",
@@ -282,9 +284,49 @@ describe("FridayProviderFallback", () => {
       expect(candidates[0].model).toBe("gpt-4-turbo");
     });
 
+    it("falls back to each provider's own supported default when routing.defaultModel is provider-specific", () => {
+      const fb = createFridayProviderFallback();
+      const providers = [
+        makeProvider(
+          "anthropic-default",
+          "anthropic",
+          true,
+          "claude-opus-4-20250514",
+          ["claude-opus-4-20250514"],
+        ),
+        makeProvider(
+          "openai-fallback",
+          "openai",
+          true,
+          "gpt-4.1-mini",
+          ["gpt-4.1-mini", "gpt-4o-mini"],
+        ),
+      ];
+      const routing: FridayModelRoutingConfig = {
+        defaultProviderId: "anthropic-default",
+        defaultModel: "claude-opus-4-20250514",
+        fallbackProviderIds: ["openai-fallback"],
+      };
+
+      const candidates = fb.resolveCandidates({
+        routing,
+        providers,
+      });
+
+      expect(candidates).toHaveLength(2);
+      expect(candidates[0]).toMatchObject({
+        provider: expect.objectContaining({ id: "anthropic-default" }),
+        model: "claude-opus-4-20250514",
+      });
+      expect(candidates[1]).toMatchObject({
+        provider: expect.objectContaining({ id: "openai-fallback" }),
+        model: "gpt-4.1-mini",
+      });
+    });
+
     it("falls back to provider.defaultModel when no routing model", () => {
       const fb = createFridayProviderFallback();
-      const providers = [makeProvider("p1", "openai", true, "provider-default")];
+      const providers = [makeProvider("p1", "openai", true, "provider-default", ["provider-default", "model-b"])];
       const routing: FridayModelRoutingConfig = {
         defaultProviderId: "p1",
         fallbackProviderIds: [],
