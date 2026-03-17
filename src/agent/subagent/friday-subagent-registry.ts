@@ -113,6 +113,7 @@ export function createFridaySubagentRegistry(
 
     // Create child runtime
     const childRuntime = createChildRuntime({
+      providerId: input.providerId,
       model: input.model,
       systemPrompt,
       depth: input.depth + 1,
@@ -133,10 +134,14 @@ export function createFridaySubagentRegistry(
       const timeoutMs = input.timeoutMs ?? FRIDAY_SUBAGENT_DEFAULT_TIMEOUT_MS;
       const result = await childRuntime.executeRun({
         task: input.task,
+        taskPrompt: input.taskPrompt,
         runId: childRunId,
         sessionKey: childSessionKey,
+        providerId: input.providerId,
+        model: input.model,
         timezone: input.timezone,
         timeoutMs,
+        conversationContext: input.conversationContext,
         signal: input.signal,
         constraints: input.constraints,
       });

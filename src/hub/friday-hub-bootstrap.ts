@@ -37,6 +37,7 @@ import {
   createFridaySecretRepository,
   decryptSecret,
   getMasterKey,
+  resolveFridayRoutingStabilityWarning,
 } from "#providers";
 import type { FridayEncryptedEnvelope, FridayProviderApi } from "#providers";
 import { FridaySkillRegistryImpl, safeParseFridaySkillManifestV2 } from "#skills";
@@ -1868,6 +1869,18 @@ export async function createFridayHub(
   } catch {
     // No provider configured yet — use generic identity.
   }
+  try {
+    const [routing, providers] = await Promise.all([
+      providerService.getRoutingConfig(),
+      providerService.listProviders(),
+    ]);
+    const routingWarning = resolveFridayRoutingStabilityWarning({ routing, providers });
+    if (routingWarning) {
+      console.warn(`[friday][W-PROVIDER-ROUTING-001] ${routingWarning}`);
+    }
+  } catch {
+    // Non-fatal: provider routing diagnostics should not block startup.
+  }
 
   // Dynamic system prompt builder — invoked at each executeRun() with the
   // current set of registered tool names, so the prompt is always accurate.
@@ -1989,8 +2002,12 @@ export async function createFridayHub(
     delegationHandler: async (input) => {
       const detached = subagentRegistry.spawnDetached({
         task: input.task,
+        taskPrompt: input.taskPrompt,
+        providerId: input.providerId,
+        model: input.model,
         timezone: input.timezone,
         timeoutMs: input.timeoutMs,
+        conversationContext: input.conversationContext,
         parentRunId: input.runId,
         parentSessionKey: input.sessionKey,
         depth: 0,
@@ -2105,7 +2122,7 @@ export async function createFridayHub(
         db: stateRuntime!.sqlite,
         llmClient: agentLlmClient,
         model: params.model ?? agentDefaultModel,
-        providerId: agentDefaultProviderId,
+        providerId: params.providerId ?? agentDefaultProviderId,
         systemPrompt: params.systemPrompt,
         tools: childTools,
         eventEmitter: agentEventEmitter,
@@ -4027,6 +4044,11 @@ export async function createFridayHub(
                 content: text,
                 contentText: text,
                 idempotencyKey: inboundIdempotencyKey,
+                metadata: {
+                  sourceMessageId: msg.id,
+                  ...(msg.replyTo ? { replyToMessageId: msg.replyTo } : {}),
+                  channelKind: msg.channelKind,
+                },
               }).catch((err) => {
                 // Non-fatal: session mirror errors should not block channel handling.
                 logChannelIssue({
@@ -4058,6 +4080,7 @@ export async function createFridayHub(
                     historyRecords: messages.filter((message) => message.idempotencyKey !== inboundIdempotencyKey),
                     focusState,
                     currentUserSequence: inboundMessage?.sequence,
+                    replyToMessageId: msg.replyTo,
                   }))
                 .catch((err) => {
                   logChannelIssue({
@@ -4072,6 +4095,10 @@ export async function createFridayHub(
                     taskPrompt: text,
                     previousTopicSummary: undefined,
                     currentTopicSummary: text,
+                    selectedBlocks: [],
+                    selectionReasons: [],
+                    replyAnchorMessageId: undefined,
+                    replyAnchorSequence: undefined,
                   };
                 });
 
@@ -4079,6 +4106,9 @@ export async function createFridayHub(
                 turnKind: preparedTurn.turnKind,
                 previousTopicSummary: preparedTurn.previousTopicSummary,
                 currentTopicSummary: preparedTurn.currentTopicSummary,
+                selectedBlocks: preparedTurn.selectedBlocks,
+                selectionReasons: preparedTurn.selectionReasons,
+                replyToMessageId: msg.replyTo,
               };
               const planningDecision = agentPlanningGate.handleTurn({
                 runId,
@@ -4142,23 +4172,6 @@ export async function createFridayHub(
                   constraints: preparedTurn.turnKind === "status_check" ? { readOnly: true } : undefined,
                   principalId: msg.senderId,
                 });
-                await hubSessionService.addMessage(sessionKey, {
-                  role: "assistant",
-                  content: result.response,
-                  contentText: result.response,
-                  idempotencyKey: resolveAgentMirrorIdempotencyKey({
-                    runId: result.runId,
-                    kind: "assistant",
-                    status: result.status,
-                  }),
-                }).catch((err) => {
-                  logChannelIssue({
-                    level: "warn",
-                    code: "W-CH-SESSION-MIRROR-001",
-                    routeId: "hub.channel.session.mirror.assistant",
-                    error: err,
-                  });
-                });
               } else if (planningDecision.action === "reject") {
                 result = agentPlanningGate.rejectPlan({
                   runId: planningDecision.runId,
@@ -4192,23 +4205,6 @@ export async function createFridayHub(
                   principalId: msg.senderId,
                   timezone: msg.timezone,
                 });
-                await hubSessionService.addMessage(sessionKey, {
-                  role: "assistant",
-                  content: result.response,
-                  contentText: result.response,
-                  idempotencyKey: resolveAgentMirrorIdempotencyKey({
-                    runId: result.runId,
-                    kind: "assistant",
-                    status: result.status,
-                  }),
-                }).catch((err) => {
-                  logChannelIssue({
-                    level: "warn",
-                    code: "W-CH-SESSION-MIRROR-001",
-                    routeId: "hub.channel.session.mirror.assistant",
-                    error: err,
-                  });
-                });
               }
 
               await hubSessionService.setConversationFocus(
@@ -4220,6 +4216,8 @@ export async function createFridayHub(
                   turnKind: preparedTurn.turnKind,
                   focusState: await hubSessionService.getConversationFocus(sessionKey).catch(() => focusState),
                   currentUserSequence: inboundMessage?.sequence,
+                  replyAnchorMessageId: preparedTurn.replyAnchorMessageId,
+                  replyAnchorSequence: preparedTurn.replyAnchorSequence,
                   pendingPlanRunId:
                     planningDecision.action === "return"
                       ? (planningDecision.pendingPlanRunId ?? null)
@@ -4267,11 +4265,43 @@ export async function createFridayHub(
               );
 
               try {
-                await channelRegistry.send(msg.channelKind, {
+                const delivery = await channelRegistry.send(msg.channelKind, {
                   chatId: msg.chatId,
                   text: outboundText,
                   replyTo: msg.id,
                   images: outboundImages,
+                });
+                const assistantMirrorIdempotencyKey = planningDecision.action === "return"
+                  ? resolveAgentMirrorIdempotencyKey({
+                    runId: result.runId,
+                    kind: "planning",
+                    status: result.status,
+                  })
+                  : planningDecision.action === "reject"
+                    ? resolveAgentMirrorIdempotencyKey({
+                      runId: result.runId,
+                      kind: "planning-reject",
+                    })
+                    : resolveAgentMirrorIdempotencyKey({
+                      runId: result.runId,
+                      kind: "assistant",
+                      status: result.status,
+                    });
+                await hubSessionService.updateMessageMetadataByIdempotency(sessionKey, {
+                  idempotencyKey: assistantMirrorIdempotencyKey,
+                  metadataPatch: {
+                    sourceMessageId: delivery.messageId,
+                    replyToMessageId: msg.id,
+                    channelKind: msg.channelKind,
+                  },
+                }).catch((err) => {
+                  logChannelIssue({
+                    level: "warn",
+                    code: "W-CH-SESSION-MIRROR-001",
+                    routeId: "hub.channel.session.mirror.outbound_source",
+                    runId: result.runId,
+                    error: err,
+                  });
                 });
               } catch (err) {
                 logChannelIssue({

@@ -65,6 +65,14 @@ export function createFridaySessionService(
         typeof candidate.currentTopicSummary === "string" ? candidate.currentTopicSummary : undefined,
       currentTopicStartSequence:
         typeof candidate.currentTopicStartSequence === "number" ? candidate.currentTopicStartSequence : undefined,
+      assistantAnchorSummary:
+        typeof candidate.assistantAnchorSummary === "string" ? candidate.assistantAnchorSummary : undefined,
+      assistantAnchorFingerprint:
+        typeof candidate.assistantAnchorFingerprint === "string" ? candidate.assistantAnchorFingerprint : undefined,
+      replyAnchorMessageId:
+        typeof candidate.replyAnchorMessageId === "string" ? candidate.replyAnchorMessageId : undefined,
+      replyAnchorSequence:
+        typeof candidate.replyAnchorSequence === "number" ? candidate.replyAnchorSequence : undefined,
       lastAnsweredQuestion:
         typeof candidate.lastAnsweredQuestion === "string" ? candidate.lastAnsweredQuestion : undefined,
       lastAssistantAskedQuestion:
@@ -378,6 +386,18 @@ export function createFridaySessionService(
 
         return record;
       });
+    },
+
+    async updateMessageMetadataByIdempotency(key, input) {
+      key = canonicalizeFridaySessionKey(key);
+      return deps.db.withWriteTransaction((db) =>
+        messageRepo.updateMetadataByIdempotency(db, {
+          sessionKey: key,
+          idempotencyKey: input.idempotencyKey,
+          metadataPatch: input.metadataPatch,
+          nowIso: deps.nowIso(),
+        }),
+      );
     },
 
     async getMessages(key, limit, before) {

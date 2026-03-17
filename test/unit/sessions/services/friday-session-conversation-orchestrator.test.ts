@@ -14,6 +14,7 @@ function makeMessage(input: {
   sequence: number;
   role: "user" | "assistant";
   contentText: string;
+  metadata?: Record<string, unknown>;
 }): FridaySessionMessageRecord {
   return {
     id: `msg-${String(input.sequence)}`,
@@ -24,7 +25,7 @@ function makeMessage(input: {
     content: input.contentText,
     contentText: input.contentText,
     tokenCount: 0,
-    metadata: {},
+    metadata: input.metadata ?? {},
     memoryExtractStatus: "skipped",
     occurredAt: "2026-03-15T10:00:00.000Z",
     createdAt: "2026-03-15T10:00:00.000Z",
@@ -66,6 +67,7 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.turnKind).toBe("follow_up");
     expect(prepared.historyMessages).toHaveLength(4);
     expect(prepared.taskPrompt).toContain("Continue the current topic");
+    expect(prepared.selectedBlocks.length).toBeGreaterThan(0);
   });
 
   it("drops prior content history for a new topic", () => {
@@ -84,6 +86,70 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.turnKind).toBe("new_topic");
     expect(prepared.historyMessages).toEqual([]);
     expect(prepared.taskPrompt).toContain("Current question: How do I bake sourdough bread?");
+  });
+
+  it("classifies short follow-ups against the latest assistant answer", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "为什么没有connect",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "看一下我桌面上的codex app给我的回复是什么",
+        assistantAnchorSummary: "The desktop companion is not connected.",
+      },
+      currentUserSequence: 5,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "看一下我桌面上的codex app给我的回复是什么" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "I cannot inspect it because the desktop companion is not connected." }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.selectedBlocks.some((block) => block.source === "assistant_anchor")).toBe(true);
+    expect(prepared.taskPrompt).toContain("Relevant anchors");
+  });
+
+  it("resolves reply anchors from platform source message ids", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "这里",
+      focusState: baseFocusState,
+      currentUserSequence: 5,
+      replyToMessageId: "discord-msg-2",
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "Open GitHub" }),
+        makeMessage({
+          sequence: 2,
+          role: "assistant",
+          contentText: "I could not open it because the browser was not connected.",
+          metadata: { sourceMessageId: "discord-msg-2" },
+        }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.replyAnchorMessageId).toBe("msg-2");
+    expect(prepared.selectedBlocks[0]?.source).toBe("reply_anchor");
+  });
+
+  it("builds an anchored follow-up prompt even without persisted focus state", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "why didn't it connect/open?",
+      currentUserSequence: 5,
+      replyToMessageId: "discord-msg-2",
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "open github" }),
+        makeMessage({
+          sequence: 2,
+          role: "assistant",
+          contentText: "I could not open GitHub because the browser session was not connected.",
+          metadata: { sourceMessageId: "discord-msg-2" },
+        }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.taskPrompt).toContain("specifically referenced earlier exchange");
+    expect(prepared.taskPrompt).toContain("Relevant anchors");
+    expect(prepared.taskPrompt).toContain("Do not reinterpret this as a generic troubleshooting or research request");
   });
 
   it("treats explicit progress checks as status_check and avoids prior answer history", () => {
@@ -156,6 +222,7 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(focus.currentTopicStartSequence).toBe(9);
     expect(focus.lastRunId).toBe("run-2");
     expect(focus.lastTurnKind).toBe("new_topic");
+    expect(focus.assistantAnchorSummary).toBe("Use a starter and let the dough ferment overnight.");
   });
 
   it("preserves another active run when a status-check turn finishes", () => {

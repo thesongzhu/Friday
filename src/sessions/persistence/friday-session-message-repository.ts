@@ -103,6 +103,16 @@ export interface FridaySessionMessageRepository {
     input: { sessionKey: string; messageId: string },
   ): FridaySessionMessageRecord | null;
 
+  updateMetadataByIdempotency(
+    db: Database.Database,
+    input: {
+      sessionKey: string;
+      idempotencyKey: string;
+      metadataPatch: Record<string, unknown>;
+      nowIso: string;
+    },
+  ): FridaySessionMessageRecord | null;
+
   listForkContextWindow(
     db: Database.Database,
     input: { sessionKey: string; limit: number; maxSequence?: number },
@@ -210,6 +220,35 @@ export function createFridaySessionMessageRepository(): FridaySessionMessageRepo
       const row = db.prepare(
         "SELECT * FROM session_messages WHERE session_key = ? AND id = ?",
       ).get(input.sessionKey, input.messageId) as FridaySessionMessageRow | undefined;
+
+      return row ? rowToRecord(row) : null;
+    },
+
+    updateMetadataByIdempotency(db, input) {
+      const existing = this.findByIdempotency(db, {
+        sessionKey: input.sessionKey,
+        idempotencyKey: input.idempotencyKey,
+      });
+      if (!existing) {
+        return null;
+      }
+
+      const mergedMetadata = {
+        ...(existing.metadata ?? {}),
+        ...input.metadataPatch,
+      };
+
+      db.prepare(
+        "UPDATE session_messages SET metadata_json = ?, updated_at = ? WHERE id = ?",
+      ).run(
+        JSON.stringify(mergedMetadata),
+        input.nowIso,
+        existing.id,
+      );
+
+      const row = db.prepare(
+        "SELECT * FROM session_messages WHERE id = ?",
+      ).get(existing.id) as FridaySessionMessageRow | undefined;
 
       return row ? rowToRecord(row) : null;
     },

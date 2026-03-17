@@ -81,6 +81,7 @@ export interface FridaySessionRunRequest {
   task?: string;
   providerId?: string;
   model?: string;
+  replyToMessageId?: string;
   timezone?: string;
   timeoutMs?: number;
 }

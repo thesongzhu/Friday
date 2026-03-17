@@ -52,9 +52,38 @@ describe("FridayAgentRuntime delegation", () => {
       task: "Open Facebook and tell me what is on the page.",
       runId: "run-1",
       sessionKey: "ui:command-center:test",
+      taskPrompt: "Focus on the reply anchor and do not reframe this as generic troubleshooting.",
+      providerId: "provider-openai",
+      model: "gpt-4.1",
+      conversationContext: {
+        turnKind: "follow_up",
+        previousTopicSummary: "Desktop connection issue",
+        currentTopicSummary: "Why didn't it connect?",
+        selectedBlocks: [
+          {
+            id: "reply-anchor-1",
+            source: "reply_anchor",
+            summary: "Friday previously said the desktop companion was not connected.",
+            score: 1,
+            sequenceStart: 2,
+            sequenceEnd: 3,
+          },
+        ],
+        selectionReasons: ["reply anchor"],
+        replyToMessageId: "discord-msg-123",
+      },
     });
 
     expect(delegationHandler).toHaveBeenCalledOnce();
+    expect(delegationHandler).toHaveBeenCalledWith(expect.objectContaining({
+      taskPrompt: "Focus on the reply anchor and do not reframe this as generic troubleshooting.",
+      providerId: "provider-openai",
+      model: "gpt-4.1",
+      conversationContext: expect.objectContaining({
+        turnKind: "follow_up",
+        replyToMessageId: "discord-msg-123",
+      }),
+    }));
     expect(llmClient.stream).not.toHaveBeenCalled();
     expect(result.status).toBe("completed");
     expect(result.response).toContain("Delegated child completed successfully.");

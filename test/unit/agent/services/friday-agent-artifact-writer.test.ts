@@ -66,6 +66,48 @@ describe("FridayAgentArtifactWriter", () => {
     expect(runMeta.status).toBe("completed");
     expect(runMeta.durationMs).toBe(5000);
     expect(runMeta.costUsd).toBe(0.01);
+    expect(runMeta.contextSelection).toBeNull();
+  });
+
+  it("writes contextSelection debug metadata when provided", () => {
+    const writer = createFridayAgentArtifactWriter(tmpDir);
+    const result = writer.writeRunArtifacts({
+      ...makeParams(),
+      conversationContext: {
+        turnKind: "follow_up",
+        previousTopicSummary: "Desktop companion is not connected.",
+        currentTopicSummary: "Desktop companion is not connected.",
+        replyToMessageId: "discord-msg-2",
+        selectedBlocks: [
+          {
+            id: "reply:msg-2",
+            source: "reply_anchor",
+            summary: "assistant: Desktop companion is not connected.",
+            score: 100,
+            reason: "Explicit reply target matched a prior session message.",
+            messageIds: ["msg-2"],
+          },
+        ],
+        selectionReasons: ["reply anchor → msg-2"],
+      },
+    });
+
+    const runMeta = JSON.parse(fs.readFileSync(path.join(result.artifactDir, "run.json"), "utf-8"));
+    expect(runMeta.contextSelection).toEqual({
+      turnKind: "follow_up",
+      selectedBlocks: [
+        {
+          id: "reply:msg-2",
+          source: "reply_anchor",
+          summary: "assistant: Desktop companion is not connected.",
+          score: 100,
+          reason: "Explicit reply target matched a prior session message.",
+          messageIds: ["msg-2"],
+        },
+      ],
+      selectionReasons: ["reply anchor → msg-2"],
+      replyToMessageId: "discord-msg-2",
+    });
   });
 
   it("response.md contains response text", () => {
