@@ -942,6 +942,8 @@ export function createFridayAgentRuntime(
             nowIso: runTimeContext.nowIso,
             timezone: runTimeContext.timezone,
             localDate: runTimeContext.localDate,
+            task: params.task,
+            conversationContext,
           }))
           : (staticSystemPrompt ?? "You are an AI assistant.");
 
