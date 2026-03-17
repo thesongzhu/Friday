@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createFridayAgentSubagentTools, FRIDAY_SUBAGENT_ERROR_CODES } from "#agent";
 import type {
+  FridayAgentConversationContext,
   FridaySubagentRegistry,
   FridaySubagentContext,
   FridaySubagentOutcome,
@@ -16,7 +17,14 @@ function signal(): AbortSignal {
 }
 
 function signalWithContext(
-  overrides?: Partial<{ runId: string; sessionKey: string; readOnly: boolean; timezone: string }>,
+  overrides?: Partial<{
+    runId: string;
+    sessionKey: string;
+    readOnly: boolean;
+    timezone: string;
+    taskPrompt: string;
+    conversationContext: FridayAgentConversationContext;
+  }>,
 ): AbortSignal {
   const controller = new AbortController();
   return attachFridayAgentToolExecutionContext(controller.signal, {
@@ -24,6 +32,8 @@ function signalWithContext(
     sessionKey: overrides?.sessionKey ?? "agent:run:live-run-1",
     readOnly: overrides?.readOnly ?? false,
     timezone: overrides?.timezone,
+    taskPrompt: overrides?.taskPrompt,
+    conversationContext: overrides?.conversationContext,
   });
 }
 
@@ -324,6 +334,47 @@ describe("FridayAgentSubagentTools", () => {
       expect(spawnDetachedFn).toHaveBeenCalledWith(
         expect.objectContaining({
           timezone: "America/New_York",
+        }),
+      );
+    });
+
+    it("forwards taskPrompt and conversationContext from the execution signal", async () => {
+      const spawnDetachedFn = vi.fn().mockReturnValue(makeDetachedResult());
+      const registry = mockRegistry({ spawnDetached: spawnDetachedFn });
+
+      const tools = createFridayAgentSubagentTools({
+        registry,
+        subagentContext: makeContext(),
+      });
+
+      const spawnTool = tools.find((t) => t.name === "spawn_subagent")!;
+      await spawnTool.execute(
+        { task: "why didn't it connect/open?" },
+        signalWithContext({
+          taskPrompt: "The user is following up on a specifically referenced earlier exchange.",
+          conversationContext: {
+            turnKind: "follow_up",
+            selectedBlocks: [
+              {
+                id: "reply:msg-2",
+                source: "reply_anchor",
+                summary: "assistant: I could not open GitHub because the browser session was not connected.",
+                score: 100,
+                reason: "Explicit reply target matched a prior session message.",
+              },
+            ],
+            selectionReasons: ["reply_anchor → Explicit reply target matched a prior session message."],
+            replyToMessageId: "discord-assistant-2",
+          },
+        }),
+      );
+
+      expect(spawnDetachedFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskPrompt: "The user is following up on a specifically referenced earlier exchange.",
+          conversationContext: expect.objectContaining({
+            replyToMessageId: "discord-assistant-2",
+          }),
         }),
       );
     });

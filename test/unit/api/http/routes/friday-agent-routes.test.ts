@@ -186,6 +186,29 @@ describe("FridayAgentRoutes", () => {
       expect(result).toEqual(createStubResult());
     });
 
+    it("forwards replyToMessageId when provided", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const ctx = {
+        body: { task: "Continue that", replyToMessageId: "msg-42" },
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await route.handler(ctx);
+
+      expect(stubDeps.startRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          task: "Continue that",
+          replyToMessageId: "msg-42",
+        }),
+      );
+    });
+
     it("forwards sessionKey when provided", async () => {
       const routes = createFridayAgentRoutes(stubDeps);
       const route = routes.find((r) => r.operationId === "agent.runs.start")!;
@@ -232,6 +255,22 @@ describe("FridayAgentRoutes", () => {
         receivedAt: "2026-01-01T00:00:00.000Z",
       };
       await expect(route.handler(ctx)).rejects.toThrow("timeoutMs must be a positive number");
+    });
+
+    it("validates replyToMessageId is non-empty when provided", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const ctx = {
+        body: { task: "test", replyToMessageId: "   " },
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await expect(route.handler(ctx)).rejects.toThrow("replyToMessageId must be a non-empty string when provided");
     });
 
     it("forwards requireReview flag", async () => {

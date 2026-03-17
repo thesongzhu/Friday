@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import type { FridayAgentArtifact, FridayAgentTestResult, FridayAgentToolCallRecord } from "../model/friday-agent.types.js";
+import type { FridayAgentConversationContext } from "../runtime/friday-agent-runtime.types.js";
 
 // ─── Types ───
 
@@ -29,6 +30,7 @@ export interface FridayAgentArtifactWriterParams {
   usageOutput: number;
   costUsd?: number;
   completedAt: string;
+  conversationContext?: FridayAgentConversationContext;
 }
 
 export interface FridayAgentArtifactWriterResult {
@@ -58,6 +60,14 @@ export function createFridayAgentArtifactWriter(
         usageOutput: params.usageOutput,
         costUsd: params.costUsd ?? null,
         completedAt: params.completedAt,
+        contextSelection: params.conversationContext
+          ? {
+            turnKind: params.conversationContext.turnKind ?? null,
+            selectedBlocks: params.conversationContext.selectedBlocks ?? [],
+            selectionReasons: params.conversationContext.selectionReasons ?? [],
+            replyToMessageId: params.conversationContext.replyToMessageId ?? null,
+          }
+          : null,
       };
       fs.writeFileSync(
         path.join(runDir, "run.json"),

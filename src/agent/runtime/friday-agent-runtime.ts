@@ -49,6 +49,54 @@ import { getApprovalRequiredReasonForToolCall } from "./friday-agent-tool-risk.j
 
 const RULES_EVALUATE_SCOPE = "rules:evaluate";
 
+function hasCjkText(text: string): boolean {
+  return /[\u4e00-\u9fff]/u.test(text);
+}
+
+function deriveReplyAnchorAssistantFact(
+  conversationContext?: FridayAgentConversationContext,
+): string | undefined {
+  const summary = conversationContext?.selectedBlocks
+    ?.find((block) => block.source === "reply_anchor")
+    ?.summary
+    ?.trim();
+  if (!summary) {
+    return undefined;
+  }
+  const assistantMatch = summary.match(/assistant:\s*([\s\S]+)$/i);
+  const fact = assistantMatch?.[1]?.trim() ?? summary;
+  return fact.length > 0 ? fact : undefined;
+}
+
+function buildReplyAnchorFallbackResponse(params: {
+  task: string;
+  conversationContext?: FridayAgentConversationContext;
+}): string | undefined {
+  const assistantFact = deriveReplyAnchorAssistantFact(params.conversationContext);
+  if (!assistantFact) {
+    return undefined;
+  }
+
+  if (hasCjkText(params.task)) {
+    return [
+      `我把这条追问锚定到前面的回复：${assistantFact}${assistantFact.endsWith("。") ? "" : "。"}`,
+      "基于这条已知事实，我目前能确认的是前面提到的情况本身。",
+      "更深一层的根因我现在没有可验证证据，所以不做额外假设。",
+    ].join("");
+  }
+
+  return [
+    `I'm anchoring this follow-up to the earlier reply: ${assistantFact}${/[.!?]$/.test(assistantFact) ? "" : "."}`,
+    " Based on that referenced fact, that's the concrete explanation I can verify here.",
+    " I do not have deeper root-cause evidence beyond that, so I won't speculate.",
+  ].join("");
+}
+
+function hasExplicitResearchIntent(task: string): boolean {
+  return /\b(search|research|look up|lookup|find sources|find source|latest|news|browse|google)\b/i.test(task)
+    || /(搜索|搜一下|查一下|查一查|上网查|最新|新闻|帮我找资料)/.test(task);
+}
+
 // ─── Factory ───
 
 export function createFridayAgentRuntime(
@@ -200,9 +248,15 @@ export function createFridayAgentRuntime(
       const startedAt = Date.now();
       const constraints = params.constraints;
       const isReadOnly = constraints?.readOnly === true;
-      const disabledToolNames = normalizeToolNameSet(params.disabledToolNames);
+      const disabledToolNames = new Set(normalizeToolNameSet(params.disabledToolNames));
       const executionContext = params.executionContext;
       const conversationContext = params.conversationContext;
+      const hasReplyAnchor = Boolean(
+        conversationContext?.selectedBlocks?.some((block) => block.source === "reply_anchor"),
+      );
+      if (hasReplyAnchor && !hasExplicitResearchIntent(params.task)) {
+        disabledToolNames.add("web_search");
+      }
       const principalId =
         typeof params.principalId === "string" && params.principalId.trim().length > 0
           ? params.principalId
@@ -218,6 +272,28 @@ export function createFridayAgentRuntime(
         ?? normalizeDefaultRouteSentinel(providerId);
       const requestedModel = normalizeDefaultRouteSentinel(params.model)
         ?? normalizeDefaultRouteSentinel(model);
+      const mirrorAssistantResponse = async (
+        response: string,
+        toolCalls?: FridayAgentToolCallRecord[],
+      ): Promise<void> => {
+        if (!sessionMirror || response.trim().length === 0) {
+          return;
+        }
+        try {
+          await sessionMirror(sessionKey, {
+            role: "assistant",
+            content: response,
+            contentText: response,
+            idempotencyKey: `agent-run:${runId}:response`,
+            toolCalls: toolCalls && toolCalls.length > 0 ? toolCalls : undefined,
+          });
+        } catch (error) {
+          console.warn(
+            `[friday][W-AG-SESSION-MIRROR-001] Failed to mirror assistant response for run ${runId}:`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      };
 
       function deriveEta(elapsedMs: number): { eta?: number; etaConfidence: FridayAgentEtaConfidence } {
         if (timeoutMs > elapsedMs) {
@@ -406,6 +482,7 @@ export function createFridayAgentRuntime(
             usageOutput: totalOutputTokens,
             costUsd: input.costUsd,
             completedAt: input.completedAt,
+            conversationContext,
           });
           artifactDir = writerResult.artifactDir;
           writtenArtifacts = writerResult.artifacts;
@@ -419,11 +496,11 @@ export function createFridayAgentRuntime(
         return { artifactDir, artifacts: writtenArtifacts };
       };
 
-      const transitionToAwaitingClarification = (input: {
+      const transitionToAwaitingClarification = async (input: {
         kind: FridayPlanningGateKind;
         questions: string[];
         currentPlanReview?: FridayAgentPlanReviewPayload;
-      }): FridayAgentRuntimeResult => {
+      }): Promise<FridayAgentRuntimeResult> => {
         const durationMs = Date.now() - startedAt;
         const totalCostUsd = actualTurns.reduce((sum, turn) => sum + (turn.costUsd ?? 0), 0);
         const lastTurn = actualTurns[actualTurns.length - 1];
@@ -477,6 +554,7 @@ export function createFridayAgentRuntime(
           questions: input.questions,
           planKind: input.kind,
         });
+        await mirrorAssistantResponse(clarificationResponse, allToolCalls);
 
         return {
           runId,
@@ -553,6 +631,20 @@ export function createFridayAgentRuntime(
           task: params.task,
           model: requestedModel,
           providerId: requestedProviderId,
+          contextSelection: conversationContext
+            ? {
+              turnKind: conversationContext.turnKind,
+              selectedBlocks: (conversationContext.selectedBlocks ?? []).map((block) => ({
+                id: block.id,
+                source: block.source,
+                summary: block.summary,
+                score: block.score,
+                reason: block.reason,
+                messageIds: block.messageIds,
+              })),
+              selectionReasons: conversationContext.selectionReasons,
+            }
+            : undefined,
         });
 
         db.withWriteTransaction((writer) =>
@@ -676,6 +768,9 @@ export function createFridayAgentRuntime(
             runId,
             sessionKey,
             task: params.task,
+            taskPrompt: llmTask,
+            providerId: requestedProviderId,
+            model: requestedModel,
             timezone: params.timezone,
             timeoutMs,
             signal: runAbortController.signal,
@@ -767,22 +862,7 @@ export function createFridayAgentRuntime(
                 artifacts: persistedArtifacts.artifacts.map((a) => ({ type: a.type, path: a.path })),
               });
 
-              if (sessionMirror && terminalResponse) {
-                try {
-                  await sessionMirror(sessionKey, {
-                    role: "assistant",
-                    content: terminalResponse,
-                    contentText: terminalResponse,
-                    idempotencyKey: `agent-run:${runId}:response`,
-                    toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
-                  });
-                } catch (error) {
-                  console.warn(
-                    `[friday][W-AG-SESSION-MIRROR-001] Failed to mirror assistant response for delegated run ${runId}:`,
-                    error instanceof Error ? error.message : String(error),
-                  );
-                }
-              }
+              await mirrorAssistantResponse(terminalResponse, allToolCalls);
 
               return {
                 runId,
@@ -813,6 +893,8 @@ export function createFridayAgentRuntime(
                 correlationId: delegated.childRunId,
               });
             }
+
+            await mirrorAssistantResponse(terminalResponse, allToolCalls);
 
             return {
               runId,
@@ -1013,10 +1095,11 @@ export function createFridayAgentRuntime(
               historyMessages: normalizeHistoryMessages(params.historyMessages),
               conversationContext,
             });
+            const maxAnswerAlignmentRetries = hasReplyAnchor ? 2 : 1;
             if (
               alignmentDecision.retryPrompt &&
               alignedResponse.trim().length > 0 &&
-              answerAlignmentRetries < 1
+              answerAlignmentRetries < maxAnswerAlignmentRetries
             ) {
               answerAlignmentRetries++;
               messages.push({
@@ -1024,6 +1107,21 @@ export function createFridayAgentRuntime(
                 content: alignmentDecision.retryPrompt,
               });
               continue;
+            }
+
+            if (
+              alignmentDecision.retryPrompt
+              && alignedResponse.trim().length > 0
+              && hasReplyAnchor
+            ) {
+              const anchoredFallback = buildReplyAnchorFallbackResponse({
+                task: params.task,
+                conversationContext,
+              });
+              if (anchoredFallback) {
+                responseText = anchoredFallback;
+                break;
+              }
             }
 
             responseText = alignedResponse;
@@ -1238,6 +1336,8 @@ export function createFridayAgentRuntime(
               sessionKey,
               readOnly: isReadOnly,
               timezone: runTimeContext.timezone,
+              taskPrompt: llmTask,
+              conversationContext,
               principalId,
               executionContext,
               nowIso,
@@ -1282,7 +1382,7 @@ export function createFridayAgentRuntime(
 
           const generatorClarificationSignal = extractGeneratorClarificationSignal(allToolCalls);
           if (generatorClarificationSignal) {
-            return transitionToAwaitingClarification({
+            return await transitionToAwaitingClarification({
               ...generatorClarificationSignal,
               currentPlanReview: planReview,
             });
@@ -1447,6 +1547,7 @@ export function createFridayAgentRuntime(
               routeId: "agent.execute.run.validation",
               correlationId: runCorrelationId,
             });
+            await mirrorAssistantResponse(responseText || "Validation criteria not met", allToolCalls);
 
             return {
               runId,
@@ -1522,6 +1623,7 @@ export function createFridayAgentRuntime(
             routeId: "agent.execute.run.output_closure",
             correlationId: runCorrelationId,
           });
+          await mirrorAssistantResponse(failureResponse, allToolCalls);
 
           return {
             runId,
@@ -1575,24 +1677,7 @@ export function createFridayAgentRuntime(
           artifacts: persistedArtifacts.artifacts.map((a) => ({ type: a.type, path: a.path })),
         });
 
-        // ─── IMPL-6: Session mirror ───
-        if (sessionMirror && responseText) {
-          try {
-            await sessionMirror(sessionKey, {
-              role: "assistant",
-              content: responseText,
-              contentText: responseText,
-              idempotencyKey: `agent-run:${runId}:response`,
-              toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
-            });
-          } catch (error) {
-            // Non-fatal: mirror failure should not kill the run.
-            console.warn(
-              `[friday][W-AG-SESSION-MIRROR-001] Failed to mirror assistant response for run ${runId}:`,
-              error instanceof Error ? error.message : String(error),
-            );
-          }
-        }
+        await mirrorAssistantResponse(responseText, allToolCalls);
 
         return {
           runId,
@@ -1650,6 +1735,7 @@ export function createFridayAgentRuntime(
           routeId: "agent.execute.run.unhandled",
           correlationId: runCorrelationId,
         });
+        await mirrorAssistantResponse(responseText || errorMessage, allToolCalls);
 
         return {
           runId,
@@ -2965,6 +3051,8 @@ interface ExecuteToolCallParams {
   sessionKey: string;
   readOnly: boolean;
   timezone?: string;
+  taskPrompt?: string;
+  conversationContext?: FridayAgentConversationContext;
   principalId?: string;
   executionContext?: FridayAgentExecutionContext;
   nowIso: () => string;
@@ -3142,6 +3230,8 @@ async function executeToolCall(
       sessionKey,
       readOnly: params.readOnly,
       timezone: params.timezone,
+      taskPrompt: params.taskPrompt,
+      conversationContext: params.conversationContext,
     });
     const rawResult = await tool.execute(toolArgs, toolSignal);
     const durationMs = Date.now() - startedAt;
