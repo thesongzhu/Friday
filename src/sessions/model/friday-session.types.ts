@@ -8,6 +8,31 @@ export type FridayConversationTurnKind =
   | "status_check"
   | "continue_active_task";
 
+export type FridayConversationBlockSource =
+  | "reply_anchor"
+  | "assistant_anchor"
+  | "recent_user"
+  | "focus_topic"
+  | "active_run"
+  | "pending_plan"
+  | "status_anchor";
+
+export interface FridayConversationBlock {
+  id: string;
+  source: FridayConversationBlockSource;
+  summary: string;
+  score: number;
+  reason: string;
+  messageIds?: string[];
+  sequenceStart?: number;
+  sequenceEnd?: number;
+}
+
+export interface FridayContextSelectionResult {
+  selectedBlocks: FridayConversationBlock[];
+  selectionReasons: string[];
+}
+
 /**
  * Send policy controls whether outbound messages are allowed for a session.
  * - "allow"  — messages can be sent (default behavior)
@@ -58,6 +83,10 @@ export interface FridaySessionConversationFocusState {
   currentTopicFingerprint?: string;
   currentTopicSummary?: string;
   currentTopicStartSequence?: number;
+  assistantAnchorSummary?: string;
+  assistantAnchorFingerprint?: string;
+  replyAnchorMessageId?: string;
+  replyAnchorSequence?: number;
   lastAnsweredQuestion?: string;
   lastAssistantAskedQuestion?: boolean;
   lastRunId?: string;

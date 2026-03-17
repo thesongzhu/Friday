@@ -265,6 +265,62 @@ describe("FridaySubagentRegistry", () => {
       );
     });
 
+    it("passes taskPrompt and conversationContext through to the child executeRun", async () => {
+      const executeRun = vi.fn().mockResolvedValue(makeResult());
+      const createChildRuntime = vi.fn().mockReturnValue({ executeRun });
+
+      const registry = createRegistry({ createChildRuntime });
+      await registry.spawn(spawnInput({
+        task: "why didn't it connect/open?",
+        taskPrompt: "The user is following up on a specifically referenced earlier exchange.",
+        conversationContext: {
+          turnKind: "follow_up",
+          selectedBlocks: [
+            {
+              id: "reply:msg-2",
+              source: "reply_anchor",
+              summary: "assistant: I could not open GitHub because the browser session was not connected.",
+              score: 100,
+              reason: "Explicit reply target matched a prior session message.",
+            },
+          ],
+          selectionReasons: ["reply_anchor → Explicit reply target matched a prior session message."],
+          replyToMessageId: "discord-assistant-2",
+        },
+      }));
+
+      expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+        taskPrompt: "The user is following up on a specifically referenced earlier exchange.",
+        conversationContext: expect.objectContaining({
+          replyToMessageId: "discord-assistant-2",
+        }),
+      }));
+    });
+
+    it("passes provider and model overrides through to child executeRun", async () => {
+      const executeRun = vi.fn().mockResolvedValue(makeResult());
+      const createChildRuntime = vi.fn().mockReturnValue({ executeRun });
+
+      const registry = createRegistry({ createChildRuntime });
+      await registry.spawn(spawnInput({
+        providerId: "provider-openai",
+        model: "gpt-4.1",
+      }));
+
+      expect(createChildRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerId: "provider-openai",
+          model: "gpt-4.1",
+        }),
+      );
+      expect(executeRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerId: "provider-openai",
+          model: "gpt-4.1",
+        }),
+      );
+    });
+
     it("persists requesterSessionKey and rootRunId", async () => {
       const registry = createRegistry();
       await registry.spawn(spawnInput({ rootRunId: "root-123" }));

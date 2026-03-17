@@ -1,5 +1,6 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridayEvaluationContext, FridayEvaluationResult } from "#rules";
+import type { FridayConversationBlock } from "#sessions";
 
 import type {
   FridayAgentMessage,
@@ -27,12 +28,18 @@ export interface FridayAgentConversationContext {
   turnKind?: "new_topic" | "follow_up" | "clarification" | "status_check" | "continue_active_task";
   previousTopicSummary?: string;
   currentTopicSummary?: string;
+  selectedBlocks?: FridayConversationBlock[];
+  selectionReasons?: string[];
+  replyToMessageId?: string;
 }
 
 export interface FridayAgentDelegationRequest {
   runId: string;
   sessionKey: string;
   task: string;
+  taskPrompt?: string;
+  providerId?: string;
+  model?: string;
   timezone?: string;
   timeoutMs: number;
   signal: AbortSignal;

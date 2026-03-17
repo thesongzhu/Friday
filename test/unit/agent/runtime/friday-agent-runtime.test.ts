@@ -587,6 +587,467 @@ describe("FridayAgentRuntime", () => {
     );
   });
 
+  it("retries when a reply-anchor follow-up asks for more context instead of answering the anchored point", async () => {
+    const capturedCalls: FridayAgentMessage[][] = [];
+    let callIndex = 0;
+
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedCalls.push(params.messages.map((message) => ({
+          role: message.role,
+          content: typeof message.content === "string"
+            ? message.content
+            : JSON.parse(JSON.stringify(message.content)),
+        })));
+        if (callIndex === 0) {
+          callIndex++;
+          yield { type: "text_delta", text: "关于“这里”，我无法确定您具体指的内容。如果您能提供更多上下文，我将乐意帮助您。" };
+          yield { type: "message_end", stopReason: "end_turn", inputTokens: 6, outputTokens: 10 };
+          return;
+        }
+        yield { type: "text_delta", text: "这里指的是前面提到的桌面伴侣没有连接，所以 Friday 无法查看桌面内容。" };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 7, outputTokens: 12 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "这里",
+      taskPrompt: [
+        "Continue the current topic: 桌面伴侣未连接",
+        "Relevant anchors:",
+        "- [reply_anchor] assistant: The desktop companion is not connected.",
+        "An explicit reply anchor was selected. Do not ask what 'this/that/here' refers to unless the reply anchor itself is ambiguous.",
+        "Latest user turn: 这里",
+      ].join("\n"),
+      historyMessages: [
+        { role: "user", content: "看一下我桌面上的codex app给我的回复是什么" },
+        { role: "assistant", content: "The desktop companion is not connected." },
+      ],
+      conversationContext: {
+        turnKind: "follow_up",
+        previousTopicSummary: "桌面伴侣未连接",
+        currentTopicSummary: "桌面伴侣未连接",
+        selectedBlocks: [
+          {
+            id: "reply:msg-2",
+            source: "reply_anchor",
+            summary: "assistant: The desktop companion is not connected.",
+            score: 100,
+            reason: "Explicit reply target matched a prior session message.",
+            messageIds: ["msg-2"],
+          },
+        ],
+        selectionReasons: ["reply_anchor → Explicit reply target matched a prior session message."],
+        replyToMessageId: "discord-assistant-1",
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("The desktop companion is not connected");
+    expect(capturedCalls).toHaveLength(3);
+    expect(capturedCalls[1]![capturedCalls[1]!.length - 1]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("explicit reply anchor was already selected"),
+      }),
+    );
+    expect(capturedCalls[2]![capturedCalls[2]!.length - 1]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("without carrying forward any concrete detail"),
+      }),
+    );
+  });
+
+  it("retries when a reply-anchor follow-up drifts into generic troubleshooting without anchored facts", async () => {
+    const capturedCalls: FridayAgentMessage[][] = [];
+    let callIndex = 0;
+
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedCalls.push(params.messages.map((message) => ({
+          role: message.role,
+          content: typeof message.content === "string"
+            ? message.content
+            : JSON.parse(JSON.stringify(message.content)),
+        })));
+        if (callIndex === 0) {
+          callIndex++;
+          yield { type: "text_delta", text: "Common reasons applications fail to open include network issues, outdated software, or app crashes." };
+          yield { type: "message_end", stopReason: "end_turn", inputTokens: 7, outputTokens: 14 };
+          return;
+        }
+        yield { type: "text_delta", text: "It did not open because the browser session was not connected in the earlier GitHub attempt." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 15 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "why didn't it connect/open?",
+      taskPrompt: [
+        "The user is following up on a specifically referenced earlier exchange.",
+        "Relevant anchors:",
+        "- [reply_anchor] user: open github assistant: I could not open GitHub because the browser session was not connected.",
+        "Latest user turn: why didn't it connect/open?",
+        "An explicit reply anchor was selected. Answer the referenced point directly from the anchored context.",
+        "Do not reinterpret this as a generic troubleshooting or research request unless the user explicitly broadens the scope.",
+      ].join("\n"),
+      historyMessages: [
+        { role: "user", content: "open github" },
+        { role: "assistant", content: "I could not open GitHub because the browser session was not connected." },
+      ],
+      conversationContext: {
+        turnKind: "follow_up",
+        currentTopicSummary: "open github",
+        selectedBlocks: [
+          {
+            id: "reply:msg-2",
+            source: "reply_anchor",
+            summary: "user: open github assistant: I could not open GitHub because the browser session was not connected.",
+            score: 100,
+            reason: "Explicit reply target matched a prior session message.",
+            messageIds: ["msg-1", "msg-2"],
+          },
+        ],
+        selectionReasons: ["reply_anchor → Explicit reply target matched a prior session message."],
+        replyToMessageId: "discord-assistant-2",
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("browser session was not connected");
+    expect(capturedCalls).toHaveLength(2);
+    expect(capturedCalls[1]![capturedCalls[1]!.length - 1]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("without carrying forward any concrete detail"),
+      }),
+    );
+  });
+
+  it("retries and anchors a Chinese short follow-up instead of generic troubleshooting", async () => {
+    const capturedCalls: FridayAgentMessage[][] = [];
+    let callIndex = 0;
+
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedCalls.push(params.messages.map((message) => ({
+          role: message.role,
+          content: typeof message.content === "string"
+            ? message.content
+            : JSON.parse(JSON.stringify(message.content)),
+        })));
+        if (callIndex === 0) {
+          callIndex++;
+          yield {
+            type: "text_delta",
+            text: "您提到的 Codex 应用没有连接的原因可能是由于多种因素。以下是一些常见的问题和解决方法：1. 网络问题。2. 权限问题。",
+          };
+          yield { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 24 };
+          return;
+        }
+        yield {
+          type: "text_delta",
+          text: "前面那次不是网络排障，而是我在尝试访问 Codex 应用时遇到了无效的 URL，所以当时没能直接读取通知。",
+        };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 22 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "为什么没有connect",
+      taskPrompt: [
+        "用户是在追问前面一条明确引用的回复。",
+        "Relevant anchors:",
+        "- [reply_anchor] user: 看一下我桌面上的codex app给我的回复是什么 assistant: 我尝试访问 Codex 应用时遇到了无效的 URL，所以没能直接读取通知。",
+        "Latest user turn: 为什么没有connect",
+        "显式 reply anchor 已经选中。先解释前面那条回复里已经出现的具体事实，不要改写成泛化排障清单。",
+      ].join("\n"),
+      historyMessages: [
+        { role: "user", content: "看一下我桌面上的codex app给我的回复是什么" },
+        { role: "assistant", content: "我尝试访问 Codex 应用时遇到了无效的 URL，所以没能直接读取通知。" },
+      ],
+      conversationContext: {
+        turnKind: "follow_up",
+        currentTopicSummary: "桌面上的 Codex 应用回复",
+        selectedBlocks: [
+          {
+            id: "reply:msg-cn-2",
+            source: "reply_anchor",
+            summary: "user: 看一下我桌面上的codex app给我的回复是什么 assistant: 我尝试访问 Codex 应用时遇到了无效的 URL，所以没能直接读取通知。",
+            score: 100,
+            reason: "Explicit reply target matched a prior session message.",
+            messageIds: ["msg-cn-1", "msg-cn-2"],
+          },
+        ],
+        selectionReasons: ["reply_anchor → Explicit reply target matched a prior session message."],
+        replyToMessageId: "discord-assistant-cn-2",
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("无效");
+    expect(result.response).toContain("URL");
+    expect(capturedCalls).toHaveLength(2);
+    expect(capturedCalls[1]![capturedCalls[1]!.length - 1]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("generic troubleshooting"),
+      }),
+    );
+  });
+
+  it("allows up to two alignment retries for reply-anchor follow ups", async () => {
+    let callIndex = 0;
+    const capturedCalls: FridayAgentMessage[][] = [];
+
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedCalls.push(params.messages.map((message) => ({
+          role: message.role,
+          content: typeof message.content === "string"
+            ? message.content
+            : JSON.parse(JSON.stringify(message.content)),
+        })));
+        if (callIndex === 0) {
+          callIndex++;
+          yield { type: "text_delta", text: "I need more context to know what you mean by that." };
+          yield { type: "message_end", stopReason: "end_turn", inputTokens: 6, outputTokens: 11 };
+          return;
+        }
+        if (callIndex === 1) {
+          callIndex++;
+          yield { type: "text_delta", text: "Common reasons things fail to open include network issues or bad settings." };
+          yield { type: "message_end", stopReason: "end_turn", inputTokens: 7, outputTokens: 13 };
+          return;
+        }
+        yield { type: "text_delta", text: "The earlier GitHub attempt did not open because the browser session was not connected. I do not have deeper root-cause evidence beyond that anchored fact." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 18 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "why didn't it connect/open?",
+      taskPrompt: [
+        "The user is following up on a specifically referenced earlier exchange.",
+        "Relevant anchors:",
+        "- [reply_anchor] user: open github assistant: I could not open GitHub because the browser session was not connected.",
+        "Latest user turn: why didn't it connect/open?",
+        "An explicit reply anchor was selected. Answer the referenced point directly from the anchored context.",
+      ].join("\n"),
+      historyMessages: [
+        { role: "user", content: "open github" },
+        { role: "assistant", content: "I could not open GitHub because the browser session was not connected." },
+      ],
+      conversationContext: {
+        turnKind: "follow_up",
+        currentTopicSummary: "open github",
+        selectedBlocks: [
+          {
+            id: "reply:msg-2",
+            source: "reply_anchor",
+            summary: "user: open github assistant: I could not open GitHub because the browser session was not connected.",
+            score: 100,
+            reason: "Explicit reply target matched a prior session message.",
+            messageIds: ["msg-1", "msg-2"],
+          },
+        ],
+        selectionReasons: ["reply_anchor → Explicit reply target matched a prior session message."],
+        replyToMessageId: "discord-assistant-2",
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("browser session was not connected");
+    expect(capturedCalls).toHaveLength(3);
+    expect(capturedCalls[1]![capturedCalls[1]!.length - 1]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("explicit reply anchor was already selected"),
+      }),
+    );
+    expect(capturedCalls[2]![capturedCalls[2]!.length - 1]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("without carrying forward any concrete detail"),
+      }),
+    );
+  });
+
+  it("falls back to a deterministic reply-anchor explanation after exhausting alignment retries", async () => {
+    let callIndex = 0;
+
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        callIndex++;
+        if (callIndex === 1) {
+          yield { type: "text_delta", text: "I need more context to know what you mean by that." };
+        } else if (callIndex === 2) {
+          yield { type: "text_delta", text: "Common reasons things fail to open include network issues or bad settings." };
+        } else {
+          yield { type: "text_delta", text: "Generic troubleshooting still applies here." };
+        }
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 7, outputTokens: 12 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "why didn't it connect/open?",
+      historyMessages: [
+        { role: "user", content: "open github" },
+        { role: "assistant", content: "I could not open GitHub because the browser session was not connected." },
+      ],
+      conversationContext: {
+        turnKind: "follow_up",
+        selectedBlocks: [
+          {
+            id: "reply:msg-2",
+            source: "reply_anchor",
+            summary: "user: open github assistant: I could not open GitHub because the browser session was not connected.",
+            score: 100,
+            reason: "Explicit reply target matched a prior session message.",
+            messageIds: ["msg-1", "msg-2"],
+          },
+        ],
+        selectionReasons: ["reply_anchor → Explicit reply target matched a prior session message."],
+        replyToMessageId: "discord-assistant-2",
+      },
+    });
+
+    expect(callIndex).toBe(3);
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("I could not open GitHub because the browser session was not connected.");
+    expect(result.response).toContain("I won't speculate");
+  });
+
+  it("disables web_search for reply-anchor follow ups without explicit research intent", async () => {
+    const webSearchSpy = vi.fn(async () => ({
+      content: "should not be called",
+    }));
+
+    const llmClient = createMockLlmClient([
+      [
+        { type: "tool_use", id: "call-web", name: "web_search", input: { query: "what did that earlier failure mean" } },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 7, outputTokens: 8 },
+      ],
+      [
+        { type: "text_delta", text: "The earlier GitHub attempt did not open because the browser session was not connected." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 13 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [{
+        name: "web_search",
+        description: "Search the web",
+        parameters: {
+          properties: {
+            query: { type: "string" },
+          },
+          required: ["query"],
+        },
+        async execute(args) {
+          return webSearchSpy(args);
+        },
+      }],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "what did that earlier failure mean?",
+      historyMessages: [
+        { role: "user", content: "open github" },
+        { role: "assistant", content: "I could not open GitHub because the browser session was not connected." },
+      ],
+      conversationContext: {
+        turnKind: "follow_up",
+        selectedBlocks: [
+          {
+            id: "reply:msg-2",
+            source: "reply_anchor",
+            summary: "user: open github assistant: I could not open GitHub because the browser session was not connected.",
+            score: 100,
+            reason: "Explicit reply target matched a prior session message.",
+            messageIds: ["msg-1", "msg-2"],
+          },
+        ],
+        selectionReasons: ["reply_anchor → Explicit reply target matched a prior session message."],
+        replyToMessageId: "discord-assistant-2",
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("browser session was not connected");
+    expect(webSearchSpy).not.toHaveBeenCalled();
+  });
+
   it("records usage metadata when LLM reports actual provider fields", async () => {
     const llmClient = createMockLlmClient([
       [
@@ -3260,6 +3721,11 @@ describe("FridayAgentRuntime", () => {
 
     expect(result.status).toBe("completed");
     expect(mockWriter.writeRunArtifacts).toHaveBeenCalledOnce();
+    expect(mockWriter.writeRunArtifacts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationContext: undefined,
+      }),
+    );
 
     const repo = createFridayAgentRunRepository();
     const run = db.withReadConnection((reader) => repo.getById(reader, result.runId));
@@ -3314,6 +3780,7 @@ describe("FridayAgentRuntime", () => {
       expect.objectContaining({
         status: "failed",
         response: "Captured diagnostic summary",
+        conversationContext: undefined,
       }),
     );
 

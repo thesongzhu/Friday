@@ -7,7 +7,7 @@ import {
   finalizeFridayConversationFocus,
   prepareFridayConversationTurn,
 } from "#sessions";
-import type { FridaySessionMessageRecord } from "#sessions";
+import type { FridayConversationBlock, FridaySessionMessageRecord } from "#sessions";
 import {
   createFridayWorkflowBuilderRuntime,
   createFridayWorkflowProductService,
@@ -1577,6 +1577,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       sessionKey?: string;
       providerId?: string;
       model?: string;
+      replyToMessageId?: string;
       timezone?: string;
       timeoutMs?: number;
       signal?: AbortSignal;
@@ -1608,17 +1609,25 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           content: task,
           contentText: task,
           idempotencyKey: inboundIdempotencyKey,
+          metadata: input.replyToMessageId
+            ? { replyToMessageId: input.replyToMessageId }
+            : undefined,
         });
         currentUserSequence = inboundMessage.sequence;
       }
 
       let historyMessages: FridayAgentMessage[] | undefined;
       let taskPrompt = task;
+      let replyAnchorMessageId: string | undefined;
+      let replyAnchorSequence: number | undefined;
       let conversationContext:
         | {
           turnKind?: "new_topic" | "follow_up" | "clarification" | "status_check" | "continue_active_task";
           previousTopicSummary?: string;
           currentTopicSummary?: string;
+          selectedBlocks?: FridayConversationBlock[];
+          selectionReasons?: string[];
+          replyToMessageId?: string;
         }
         | undefined;
       let planningDecision: ReturnType<NonNullable<typeof agentPlanningGate>["handleTurn"]> | undefined;
@@ -1637,6 +1646,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             !inboundIdempotencyKey || message.idempotencyKey !== inboundIdempotencyKey),
           focusState,
           currentUserSequence,
+          replyToMessageId: input.replyToMessageId,
         });
         if (
           input.sessionKey
@@ -1656,7 +1666,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           turnKind: preparedTurn.turnKind,
           previousTopicSummary: preparedTurn.previousTopicSummary,
           currentTopicSummary: preparedTurn.currentTopicSummary,
+          selectedBlocks: preparedTurn.selectedBlocks,
+          selectionReasons: preparedTurn.selectionReasons,
+          replyToMessageId: input.replyToMessageId,
         };
+        replyAnchorMessageId = preparedTurn.replyAnchorMessageId;
+        replyAnchorSequence = preparedTurn.replyAnchorSequence;
 
         if (agentPlanningGate) {
           planningDecision = agentPlanningGate.handleTurn({
@@ -1691,6 +1706,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
                 turnKind: conversationContext.turnKind ?? "new_topic",
                 focusState,
                 currentUserSequence,
+                replyAnchorMessageId: preparedTurn.replyAnchorMessageId,
+                replyAnchorSequence: preparedTurn.replyAnchorSequence,
                 pendingPlanRunId: planningDecision.pendingPlanRunId ?? null,
                 nowIso: deps.nowIso(),
               }),
@@ -1714,16 +1731,6 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
               historyMessages,
               conversationContext,
             });
-            await sessionService.addMessage(input.sessionKey, {
-              role: "assistant",
-              content: approved.response,
-              contentText: approved.response,
-              idempotencyKey: resolveAgentMirrorIdempotencyKey({
-                runId: approved.runId,
-                kind: "assistant",
-                status: approved.status,
-              }),
-            }).catch(() => undefined);
             await sessionService.setConversationFocus(
               input.sessionKey,
               finalizeFridayConversationFocus({
@@ -1733,6 +1740,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
                 turnKind: conversationContext.turnKind ?? "new_topic",
                 focusState: await sessionService.getConversationFocus(input.sessionKey).catch(() => focusState),
                 currentUserSequence,
+                replyAnchorMessageId: preparedTurn.replyAnchorMessageId,
+                replyAnchorSequence: preparedTurn.replyAnchorSequence,
                 pendingPlanRunId:
                   approved.status === "awaiting_clarification" || approved.status === "awaiting_plan_approval"
                     ? approved.runId
@@ -1765,6 +1774,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
                 turnKind: conversationContext.turnKind ?? "new_topic",
                 focusState,
                 currentUserSequence,
+                replyAnchorMessageId: preparedTurn.replyAnchorMessageId,
+                replyAnchorSequence: preparedTurn.replyAnchorSequence,
                 pendingPlanRunId: null,
                 nowIso: deps.nowIso(),
               }),
@@ -1833,16 +1844,6 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       });
 
       if (input.sessionKey && conversationContext?.turnKind) {
-        await sessionService.addMessage(input.sessionKey, {
-          role: "assistant",
-          content: result.response,
-          contentText: result.response,
-          idempotencyKey: resolveAgentMirrorIdempotencyKey({
-            runId: result.runId,
-            kind: "assistant",
-            status: result.status,
-          }),
-        }).catch(() => undefined);
         const latestFocusState = await sessionService
           .getConversationFocus(input.sessionKey)
           .catch(() => focusState);
@@ -1855,6 +1856,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             turnKind: conversationContext.turnKind,
             focusState: latestFocusState,
             currentUserSequence,
+            replyAnchorMessageId,
+            replyAnchorSequence,
             pendingPlanRunId:
               result.status === "awaiting_clarification" || result.status === "awaiting_plan_approval"
                 ? result.runId
@@ -1887,6 +1890,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       task: string;
       providerId?: string;
       model?: string;
+      replyToMessageId?: string;
       timezone?: string;
       timeoutMs?: number;
       principalId?: string;
@@ -1902,6 +1906,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         sessionKey: input.sessionKey,
         providerId: input.providerId,
         model: input.model,
+        replyToMessageId: input.replyToMessageId,
         timezone: input.timezone,
         timeoutMs: input.timeoutMs,
         principalId: input.principalId,
@@ -1945,6 +1950,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       sessionKey?: string;
       providerId?: string;
       model?: string;
+      replyToMessageId?: string;
       timezone?: string;
       timeoutMs?: number;
       requireReview?: boolean;
@@ -1966,6 +1972,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           sessionKey: input.sessionKey,
           providerId: input.providerId,
           model: input.model,
+          replyToMessageId: input.replyToMessageId,
           timezone: input.timezone,
           timeoutMs: input.timeoutMs,
           signal: abortController.signal,

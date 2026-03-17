@@ -255,6 +255,18 @@ export interface FridayAgentRunStartedPayload {
   task: string;
   model: string;
   providerId: string;
+  contextSelection?: {
+    turnKind?: string;
+    selectedBlocks: Array<{
+      id: string;
+      source: string;
+      summary: string;
+      score: number;
+      reason: string;
+      messageIds?: string[];
+    }>;
+    selectionReasons?: string[];
+  };
 }
 
 export interface FridayAgentRunPlanningPayload {
