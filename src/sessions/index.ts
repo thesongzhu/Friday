@@ -34,6 +34,7 @@ export type {
   FridayConversationTurnKind,
   FridayConversationBlockSource,
   FridayConversationBlock,
+  FridayEvidenceBlock,
   FridayConversationHistoryBlockKind,
   FridayConversationHistoryBlockSummary,
   FridayContextSelectionResult,

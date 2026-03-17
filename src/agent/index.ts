@@ -237,6 +237,11 @@ export type {
 } from "./tools/friday-agent-task-status-tool.js";
 export { createFridayAgentTaskStatusTool } from "./tools/friday-agent-task-status-tool.js";
 
+// ─── Evidence block selector ───
+
+export type { BuildFridayEvidenceBlocksInput } from "./runtime/friday-agent-evidence-blocks.js";
+export { buildFridayEvidenceBlocks } from "./runtime/friday-agent-evidence-blocks.js";
+
 // ─── MCP adapter ───
 
 export type {

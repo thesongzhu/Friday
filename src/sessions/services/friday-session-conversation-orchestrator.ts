@@ -8,6 +8,7 @@ import type {
   FridayConversationHistoryBlockKind,
   FridayConversationHistoryBlockSummary,
   FridayConversationTurnKind,
+  FridayEvidenceBlock,
   FridaySessionConversationFocusState,
   FridaySessionMessageRecord,
 } from "../model/friday-session.types.js";
@@ -25,7 +26,7 @@ const DEICTIC_FOLLOW_UP_HINTS = /\b(this one|that one|same one|same issue|that i
 const ADVISORY_CONTINUATION_HINTS = /\b(prefer|preference|recommend|recommendation|recommendations|should i|best)\b/i;
 const STATUS_CHECK_HINTS =
   /\b(status update|check status|current status|what(?:'s| is) (?:the )?status|progress|still working|still running|still executing|what are you doing|what's happening|how long|eta|done yet|finished yet)\b/i;
-const CHINESE_STATUS_CHECK_HINTS = /(状态|进度|还在|多久|完成了吗|现在在做什么|刚才那个任务|还没好|ETA)/;
+const CHINESE_STATUS_CHECK_HINTS = /(状态|进度|还在|多久|完成了吗|现在在做什么|刚才那个任务|那个任务结果呢|结果呢|还没好|ETA)/;
 const CONTINUE_HINTS =
   /\b(continue|go ahead|proceed|keep going|do it|start it|carry on)\b/i;
 const CHINESE_CONTINUE_HINTS = /(继续|开始吧|继续做|接着做|往下做|执行吧)/;
@@ -106,6 +107,7 @@ export interface PrepareFridayConversationTurnInput {
   focusState?: FridaySessionConversationFocusState | null;
   currentUserSequence?: number;
   replyToMessageId?: string;
+  evidenceBlocks?: FridayEvidenceBlock[];
 }
 
 export interface FinalizeFridayConversationFocusInput {
@@ -134,6 +136,22 @@ interface FridayConversationHistoryBlockCandidate {
   reason: string;
   messages: FridayAgentMessage[];
   taskOverlap: number;
+}
+
+function createEvidenceBlockCandidate(
+  block: FridayEvidenceBlock,
+): FridayConversationBlockCandidate {
+  return {
+    block: {
+      id: block.id,
+      source: block.source,
+      summary: summarizeTopic(block.summary),
+      score: block.score,
+      reason: block.reason,
+    },
+    messages: [],
+    fallbackOnly: false,
+  };
 }
 
 function normalizeText(text: string): string {
@@ -605,6 +623,7 @@ function buildConversationBlockSelection(input: {
   focusState?: FridaySessionConversationFocusState | null;
   turnKind: FridayConversationTurnKind;
   replyToMessageId?: string;
+  evidenceBlocks?: FridayEvidenceBlock[];
 }): FridayContextSelectionResult & { historyMessages: FridayAgentMessage[]; replyAnchorMessageId?: string; replyAnchorSequence?: number } {
   const taskTokens = tokenize(input.task);
   const taskLower = normalizeText(input.task).toLowerCase();
@@ -801,6 +820,10 @@ function buildConversationBlockSelection(input: {
       },
       messages: [],
     });
+  }
+
+  for (const evidenceBlock of input.evidenceBlocks ?? []) {
+    registerCandidate(createEvidenceBlockCandidate(evidenceBlock));
   }
 
   const historyBlockCandidates: FridayConversationHistoryBlockCandidate[] = [];
@@ -1119,6 +1142,7 @@ export function prepareFridayConversationTurn(
     focusState,
     turnKind,
     replyToMessageId: input.replyToMessageId,
+    evidenceBlocks: input.evidenceBlocks,
   });
   const currentTopicSummary = turnKind === "new_topic"
     ? summarizeTopic(input.task)

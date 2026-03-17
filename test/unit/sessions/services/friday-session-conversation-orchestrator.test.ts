@@ -6,6 +6,7 @@ import {
   prepareFridayConversationTurn,
 } from "#sessions";
 import type {
+  FridayEvidenceBlock,
   FridaySessionConversationFocusState,
   FridaySessionMessageRecord,
 } from "#sessions";
@@ -210,6 +211,60 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.historyMessages).toHaveLength(2);
     expect(prepared.taskPrompt).toContain("asking for a status update");
     expect(prepared.taskPrompt).toContain("Use the task_status tool before answering.");
+  });
+
+  it("treats Chinese result follow-ups as status_check", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "那个任务结果呢？",
+      focusState: {
+        ...baseFocusState,
+        pendingPlanRunId: "run-plan-1",
+      },
+      currentUserSequence: 5,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "create a new workflow that watches release blockers and posts a summary to Slack every weekday morning" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "Before I execute this major decision, I need one detail to make sure the direction is correct." }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("status_check");
+    expect(prepared.taskPrompt).toContain("asking for a status update");
+    expect(prepared.taskPrompt).toContain("Pending plan run: run-plan-1");
+  });
+
+  it("selects deterministic evidence blocks for status questions", () => {
+    const evidenceBlocks: FridayEvidenceBlock[] = [
+      {
+        id: "evidence:task-status",
+        source: "task_status_block",
+        summary: "run run-2; status running; phase executing; latest tool browser",
+        score: 125,
+        reason: "Deterministic task status snapshot selected for a status/progress/result question.",
+      },
+      {
+        id: "evidence:run-activity",
+        source: "run_event_block",
+        summary: "latest phase executing; latest tool browser; elapsed 12s",
+        score: 114,
+        reason: "Latest run activity derived from deterministic run-event-backed task status.",
+      },
+    ];
+
+    const prepared = prepareFridayConversationTurn({
+      task: "你现在在做什么？",
+      focusState: baseFocusState,
+      currentUserSequence: 3,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "Open Facebook and sign up." }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "I delegated the task to a browser worker." }),
+      ],
+      evidenceBlocks,
+    });
+
+    expect(prepared.turnKind).toBe("status_check");
+    expect(prepared.selectedBlocks.some((block) => block.source === "task_status_block")).toBe(true);
+    expect(prepared.selectedBlocks.some((block) => block.source === "run_event_block")).toBe(true);
+    expect(prepared.taskPrompt).toContain("[task_status_block] run run-2; status running; phase executing; latest tool browser");
   });
 
   it("does not treat workflow requirements containing release status as a status check", () => {

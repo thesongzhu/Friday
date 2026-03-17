@@ -98,6 +98,7 @@ import type { FridayConversationBlock } from "#sessions";
 import type { FridayMemoryFileSyncService, FridayMemoryService } from "#memory";
 import {
   buildFridayAgentSystemPrompt,
+  buildFridayEvidenceBlocks,
   createFridayAgentAgentsListTool,
   createFridayAgentArtifactWriter,
   createFridayAgentCronTool,
@@ -1324,7 +1325,10 @@ export async function createFridayHub(
     const focusState = input.sessionKey
       ? await hubSessionService.getConversationFocus(input.sessionKey).catch(() => null)
       : null;
-    const trackedRunId = focusState?.activeRunId ?? input.runId ?? focusState?.lastRunId;
+    const trackedRunId = focusState?.activeRunId
+      ?? input.runId
+      ?? focusState?.pendingPlanRunId
+      ?? focusState?.lastRunId;
     const trackedRun = trackedRunId
       ? stateRuntime!.sqlite.withReadConnection((reader) => agentRunRepo.getById(reader, trackedRunId))
       : null;
@@ -1372,7 +1376,13 @@ export async function createFridayHub(
       blockers.push(trackedRun.errorMessage);
     }
     if (focusState?.pendingPlanRunId) {
-      blockers.push(`Awaiting plan approval for run ${focusState.pendingPlanRunId}.`);
+      if (trackedRun?.status === "awaiting_clarification") {
+        blockers.push(`Awaiting clarification for run ${focusState.pendingPlanRunId}.`);
+      } else if (trackedRun?.status === "awaiting_plan_approval") {
+        blockers.push(`Awaiting plan approval for run ${focusState.pendingPlanRunId}.`);
+      } else {
+        blockers.push(`Pending planning gate for run ${focusState.pendingPlanRunId}.`);
+      }
     }
 
     const elapsedMs = trackedRun?.startedAt
@@ -2852,6 +2862,8 @@ export async function createFridayHub(
     supportedChannelKinds: [...FRIDAY_SUPPORTED_CHANNEL_KINDS],
     enabledChannelKinds,
     sessionService: hubSessionService,
+    capabilitySnapshotGetter: getAgentCapabilitySnapshot,
+    taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
     serverVersion: config.serverVersion ?? FRIDAY_HUB_DEFAULT_SERVER_VERSION,
     serverHost: config.host ?? "127.0.0.1",
     serverPort: config.port ?? 3141,
@@ -4082,14 +4094,38 @@ export async function createFridayHub(
 
               const preparedTurn = await hubSessionService
                 .getMessages(sessionKey, FRIDAY_CHANNEL_CONTEXT_HISTORY_LIMIT * 2)
-                .then((messages) =>
-                  prepareFridayConversationTurn({
+                .then(async (messages) => {
+                  const filteredMessages = messages.filter((message) => message.idempotencyKey !== inboundIdempotencyKey);
+                  let preparedTurn = prepareFridayConversationTurn({
                     task: text,
-                    historyRecords: messages.filter((message) => message.idempotencyKey !== inboundIdempotencyKey),
+                    historyRecords: filteredMessages,
                     focusState,
                     currentUserSequence: inboundMessage?.sequence,
                     replyToMessageId: msg.replyTo,
-                  }))
+                  });
+                  const evidenceBlocks = buildFridayEvidenceBlocks({
+                    task: text,
+                    turnKind: preparedTurn.turnKind,
+                    focusState,
+                    capabilitiesSnapshot: await getAgentCapabilitySnapshot({ readOnly: false }).catch(() => undefined),
+                    taskStatusSnapshot: await getAgentTaskStatusSnapshot({
+                      runId,
+                      sessionKey,
+                      readOnly: false,
+                    }).catch(() => undefined),
+                  });
+                  if (evidenceBlocks.length > 0) {
+                    preparedTurn = prepareFridayConversationTurn({
+                      task: text,
+                      historyRecords: filteredMessages,
+                      focusState,
+                      currentUserSequence: inboundMessage?.sequence,
+                      replyToMessageId: msg.replyTo,
+                      evidenceBlocks,
+                    });
+                  }
+                  return preparedTurn;
+                })
                 .catch((err) => {
                   logChannelIssue({
                     level: "warn",
@@ -4215,6 +4251,15 @@ export async function createFridayHub(
                 });
               }
 
+              const nextPendingPlanRunId = planningDecision.action === "return"
+                ? (planningDecision.pendingPlanRunId ?? null)
+                : (
+                  result.status === "awaiting_clarification" || result.status === "awaiting_plan_approval"
+                    ? result.runId
+                    : preparedTurn.turnKind === "status_check"
+                      ? undefined
+                      : null
+                );
               await hubSessionService.setConversationFocus(
                 sessionKey,
                 finalizeFridayConversationFocus({
@@ -4226,14 +4271,7 @@ export async function createFridayHub(
                   currentUserSequence: inboundMessage?.sequence,
                   replyAnchorMessageId: preparedTurn.replyAnchorMessageId,
                   replyAnchorSequence: preparedTurn.replyAnchorSequence,
-                  pendingPlanRunId:
-                    planningDecision.action === "return"
-                      ? (planningDecision.pendingPlanRunId ?? null)
-                      : (
-                        result.status === "awaiting_clarification" || result.status === "awaiting_plan_approval"
-                          ? result.runId
-                          : null
-                      ),
+                  pendingPlanRunId: nextPendingPlanRunId,
                   nowIso: nowIso(),
                 }),
               ).catch((err) => {
