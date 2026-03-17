@@ -207,4 +207,136 @@ describe("FridayApiRuntime — planning gate session loop", () => {
     expect(assistantMessages.some((message) => message.includes("Question 3/3"))).toBe(true);
     expect(assistantMessages).toContain(answerThree.response);
   });
+
+  it("preserves pending plan focus when plan approval happens through the direct approve endpoint", async () => {
+    db = createTestDb();
+    const idGenerator = makeIdGenerator();
+    const runRepo = createFridayAgentRunRepository();
+    const eventEmitter = createFridayAgentEventEmitter();
+    let sessionServiceRef:
+      | ReturnType<typeof createFridayApiRuntime>["sessionService"]
+      | undefined;
+    const clarificationQuestions = [
+      "What time on Friday should this workflow run?",
+      "Which Slack channel or webhook should receive the release status summary?",
+      "What specific workspace root path should be checked for release readiness?",
+    ];
+
+    const agentRuntime: FridayAgentRuntime = {
+      executeRun: vi.fn(async (params) => {
+        const existing = db.withReadConnection((reader) => runRepo.getById(reader, params.runId!));
+        const nextPlanReview = {
+          ...(params.planReviewOverride ?? existing?.planReview ?? {
+            plan: {
+              task: params.task,
+              stepCount: 3,
+              description: "Planning gate for generate workflow",
+            },
+          }),
+          gate: {
+            ...(params.planReviewOverride?.gate ?? existing?.planReview?.gate ?? {
+              kind: "generate_workflow" as const,
+            }),
+            state: "awaiting_clarification" as const,
+            clarificationQuestions,
+            answers: existing?.planReview?.gate?.answers ?? [],
+          },
+        };
+        const response = [
+          "I hit a real blocker while continuing workflow generation: the downstream generator still needs a few specific details before it can proceed.",
+          "",
+          "Please answer these questions in the same thread:",
+          "1. What time on Friday should this workflow run?",
+          "2. Which Slack channel or webhook should receive the release status summary?",
+          "3. What specific workspace root path should be checked for release readiness?",
+          "",
+          "After you answer them, Friday will update the plan and wait for confirmation again before continuing.",
+        ].join("\n");
+
+        db.withWriteTransaction((writer) =>
+          runRepo.update(writer, {
+            id: params.runId!,
+            status: "awaiting_clarification",
+            responseText: response,
+            summary: "Workflow generation needs clarification",
+            planReview: nextPlanReview,
+          }));
+
+        if (params.sessionKey && sessionServiceRef) {
+          await sessionServiceRef.addMessage(params.sessionKey, {
+            role: "assistant",
+            content: response,
+            contentText: response,
+            idempotencyKey: `agent-run:${params.runId}:response`,
+          });
+        }
+
+        return {
+          runId: params.runId!,
+          status: "awaiting_clarification",
+          response,
+          toolCallCount: 1,
+          durationMs: 10,
+          usageInput: 1,
+          usageOutput: 1,
+          finalResponse: response,
+        };
+      }),
+      registerTool: vi.fn(),
+      resumeStaleRunsOnBoot: vi.fn(() => 0),
+    };
+
+    const runtime = createFridayApiRuntime({
+      db,
+      idGenerator,
+      nowIso: () => NOW,
+      providerService: makeProviderService(),
+      agentRuntime,
+      agentEventEmitter: eventEmitter,
+      tokenSecret: "test-secret-key-that-is-at-least-32-chars-long!!", // pragma: allowlist secret
+      allowLocalBypassLogin: true,
+      computeChecksum: (content: string) => `checksum-${content.length}`,
+      resolveSkill: () => null,
+      invokeSkill: async () => ({}),
+    });
+    sessionServiceRef = runtime.sessionService;
+
+    const startRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.start");
+    const approveRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.approve.plan");
+    expect(startRoute).toBeDefined();
+    expect(approveRoute).toBeDefined();
+
+    const sessionKey = "ui:planning-direct-approve:test";
+    const initial = await startRoute!.handler({
+      body: {
+        task: "Generate a workflow that runs every Friday, collects workspace release status, posts the summary to Slack, keeps the execution read-only, and reports blockers before deployment.",
+        sessionKey,
+      },
+    } as never);
+    expect(initial.status).toBe("awaiting_plan_approval");
+
+    const approved = await approveRoute!.handler({
+      params: { runId: initial.runId },
+    } as never);
+    expect(approved.status).toBe("awaiting_clarification");
+    expect(approved.runId).toBe(initial.runId);
+
+    const focusAfterApprove = await runtime.sessionService.getConversationFocus(sessionKey);
+    expect(focusAfterApprove?.pendingPlanRunId).toBe(initial.runId);
+
+    const answerOne = await startRoute!.handler({
+      body: {
+        task: "Every Friday at 10:00 AM Pacific time.",
+        sessionKey,
+      },
+    } as never);
+    expect(answerOne.runId).toBe(initial.runId);
+    expect(answerOne.status).toBe("awaiting_clarification");
+
+    const messages = await runtime.sessionService.getMessages(sessionKey, 20);
+    const assistantMessages = messages
+      .filter((message) => message.role === "assistant")
+      .map((message) => message.contentText);
+    expect(assistantMessages).toContain(approved.response);
+  });
 });

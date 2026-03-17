@@ -67,7 +67,7 @@ export interface CreateFridayAgentPlanningGateServiceDeps {
 const APPROVE_COMMAND = /^(approve|approved|go ahead|proceed with the plan|proceed with plan|yes,? approve|yes approve|同意|批准|通过这个计划|按这个计划继续)$/i;
 const REJECT_COMMAND = /^(reject|rejected|decline|cancel plan|stop|do not proceed|don't proceed|不同意|拒绝|驳回|取消这个计划)$/i;
 const GENERATE_SKILL_HINTS = /\b(generate (a )?skill|create (a )?skill|build (a )?skill|skill generator)\b/i;
-const GENERATE_WORKFLOW_HINTS = /\b(generate (a )?workflow|create (a )?workflow|build (a )?workflow|automation|pipeline)\b/i;
+const GENERATE_WORKFLOW_HINTS = /\b(generate (?:a )?(?:new )?workflow|create (?:a )?(?:new )?workflow|build (?:a )?(?:new )?workflow|automation|pipeline)\b/i;
 const DEPLOY_WORKFLOW_HINTS = /\b(deploy workflow|publish workflow|ship workflow|roll out workflow)\b/i;
 const EXPORT_WORKFLOW_HINTS = /\b(export workflow|workflow bundle|package workflow)\b/i;
 const MAJOR_DECISION_HINTS = /\b(architecture|architect|strategy|migration|roadmap|implementation plan|rollout plan|major refactor|large refactor|overhaul|choose between|decision|tradeoff|design the approach)\b/i;
