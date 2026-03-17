@@ -34,6 +34,24 @@ const STOPWORDS = new Set([
   "which", "who", "why", "you", "your",
 ]);
 
+function isShortContextualFollowUpTask(task: string): boolean {
+  const normalized = normalizeText(task);
+  return normalized.length <= 48
+    || /\b(why|what|that|this|here|it|connect|open)\b/i.test(normalized)
+    || /(为什么|什么|这里|这个|那个|连接|打不开|打开)/.test(normalized);
+}
+
+function isShortAssistantAnchorFollowUpTask(task: string): boolean {
+  const normalized = normalizeText(task);
+  if (normalized.length === 0 || normalized.length > 48) {
+    return false;
+  }
+  return (
+    /\b(why|what|that|this|here|it|same|again|connect|didn't|did not|failed)\b/i.test(normalized)
+    || /(为什么|什么|这里|这个|那个|同一个|还是|连接|打不开|失败|没连上)/.test(normalized)
+  );
+}
+
 export interface FridayPreparedConversationTurn {
   turnKind: FridayConversationTurnKind;
   historyMessages: FridayAgentMessage[];
@@ -184,6 +202,7 @@ export function classifyFridayConversationTurn(input: {
   const latestAssistantOverlap = countOverlap(taskTokens, tokenize(latestAssistant?.contentText ?? focusState?.assistantAnchorSummary ?? ""));
   const latestUserOverlap = countOverlap(taskTokens, tokenize(latestUser?.contentText ?? ""));
   const hasReplyAnchor = Boolean(resolveReplyAnchorRecord(records, input.replyToMessageId));
+  const hasAssistantAnchor = Boolean(latestAssistant?.contentText || focusState?.assistantAnchorSummary);
   const shortTask = task.length > 0 && task.length <= 120;
   const advisoryContinuation =
     ADVISORY_CONTINUATION_HINTS.test(taskLower)
@@ -206,6 +225,13 @@ export function classifyFridayConversationTurn(input: {
     return "clarification";
   }
   if (hasReplyAnchor) {
+    return "follow_up";
+  }
+  if (
+    hasFocus
+    && hasAssistantAnchor
+    && isShortAssistantAnchorFollowUpTask(task)
+  ) {
     return "follow_up";
   }
   if (
@@ -314,6 +340,38 @@ function buildAnchorWindow(
   return nextAssistant ? [anchorRecord, nextAssistant] : [anchorRecord];
 }
 
+function deriveSelectedAssistantFact(input: {
+  selectedBlocks: FridayConversationBlock[];
+  focusState?: FridaySessionConversationFocusState | null;
+}): string | undefined {
+  const replyAnchorSummary = input.selectedBlocks
+    .find((block) => block.source === "reply_anchor")
+    ?.summary
+    ?.trim();
+  if (replyAnchorSummary) {
+    const assistantMatch = replyAnchorSummary.match(/assistant:\s*([\s\S]+)$/i);
+    const replyAssistantFact = assistantMatch?.[1]?.trim() ?? replyAnchorSummary;
+    if (replyAssistantFact.length > 0) {
+      return replyAssistantFact;
+    }
+  }
+
+  const assistantAnchorSummary = input.selectedBlocks
+    .find((block) => block.source === "assistant_anchor")
+    ?.summary
+    ?.trim();
+  if (assistantAnchorSummary && assistantAnchorSummary.length > 0) {
+    return assistantAnchorSummary;
+  }
+
+  const persistedAssistantAnchor = input.focusState?.assistantAnchorSummary?.trim();
+  if (persistedAssistantAnchor && persistedAssistantAnchor.length > 0) {
+    return persistedAssistantAnchor;
+  }
+
+  return undefined;
+}
+
 function buildConversationBlockSelection(input: {
   task: string;
   historyRecords: FridaySessionMessageRecord[];
@@ -363,7 +421,7 @@ function buildConversationBlockSelection(input: {
     registerCandidate(createMessageBlockCandidate({
       id: `assistant:${latestAssistant.id}`,
       source: "assistant_anchor",
-      summary: buildAnchorWindow(records, latestAssistant).map((record) => `${record.role}: ${record.contentText}`).join("\n"),
+      summary: latestAssistant.contentText,
       score: assistantScore,
       reason: assistantOverlap > 0
         ? `Current turn overlaps the latest assistant answer (${String(assistantOverlap)} token match(es)).`
@@ -506,6 +564,15 @@ function buildTaskPrompt(input: {
   const task = normalizeText(input.task);
   const previousTopicSummary = input.focusState?.currentTopicSummary?.trim();
   const hasExplicitReplyAnchor = input.selectedBlocks.some((block) => block.source === "reply_anchor");
+  const assistantFactSummary = deriveSelectedAssistantFact({
+    selectedBlocks: input.selectedBlocks,
+    focusState: input.focusState,
+  });
+  const isShortAssistantFactFollowUp = Boolean(
+    assistantFactSummary
+    && (input.turnKind === "follow_up" || input.turnKind === "clarification" || input.turnKind === "continue_active_task")
+    && isShortContextualFollowUpTask(task),
+  );
   const selectedBlockSummary = input.selectedBlocks.length > 0
     ? input.selectedBlocks
       .map((block) => `- [${block.source}] ${block.summary}`)
@@ -554,6 +621,23 @@ function buildTaskPrompt(input: {
       "An explicit reply anchor was selected. Treat that anchor as the user's intended referent even if the latest turn is short or deictic.",
       "Answer the referenced point directly from the anchored context before asking for more detail.",
       "Do not switch to generic advice or external research unless the user explicitly asked for that broader scope.",
+    ].filter((value): value is string => Boolean(value)).join("\n");
+  }
+
+  if (isShortAssistantFactFollowUp && assistantFactSummary) {
+    return [
+      previousTopicSummary
+        ? `Continue the current topic: ${previousTopicSummary}`
+        : "The user is following up on the latest assistant-stated fact.",
+      `Referenced assistant fact: ${assistantFactSummary}`,
+      selectedBlockSummary ? `Relevant anchors:\n${selectedBlockSummary}` : undefined,
+      hasExplicitReplyAnchor
+        ? "An explicit reply anchor was selected. Treat that anchor as the user's intended referent even if the latest turn is short or deictic."
+        : "Treat this short follow-up as referring to the referenced assistant fact even if the user uses deictic wording like “这里/这个/that one/why didn’t it connect”.",
+      `Latest user turn: ${task}`,
+      "Explain the referenced assistant fact directly before adding any broader caveat.",
+      "Do not claim a new action, a new success state, or a new result unless this turn produced new deterministic evidence.",
+      "If the deeper cause is unknown, say that explicitly instead of speculating.",
     ].filter((value): value is string => Boolean(value)).join("\n");
   }
 

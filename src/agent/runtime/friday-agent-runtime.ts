@@ -56,16 +56,23 @@ function hasCjkText(text: string): boolean {
 function deriveReplyAnchorAssistantFact(
   conversationContext?: FridayAgentConversationContext,
 ): string | undefined {
-  const summary = conversationContext?.selectedBlocks
+  const replyAnchorSummary = conversationContext?.selectedBlocks
     ?.find((block) => block.source === "reply_anchor")
     ?.summary
     ?.trim();
-  if (!summary) {
-    return undefined;
+  if (replyAnchorSummary) {
+    const assistantMatch = replyAnchorSummary.match(/assistant:\s*([\s\S]+)$/i);
+    const fact = assistantMatch?.[1]?.trim() ?? replyAnchorSummary;
+    return fact.length > 0 ? fact : undefined;
   }
-  const assistantMatch = summary.match(/assistant:\s*([\s\S]+)$/i);
-  const fact = assistantMatch?.[1]?.trim() ?? summary;
-  return fact.length > 0 ? fact : undefined;
+
+  const assistantAnchorSummary = conversationContext?.selectedBlocks
+    ?.find((block) => block.source === "assistant_anchor")
+    ?.summary
+    ?.trim();
+  return assistantAnchorSummary && assistantAnchorSummary.length > 0
+    ? assistantAnchorSummary
+    : undefined;
 }
 
 function buildReplyAnchorFallbackResponse(params: {
@@ -251,10 +258,10 @@ export function createFridayAgentRuntime(
       const disabledToolNames = new Set(normalizeToolNameSet(params.disabledToolNames));
       const executionContext = params.executionContext;
       const conversationContext = params.conversationContext;
-      const hasReplyAnchor = Boolean(
-        conversationContext?.selectedBlocks?.some((block) => block.source === "reply_anchor"),
+      const hasAnchoredAssistantFact = Boolean(
+        deriveReplyAnchorAssistantFact(conversationContext),
       );
-      if (hasReplyAnchor && !hasExplicitResearchIntent(params.task)) {
+      if (hasAnchoredAssistantFact && !hasExplicitResearchIntent(params.task)) {
         disabledToolNames.add("web_search");
       }
       const principalId =
@@ -1095,7 +1102,7 @@ export function createFridayAgentRuntime(
               historyMessages: normalizeHistoryMessages(params.historyMessages),
               conversationContext,
             });
-            const maxAnswerAlignmentRetries = hasReplyAnchor ? 2 : 1;
+            const maxAnswerAlignmentRetries = hasAnchoredAssistantFact ? 2 : 1;
             if (
               alignmentDecision.retryPrompt &&
               alignedResponse.trim().length > 0 &&
@@ -1112,7 +1119,7 @@ export function createFridayAgentRuntime(
             if (
               alignmentDecision.retryPrompt
               && alignedResponse.trim().length > 0
-              && hasReplyAnchor
+              && hasAnchoredAssistantFact
             ) {
               const anchoredFallback = buildReplyAnchorFallbackResponse({
                 task: params.task,
