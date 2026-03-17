@@ -967,6 +967,7 @@ export function createFridayAgentRuntime(
         let evidenceEnforcementRetries = 0;
         let timelinessEnforcementRetries = 0;
         let answerAlignmentRetries = 0;
+        let desktopInspectionRetries = 0;
 
         while (iterations < FRIDAY_AGENT_MAX_LOOP_ITERATIONS) {
           if (runAbortController.signal.aborted) {
@@ -1096,6 +1097,24 @@ export function createFridayAgentRuntime(
             }
 
             const alignedResponse = timelinessDecision.responseText;
+            if (
+              taskRequiresReadOnlyDesktopInspection(params.task)
+              && hasDesktopContentInspectionCoverageEvidence(allToolCalls)
+              && alignedResponse.trim().length > 0
+              && !responseAddressesDesktopContentInspection(alignedResponse)
+              && desktopInspectionRetries < 1
+            ) {
+              desktopInspectionRetries++;
+              messages.push({
+                role: "user",
+                content: buildDesktopContentInspectionRetryPrompt({
+                  task: params.task,
+                  toolCalls: allToolCalls,
+                }),
+              });
+              continue;
+            }
+
             const alignmentDecision = evaluateFridayAnswerAlignment({
               task: params.task,
               responseText: alignedResponse,
@@ -2256,6 +2275,164 @@ function taskLooksLikeDesktopAction(task: string): boolean {
   return english.test(task) || chinese.test(task);
 }
 
+function taskLooksLikeDesktopContentInspection(task: string): boolean {
+  const englishDesktop =
+    /\b(desktop|screen|window|app|application|notification|message|reply|response)\b/i;
+  const englishInspection =
+    /\b(read|look(?:\s+at)?|check|see|show|what(?:'s| is)?|content|message|reply|response|notification|says?)\b/i;
+  const chineseDesktop =
+    /(桌面|屏幕|窗口|应用|app|通知|消息|回复)/;
+  const chineseInspection =
+    /(看一下|看下|看看|读取|读一下|回复是什么|说了什么|内容是什么|消息是什么|通知是什么|显示什么)/;
+  return (
+    (englishDesktop.test(task) && englishInspection.test(task))
+    || (chineseDesktop.test(task) && chineseInspection.test(task))
+  );
+}
+
+function taskExplicitlyRequestsDesktopMutation(task: string): boolean {
+  const english =
+    /\b(open|launch|start|click|type|press|focus|arrange|close|scroll|drag|navigate|switch)\b/i;
+  const chinese =
+    /(打开|启动|点开|点击|输入|按下|聚焦|排列|关闭|滚动|拖动|切换)/;
+  return english.test(task) || chinese.test(task);
+}
+
+function taskRequiresReadOnlyDesktopInspection(task: string): boolean {
+  if (!taskLooksLikeDesktopContentInspection(task)) {
+    return false;
+  }
+  return !taskExplicitlyRequestsDesktopMutation(task);
+}
+
+function responseAddressesDesktopContentInspection(responseText: string): boolean {
+  const normalized = responseText.trim();
+  if (normalized.length === 0) return false;
+  const englishVerdict =
+    /\b(cannot|can't|unable|not able|could not|did not|didn't|can see|i see|visible|not visible|not readable|couldn't read|cannot read|reply is|response is|message says|content says|i found)\b/i;
+  const chineseVerdict =
+    /(无法|不能|未能|看不到|没看到|无法读取|不能读取|无法确认|不能确认|看到了|我看到|可见|不可见|回复是|消息是|内容是|我找到了)/;
+  return englishVerdict.test(normalized) || chineseVerdict.test(normalized);
+}
+
+function snapshotSuggestsDesktopUnavailable(toolCalls: FridayAgentToolCallRecord[]): boolean {
+  return toolCalls.some((call) => {
+    if (call.toolName !== "system" || call.result.isError || call.args.action !== "snapshot") {
+      return false;
+    }
+    const content = call.result.content;
+    return /desktopConnected\"\s*:\s*false/i.test(content)
+      || /desktop_session_unavailable/i.test(content)
+      || /safe_mode/i.test(content)
+      || /safeMode\"\s*:\s*true/i.test(content);
+  });
+}
+
+function hasDesktopContentInspectionCoverageEvidence(
+  toolCalls: FridayAgentToolCallRecord[],
+): boolean {
+  return toolCalls.some((call) => {
+    if (call.result.isError) {
+      return false;
+    }
+    if (call.toolName !== "system") {
+      return false;
+    }
+    return call.args.action === "snapshot"
+      || call.args.action === "notification_list"
+      || call.args.action === "read_notification"
+      || call.args.action === "triage_notifications";
+  });
+}
+
+function buildDesktopContentInspectionRetryPrompt(params: {
+  task: string;
+  toolCalls: FridayAgentToolCallRecord[];
+}): string {
+  const unavailableHint = snapshotSuggestsDesktopUnavailable(params.toolCalls)
+    ? "The current snapshot indicates desktop/session limitations (for example safe mode or desktop not connected). Make that explicit."
+    : "";
+  return [
+    "You answered a desktop content-inspection request with environment/app status, but you did not clearly answer whether the requested content was actually visible.",
+    "Answer the user's actual question directly.",
+    "If the requested reply/content is visible from current tool evidence, say what it is.",
+    "If it is not currently readable or not verified, say that explicitly and explain why using the existing tool evidence.",
+    "Do not just list running apps, PIDs, or generic environment status.",
+    unavailableHint,
+  ].filter((part) => part.length > 0).join(" ");
+}
+
+function toolCallViolatesDesktopInspectionIntent(params: {
+  task: string;
+  toolName: string;
+  toolArgs: Record<string, unknown>;
+}): string | null {
+  if (!taskRequiresReadOnlyDesktopInspection(params.task)) {
+    return null;
+  }
+
+  if (params.toolName === "system") {
+    const action = typeof params.toolArgs.action === "string" ? params.toolArgs.action : "";
+    const blockedActions = new Set([
+      "open",
+      "focus",
+      "arrange_windows",
+      "launch_app",
+      "close_app",
+      "open_url",
+      "open_project",
+      "search_file",
+      "handoff_to_browser",
+      "handoff_to_terminal",
+      "recover_ui",
+      "clipboard_write",
+      "request_control",
+      "release_control",
+      "approve",
+      "deny",
+    ]);
+    if (blockedActions.has(action)) {
+      return `This task asked to inspect existing desktop/app content, not to mutate the desktop. Do not use system.${action}; use system.snapshot, notification_list/read_notification, or desktop screenshot/session_info instead.`;
+    }
+  }
+
+  if (params.toolName === "desktop") {
+    const action = typeof params.toolArgs.action === "string" ? params.toolArgs.action : "";
+    if (action === "execute") {
+      const actionType = typeof params.toolArgs.actionType === "string" ? params.toolArgs.actionType : "";
+      const blockedActionTypes = new Set([
+        "type",
+        "keypress",
+        "launch_app",
+        "close_app",
+        "file_operation",
+      ]);
+      if (blockedActionTypes.has(actionType)) {
+        return `This task asked to inspect existing desktop/app content, not to perform desktop execute.${actionType}. Use desktop.screenshot, inspect_element, search_elements, session_info, or a read-only system action instead.`;
+      }
+      if (actionType === "clipboard") {
+        const operation = typeof params.toolArgs.operation === "string" ? params.toolArgs.operation : "";
+        if (operation !== "" && operation !== "read") {
+          return "This task asked to inspect existing desktop/app content, not to mutate the clipboard. Use a read-only action instead.";
+        }
+      }
+    }
+    if (action === "start_recording" || action === "stop_recording") {
+      return `This task asked to inspect existing desktop/app content, not to ${action.replace("_", " ")}. Use screenshot/session_info/inspect_element instead.`;
+    }
+  }
+
+  if (params.toolName === "browser") {
+    const action = typeof params.toolArgs.action === "string" ? params.toolArgs.action : "";
+    const blockedActions = new Set(["open", "navigate", "goto", "act", "type", "click"]);
+    if (blockedActions.has(action)) {
+      return `This task asked to inspect existing desktop/app content, not to perform browser.${action}. Use the current desktop/system evidence instead.`;
+    }
+  }
+
+  return null;
+}
+
 function classifyEvidenceTask(task: string): "web" | "desktop" | null {
   if (taskLooksLikeDesktopAction(task)) return "desktop";
   if (taskLooksLikeExternalAction(task)) return "web";
@@ -3189,6 +3366,40 @@ async function executeToolCall(
     const unavailableMessage = buildUnavailableToolMessage(toolUse.name);
     const result = {
       content: unavailableMessage,
+      isError: true,
+    };
+    const durationMs = Date.now() - startedAt;
+
+    emitRunEvent("agent.run.tool_end", {
+      runId,
+      toolName: toolUse.name,
+      toolCallId: toolUse.id,
+      durationMs,
+      isError: true,
+      summary: result.content.slice(0, 200),
+      errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
+      routeId,
+      correlationId,
+    });
+
+    return {
+      toolCallId: toolUse.id,
+      toolName: toolUse.name,
+      args: toolUse.input,
+      result,
+      durationMs,
+      startedAt: nowIso(),
+    };
+  }
+
+  const taskIntentViolation = toolCallViolatesDesktopInspectionIntent({
+    task: params.taskPrompt ?? "",
+    toolName: toolUse.name,
+    toolArgs,
+  });
+  if (taskIntentViolation) {
+    const result = {
+      content: taskIntentViolation,
       isError: true,
     };
     const durationMs = Date.now() - startedAt;
