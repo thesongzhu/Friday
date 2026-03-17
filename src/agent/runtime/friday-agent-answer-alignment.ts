@@ -29,6 +29,11 @@ const STOPWORDS = new Set([
   "you", "your",
 ]);
 
+const POSITIVE_ACTION_CLAIM_TERMS =
+  /\b(successfully|completed|done|finished|opened|launched|focused|connected|transferred|switched|navigated|now you can|you can now)\b/i;
+const CHINESE_POSITIVE_ACTION_CLAIM_TERMS =
+  /(成功|已成功|已经成功|已完成|已经完成|已打开|已经打开|已启动|已经启动|已聚焦|已经聚焦|已连接|已经连接|已切换|已经切换|现在你可以)/;
+
 export interface FridayAnswerAlignmentDecision {
   retryPrompt?: string;
 }
@@ -112,41 +117,42 @@ function selectedBlockSummary(
   return selectedBlocks.map((block) => block.summary).join("\n");
 }
 
-function replyAnchorSpecificTokens(
-  conversationContext: FridayAgentConversationContext | undefined,
-  currentTaskTokens: string[],
-): string[] {
-  const replyAnchorSummary = (conversationContext?.selectedBlocks ?? [])
-    .filter((block) => block.source === "reply_anchor")
-    .map((block) => block.summary)
-    .join("\n");
-  if (replyAnchorSummary.length === 0) {
-    return [];
-  }
-
-  const currentTaskTokenSet = new Set(currentTaskTokens);
-  return tokenize(replyAnchorSummary).filter((token) => !currentTaskTokenSet.has(token));
-}
-
-function replyAnchorAssistantSummary(
+function deriveAnchoredAssistantFact(
   conversationContext: FridayAgentConversationContext | undefined,
 ): string {
   const replyAnchorSummary = (conversationContext?.selectedBlocks ?? [])
     .filter((block) => block.source === "reply_anchor")
     .map((block) => block.summary)
     .join("\n");
-  if (replyAnchorSummary.length === 0) {
-    return "";
+  if (replyAnchorSummary.length > 0) {
+    const assistantMatch = replyAnchorSummary.match(/assistant:\s*([\s\S]+)$/i);
+    return assistantMatch?.[1]?.trim() ?? replyAnchorSummary;
   }
-  const assistantMatch = replyAnchorSummary.match(/assistant:\s*([\s\S]+)$/i);
-  return assistantMatch?.[1]?.trim() ?? replyAnchorSummary;
+
+  const assistantAnchorSummary = (conversationContext?.selectedBlocks ?? [])
+    .find((block) => block.source === "assistant_anchor")
+    ?.summary
+    ?.trim();
+  return assistantAnchorSummary ?? "";
 }
 
-function replyAnchorSalientTokens(
+function anchoredAssistantSpecificTokens(
   conversationContext: FridayAgentConversationContext | undefined,
   currentTaskTokens: string[],
 ): string[] {
-  const assistantSummary = replyAnchorAssistantSummary(conversationContext);
+  const assistantFact = deriveAnchoredAssistantFact(conversationContext);
+  if (assistantFact.length === 0) {
+    return [];
+  }
+  const currentTaskTokenSet = new Set(currentTaskTokens);
+  return tokenize(assistantFact).filter((token) => !currentTaskTokenSet.has(token));
+}
+
+function anchoredAssistantSalientTokens(
+  conversationContext: FridayAgentConversationContext | undefined,
+  currentTaskTokens: string[],
+): string[] {
+  const assistantSummary = deriveAnchoredAssistantFact(conversationContext);
   if (assistantSummary.length === 0) {
     return [];
   }
@@ -173,6 +179,30 @@ function isShortReplyFollowUp(task: string): boolean {
     || /(为什么|什么|这里|这个|那个|连接|打不开|打开)/.test(normalized);
 }
 
+function hasAnchoredAssistantFact(
+  conversationContext: FridayAgentConversationContext | undefined,
+): boolean {
+  return deriveAnchoredAssistantFact(conversationContext).length > 0;
+}
+
+function anchorFactLooksNegative(
+  conversationContext: FridayAgentConversationContext | undefined,
+): boolean {
+  const assistantFact = deriveAnchoredAssistantFact(conversationContext);
+  return assistantFact.length > 0
+    && (
+      ENGLISH_ERROR_FACT_TERMS.test(assistantFact)
+      || CHINESE_ERROR_FACT_TERMS.test(assistantFact)
+    );
+}
+
+function responseClaimsPositiveActionState(responseText: string): boolean {
+  return (
+    POSITIVE_ACTION_CLAIM_TERMS.test(responseText)
+    || CHINESE_POSITIVE_ACTION_CLAIM_TERMS.test(responseText)
+  );
+}
+
 export function evaluateFridayAnswerAlignment(params: {
   task: string;
   responseText: string;
@@ -195,14 +225,20 @@ export function evaluateFridayAnswerAlignment(params: {
   );
   const currentOverlap = countOverlap(responseTokens, currentTaskTokens);
   const anchoredOverlap = countOverlap(responseTokens, anchoredContextTokens);
-  const replyAnchorSpecificOverlap = countOverlap(
+  const anchoredAssistantSpecificOverlap = countOverlap(
     responseTokens,
-    replyAnchorSpecificTokens(params.conversationContext, currentTaskTokens),
+    anchoredAssistantSpecificTokens(params.conversationContext, currentTaskTokens),
   );
-  const replyAnchorSalientOverlap = countOverlap(
+  const anchoredAssistantSalientOverlap = countOverlap(
     responseTokens,
-    replyAnchorSalientTokens(params.conversationContext, currentTaskTokens),
+    anchoredAssistantSalientTokens(params.conversationContext, currentTaskTokens),
   );
+  const hasExplicitReplyAnchor = Boolean(
+    params.conversationContext?.selectedBlocks?.some((block) => block.source === "reply_anchor"),
+  );
+  const hasAssistantFactAnchor = hasAnchoredAssistantFact(params.conversationContext);
+  const anchorBlocks = (params.conversationContext?.selectedBlocks ?? [])
+    .filter((block) => block.source === "reply_anchor" || block.source === "assistant_anchor");
 
   if (turnKind === "status_check") {
     const hasStatusLanguage = STATUS_TERMS.test(responseText) || CHINESE_STATUS_TERMS.test(responseText);
@@ -231,7 +267,7 @@ export function evaluateFridayAnswerAlignment(params: {
   }
 
   if (
-    params.conversationContext?.selectedBlocks?.some((block) => block.source === "reply_anchor")
+    hasAssistantFactAnchor
     && (
       GENERIC_CONTEXT_REQUEST_TERMS.test(responseText)
       || CHINESE_GENERIC_CONTEXT_REQUEST_TERMS.test(responseText)
@@ -241,13 +277,12 @@ export function evaluateFridayAnswerAlignment(params: {
       retryPrompt: [
         "You asked the user for more context even though an explicit reply anchor was already selected for this turn.",
         `Current turn: ${params.task}`,
-        `Reply anchor(s):\n${params.conversationContext.selectedBlocks
-          .filter((block) => block.source === "reply_anchor")
+        `Reply/assistant anchor(s):\n${anchorBlocks
           .map((block) => `- ${block.summary}`)
           .join("\n")}`,
         "Answer the referenced point directly. If the user is asking about a prior statement, first explain what that referenced statement means.",
         "If the underlying root cause is unknown, say that the root cause is unknown after restating the anchored fact.",
-        "Do not ask the user what 'this/that/here' refers to unless the reply anchor itself is ambiguous.",
+        "Do not ask the user what 'this/that/here' refers to unless the selected anchor itself is ambiguous.",
       ].join("\n"),
     };
   }
@@ -270,16 +305,15 @@ export function evaluateFridayAnswerAlignment(params: {
   }
 
   if (
-    params.conversationContext?.selectedBlocks?.some((block) => block.source === "reply_anchor")
+    hasExplicitReplyAnchor
     && (turnKind === "follow_up" || turnKind === "clarification" || turnKind === "continue_active_task")
-    && replyAnchorSpecificOverlap === 0
+    && anchoredAssistantSpecificOverlap === 0
   ) {
     return {
       retryPrompt: [
-        "You answered a reply-anchored follow-up without carrying forward any concrete detail from the anchored context.",
+        "You answered an anchored follow-up without carrying forward any concrete detail from the referenced assistant fact.",
         `Current follow-up: ${params.task}`,
-        `Reply anchor(s):\n${params.conversationContext.selectedBlocks
-          .filter((block) => block.source === "reply_anchor")
+        `Reply/assistant anchor(s):\n${anchorBlocks
           .map((block) => `- ${block.summary}`)
           .join("\n")}`,
         "Answer the anchored follow-up directly and mention the relevant anchored fact(s).",
@@ -291,20 +325,19 @@ export function evaluateFridayAnswerAlignment(params: {
   }
 
   if (
-    params.conversationContext?.selectedBlocks?.some((block) => block.source === "reply_anchor")
+    hasAssistantFactAnchor
     && (turnKind === "follow_up" || turnKind === "clarification" || turnKind === "continue_active_task")
     && (
       GENERIC_TROUBLESHOOTING_TERMS.test(responseText)
       || CHINESE_GENERIC_TROUBLESHOOTING_TERMS.test(responseText)
     )
-    && (replyAnchorSalientOverlap === 0 || isShortReplyFollowUp(params.task))
+    && (anchoredAssistantSalientOverlap === 0 || isShortReplyFollowUp(params.task))
   ) {
     return {
       retryPrompt: [
-        "You answered a reply-anchored follow-up with generic troubleshooting instead of the concrete fact from the referenced earlier reply.",
+        "You answered an anchored follow-up with generic troubleshooting instead of the concrete fact from the referenced earlier reply.",
         `Current follow-up: ${params.task}`,
-        `Reply anchor(s):\n${params.conversationContext.selectedBlocks
-          .filter((block) => block.source === "reply_anchor")
+        `Reply/assistant anchor(s):\n${anchorBlocks
           .map((block) => `- ${block.summary}`)
           .join("\n")}`,
         "Do not give a generic checklist.",
@@ -314,7 +347,7 @@ export function evaluateFridayAnswerAlignment(params: {
   }
 
   if (
-    params.conversationContext?.selectedBlocks?.some((block) => block.source === "reply_anchor")
+    hasAssistantFactAnchor
     && isShortReplyFollowUp(params.task)
     && (
       SPECULATION_TERMS.test(responseText)
@@ -327,10 +360,9 @@ export function evaluateFridayAnswerAlignment(params: {
   ) {
     return {
       retryPrompt: [
-        "You answered a short reply-anchored follow-up by speculating about root causes instead of sticking to the verified earlier fact.",
+        "You answered a short anchored follow-up by speculating about root causes instead of sticking to the verified earlier fact.",
         `Current follow-up: ${params.task}`,
-        `Reply anchor(s):\n${params.conversationContext.selectedBlocks
-          .filter((block) => block.source === "reply_anchor")
+        `Reply/assistant anchor(s):\n${anchorBlocks
           .map((block) => `- ${block.summary}`)
           .join("\n")}`,
         "Restate the anchored fact first.",
@@ -340,21 +372,40 @@ export function evaluateFridayAnswerAlignment(params: {
   }
 
   if (
-    params.conversationContext?.selectedBlocks?.some((block) => block.source === "reply_anchor")
+    hasExplicitReplyAnchor
     && isShortReplyFollowUp(params.task)
-    && replyAnchorSalientTokens(params.conversationContext, currentTaskTokens).length > 0
-    && replyAnchorSalientOverlap === 0
+    && anchoredAssistantSalientTokens(params.conversationContext, currentTaskTokens).length > 0
+    && anchoredAssistantSalientOverlap === 0
   ) {
     return {
       retryPrompt: [
-        "This short reply-anchored follow-up should stay attached to the concrete error/failure fact from the earlier reply.",
+        "This short anchored follow-up should stay attached to the concrete error/failure fact from the earlier reply.",
         `Current follow-up: ${params.task}`,
-        `Reply anchor(s):\n${params.conversationContext.selectedBlocks
-          .filter((block) => block.source === "reply_anchor")
+        `Reply/assistant anchor(s):\n${anchorBlocks
           .map((block) => `- ${block.summary}`)
           .join("\n")}`,
         "Explain the referenced earlier fact directly before adding any broader caveat.",
         "If the deeper cause is unknown, say that explicitly after restating the anchored fact.",
+      ].join("\n"),
+    };
+  }
+
+  if (
+    hasAssistantFactAnchor
+    && !hasExplicitReplyAnchor
+    && isShortReplyFollowUp(params.task)
+    && anchorFactLooksNegative(params.conversationContext)
+    && responseClaimsPositiveActionState(responseText)
+  ) {
+    return {
+      retryPrompt: [
+        "You turned a short anchored follow-up into a new successful action/result, which contradicts the earlier anchored fact.",
+        `Current follow-up: ${params.task}`,
+        `Reply/assistant anchor(s):\n${anchorBlocks
+          .map((block) => `- ${block.summary}`)
+          .join("\n")}`,
+        "Do not claim a new successful action, new connection, or new completion state unless this turn produced new deterministic evidence.",
+        "First restate the anchored earlier fact. If the deeper cause is unknown, say that explicitly instead of inventing a new outcome.",
       ].join("\n"),
     };
   }
