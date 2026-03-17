@@ -147,6 +147,31 @@ function resolveRequestedModelForProvider(
   return null;
 }
 
+function resolveImplicitModelForProvider(params: {
+  routingDefaultModel?: string;
+  provider: FridayProviderProfile;
+}): string {
+  const { routingDefaultModel, provider } = params;
+  const supportedModels = provider.config.supportedModels ?? [];
+  const requested = routingDefaultModel?.trim();
+
+  if (requested) {
+    const matched = resolveRequestedModelForProvider(requested, supportedModels);
+    if (matched) {
+      return matched;
+    }
+  }
+
+  if (
+    provider.defaultModel &&
+    supportedModels.includes(provider.defaultModel)
+  ) {
+    return provider.defaultModel;
+  }
+
+  return supportedModels[0] ?? provider.defaultModel ?? requested ?? "";
+}
+
 // ─── Fallback interface ───
 
 export interface FridayProviderFallback {
@@ -253,12 +278,10 @@ export function createFridayProviderFallback(
           continue;
         }
 
-        // Determine model: routing default > provider default > first supported
-        const model =
-          routing.defaultModel
-          ?? provider.defaultModel
-          ?? provider.config.supportedModels[0]
-          ?? "";
+        const model = resolveImplicitModelForProvider({
+          routingDefaultModel: routing.defaultModel,
+          provider,
+        });
 
         candidates.push({ provider, model });
       }

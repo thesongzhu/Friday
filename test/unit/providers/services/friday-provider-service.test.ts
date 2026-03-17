@@ -867,6 +867,67 @@ describe("FridayProviderService", () => {
         delete process.env.ANTHROPIC_KEY;
       }
     });
+
+    it("uses each fallback provider's own supported model when routing.defaultModel is provider-specific", async () => {
+      process.env.OPENAI_KEY = "sk-openai";
+      process.env.ANTHROPIC_KEY = "sk-anthropic";
+      try {
+        await service.createProvider({
+          kind: "anthropic",
+          name: "Claude",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "api-key",
+          api: "anthropic-messages",
+          apiKey: "$ANTHROPIC_KEY",
+          supportedModels: ["claude-opus-4-20250514"],
+          defaultModel: "claude-opus-4-20250514",
+          validateOnSave: false,
+        });
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$OPENAI_KEY",
+          supportedModels: ["gpt-4.1-mini", "gpt-4o-mini"],
+          defaultModel: "gpt-4.1-mini",
+          validateOnSave: false,
+        });
+
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          defaultModel: "claude-opus-4-20250514",
+          fallbackProviderIds: ["test-id-0002"],
+        });
+
+        const seenRoutes: string[] = [];
+        const { result, route, attempts } = await service.runWithFallback({
+          run: async (candidate) => {
+            seenRoutes.push(`${candidate.provider.id}:${candidate.model}`);
+            if (candidate.provider.id === "test-id-0001") {
+              throw Object.assign(new Error("Internal server error"), { status: 500 });
+            }
+            return candidate.model;
+          },
+        });
+
+        expect(result).toBe("gpt-4.1-mini");
+        expect(route.provider.id).toBe("test-id-0002");
+        expect(route.model).toBe("gpt-4.1-mini");
+        expect(seenRoutes.every((entry) => !entry.endsWith(":claude-opus-4-20250514") || entry.startsWith("test-id-0001:"))).toBe(true);
+        expect(seenRoutes).toContain("test-id-0002:gpt-4.1-mini");
+        if (attempts.length > 0) {
+          expect(attempts[0]).toMatchObject({
+            providerId: "test-id-0001",
+            model: "claude-opus-4-20250514",
+          });
+        }
+      } finally {
+        delete process.env.OPENAI_KEY;
+        delete process.env.ANTHROPIC_KEY;
+      }
+    });
   });
 
   describe("OAuth provider lifecycle", () => {
