@@ -12,6 +12,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { loadFridayWorkspaceContext } from "../../../../src/agent/runtime/friday-agent-workspace-context.js";
+import type { FridayConversationBlock } from "../../../../src/sessions/index.js";
 
 let tmpDir: string;
 
@@ -286,6 +287,103 @@ describe("loadFridayWorkspaceContext", () => {
       const ctx = await loadFridayWorkspaceContext(tmpDir);
       // Total should be capped
       expect(ctx.promptFragment.length).toBeLessThan(70_000); // Some overhead for headers
+    });
+  });
+
+  describe("task-aware relevant block selection", () => {
+    it("keeps identity blocks and filters candidate blocks by task relevance", async () => {
+      await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "Always follow repository instructions.");
+      await fs.writeFile(path.join(tmpDir, "SOUL.md"), "Stay concise.");
+      await fs.writeFile(path.join(tmpDir, "USER.md"), "User likes sourdough recipes.");
+      await fs.writeFile(path.join(tmpDir, "MEMORY.md"), "User prefers dark mode in editors.");
+
+      const ctx = await loadFridayWorkspaceContext(tmpDir, {
+        task: "How do I bake sourdough bread?",
+      });
+
+      expect(ctx.promptFragment).toContain("## AGENTS.md");
+      expect(ctx.promptFragment).toContain("## SOUL.md");
+      expect(ctx.promptFragment).toContain("sourdough recipes");
+      expect(ctx.promptFragment).not.toContain("dark mode in editors");
+    });
+
+    it("uses selected session blocks to pull in relevant stored memory for generic follow-ups", async () => {
+      const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
+      await fs.mkdir(exportDir, { recursive: true });
+      await fs.writeFile(
+        path.join(exportDir, "session.json"),
+        JSON.stringify({
+          namespace: "agent:session:test",
+          items: [
+            {
+              id: "mem-1",
+              contentText: "GitHub browser issue was caused by browser not connected",
+              tags: ["incident"],
+              createdAt: "2026-03-16T10:00:00Z",
+            },
+            {
+              id: "mem-2",
+              contentText: "Unrelated note about sourdough hydration",
+              tags: ["recipe"],
+              createdAt: "2026-03-15T10:00:00Z",
+            },
+          ],
+        }),
+      );
+
+      const selectedBlocks: FridayConversationBlock[] = [
+        {
+          id: "reply:1",
+          source: "reply_anchor",
+          summary: "The GitHub issue was browser not connected.",
+          score: 100,
+          reason: "Explicit reply anchor",
+          messageIds: ["assistant-1"],
+        },
+      ];
+
+      const ctx = await loadFridayWorkspaceContext(tmpDir, {
+        task: "Why did that fail?",
+        selectedBlocks,
+      });
+
+      expect(ctx.promptFragment).toContain("browser not connected");
+      expect(ctx.promptFragment).not.toContain("sourdough hydration");
+    });
+
+    it("matches simple singular/plural variants when selecting stored memories", async () => {
+      const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
+      await fs.mkdir(exportDir, { recursive: true });
+      await fs.writeFile(
+        path.join(exportDir, "session.json"),
+        JSON.stringify({
+          namespace: "agent:session:test",
+          items: [
+            {
+              id: "mem-1",
+              contentText: "The user likes matcha drinks",
+              tags: ["preference"],
+              createdAt: "2026-03-17T00:00:00Z",
+            },
+          ],
+        }),
+      );
+
+      const ctx = await loadFridayWorkspaceContext(tmpDir, {
+        task: "What drink do I like?",
+      });
+
+      expect(ctx.promptFragment).toContain("matcha drinks");
+    });
+
+    it("includes all candidate blocks when no task-aware filtering input is provided", async () => {
+      await fs.writeFile(path.join(tmpDir, "USER.md"), "User likes sourdough recipes.");
+      await fs.writeFile(path.join(tmpDir, "MEMORY.md"), "User prefers dark mode in editors.");
+
+      const ctx = await loadFridayWorkspaceContext(tmpDir);
+
+      expect(ctx.promptFragment).toContain("sourdough recipes");
+      expect(ctx.promptFragment).toContain("dark mode in editors");
     });
   });
 });
