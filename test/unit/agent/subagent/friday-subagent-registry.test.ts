@@ -366,6 +366,31 @@ describe("FridaySubagentRegistry", () => {
       const outcome = await registry.waitForCompletion(result.subagentId, 5000);
       expect(outcome.status).toBe("completed");
     });
+
+    it("drain waits for detached children to settle", async () => {
+      let resolveRun: ((value: FridayAgentRuntimeResult) => void) | undefined;
+      const registry = createRegistry({
+        createChildRuntime: () => ({
+          executeRun: vi.fn().mockReturnValue(new Promise<FridayAgentRuntimeResult>((resolve) => {
+            resolveRun = resolve;
+          })),
+        }),
+      });
+
+      registry.spawnDetached(spawnInput());
+
+      let settled = false;
+      const draining = registry.drain(1000).then(() => {
+        settled = true;
+      });
+
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      resolveRun?.(makeResult());
+      await draining;
+      expect(settled).toBe(true);
+    });
   });
 
   // ─── finalize ───

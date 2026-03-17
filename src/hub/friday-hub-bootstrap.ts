@@ -4582,6 +4582,7 @@ export async function createFridayHub(
         desktopSessionManager.disconnect();
       }
       await browserManager.close();
+      await subagentRegistry.drain();
       // 4. API runtime — no async teardown yet (HTTP server stop is CLI concern)
       // 5. Workflow runtime — scheduler now handles cron lifecycle
       // 6. Skills
