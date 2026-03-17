@@ -27,6 +27,8 @@ import type {
   FridayAgentRuntime,
   FridaySubagentRegistry,
 } from "#agent";
+import type { FridayAgentCapabilitiesSnapshot } from "#agent";
+import type { FridayAgentTaskStatusSnapshot } from "#agent";
 import type { FridayDeterministicPipelineRoutesDeps } from "../http/routes/friday-deterministic-pipeline-routes.js";
 import type { FridayDesktopRoutesDeps } from "../http/routes/friday-desktop-routes.js";
 import type { FridayDiscoveryRoutesDeps } from "../http/routes/friday-discovery-routes.js";
@@ -146,6 +148,12 @@ export interface CreateFridayApiRuntimeDeps {
   sessionService?: FridaySessionService;
   /** Optional: agent runtime for agent run endpoints. */
   agentRuntime?: FridayAgentRuntime;
+  /** Optional deterministic runtime capability getter used by context evidence selection. */
+  capabilitySnapshotGetter?: (input: { readOnly: boolean }) =>
+    Promise<FridayAgentCapabilitiesSnapshot> | FridayAgentCapabilitiesSnapshot;
+  /** Optional deterministic task status getter used by context evidence selection. */
+  taskStatusSnapshotGetter?: (input: { runId?: string; sessionKey?: string; readOnly: boolean }) =>
+    Promise<FridayAgentTaskStatusSnapshot> | FridayAgentTaskStatusSnapshot;
   /** Optional: agent event emitter for SSE streaming. */
   agentEventEmitter?: FridayAgentEventEmitter;
   /** Optional: sub-agent registry for sub-agent tree endpoints. */

@@ -117,6 +117,68 @@ function selectedBlockSummary(
   return selectedBlocks.map((block) => block.summary).join("\n");
 }
 
+function selectedBlockBySource(
+  conversationContext: FridayAgentConversationContext | undefined,
+  source: string,
+): string | undefined {
+  return conversationContext?.selectedBlocks
+    ?.find((block) => block.source === source)
+    ?.summary;
+}
+
+function hasCapabilityContradiction(
+  conversationContext: FridayAgentConversationContext | undefined,
+  responseText: string,
+): boolean {
+  const summary = selectedBlockBySource(conversationContext, "capabilities_block");
+  if (!summary) {
+    return false;
+  }
+
+  const response = normalizeText(responseText);
+  const summaryNormalized = normalizeText(summary);
+  const discordEnabled = /messaging enabled \(discord\)/i.test(summaryNormalized);
+  const mcpEnabled = /\bMCP enabled\b/i.test(summaryNormalized);
+  const providerBlocked = /provider mutations blocked by read.?only/i.test(summaryNormalized);
+
+  const responseDiscordDisabled =
+    /\bdiscord\b(?:[^.;,\n]{0,40})?(?:disabled|not enabled|unavailable)\b/i.test(response);
+  const responseDiscordEnabled =
+    /\bdiscord\b(?:[^.;,\n]{0,40})?\benabled\b/i.test(response) && !responseDiscordDisabled;
+  if (discordEnabled && responseDiscordDisabled) {
+    return true;
+  }
+  if (!discordEnabled && responseDiscordEnabled) {
+    return true;
+  }
+
+  const responseMcpDisabled =
+    /\bmcp\b(?:[^.;,\n]{0,40})?(?:disabled|not enabled|unavailable)\b/i.test(response);
+  const responseMcpEnabled =
+    /\bmcp\b(?:[^.;,\n]{0,40})?\benabled\b/i.test(response) && !responseMcpDisabled;
+  if (mcpEnabled && responseMcpDisabled) {
+    return true;
+  }
+  if (!mcpEnabled && responseMcpEnabled) {
+    return true;
+  }
+
+  const responseProviderAvailable =
+    /provider mutation(?:s)? .*not blocked by read.?only/i.test(response)
+    || /provider mutation(?:s)? .*available/i.test(response);
+  const responseProviderBlocked =
+    /provider mutation(?:s)? .*blocked by read.?only/i.test(response)
+    && !responseProviderAvailable;
+  if (providerBlocked && responseProviderAvailable) {
+    return true;
+  }
+  if (!providerBlocked && responseProviderBlocked) {
+    return true;
+  }
+
+  return false;
+}
+
 function deriveAnchoredAssistantFact(
   conversationContext: FridayAgentConversationContext | undefined,
 ): string {
@@ -251,6 +313,18 @@ export function evaluateFridayAnswerAlignment(params: {
         ].join("\n"),
       };
     }
+  }
+
+  if (hasCapabilityContradiction(params.conversationContext, responseText)) {
+    return {
+      retryPrompt: [
+        "You contradicted deterministic runtime capability facts selected for this turn.",
+        `Current question: ${params.task}`,
+        `Capability facts:\n- ${selectedBlockBySource(params.conversationContext, "capabilities_block")}`,
+        "Answer only with the selected deterministic capability facts.",
+        "Do not negate or reinterpret those facts.",
+      ].join("\n"),
+    };
   }
 
   if (turnKind === "new_topic" && anchoredOverlap >= 2 && currentOverlap === 0) {

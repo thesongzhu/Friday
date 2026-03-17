@@ -16,6 +16,8 @@ export type FridayConversationBlockSource =
   | "active_run"
   | "pending_plan"
   | "status_anchor"
+  | "capabilities_block"
+  | "run_event_block"
   | "topic_block"
   | "plan_block"
   | "task_status_block"
@@ -54,6 +56,14 @@ export interface FridayConversationBlock {
   messageIds?: string[];
   sequenceStart?: number;
   sequenceEnd?: number;
+}
+
+export interface FridayEvidenceBlock {
+  id: string;
+  source: FridayConversationBlockSource;
+  summary: string;
+  score: number;
+  reason: string;
 }
 
 export interface FridayContextSelectionResult {

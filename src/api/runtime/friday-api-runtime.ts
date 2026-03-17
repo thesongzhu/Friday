@@ -89,6 +89,7 @@ import type {
   FridayAgentMessage,
   FridayAgentRunStatus,
 } from "#agent";
+import { buildFridayEvidenceBlocks } from "#agent";
 import { createFridayHealthRoutes } from "../http/routes/friday-health-routes.js";
 import { createFridayApiTokenRepository } from "../persistence/friday-api-token-repository.js";
 import type { FridayAuthPrincipal } from "../model/friday-api-common.types.js";
@@ -1640,7 +1641,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           currentUserSequence = lastMatchingUserMessage?.sequence;
         }
 
-        const preparedTurn = prepareFridayConversationTurn({
+        let preparedTurn = prepareFridayConversationTurn({
           task,
           historyRecords: historyRecords.filter((message) =>
             !inboundIdempotencyKey || message.idempotencyKey !== inboundIdempotencyKey),
@@ -1648,6 +1649,36 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           currentUserSequence,
           replyToMessageId: input.replyToMessageId,
         });
+
+        const evidenceBlocks = buildFridayEvidenceBlocks({
+          task,
+          turnKind: preparedTurn.turnKind,
+          focusState,
+          capabilitiesSnapshot: deps.capabilitySnapshotGetter
+            ? await Promise.resolve(deps.capabilitySnapshotGetter({
+                readOnly: input.constraints?.readOnly ?? false,
+              })).catch(() => undefined)
+            : undefined,
+          taskStatusSnapshot: deps.taskStatusSnapshotGetter
+            ? await Promise.resolve(deps.taskStatusSnapshotGetter({
+                runId: input.runId,
+                sessionKey: input.sessionKey,
+                readOnly: input.constraints?.readOnly ?? false,
+              })).catch(() => undefined)
+            : undefined,
+        });
+
+        if (evidenceBlocks.length > 0) {
+          preparedTurn = prepareFridayConversationTurn({
+            task,
+            historyRecords: historyRecords.filter((message) =>
+              !inboundIdempotencyKey || message.idempotencyKey !== inboundIdempotencyKey),
+            focusState,
+            currentUserSequence,
+            replyToMessageId: input.replyToMessageId,
+            evidenceBlocks,
+          });
+        }
         if (
           input.sessionKey
           && preparedTurn.turnKind !== "status_check"
@@ -1672,8 +1703,32 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         };
         replyAnchorMessageId = preparedTurn.replyAnchorMessageId;
         replyAnchorSequence = preparedTurn.replyAnchorSequence;
+      } else if (deps.capabilitySnapshotGetter) {
+        const evidenceBlocks = buildFridayEvidenceBlocks({
+          task,
+          turnKind: "new_topic",
+          capabilitiesSnapshot: await Promise.resolve(deps.capabilitySnapshotGetter({
+            readOnly: input.constraints?.readOnly ?? false,
+          })).catch(() => undefined),
+        });
+        if (evidenceBlocks.length > 0) {
+          conversationContext = {
+            turnKind: "new_topic",
+            currentTopicSummary: task,
+            selectedBlocks: evidenceBlocks.map((block) => ({
+              id: block.id,
+              source: block.source,
+              summary: block.summary,
+              score: block.score,
+              reason: block.reason,
+            })),
+            selectionReasons: evidenceBlocks.map((block) => `${block.source} → ${block.reason}`),
+          };
+        }
+      }
 
-        if (agentPlanningGate) {
+      if (input.sessionKey && agentPlanningGate) {
+          const resolvedTurnKind = conversationContext?.turnKind ?? "new_topic";
           planningDecision = agentPlanningGate.handleTurn({
             runId: input.runId,
             task,
@@ -1703,11 +1758,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
                 task,
                 responseText: planningDecision.result.response,
                 runId: planningDecision.result.runId,
-                turnKind: conversationContext.turnKind ?? "new_topic",
+                turnKind: resolvedTurnKind,
                 focusState,
                 currentUserSequence,
-                replyAnchorMessageId: preparedTurn.replyAnchorMessageId,
-                replyAnchorSequence: preparedTurn.replyAnchorSequence,
+                replyAnchorMessageId,
+                replyAnchorSequence,
                 pendingPlanRunId: planningDecision.pendingPlanRunId ?? null,
                 nowIso: deps.nowIso(),
               }),
@@ -1737,11 +1792,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
                 task,
                 responseText: approved.response,
                 runId: approved.runId,
-                turnKind: conversationContext.turnKind ?? "new_topic",
+                turnKind: resolvedTurnKind,
                 focusState: await sessionService.getConversationFocus(input.sessionKey).catch(() => focusState),
                 currentUserSequence,
-                replyAnchorMessageId: preparedTurn.replyAnchorMessageId,
-                replyAnchorSequence: preparedTurn.replyAnchorSequence,
+                replyAnchorMessageId,
+                replyAnchorSequence,
                 pendingPlanRunId:
                   approved.status === "awaiting_clarification" || approved.status === "awaiting_plan_approval"
                     ? approved.runId
@@ -1771,18 +1826,17 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
                 task,
                 responseText: rejected.response,
                 runId: rejected.runId,
-                turnKind: conversationContext.turnKind ?? "new_topic",
+                turnKind: resolvedTurnKind,
                 focusState,
                 currentUserSequence,
-                replyAnchorMessageId: preparedTurn.replyAnchorMessageId,
-                replyAnchorSequence: preparedTurn.replyAnchorSequence,
+                replyAnchorMessageId,
+                replyAnchorSequence,
                 pendingPlanRunId: null,
                 nowIso: deps.nowIso(),
               }),
             ).catch(() => undefined);
             return rejected;
           }
-        }
       }
 
       if (!input.sessionKey && agentPlanningGate) {
@@ -1847,6 +1901,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         const latestFocusState = await sessionService
           .getConversationFocus(input.sessionKey)
           .catch(() => focusState);
+        const nextPendingPlanRunId = result.status === "awaiting_clarification"
+          || result.status === "awaiting_plan_approval"
+          ? result.runId
+          : conversationContext.turnKind === "status_check"
+            ? undefined
+            : null;
         await sessionService.setConversationFocus(
           input.sessionKey,
           finalizeFridayConversationFocus({
@@ -1854,16 +1914,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             responseText: result.response,
             runId: result.runId,
             turnKind: conversationContext.turnKind,
-            focusState: latestFocusState,
-            currentUserSequence,
-            replyAnchorMessageId,
-            replyAnchorSequence,
-            pendingPlanRunId:
-              result.status === "awaiting_clarification" || result.status === "awaiting_plan_approval"
-                ? result.runId
-                : null,
-            nowIso: deps.nowIso(),
-          }),
+                focusState: latestFocusState,
+                currentUserSequence,
+                replyAnchorMessageId,
+                replyAnchorSequence,
+                pendingPlanRunId: nextPendingPlanRunId,
+                nowIso: deps.nowIso(),
+              }),
         ).catch(() => undefined);
       }
 
