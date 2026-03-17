@@ -62,6 +62,9 @@ describe("FridayApiRuntime — planning gate session loop", () => {
     const idGenerator = makeIdGenerator();
     const runRepo = createFridayAgentRunRepository();
     const eventEmitter = createFridayAgentEventEmitter();
+    let sessionServiceRef:
+      | ReturnType<typeof createFridayApiRuntime>["sessionService"]
+      | undefined;
     const clarificationQuestions = [
       "What time on Friday should this workflow run?",
       "Which Slack channel or webhook should receive the release status summary?",
@@ -108,6 +111,15 @@ describe("FridayApiRuntime — planning gate session loop", () => {
             planReview: nextPlanReview,
           }));
 
+        if (params.sessionKey && sessionServiceRef) {
+          await sessionServiceRef.addMessage(params.sessionKey, {
+            role: "assistant",
+            content: response,
+            contentText: response,
+            idempotencyKey: `agent-run:${params.runId}:response`,
+          });
+        }
+
         return {
           runId: params.runId!,
           status: "awaiting_clarification",
@@ -136,6 +148,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
     });
+    sessionServiceRef = runtime.sessionService;
 
     const startRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.start");
     expect(startRoute).toBeDefined();
