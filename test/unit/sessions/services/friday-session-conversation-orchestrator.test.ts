@@ -105,7 +105,49 @@ describe("friday-session-conversation-orchestrator", () => {
 
     expect(prepared.turnKind).toBe("follow_up");
     expect(prepared.selectedBlocks.some((block) => block.source === "assistant_anchor")).toBe(true);
-    expect(prepared.taskPrompt).toContain("Relevant anchors");
+    expect(prepared.taskPrompt).toContain("Referenced assistant fact:");
+    expect(prepared.taskPrompt).toContain("desktop companion is not connected");
+    expect(prepared.taskPrompt).toContain("Do not claim a new action");
+  });
+
+  it("keeps a short why-question on the same topic even when the latest assistant anchor uses different wording", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "为什么没有connect",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "看一下我桌面上的codex app给我的回复是什么",
+        assistantAnchorSummary: "当前桌面上的 Codex 应用程序无法列出通知，状态为不可用。",
+      },
+      currentUserSequence: 5,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "看一下我桌面上的codex app给我的回复是什么" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "当前桌面上的 Codex 应用程序无法列出通知，状态为不可用。" }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.taskPrompt).toContain("Referenced assistant fact:");
+    expect(prepared.taskPrompt).toContain("Codex 应用程序无法列出通知");
+  });
+
+  it("stores assistant-anchor summaries as assistant facts instead of full user-assistant windows", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "这里",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "看一下我桌面上的codex app给我的回复是什么",
+        assistantAnchorSummary: "The desktop companion is not connected.",
+      },
+      currentUserSequence: 5,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "看一下我桌面上的codex app给我的回复是什么" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "The desktop companion is not connected." }),
+      ],
+    });
+
+    const assistantAnchor = prepared.selectedBlocks.find((block) => block.source === "assistant_anchor");
+    expect(assistantAnchor?.summary).toBe("The desktop companion is not connected.");
+    expect(prepared.taskPrompt).toContain("Referenced assistant fact: The desktop companion is not connected.");
   });
 
   it("resolves reply anchors from platform source message ids", () => {
@@ -147,9 +189,10 @@ describe("friday-session-conversation-orchestrator", () => {
     });
 
     expect(prepared.turnKind).toBe("follow_up");
-    expect(prepared.taskPrompt).toContain("specifically referenced earlier exchange");
+    expect(prepared.taskPrompt).toContain("following up on the latest assistant-stated fact");
+    expect(prepared.taskPrompt).toContain("Referenced assistant fact: I could not open GitHub because the browser session was not connected.");
     expect(prepared.taskPrompt).toContain("Relevant anchors");
-    expect(prepared.taskPrompt).toContain("Do not reinterpret this as a generic troubleshooting or research request");
+    expect(prepared.taskPrompt).toContain("Do not claim a new action, a new success state, or a new result");
   });
 
   it("treats explicit progress checks as status_check and avoids prior answer history", () => {
