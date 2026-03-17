@@ -250,6 +250,99 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.historyMessages).toHaveLength(5);
   });
 
+  it("rehydrates relevant earlier history blocks for long follow-up conversations", () => {
+    const historyRecords: FridaySessionMessageRecord[] = [
+      makeMessage({ sequence: 1, role: "user", contentText: "Open GitHub in the browser." }),
+      makeMessage({ sequence: 2, role: "assistant", contentText: "I could not open GitHub because the browser session was not connected." }),
+      makeMessage({ sequence: 3, role: "user", contentText: "What does the error imply?" }),
+      makeMessage({ sequence: 4, role: "assistant", contentText: "It implies the browser bridge was unavailable." }),
+      makeMessage({ sequence: 5, role: "user", contentText: "How should we test the fix?" }),
+      makeMessage({ sequence: 6, role: "assistant", contentText: "Run a smoke test after reconnecting the browser session." }),
+      makeMessage({ sequence: 7, role: "user", contentText: "Should we also check Discord?" }),
+      makeMessage({ sequence: 8, role: "assistant", contentText: "Yes, verify Discord notifications after the browser smoke test." }),
+      makeMessage({ sequence: 9, role: "user", contentText: "What about logging?" }),
+      makeMessage({ sequence: 10, role: "assistant", contentText: "Capture logs before and after reconnecting." }),
+      makeMessage({ sequence: 11, role: "user", contentText: "Summarize the rollout order." }),
+      makeMessage({ sequence: 12, role: "assistant", contentText: "Reconnect browser, rerun smoke, verify Discord, then inspect logs." }),
+      makeMessage({ sequence: 13, role: "user", contentText: "Do we need screenshots?" }),
+      makeMessage({ sequence: 14, role: "assistant", contentText: "Yes, collect screenshots for the regression report." }),
+      makeMessage({ sequence: 15, role: "user", contentText: "Anything else?" }),
+      makeMessage({ sequence: 16, role: "assistant", contentText: "That covers the rollout checklist." }),
+    ];
+
+    const prepared = prepareFridayConversationTurn({
+      task: "why didn't it connect/open?",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "Open GitHub in the browser and understand why it failed to connect.",
+        currentTopicStartSequence: 1,
+        assistantAnchorSummary: "That covers the rollout checklist.",
+      },
+      currentUserSequence: 17,
+      historyRecords,
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.selectedBlocks.some((block) => block.source === "tool_failure_block")).toBe(true);
+    expect(prepared.historyMessages.some((message) =>
+      message.role === "assistant"
+      && typeof message.content === "string"
+      && message.content.includes("browser session was not connected"))).toBe(true);
+    expect(prepared.taskPrompt).toContain("tool_failure_block");
+  });
+
+  it("does not let compacted older blocks pollute a new topic", () => {
+    const historyRecords: FridaySessionMessageRecord[] = Array.from({ length: 16 }, (_, index) => {
+      const sequence = index + 1;
+      return makeMessage({
+        sequence,
+        role: sequence % 2 === 1 ? "user" : "assistant",
+        contentText: sequence % 2 === 1
+          ? `Discuss browser rollout step ${String(sequence)}`
+          : `Assistant rollout answer ${String(sequence)} about reconnecting the browser.`,
+      });
+    });
+
+    const prepared = prepareFridayConversationTurn({
+      task: "How do I bake sourdough bread?",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "Open GitHub in the browser and understand why it failed to connect.",
+        currentTopicStartSequence: 1,
+      },
+      currentUserSequence: 17,
+      historyRecords,
+    });
+
+    expect(prepared.turnKind).toBe("new_topic");
+    expect(prepared.historyMessages).toEqual([]);
+    expect(prepared.taskPrompt).toContain("Current question: How do I bake sourdough bread?");
+    expect(prepared.taskPrompt).toContain("Previous topic");
+  });
+
+  it("does not treat a new topic as follow-up when the only overlap is a weak assistant token", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "How do I bake sourdough bread? Answer in one sentence.",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "Say exactly this sentence and nothing else: GitHub did not open because the browser session was not connected.",
+        currentTopicStartSequence: 1,
+        assistantAnchorSummary: "GitHub did not open because the browser session was not connected.",
+      },
+      currentUserSequence: 19,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "Say exactly this sentence and nothing else: GitHub did not open because the browser session was not connected." }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "GitHub did open successfully and returned an HTTP 200 OK status." }),
+        makeMessage({ sequence: 3, role: "user", contentText: "For that same browser-session problem, in one short sentence, summarize the smoke test." }),
+        makeMessage({ sequence: 4, role: "assistant", contentText: "I do not have deeper root-cause evidence beyond that, so I won't speculate." }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("new_topic");
+    expect(prepared.historyMessages).toEqual([]);
+    expect(prepared.taskPrompt).toContain("Current question: How do I bake sourdough bread?");
+  });
+
   it("persists new-topic focus state with the current sequence", () => {
     const focus = finalizeFridayConversationFocus({
       task: "How do I bake sourdough bread?",

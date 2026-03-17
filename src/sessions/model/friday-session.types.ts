@@ -15,7 +15,35 @@ export type FridayConversationBlockSource =
   | "focus_topic"
   | "active_run"
   | "pending_plan"
-  | "status_anchor";
+  | "status_anchor"
+  | "topic_block"
+  | "plan_block"
+  | "task_status_block"
+  | "tool_failure_block"
+  | "delegated_task_block"
+  | "conversation_block";
+
+export type FridayConversationHistoryBlockKind =
+  | "topic_block"
+  | "plan_block"
+  | "task_status_block"
+  | "tool_failure_block"
+  | "delegated_task_block"
+  | "conversation_block";
+
+export interface FridayConversationHistoryBlockSummary {
+  id: string;
+  kind: FridayConversationHistoryBlockKind;
+  summaryText: string;
+  decisions: string[];
+  todos: string[];
+  openQuestions: string[];
+  toolFailures: string[];
+  fileOperations: string[];
+  messageIds: string[];
+  sequenceStart?: number;
+  sequenceEnd?: number;
+}
 
 export interface FridayConversationBlock {
   id: string;

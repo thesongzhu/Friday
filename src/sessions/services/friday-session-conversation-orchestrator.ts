@@ -5,6 +5,8 @@ import type { FridayAgentMessage } from "#agent";
 import type {
   FridayContextSelectionResult,
   FridayConversationBlock,
+  FridayConversationHistoryBlockKind,
+  FridayConversationHistoryBlockSummary,
   FridayConversationTurnKind,
   FridaySessionConversationFocusState,
   FridaySessionMessageRecord,
@@ -13,6 +15,9 @@ import type {
 const MAX_TOPIC_SUMMARY_CHARS = 180;
 const MAX_FOLLOW_UP_HISTORY = 12;
 const MAX_STATUS_HISTORY = 6;
+const MAX_SELECTED_BLOCKS = 6;
+const MAX_RELEVANT_HISTORY_BLOCKS = 3;
+const MAX_BLOCK_SUMMARY_CHARS = 240;
 const FOLLOW_UP_HINTS =
   /\b(that|it|this|those|these|also|and|then|what about|more about|continue|same|again|summari[sz]e|summary|recap|recommendation|recommendations)\b/i;
 const CHINESE_FOLLOW_UP_HINTS = /(这个|那个|这里|这儿|继续|还有|然后|刚才|上一个|同一个|总结|概括|再说|细讲)/;
@@ -87,6 +92,13 @@ export interface FinalizeFridayConversationFocusInput {
 
 interface FridayConversationBlockCandidate {
   block: FridayConversationBlock;
+  messages: FridayAgentMessage[];
+}
+
+interface FridayConversationHistoryBlockCandidate {
+  summary: FridayConversationHistoryBlockSummary;
+  score: number;
+  reason: string;
   messages: FridayAgentMessage[];
 }
 
@@ -211,6 +223,14 @@ export function classifyFridayConversationTurn(input: {
     FOLLOW_UP_HINTS.test(taskLower)
     || CHINESE_FOLLOW_UP_HINTS.test(task)
     || DEICTIC_FOLLOW_UP_HINTS.test(taskLower);
+  const assistantOverlapSignal = latestAssistantOverlap >= 2
+    || (
+      latestAssistantOverlap >= 1
+      && hasFocus
+      && hasAssistantAnchor
+      && isShortAssistantAnchorFollowUpTask(task)
+    );
+  const userOverlapSignal = latestUserOverlap >= 2;
 
   if (STATUS_CHECK_HINTS.test(taskLower) || CHINESE_STATUS_CHECK_HINTS.test(task)) {
     return "status_check";
@@ -235,11 +255,11 @@ export function classifyFridayConversationTurn(input: {
     return "follow_up";
   }
   if (
-    (hasFocus || latestAssistantOverlap >= 1 || latestUserOverlap >= 2)
+    (hasFocus || assistantOverlapSignal || userOverlapSignal)
     && (
       overlap >= 2
-      || latestAssistantOverlap >= 1
-      || latestUserOverlap >= 2
+      || assistantOverlapSignal
+      || userOverlapSignal
       || advisoryContinuation
       || followUpHint
     )
@@ -292,6 +312,163 @@ function resolveReplyAnchorRecord(
     record.id === normalizedReplyId || resolveSourceMessageId(record) === normalizedReplyId);
 }
 
+function clampSummary(text: string, limit = MAX_BLOCK_SUMMARY_CHARS): string {
+  const normalized = normalizeText(text);
+  if (normalized.length <= limit) {
+    return normalized;
+  }
+  return `${normalized.slice(0, limit - 1)}…`;
+}
+
+function extractFileOperations(text: string): string[] {
+  const matches = text.match(/(?:^|\s)(?:\.{0,2}\/)?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?:\.[A-Za-z0-9._-]+)?/g) ?? [];
+  return [...new Set(matches.map((match) => match.trim()).filter((match) => match.length > 0))].slice(0, 4);
+}
+
+function classifyConversationHistoryBlockKind(
+  records: readonly FridaySessionMessageRecord[],
+): FridayConversationHistoryBlockKind {
+  const combined = records.map((record) => record.contentText).join("\n").toLowerCase();
+  if (
+    /\b(plan|approval|approve|approved|reject|rejected|clarif(?:y|ication)|awaiting plan|awaiting clarification|review required)\b/i.test(combined)
+    || /(计划|批准|审批|驳回|澄清|需要更多信息|等待批准)/.test(combined)
+  ) {
+    return "plan_block";
+  }
+  if (
+    STATUS_CHECK_HINTS.test(combined)
+    || CHINESE_STATUS_CHECK_HINTS.test(combined)
+  ) {
+    return "task_status_block";
+  }
+  if (
+    /\b(subagent|delegat(?:e|ed|ion)|worker|child run|spawned|spawn_subagent|hand[- ]?off)\b/i.test(combined)
+    || /(子任务|子代理|委派|工作线程|分配给)/.test(combined)
+  ) {
+    return "delegated_task_block";
+  }
+  if (
+    /\b(failed|failure|error|unable|cannot|could not|couldn't|blocked|timed out|not connected|invalid|denied)\b/i.test(combined)
+    || /(失败|错误|无法|不能|未连接|阻止|超时|无效|拒绝)/.test(combined)
+  ) {
+    return "tool_failure_block";
+  }
+  const hasUser = records.some((record) => record.role === "user");
+  const hasAssistant = records.some((record) => record.role === "assistant");
+  return hasUser && hasAssistant ? "topic_block" : "conversation_block";
+}
+
+function summarizeConversationHistoryBlock(
+  records: readonly FridaySessionMessageRecord[],
+): FridayConversationHistoryBlockSummary {
+  const kind = classifyConversationHistoryBlockKind(records);
+  const userSummaries = records
+    .filter((record) => record.role === "user")
+    .map((record) => clampSummary(record.contentText, 140));
+  const assistantSummaries = records
+    .filter((record) => record.role === "assistant")
+    .map((record) => clampSummary(record.contentText, 160));
+  const summaryText = clampSummary(
+    [
+      userSummaries.length > 0 ? `User: ${userSummaries.join(" | ")}` : undefined,
+      assistantSummaries.length > 0 ? `Assistant: ${assistantSummaries.join(" | ")}` : undefined,
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(" "),
+  );
+  const combined = records.map((record) => record.contentText).join("\n");
+  const toolFailures = kind === "tool_failure_block"
+    ? records.map((record) => clampSummary(record.contentText, 120)).slice(-2)
+    : [];
+  const openQuestions = records
+    .filter((record) => record.role === "user" && /(?:\?|？)\s*$/.test(record.contentText.trim()))
+    .map((record) => clampSummary(record.contentText, 120))
+    .slice(-2);
+  const decisions = records
+    .filter((record) => record.role === "assistant" && /\b(recommend|decide|should|best|prefer|plan)\b/i.test(record.contentText))
+    .map((record) => clampSummary(record.contentText, 120))
+    .slice(0, 3);
+  const todos = records
+    .filter((record) => /\b(todo|next|follow up|need to|should)\b/i.test(record.contentText) || /(下一步|待办|需要)/.test(record.contentText))
+    .map((record) => clampSummary(record.contentText, 120))
+    .slice(0, 3);
+
+  return {
+    id: `history-block:${records[0]?.id ?? "unknown"}:${records[records.length - 1]?.id ?? "unknown"}`,
+    kind,
+    summaryText,
+    decisions,
+    todos,
+    openQuestions,
+    toolFailures,
+    fileOperations: extractFileOperations(combined),
+    messageIds: records.map((record) => record.id),
+    sequenceStart: records[0]?.sequence,
+    sequenceEnd: records[records.length - 1]?.sequence,
+  };
+}
+
+function buildConversationHistoryBlocks(
+  records: readonly FridaySessionMessageRecord[],
+): FridayConversationHistoryBlockSummary[] {
+  if (records.length === 0) {
+    return [];
+  }
+
+  const blocks: FridayConversationHistoryBlockSummary[] = [];
+  let current: FridaySessionMessageRecord[] = [];
+
+  const flushCurrent = () => {
+    if (current.length === 0) {
+      return;
+    }
+    blocks.push(summarizeConversationHistoryBlock(current));
+    current = [];
+  };
+
+  for (const record of records) {
+    if (record.role === "user" && current.some((entry) => entry.role === "user")) {
+      flushCurrent();
+    }
+    current.push(record);
+  }
+  flushCurrent();
+  return blocks;
+}
+
+function formatConversationHistoryBlockSummary(
+  block: FridayConversationHistoryBlockSummary,
+): string {
+  const parts = [`${block.kind}: ${block.summaryText}`];
+  if (block.decisions.length > 0) {
+    parts.push(`decisions=${block.decisions.join(" | ")}`);
+  }
+  if (block.todos.length > 0) {
+    parts.push(`todos=${block.todos.join(" | ")}`);
+  }
+  if (block.openQuestions.length > 0) {
+    parts.push(`openQuestions=${block.openQuestions.join(" | ")}`);
+  }
+  if (block.toolFailures.length > 0) {
+    parts.push(`toolFailures=${block.toolFailures.join(" | ")}`);
+  }
+  if (block.fileOperations.length > 0) {
+    parts.push(`fileOperations=${block.fileOperations.join(" | ")}`);
+  }
+  return parts.join(" | ");
+}
+
+function rehydrateConversationHistoryBlockMessages(
+  block: FridayConversationHistoryBlockSummary,
+  records: readonly FridaySessionMessageRecord[],
+): FridayAgentMessage[] {
+  return block.messageIds
+    .map((messageId) => records.find((record) => record.id === messageId))
+    .filter((record): record is FridaySessionMessageRecord => Boolean(record))
+    .map(mapSessionMessageToAgentMessage)
+    .filter((message): message is FridayAgentMessage => message !== null);
+}
+
 function createMessageBlockCandidate(input: {
   id: string;
   source: FridayConversationBlock["source"];
@@ -315,6 +492,20 @@ function createMessageBlockCandidate(input: {
       sequenceEnd: input.records[input.records.length - 1]?.sequence,
     },
     messages: historyMessages,
+  };
+}
+
+function createHistoryBlockCandidate(input: {
+  summary: FridayConversationHistoryBlockSummary;
+  score: number;
+  reason: string;
+  records: readonly FridaySessionMessageRecord[];
+}): FridayConversationHistoryBlockCandidate {
+  return {
+    summary: input.summary,
+    score: input.score,
+    reason: input.reason,
+    messages: rehydrateConversationHistoryBlockMessages(input.summary, input.records),
   };
 }
 
@@ -464,6 +655,13 @@ function buildConversationBlockSelection(input: {
     });
   }
 
+  const useCrossTopicRecapWindow =
+    input.turnKind === "follow_up"
+    && (
+      CROSS_TOPIC_RECAP_HINTS.test(input.task)
+      || CHINESE_CROSS_TOPIC_RECAP_HINTS.test(input.task)
+    );
+
   const topicWindowRecords = (
     (input.turnKind === "follow_up" || input.turnKind === "clarification" || input.turnKind === "continue_active_task")
     && typeof focusState?.currentTopicStartSequence === "number"
@@ -475,14 +673,29 @@ function buildConversationBlockSelection(input: {
       .map((record) => `${record.role}: ${record.contentText}`)
       .join("\n");
     const topicWindowScore = 36 + (countOverlap(taskTokens, tokenize(topicWindowSummary)) * 10);
-    registerCandidate(createMessageBlockCandidate({
-      id: `topic-window:${String(focusState?.currentTopicStartSequence)}`,
-      source: "focus_topic",
-      summary: topicWindowSummary,
-      score: topicWindowScore,
-      reason: "Current turn is still inside the persisted topic window.",
-      records: topicWindowRecords,
-    }));
+    if (topicWindowRecords.length > MAX_FOLLOW_UP_HISTORY) {
+      registerCandidate({
+        block: {
+          id: `topic-window:${String(focusState?.currentTopicStartSequence)}`,
+          source: "focus_topic",
+          summary: summarizeTopic(topicWindowSummary),
+          score: topicWindowScore,
+          reason: "Current turn is still inside the persisted topic window; the long topic window is now represented as a compacted summary block.",
+          sequenceStart: topicWindowRecords[0]?.sequence,
+          sequenceEnd: topicWindowRecords[topicWindowRecords.length - 1]?.sequence,
+        },
+        messages: [],
+      });
+    } else {
+      registerCandidate(createMessageBlockCandidate({
+        id: `topic-window:${String(focusState?.currentTopicStartSequence)}`,
+        source: "focus_topic",
+        summary: topicWindowSummary,
+        score: topicWindowScore,
+        reason: "Current turn is still inside the persisted topic window.",
+        records: topicWindowRecords,
+      }));
+    }
   }
 
   if (input.turnKind === "status_check" && (focusState?.activeRunId || focusState?.pendingPlanRunId || focusState?.activeSubagentIds?.length)) {
@@ -505,49 +718,150 @@ function buildConversationBlockSelection(input: {
     });
   }
 
-  const useCrossTopicRecapWindow =
-    input.turnKind === "follow_up"
-    && (
-      CROSS_TOPIC_RECAP_HINTS.test(input.task)
-      || CHINESE_CROSS_TOPIC_RECAP_HINTS.test(input.task)
+  const historyBlockCandidates: FridayConversationHistoryBlockCandidate[] = [];
+  const seenHistoryBlockIds = new Set<string>();
+  const registerHistoryBlock = (candidate: FridayConversationHistoryBlockCandidate | null) => {
+    if (!candidate || seenHistoryBlockIds.has(candidate.summary.id) || candidate.score <= 0) {
+      return;
+    }
+    seenHistoryBlockIds.add(candidate.summary.id);
+    historyBlockCandidates.push(candidate);
+  };
+
+  const candidateHistoryRecords = useCrossTopicRecapWindow
+    ? records
+    : topicWindowRecords;
+  if (
+    candidateHistoryRecords.length > MAX_FOLLOW_UP_HISTORY
+    && input.turnKind !== "new_topic"
+  ) {
+    const alreadyAnchoredMessageIds = new Set(
+      candidates.flatMap((candidate) => candidate.block.messageIds ?? []),
     );
+    const historyBlocks = buildConversationHistoryBlocks(candidateHistoryRecords);
+    const totalBlockCount = historyBlocks.length;
+    const focusTokens = tokenize(focusState?.currentTopicSummary ?? "");
+
+    historyBlocks.forEach((block, index) => {
+      const unanchoredMessageIds = block.messageIds.filter((messageId) => !alreadyAnchoredMessageIds.has(messageId));
+      if (unanchoredMessageIds.length === 0) {
+        return;
+      }
+
+      const formattedSummary = formatConversationHistoryBlockSummary(block);
+      const blockTokens = tokenize(formattedSummary);
+      const taskOverlap = countOverlap(taskTokens, blockTokens);
+      const focusOverlap = focusTokens.length > 0 ? countOverlap(focusTokens, blockTokens) : 0;
+      const recencyBonus = Math.max(1, totalBlockCount - index);
+      const kindBonus = block.kind === "tool_failure_block"
+        ? 14
+        : block.kind === "task_status_block"
+          ? 12
+          : block.kind === "delegated_task_block"
+            ? 10
+            : block.kind === "plan_block"
+              ? 8
+              : block.kind === "topic_block"
+                ? 6
+                : 4;
+      const score = (taskOverlap * 14) + (focusOverlap * 8) + recencyBonus + kindBonus;
+
+      registerHistoryBlock(createHistoryBlockCandidate({
+        summary: {
+          ...block,
+          messageIds: unanchoredMessageIds,
+        },
+        score,
+        reason: taskOverlap > 0 || focusOverlap > 0
+          ? `Compacted ${block.kind} matched the current turn (${String(taskOverlap)} task token match(es), ${String(focusOverlap)} focus token match(es)).`
+          : `Compacted ${block.kind} kept as a recency-weighted history block.`,
+        records: candidateHistoryRecords,
+      }));
+    });
+  }
 
   const scoreThreshold = input.turnKind === "new_topic" ? 60 : 1;
   const selectedCandidates = candidates
     .filter((candidate) => candidate.block.score >= scoreThreshold || candidate.block.source === "reply_anchor")
     .sort((left, right) => right.block.score - left.block.score || left.block.id.localeCompare(right.block.id))
     .slice(0, input.turnKind === "status_check" ? 3 : 4);
-  const selectionReasons = selectedCandidates.map((candidate) =>
-    `${candidate.block.source} → ${candidate.block.reason}`);
+  const selectedHistoryCandidates = historyBlockCandidates
+    .filter((candidate) => candidate.score >= scoreThreshold)
+    .sort((left, right) => right.score - left.score || left.summary.id.localeCompare(right.summary.id))
+    .slice(0, input.turnKind === "status_check" ? 1 : MAX_RELEVANT_HISTORY_BLOCKS);
+  const selectionReasons = [
+    ...selectedCandidates.map((candidate) => `${candidate.block.source} → ${candidate.block.reason}`),
+    ...selectedHistoryCandidates.map((candidate) => `${candidate.summary.kind} → ${candidate.reason}`),
+  ];
 
-  const messageMap = new Map<string, { sequence: number; message: FridayAgentMessage }>();
-  for (const candidate of selectedCandidates) {
-    for (const messageRecord of candidate.block.messageIds ?? []) {
-      const record = records.find((entry) => entry.id === messageRecord);
-      const mapped = record ? mapSessionMessageToAgentMessage(record) : null;
-      if (record && mapped) {
-        messageMap.set(record.id, { sequence: record.sequence, message: mapped });
+  const historyMessageLimit = input.turnKind === "status_check"
+    ? MAX_STATUS_HISTORY
+    : MAX_FOLLOW_UP_HISTORY + 6;
+  const prioritizedHistoryEntries: Array<{ id: string; sequence: number; message: FridayAgentMessage }> = [];
+  const seenHistoryMessageIds = new Set<string>();
+
+  const appendHistoryMessages = (messageIds: readonly string[], messages: readonly FridayAgentMessage[]) => {
+    messageIds.forEach((messageId, index) => {
+      if (seenHistoryMessageIds.has(messageId) || prioritizedHistoryEntries.length >= historyMessageLimit) {
+        return;
       }
-    }
+      const record = records.find((entry) => entry.id === messageId);
+      const mapped = messages[index]
+        ?? (record ? mapSessionMessageToAgentMessage(record) : null);
+      if (record && mapped) {
+        seenHistoryMessageIds.add(messageId);
+        prioritizedHistoryEntries.push({
+          id: record.id,
+          sequence: record.sequence,
+          message: mapped,
+        });
+      }
+    });
+  };
+
+  for (const candidate of selectedCandidates) {
+    appendHistoryMessages(candidate.block.messageIds ?? [], candidate.messages);
+  }
+  for (const candidate of selectedHistoryCandidates) {
+    appendHistoryMessages(candidate.summary.messageIds, candidate.messages);
   }
 
   if (useCrossTopicRecapWindow && records.length > 0) {
     const maxCount = input.turnKind === "status_check" ? MAX_STATUS_HISTORY : MAX_FOLLOW_UP_HISTORY;
     for (const record of records.slice(Math.max(0, records.length - maxCount))) {
+      if (seenHistoryMessageIds.has(record.id) || prioritizedHistoryEntries.length >= historyMessageLimit) {
+        continue;
+      }
       const mapped = mapSessionMessageToAgentMessage(record);
       if (mapped) {
-        messageMap.set(record.id, { sequence: record.sequence, message: mapped });
+        seenHistoryMessageIds.add(record.id);
+        prioritizedHistoryEntries.push({ id: record.id, sequence: record.sequence, message: mapped });
       }
     }
   }
 
-  const historyMessages = [...messageMap.values()]
+  const historyMessages = prioritizedHistoryEntries
     .sort((left, right) => left.sequence - right.sequence)
-    .slice(-(input.turnKind === "status_check" ? MAX_STATUS_HISTORY : MAX_FOLLOW_UP_HISTORY))
     .map((entry) => entry.message);
 
+  const selectedBlocks = [
+    ...selectedCandidates.map((candidate) => candidate.block),
+    ...selectedHistoryCandidates.map((candidate): FridayConversationBlock => ({
+      id: candidate.summary.id,
+      source: candidate.summary.kind,
+      summary: formatConversationHistoryBlockSummary(candidate.summary),
+      score: candidate.score,
+      reason: candidate.reason,
+      messageIds: candidate.summary.messageIds,
+      sequenceStart: candidate.summary.sequenceStart,
+      sequenceEnd: candidate.summary.sequenceEnd,
+    })),
+  ]
+    .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id))
+    .slice(0, MAX_SELECTED_BLOCKS);
+
   return {
-    selectedBlocks: selectedCandidates.map((candidate) => candidate.block),
+    selectedBlocks,
     selectionReasons,
     historyMessages,
     replyAnchorMessageId: replyAnchor?.id,
