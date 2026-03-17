@@ -9,6 +9,42 @@ REPO_DIR="$(cd "${REPO_DIR}" && pwd)"
 LOCK_DIR="${FRIDAY_MACOS_RELEASE_LOCK_DIR:-${REPO_DIR}/.friday/locks/macos-release.lock}"
 CHANNELS_DIR="${FRIDAY_RELEASE_CHANNELS_DIR:-${REPO_DIR}/dist/releases/channels}"
 SPARKLE_APPCAST_PATH="${FRIDAY_SYSTEM_COMPANION_SPARKLE_APPCAST_PATH:-${REPO_DIR}/dist/releases/macos/appcast.xml}"
+LOCK_OWNER_FILE="${LOCK_DIR}/owner.pid"
+
+lock_mtime_epoch() {
+  if stat -f %m "${LOCK_DIR}" >/dev/null 2>&1; then
+    stat -f %m "${LOCK_DIR}"
+    return
+  fi
+  stat -c %Y "${LOCK_DIR}"
+}
+
+cleanup_stale_release_lock() {
+  if [[ ! -d "${LOCK_DIR}" ]]; then
+    return 1
+  fi
+
+  if [[ -f "${LOCK_OWNER_FILE}" ]]; then
+    local owner_pid
+    owner_pid="$(tr -d '[:space:]' < "${LOCK_OWNER_FILE}")"
+    if [[ -n "${owner_pid}" ]] && kill -0 "${owner_pid}" >/dev/null 2>&1; then
+      return 1
+    fi
+    rm -rf "${LOCK_DIR}"
+    return 0
+  fi
+
+  local now_epoch
+  now_epoch="$(date +%s)"
+  local mtime_epoch
+  mtime_epoch="$(lock_mtime_epoch 2>/dev/null || echo 0)"
+  if [[ "${mtime_epoch}" =~ ^[0-9]+$ ]] && (( now_epoch - mtime_epoch >= 30 )); then
+    rm -rf "${LOCK_DIR}"
+    return 0
+  fi
+
+  return 1
+}
 
 acquire_release_lock() {
   if [[ "${FRIDAY_MACOS_RELEASE_LOCK_HELD:-false}" == "true" ]]; then
@@ -18,6 +54,7 @@ acquire_release_lock() {
   mkdir -p "$(dirname "${LOCK_DIR}")"
   local attempts=0
   until mkdir "${LOCK_DIR}" >/dev/null 2>&1; do
+    cleanup_stale_release_lock >/dev/null 2>&1 && continue
     attempts="$((attempts + 1))"
     if (( attempts >= 120 )); then
       echo "[friday-companion-release] timed out waiting for release lock at ${LOCK_DIR}" >&2
@@ -26,6 +63,7 @@ acquire_release_lock() {
     sleep 1
   done
 
+  printf '%s\n' "$$" > "${LOCK_OWNER_FILE}"
   export FRIDAY_MACOS_RELEASE_LOCK_HELD="true"
   export FRIDAY_MACOS_RELEASE_LOCK_OWNER="true"
   trap 'if [[ "${FRIDAY_MACOS_RELEASE_LOCK_OWNER:-false}" == "true" ]]; then rm -rf "${LOCK_DIR}"; fi' EXIT

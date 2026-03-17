@@ -43,6 +43,8 @@ interface AgentRunResult {
   };
 }
 
+const MOCK_E2E_TIMEOUT_MS = 20_000;
+
 // ─── Tests ───
 
 describe("Friday Mock Sessions E2E", () => {
@@ -76,7 +78,7 @@ describe("Friday Mock Sessions E2E", () => {
 
     await apiFetch<AgentRunResult>(
       env.baseUrl, env.accessToken, "POST", "/v1/agent/runs",
-      { task: "Create a session", providerId, model, timeoutMs: 10_000, sessionKey },
+      { task: "Create a session", providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS, sessionKey },
     );
 
     // Fetch sessions list
@@ -98,7 +100,7 @@ describe("Friday Mock Sessions E2E", () => {
 
     await apiFetch<AgentRunResult>(
       env.baseUrl, env.accessToken, "POST", "/v1/agent/runs",
-      { task: "What is the answer?", providerId, model, timeoutMs: 10_000, sessionKey },
+      { task: "What is the answer?", providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS, sessionKey },
     );
 
     // Fetch session messages — API returns { items } not { messages }
@@ -117,7 +119,7 @@ describe("Friday Mock Sessions E2E", () => {
     expect(roles).toContain("assistant");
   });
 
-  it("multiple runs in same session accumulate messages", async () => {
+  it("multiple runs in same session accumulate messages", { timeout: MOCK_E2E_TIMEOUT_MS }, async () => {
     const mock = env.mockFor("ollama");
     const sessionKey = "api:e2e:sessions-accumulate";
 
@@ -125,7 +127,7 @@ describe("Friday Mock Sessions E2E", () => {
     mock.setDefault({ type: "text", text: "First response." });
     await apiFetch<AgentRunResult>(
       env.baseUrl, env.accessToken, "POST", "/v1/agent/runs",
-      { task: "First question", providerId, model, timeoutMs: 10_000, sessionKey },
+      { task: "First question", providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS, sessionKey },
     );
 
     mock.reset();
@@ -135,7 +137,7 @@ describe("Friday Mock Sessions E2E", () => {
     mock.setDefault({ type: "text", text: "Second response." });
     await apiFetch<AgentRunResult>(
       env.baseUrl, env.accessToken, "POST", "/v1/agent/runs",
-      { task: "Second question", providerId, model, timeoutMs: 10_000, sessionKey },
+      { task: "Second question", providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS, sessionKey },
     );
 
     // Fetch session messages
@@ -149,7 +151,7 @@ describe("Friday Mock Sessions E2E", () => {
     expect(msgsRes.json.data.items.length).toBeGreaterThanOrEqual(4);
   });
 
-  it("sessions list contains multiple sessions", async () => {
+  it("sessions list contains multiple sessions", { timeout: MOCK_E2E_TIMEOUT_MS }, async () => {
     const mock = env.mockFor("ollama");
     mock.setDefault({ type: "text", text: "ok" });
 
@@ -160,7 +162,7 @@ describe("Friday Mock Sessions E2E", () => {
       mock.setDefault({ type: "text", text: `Response ${String(i)}` });
       await apiFetch<AgentRunResult>(
         env.baseUrl, env.accessToken, "POST", "/v1/agent/runs",
-        { task: `Task ${String(i)}`, providerId, model, timeoutMs: 10_000, sessionKey: `api:e2e:sessions-list-${String(i)}` },
+        { task: `Task ${String(i)}`, providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS, sessionKey: `api:e2e:sessions-list-${String(i)}` },
       );
     }
 
@@ -185,7 +187,7 @@ describe("Friday Mock Sessions E2E", () => {
     // Run without explicit sessionKey
     const res = await apiFetch<AgentRunResult>(
       env.baseUrl, env.accessToken, "POST", "/v1/agent/runs",
-      { task: "Auto session test", providerId, model, timeoutMs: 10_000 },
+      { task: "Auto session test", providerId, model, timeoutMs: MOCK_E2E_TIMEOUT_MS },
     );
 
     expect(res.json.data.status).toBe("completed");

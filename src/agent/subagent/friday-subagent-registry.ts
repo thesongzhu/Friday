@@ -1,3 +1,4 @@
+import type Database from "better-sqlite3";
 import { FridayDomainError } from "#errors";
 import { buildFridaySubagentSessionKey } from "#sessions";
 
@@ -24,6 +25,8 @@ const FRIDAY_SUBAGENT_DEFAULT_ARCHIVAL_OFFSET_MS = 24 * 60 * 60 * 1000;
 
 /** Poll interval for waitForCompletion (ms). */
 const FRIDAY_SUBAGENT_POLL_INTERVAL_MS = 250;
+/** Shutdown grace period for detached children (ms). */
+const FRIDAY_SUBAGENT_DRAIN_TIMEOUT_MS = 15_000;
 
 // ─── Factory ───
 
@@ -32,6 +35,23 @@ export function createFridaySubagentRegistry(
 ): FridaySubagentRegistry {
   const { db, createChildRuntime, eventEmitter, idGenerator, nowIso } = deps;
   const repo = createFridaySubagentRunRepository();
+  const inFlightExecutions = new Map<string, Promise<FridaySubagentOutcome>>();
+
+  function isClosedDbError(error: unknown): boolean {
+    return error instanceof Error && /database connection is not open/i.test(error.message);
+  }
+
+  function safeWrite(
+    operation: (writer: Database.Database) => void,
+  ): void {
+    try {
+      db.withWriteTransaction(operation);
+    } catch (error) {
+      if (!isClosedDbError(error)) {
+        throw error;
+      }
+    }
+  }
 
   /** Shared validation + record creation for both spawn() and spawnDetached(). */
   function prepareSpawn(input: FridaySubagentRegistrySpawnInput): {
@@ -66,7 +86,7 @@ export function createFridaySubagentRegistry(
     const childSessionKey = buildFridaySubagentSessionKey(input.parentSessionKey, childRunId);
 
     // 4. Create subagent record
-    db.withWriteTransaction((writer) =>
+    safeWrite((writer) =>
       repo.create(writer, {
         id: subagentRecordId,
         parentRunId: input.parentRunId,
@@ -121,7 +141,7 @@ export function createFridaySubagentRegistry(
     });
 
     // Transition to running
-    db.withWriteTransaction((writer) =>
+    safeWrite((writer) =>
       repo.update(writer, {
         id: subagentRecordId,
         status: "running",
@@ -163,7 +183,7 @@ export function createFridaySubagentRegistry(
       };
 
       // Finalize record
-      db.withWriteTransaction((writer) =>
+      safeWrite((writer) =>
         repo.update(writer, {
           id: subagentRecordId,
           status: terminalStatus,
@@ -195,7 +215,7 @@ export function createFridaySubagentRegistry(
         images: [],
       };
 
-      db.withWriteTransaction((writer) =>
+      safeWrite((writer) =>
         repo.update(writer, {
           id: subagentRecordId,
           status: "failed",
@@ -232,9 +252,12 @@ export function createFridaySubagentRegistry(
       detachedInputs.set(subagentRecordId, { input, childSessionKey });
 
       // Fire-and-forget the child execution
-      void executeChild(subagentRecordId, childRunId, input, childSessionKey).finally(() => {
+      const execution = executeChild(subagentRecordId, childRunId, input, childSessionKey).finally(() => {
         detachedInputs.delete(subagentRecordId);
+        inFlightExecutions.delete(subagentRecordId);
       });
+      inFlightExecutions.set(subagentRecordId, execution);
+      void execution;
 
       const record = db.withReadConnection((reader) =>
         repo.getById(reader, subagentRecordId),
@@ -250,6 +273,19 @@ export function createFridaySubagentRegistry(
         detached: true,
         awaited: false,
       };
+    },
+
+    async drain(timeoutMs = FRIDAY_SUBAGENT_DRAIN_TIMEOUT_MS): Promise<void> {
+      if (inFlightExecutions.size === 0) {
+        return;
+      }
+      const pending = Array.from(inFlightExecutions.values());
+      await Promise.race([
+        Promise.allSettled(pending).then(() => undefined),
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, timeoutMs);
+        }),
+      ]);
     },
 
     async startRun(subagentId: string): Promise<FridaySubagentOutcome> {
@@ -302,7 +338,7 @@ export function createFridaySubagentRegistry(
       const deadline = opts?.archivalDeadline
         ?? new Date(Date.now() + FRIDAY_SUBAGENT_DEFAULT_ARCHIVAL_OFFSET_MS).toISOString();
 
-      db.withWriteTransaction((writer) =>
+      safeWrite((writer) =>
         repo.update(writer, {
           id: subagentId,
           cleanupRequested: true,
@@ -313,9 +349,16 @@ export function createFridaySubagentRegistry(
 
     cleanup(beforeIso?: string): number {
       const cutoff = beforeIso ?? nowIso();
-      return db.withWriteTransaction((writer) =>
-        repo.deleteCleanedUp(writer, cutoff),
-      );
+      try {
+        return db.withWriteTransaction((writer) =>
+          repo.deleteCleanedUp(writer, cutoff),
+        );
+      } catch (error) {
+        if (isClosedDbError(error)) {
+          return 0;
+        }
+        throw error;
+      }
     },
 
     resumeOnBoot(): number {
@@ -335,7 +378,7 @@ export function createFridaySubagentRegistry(
           images: [],
         };
 
-        db.withWriteTransaction((writer) =>
+        safeWrite((writer) =>
           repo.update(writer, {
             id: record.id,
             status: "failed",
