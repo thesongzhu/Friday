@@ -94,6 +94,7 @@ import {
   finalizeFridayConversationFocus,
   prepareFridayConversationTurn,
 } from "#sessions";
+import type { FridayConversationBlock } from "#sessions";
 import type { FridayMemoryFileSyncService, FridayMemoryService } from "#memory";
 import {
   buildFridayAgentSystemPrompt,
@@ -1891,10 +1892,17 @@ export async function createFridayHub(
     nowIso: string;
     timezone: string;
     localDate: string;
+    task?: string;
+    conversationContext?: {
+      selectedBlocks?: FridayConversationBlock[];
+    };
   }) => {
     let workspaceContext: string | undefined;
     try {
-      const ctx = await loadFridayWorkspaceContext(workspaceRoot);
+      const ctx = await loadFridayWorkspaceContext(workspaceRoot, {
+        task: input.task,
+        selectedBlocks: input.conversationContext?.selectedBlocks,
+      });
       if (ctx.promptFragment) {
         workspaceContext = ctx.promptFragment;
       }

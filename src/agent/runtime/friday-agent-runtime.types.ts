@@ -70,6 +70,8 @@ export interface FridayAgentSystemPromptContext {
   nowIso: string;
   timezone: string;
   localDate: string;
+  task?: string;
+  conversationContext?: FridayAgentConversationContext;
 }
 
 // ─── Runtime interface ───
