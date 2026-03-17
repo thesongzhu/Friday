@@ -104,6 +104,7 @@ export {
 // Service
 export type { FridayProviderService, CreateFridayProviderServiceDeps } from "./services/friday-provider-service.types.js";
 export { createFridayProviderService } from "./services/friday-provider-service.js";
+export { resolveFridayRoutingStabilityWarning } from "./services/friday-provider-routing-warning.js";
 export type {
   FridaySecretAdminService,
   FridaySecretSummary,
