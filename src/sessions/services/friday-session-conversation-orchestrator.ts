@@ -25,7 +25,7 @@ const CHINESE_FOLLOW_UP_HINTS = /(这个|那个|这里|这儿|继续|还有|然�
 const DEICTIC_FOLLOW_UP_HINTS = /\b(this one|that one|same one|same issue|that issue|this issue|that part|this part|here|there)\b/i;
 const ADVISORY_CONTINUATION_HINTS = /\b(prefer|preference|recommend|recommendation|recommendations|should i|best)\b/i;
 const STATUS_CHECK_HINTS =
-  /\b(status update|check status|current status|what(?:'s| is) (?:the )?status|progress|still working|still running|still executing|what are you doing|what's happening|how long|eta|done yet|finished yet)\b/i;
+  /\b(status update|check status|current status|what(?:'s| is) (?:the )?status|what(?:'s| is) (?:the )?(?:final )?result(?: now)?|progress|still working|still running|still executing|what are you doing|what's happening|how long|eta|done yet|finished yet)\b/i;
 const CHINESE_STATUS_CHECK_HINTS = /(状态|进度|还在|多久|完成了吗|现在在做什么|刚才那个任务|那个任务结果呢|结果呢|还没好|ETA)/;
 const CONTINUE_HINTS =
   /\b(continue|go ahead|proceed|keep going|do it|start it|carry on)\b/i;
@@ -1194,7 +1194,9 @@ export function finalizeFridayConversationFocus(
     replyAnchorSequence: input.replyAnchorSequence,
     lastAnsweredQuestion: summarizeTopic(input.task),
     lastAssistantAskedQuestion: assistantAskedQuestion,
-    lastRunId: input.runId,
+    lastRunId: input.turnKind === "status_check" && previous?.lastRunId
+      ? previous.lastRunId
+      : input.runId,
     activeRunId: previous?.activeRunId && previous.activeRunId !== input.runId
       ? previous.activeRunId
       : undefined,

@@ -13,6 +13,8 @@ export interface FridayAgentTaskStatusSubagentSnapshot {
   startedAt?: string;
   completedAt?: string;
   durationMs?: number;
+  outcomeStatus?: "completed" | "failed" | "cancelled";
+  outcomeResponse?: string;
 }
 
 export interface FridayAgentTaskStatusSnapshot {
@@ -25,6 +27,7 @@ export interface FridayAgentTaskStatusSnapshot {
   elapsedMs?: number;
   latestTool?: string;
   activeSubagents: FridayAgentTaskStatusSubagentSnapshot[];
+  recentCompletedSubagents?: FridayAgentTaskStatusSubagentSnapshot[];
   blockers: string[];
   pendingPlanRunId?: string;
   terminalOutcome?: {

@@ -154,6 +154,23 @@ describe("friday-agent-planning-gate", () => {
     expect(runs.get("run-1")?.planReview?.gate?.planMarkdown).toContain("Reply `approve` to continue");
   });
 
+  it("treats 'create a new workflow' as a planning-gated workflow request", () => {
+    const service = createService();
+
+    const decision = service.handleTurn({
+      runId: "run-new-workflow",
+      task: "Create a new workflow that runs every weekday morning, summarizes git status, and returns the summary in the workflow response.",
+      sessionKey: "ui:assistant:1",
+    });
+
+    expect(decision.action).toBe("return");
+    if (decision.action !== "return") {
+      throw new Error("Expected return decision");
+    }
+    expect(decision.result.status).toBe("awaiting_clarification");
+    expect(decision.pendingPlanRunId).toBe("run-new-workflow");
+  });
+
   it("moves from clarification to plan approval when the user answers follow-up questions", () => {
     const service = createService();
 
