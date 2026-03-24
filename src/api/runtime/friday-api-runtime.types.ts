@@ -1,4 +1,5 @@
 import type { FridaySqliteLayer } from "#state";
+import type { FridayDaemonStatus } from "#daemon";
 import type { FridayHubConfigManagerService } from "#hub";
 import type { FridayOutboxQueueService } from "#satellites";
 import type { FridayAccessTokenClaims, FridayRole } from "../model/friday-api-auth.types.js";
@@ -154,6 +155,10 @@ export interface CreateFridayApiRuntimeDeps {
   /** Optional deterministic task status getter used by context evidence selection. */
   taskStatusSnapshotGetter?: (input: { runId?: string; sessionKey?: string; readOnly: boolean }) =>
     Promise<FridayAgentTaskStatusSnapshot> | FridayAgentTaskStatusSnapshot;
+  /** Optional: daemon status getter for deterministic daemon status responses. */
+  daemonStatusGetter?: () => FridayDaemonStatus;
+  /** Optional: external MCP server lister for deterministic MCP bridge queries. */
+  listMcpServers?: () => ReadonlyArray<{ id: string; transport?: string }>;
   /** Optional: agent event emitter for SSE streaming. */
   agentEventEmitter?: FridayAgentEventEmitter;
   /** Optional: sub-agent registry for sub-agent tree endpoints. */

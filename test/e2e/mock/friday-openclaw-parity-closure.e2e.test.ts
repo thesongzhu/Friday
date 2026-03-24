@@ -1041,7 +1041,7 @@ describe("Friday OpenClaw Parity Closure E2E — Desktop Enablement", () => {
 });
 
 describe("Friday OpenClaw Parity Closure E2E — MCP Enablement", () => {
-  it("mcp enabled route closure: mcp tool lists configured servers and returns user-visible response", async () => {
+  it("mcp discovery route closure: configured servers are returned from the deterministic control plane", async () => {
     const mcpConfig = JSON.stringify([
       {
         id: "local-mcp",
@@ -1062,15 +1062,6 @@ describe("Friday OpenClaw Parity Closure E2E — MCP Enablement", () => {
           const providerId = env.providers.anthropic!.providerId;
           const model = env.providers.anthropic!.model;
           const mock = env.mockFor("anthropic");
-          mock.enqueue({
-            type: "tool_use",
-            toolName: "mcp",
-            toolInput: { action: "list_servers" },
-          });
-          mock.enqueue({
-            type: "text",
-            text: "MCP server list fetched.",
-          });
 
           const res = await apiFetch<AgentRunResult>(
             env.baseUrl,
@@ -1088,16 +1079,15 @@ describe("Friday OpenClaw Parity Closure E2E — MCP Enablement", () => {
           expect(res.status).toBe(200);
           expect(res.json.ok).toBe(true);
           expect(res.json.data.status).toBe("completed");
-          expect(res.json.data.toolCallCount).toBeGreaterThanOrEqual(1);
-          expect(res.json.data.responseText ?? res.json.data.response).toContain("MCP server list fetched");
-          expect(mock.calls.length).toBe(2);
+          expect(res.json.data.toolCallCount).toBe(0);
+          const responseText = res.json.data.responseText ?? res.json.data.response;
+          expect(responseText).toContain("1 MCP server(s) configured");
+          expect(responseText).toContain("local-mcp");
+          expect(mock.calls.length).toBe(0);
 
-          const toolResultContent = extractLastToolResultContent(mock.calls[1]?.bodyJson);
-          expect(toolResultContent).toContain("\"id\": \"local-mcp\"");
-          expect(toolResultContent).toContain("\"command\": \"echo\"");
           const evidencePath = writeEnablementEvidence(
-            `mcp-list-servers-${Date.now()}.json`,
-            toolResultContent,
+            `mcp-list-servers-${Date.now()}.txt`,
+            responseText,
           );
           expect(fs.statSync(evidencePath).size).toBeGreaterThan(0);
 
@@ -1105,10 +1095,7 @@ describe("Friday OpenClaw Parity Closure E2E — MCP Enablement", () => {
           const toolEnd = runEvents.find((event) =>
             event.eventName === "agent.run.tool_end" && event.payload.toolName === "mcp"
           );
-          expect(toolEnd).toBeDefined();
-          expect(toolEnd!.payload.isError).toBe(false);
-          expect(toolEnd!.payload.routeId).toBe("agent.execute.tool");
-          expect(toolEnd!.payload.correlationId).toBe(res.json.data.runId);
+          expect(toolEnd).toBeUndefined();
         } finally {
           await env.cleanup();
         }
@@ -1116,7 +1103,7 @@ describe("Friday OpenClaw Parity Closure E2E — MCP Enablement", () => {
     );
   }, 90_000);
 
-  it("mcp input-recovery route closure: missing action auto-falls back to list_servers", async () => {
+  it("generic mcp info route closure: broad MCP queries are served without agent fallback", async () => {
     const mcpConfig = JSON.stringify([
       {
         id: "local-mcp",
@@ -1137,15 +1124,6 @@ describe("Friday OpenClaw Parity Closure E2E — MCP Enablement", () => {
           const providerId = env.providers.anthropic!.providerId;
           const model = env.providers.anthropic!.model;
           const mock = env.mockFor("anthropic");
-          mock.enqueue({
-            type: "tool_use",
-            toolName: "mcp",
-            toolInput: {},
-          });
-          mock.enqueue({
-            type: "text",
-            text: "MCP fallback completed.",
-          });
 
           const res = await apiFetch<AgentRunResult>(
             env.baseUrl,
@@ -1163,40 +1141,23 @@ describe("Friday OpenClaw Parity Closure E2E — MCP Enablement", () => {
           expect(res.status).toBe(200);
           expect(res.json.ok).toBe(true);
           expect(res.json.data.status).toBe("completed");
-          expect(res.json.data.toolCallCount).toBeGreaterThanOrEqual(1);
-          expect(res.json.data.responseText ?? res.json.data.response).toContain("MCP fallback completed");
-          expect(mock.calls.length).toBe(2);
+          expect(res.json.data.toolCallCount).toBe(0);
+          const responseText = res.json.data.responseText ?? res.json.data.response;
+          expect(responseText).toContain("1 MCP server(s) configured");
+          expect(responseText).toContain("local-mcp");
+          expect(mock.calls.length).toBe(0);
 
-          const toolResultContent = extractLastToolResultContent(mock.calls[1]?.bodyJson);
-          expect(toolResultContent).toContain("[auto-recovery:mcp->discovery]");
-          expect(toolResultContent).toContain("\"id\": \"local-mcp\"");
           const evidencePath = writeEnablementEvidence(
-            `mcp-input-recovery-${Date.now()}.json`,
-            toolResultContent,
+            `mcp-input-recovery-${Date.now()}.txt`,
+            responseText,
           );
           expect(fs.statSync(evidencePath).size).toBeGreaterThan(0);
 
           const runEvents = listAgentRunEvents(env.stateDir, res.json.data.runId);
-          const primaryToolEnd = runEvents.find((event) =>
-            event.eventName === "agent.run.tool_end"
-            && event.payload.toolName === "mcp"
-            && event.payload.routeId === "agent.execute.tool"
+          const toolEnd = runEvents.find((event) =>
+            event.eventName === "agent.run.tool_end" && event.payload.toolName === "mcp"
           );
-          expect(primaryToolEnd).toBeDefined();
-          expect(primaryToolEnd!.payload.isError).toBe(false);
-          expect(primaryToolEnd!.payload.routeId).toBe("agent.execute.tool");
-          expect(primaryToolEnd!.payload.correlationId).toBe(res.json.data.runId);
-
-          const recoveryToolEnd = runEvents.find((event) =>
-            event.eventName === "agent.run.tool_end"
-            && event.payload.toolName === "mcp"
-            && typeof event.payload.toolCallId === "string"
-            && event.payload.toolCallId.endsWith(":input-recovery")
-          );
-          expect(recoveryToolEnd).toBeDefined();
-          expect(recoveryToolEnd!.payload.isError).toBe(false);
-          expect(recoveryToolEnd!.payload.routeId).toBe("agent.execute.tool.input_recovery");
-          expect(recoveryToolEnd!.payload.correlationId).toBe(res.json.data.runId);
+          expect(toolEnd).toBeUndefined();
         } finally {
           await env.cleanup();
         }

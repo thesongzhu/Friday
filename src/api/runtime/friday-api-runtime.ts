@@ -16,6 +16,11 @@ import {
 } from "#workflows";
 import type { JsonObject } from "#workflows";
 
+import { classifyFridayExecution } from "../../sessions/services/friday-execution-classifier.js";
+import { dispatchDeterministic } from "../../sessions/services/friday-deterministic-dispatch.js";
+import type { FridayDeterministicDispatchDeps } from "../../sessions/services/friday-deterministic-dispatch.js";
+import { dispatchManagedAsync } from "../../sessions/services/friday-managed-async-dispatch.js";
+import type { FridayManagedAsyncDispatchDeps } from "../../sessions/services/friday-managed-async-dispatch.js";
 import type { CreateFridayApiRuntimeDeps, FridayApiRuntime } from "./friday-api-runtime.types.js";
 import { createFridayAuthService } from "../auth/friday-auth-service.js";
 import { createFridayTokenValidator } from "../auth/friday-token-validator.js";
@@ -1558,10 +1563,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   const resolveAgentMirrorIdempotencyKey = (input: {
     runId: string;
-    kind: "planning" | "assistant" | "planning-reject";
+    kind: "planning" | "assistant" | "planning-reject" | "deterministic";
     status?: FridayAgentRunStatus;
   }): string => {
-    if (input.kind === "planning-reject" || !agentRepo) {
+    if (input.kind === "planning-reject" || input.kind === "deterministic" || !agentRepo) {
       return `agent-run:${input.runId}:${input.kind}`;
     }
     const run = deps.db.withReadConnection((reader) => agentRepo.getById(reader, input.runId));
@@ -1726,6 +1731,90 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           };
         }
       }
+
+      // ── Deterministic / managed control-plane dispatch (Rules 3/5) ──
+      const resolvedTurnKindForClassifier = conversationContext?.turnKind ?? "new_topic";
+      const executionClass = classifyFridayExecution({
+        task,
+        turnKind: resolvedTurnKindForClassifier,
+        focusState,
+      });
+      const apiDispatchDeps: FridayDeterministicDispatchDeps = {
+        capabilitySnapshotGetter: deps.capabilitySnapshotGetter,
+        taskStatusSnapshotGetter: deps.taskStatusSnapshotGetter,
+        getDaemonStatus: deps.daemonStatusGetter,
+        listMcpServers: deps.listMcpServers,
+        approvalService,
+        workflowExecutionService: workflowRuntime.execution,
+      };
+      const managedAsyncDeps: FridayManagedAsyncDispatchDeps = {
+        workflowExecutionService: workflowRuntime.execution,
+      };
+      const finalizeControlPlaneResult = async (responseText: string) => {
+        const result = {
+          runId: input.runId,
+          status: "completed" as const,
+          response: responseText,
+          toolCallCount: 0,
+          durationMs: 0,
+          usageInput: 0,
+          usageOutput: 0,
+        };
+        if (input.sessionKey) {
+          await sessionService.addMessage(input.sessionKey, {
+            role: "assistant",
+            content: result.response,
+            contentText: result.response,
+            idempotencyKey: resolveAgentMirrorIdempotencyKey({
+              runId: result.runId,
+              kind: "deterministic",
+            }),
+          }).catch(() => undefined);
+          await sessionService.setConversationFocus(
+            input.sessionKey,
+            finalizeFridayConversationFocus({
+              task,
+              responseText: result.response,
+              runId: result.runId,
+              turnKind: resolvedTurnKindForClassifier,
+              focusState,
+              currentUserSequence,
+              replyAnchorMessageId,
+              replyAnchorSequence,
+              pendingPlanRunId: resolvedTurnKindForClassifier === "status_check" ? undefined : null,
+              nowIso: deps.nowIso(),
+            }),
+          ).catch(() => undefined);
+        }
+        return result;
+      };
+
+      if (executionClass.category === "sync_immediate") {
+        const deterministicResult = await dispatchDeterministic(
+          {
+            classification: executionClass,
+            sessionKey: input.sessionKey,
+            runId: input.runId,
+            actorId: input.principalId,
+          },
+          apiDispatchDeps,
+        );
+        if (deterministicResult.handled && deterministicResult.response) {
+          return await finalizeControlPlaneResult(deterministicResult.response);
+        }
+      }
+      if (executionClass.category === "managed_async") {
+        const managedResult = await dispatchManagedAsync(
+          {
+            classification: executionClass,
+          },
+          managedAsyncDeps,
+        );
+        if (managedResult.handled && managedResult.response) {
+          return await finalizeControlPlaneResult(managedResult.response);
+        }
+      }
+      // ── End deterministic dispatch ──
 
       if (input.sessionKey && agentPlanningGate) {
           const resolvedTurnKind = conversationContext?.turnKind ?? "new_topic";

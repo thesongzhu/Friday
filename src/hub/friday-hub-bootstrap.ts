@@ -30,6 +30,7 @@ import { createOnboardingEngine } from "../uix/engine/index.js";
 import { FridayDomainError } from "#errors";
 import { initializeFridayState } from "#state";
 import type { FridayStateRuntime } from "#state";
+import { createFridayLocalDaemonService } from "#daemon";
 import {
   createFridayProviderCostCalculator,
   createFridayProviderPricingCatalog,
@@ -127,6 +128,12 @@ import {
   loadFridayWorkspaceContext,
   parseFridayMcpServersFromEnv,
 } from "#agent";
+import { buildMcpServerToolFilter } from "./friday-mcp-safe-catalog.js";
+import { classifyFridayExecution } from "../sessions/services/friday-execution-classifier.js";
+import { dispatchDeterministic } from "../sessions/services/friday-deterministic-dispatch.js";
+import type { FridayDeterministicDispatchDeps } from "../sessions/services/friday-deterministic-dispatch.js";
+import { dispatchManagedAsync } from "../sessions/services/friday-managed-async-dispatch.js";
+import type { FridayManagedAsyncDispatchDeps } from "../sessions/services/friday-managed-async-dispatch.js";
 import type { FridayImageAnalysisFn } from "#agent";
 import type {
   FridayAgentCapabilitiesSnapshot,
@@ -413,6 +420,11 @@ export async function createFridayHub(
     ? { env: { ...process.env, FRIDAY_STATE_DIR: config.stateDir } as NodeJS.ProcessEnv }
     : undefined;
   stateRuntime = initializeFridayState(stateOpts);
+  const daemonService = createFridayLocalDaemonService({
+    moduleUrl: import.meta.url,
+    stateDir: stateRuntime.stateDir,
+    version: config.serverVersion ?? FRIDAY_HUB_DEFAULT_SERVER_VERSION,
+  });
 
   // 1b. Seed default admin user if users table is empty
   {
@@ -1527,11 +1539,11 @@ export async function createFridayHub(
       return undefined;
     }
 
-    const allowlist = (process.env.FRIDAY_MCP_SERVER_TOOL_ALLOWLIST ?? "")
+    const envAllowlist = (process.env.FRIDAY_MCP_SERVER_TOOL_ALLOWLIST ?? "")
       .split(",")
       .map((value) => value.trim())
       .filter((value) => value.length > 0);
-    const isToolAllowed = (toolName: string) => allowlist.length === 0 || allowlist.includes(toolName);
+    const { isToolAllowed } = buildMcpServerToolFilter(envAllowlist);
     const listAllowedTools = () => agentTools.filter((tool) => isToolAllowed(tool.name));
     const appendMcpServerAudit = (entry: {
       action: string;
@@ -1593,7 +1605,7 @@ export async function createFridayHub(
 
     console.log(
       `[friday] MCP server enabled with ${String(listAllowedTools().length)} tool(s)` +
-      (allowlist.length > 0 ? " (allowlist mode)" : ""),
+      (envAllowlist.length > 0 ? " (allowlist mode)" : " (safe catalog)"),
     );
 
     return {
@@ -2166,10 +2178,10 @@ export async function createFridayHub(
 
   const resolveAgentMirrorIdempotencyKey = (input: {
     runId: string;
-    kind: "planning" | "assistant" | "planning-reject";
+    kind: "planning" | "assistant" | "planning-reject" | "deterministic";
     status?: FridayAgentRunStatus;
   }): string => {
-    if (input.kind === "planning-reject") {
+    if (input.kind === "planning-reject" || input.kind === "deterministic") {
       return `agent-run:${input.runId}:${input.kind}`;
     }
     const run = stateRuntime!.sqlite.withReadConnection((reader) =>
@@ -2949,6 +2961,10 @@ export async function createFridayHub(
     sessionService: hubSessionService,
     capabilitySnapshotGetter: getAgentCapabilitySnapshot,
     taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
+    daemonStatusGetter: () => daemonService.status(),
+    listMcpServers: mcpAdapter
+      ? () => mcpAdapter.listServers().map((server) => ({ id: server.id, transport: server.transport }))
+      : undefined,
     serverVersion: config.serverVersion ?? FRIDAY_HUB_DEFAULT_SERVER_VERSION,
     serverHost: config.host ?? "127.0.0.1",
     serverPort: config.port ?? 3141,
@@ -4038,6 +4054,22 @@ export async function createFridayHub(
       //    HTTP listener start is handled by CLI run-loop (Batch 2), not here.
 
       // 4. Start channel plugins (route inbound messages to agent runtime)
+
+      // Deterministic dispatch deps — reused across all channel messages.
+      const deterministicDispatchDeps: FridayDeterministicDispatchDeps = {
+        capabilitySnapshotGetter: getAgentCapabilitySnapshot,
+        taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
+        getDaemonStatus: () => daemonService.status(),
+        listMcpServers: mcpAdapter
+          ? () => mcpAdapter.listServers().map((s) => ({ id: s.id, transport: s.transport }))
+          : undefined,
+        approvalService: workflowRuntime.approval,
+        workflowExecutionService: workflowRuntime.execution,
+      };
+      const managedAsyncDispatchDeps: FridayManagedAsyncDispatchDeps = {
+        workflowExecutionService: workflowRuntime.execution,
+      };
+
       if (channelsConfig.enabled && channelRegistry.list().length > 0) {
         const channelMessageHandler = (msg: FridayChannelMessage) => {
           const text = sanitizeChannelInput(msg.text);
@@ -4239,6 +4271,103 @@ export async function createFridayHub(
                 selectionReasons: preparedTurn.selectionReasons,
                 replyToMessageId: msg.replyTo,
               };
+
+              // ── Deterministic-first dispatch (Rule 5) ──
+              // Attempt to serve sync_immediate requests without the agent.
+              const executionClass = classifyFridayExecution({
+                task: text,
+                turnKind: preparedTurn.turnKind,
+                focusState,
+              });
+
+              const sendControlPlaneResponse = async (responseText: string) => {
+                await hubSessionService.addMessage(sessionKey, {
+                  role: "assistant",
+                  content: responseText,
+                  contentText: responseText,
+                  idempotencyKey: resolveAgentMirrorIdempotencyKey({
+                    runId,
+                    kind: "deterministic",
+                  }),
+                }).catch((err) => {
+                  logChannelIssue({
+                    level: "warn",
+                    code: "W-CH-SESSION-MIRROR-001",
+                    routeId: "hub.channel.session.mirror.deterministic",
+                    error: err,
+                  });
+                });
+
+                const nextPendingPlanRunId = preparedTurn.turnKind === "status_check" ? undefined : null;
+                await hubSessionService.setConversationFocus(
+                  sessionKey,
+                  finalizeFridayConversationFocus({
+                    task: text,
+                    responseText,
+                    runId,
+                    turnKind: preparedTurn.turnKind,
+                    focusState: await hubSessionService.getConversationFocus(sessionKey).catch(() => focusState),
+                    currentUserSequence: inboundMessage?.sequence,
+                    replyAnchorMessageId: preparedTurn.replyAnchorMessageId,
+                    replyAnchorSequence: preparedTurn.replyAnchorSequence,
+                    pendingPlanRunId: nextPendingPlanRunId,
+                    nowIso: nowIso(),
+                  }),
+                ).catch((err) => {
+                  logChannelIssue({
+                    level: "warn",
+                    code: "W-CH-FOCUS-WRITE-001",
+                    routeId: "hub.channel.focus.deterministic",
+                    error: err,
+                  });
+                });
+
+                typingController.stopRun();
+
+                await channelRegistry.send(msg.channelKind, {
+                  chatId: msg.chatId,
+                  text: responseText,
+                  replyTo: msg.id,
+                }).catch((err) => {
+                  logChannelIssue({
+                    level: "error",
+                    code: "E-CH-OUTBOUND-001",
+                    routeId: "hub.channel.delivery.deterministic",
+                    runId,
+                    error: err,
+                  });
+                });
+
+                slowTaskNotifier.stop();
+              };
+
+              if (executionClass.category === "sync_immediate") {
+                const deterministicResult = await dispatchDeterministic(
+                  {
+                    classification: executionClass,
+                    sessionKey,
+                    runId,
+                    actorId: msg.senderId,
+                  },
+                  deterministicDispatchDeps,
+                );
+                if (deterministicResult.handled && deterministicResult.response) {
+                  await sendControlPlaneResponse(deterministicResult.response);
+                  return;
+                }
+              }
+              if (executionClass.category === "managed_async") {
+                const managedResult = await dispatchManagedAsync(
+                  { classification: executionClass },
+                  managedAsyncDispatchDeps,
+                );
+                if (managedResult.handled && managedResult.response) {
+                  await sendControlPlaneResponse(managedResult.response);
+                  return;
+                }
+              }
+              // ── End deterministic dispatch ──
+
               const planningDecision = agentPlanningGate.handleTurn({
                 runId,
                 task: text,

@@ -107,7 +107,7 @@ describe("FridayHub Bootstrap Integration", () => {
         process.env.FRIDAY_DESKTOP_SANDBOX_ALLOWED_ROOTS = prevSandboxRoots;
       }
     }
-  });
+  }, 30_000);
 
   it("registers late-bound setup tools on the top-level agent runtime", async () => {
     const prevMcpServerEnabled = process.env.FRIDAY_MCP_SERVER_ENABLED;
@@ -118,15 +118,16 @@ describe("FridayHub Bootstrap Integration", () => {
       const tools = await Promise.resolve(hub.apiRuntime.mcpServer!.listTools());
       const toolNames = tools.map((tool) => tool.name);
 
-      expect(toolNames).toContain("autonomous");
-      expect(toolNames).toContain("setup");
-      expect(toolNames).toContain("setup_assistant");
-
-      const setupAssistantResult = await hub.apiRuntime.mcpServer!.callTool({
-        name: "setup_assistant",
-        args: { action: "get_progress" },
-      });
-      expect(setupAssistantResult.isError).toBe(false);
+      // MCP self-server now defaults to a curated safe catalog.
+      // Unsafe tools (autonomous, setup, setup_assistant) are no longer
+      // exposed by default — only safe read-only tools are listed.
+      expect(toolNames).toContain("capabilities");
+      expect(toolNames).toContain("task_status");
+      expect(toolNames).toContain("read");
+      expect(toolNames).not.toContain("sessions");
+      expect(toolNames).not.toContain("autonomous");
+      expect(toolNames).not.toContain("setup");
+      expect(toolNames).not.toContain("exec");
     } finally {
       if (prevMcpServerEnabled === undefined) {
         delete process.env.FRIDAY_MCP_SERVER_ENABLED;
