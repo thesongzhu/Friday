@@ -38,6 +38,7 @@ import {
   encryptSecret,
   getMasterKey,
 } from "#providers";
+import { parseFridayHttpTrustProxyMode } from "#api";
 import { resolveFridayDbPath } from "#state";
 import { resolveSafePath } from "#utilities";
 import Database from "better-sqlite3";
@@ -1132,6 +1133,7 @@ function buildConfig(parsed: ParsedArgs): FridayHubConfig {
 async function cmdStart(parsed: ParsedArgs): Promise<void> {
   const startupBinding = resolveStartupNetworkBinding(parsed);
   const startupChannels = prepareStartupChannelsConfig();
+  const trustProxyMode = parseFridayHttpTrustProxyMode(process.env.FRIDAY_HTTP_TRUST_PROXY);
   if (startupChannels.compatMode && !process.env.FRIDAY_CHANNEL_SECRET_POLICY) {
     process.env.FRIDAY_CHANNEL_SECRET_POLICY = "compat"; // pragma: allowlist secret
   }
@@ -1159,6 +1161,7 @@ async function cmdStart(parsed: ParsedArgs): Promise<void> {
     host: startupBinding.host,
     corsOrigins: resolved.corsOrigins,
     logRequests: resolved.logRequests,
+    trustProxyMode,
     uiStaticDir,
   });
 }

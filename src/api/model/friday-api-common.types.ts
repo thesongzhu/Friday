@@ -28,6 +28,7 @@ export interface FridayRequestMeta {
   traceId?: string;
   receivedAt: ISODateTime;
   ip?: string;
+  socketIp?: string;
   userAgent?: string;
 }
 

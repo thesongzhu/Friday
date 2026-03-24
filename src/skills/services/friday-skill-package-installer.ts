@@ -1,8 +1,12 @@
-import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { FridayDomainError } from "#errors";
 import { safeDirName, validateInstallId } from "#utilities";
-import { createFridaySkillPackageArchiver } from "../converter/services/friday-skill-package-archive.js";
+import {
+  createFridaySkillPackageArchiver,
+  type FridaySkillPackageArchiver,
+} from "../converter/services/friday-skill-package-archive.js";
 
 // ─── Interface ───
 
@@ -19,6 +23,7 @@ export interface FridaySkillPackageInstaller {
 
 export interface CreateSkillPackageInstallerDeps {
   managedSkillsDir: string;
+  archiver?: FridaySkillPackageArchiver;
 }
 
 // ─── Containment check using path.relative ───
@@ -51,7 +56,7 @@ export function createFridaySkillPackageInstaller(
 ): FridaySkillPackageInstaller {
   const baseDir = deps.managedSkillsDir;
   const resolvedBase = resolve(baseDir);
-  const archiver = createFridaySkillPackageArchiver();
+  const archiver = deps.archiver ?? createFridaySkillPackageArchiver();
 
   function validateInputs(skillId: string, version: string): void {
     validateSegment(skillId, "skillId");
@@ -74,6 +79,22 @@ export function createFridaySkillPackageInstaller(
     return dir;
   }
 
+  function activatingDir(skillId: string, version: string): string {
+    const safeId = safeDirName(skillId);
+    const safeVersion = safeDirName(version);
+    const dir = join(baseDir, ".activating", safeId, `${safeVersion}-${randomUUID()}`);
+    assertWithinBase(resolve(dir), resolvedBase, "activating path");
+    return dir;
+  }
+
+  function backupDir(skillId: string, version: string): string {
+    const safeId = safeDirName(skillId);
+    const safeVersion = safeDirName(version);
+    const dir = join(baseDir, ".backup", safeId, `${safeVersion}-${randomUUID()}`);
+    assertWithinBase(resolve(dir), resolvedBase, "backup path");
+    return dir;
+  }
+
   return {
     stage(skillId, version, packageBytes) {
       validateInputs(skillId, version);
@@ -89,17 +110,50 @@ export function createFridaySkillPackageInstaller(
       const src = stagingDir(skillId, version);
       const dest = finalDir(skillId, version);
       const archivePath = join(src, "package.tgz");
-
-      // Remove existing destination if present
-      if (existsSync(dest)) {
-        rmSync(dest, { recursive: true, force: true });
-      }
+      const activating = activatingDir(skillId, version);
+      const backup = backupDir(skillId, version);
+      let backupCreated = false;
+      let activated = false;
 
       mkdirSync(join(baseDir, safeDirName(skillId)), { recursive: true });
-      mkdirSync(dest, { recursive: true });
-      archiver.unpackSkill(archivePath, dest);
-      copyFileSync(archivePath, join(dest, "package.tgz"));
-      rmSync(src, { recursive: true, force: true });
+
+      try {
+        archiver.unpackSkill(archivePath, activating);
+        if (!existsSync(join(activating, "skill.manifest.json"))) {
+          throw new FridayDomainError(
+            "PACKAGE_VALIDATION_ERROR",
+            "Installed package is missing skill.manifest.json",
+            { httpStatus: 400 },
+          );
+        }
+        copyFileSync(archivePath, join(activating, "package.tgz"));
+
+        if (existsSync(dest)) {
+          mkdirSync(join(baseDir, ".backup", safeDirName(skillId)), { recursive: true });
+          renameSync(dest, backup);
+          backupCreated = true;
+        }
+
+        renameSync(activating, dest);
+        activated = true;
+
+        try {
+          if (backupCreated && existsSync(backup)) {
+            rmSync(backup, { recursive: true, force: true });
+          }
+          rmSync(src, { recursive: true, force: true });
+        } catch {
+          // Activation already succeeded; lingering temp paths are safe to clean later.
+        }
+      } catch (err) {
+        if (!activated && existsSync(activating)) {
+          rmSync(activating, { recursive: true, force: true });
+        }
+        if (backupCreated && !existsSync(dest) && existsSync(backup)) {
+          renameSync(backup, dest);
+        }
+        throw err;
+      }
       return dest;
     },
 

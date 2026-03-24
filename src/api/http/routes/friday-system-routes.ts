@@ -140,9 +140,8 @@ function parsePositiveInt(value: unknown, field: string): number | undefined {
   return Math.floor(raw);
 }
 
-function readClientIp(ctx: { ip?: string; headers: Record<string, string | undefined> }): string | undefined {
-  const forwarded = ctx.headers["x-forwarded-for"]?.split(",")[0]?.trim();
-  return ctx.ip ?? ctx.headers["x-real-ip"] ?? forwarded;
+function readClientIp(ctx: { ip?: string; socketIp?: string }): string | undefined {
+  return ctx.ip ?? ctx.socketIp;
 }
 
 function readUserAgent(ctx: { userAgent?: string; headers: Record<string, string | undefined> }): string | undefined {

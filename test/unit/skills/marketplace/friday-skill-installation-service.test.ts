@@ -239,6 +239,48 @@ describe("FridaySkillInstallationService", () => {
     ).rejects.toThrow("Missing required permissions");
   });
 
+  it("keeps the previously installed version when package activation fails", async () => {
+    db.withWriteTransaction((conn) => {
+      createFridaySkillRepository().setInstalledVersion(
+        conn,
+        "skill-1",
+        "0.9.0",
+        createTestManifest({
+          id: "skill-1",
+          version: "0.9.0",
+          permissions: { grants: [], promptOn: [] },
+        }),
+        NOW,
+      );
+    });
+
+    const failingInstaller: FridaySkillPackageInstaller = {
+      stage: vi.fn().mockReturnValue("/tmp/staging"),
+      activate: vi.fn(() => {
+        throw new Error("simulated activate failure");
+      }),
+      remove: vi.fn(),
+    };
+
+    const service = createService(undefined, failingInstaller);
+
+    await expect(
+      service.install({ skillId: "skill-1", version: "1.0.0", grantPermissions: [] }),
+    ).rejects.toThrow("Package installation failed");
+
+    const skill = db.withReadConnection((conn) =>
+      createFridaySkillRepository().getSkillById(conn, "skill-1"),
+    );
+    const installations = db.withReadConnection((conn) =>
+      createFridaySkillInstallationRepository().listBySkill(conn, "skill-1"),
+    );
+
+    expect(skill!.installedVersion).toBe("0.9.0");
+    expect(skill!.status).toBe("installed");
+    expect(installations[0]!.status).toBe("failed");
+    expect(installations[0]!.lastError).toContain("simulated activate failure");
+  });
+
   it("uninstalls a skill", async () => {
     const packageInstaller = createMockPackageInstaller();
     const service = createService(undefined, packageInstaller);

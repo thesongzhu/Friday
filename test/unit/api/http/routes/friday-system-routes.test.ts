@@ -293,8 +293,13 @@ describe("createFridaySystemRoutes", () => {
         idempotencyKey: "assert-verify-key",
       },
       ip: "192.168.1.10",
+      socketIp: "127.0.0.1",
       userAgent: "agent-os-ui",
-      headers: { origin: "http://localhost:3141" },
+      headers: {
+        origin: "http://localhost:3141",
+        "x-forwarded-for": "203.0.113.50",
+        "x-real-ip": "203.0.113.51",
+      },
     }));
 
     expect(deps.remoteAuth.beginRegistration).toHaveBeenCalledWith(
@@ -330,13 +335,23 @@ describe("createFridaySystemRoutes", () => {
     await createRoute.handler(makeCtx({
       body: { deviceId: "device-1", assertionToken: "assertion-token", idempotencyKey: "create-key" },
       ip: "192.168.1.10",
+      socketIp: "127.0.0.1",
       userAgent: "agent-os-ui",
+      headers: {
+        "x-forwarded-for": "203.0.113.60",
+        "x-real-ip": "203.0.113.61",
+      },
     }));
     await heartbeatRoute.handler(makeCtx({
       params: { sessionId: "remote-session-1" },
       body: { idempotencyKey: "heartbeat-key" },
       ip: "192.168.1.10",
+      socketIp: "127.0.0.1",
       userAgent: "agent-os-ui",
+      headers: {
+        "x-forwarded-for": "203.0.113.62",
+        "x-real-ip": "203.0.113.63",
+      },
     }));
 
     expect(deps.remote.openSession).toHaveBeenCalledWith(
@@ -347,6 +362,24 @@ describe("createFridaySystemRoutes", () => {
       "remote-session-1",
       { idempotencyKey: "heartbeat-key" },
       { ipAddress: "192.168.1.10", userAgent: "agent-os-ui" },
+    );
+  });
+
+  it("falls back to socketIp when the parsed client IP is unavailable", async () => {
+    const deps = makeDeps();
+    const routes = createFridaySystemRoutes(deps);
+    const createRoute = findRoute(routes, "system.remote.sessions.create");
+
+    await createRoute.handler(makeCtx({
+      body: { deviceId: "device-1", assertionToken: "assertion-token", idempotencyKey: "create-key" },
+      ip: undefined,
+      socketIp: "192.168.1.25",
+      userAgent: "agent-os-ui",
+    }));
+
+    expect(deps.remote.openSession).toHaveBeenCalledWith(
+      { deviceId: "device-1", assertionToken: "assertion-token", idempotencyKey: "create-key" },
+      { ipAddress: "192.168.1.25", userAgent: "agent-os-ui" },
     );
   });
 });
