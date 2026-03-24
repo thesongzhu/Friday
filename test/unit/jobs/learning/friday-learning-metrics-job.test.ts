@@ -126,6 +126,47 @@ describe("FridayLearningMetricsJob", () => {
     expect(result.metric.successRate).toBeCloseTo(0.666, 2);
   });
 
+  it("computes expanded conversion rates from incentive-alignment events", () => {
+    const ledger = createFridayLearningEventLedger({ db });
+
+    ledger.appendBatch([
+      {
+        eventId: "evt-activation-1",
+        ts: "2025-06-15T08:00:00.000Z",
+        userId: "test-user",
+        kind: "workflow_outcome",
+        payload: { success: true, workflowId: "wf-1" },
+      },
+      {
+        eventId: "evt-save-1",
+        ts: "2025-06-15T09:00:00.000Z",
+        userId: "test-user",
+        kind: "automation_saved",
+        payload: { automationId: "auto-1" },
+      },
+      {
+        eventId: "evt-reuse-1",
+        ts: "2025-06-15T10:00:00.000Z",
+        userId: "test-user",
+        kind: "automation_reused",
+        payload: { automationId: "auto-1", success: true },
+      },
+      {
+        eventId: "evt-request-1",
+        ts: "2025-06-15T11:00:00.000Z",
+        userId: "test-user",
+        kind: "request_fulfilled",
+        payload: { requestId: "req-1" },
+      },
+    ]);
+
+    const result = job.run("2025-06-15");
+    expect(result.metric.activationRate).toBeCloseTo(0.75, 2);
+    expect(result.metric.saveRate).toBeCloseTo(0.25, 2);
+    expect(result.metric.reuseRate).toBeCloseTo(0.25, 2);
+    expect(result.metric.requestFulfillmentRate).toBeCloseTo(0.25, 2);
+  });
+
   it("uses current day when no override provided", () => {
     const result = job.run();
     // Should use NOW.slice(0,10) = "2025-06-15"

@@ -1,4 +1,5 @@
 import { FridayDomainError } from "#errors";
+import type { FridayLearningEventAppendInput } from "#ledger";
 import type {
   FridayMarketplaceRequestAssetKind,
   FridayMarketplaceRequestPost,
@@ -22,6 +23,8 @@ export interface FridayMarketplaceRequestBoardServiceDeps {
   >;
   generateId: () => string;
   now: () => string;
+  learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
+  learningUserId?: string;
 }
 
 export interface FridayCreateMarketplaceRequestInput {
@@ -49,6 +52,20 @@ export interface FridayMarketplaceRequestBundle {
 
 export class FridayMarketplaceRequestBoardService {
   public constructor(private readonly deps: FridayMarketplaceRequestBoardServiceDeps) {}
+
+  private writeLearningEvent(event: Omit<FridayLearningEventAppendInput, "eventId" | "ts" | "userId">): void {
+    if (!this.deps.learningEventWriter || !this.deps.learningUserId) {
+      return;
+    }
+    this.deps.learningEventWriter([
+      {
+        eventId: this.deps.generateId(),
+        ts: this.deps.now(),
+        userId: this.deps.learningUserId,
+        ...event,
+      },
+    ]);
+  }
 
   public async listRequests(
     actor: MarketplaceActorContext,
@@ -159,6 +176,17 @@ export class FridayMarketplaceRequestBoardService {
       status: "accepted",
       acceptedResponseId: response.id,
       updatedAt: this.deps.now(),
+    });
+    this.writeLearningEvent({
+      kind: "request_fulfilled",
+      payload: {
+        requestId,
+        responseId: response.id,
+        assetKind: request.assetKind,
+        deliverableAssetId: response.deliverableAssetId ?? null,
+        responderCreatorId: response.responderCreatorId,
+        requesterPrincipalId: actor.principalId,
+      },
     });
     return (await this.getRequest(requestId, actor))!;
   }

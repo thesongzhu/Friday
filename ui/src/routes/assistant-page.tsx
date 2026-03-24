@@ -28,6 +28,7 @@ import {
 import { skillsApi } from "@/lib/api/skills";
 import { systemApi } from "@/lib/api/system";
 import { workflowsApi } from "@/lib/api/workflows";
+import { automationsApi } from "@/lib/api/automations";
 import type {
   FridayActionTemplateSummary,
   FridayAgentLoopPolicy,
@@ -58,6 +59,11 @@ import {
   getAssistantStarterTask,
 } from "@/lib/assistant/starter-tasks";
 import {
+  deriveAssistantOutcomeReceipt,
+  normalizeAssistantTask,
+  type FridayAssistantOutcomeReceipt,
+} from "@/lib/assistant/outcome-receipts";
+import {
   buildAssistantIssuePlaybook,
   buildAssistantQuickActions,
   buildAssistantRecoveryPaths,
@@ -75,6 +81,7 @@ import { buildSkillHref } from "@/lib/skills/view-models";
 import { buildWorkflowHref } from "@/lib/workflows/view-models";
 
 const OPERATOR_ID = "assistant-shell";
+const ASSISTANT_OUTCOME_RECEIPT_COOLDOWN_KEY = "friday.assistant.outcome-receipt.cooldowns";
 const ACTIVE_ASSISTANT_RUN_STATUSES = [
   "pending",
   "planning",
@@ -235,12 +242,60 @@ function compactText(text?: string): string {
   return text.length > 180 ? `${text.slice(0, 177)}...` : text;
 }
 
+function readOutcomeReceiptCooldowns(): Record<string, string> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(ASSISTANT_OUTCOME_RECEIPT_COOLDOWN_KEY);
+    return raw ? JSON.parse(raw) as Record<string, string> : {};
+  } catch {
+    return {};
+  }
+}
+
+function getActiveOutcomeReceiptCooldownTaskKeys(nowMs = Date.now()): string[] {
+  return Object.entries(readOutcomeReceiptCooldowns())
+    .filter(([, until]) => new Date(until).getTime() > nowMs)
+    .map(([taskKey]) => taskKey);
+}
+
+function setOutcomeReceiptCooldown(task: string, days = 14): string[] {
+  const taskKey = normalizeAssistantTask(task);
+  const cooldowns = readOutcomeReceiptCooldowns();
+  cooldowns[taskKey] = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(ASSISTANT_OUTCOME_RECEIPT_COOLDOWN_KEY, JSON.stringify(cooldowns));
+  }
+  return getActiveOutcomeReceiptCooldownTaskKeys();
+}
+
+function buildAssistantAutomationName(task: string): string {
+  const trimmed = task.trim();
+  if (trimmed.length <= 48) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, 45)}...`;
+}
+
+function buildAutomationsPrefillHref(receipt: FridayAssistantOutcomeReceipt): string {
+  const params = new URLSearchParams({
+    name: buildAssistantAutomationName(receipt.task),
+    task: receipt.task,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  });
+  return `/automations?${params.toString()}`;
+}
+
 export function AssistantPage() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const [goal, setGoal] = useState("");
   const [intentResult, setIntentResult] = useState<FridayBeginnerIntentResolution | null>(null);
   const [templateValues, setTemplateValues] = useState<Record<string, Record<string, string | boolean>>>({});
+  const [suppressedOutcomeTaskKeys, setSuppressedOutcomeTaskKeys] = useState<string[]>(() =>
+    getActiveOutcomeReceiptCooldownTaskKeys(),
+  );
   const setupStarterApplied = useRef(false);
 
   const sessionQuery = useQuery({
@@ -333,6 +388,12 @@ export function AssistantPage() {
     queryKey: ["assistant-shell", "skills"],
     queryFn: () => skillsApi.listSkills(),
     refetchInterval: 20_000,
+  });
+
+  const automationsQuery = useQuery({
+    queryKey: ["assistant-shell", "automations"],
+    queryFn: () => automationsApi.list({ limit: 20 }),
+    refetchInterval: 15_000,
   });
 
   const catalogQuery = useQuery({
@@ -515,6 +576,23 @@ export function AssistantPage() {
     },
   });
 
+  const saveAutomationMutation = useMutation({
+    mutationFn: (input: { name: string; taskTemplate: string; sourceRunId?: string }) =>
+      agentApi.saveAutomation({
+        name: input.name,
+        taskTemplate: input.taskTemplate,
+        sourceRunId: input.sourceRunId,
+        enabled: true,
+      }),
+    onSuccess: (automation) => {
+      toast.success(`Saved "${automation.name}" as an automation.`);
+      void invalidateAssistantShell(queryClient);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not save this as an automation");
+    },
+  });
+
   const updateSkillMutation = useMutation({
     mutationFn: (skillId: string) => skillsApi.updateSkill(skillId),
     onSuccess: (result) => {
@@ -651,6 +729,7 @@ export function AssistantPage() {
   const loopRuns = loopRunsQuery.data ?? [];
   const workflowOverviews = workflowOverviewQueries.flatMap((query) => (query.data ? [query.data] : []));
   const installedSkills = skillsQuery.data ?? [];
+  const assistantAutomations = automationsQuery.data ?? [];
   const catalogItems = catalogQuery.data?.items ?? [];
   const sources = sourcesQuery.data ?? [];
   const satellites = satellitesQuery.data?.items ?? [];
@@ -665,6 +744,14 @@ export function AssistantPage() {
         isAssistantActiveRunStatus(run.status),
       ) ?? null,
     [agentRunsQuery.data],
+  );
+  const latestOutcomeReceipt = useMemo(
+    () => deriveAssistantOutcomeReceipt({
+      runs: agentRunsQuery.data ?? [],
+      automations: assistantAutomations,
+      suppressedTaskKeys: suppressedOutcomeTaskKeys,
+    }),
+    [agentRunsQuery.data, assistantAutomations, suppressedOutcomeTaskKeys],
   );
   const assistantRunEvents = useAgentRunEvents(activeAssistantRun?.id ?? null, {
     enabled: activeAssistantRun !== null,
@@ -775,6 +862,26 @@ export function AssistantPage() {
               loading={resolveIntentMutation.isPending}
               intentResult={intentResult}
               expertModeEnabled={expertModeQuery.data?.enabled ?? false}
+            />
+
+            <OutcomeReceiptCard
+              receipt={latestOutcomeReceipt}
+              savePending={saveAutomationMutation.isPending}
+              onSave={(receipt) =>
+                saveAutomationMutation.mutate({
+                  name: buildAssistantAutomationName(receipt.task),
+                  taskTemplate: receipt.task,
+                  sourceRunId: receipt.runId,
+                })}
+              onPackage={(receipt) => {
+                const packageGoal = `Create a reusable skill I can enable for this task: ${receipt.task}`;
+                setGoal(packageGoal);
+                resolveIntentMutation.mutate(packageGoal);
+              }}
+              onPublishLater={(receipt) => {
+                setSuppressedOutcomeTaskKeys(setOutcomeReceiptCooldown(receipt.task));
+                toast.success("Friday will keep this private for now and wait for stronger proof-of-use before asking again.");
+              }}
             />
 
             <AssistantQuickActionsCard
@@ -924,6 +1031,89 @@ export function AssistantPage() {
   );
 }
 
+function OutcomeReceiptCard(props: {
+  receipt: FridayAssistantOutcomeReceipt | null;
+  savePending: boolean;
+  onSave: (receipt: FridayAssistantOutcomeReceipt) => void;
+  onPackage: (receipt: FridayAssistantOutcomeReceipt) => void;
+  onPublishLater: (receipt: FridayAssistantOutcomeReceipt) => void;
+}) {
+  if (!props.receipt) {
+    return null;
+  }
+
+  const receipt = props.receipt;
+  const actionTone = (action: FridayAssistantOutcomeReceipt["nextRecommendedAction"]) =>
+    receipt.nextRecommendedAction === action ? "primary" : "secondary";
+
+  return (
+    <ShellCard
+      eyebrow="Outcome receipt"
+      title="Friday turns a successful run into the next durable advantage"
+      aside={<StatusPill tone="success">next best action</StatusPill>}
+    >
+      <div
+        className="space-y-4"
+        data-testid="assistant-outcome-receipt"
+        data-recommended-action={receipt.nextRecommendedAction}
+      >
+        <div className="rounded-[24px] border border-emerald-300/15 bg-emerald-300/[0.08] p-4">
+          <p className="text-sm font-medium text-emerald-100">{receipt.summary}</p>
+          <p className="mt-2 text-xs uppercase tracking-[0.18em] text-emerald-100/70">
+            Estimated time saved next time: {receipt.estimatedTimeSavedMinutes} min
+          </p>
+        </div>
+        <div>
+          <p className="text-sm font-medium text-white">{receipt.task}</p>
+          <p className="mt-2 text-sm leading-6 text-white/62">{receipt.nextReason}</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {receipt.evidence.map((line) => (
+            <div key={line} className="rounded-[20px] border border-white/[0.08] bg-white/[0.04] p-3 text-sm text-white/65">
+              {line}
+            </div>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <ActionButton
+            data-testid="assistant-outcome-save"
+            disabled={props.savePending || Boolean(receipt.matchingAutomation)}
+            tone={actionTone("save")}
+            onClick={() => props.onSave(receipt)}
+          >
+            {receipt.matchingAutomation ? "Already saved" : "Save"}
+          </ActionButton>
+          <Link
+            className={`inline-flex items-center justify-center rounded-2xl px-4 py-2 text-sm font-medium transition ${
+              receipt.nextRecommendedAction === "schedule"
+                ? "bg-[var(--accent-strong)] text-slate-950 hover:bg-[var(--accent-soft)]"
+                : "bg-white/10 text-white hover:bg-white/[0.14]"
+            }`}
+            data-testid="assistant-outcome-schedule"
+            to={buildAutomationsPrefillHref(receipt)}
+          >
+            Schedule
+          </Link>
+          <ActionButton
+            data-testid="assistant-outcome-package"
+            tone={actionTone("package")}
+            onClick={() => props.onPackage(receipt)}
+          >
+            Package
+          </ActionButton>
+          <ActionButton
+            data-testid="assistant-outcome-publish-later"
+            tone={actionTone("publish_later")}
+            onClick={() => props.onPublishLater(receipt)}
+          >
+            Publish later
+          </ActionButton>
+        </div>
+      </div>
+    </ShellCard>
+  );
+}
+
 function AssistantRunPulseCard(props: {
   run: AgentRunRecord | null;
   progress: {
@@ -1039,6 +1229,7 @@ function GoalIntakeCard(props: {
           hint="Friday will infer defaults, ask only the decisive question when needed, and turn the goal into clickable next steps."
         />
         <textarea
+          data-testid="assistant-goal-input"
           value={goal}
           onChange={(event) => onGoalChange(event.target.value)}
           placeholder="Examples: help me understand why deployments keep failing, generate and deploy a workflow for weekly error digests, or fix the degraded satellite."
@@ -1046,6 +1237,7 @@ function GoalIntakeCard(props: {
         />
         <div className="flex flex-wrap gap-3">
           <ActionButton
+            data-testid="assistant-goal-submit"
             onClick={() => onIntentClick(goal)}
             disabled={!goal.trim() || loading}
           >
@@ -1583,7 +1775,10 @@ export function MarketplaceActionCard(props: {
             <AssistantAdvancedPanel
               summary="Friday keeps the public marketplace permission-aware and declarative-first. If a public asset does not fit, it should guide you toward a request instead of leaving you stuck."
               operatorContext={[
+                `Proof of use: ${asset.proofOfUseScore ?? "unknown"}`,
                 `Trust score: ${asset.trustScore ?? "unknown"}`,
+                `Reliability: ${asset.outcomeReliabilityScore ?? "unknown"}`,
+                `Permission efficiency: ${asset.permissionEfficiencyScore ?? "unknown"}`,
                 `Maturity: ${asset.maturity.replaceAll("_", " ")}`,
                 `Installable from assistant: ${asset.installable ? "yes" : "no"}`,
               ]}

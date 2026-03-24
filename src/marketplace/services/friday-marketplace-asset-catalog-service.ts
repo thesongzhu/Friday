@@ -11,6 +11,11 @@ import type {
   FridaySkillLifecycleService,
 } from "../../skills/services/friday-skill-lifecycle-service.js";
 import type { PermissionGrant } from "../../skills/model/friday-skill-permission-policy.types.js";
+import {
+  computeMarketplaceProofSignals,
+  sortMarketplaceAssetsByProofOfUse,
+} from "./friday-marketplace-proof-of-use.js";
+import type { FridayMarketplaceProofOfUsePolicy } from "./friday-marketplace-proof-of-use-policy.js";
 
 export type FridayMarketplaceAssetSourceKind =
   | "skills_lifecycle"
@@ -34,6 +39,12 @@ export interface FridayMarketplaceAssetSummary {
   trustScore: number | null;
   latestVersion: string | null;
   maturity: "validated_and_keep" | "validated_but_temporary" | "deferred";
+  proofOfUseScore?: number;
+  repeatRunRate?: number;
+  outcomeReliabilityScore?: number;
+  permissionEfficiencyScore?: number;
+  requestFulfillmentRate?: number;
+  maintenanceResponsivenessScore?: number;
 }
 
 export interface FridayMarketplaceAssetDetail
@@ -58,10 +69,27 @@ export interface FridayMarketplaceAssetCatalogServiceDeps {
     FridayMarketplaceCommerceRoutesDeps,
     "getPublisher" | "getSearchIndex"
   >;
+  commerceAnalytics?: {
+    listInstallations: () => Promise<Array<{ listingId: string }>>;
+    listSupportEvents: () => Promise<Array<{ assetId: string }>>;
+    listAcceptedRequestCountsByCreator: () => Promise<
+      readonly {
+        creatorId: string;
+        count: number;
+      }[]
+    >;
+  };
   skillLifecycle: Pick<
     FridaySkillLifecycleService,
     "getSkill" | "listCatalog"
   >;
+  proofOfUsePolicy?: FridayMarketplaceProofOfUsePolicy;
+}
+
+interface FridayMarketplaceProofContext {
+  installCountByAsset: Map<string, number>;
+  supportCountByAsset: Map<string, number>;
+  requestFulfillmentCountByCreator: Map<string, number>;
 }
 
 function permissionGrantToLabel(grant: PermissionGrant): string {
@@ -142,38 +170,42 @@ export class FridayMarketplaceAssetCatalogService {
   ) {}
 
   public async listAssets(): Promise<FridayMarketplaceAssetSummary[]> {
+    const proofContext = await this.buildProofContext();
     const [skillAssets, listingAssets] = await Promise.all([
-      this.listSkillAssets(),
-      this.listListingAssets(),
+      this.listSkillAssets(proofContext),
+      this.listListingAssets(proofContext),
     ]);
-    return [...skillAssets, ...listingAssets].sort((left, right) =>
-      left.title.localeCompare(right.title),
-    );
+    return sortMarketplaceAssetsByProofOfUse([...skillAssets, ...listingAssets]);
   }
 
   public async getAsset(
     assetId: string,
   ): Promise<FridayMarketplaceAssetDetail | null> {
+    const proofContext = await this.buildProofContext();
     if (assetId.startsWith("skill:")) {
-      return this.getSkillAsset(assetId.slice("skill:".length));
+      return this.getSkillAsset(assetId.slice("skill:".length), proofContext);
     }
     if (assetId.startsWith("listing:")) {
-      return this.getListingAsset(assetId.slice("listing:".length));
+      return this.getListingAsset(assetId.slice("listing:".length), proofContext);
     }
     return null;
   }
 
-  private async listSkillAssets(): Promise<FridayMarketplaceAssetSummary[]> {
+  private async listSkillAssets(
+    proofContext: FridayMarketplaceProofContext,
+  ): Promise<FridayMarketplaceAssetSummary[]> {
     const catalog = await this.deps.skillLifecycle.listCatalog({
       includeStale: true,
       limit: 200,
     });
     return (catalog.items as FridaySkillCatalogViewItem[])
-      .map((item) => this.mapSkillSummary(item))
+      .map((item) => this.mapSkillSummary(item, proofContext))
       .filter((item) => item.publicEligible);
   }
 
-  private async listListingAssets(): Promise<FridayMarketplaceAssetSummary[]> {
+  private async listListingAssets(
+    proofContext: FridayMarketplaceProofContext,
+  ): Promise<FridayMarketplaceAssetSummary[]> {
     const searchIndex = await this.deps.commerce.getSearchIndex();
     const publisherCache = new Map<string, Promise<FridayPublisher | null>>();
     const assets: FridayMarketplaceAssetSummary[] = [];
@@ -186,7 +218,7 @@ export class FridayMarketplaceAssetCatalogService {
         publisherCache.set(entry.listing.publisherId, publisherPromise);
       }
       const publisher = await publisherPromise;
-      const summary = this.mapListingSummary(entry, publisher);
+      const summary = this.mapListingSummary(entry, publisher, proofContext);
       if (summary.publicEligible) {
         assets.push(summary);
       }
@@ -196,16 +228,18 @@ export class FridayMarketplaceAssetCatalogService {
 
   private async getSkillAsset(
     skillId: string,
+    proofContext: FridayMarketplaceProofContext,
   ): Promise<FridayMarketplaceAssetDetail | null> {
     const detail = await this.deps.skillLifecycle.getSkill(skillId);
     if (detail === null) {
       return null;
     }
-    return this.mapSkillDetail(detail);
+    return this.mapSkillDetail(detail, proofContext);
   }
 
   private async getListingAsset(
     listingId: string,
+    proofContext: FridayMarketplaceProofContext,
   ): Promise<FridayMarketplaceAssetDetail | null> {
     const searchIndex = await this.deps.commerce.getSearchIndex();
     const entry =
@@ -216,17 +250,29 @@ export class FridayMarketplaceAssetCatalogService {
     const publisher = await this.deps.commerce.getPublisher(
       entry.listing.publisherId,
     );
-    return this.mapListingDetail(entry, publisher);
+    return this.mapListingDetail(entry, publisher, proofContext);
   }
 
   private mapSkillSummary(
     item: FridaySkillCatalogViewItem,
+    proofContext: FridayMarketplaceProofContext,
   ): FridayMarketplaceAssetSummary {
     const distributionMode = skillDistributionMode(item);
     const publicEligible = distributionMode === "declarative_public";
+    const assetId = `skill:${item.skillId}`;
+    const creatorId = skillCreatorId(item);
+    const signals = computeMarketplaceProofSignals({
+      verificationStatus: item.signatureValid ? "verified" : "unverified",
+      trustScore: item.trustScore,
+      permissionCount: item.manifest.permissions.grants.length,
+      installCount: item.installed ? 1 : 0,
+      supportCount: proofContext.supportCountByAsset.get(assetId) ?? 0,
+      requestFulfillmentCount: proofContext.requestFulfillmentCountByCreator.get(creatorId) ?? 0,
+      maintained: Boolean(item.version),
+    }, this.deps.proofOfUsePolicy);
     return {
-      assetId: `skill:${item.skillId}`,
-      creatorId: skillCreatorId(item),
+      assetId,
+      creatorId,
       assetType: "skill",
       sourceKind: "skills_lifecycle",
       distributionMode,
@@ -242,19 +288,38 @@ export class FridayMarketplaceAssetCatalogService {
       trustScore: item.trustScore,
       latestVersion: item.version,
       maturity: publicEligible ? "validated_and_keep" : "validated_but_temporary",
+      ...signals,
     };
   }
 
   private mapSkillDetail(
     detail: FridaySkillLifecycleDetail,
+    proofContext: FridayMarketplaceProofContext,
   ): FridayMarketplaceAssetDetail {
     const manifest =
       detail.currentManifest ?? detail.catalogEntry?.manifest ?? null;
     const distributionMode = skillDistributionMode(detail);
     const publicEligible = distributionMode === "declarative_public";
+    const assetId = `skill:${detail.skillId}`;
+    const creatorId = skillCreatorId(detail);
+    const permissions = skillPermissionsToLabels(detail);
+    const signals = computeMarketplaceProofSignals({
+      verificationStatus:
+        detail.verification?.ok === true
+          ? "verified"
+          : detail.verification?.ok === false
+            ? "unverified"
+            : "unknown",
+      trustScore: detail.catalogEntry?.trustScore ?? null,
+      permissionCount: permissions.length,
+      installCount: Boolean(detail.installedVersion) ? 1 : 0,
+      supportCount: proofContext.supportCountByAsset.get(assetId) ?? 0,
+      requestFulfillmentCount: proofContext.requestFulfillmentCountByCreator.get(creatorId) ?? 0,
+      maintained: Boolean(detail.latestVersion ?? detail.installedVersion),
+    }, this.deps.proofOfUsePolicy);
     return {
-      assetId: `skill:${detail.skillId}`,
-      creatorId: skillCreatorId(detail),
+      assetId,
+      creatorId,
       assetType: "skill",
       sourceKind: "skills_lifecycle",
       distributionMode,
@@ -276,8 +341,9 @@ export class FridayMarketplaceAssetCatalogService {
       trustScore: detail.catalogEntry?.trustScore ?? null,
       latestVersion: detail.latestVersion ?? detail.installedVersion ?? null,
       maturity: publicEligible ? "validated_and_keep" : "validated_but_temporary",
+      ...signals,
       description: detail.description ?? manifest?.description ?? "",
-      permissions: skillPermissionsToLabels(detail),
+      permissions,
       sourceLabel: detail.sourceDetails?.name ?? detail.source,
       provenance: {
         kind: "skill",
@@ -289,12 +355,24 @@ export class FridayMarketplaceAssetCatalogService {
   private mapListingSummary(
     entry: ListingSearchEntry,
     publisher: FridayPublisher | null,
+    proofContext: FridayMarketplaceProofContext,
   ): FridayMarketplaceAssetSummary {
     const publicEligible =
       entry.version.distributionMode === "declarative_public";
+    const assetId = `listing:${entry.listing.id}`;
+    const creatorId = listingCreatorId(entry);
+    const signals = computeMarketplaceProofSignals({
+      verificationStatus: "unverified",
+      trustScore: null,
+      permissionCount: entry.version.permissionManifest.permissions.length,
+      installCount: proofContext.installCountByAsset.get(assetId) ?? 0,
+      supportCount: proofContext.supportCountByAsset.get(assetId) ?? 0,
+      requestFulfillmentCount: proofContext.requestFulfillmentCountByCreator.get(creatorId) ?? 0,
+      maintained: Boolean(entry.version.packageVersion),
+    }, this.deps.proofOfUsePolicy);
     return {
-      assetId: `listing:${entry.listing.id}`,
-      creatorId: listingCreatorId(entry),
+      assetId,
+      creatorId,
       assetType: entry.version.assetType,
       sourceKind: "marketplace_listing",
       distributionMode: entry.version.distributionMode,
@@ -314,14 +392,16 @@ export class FridayMarketplaceAssetCatalogService {
           ? "validated_and_keep"
           : "validated_but_temporary"
         : "validated_but_temporary",
+      ...signals,
     };
   }
 
   private mapListingDetail(
     entry: ListingSearchEntry,
     publisher: FridayPublisher | null,
+    proofContext: FridayMarketplaceProofContext,
   ): FridayMarketplaceAssetDetail {
-    const summary = this.mapListingSummary(entry, publisher);
+    const summary = this.mapListingSummary(entry, publisher, proofContext);
     return {
       ...summary,
       description:
@@ -333,6 +413,44 @@ export class FridayMarketplaceAssetCatalogService {
         listingId: entry.listing.id,
         versionId: entry.version.id,
       },
+    };
+  }
+
+  private async buildProofContext(): Promise<FridayMarketplaceProofContext> {
+    if (!this.deps.commerceAnalytics) {
+      return {
+        installCountByAsset: new Map(),
+        supportCountByAsset: new Map(),
+        requestFulfillmentCountByCreator: new Map(),
+      };
+    }
+
+    const [installations, supportEvents, acceptedRequests] = await Promise.all([
+      this.deps.commerceAnalytics.listInstallations(),
+      this.deps.commerceAnalytics.listSupportEvents(),
+      this.deps.commerceAnalytics.listAcceptedRequestCountsByCreator(),
+    ]);
+
+    const installCountByAsset = new Map<string, number>();
+    for (const installation of installations) {
+      const assetId = `listing:${installation.listingId}`;
+      installCountByAsset.set(assetId, (installCountByAsset.get(assetId) ?? 0) + 1);
+    }
+
+    const supportCountByAsset = new Map<string, number>();
+    for (const event of supportEvents) {
+      supportCountByAsset.set(event.assetId, (supportCountByAsset.get(event.assetId) ?? 0) + 1);
+    }
+
+    const requestFulfillmentCountByCreator = new Map<string, number>();
+    for (const entry of acceptedRequests) {
+      requestFulfillmentCountByCreator.set(entry.creatorId, entry.count);
+    }
+
+    return {
+      installCountByAsset,
+      supportCountByAsset,
+      requestFulfillmentCountByCreator,
     };
   }
 }
