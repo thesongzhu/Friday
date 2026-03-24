@@ -7,16 +7,28 @@ and this project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-24
+
 ### Added
+- Assistant `Outcome Receipt` guidance with direct follow-up actions for saving, scheduling, packaging, and deferring publication.
+- Standalone browser E2E lane for incentive-alignment journeys via `npm run test:e2e:ui`.
 - One-command local demo workflow runner: `npm run demo` (`scripts/demo/minimal-workflow-demo.mjs` + sample workflow JSON).
 - Troubleshooting and self-recovery runbook: `docs/TROUBLESHOOTING.md`.
 - Extension guide and copy-ready templates for skills/plugins/workflows: `docs/EXTENDING.md` and `examples/templates/*`.
 - Release notes template and closed-loop usability blueprint docs.
 
 ### Changed
+- `/automations` now surfaces leverage-oriented metadata including time-saved estimates, reuse counts, promotion state, and outcome score ranking.
+- Marketplace asset ranking and creator reputation now use proof-of-use signals instead of install-count-first ordering, with typed scoring policy support.
+- Assistant handoff into automations and marketplace requests now preserves task context and prefill data across the full loop.
+- CI and `release:verify` now run the browser E2E lane explicitly instead of relying on default `npm test`.
 - README now surfaces one-command demo, troubleshooting, extensibility, release links, and CI/release status badges.
 - `docs/RELEASING.md` now includes release artifact completeness checks (version/changelog/release notes/license/security/CI).
 - Hub bootstrap env test now reads package version dynamically (no hardcoded `0.3.0`), preventing version-bump CI regressions.
+
+### Fixed
+- `detect-secrets` false positives in browser/mock support tests are now inline-allowlisted, and the secrets baseline is synchronized with the new allowlist.
+- GitHub CI no longer fails by trying to run browser E2E through the default `npm test` entry without a built UI bundle.
 
 ## [0.3.1] - 2026-02-27
 

@@ -76,7 +76,7 @@ describe("Friday HTTP client IP resolution", () => {
       db,
       idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
       nowIso: () => "2025-06-15T10:00:00.000Z",
-      tokenSecret: "test-route-secret",
+      tokenSecret: "test-route-secret", // pragma: allowlist secret
       accessTokenTtlSec: 900,
       refreshTokenTtlSec: 604800,
       allowLocalBypassLogin: true,
