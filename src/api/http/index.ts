@@ -26,3 +26,11 @@ export {
   type FridayHttpServer,
   type FridayHttpServerDeps,
 } from "./friday-http-server.js";
+export {
+  parseFridayHttpTrustProxyMode,
+  resolveFridayClientIp,
+  normalizeFridayClientIp,
+  isFridayLoopbackAddress,
+  isFridayPrivateNetworkAddress,
+  type FridayHttpTrustProxyMode,
+} from "./friday-http-client-ip.js";

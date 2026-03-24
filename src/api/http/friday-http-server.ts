@@ -23,6 +23,7 @@ import type { WebchatWsService } from "#channels";
 import { buildErrorResponse } from "./friday-http-error-mapper.js";
 import { isFridayHttpRawTextResponse } from "./friday-http-raw-response.js";
 import { buildFridayApiError, FRIDAY_API_ERROR_CODES } from "../model/friday-api-error-codes.js";
+import { type FridayHttpTrustProxyMode, resolveFridayClientIp } from "./friday-http-client-ip.js";
 
 // ─── Types ───
 
@@ -41,6 +42,8 @@ export interface FridayHttpServerDeps {
   logger?: (line: string) => void;
   /** Directory containing static UI assets (dist/ui). */
   uiStaticDir?: string;
+  /** Whether to trust proxy forwarding headers when resolving the client IP. */
+  trustProxyMode?: FridayHttpTrustProxyMode;
   /** Optional Webchat WS service for /ws/chat style upgrades. */
   webchatWsService?: WebchatWsService;
 }
@@ -394,6 +397,7 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
   const logRequests = deps.logRequests ?? false;
   const logger = deps.logger ?? console.log;
   const uiStaticDir = deps.uiStaticDir ?? undefined;
+  const trustProxyMode = deps.trustProxyMode ?? "off";
   const hasObservabilityRoutes = routes
     .getRoutes()
     .some((route) => route.path.startsWith("/v1/observability"));
@@ -523,12 +527,19 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       for (const [key, value] of Object.entries(req.headers)) {
         headers[key] = Array.isArray(value) ? value.join(", ") : value;
       }
+      const socketIp = req.socket.remoteAddress;
+      const clientIp = resolveFridayClientIp({
+        socketIp,
+        headers,
+        trustProxyMode,
+      });
 
       // Build context
       const ctx: FridayHttpContext<unknown, unknown, unknown> = {
         requestId,
         receivedAt,
-        ip: req.socket.remoteAddress,
+        ip: clientIp,
+        socketIp,
         userAgent: req.headers["user-agent"],
         params,
         query,

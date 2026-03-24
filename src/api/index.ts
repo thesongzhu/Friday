@@ -78,6 +78,14 @@ export type {
 export { buildErrorResponse, mapErrorToStatusCode, mapErrorToApiError } from "./http/friday-http-error-mapper.js";
 export { createFridayHttpServer } from "./http/friday-http-server.js";
 export type { FridayHttpServer, FridayHttpServerDeps } from "./http/friday-http-server.js";
+export {
+  parseFridayHttpTrustProxyMode,
+  resolveFridayClientIp,
+  normalizeFridayClientIp,
+  isFridayLoopbackAddress,
+  isFridayPrivateNetworkAddress,
+} from "./http/friday-http-client-ip.js";
+export type { FridayHttpTrustProxyMode } from "./http/friday-http-client-ip.js";
 
 // Memory routes (guard-based)
 export { createFridayMemoryRoutes } from "./http/routes/friday-memory-routes.js";

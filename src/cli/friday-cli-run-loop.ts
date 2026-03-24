@@ -8,6 +8,7 @@
 import { resolve } from "node:path";
 import type { FridayHub } from "#hub";
 import { createFridayHttpServer } from "../api/http/friday-http-server.js";
+import type { FridayHttpTrustProxyMode } from "../api/http/friday-http-client-ip.js";
 
 // ─── Types ───
 
@@ -17,6 +18,7 @@ export interface FridayCliRunLoopDeps {
   host?: string;
   corsOrigins?: string[];
   logRequests?: boolean;
+  trustProxyMode?: FridayHttpTrustProxyMode;
   /** Directory containing static UI assets. Default: dist/ui relative to cwd. */
   uiStaticDir?: string;
   /** Override process.exit for testing. Defaults to process.exit. */
@@ -40,6 +42,7 @@ export function runFridayCliLoop(deps: FridayCliRunLoopDeps): Promise<void> {
     host: listenHost,
     corsOrigins,
     logRequests,
+    trustProxyMode: deps.trustProxyMode,
     uiStaticDir,
   });
 
