@@ -109,6 +109,7 @@ export interface FridayWorkflowExecutionService {
     status?: WorkflowRunStatus,
     limit?: number,
   ): FridayWorkflowRunEntity[];
+  listActiveRuns(limit?: number): FridayWorkflowRunEntity[];
   getRunNodes(
     runId: UUID,
     status?: string,
@@ -1487,6 +1488,13 @@ export function createFridayWorkflowExecutionService(
       return deps.db.withReadConnection((db) =>
         deps.runRepo.listRunsByWorkflow(db, workflowId, status, limit),
       );
+    },
+
+    listActiveRuns(limit) {
+      const runs = deps.db.withReadConnection((db) =>
+        deps.runRepo.listActiveRuns(db),
+      );
+      return typeof limit === "number" ? runs.slice(0, limit) : runs;
     },
 
     getRunNodes(runId, status) {

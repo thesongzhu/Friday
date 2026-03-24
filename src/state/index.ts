@@ -50,6 +50,7 @@ export { applyFridayWritePragmas, applyFridayReadPragmas } from "./sqlite/friday
 export interface InitializeFridayStateOptions extends LoadFridayConfigOptions {}
 
 export interface FridayStateRuntime {
+  stateDir: string;
   config: LoadedFridayConfig;
   sqlite: FridaySqliteLayer;
   telemetry: FridayMigrationTelemetryWriter;
@@ -95,6 +96,7 @@ export function initializeFridayState(
   });
 
   return {
+    stateDir,
     config: loadedConfig,
     sqlite,
     telemetry,

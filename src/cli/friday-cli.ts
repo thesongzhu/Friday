@@ -15,10 +15,11 @@
  *   friday converters                                       — list converters
  *   friday pack        <skill-dir> --out <file.tgz>
  *   friday skills init <skill-id> [--template node|shell] [--out <dir>]
+ *   friday daemon      start|stop|restart|status            — manage background daemon
  *   friday --help                                           — usage info
  */
 
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -40,14 +41,19 @@ import {
 import { resolveFridayDbPath } from "#state";
 import { resolveSafePath } from "#utilities";
 import Database from "better-sqlite3";
+import {
+  createFridayLocalDaemonService,
+  formatFridayDaemonStatus,
+} from "../daemon/friday-daemon-runtime.js";
 import { runFridayCliLoop } from "./friday-cli-run-loop.js";
 import { FRIDAY_VERSION } from "../lib/version.js";
+import { resolveStateDir } from "../state/paths/friday-state-dir-resolver.js";
 import { runFridayCliAuthLoginAnthropic } from "./friday-cli-auth.js";
 
 // ─── Arg parser ───
 
 export interface ParsedArgs {
-  command: "start" | "list" | "run" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth" | "skills";
+  command: "start" | "list" | "run" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth" | "skills" | "daemon";
   skillDirs: string[];
   port: number | undefined;
   skillId: string | undefined;
@@ -74,6 +80,8 @@ export interface ParsedArgs {
   skillsSubcommand: string | undefined;
   template: "node" | "shell" | undefined;
   initSkillId: string | undefined;
+  // Daemon-related fields
+  daemonSubcommand: "start" | "stop" | "restart" | "status" | undefined;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -105,6 +113,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     skillsSubcommand: undefined,
     template: undefined,
     initSkillId: undefined,
+    daemonSubcommand: undefined,
   };
 
   if (args.length === 0) {
@@ -117,7 +126,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     return result;
   }
 
-  const validCommands = ["start", "list", "run", "status", "import", "convert", "converters", "pack", "auth", "skills"] as const;
+  const validCommands = ["start", "list", "run", "status", "import", "convert", "converters", "pack", "auth", "skills", "daemon"] as const;
   type ValidCommand = (typeof validCommands)[number];
 
   if ((validCommands as readonly string[]).includes(cmd)) {
@@ -129,6 +138,16 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   // For "converters" command, no additional args needed
   if (cmd === "converters") {
+    return result;
+  }
+
+  // For "daemon" command, parse the subcommand
+  if (cmd === "daemon") {
+    const sub = args[1];
+    const validSubs = ["start", "stop", "restart", "status"] as const;
+    if (sub && (validSubs as readonly string[]).includes(sub)) {
+      result.daemonSubcommand = sub as (typeof validSubs)[number];
+    }
     return result;
   }
 
@@ -335,6 +354,9 @@ Usage:
 
   friday skills init <skill-id> [--template node|shell] [--out <dir>]
       Create a minimal local skill template with manifest, entrypoint, and SKILL.md.
+
+  friday daemon start|stop|restart|status
+      Manage the Friday background daemon process.
 
   friday --help
       Show this help message.
@@ -1578,15 +1600,74 @@ async function cmdAuth(parsed: ParsedArgs): Promise<void> {
 }
 
 function cmdStatus(): void {
-  // v1: No persistent hub process or IPC socket yet.
-  // Report CLI version and basic system info.
   const version = FRIDAY_VERSION;
+  const stateDir = resolveStateDir();
+  const daemonService = createFridayLocalDaemonService({
+    moduleUrl: import.meta.url,
+    stateDir,
+    version,
+  });
   console.log(`Friday CLI v${version}`);
   console.log(`Node.js ${process.version}`);
   console.log(`Platform: ${process.platform} ${process.arch}`);
   console.log("");
-  console.log("Hub status: not detectable (no IPC socket in v1)");
-  console.log("Start the hub with: friday start");
+  console.log(formatFridayDaemonStatus(daemonService.status()));
+  console.log(`State dir: ${stateDir}`);
+}
+
+// ─── Daemon ───
+
+async function cmdDaemon(parsed: ParsedArgs): Promise<void> {
+  const sub = parsed.daemonSubcommand;
+  if (!sub) {
+    console.error("Usage: friday daemon start|stop|restart|status");
+    process.exitCode = 1;
+    return;
+  }
+
+  const stateDir = resolveStateDir();
+  const service = createFridayLocalDaemonService({
+    moduleUrl: import.meta.url,
+    stateDir,
+    version: FRIDAY_VERSION,
+  });
+
+  switch (sub) {
+    case "start": {
+      const result = await service.start();
+      if (result.ok) {
+        console.log(`Friday daemon started (PID ${String(result.value.pid)})`);
+      } else {
+        console.error(`Failed to start daemon: ${result.error.message}`);
+        process.exitCode = 1;
+      }
+      break;
+    }
+    case "stop": {
+      const result = await service.stop();
+      if (result.ok) {
+        console.log("Friday daemon stopped");
+      } else {
+        console.error(`Failed to stop daemon: ${result.error.message}`);
+        process.exitCode = 1;
+      }
+      break;
+    }
+    case "restart": {
+      const result = await service.restart();
+      if (result.ok) {
+        console.log(`Friday daemon restarted (PID ${String(result.value.pid)})`);
+      } else {
+        console.error(`Failed to restart daemon: ${result.error.message}`);
+        process.exitCode = 1;
+      }
+      break;
+    }
+    case "status": {
+      console.log(formatFridayDaemonStatus(service.status()));
+      break;
+    }
+  }
 }
 
 function padEnd(s: string, len: number): string {
@@ -1645,6 +1726,9 @@ async function main(): Promise<void> {
       break;
     case "skills":
       await cmdSkills(parsed);
+      break;
+    case "daemon":
+      await cmdDaemon(parsed);
       break;
     case "help":
     default:
