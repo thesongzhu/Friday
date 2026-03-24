@@ -29,6 +29,12 @@ function rowToEntity(row: FridayLearningMetricsRow): FridayLearningMetricsEntity
     successRate: row.success_rate ?? undefined,
     autoFixSuccessRate: row.auto_fix_success_rate ?? undefined,
     rollbackRate: row.rollback_rate ?? undefined,
+    activationRate: row.activation_rate ?? undefined,
+    saveRate: row.save_rate ?? undefined,
+    reuseRate: row.reuse_rate ?? undefined,
+    promotionRate: row.promotion_rate ?? undefined,
+    supportConversionRate: row.support_conversion_rate ?? undefined,
+    requestFulfillmentRate: row.request_fulfillment_rate ?? undefined,
     incidentsTotal: row.incidents_total,
     factsUpdated: row.facts_updated,
     actionsExecuted: row.actions_executed,
@@ -43,12 +49,19 @@ export function createFridayLearningMetricsRepository(): FridayLearningMetricsRe
       db.prepare(
         `INSERT INTO learning_metrics
          (day, success_rate, auto_fix_success_rate, rollback_rate,
+          activation_rate, save_rate, reuse_rate, promotion_rate, support_conversion_rate, request_fulfillment_rate,
           incidents_total, facts_updated, actions_executed, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(day) DO UPDATE SET
            success_rate = excluded.success_rate,
            auto_fix_success_rate = excluded.auto_fix_success_rate,
            rollback_rate = excluded.rollback_rate,
+           activation_rate = excluded.activation_rate,
+           save_rate = excluded.save_rate,
+           reuse_rate = excluded.reuse_rate,
+           promotion_rate = excluded.promotion_rate,
+           support_conversion_rate = excluded.support_conversion_rate,
+           request_fulfillment_rate = excluded.request_fulfillment_rate,
            incidents_total = excluded.incidents_total,
            facts_updated = excluded.facts_updated,
            actions_executed = excluded.actions_executed,
@@ -58,6 +71,12 @@ export function createFridayLearningMetricsRepository(): FridayLearningMetricsRe
         metric.successRate ?? null,
         metric.autoFixSuccessRate ?? null,
         metric.rollbackRate ?? null,
+        metric.activationRate ?? null,
+        metric.saveRate ?? null,
+        metric.reuseRate ?? null,
+        metric.promotionRate ?? null,
+        metric.supportConversionRate ?? null,
+        metric.requestFulfillmentRate ?? null,
         metric.incidentsTotal,
         metric.factsUpdated,
         metric.actionsExecuted,

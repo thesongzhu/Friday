@@ -1,6 +1,7 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridayDaemonStatus } from "#daemon";
 import type { FridayHubConfigManagerService } from "#hub";
+import type { FridayLearningEventAppendInput } from "#ledger";
 import type { FridayOutboxQueueService } from "#satellites";
 import type { FridayAccessTokenClaims, FridayRole } from "../model/friday-api-auth.types.js";
 import type { FridayAuthService } from "../auth/friday-auth-service.types.js";
@@ -161,6 +162,10 @@ export interface CreateFridayApiRuntimeDeps {
   listMcpServers?: () => ReadonlyArray<{ id: string; transport?: string }>;
   /** Optional: agent event emitter for SSE streaming. */
   agentEventEmitter?: FridayAgentEventEmitter;
+  /** Optional: learning event sink used by runtime-originated automation signals. */
+  learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
+  /** Optional: default user id used for runtime-originated automation learning events. */
+  learningUserId?: string;
   /** Optional: sub-agent registry for sub-agent tree endpoints. */
   subagentRegistry?: FridaySubagentRegistry;
   /** Optional: deterministic pipeline module services for global pipeline APIs. */

@@ -1028,6 +1028,18 @@ export interface FridayCreatorReputationSummary {
   readonly permissionRestraintScore: number;
   /** Number of fulfilled requests attributed to the creator. */
   readonly fulfilledRequestCount: number;
+  /** Proof-of-use weighted score averaged across public assets. */
+  readonly proofOfUseScore: number;
+  /** Average repeat-use signal across assets (0..1). */
+  readonly repeatRunRate: number;
+  /** Average reliability score across assets (0..100). */
+  readonly outcomeReliabilityScore: number;
+  /** Average permission-efficiency score across assets (0..100). */
+  readonly permissionEfficiencyScore: number;
+  /** Average request-fulfillment rate across assets (0..1). */
+  readonly requestFulfillmentRate: number;
+  /** Average maintenance responsiveness across assets (0..100). */
+  readonly maintenanceResponsivenessScore: number;
 }
 
 /** A public creator profile in the skills-first marketplace. */

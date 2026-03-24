@@ -4,7 +4,14 @@ export type FridayLearningEventKind =
   | "tool_result"
   | "user_correction"
   | "error_incident"
-  | "workflow_outcome";
+  | "workflow_outcome"
+  | "automation_saved"
+  | "automation_reused"
+  | "asset_promoted"
+  | "asset_published"
+  | "asset_supported"
+  | "request_fulfilled"
+  | "outcome_confirmed";
 
 export interface FridayLearningEventAppendInput {
   eventId: string;

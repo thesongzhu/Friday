@@ -5,6 +5,7 @@ import {
   createFridayAgentAutomationService,
   createFridayAgentAutomationRepository,
 } from "#agent";
+import type { FridayLearningEventAppendInput } from "#ledger";
 import type {
   FridayAgentAutomationSchedulerBridge,
   FridayAgentAutomationService,
@@ -16,6 +17,7 @@ describe("FridayAgentAutomationService", () => {
   let db: FridaySqliteLayer;
   let idGenerator: () => string;
   let service: FridayAgentAutomationService;
+  let learningEvents: FridayLearningEventAppendInput[];
   let mockStartRun: ReturnType<typeof vi.fn<(input: {
     task: string;
     providerId?: string;
@@ -27,6 +29,7 @@ describe("FridayAgentAutomationService", () => {
   beforeEach(() => {
     db = createTestDb();
     idGenerator = createTestIdGenerator();
+    learningEvents = [];
     mockStartRun = vi.fn<(input: {
       task: string;
       providerId?: string;
@@ -48,6 +51,10 @@ describe("FridayAgentAutomationService", () => {
       startRun: mockStartRun,
       idGenerator,
       nowIso: () => NOW,
+      learningUserId: "test-user",
+      learningEventWriter: (events) => {
+        learningEvents.push(...events);
+      },
     });
   });
 
@@ -69,6 +76,9 @@ describe("FridayAgentAutomationService", () => {
       expect(automation.taskTemplate).toBe("Do something useful");
       expect(automation.enabled).toBe(true);
       expect(automation.runCount).toBe(0);
+      expect(automation.reuseCount).toBe(0);
+      expect(automation.promotionState).toBe("private");
+      expect(automation.lastOutcomeScore).toBe(0);
       expect(automation.createdAt).toBe(NOW);
       expect(automation.updatedAt).toBe(NOW);
     });
@@ -97,6 +107,7 @@ describe("FridayAgentAutomationService", () => {
         timezone: "America/New_York",
       });
       expect(automation.enabled).toBe(false);
+      expect(automation.estimatedTimeSavedMinutes).toBeGreaterThan(0);
     });
   });
 
@@ -335,6 +346,8 @@ describe("FridayAgentAutomationService", () => {
       expect(automation?.lastRunId).toBe("run-result-001");
       expect(automation?.lastRunAt).toBe(NOW);
       expect(automation?.runCount).toBe(1);
+      expect(automation?.reuseCount).toBe(1);
+      expect(automation?.lastOutcomeScore).toBeGreaterThan(0);
     });
 
     it("increments runCount on each execution", async () => {
@@ -348,6 +361,7 @@ describe("FridayAgentAutomationService", () => {
 
       const automation = service.get(created.id);
       expect(automation?.runCount).toBe(2);
+      expect(automation?.reuseCount).toBe(2);
     });
 
     it("throws AGENT_AUTOMATION_NOT_FOUND for non-existent id", async () => {
@@ -372,6 +386,24 @@ describe("FridayAgentAutomationService", () => {
         expect((error as FridayDomainError).code).toBe("AGENT_AUTOMATION_DISABLED");
         expect((error as FridayDomainError).httpStatus).toBe(409);
       }
+    });
+
+    it("writes learning events for save and successful reuse", async () => {
+      const created = service.save({
+        name: "Signal Me",
+        taskTemplate: "task",
+      });
+
+      await service.run(created.id);
+
+      expect(learningEvents.map((event) => event.kind)).toEqual([
+        "automation_saved",
+        "automation_reused",
+        "outcome_confirmed",
+      ]);
+      expect(learningEvents[0]?.payload).toMatchObject({
+        automationId: created.id,
+      });
     });
   });
 });

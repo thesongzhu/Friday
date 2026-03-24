@@ -21,6 +21,11 @@ export interface CreateLearningMetricsServiceDeps {
 export function createFridayLearningMetricsService(
   deps: CreateLearningMetricsServiceDeps,
 ): FridayLearningMetricsService {
+  function clampRate(numerator: number, denominator: number): number | undefined {
+    if (denominator <= 0) return undefined;
+    return Math.min(1, Math.max(0, numerator / denominator));
+  }
+
   function aggregateSingleDay(day: string): FridayLearningMetricsEntity {
     return deps.db.withWriteTransaction((db) => {
       const dayStart = `${day}T00:00:00.000Z`;
@@ -62,6 +67,61 @@ export function createFridayLearningMetricsService(
         successRate = successOutcomes.cnt / totalOutcomes.cnt;
       }
 
+      const totalLearningEvents = db
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM learning_events
+           WHERE ts >= ? AND ts <= ?`,
+        )
+        .get(dayStart, dayEnd) as { cnt: number };
+
+      const activationEvents = db
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM learning_events
+           WHERE ts >= ? AND ts <= ?
+             AND kind IN ('workflow_outcome', 'automation_saved', 'automation_reused', 'outcome_confirmed')`,
+        )
+        .get(dayStart, dayEnd) as { cnt: number };
+
+      const automationSaved = db
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM learning_events
+           WHERE ts >= ? AND ts <= ?
+             AND kind = 'automation_saved'`,
+        )
+        .get(dayStart, dayEnd) as { cnt: number };
+
+      const automationReused = db
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM learning_events
+           WHERE ts >= ? AND ts <= ?
+             AND kind = 'automation_reused'`,
+        )
+        .get(dayStart, dayEnd) as { cnt: number };
+
+      const assetPromoted = db
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM learning_events
+           WHERE ts >= ? AND ts <= ?
+             AND kind = 'asset_promoted'`,
+        )
+        .get(dayStart, dayEnd) as { cnt: number };
+
+      const assetSupported = db
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM learning_events
+           WHERE ts >= ? AND ts <= ?
+             AND kind = 'asset_supported'`,
+        )
+        .get(dayStart, dayEnd) as { cnt: number };
+
+      const requestFulfilled = db
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM learning_events
+           WHERE ts >= ? AND ts <= ?
+             AND kind = 'request_fulfilled'`,
+        )
+        .get(dayStart, dayEnd) as { cnt: number };
+
       // Compute auto-fix metrics
       let autoFixSuccessRate: number | undefined;
       let rollbackRate: number | undefined;
@@ -84,6 +144,12 @@ export function createFridayLearningMetricsService(
         successRate,
         autoFixSuccessRate,
         rollbackRate,
+        activationRate: clampRate(activationEvents.cnt, totalLearningEvents.cnt),
+        saveRate: clampRate(automationSaved.cnt, totalLearningEvents.cnt),
+        reuseRate: clampRate(automationReused.cnt, totalLearningEvents.cnt),
+        promotionRate: clampRate(assetPromoted.cnt, totalLearningEvents.cnt),
+        supportConversionRate: clampRate(assetSupported.cnt, totalLearningEvents.cnt),
+        requestFulfillmentRate: clampRate(requestFulfilled.cnt, totalLearningEvents.cnt),
         incidentsTotal: incidentCount.cnt,
         factsUpdated: factsCount.cnt,
         actionsExecuted,

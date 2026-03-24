@@ -68,6 +68,7 @@
     "test:install:smoke": "node scripts/ci/install-smoke.mjs",
     "test:docker:e2e-smoke": "bash scripts/ci/docker-e2e-smoke.sh",
     "test:e2e:cloud": "FRIDAY_E2E_TARGET=cloud vitest run test/e2e/live/friday-cloud-journeys.e2e.test.ts",
+    "test:e2e:ui": "npm run build:ui && vitest run --project browser-e2e",
     "test:e2e:closure": "node scripts/e2e/run-friday-closure.mjs --local-only",
     "test:e2e:closure:local": "node scripts/e2e/run-friday-closure.mjs --local-only",
     "test:e2e:closure:all": "node scripts/e2e/run-friday-closure.mjs --all",

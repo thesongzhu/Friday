@@ -228,6 +228,8 @@ export async function createMockHubEnv(opts?: {
   channels?: Record<string, unknown>;
   /** Optional skill discovery directories for hub bootstrap. Defaults to []. */
   skillDirs?: string[];
+  /** Optional static UI directory served by the test HTTP server. */
+  uiStaticDir?: string;
   /** Optional hook invoked after hub creation and before hub.start(). */
   beforeStart?: (hub: FridayHub) => Promise<void> | void;
 }): Promise<MockHubEnv> {
@@ -260,6 +262,7 @@ export async function createMockHubEnv(opts?: {
     wsGateway: hub.apiRuntime.wsGateway,
     middleware: hub.apiRuntime.middleware,
     webchatWsService: hub.webchatWsService,
+    uiStaticDir: opts?.uiStaticDir,
     port,
     host: "127.0.0.1",
     logRequests: false,

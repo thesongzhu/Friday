@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock3, Play, Plus, RefreshCcw, SquarePen } from "lucide-react";
 import { toast } from "sonner";
+import { useSearchParams } from "react-router-dom";
 import { automationsApi } from "@/lib/api/automations";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 
@@ -18,15 +19,42 @@ function summarizeSchedule(schedule?: { type: "cron"; cron: string; timezone?: s
 
 export function AutomationsPage() {
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
   const [name, setName] = useState("");
   const [taskTemplate, setTaskTemplate] = useState("");
   const [cron, setCron] = useState("");
   const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
 
+  useEffect(() => {
+    const seededName = searchParams.get("name");
+    const seededTask = searchParams.get("task");
+    const seededTimezone = searchParams.get("timezone");
+    if (seededName) {
+      setName(seededName);
+    }
+    if (seededTask) {
+      setTaskTemplate(seededTask);
+    }
+    if (seededTimezone) {
+      setTimezone(seededTimezone);
+    }
+  }, [searchParams]);
+
   const { data: automations = [], isLoading, refetch } = useQuery({
     queryKey: ["agent-os", "automations"],
     queryFn: () => automationsApi.list({ limit: 50 }),
   });
+
+  const sortedAutomations = useMemo(
+    () =>
+      [...automations].sort((left, right) =>
+        right.lastOutcomeScore - left.lastOutcomeScore
+        || right.estimatedTimeSavedMinutes - left.estimatedTimeSavedMinutes
+        || right.reuseCount - left.reuseCount
+        || right.runCount - left.runCount,
+      ),
+    [automations],
+  );
 
   const createAutomationMutation = useMutation({
     mutationFn: () =>
@@ -92,12 +120,14 @@ export function AutomationsPage() {
             }}
           >
             <input
+              data-testid="automations-name-input"
               value={name}
               onChange={(event) => setName(event.target.value)}
               className="agent-input"
               placeholder="Task name"
             />
             <textarea
+              data-testid="automations-task-input"
               value={taskTemplate}
               onChange={(event) => setTaskTemplate(event.target.value)}
               rows={6}
@@ -106,12 +136,14 @@ export function AutomationsPage() {
             />
             <div className="grid gap-3 md:grid-cols-[1fr_220px]">
               <input
+                data-testid="automations-cron-input"
                 value={cron}
                 onChange={(event) => setCron(event.target.value)}
                 className="agent-input"
                 placeholder="Cron schedule (optional)"
               />
               <input
+                data-testid="automations-timezone-input"
                 value={timezone}
                 onChange={(event) => setTimezone(event.target.value)}
                 className="agent-input"
@@ -149,20 +181,27 @@ export function AutomationsPage() {
       >
         {isLoading ? (
           <p className="text-sm text-white/60">Loading task queue...</p>
-        ) : automations.length === 0 ? (
+        ) : sortedAutomations.length === 0 ? (
           <div className="rounded-[28px] border border-dashed border-white/[0.12] bg-black/20 p-8 text-center text-sm text-white/60">
             No scheduled tasks exist yet.
           </div>
         ) : (
           <div className="space-y-3">
-            {automations.map((automation) => (
-              <div key={automation.id} className="rounded-[26px] border border-white/10 bg-black/20 p-5">
+            {sortedAutomations.map((automation) => (
+              <div
+                key={automation.id}
+                className="rounded-[26px] border border-white/10 bg-black/20 p-5"
+                data-testid={`automation-card-${automation.id}`}
+              >
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <h2 className="text-lg font-semibold text-white">{automation.name}</h2>
                       <StatusPill tone={automation.enabled ? "success" : "neutral"}>
                         {automation.enabled ? "enabled" : "paused"}
+                      </StatusPill>
+                      <StatusPill tone={automation.promotionState === "public_boost_eligible" ? "warning" : automation.promotionState === "team" ? "success" : "neutral"}>
+                        {automation.promotionState.replaceAll("_", " ")}
                       </StatusPill>
                     </div>
                     {automation.description ? (
@@ -190,11 +229,15 @@ export function AutomationsPage() {
                     </ActionButton>
                   </div>
                 </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div className="mt-4 grid gap-3 md:grid-cols-4">
                   <TaskMetric label="Schedule" value={summarizeSchedule(automation.schedule)} icon={<Clock3 className="h-4 w-4" />} />
-                  <TaskMetric label="Last Run" value={formatTimestamp(automation.lastRunAt)} icon={<Play className="h-4 w-4" />} />
-                  <TaskMetric label="Run Count" value={String(automation.runCount)} icon={<RefreshCcw className="h-4 w-4" />} />
+                  <TaskMetric label="Time Saved" value={`${automation.estimatedTimeSavedMinutes} min`} icon={<Clock3 className="h-4 w-4" />} />
+                  <TaskMetric label="Reuse Count" value={String(automation.reuseCount)} icon={<RefreshCcw className="h-4 w-4" />} />
+                  <TaskMetric label="Outcome Score" value={String(Math.round(automation.lastOutcomeScore))} icon={<Play className="h-4 w-4" />} />
                 </div>
+                <p className="mt-3 text-xs text-white/45">
+                  Last run {formatTimestamp(automation.lastRunAt)} · total runs {automation.runCount}
+                </p>
               </div>
             ))}
           </div>
