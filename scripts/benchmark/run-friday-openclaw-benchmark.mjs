@@ -17,7 +17,12 @@ const openClawRepo = process.env.OPENCLAW_REPO_PATH ?? "../openclaw-dev";
 const openAiModel = process.env.FRIDAY_BENCHMARK_MODEL ?? "gpt-4o-mini";
 
 function parseArgs(argv) {
-  const result = { repeats: 1, systems: ["friday", "openclaw"], outputRoot: defaultOutputRoot };
+  const result = {
+    repeats: 1,
+    systems: ["friday", "openclaw"],
+    outputRoot: defaultOutputRoot,
+    cases: null,
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--repeats") {
@@ -28,6 +33,12 @@ function parseArgs(argv) {
       index += 1;
     } else if (arg === "--output-root") {
       result.outputRoot = path.resolve(argv[index + 1] ?? defaultOutputRoot);
+      index += 1;
+    } else if (arg === "--cases") {
+      result.cases = String(argv[index + 1] ?? "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
       index += 1;
     }
   }
@@ -473,6 +484,19 @@ function toMarkdown({ summary, comparisons }) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  const selectedCases = options.cases
+    ? BENCHMARK_CASES.filter((caseDef) => options.cases.includes(caseDef.id))
+    : BENCHMARK_CASES;
+  if (options.cases) {
+    const missingCaseIds = options.cases.filter((caseId) => !selectedCases.some((caseDef) => caseDef.id === caseId));
+    if (missingCaseIds.length > 0) {
+      throw new Error(`Unknown benchmark case id(s): ${missingCaseIds.join(", ")}`);
+    }
+  }
+  if (selectedCases.length === 0) {
+    throw new Error("No benchmark cases selected");
+  }
+
   await mkdir(options.outputRoot, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:]/g, "-");
   const runOutputRoot = path.join(options.outputRoot, timestamp);
@@ -486,7 +510,7 @@ async function main() {
   }
 
   const results = [];
-  for (const caseDef of BENCHMARK_CASES) {
+  for (const caseDef of selectedCases) {
     for (const system of options.systems) {
       for (let repeatIndex = 1; repeatIndex <= options.repeats; repeatIndex += 1) {
         results.push(
@@ -505,7 +529,7 @@ async function main() {
   }
 
   const comparisons = [];
-  for (const caseDef of BENCHMARK_CASES) {
+  for (const caseDef of selectedCases) {
     const fridayResults = results.filter((item) => item.caseId === caseDef.id && item.systemUnderTest === "friday");
     const openClawResults = results.filter((item) => item.caseId === caseDef.id && item.systemUnderTest === "openclaw");
     if (fridayResults.length === 0 || openClawResults.length === 0) continue;
@@ -540,6 +564,7 @@ async function main() {
     systems: options.systems,
     fridayBaseUrl,
     openClawRepo,
+    caseIds: selectedCases.map((caseDef) => caseDef.id),
     totals,
     gapRanking: buildGapRanking(comparisons),
   };
