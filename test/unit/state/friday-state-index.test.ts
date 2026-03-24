@@ -40,6 +40,7 @@ describe("state-index (initializeFridayState)", () => {
 
     expect(runtime.config.exists).toBe(true);
     expect(runtime.config.config.stateDir).toBe(tmpDir);
+    expect(runtime.stateDir).toBe(tmpDir);
     expect(runtime.sqlite).toBeTruthy();
     expect(runtime.sqlite.writer).toBeTruthy();
     expect(runtime.telemetry).toBeTruthy();

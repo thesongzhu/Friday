@@ -27,6 +27,7 @@ function mockExecutionService(
   error?: Error,
 ): FridayWorkflowExecutionService {
   return {
+    setDistributedDispatcher: vi.fn(),
     startRun: error
       ? vi.fn().mockRejectedValue(error)
       : vi.fn().mockResolvedValue(runEntity ?? makeRunEntity()),
@@ -35,8 +36,10 @@ function mockExecutionService(
     retryRun: vi.fn(),
     getRun: vi.fn().mockReturnValue(null),
     listRuns: vi.fn().mockReturnValue([]),
+    listActiveRuns: vi.fn().mockReturnValue([]),
     getRunNodes: vi.fn().mockReturnValue([]),
     recoverActiveRuns: vi.fn().mockResolvedValue(0),
+    reportRemoteNodeResult: vi.fn(),
     reapExpiredLeases: vi.fn().mockResolvedValue(0),
     sweepTimedOutRuns: vi.fn().mockResolvedValue(0),
     sweepTimedOutNodes: vi.fn().mockResolvedValue(0),
