@@ -68,6 +68,9 @@ jobs:
             exit 1
           fi
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Release verify
         run: npm run release:verify
 
