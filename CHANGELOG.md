@@ -7,6 +7,11 @@ and this project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-03-24
+
+### Fixed
+- Release workflow `verify` job now installs Playwright Chromium before running `release:verify`, matching main CI and preventing browser-backed mock E2E failures during tag validation.
+
 ## [0.4.0] - 2026-03-24
 
 ### Added
