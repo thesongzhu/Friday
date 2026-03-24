@@ -200,7 +200,7 @@ async function installProvider(
     validateOnSave: false,
     // For api-key providers, provide a mock key
     ...(entry.authMode === "api-key"
-      ? { apiKey: "mock-key-for-testing" }
+      ? { apiKey: "mock-key-for-testing" } // pragma: allowlist secret
       : {}),
   }, fetchImpl);
 
