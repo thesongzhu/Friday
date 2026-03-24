@@ -1,6 +1,26 @@
 const SENSITIVE_KEY_RE = /\b(api[_-]?token|access[_-]?token|refresh[_-]?token|secret|password|credential|private[_-]?key|token)\b/i;
+const SENSITIVE_ASSIGNMENT_RE = /(?:["']?(api[_-]?token|access[_-]?token|refresh[_-]?token|secret|password|credential|private[_-]?key|token)["']?\s*[:=]|(?:export\s+)?[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*=)/i;
 const DESTRUCTIVE_PROGRAMS = new Set(["rm", "unlink", "shred", "truncate"]);
 const MUTATING_PROGRAMS = new Set(["sed", "perl", "python", "python3", "node", "jq", "ruby"]);
+const HIGH_RISK_MUTATION_EXTENSION_RE = /\.(?:bak|backup|dump|sqlite|db|sql|tar|tgz|gz|zip)$/i;
+const HIGH_RISK_MUTATION_NAME_RE = /\b(database|backup|snapshot|restore)\b/i;
+
+function requiresApprovalForProtectedArtifactPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/");
+  const baseName = normalized.split("/").at(-1) ?? normalized;
+  const lowerBaseName = baseName.toLowerCase();
+  const obviouslyTextual = /\.(?:md|txt|json|ya?ml|toml|ini|cfg|conf)$/i.test(lowerBaseName);
+
+  if (HIGH_RISK_MUTATION_EXTENSION_RE.test(lowerBaseName)) {
+    return true;
+  }
+
+  if (!obviouslyTextual && HIGH_RISK_MUTATION_NAME_RE.test(lowerBaseName)) {
+    return true;
+  }
+
+  return false;
+}
 
 export function getApprovalRequiredReasonForExecCommand(command: string): string | null {
   const trimmed = command.trim();
@@ -27,8 +47,12 @@ export function getApprovalRequiredReasonForFileMutation(
   filePath: string,
   fragments: string[],
 ): string | null {
+  if (requiresApprovalForProtectedArtifactPath(filePath)) {
+    return `Mutating backup/dump/snapshot-like artifact "${filePath}" requires explicit approval in the current run context.`;
+  }
+
   const haystack = fragments.join("\n");
-  if (SENSITIVE_KEY_RE.test(haystack)) {
+  if (SENSITIVE_ASSIGNMENT_RE.test(haystack)) {
     return `Mutating sensitive token/secret-like material in "${filePath}" requires explicit approval in the current run context.`;
   }
   return null;

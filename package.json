@@ -88,6 +88,7 @@
     "check:closeout:evidence:freshness": "node scripts/quality/check-closeout-evidence-freshness.mjs",
     "benchmark:openclaw:mixed-round1": "node scripts/benchmark/run-friday-openclaw-benchmark.mjs --repeats 1",
     "benchmark:openclaw:mixed-round1:full": "node scripts/benchmark/run-friday-openclaw-benchmark.mjs --repeats 3",
+    "benchmark:openclaw:promoted-gaps": "node scripts/benchmark/run-friday-openclaw-benchmark.mjs --repeats 1 --cases dialog-risk-boundary-reset,dialog-expectation-boundary-autonomy,doing-continue-with-blocker,troubleshoot-high-risk-approval-boundary",
     "release:manifest": "node scripts/ops/write-friday-release-manifest.mjs",
     "verify:companion:native": "bash scripts/ops/verify-friday-companion-app.sh",
     "release:companion:local": "bash scripts/ops/release-friday-companion-app.sh",

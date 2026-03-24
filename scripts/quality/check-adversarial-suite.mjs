@@ -11,6 +11,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { detectSkippedTests } from "./skip-detection.mjs";
+import { PROMOTED_BENCHMARK_STRONG_REGRESSION_CASE_IDS } from "../benchmark/friday-openclaw-promoted-gap-cases.mjs";
 
 const ADVERSARIAL_DIR = "test/adversarial";
 
@@ -53,9 +54,11 @@ ok(`Found ${testFiles.length} adversarial test files`);
 
 // 2. Check for skipped tests using shared detector (full-content, catches all patterns)
 let skippedCount = 0;
+const fileContents = new Map();
 
 for (const f of testFiles) {
   const content = await readFile(join(ADVERSARIAL_DIR, f), "utf-8");
+  fileContents.set(f, content);
   const findings = detectSkippedTests(content);
 
   for (const { line, label } of findings) {
@@ -76,6 +79,40 @@ for (const cat of EXPECTED_CATEGORIES) {
     fail(`Missing adversarial test category: ${cat}`);
   } else {
     ok(`Category covered: ${cat}`);
+  }
+}
+
+const combinedContent = [...fileContents.values()].join("\n");
+
+const STRUCTURAL_MARKERS = [
+  {
+    label: "artifact-truth / truth-alignment coverage",
+    pattern: /STRUCT-ARTIFACT-TRUTH-\d+/,
+  },
+  {
+    label: "approval-boundary structural coverage",
+    pattern: /STRUCT-APPROVAL-BOUNDARY-\d+/,
+  },
+  {
+    label: "promoted benchmark-gap coverage",
+    pattern: /STRUCT-BENCHMARK-GAP-/,
+  },
+];
+
+for (const marker of STRUCTURAL_MARKERS) {
+  if (!marker.pattern.test(combinedContent)) {
+    fail(`Missing ${marker.label} in adversarial suite`);
+  } else {
+    ok(`Structural marker covered: ${marker.label}`);
+  }
+}
+
+for (const caseId of PROMOTED_BENCHMARK_STRONG_REGRESSION_CASE_IDS) {
+  const promotedMarker = `STRUCT-BENCHMARK-GAP-${caseId}`;
+  if (!combinedContent.includes(promotedMarker)) {
+    fail(`Missing promoted benchmark regression marker: ${promotedMarker}`);
+  } else {
+    ok(`Promoted benchmark regression covered: ${caseId}`);
   }
 }
 

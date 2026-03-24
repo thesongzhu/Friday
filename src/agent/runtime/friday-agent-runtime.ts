@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import { FridayDomainError } from "#errors";
 import type { FridayEvaluationContext, FridayEvaluationResult } from "#rules";
@@ -970,6 +970,7 @@ export function createFridayAgentRuntime(
         let timelinessEnforcementRetries = 0;
         let answerAlignmentRetries = 0;
         let desktopInspectionRetries = 0;
+        let artifactTruthRetries = 0;
 
         while (iterations < FRIDAY_AGENT_MAX_LOOP_ITERATIONS) {
           if (runAbortController.signal.aborted) {
@@ -1147,9 +1148,37 @@ export function createFridayAgentRuntime(
                 conversationContext,
               });
               if (anchoredFallback) {
+                const artifactTruthGap = detectArtifactTruthGap({
+                  task: params.task,
+                  responseText: anchoredFallback,
+                  toolCalls: allToolCalls,
+                });
+                if (artifactTruthGap && artifactTruthRetries < 2) {
+                  artifactTruthRetries++;
+                  messages.push({
+                    role: "user",
+                    content: buildArtifactTruthRetryPrompt(artifactTruthGap),
+                  });
+                  continue;
+                }
+
                 responseText = anchoredFallback;
                 break;
               }
+            }
+
+            const artifactTruthGap = detectArtifactTruthGap({
+              task: params.task,
+              responseText: alignedResponse,
+              toolCalls: allToolCalls,
+            });
+            if (artifactTruthGap && alignedResponse.trim().length > 0 && artifactTruthRetries < 2) {
+              artifactTruthRetries++;
+              messages.push({
+                role: "user",
+                content: buildArtifactTruthRetryPrompt(artifactTruthGap),
+              });
+              continue;
             }
 
             responseText = alignedResponse;
@@ -1600,6 +1629,10 @@ export function createFridayAgentRuntime(
           toolCalls: allToolCalls,
           toolMap,
           disabledToolNames,
+        }) ?? detectArtifactTruthGap({
+          task: params.task,
+          responseText,
+          toolCalls: allToolCalls,
         });
 
         if (outputClosureGap) {
@@ -2094,6 +2127,310 @@ function detectEvidenceClosureGap(params: {
   };
 }
 
+function detectArtifactTruthGap(params: {
+  task: string;
+  responseText: string;
+  toolCalls: FridayAgentToolCallRecord[];
+}): OutputClosureGap | null {
+  return detectRequiredBlockerArtifactGap(params)
+    ?? detectApprovalBoundaryArtifactGap(params)
+    ?? detectSourceArtifactCompletionGap(params);
+}
+
+function detectRequiredBlockerArtifactGap(params: {
+  task: string;
+  responseText: string;
+  toolCalls: FridayAgentToolCallRecord[];
+}): OutputClosureGap | null {
+  if (!taskRequiresExplicitBlockerRecord(params.task)) {
+    return null;
+  }
+
+  const writtenArtifacts = listSuccessfulWrittenTextArtifacts(params.toolCalls);
+  if (writtenArtifacts.length === 0) {
+    return null;
+  }
+
+  const missingFiles = extractMissingFileMentions(params.task);
+  const hasRecordedBlocker = writtenArtifacts.some((artifact) =>
+    contentHasExplicitBlockerRecord(artifact.content, missingFiles)
+  );
+  if (hasRecordedBlocker) {
+    return null;
+  }
+
+  return {
+    errorCode: FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR,
+    userMessage:
+      "Artifact truth check failed: the required blocker was not recorded in the written artifact.",
+    developerMessage:
+      `Task "${params.task.slice(0, 160)}" required a recorded blocker, but written artifacts ` +
+      `(${writtenArtifacts.map((artifact) => artifact.path).join(", ")}) did not contain a clear blocker section.`,
+    attemptedImageToolCalls: 0,
+    failedImageToolCalls: 0,
+  };
+}
+
+function detectApprovalBoundaryArtifactGap(params: {
+  task: string;
+  responseText: string;
+  toolCalls: FridayAgentToolCallRecord[];
+}): OutputClosureGap | null {
+  if (
+    !taskRequiresApprovalBoundary(params.task)
+    || !taskRequestsDecisionArtifact(params.task)
+    || !hasBlockedApprovalAttempt(params.toolCalls)
+  ) {
+    return null;
+  }
+
+  const writtenArtifacts = listSuccessfulWrittenTextArtifacts(params.toolCalls);
+  const decisionArtifacts = writtenArtifacts.filter((artifact) => /decision|plan/i.test(basename(artifact.path)));
+
+  if (decisionArtifacts.length === 0) {
+    return {
+      errorCode: FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR,
+      userMessage:
+        "Artifact truth check failed: approval-boundary reasoning was required but no decision artifact was written.",
+      developerMessage:
+        `Task "${params.task.slice(0, 160)}" triggered approval-boundary blocking, but no decision/plan artifact was written after blocked attempts.`,
+      attemptedImageToolCalls: 0,
+      failedImageToolCalls: 0,
+    };
+  }
+
+  const honestDecision = decisionArtifacts.some((artifact) =>
+    contentHonestlyStatesApprovalBoundary(artifact.content)
+  );
+  const responseClaimsExecution = appearsToClaimDestructiveCompletion(params.responseText);
+  if (honestDecision && !responseClaimsExecution) {
+    return null;
+  }
+
+  return {
+    errorCode: FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR,
+    userMessage:
+      "Artifact truth check failed: approval-boundary output must say the action was stopped pending approval and not executed.",
+    developerMessage:
+      `Approval-boundary task "${params.task.slice(0, 160)}" had blocked destructive attempts, but decision artifacts ` +
+      `(${decisionArtifacts.map((artifact) => artifact.path).join(", ")}) or the final response still implied execution.`,
+    attemptedImageToolCalls: 0,
+    failedImageToolCalls: 0,
+  };
+}
+
+function detectSourceArtifactCompletionGap(params: {
+  task: string;
+  responseText: string;
+  toolCalls: FridayAgentToolCallRecord[];
+}): OutputClosureGap | null {
+  const requirement = extractSourceBackedArtifactRequirement(params.task);
+  if (!requirement || !appearsToClaimArtifactCompletion(params.responseText)) {
+    return null;
+  }
+
+  const writtenArtifacts = listSuccessfulWrittenTextArtifacts(params.toolCalls);
+  if (writtenArtifacts.length === 0) {
+    return null;
+  }
+
+  const outputArtifact = matchArtifactByTaskPath(writtenArtifacts, requirement.outputPath)
+    ?? writtenArtifacts.find((artifact) => basename(artifact.path) !== basename(requirement.sourcePath));
+  if (!outputArtifact) {
+    return null;
+  }
+
+  const sourcePath = resolveTaskFilePath(requirement.sourcePath, outputArtifact.path);
+  if (!existsSync(sourcePath)) {
+    return null;
+  }
+
+  let sourceText = "";
+  try {
+    sourceText = readFileSync(sourcePath, "utf8");
+  } catch {
+    return null;
+  }
+
+  if (contentCarriesSourceEvidence(sourceText, outputArtifact.content)) {
+    return null;
+  }
+
+  return {
+    errorCode: FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR,
+    userMessage:
+      "Artifact truth check failed: the completion claim does not match the actual content written to the required artifact.",
+    developerMessage:
+      `Task "${params.task.slice(0, 160)}" required ${requirement.outputPath} to use ${requirement.sourcePath}, ` +
+      `but artifact "${outputArtifact.path}" did not contain meaningful source-derived content.`,
+    attemptedImageToolCalls: 0,
+    failedImageToolCalls: 0,
+  };
+}
+
+function listSuccessfulWrittenTextArtifacts(
+  toolCalls: FridayAgentToolCallRecord[],
+): Array<{ path: string; content: string }> {
+  const artifacts: Array<{ path: string; content: string }> = [];
+  const seen = new Set<string>();
+
+  for (const call of toolCalls) {
+    if (call.result.isError || (call.toolName !== "write" && call.toolName !== "edit")) {
+      continue;
+    }
+    const filePath = typeof call.args.path === "string" ? call.args.path.trim() : "";
+    if (!filePath || seen.has(filePath) || !existsSync(filePath)) {
+      continue;
+    }
+    try {
+      const content = readFileSync(filePath, "utf8");
+      seen.add(filePath);
+      artifacts.push({ path: filePath, content });
+    } catch {
+      // Best-effort read: skip binary/unavailable artifacts.
+    }
+  }
+
+  return artifacts;
+}
+
+function taskRequiresExplicitBlockerRecord(task: string): boolean {
+  return /\b(record|explicitly record|document|include)\b[\s\S]{0,32}\bblocker\b/i.test(task)
+    || /(记录|写明|注明).{0,10}(阻塞|卡点)/.test(task);
+}
+
+function extractMissingFileMentions(task: string): string[] {
+  const matches = task.match(/\b[\w./-]+\.[A-Za-z0-9]+\b/g) ?? [];
+  return [...new Set(matches.filter((match) => {
+    const escaped = match.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`${escaped}[\\s\\S]{0,24}\\bmissing\\b|\\bmissing\\b[\\s\\S]{0,24}${escaped}`, "i");
+    return regex.test(task);
+  }))];
+}
+
+function contentHasExplicitBlockerRecord(content: string, missingFiles: string[]): boolean {
+  const normalized = content.toLowerCase();
+  const hasBlockerLabel = /\b(blocker|blocked|missing dependency)\b/i.test(content) || /(阻塞|卡点|缺少)/.test(content);
+  if (!hasBlockerLabel) {
+    return false;
+  }
+
+  if (missingFiles.length === 0) {
+    return /\bmissing\b/i.test(content) || /(缺失|缺少|不存在)/.test(content);
+  }
+
+  return missingFiles.some((fileName) => normalized.includes(fileName.toLowerCase()))
+    && (/\bmissing\b/i.test(content) || /(缺失|缺少|不存在)/.test(content));
+}
+
+function taskRequiresApprovalBoundary(task: string): boolean {
+  return (
+    /\b(risky|destructive|approval|approve|confirm)\b/i.test(task)
+    && /\b(stop|ask|instead of making changes|before making changes)\b/i.test(task)
+  ) || /(高风险|危险|审批|批准).{0,20}(停止|先问|不要直接执行)/.test(task);
+}
+
+function taskRequestsDecisionArtifact(task: string): boolean {
+  return /\b(decision|plan)\.[A-Za-z0-9]+\b/i.test(task)
+    || /\bwrite\b[\s\S]{0,24}\b(decision|plan)\b/i.test(task)
+    || /(写|生成).{0,10}(decision|plan)\.[A-Za-z0-9]+/i.test(task);
+}
+
+function hasBlockedApprovalAttempt(toolCalls: FridayAgentToolCallRecord[]): boolean {
+  return toolCalls.some((call) =>
+    Boolean(call.result.isError)
+    && /\bapproval\b/i.test(call.result.content)
+    && /\b(blocked|require|pending)\b/i.test(call.result.content)
+  );
+}
+
+function contentHonestlyStatesApprovalBoundary(content: string): boolean {
+  const hasApprovalMarker = /\b(approval|approve|confirm|risky|destructive)\b/i.test(content)
+    || /(审批|批准|确认|高风险|危险)/.test(content);
+  const hasStoppedMarker = /\b(stopped|pending approval|awaiting approval|not executed|did not execute|not run)\b/i.test(content)
+    || /(已停止|待审批|待批准|未执行|没有执行|未运行)/.test(content);
+  return hasApprovalMarker && hasStoppedMarker;
+}
+
+function appearsToClaimDestructiveCompletion(text: string): boolean {
+  return /\b(i|we)\s+(deleted|rotated|reset|updated|executed|completed)\b/i.test(text)
+    || /\b(successfully|completed)\b[\s\S]{0,24}\b(delete|rotate|reset|update)\b/i.test(text)
+    || /(已|已经|成功|完成).{0,10}(删除|轮换|重置|更新|执行)/.test(text);
+}
+
+function extractSourceBackedArtifactRequirement(
+  task: string,
+): { outputPath: string; sourcePath: string } | null {
+  const sourceMatch = task.match(/\b(?:using|use|based on)\s+([^\s:]+?\.[A-Za-z0-9]+)\b/i)
+    ?? task.match(/使用\s*([^\s:]+?\.[A-Za-z0-9]+)\b/i);
+  if (!sourceMatch?.[1]) {
+    return null;
+  }
+
+  const outputMatch = task.match(/\b(?:create|write|generate|update)\s+([^\s:]+?\.[A-Za-z0-9]+)\b/i)
+    ?? task.match(/(?:创建|写入|生成|更新)\s*([^\s:]+?\.[A-Za-z0-9]+)\b/i);
+  if (!outputMatch?.[1]) {
+    return null;
+  }
+
+  return {
+    outputPath: stripTrailingPunctuation(outputMatch[1]),
+    sourcePath: stripTrailingPunctuation(sourceMatch[1]),
+  };
+}
+
+function stripTrailingPunctuation(value: string): string {
+  return value.replace(/[),.;:]+$/g, "");
+}
+
+function matchArtifactByTaskPath(
+  artifacts: Array<{ path: string; content: string }>,
+  taskPath: string,
+): { path: string; content: string } | undefined {
+  return artifacts.find((artifact) => {
+    const artifactBase = basename(artifact.path).toLowerCase();
+    return artifact.path === taskPath || artifactBase === basename(taskPath).toLowerCase();
+  });
+}
+
+function resolveTaskFilePath(taskPath: string, relativeToArtifactPath: string): string {
+  if (isAbsolute(taskPath)) {
+    return taskPath;
+  }
+  return resolve(dirname(relativeToArtifactPath), taskPath);
+}
+
+function contentCarriesSourceEvidence(sourceText: string, artifactText: string): boolean {
+  const sourceTokens = tokenizeEvidenceWords(sourceText);
+  if (sourceTokens.length === 0) {
+    return false;
+  }
+
+  const artifactLower = artifactText.toLowerCase();
+  const overlappingTokens = sourceTokens.filter((token) => artifactLower.includes(token));
+  if (overlappingTokens.length >= Math.min(2, sourceTokens.length)) {
+    return true;
+  }
+
+  const sourceLine = sourceText
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length >= 12);
+  return Boolean(sourceLine && artifactText.toLowerCase().includes(sourceLine.toLowerCase().slice(0, 24)));
+}
+
+function tokenizeEvidenceWords(text: string): string[] {
+  return [...new Set(
+    text.toLowerCase().match(/\b[a-z][a-z0-9_-]{3,}\b/g) ?? [],
+  )];
+}
+
+function appearsToClaimArtifactCompletion(text: string): boolean {
+  return /\b(i|we)\s+(created|wrote|updated|documented|completed|finished)\b/i.test(text)
+    || /\b(created|wrote|updated|documented|completed|finished)\b[\s\S]{0,24}\b(result|decision|file|artifact)\b/i.test(text)
+    || /(已|已经|成功|完成).{0,10}(创建|写入|更新|记录|完成)/.test(text);
+}
+
 function isImageArtifactCall(call: FridayAgentToolCallRecord): boolean {
   if (call.toolName === "browser") {
     return isBrowserScreenshotCall(call.args);
@@ -2463,6 +2800,17 @@ function buildEvidenceRetryPrompt(params: {
     `You must use available tools (${toolHint}) and provide an evidence-backed answer. ` +
     `${approachHint} If all attempts fail, report exact tool errors and what you retried.`
   );
+}
+
+function buildArtifactTruthRetryPrompt(gap: OutputClosureGap): string {
+  return [
+    "Artifact truth check failed.",
+    gap.userMessage,
+    "Before replying, inspect and correct the written artifact itself so it honestly matches what happened in this run.",
+    "If a blocker was required, add a clearly labeled blocker section.",
+    "If a risky action was stopped, the decision artifact must explicitly say approval is required and that no destructive changes were executed.",
+    "Do not claim completion, blocker recording, or decision logging unless the file content now says that.",
+  ].join(" ");
 }
 
 interface RunTimeContext {
