@@ -66,7 +66,9 @@ jobs:
       - name: Unit/Integration + Core E2E tests
         env:
           FRIDAY_E2E_CORE: "1"
-        run: npm test
+        run: |
+          npm test
+          npm run test:e2e:ui
 
   # ── MECHANISM-2: Gate 3 — Migration Chain Integrity ──
   migrations:
