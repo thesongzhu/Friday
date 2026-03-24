@@ -1,6 +1,6 @@
 {
   "name": "friday",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "description": "Friday visual AI automation platform",
   "license": "MIT",
@@ -44,8 +44,8 @@
     "start:companion": "node dist/system/companion/friday-system-companion-daemon.js",
     "demo:minimal": "node scripts/demo/minimal-workflow-demo.mjs",
     "demo": "npm run demo:minimal",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run --project default --project typecheck --project llm-e2e",
+    "test:watch": "vitest --project default",
     "test:adversarial": "vitest run test/adversarial",
     "test:integration:openclaw-overlap": "vitest run test/integration/agent/friday-openclaw-overlap-acceptance.test.ts",
     "lint": "eslint src",
@@ -103,7 +103,7 @@
     "closeout:phase5": "node scripts/quality/run-closeout-phase.mjs phase5",
     "closeout:marketplace": "node scripts/quality/run-closeout-phase.mjs marketplace",
     "closeout:final": "node scripts/quality/run-closeout-final.mjs",
-    "release:verify": "npm run typecheck && npm run lint && npm run build && npm test && npm run test:integration:openclaw-overlap && npm run check:all && npm run test:install:smoke && npm run release:check",
+    "release:verify": "npm run typecheck && npm run lint && npm run build && npm test && npm run test:e2e:ui && npm run test:integration:openclaw-overlap && npm run check:all && npm run test:install:smoke && npm run release:check",
     "ui:dev": "vite --config ui/vite.config.ts",
     "ui:preview": "vite preview --config ui/vite.config.ts"
   },
