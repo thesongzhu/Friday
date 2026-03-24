@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 
 import type { FridaySqliteLayer } from "#state";
+import type { FridayLearningEventAppendInput } from "#ledger";
 
 import type { FridayAgentRuntimeResult } from "../runtime/friday-agent-runtime.types.js";
 
@@ -9,6 +10,12 @@ export interface FridayAgentAutomationSchedule {
   cron: string;
   timezone?: string;
 }
+
+export type FridayAgentAutomationPromotionState =
+  | "private"
+  | "team"
+  | "public_boost_eligible"
+  | "public";
 
 // ─── Persisted automation record ───
 
@@ -27,6 +34,10 @@ export interface FridayAgentAutomationRecord {
   lastRunId?: string;
   lastRunAt?: string;
   runCount: number;
+  estimatedTimeSavedMinutes: number;
+  reuseCount: number;
+  promotionState: FridayAgentAutomationPromotionState;
+  lastOutcomeScore: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -123,4 +134,6 @@ export interface CreateFridayAgentAutomationServiceDeps {
   }) => Promise<FridayAgentRuntimeResult>;
   idGenerator: () => string;
   nowIso: () => string;
+  learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
+  learningUserId?: string;
 }

@@ -154,6 +154,12 @@ export interface FridayLearningMetricsRow {
   success_rate: number | null;
   auto_fix_success_rate: number | null;
   rollback_rate: number | null;
+  activation_rate: number | null;
+  save_rate: number | null;
+  reuse_rate: number | null;
+  promotion_rate: number | null;
+  support_conversion_rate: number | null;
+  request_fulfillment_rate: number | null;
   incidents_total: number;
   facts_updated: number;
   actions_executed: number;
@@ -166,6 +172,12 @@ export interface FridayLearningMetricsEntity {
   successRate?: number;
   autoFixSuccessRate?: number;
   rollbackRate?: number;
+  activationRate?: number;
+  saveRate?: number;
+  reuseRate?: number;
+  promotionRate?: number;
+  supportConversionRate?: number;
+  requestFulfillmentRate?: number;
   incidentsTotal: number;
   factsUpdated: number;
   actionsExecuted: number;

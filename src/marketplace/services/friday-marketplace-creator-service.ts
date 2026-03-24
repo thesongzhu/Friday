@@ -1,4 +1,5 @@
 import { FridayDomainError } from "#errors";
+import type { FridayLearningEventAppendInput } from "#ledger";
 import type {
   FridayCreatorProfile,
   FridayCreatorReputationSummary,
@@ -14,6 +15,10 @@ import type {
   FridayMarketplaceAssetSummary,
 } from "./friday-marketplace-asset-catalog-service.js";
 import type { FridayMarketplaceCommercePersistence } from "../persistence/friday-marketplace-commerce-persistence.js";
+import {
+  DEFAULT_FRIDAY_MARKETPLACE_PROOF_OF_USE_POLICY,
+  type FridayMarketplaceProofOfUsePolicy,
+} from "./friday-marketplace-proof-of-use-policy.js";
 
 export interface FridayMarketplaceCreatorServiceDeps {
   commerce: Pick<
@@ -28,6 +33,9 @@ export interface FridayMarketplaceCreatorServiceDeps {
   assetCatalog: Pick<FridayMarketplaceAssetCatalogService, "getAsset" | "listAssets">;
   generateId: () => string;
   now: () => string;
+  learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
+  learningUserId?: string;
+  proofOfUsePolicy?: FridayMarketplaceProofOfUsePolicy;
 }
 
 export interface FridayRecordSupportInput {
@@ -61,6 +69,7 @@ function reputationFrom(
   permissionScoreByAsset: Map<string, number>,
   installCountByAsset: Map<string, number>,
   fulfilledRequestCount: number,
+  proofOfUsePolicy: FridayMarketplaceProofOfUsePolicy,
 ): FridayCreatorReputationSummary {
   const supportCount = supports.length;
   const supportTotalCents = supports.reduce((sum, event) => sum + event.amount.amount, 0);
@@ -76,13 +85,51 @@ function reputationFrom(
     : Math.round(
       assets.reduce((sum, asset) => sum + (permissionScoreByAsset.get(asset.assetId) ?? 50), 0) / assets.length,
     );
+  const proofOfUseScore = assets.length === 0
+    ? 0
+    : Math.round(assets.reduce((sum, asset) => sum + (asset.proofOfUseScore ?? 0), 0) / assets.length);
+  const repeatRunRate = assets.length === 0
+    ? 0
+    : Number(
+      (
+        assets.reduce((sum, asset) => sum + (asset.repeatRunRate ?? 0), 0) / assets.length
+      ).toFixed(3),
+    );
+  const outcomeReliabilityScore = assets.length === 0
+    ? 0
+    : Math.round(
+      assets.reduce((sum, asset) => sum + (asset.outcomeReliabilityScore ?? 0), 0) / assets.length,
+    );
+  const permissionEfficiencyScore = assets.length === 0
+    ? permissionRestraintScore
+    : Math.round(
+      assets.reduce((sum, asset) => sum + (asset.permissionEfficiencyScore ?? 0), 0) / assets.length,
+    );
+  const requestFulfillmentRate = assets.length === 0
+    ? 0
+    : Number(
+      (
+        assets.reduce((sum, asset) => sum + (asset.requestFulfillmentRate ?? 0), 0) / assets.length
+      ).toFixed(3),
+    );
+  const maintenanceResponsivenessScore = assets.length === 0
+    ? 0
+    : Math.round(
+      assets.reduce((sum, asset) => sum + (asset.maintenanceResponsivenessScore ?? 0), 0) / assets.length,
+    );
   const overallScore = Math.round(
     clamp(
-      (verificationSuccessRate ?? 0.5) * 45
-      + Math.min(20, supportCount * 3)
-      + Math.min(20, installCount * 1.5)
-      + Math.min(10, fulfilledRequestCount * 2)
-      + permissionRestraintScore * 0.15,
+      proofOfUseScore * proofOfUsePolicy.creatorOverallWeights.proofOfUse
+      + outcomeReliabilityScore * proofOfUsePolicy.creatorOverallWeights.outcomeReliability
+      + permissionEfficiencyScore * proofOfUsePolicy.creatorOverallWeights.permissionEfficiency
+      + Math.min(
+        proofOfUsePolicy.creatorOverallWeights.supportCountPointsCap,
+        supportCount * proofOfUsePolicy.creatorOverallWeights.supportCountPointsPerEvent,
+      )
+      + Math.min(
+        proofOfUsePolicy.creatorOverallWeights.fulfilledRequestPointsCap,
+        fulfilledRequestCount * proofOfUsePolicy.creatorOverallWeights.fulfilledRequestPointsPerEvent,
+      ),
       0,
       100,
     ),
@@ -99,11 +146,31 @@ function reputationFrom(
     verificationSuccessRate,
     permissionRestraintScore,
     fulfilledRequestCount,
+    proofOfUseScore,
+    repeatRunRate,
+    outcomeReliabilityScore,
+    permissionEfficiencyScore,
+    requestFulfillmentRate,
+    maintenanceResponsivenessScore,
   };
 }
 
 export class FridayMarketplaceCreatorService {
   public constructor(private readonly deps: FridayMarketplaceCreatorServiceDeps) {}
+
+  private writeLearningEvent(event: Omit<FridayLearningEventAppendInput, "eventId" | "ts" | "userId">): void {
+    if (!this.deps.learningEventWriter || !this.deps.learningUserId) {
+      return;
+    }
+    this.deps.learningEventWriter([
+      {
+        eventId: this.deps.generateId(),
+        ts: this.deps.now(),
+        userId: this.deps.learningUserId,
+        ...event,
+      },
+    ]);
+  }
 
   public async listCreators(): Promise<FridayCreatorProfile[]> {
     const context = await this.buildContext();
@@ -151,6 +218,17 @@ export class FridayMarketplaceCreatorService {
       createdAt: this.deps.now(),
     };
     await this.deps.commerce.saveSupportEvent(supportEvent);
+    this.writeLearningEvent({
+      kind: "asset_supported",
+      payload: {
+        assetId: asset.assetId,
+        creatorId: asset.creatorId,
+        assetType: asset.assetType,
+        amount: input.amount.amount,
+        currency: input.amount.currency,
+        supporterPrincipalId: input.actor.principalId,
+      },
+    });
     const creator = await this.getCreator(asset.creatorId);
     if (creator === null) {
       throw new FridayDomainError(
@@ -242,6 +320,7 @@ export class FridayMarketplaceCreatorService {
       context.permissionScoreByAsset,
       context.installCountByAsset,
       fulfilledRequestCount,
+      this.deps.proofOfUsePolicy ?? DEFAULT_FRIDAY_MARKETPLACE_PROOF_OF_USE_POLICY,
     );
     const displayName = publisher?.displayName ?? assets[0]?.publisherName ?? creatorId;
     return {

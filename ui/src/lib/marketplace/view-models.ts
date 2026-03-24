@@ -14,6 +14,9 @@ export type FridayMarketplaceAssistantCard = {
   installable: boolean;
   supportable: boolean;
   trustScore?: number;
+  proofOfUseScore?: number;
+  outcomeReliabilityScore?: number;
+  permissionEfficiencyScore?: number;
   maturity: FridayMarketplaceAssetSummary["maturity"];
 };
 
@@ -25,6 +28,8 @@ export function buildMarketplaceAssistantCards(
     .sort((left, right) => {
       const installFirst = Number(right.installable) - Number(left.installable);
       if (installFirst !== 0) return installFirst;
+      const proofFirst = (right.proofOfUseScore ?? 0) - (left.proofOfUseScore ?? 0);
+      if (proofFirst !== 0) return proofFirst;
       return (right.trustScore ?? 0) - (left.trustScore ?? 0);
     })
     .slice(0, 3)
@@ -37,6 +42,9 @@ export function buildMarketplaceAssistantCards(
       installable: asset.installable && asset.assetType === "skill",
       supportable: true,
       trustScore: asset.trustScore ?? undefined,
+      proofOfUseScore: asset.proofOfUseScore ?? undefined,
+      outcomeReliabilityScore: asset.outcomeReliabilityScore ?? undefined,
+      permissionEfficiencyScore: asset.permissionEfficiencyScore ?? undefined,
       maturity: asset.maturity,
     }));
 }

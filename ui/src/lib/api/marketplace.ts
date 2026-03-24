@@ -26,6 +26,12 @@ export interface FridayMarketplaceAssetSummary {
   trustScore: number | null;
   latestVersion: string | null;
   maturity: FridayMarketplaceAssetMaturity;
+  proofOfUseScore?: number;
+  repeatRunRate?: number;
+  outcomeReliabilityScore?: number;
+  permissionEfficiencyScore?: number;
+  requestFulfillmentRate?: number;
+  maintenanceResponsivenessScore?: number;
 }
 
 export interface FridayMarketplaceAssetDetail extends FridayMarketplaceAssetSummary {
@@ -51,6 +57,12 @@ export interface FridayCreatorReputationSummary {
   verificationSuccessRate: number | null;
   permissionRestraintScore: number;
   fulfilledRequestCount: number;
+  proofOfUseScore: number;
+  repeatRunRate: number;
+  outcomeReliabilityScore: number;
+  permissionEfficiencyScore: number;
+  requestFulfillmentRate: number;
+  maintenanceResponsivenessScore: number;
 }
 
 export interface FridayCreatorProfile {

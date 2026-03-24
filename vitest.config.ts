@@ -61,6 +61,7 @@ export default defineConfig({
           exclude: [
             "test/e2e/friday-llm-e2e.test.ts",
             "test/e2e/friday-real-scenarios-e2e.test.ts",
+            "test/e2e/ui/**/*.test.ts",
           ],
           pool: "forks",
         },
@@ -88,6 +89,17 @@ export default defineConfig({
           testTimeout: 120_000,
           maxWorkers: 1,
           hookTimeout: 30_000,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "browser-e2e",
+          include: ["test/e2e/ui/**/*.test.ts"],
+          pool: "forks",
+          testTimeout: 120_000,
+          hookTimeout: 30_000,
+          maxWorkers: 1,
         },
       },
     ],

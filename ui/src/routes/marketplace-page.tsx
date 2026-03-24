@@ -283,7 +283,10 @@ export function MarketplacePage() {
                   </div>
                   <p className="mt-3 text-sm text-white/65">{compactText(asset.summary)}</p>
                   <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/50">
+                    <span>Proof {asset.proofOfUseScore ?? "n/a"}</span>
                     <span>Trust {asset.trustScore ?? "n/a"}</span>
+                    <span>Reliability {asset.outcomeReliabilityScore ?? "n/a"}</span>
+                    <span>Permission efficiency {asset.permissionEfficiencyScore ?? "n/a"}</span>
                     <span>Version {asset.latestVersion ?? "n/a"}</span>
                     <span>{asset.verificationStatus}</span>
                   </div>

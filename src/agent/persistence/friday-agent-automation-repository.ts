@@ -27,6 +27,10 @@ interface FridayAgentAutomationRow {
   last_run_id: string | null;
   last_run_at: string | null;
   run_count: number;
+  estimated_time_saved_minutes: number;
+  reuse_count: number;
+  promotion_state: "private" | "team" | "public_boost_eligible" | "public";
+  last_outcome_score: number;
   created_at: string;
   updated_at: string;
 }
@@ -59,6 +63,10 @@ function rowToRecord(row: FridayAgentAutomationRow): FridayAgentAutomationRecord
     lastRunId: row.last_run_id ?? undefined,
     lastRunAt: row.last_run_at ?? undefined,
     runCount: row.run_count,
+    estimatedTimeSavedMinutes: row.estimated_time_saved_minutes,
+    reuseCount: row.reuse_count,
+    promotionState: row.promotion_state,
+    lastOutcomeScore: row.last_outcome_score,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -74,8 +82,9 @@ export function createFridayAgentAutomationRepository(): FridayAgentAutomationRe
           id, name, description, source_run_id, task_template,
           variables, skill_ids, workflow_ids, trigger_id, schedule_cron_expr, schedule_tz,
           enabled, last_run_id, last_run_at, run_count,
+          estimated_time_saved_minutes, reuse_count, promotion_state, last_outcome_score,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         record.id,
         record.name,
@@ -92,6 +101,10 @@ export function createFridayAgentAutomationRepository(): FridayAgentAutomationRe
         record.lastRunId ?? null,
         record.lastRunAt ?? null,
         record.runCount,
+        record.estimatedTimeSavedMinutes,
+        record.reuseCount,
+        record.promotionState,
+        record.lastOutcomeScore,
         record.createdAt,
         record.updatedAt,
       );
@@ -200,6 +213,22 @@ export function createFridayAgentAutomationRepository(): FridayAgentAutomationRe
       if (patch.runCount !== undefined) {
         sets.push("run_count = ?");
         params.push(patch.runCount);
+      }
+      if (patch.estimatedTimeSavedMinutes !== undefined) {
+        sets.push("estimated_time_saved_minutes = ?");
+        params.push(patch.estimatedTimeSavedMinutes);
+      }
+      if (patch.reuseCount !== undefined) {
+        sets.push("reuse_count = ?");
+        params.push(patch.reuseCount);
+      }
+      if (patch.promotionState !== undefined) {
+        sets.push("promotion_state = ?");
+        params.push(patch.promotionState);
+      }
+      if (patch.lastOutcomeScore !== undefined) {
+        sets.push("last_outcome_score = ?");
+        params.push(patch.lastOutcomeScore);
       }
       if (patch.updatedAt !== undefined) {
         sets.push("updated_at = ?");

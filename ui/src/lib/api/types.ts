@@ -177,6 +177,10 @@ export interface AgentAutomation {
     timezone?: string;
   };
   enabled: boolean;
+  estimatedTimeSavedMinutes: number;
+  reuseCount: number;
+  promotionState: "private" | "team" | "public_boost_eligible" | "public";
+  lastOutcomeScore: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -202,6 +206,10 @@ export interface AgentAutomationRecord {
   lastRunId?: string;
   lastRunAt?: string;
   runCount: number;
+  estimatedTimeSavedMinutes: number;
+  reuseCount: number;
+  promotionState: "private" | "team" | "public_boost_eligible" | "public";
+  lastOutcomeScore: number;
   createdAt: string;
   updatedAt: string;
 }
