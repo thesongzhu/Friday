@@ -9,6 +9,17 @@ export type {
 } from "./friday-daemon.types.js";
 
 export { resolveFridayDaemonPaths } from "./friday-daemon-paths.js";
+export {
+  createFridayLocalDaemonService,
+  formatFridayDaemonStatus,
+  resolveFridayDaemonLaunchSpec,
+  resolveFridayRepoRootFromModuleUrl,
+} from "./friday-daemon-runtime.js";
+export type {
+  CreateFridayLocalDaemonServiceInput,
+  FridayDaemonLaunchSpec,
+  ResolveFridayDaemonLaunchSpecInput,
+} from "./friday-daemon-runtime.js";
 
 export {
   DAEMON_PID_ERROR_CODES,
