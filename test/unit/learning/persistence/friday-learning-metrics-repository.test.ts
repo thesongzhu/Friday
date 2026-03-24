@@ -118,5 +118,33 @@ describe("FridayLearningMetricsRepository", () => {
     expect(result!.successRate).toBeUndefined();
     expect(result!.autoFixSuccessRate).toBeUndefined();
     expect(result!.rollbackRate).toBeUndefined();
+    expect(result!.activationRate).toBeUndefined();
+    expect(result!.saveRate).toBeUndefined();
+    expect(result!.reuseRate).toBeUndefined();
+    expect(result!.promotionRate).toBeUndefined();
+    expect(result!.supportConversionRate).toBeUndefined();
+    expect(result!.requestFulfillmentRate).toBeUndefined();
+  });
+
+  it("persists expanded conversion metrics", () => {
+    repo.upsertDay(db.writer, {
+      ...baseMetric,
+      activationRate: 0.4,
+      saveRate: 0.2,
+      reuseRate: 0.1,
+      promotionRate: 0.05,
+      supportConversionRate: 0.02,
+      requestFulfillmentRate: 0.03,
+    });
+
+    const result = repo.getDay(db.writer, "2025-06-15");
+    expect(result).toMatchObject({
+      activationRate: 0.4,
+      saveRate: 0.2,
+      reuseRate: 0.1,
+      promotionRate: 0.05,
+      supportConversionRate: 0.02,
+      requestFulfillmentRate: 0.03,
+    });
   });
 });

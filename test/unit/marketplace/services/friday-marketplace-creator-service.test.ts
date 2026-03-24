@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { FridayDomainError } from "#errors";
 import { FridayMarketplaceCreatorService } from "../../../../src/marketplace/services/friday-marketplace-creator-service.js";
+import { DEFAULT_FRIDAY_MARKETPLACE_PROOF_OF_USE_POLICY } from "../../../../src/marketplace/services/friday-marketplace-proof-of-use-policy.js";
 
-function createService() {
+function createService(input?: { proofOfUsePolicy?: typeof DEFAULT_FRIDAY_MARKETPLACE_PROOF_OF_USE_POLICY }) {
   const deps = {
     commerce: {
       getPublisher: vi.fn(async () => null),
@@ -55,7 +56,7 @@ function createService() {
           assetId: "listing:listing-1",
           creatorId: "publisher:publisher-1",
           assetType: "workflow",
-          sourceKind: "marketplace_plugin",
+          sourceKind: "marketplace_listing",
           distributionMode: "declarative_public",
           publicEligible: true,
           title: "Workflow One",
@@ -69,6 +70,12 @@ function createService() {
           trustScore: 91,
           latestVersion: "1.0.0",
           maturity: "validated_and_keep",
+          proofOfUseScore: 78,
+          repeatRunRate: 0.65,
+          outcomeReliabilityScore: 89,
+          permissionEfficiencyScore: 88,
+          requestFulfillmentRate: 0.67,
+          maintenanceResponsivenessScore: 83,
         },
       ]),
       getAsset: vi.fn(async (assetId: string) =>
@@ -77,7 +84,7 @@ function createService() {
             assetId,
             creatorId: "publisher:publisher-1",
             assetType: "workflow",
-            sourceKind: "marketplace_plugin",
+            sourceKind: "marketplace_listing",
             distributionMode: "declarative_public",
             publicEligible: true,
             title: "Workflow One",
@@ -101,6 +108,7 @@ function createService() {
     },
     generateId: vi.fn(() => "support-2"),
     now: vi.fn(() => "2026-03-08T00:05:00.000Z"),
+    proofOfUsePolicy: input?.proofOfUsePolicy,
   };
 
   return {
@@ -124,6 +132,8 @@ describe("FridayMarketplaceCreatorService", () => {
         installCount: 2,
         verifiedAssetCount: 1,
         fulfilledRequestCount: 2,
+        proofOfUseScore: expect.any(Number),
+        outcomeReliabilityScore: expect.any(Number),
       }),
     });
   });
@@ -142,7 +152,7 @@ describe("FridayMarketplaceCreatorService", () => {
       assetId: "listing:listing-1",
       creatorId: "publisher:publisher-1",
       assetType: "workflow",
-      sourceKind: "marketplace_plugin",
+      sourceKind: "marketplace_listing",
       distributionMode: "legacy_executable",
       publicEligible: false,
       title: "Workflow One",
@@ -152,7 +162,7 @@ describe("FridayMarketplaceCreatorService", () => {
       installable: false,
       installed: false,
       enabled: false,
-      verificationStatus: "warning",
+      verificationStatus: "unverified",
       trustScore: 50,
       latestVersion: "1.0.0",
       maturity: "validated_but_temporary",
@@ -200,5 +210,30 @@ describe("FridayMarketplaceCreatorService", () => {
     expect(result.creator).toMatchObject({
       id: "publisher:publisher-1",
     });
+  });
+
+  it("lets policy injection change creator overall score without changing response shape", async () => {
+    const { service } = createService({
+      proofOfUsePolicy: {
+        ...DEFAULT_FRIDAY_MARKETPLACE_PROOF_OF_USE_POLICY,
+        creatorOverallWeights: {
+          ...DEFAULT_FRIDAY_MARKETPLACE_PROOF_OF_USE_POLICY.creatorOverallWeights,
+          proofOfUse: 0.2,
+          outcomeReliability: 0.05,
+          permissionEfficiency: 0.05,
+          supportCountPointsPerEvent: 5,
+          supportCountPointsCap: 20,
+          fulfilledRequestPointsPerEvent: 4,
+          fulfilledRequestPointsCap: 20,
+        },
+      },
+    });
+
+    const [creator] = await service.listCreators();
+
+    expect(creator).toBeDefined();
+    expect(creator?.reputation.overallScore).toBeGreaterThan(20);
+    expect(creator?.reputation.proofOfUseScore).toBe(78);
+    expect(creator?.reputation.outcomeReliabilityScore).toBe(89);
   });
 });

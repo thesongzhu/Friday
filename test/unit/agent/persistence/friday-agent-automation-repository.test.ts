@@ -29,6 +29,10 @@ describe("FridayAgentAutomationRepository", () => {
       taskTemplate: "Build a hello world script",
       enabled: true,
       runCount: 0,
+      estimatedTimeSavedMinutes: 15,
+      reuseCount: 0,
+      promotionState: "private",
+      lastOutcomeScore: 0,
       createdAt: NOW,
       updatedAt: NOW,
       ...overrides,
@@ -49,6 +53,10 @@ describe("FridayAgentAutomationRepository", () => {
       expect(inserted.taskTemplate).toBe("Build a hello world script");
       expect(inserted.enabled).toBe(true);
       expect(inserted.runCount).toBe(0);
+      expect(inserted.estimatedTimeSavedMinutes).toBe(15);
+      expect(inserted.reuseCount).toBe(0);
+      expect(inserted.promotionState).toBe("private");
+      expect(inserted.lastOutcomeScore).toBe(0);
       expect(inserted.createdAt).toBe(NOW);
       expect(inserted.updatedAt).toBe(NOW);
     });
@@ -252,6 +260,10 @@ describe("FridayAgentAutomationRepository", () => {
           lastRunId: "run-456",
           lastRunAt: "2026-02-19T12:00:00.000Z",
           runCount: 1,
+          estimatedTimeSavedMinutes: 24,
+          reuseCount: 1,
+          promotionState: "team",
+          lastOutcomeScore: 84,
           updatedAt: NOW,
         }),
       );
@@ -259,6 +271,10 @@ describe("FridayAgentAutomationRepository", () => {
       expect(updated?.lastRunId).toBe("run-456");
       expect(updated?.lastRunAt).toBe("2026-02-19T12:00:00.000Z");
       expect(updated?.runCount).toBe(1);
+      expect(updated?.estimatedTimeSavedMinutes).toBe(24);
+      expect(updated?.reuseCount).toBe(1);
+      expect(updated?.promotionState).toBe("team");
+      expect(updated?.lastOutcomeScore).toBe(84);
     });
 
     it("updates JSON fields", () => {

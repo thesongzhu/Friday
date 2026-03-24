@@ -26,6 +26,7 @@ describe("marketplace view models", () => {
         publicEligible: true,
         installable: true,
         trustScore: 70,
+        proofOfUseScore: 60,
       },
       {
         assetId: "skill:error-triage",
@@ -39,6 +40,7 @@ describe("marketplace view models", () => {
         publicEligible: true,
         installable: true,
         trustScore: 90,
+        proofOfUseScore: 95,
       },
       {
         assetId: "agent:weekly-coach",
@@ -52,6 +54,7 @@ describe("marketplace view models", () => {
         publicEligible: false,
         installable: false,
         trustScore: 85,
+        proofOfUseScore: 80,
       },
     ];
 

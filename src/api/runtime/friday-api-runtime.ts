@@ -2140,6 +2140,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       startRun,
       idGenerator: deps.idGenerator,
       nowIso: deps.nowIso,
+      learningEventWriter: deps.learningEventWriter,
+      learningUserId: deps.learningUserId,
     });
 
     for (const route of createFridayAgentRoutes({

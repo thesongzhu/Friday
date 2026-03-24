@@ -2849,12 +2849,27 @@ export async function createFridayHub(
 
   // ─── API runtime ───
 
+  // Shared learning event writer — used by satellite sync, agent bridge, feedback,
+  // and incentive-alignment marketplace/automation signals.
+  const learningEventWriter = (events: FridayLearningEventAppendInput[]) => {
+    const results = selfLearningRuntime.pipeline.processBatch(events);
+    selfHealingApiService.emitProcessResults(results);
+  };
+
+  // Default learning user for runtime-originated remediation and feedback events.
+  const learningDefaultUserId = "admin-001";
+
   const marketplaceAssetCatalogService =
     marketplaceRuntime && marketplaceCommercePersistence
       ? new FridayMarketplaceAssetCatalogService({
         commerce: {
           getPublisher: marketplaceCommercePersistence.getPublisher,
           getSearchIndex: marketplaceCommercePersistence.getSearchIndex,
+        },
+        commerceAnalytics: {
+          listInstallations: marketplaceCommercePersistence.listInstallations,
+          listSupportEvents: marketplaceCommercePersistence.listSupportEvents,
+          listAcceptedRequestCountsByCreator: marketplaceCommercePersistence.listAcceptedRequestCountsByCreator,
         },
         skillLifecycle: marketplaceRuntime.lifecycle,
       })
@@ -2874,6 +2889,8 @@ export async function createFridayHub(
         assetCatalog: marketplaceAssetCatalogService,
         generateId: idGenerator,
         now: nowIso,
+        learningEventWriter,
+        learningUserId: learningDefaultUserId,
       })
       : null;
 
@@ -2890,17 +2907,10 @@ export async function createFridayHub(
         },
         generateId: idGenerator,
         now: nowIso,
+        learningEventWriter,
+        learningUserId: learningDefaultUserId,
       })
       : null;
-
-  // Shared learning event writer — used by satellite sync, agent bridge, and feedback tool.
-  const learningEventWriter = (events: FridayLearningEventAppendInput[]) => {
-    const results = selfLearningRuntime.pipeline.processBatch(events);
-    selfHealingApiService.emitProcessResults(results);
-  };
-
-  // Default learning user for runtime-originated remediation and feedback events.
-  const learningDefaultUserId = "admin-001";
 
   // ─── Satellite runtime ───
   const satelliteRuntime = createFridaySatelliteRuntime({
@@ -2958,6 +2968,8 @@ export async function createFridayHub(
     pluginMarketplaceAvailable,
     supportedChannelKinds: [...FRIDAY_SUPPORTED_CHANNEL_KINDS],
     enabledChannelKinds,
+    learningEventWriter,
+    learningUserId: learningDefaultUserId,
     sessionService: hubSessionService,
     capabilitySnapshotGetter: getAgentCapabilitySnapshot,
     taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
