@@ -854,5 +854,106 @@ describe("FridayAgentRoutes", () => {
 
       expect(update).toHaveBeenCalledWith("auto-1", expect.objectContaining({ schedule: null }));
     });
+
+    it("passes sessionTarget on create", async () => {
+      const save = vi.fn().mockReturnValue(
+        createAutomationStub({
+          sessionTarget: { type: "named", sessionKey: "named-session-1" },
+        }),
+      );
+      stubDeps.automationService.save = save;
+
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.automations.create")!;
+      const ctx = {
+        body: {
+          name: "Pinned thread",
+          taskTemplate: "continue",
+          sessionTarget: { type: "named", sessionKey: "named-session-1" },
+        },
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await route.handler(ctx);
+
+      expect(save).toHaveBeenCalledWith(expect.objectContaining({
+        sessionTarget: {
+          type: "named",
+          sessionKey: "named-session-1",
+        },
+      }));
+    });
+
+    it("allows clearing sessionTarget on update", async () => {
+      const update = vi.fn().mockReturnValue(createAutomationStub({ sessionTarget: { type: "isolated" } }));
+      stubDeps.automationService.update = update;
+
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.automations.update")!;
+      const ctx = {
+        body: { sessionTarget: null },
+        params: { automationId: "auto-1" },
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await route.handler(ctx);
+
+      expect(update).toHaveBeenCalledWith("auto-1", expect.objectContaining({ sessionTarget: null }));
+    });
+
+    it("passes sessionTarget override on run", async () => {
+      const run = vi.fn().mockResolvedValue(createStubResult());
+      stubDeps.automationService.run = run;
+
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.automations.run")!;
+      const ctx = {
+        body: { sessionTarget: { type: "current", sessionKey: "session-override" } },
+        params: { automationId: "auto-1" },
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await route.handler(ctx);
+
+      expect(run).toHaveBeenCalledWith("auto-1", expect.objectContaining({
+        sessionTarget: {
+          type: "current",
+          sessionKey: "session-override",
+        },
+      }));
+    });
+
+    it("rejects named session targets without a sessionKey", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.automations.create")!;
+      const ctx = {
+        body: {
+          name: "Broken target",
+          taskTemplate: "task",
+          sessionTarget: { type: "named" },
+        },
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await expect(route.handler(ctx)).rejects.toThrow("sessionTarget.sessionKey is required for named targets");
+    });
   });
 });

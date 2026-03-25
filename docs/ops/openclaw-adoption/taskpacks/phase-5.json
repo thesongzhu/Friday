@@ -2,53 +2,68 @@
   "schemaVersion": "1.0",
   "phaseId": "phase5",
   "title": "Context Engine And Isolated Automation",
-  "executionMode": "spec_only",
-  "goal": "Define context engine and isolated automation session work without bypassing approval, evidence, or the canonical fallback context path.",
+  "executionMode": "automated",
+  "goal": "Add additive context-engine preview hooks and automation session-target closure without bypassing approval, evidence, or the canonical fallback context path.",
   "allowedPaths": [
     "src/agent/runtime",
-    "src/memory",
-    "src/jobs",
-    "src/workflows",
-    "test/integration/memory",
-    "test/unit/workflows"
+    "src/agent/services",
+    "src/agent/persistence",
+    "src/agent/index.ts",
+    "src/api/http/routes/friday-agent-routes.ts",
+    "src/api/runtime/friday-api-runtime.ts",
+    "src/hub/friday-hub-bootstrap.ts",
+    "src/state/sqlite/migrations",
+    "docs/ops/openclaw-adoption/taskpacks/phase-5.json",
+    "test/unit/agent/runtime",
+    "test/unit/agent/services",
+    "test/unit/agent/persistence",
+    "test/unit/api/http/routes/friday-agent-routes.test.ts",
+    "test/unit/state/sqlite/friday-v057-agent-automation-session-targets-schema.test.ts"
   ],
   "implementationWorkers": [
     {
-      "id": "phase5-context-automation-spec",
-      "title": "Load the committed context and automation taskpack",
+      "id": "phase5-context-automation",
+      "title": "Add context-engine preview hooks and automation session-target support",
       "runner": "command",
       "mode": "implementation",
       "steps": [
         {
-          "label": "phase5-taskpack-spec",
-          "command": "node",
+          "label": "phase5-targeted-tests",
+          "command": "npx",
           "args": [
-            "-e",
-            "console.log('phase5 taskpack spec validated')"
+            "vitest",
+            "run",
+            "test/unit/agent/runtime/friday-agent-context-engine.test.ts",
+            "test/unit/agent/runtime/friday-agent-runtime.test.ts",
+            "test/unit/agent/services/friday-agent-automation-service.test.ts",
+            "test/unit/agent/persistence/friday-agent-automation-repository.test.ts",
+            "test/unit/api/http/routes/friday-agent-routes.test.ts",
+            "test/unit/state/sqlite/friday-v057-agent-automation-session-targets-schema.test.ts"
           ]
         }
       ]
     }
   ],
   "repairWorker": {
-    "id": "phase5-context-automation-repair-spec",
-    "title": "Diagnose context and automation blockers without bypassing audit or approval",
+    "id": "phase5-context-automation-repair",
+    "title": "Diagnose context and automation blockers without bypassing audit, approval, or canonical fallback behavior",
     "runner": "command",
     "mode": "repair",
     "steps": [
       {
-        "label": "phase5-taskpack-repair-spec",
-        "command": "node",
+        "label": "phase5-repair-check",
+        "command": "npm",
         "args": [
-          "-e",
-          "console.log('phase5 repair spec validated')"
+          "run",
+          "typecheck"
         ]
       }
     ]
   },
   "successCriteria": [
     "Context engine hooks stay additive and preserve default fallback behavior.",
-    "Automation session targets remain approval- and evidence-aware."
+    "Automation session targets remain approval- and evidence-aware.",
+    "No second context assembly authority or shadow automation runtime is introduced."
   ],
   "closureEvidence": [
     "phase-5/run.json",
@@ -59,7 +74,6 @@
       "id": "phase5-no-hidden-runtime-bypass",
       "description": "Phase 5 must not introduce hidden runtime bypasses around evidence or approval.",
       "pathPrefixes": [
-        "src/api/runtime",
         "src/channels",
         "src/plugins",
         "src/fleet",
@@ -69,6 +83,7 @@
     }
   ],
   "notes": [
-    "This taskpack remains spec_only until concrete context-engine and automation worker commands are authored."
+    "Phase 5 stays additive: preview hooks may extend context assembly, but the default workspace-context path remains canonical fallback.",
+    "Automation session-target work must reuse the existing agent runtime/session authority instead of introducing a parallel scheduler or delivery subsystem."
   ]
 }
