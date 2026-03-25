@@ -36,6 +36,8 @@ describe("FridayAgentFeedbackTool", () => {
     expect(event.eventId).toBe("fb-1");
     expect(event.payload).toEqual({
       feedbackKind: "correction",
+      correctedField: "tone",
+      newValue: "more formal",
       field: "tone",
       value: "more formal",
       context: "was too casual",
@@ -54,6 +56,8 @@ describe("FridayAgentFeedbackTool", () => {
     const event = written[0]![0]!;
     expect(event.payload).toEqual({
       feedbackKind: "preference",
+      correctedField: "language",
+      newValue: "Chinese",
       field: "language",
       value: "Chinese",
     });

@@ -78,6 +78,7 @@ describe("assistant marketplace handoff", () => {
     ]);
 
     await act(async () => {
+      const goalSeed = "Need a weekly reporting workflow. Constraints: read-only, no outbound network access. Risk: avoid touching production writes. Budget: $50 tip.";
       root!.render(
         createElement(
           MemoryRouter,
@@ -118,7 +119,7 @@ describe("assistant marketplace handoff", () => {
                 updatedAt: "2026-03-09T12:00:00.000Z",
               },
             ],
-            goalSeed: "Need a weekly reporting workflow",
+            goalSeed,
             onInstallSkill: vi.fn(),
             onSupportAsset: vi.fn(),
             installPending: false,
@@ -154,18 +155,48 @@ describe("assistant marketplace handoff", () => {
   }
 
   it("offers explicit marketplace handoff links and request CTAs", () => {
+    const structuredGoal = "Need a weekly reporting workflow.";
     expect(getByTestId("assistant-marketplace-open-all").getAttribute("href")).toBe("/marketplace");
     expect(getByTestId("assistant-marketplace-open-skill:error-triage").getAttribute("href")).toBe(
       "/marketplace?asset=skill%3Aerror-triage",
     );
-    expect(getByTestId("assistant-marketplace-request-skill").getAttribute("href")).toContain(
-      "/marketplace?requestKind=skill&goal=Need+a+weekly+reporting+workflow",
+    const skillHref = new URL(getByTestId("assistant-marketplace-request-skill").getAttribute("href")!, "https://example.test");
+    expect(skillHref.searchParams.get("requestKind")).toBe("skill");
+    expect(skillHref.searchParams.get("goal")).toBe(
+      "Need a weekly reporting workflow. Constraints: read-only, no outbound network access. Risk: avoid touching production writes. Budget: $50 tip.",
     );
-    expect(getByTestId("assistant-marketplace-request-workflow").getAttribute("href")).toContain(
-      "/marketplace?requestKind=workflow&goal=Need+a+weekly+reporting+workflow",
+    expect(skillHref.searchParams.get("title")).toBe(`Need a skill for: ${structuredGoal}`);
+    expect(skillHref.searchParams.get("desiredOutcome")).toBe(
+      `A usable skill that solves: ${structuredGoal}`,
     );
-    expect(getByTestId("assistant-marketplace-request-agent").getAttribute("href")).toContain(
-      "/marketplace?requestKind=agent&goal=Need+a+weekly+reporting+workflow",
+    expect(skillHref.searchParams.getAll("constraint")).toEqual(["read-only", "no outbound network access"]);
+    expect(skillHref.searchParams.get("riskNotes")).toBe("avoid touching production writes");
+    expect(skillHref.searchParams.get("budgetSupportIntent")).toBe("$50 tip");
+
+    const workflowHref = new URL(getByTestId("assistant-marketplace-request-workflow").getAttribute("href")!, "https://example.test");
+    expect(workflowHref.searchParams.get("requestKind")).toBe("workflow");
+    expect(workflowHref.searchParams.get("goal")).toBe(
+      "Need a weekly reporting workflow. Constraints: read-only, no outbound network access. Risk: avoid touching production writes. Budget: $50 tip.",
     );
+    expect(workflowHref.searchParams.get("title")).toBe(`Need a workflow for: ${structuredGoal}`);
+    expect(workflowHref.searchParams.get("desiredOutcome")).toBe(
+      `A usable workflow that solves: ${structuredGoal}`,
+    );
+    expect(workflowHref.searchParams.getAll("constraint")).toEqual(["read-only", "no outbound network access"]);
+    expect(workflowHref.searchParams.get("riskNotes")).toBe("avoid touching production writes");
+    expect(workflowHref.searchParams.get("budgetSupportIntent")).toBe("$50 tip");
+
+    const agentHref = new URL(getByTestId("assistant-marketplace-request-agent").getAttribute("href")!, "https://example.test");
+    expect(agentHref.searchParams.get("requestKind")).toBe("agent");
+    expect(agentHref.searchParams.get("goal")).toBe(
+      "Need a weekly reporting workflow. Constraints: read-only, no outbound network access. Risk: avoid touching production writes. Budget: $50 tip.",
+    );
+    expect(agentHref.searchParams.get("title")).toBe(`Need a agent for: ${structuredGoal}`);
+    expect(agentHref.searchParams.get("desiredOutcome")).toBe(
+      `A usable agent that solves: ${structuredGoal}`,
+    );
+    expect(agentHref.searchParams.getAll("constraint")).toEqual(["read-only", "no outbound network access"]);
+    expect(agentHref.searchParams.get("riskNotes")).toBe("avoid touching production writes");
+    expect(agentHref.searchParams.get("budgetSupportIntent")).toBe("$50 tip");
   });
 });

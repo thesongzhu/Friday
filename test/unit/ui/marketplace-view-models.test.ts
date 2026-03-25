@@ -166,15 +166,26 @@ describe("marketplace view models", () => {
   });
 
   it("builds marketplace handoff urls with assistant context", () => {
-    expect(
-      buildMarketplaceHref({
-        assetId: "skill:error-triage",
-        requestKind: "workflow",
-        goal: "Need a weekly reporting workflow",
-      }),
-    ).toBe(
-      "/marketplace?asset=skill%3Aerror-triage&requestKind=workflow&goal=Need+a+weekly+reporting+workflow",
-    );
+    const href = buildMarketplaceHref({
+      assetId: "skill:error-triage",
+      requestKind: "workflow",
+      goal: "Need a weekly reporting workflow",
+      title: "Need a workflow for: Need a weekly reporting workflow",
+      desiredOutcome: "A usable workflow that solves: Need a weekly reporting workflow",
+      constraints: ["read-only", "no outbound network access"],
+      budgetSupportIntent: "$50 tip",
+      riskNotes: "Avoid touching production writes.",
+    });
+
+    const params = new URL(href, "https://example.test").searchParams;
+    expect(params.get("asset")).toBe("skill:error-triage");
+    expect(params.get("requestKind")).toBe("workflow");
+    expect(params.get("goal")).toBe("Need a weekly reporting workflow");
+    expect(params.get("title")).toBe("Need a workflow for: Need a weekly reporting workflow");
+    expect(params.get("desiredOutcome")).toBe("A usable workflow that solves: Need a weekly reporting workflow");
+    expect(params.getAll("constraint")).toEqual(["read-only", "no outbound network access"]);
+    expect(params.get("budgetSupportIntent")).toBe("$50 tip");
+    expect(params.get("riskNotes")).toBe("Avoid touching production writes.");
     expect(buildMarketplaceHref()).toBe("/marketplace");
   });
 });

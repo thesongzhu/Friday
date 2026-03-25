@@ -405,5 +405,27 @@ describe("FridayAgentAutomationService", () => {
         automationId: created.id,
       });
     });
+
+    it("writes asset_promoted when reuse pushes an automation to the next promotion tier", async () => {
+      const created = service.save({
+        name: "Promote Me",
+        taskTemplate: "task",
+      });
+
+      await service.run(created.id);
+      await service.run(created.id);
+      await service.run(created.id);
+
+      const promoted = learningEvents.filter((event) => event.kind === "asset_promoted");
+      expect(promoted).toHaveLength(1);
+      expect(promoted[0]?.payload).toMatchObject({
+        assetId: created.id,
+        assetKind: "automation",
+        previousPromotionState: "private",
+        promotionState: "team",
+        reuseCount: 3,
+      });
+      expect(service.get(created.id)?.promotionState).toBe("team");
+    });
   });
 });

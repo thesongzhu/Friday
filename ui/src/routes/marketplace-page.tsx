@@ -58,6 +58,11 @@ export function MarketplacePage() {
     const assetId = searchParams.get("asset");
     const requestKind = searchParams.get("requestKind");
     const seededGoal = searchParams.get("goal");
+    const seededTitle = searchParams.get("title");
+    const seededOutcome = searchParams.get("desiredOutcome");
+    const seededConstraints = searchParams.getAll("constraint");
+    const seededBudget = searchParams.get("budgetSupportIntent");
+    const seededRiskNotes = searchParams.get("riskNotes");
 
     if (assetId) {
       setExpandedPermissionAssetId(assetId);
@@ -67,9 +72,28 @@ export function MarketplacePage() {
     }
     if (seededGoal) {
       setRequestGoal((current) => current || seededGoal);
+    }
+    if (seededTitle) {
+      setRequestTitle((current) => current || seededTitle);
+    }
+    if (seededOutcome) {
+      setRequestOutcome((current) => current || seededOutcome);
+    }
+    if (seededConstraints.length > 0) {
+      setRequestConstraints((current) => current || seededConstraints.join("\n"));
+    }
+    if (seededBudget) {
+      setRequestBudget((current) => current || seededBudget);
+    }
+    if (seededRiskNotes) {
+      setRequestRiskNotes((current) => current || seededRiskNotes);
+    }
+    if (seededGoal && !seededTitle) {
       setRequestTitle((current) =>
         current || `Need a ${requestKind === "workflow" || requestKind === "agent" ? requestKind : "skill"} for: ${seededGoal.slice(0, 48)}`,
       );
+    }
+    if (seededGoal && !seededOutcome) {
       setRequestOutcome((current) =>
         current || `A usable ${requestKind === "workflow" || requestKind === "agent" ? requestKind : "skill"} that solves: ${seededGoal}`,
       );

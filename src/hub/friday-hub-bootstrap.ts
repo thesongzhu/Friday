@@ -3006,6 +3006,8 @@ export async function createFridayHub(
         generateId: idGenerator,
         now: nowIso,
         auditSink: marketplaceAuditSink,
+        learningEventWriter,
+        learningUserId: learningDefaultUserId,
         beforePersistInstallation: marketplaceInstallMaterializer,
         ...marketplaceCommercePersistence,
       }

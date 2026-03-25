@@ -1,9 +1,11 @@
 import type { FridayMarketplaceCommerceRoutesDeps } from "../../api/http/routes/friday-marketplace-commerce-routes.js";
 import type { ListingSearchEntry } from "../engine/search-discovery.js";
 import type {
+  FridayInstallation,
   FridayMarketplaceAssetType,
   FridayMarketplaceDistributionMode,
   FridayPublisher,
+  FridaySupportEvent,
 } from "../model/friday-marketplace.types.js";
 import type {
   FridaySkillCatalogViewItem,
@@ -70,8 +72,15 @@ export interface FridayMarketplaceAssetCatalogServiceDeps {
     "getPublisher" | "getSearchIndex"
   >;
   commerceAnalytics?: {
-    listInstallations: () => Promise<Array<{ listingId: string }>>;
-    listSupportEvents: () => Promise<Array<{ assetId: string }>>;
+    listInstallations: () => Promise<Array<Pick<FridayInstallation, "listingId" | "tenantId" | "principalId" | "createdAt">>>;
+    listSupportEvents: () => Promise<
+      Array<
+        Pick<
+          FridaySupportEvent,
+          "assetId" | "creatorId" | "supporterTenantId" | "supporterPrincipalId" | "createdAt"
+        >
+      >
+    >;
     listAcceptedRequestCountsByCreator: () => Promise<
       readonly {
         creatorId: string;
@@ -90,6 +99,46 @@ interface FridayMarketplaceProofContext {
   installCountByAsset: Map<string, number>;
   supportCountByAsset: Map<string, number>;
   requestFulfillmentCountByCreator: Map<string, number>;
+}
+
+function marketplaceActorKey(input: {
+  tenantId?: string | null;
+  principalId?: string | null;
+}): string | null {
+  const tenantId = input.tenantId?.trim();
+  const principalId = input.principalId?.trim();
+  if (!tenantId && !principalId) {
+    return null;
+  }
+  return `${tenantId ?? "unknown"}:${principalId ?? "unknown"}`;
+}
+
+function publisherActorKey(
+  publisher: FridayPublisher | null | undefined,
+): string | null {
+  if (!publisher) {
+    return null;
+  }
+  return marketplaceActorKey({
+    tenantId: publisher.tenantId,
+    principalId: publisher.principalId,
+  });
+}
+
+function actorMatchesPublisher(input: {
+  tenantId?: string | null;
+  principalId?: string | null;
+}, publisher: FridayPublisher | null | undefined): boolean {
+  const actorKey = marketplaceActorKey(input);
+  const ownerKey = publisherActorKey(publisher);
+  return actorKey !== null && ownerKey !== null && actorKey === ownerKey;
+}
+
+function dedupeKeyForDay(assetId: string, actorKey: string | null, createdAt: string): string | null {
+  if (!actorKey) {
+    return null;
+  }
+  return `${assetId}:${actorKey}:${createdAt.slice(0, 10)}`;
 }
 
 function permissionGrantToLabel(grant: PermissionGrant): string {
@@ -425,20 +474,77 @@ export class FridayMarketplaceAssetCatalogService {
       };
     }
 
-    const [installations, supportEvents, acceptedRequests] = await Promise.all([
+    const [installations, supportEvents, acceptedRequests, searchIndex] = await Promise.all([
       this.deps.commerceAnalytics.listInstallations(),
       this.deps.commerceAnalytics.listSupportEvents(),
       this.deps.commerceAnalytics.listAcceptedRequestCountsByCreator(),
+      this.deps.commerce.getSearchIndex(),
     ]);
 
+    const uniquePublisherIds = [...new Set(searchIndex.map((entry) => entry.listing.publisherId))];
+    const publisherEntries = await Promise.all(
+      uniquePublisherIds.map(async (publisherId) => [
+        publisherId,
+        await this.deps.commerce.getPublisher(publisherId),
+      ] as const),
+    );
+    const publishersById = new Map<string, FridayPublisher | null>(publisherEntries);
+    const publisherByAssetId = new Map<string, FridayPublisher | null>();
+    const publisherByCreatorId = new Map<string, FridayPublisher | null>();
+    for (const entry of searchIndex) {
+      const publisher = publishersById.get(entry.listing.publisherId) ?? null;
+      publisherByAssetId.set(`listing:${entry.listing.id}`, publisher);
+      publisherByCreatorId.set(`publisher:${entry.listing.publisherId}`, publisher);
+    }
+
     const installCountByAsset = new Map<string, number>();
+    const seenInstallationActors = new Set<string>();
     for (const installation of installations) {
       const assetId = `listing:${installation.listingId}`;
+      const publisher = publisherByAssetId.get(assetId) ?? null;
+      if (actorMatchesPublisher(installation, publisher)) {
+        continue;
+      }
+      const actorKey = marketplaceActorKey(installation);
+      const dedupeKey = dedupeKeyForDay(assetId, actorKey, installation.createdAt);
+      if (dedupeKey && seenInstallationActors.has(dedupeKey)) {
+        continue;
+      }
+      if (dedupeKey) {
+        seenInstallationActors.add(dedupeKey);
+      }
       installCountByAsset.set(assetId, (installCountByAsset.get(assetId) ?? 0) + 1);
     }
 
     const supportCountByAsset = new Map<string, number>();
+    const seenSupportActors = new Set<string>();
     for (const event of supportEvents) {
+      const publisher =
+        publisherByAssetId.get(event.assetId) ??
+        publisherByCreatorId.get(event.creatorId) ??
+        null;
+      if (
+        actorMatchesPublisher(
+          {
+            tenantId: event.supporterTenantId,
+            principalId: event.supporterPrincipalId,
+          },
+          publisher,
+        )
+      ) {
+        continue;
+      }
+      const actorKey = marketplaceActorKey({
+        tenantId: event.supporterTenantId,
+        principalId: event.supporterPrincipalId,
+      });
+      const dedupeKey = dedupeKeyForDay(event.assetId, actorKey, event.createdAt);
+      if (dedupeKey && seenSupportActors.has(dedupeKey)) {
+        continue;
+      }
+      if (dedupeKey) {
+        seenSupportActors.add(dedupeKey);
+      }
       supportCountByAsset.set(event.assetId, (supportCountByAsset.get(event.assetId) ?? 0) + 1);
     }
 

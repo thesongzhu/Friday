@@ -54,6 +54,18 @@ describe("FridayPreferenceExtractionService", () => {
       expect(signals[0]!.key).toBe("pref:favorite_color");
     });
 
+    it("accepts legacy field/value correction payloads", () => {
+      const event = makeEvent({
+        kind: "user_correction",
+        payload: { field: "language", value: "TypeScript" },
+      });
+
+      const signals = service.extract(event);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]!.key).toBe("pref:language");
+      expect(signals[0]!.value).toBe("TypeScript");
+    });
+
     it("returns empty for missing correctedField", () => {
       const event = makeEvent({
         kind: "user_correction",

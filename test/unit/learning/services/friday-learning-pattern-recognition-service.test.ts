@@ -135,6 +135,34 @@ describe("FridayLearningPatternRecognitionService", () => {
     expect(correctionPatterns[0]!.key).toBe("language");
   });
 
+  it("detects correction patterns from legacy field/value payloads", () => {
+    const ledger = createFridayLearningEventLedger({ db });
+
+    ledger.appendEvent({
+      eventId: "evt-legacy-1",
+      ts: "2025-06-10T10:00:00.000Z",
+      userId: "test-user",
+      kind: "user_correction",
+      payload: { field: "theme", value: "dark" },
+    });
+    ledger.appendEvent({
+      eventId: "evt-legacy-2",
+      ts: "2025-06-12T10:00:00.000Z",
+      userId: "test-user",
+      kind: "user_correction",
+      payload: { field: "theme", value: "light" },
+    });
+
+    const patterns = service.detectUserPatterns({
+      userId: "test-user",
+      nowIso: NOW,
+      lookbackDays: 30,
+    });
+
+    expect(patterns.some((pattern) => pattern.kind === "recurring_correction_key" && pattern.key === "theme")).toBe(true);
+    expect(patterns.some((pattern) => pattern.kind === "drifting_preference_key" && pattern.key === "theme")).toBe(true);
+  });
+
   it("detects stable preference keys (evidence >= 4, confidence >= 0.75)", () => {
     const factRepo = createFridayPreferenceFactRepository();
 

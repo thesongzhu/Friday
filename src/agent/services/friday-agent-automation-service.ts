@@ -20,6 +20,13 @@ const AUTOMATION_NOT_FOUND = "AGENT_AUTOMATION_NOT_FOUND";
 const AUTOMATION_DISABLED = "AGENT_AUTOMATION_DISABLED";
 const AUTOMATION_SCHEDULER_SYNC_FAILED = "AGENT_AUTOMATION_SCHEDULER_SYNC_FAILED";
 
+const PROMOTION_STATE_RANK = {
+  private: 0,
+  team: 1,
+  public_boost_eligible: 2,
+  public: 3,
+} as const;
+
 // ─── Factory ───
 
 export function createFridayAgentAutomationService(
@@ -239,6 +246,26 @@ export function createFridayAgentAutomationService(
           updatedAt: nowIso(),
         }),
       );
+
+      if (
+        PROMOTION_STATE_RANK[nextInsights.promotionState] >
+        PROMOTION_STATE_RANK[automation.promotionState]
+      ) {
+        writeLearningEvent({
+          kind: "asset_promoted",
+          payload: {
+            assetId: automationId,
+            assetKind: "automation",
+            sourceAutomationId: automationId,
+            sourceRunId: automation.sourceRunId ?? null,
+            resultRunId: result.runId,
+            previousPromotionState: automation.promotionState,
+            promotionState: nextInsights.promotionState,
+            reuseCount: nextInsights.reuseCount,
+            lastOutcomeScore: nextInsights.lastOutcomeScore,
+          },
+        });
+      }
 
       writeLearningEvent({
         kind: "automation_reused",
