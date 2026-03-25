@@ -79,6 +79,15 @@ run_git() {
   "$@"
 }
 
+print_git_failure() {
+  local prefix="$1"
+  local log_path="$2"
+  echo "${prefix}" >&2
+  if [[ -f "${log_path}" ]]; then
+    sed 's/^/[friday-homebrew-publish] /' "${log_path}" >&2
+  fi
+}
+
 clone_target() {
   if [[ "${TAP_REPO}" == /* || "${TAP_REPO}" == file://* || "${TAP_REPO}" == *.git ]]; then
     printf '%s\n' "${TAP_REPO}"
@@ -90,7 +99,11 @@ clone_target() {
 }
 
 REMOTE_URL="$(clone_target)"
-run_git git clone "${REMOTE_URL}" "${TEMP_DIR}/tap" >/dev/null 2>&1
+CLONE_ERROR_LOG="${TEMP_DIR}/clone.stderr"
+if ! run_git git clone "${REMOTE_URL}" "${TEMP_DIR}/tap" >/dev/null 2>"${CLONE_ERROR_LOG}"; then
+  print_git_failure "[friday-homebrew-publish] failed to clone tap repo ${TAP_REPO}." "${CLONE_ERROR_LOG}"
+  exit 128
+fi
 
 mkdir -p "${TEMP_DIR}/tap/Casks"
 cp "${CASK_PATH}" "${TEMP_DIR}/tap/Casks/friday.rb"
@@ -102,7 +115,11 @@ else
   git add Casks/friday.rb
   git -c user.name="Codex" -c user.email="codex@openai.com" \
     commit -m "friday: update cask" >/dev/null
-  run_git git push origin HEAD >/dev/null 2>&1
+  PUSH_ERROR_LOG="${TEMP_DIR}/push.stderr"
+  if ! run_git git push origin HEAD >/dev/null 2>"${PUSH_ERROR_LOG}"; then
+    print_git_failure "[friday-homebrew-publish] failed to push cask update to ${TAP_REPO}." "${PUSH_ERROR_LOG}"
+    exit 128
+  fi
 fi
 popd >/dev/null
 
