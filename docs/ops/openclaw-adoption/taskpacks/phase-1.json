@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "1.0",
+  "phaseId": "phase1",
+  "title": "Skills Foundation",
+  "executionMode": "spec_only",
+  "goal": "Define the canonical additive-only skills foundation work before any automatic product mutation is attempted.",
+  "allowedPaths": [
+    "src/skills",
+    "src/api/http/routes/friday-skill-routes.ts",
+    "docs/current-source-of-truth.md",
+    "test/e2e/skills",
+    "test/e2e/api/friday-api-skills-routes.test.ts",
+    "test/integration/marketplace"
+  ],
+  "implementationWorkers": [
+    {
+      "id": "phase1-skills-foundation-spec",
+      "title": "Load the committed skills foundation taskpack",
+      "runner": "command",
+      "mode": "implementation",
+      "steps": [
+        {
+          "label": "phase1-taskpack-spec",
+          "command": "node",
+          "args": [
+            "-e",
+            "console.log('phase1 taskpack spec validated')"
+          ]
+        }
+      ],
+      "outputContract": [
+        "Taskpack can be dry-run without mutating repo state",
+        "Architecture boundaries are explicit before automation is enabled"
+      ]
+    }
+  ],
+  "repairWorker": {
+    "id": "phase1-skills-foundation-repair-spec",
+    "title": "Diagnose skills foundation blockers without leaving canonical routes",
+    "runner": "command",
+    "mode": "repair",
+    "steps": [
+      {
+        "label": "phase1-taskpack-repair-spec",
+        "command": "node",
+        "args": [
+          "-e",
+          "console.log('phase1 repair spec validated')"
+        ]
+      }
+    ]
+  },
+  "successCriteria": [
+    "Eligibility, permission preview, installation, verification, and failure evidence stay inside the canonical skills lifecycle.",
+    "No second skills registry or shadow source backbone is introduced."
+  ],
+  "closureEvidence": [
+    "phase-1/run.json",
+    "phase-1/evidence/latest-impact.json"
+  ],
+  "forbiddenBoundaries": [
+    {
+      "id": "phase1-no-plugin-or-channel-drift",
+      "description": "Phase 1 must stay inside skills and marketplace source surfaces.",
+      "pathPrefixes": [
+        "src/plugins",
+        "src/channels",
+        "src/hub",
+        "src/fleet",
+        "src/satellites",
+        "src/browser",
+        "src/agent/runtime"
+      ],
+      "verdict": "blocked"
+    }
+  ],
+  "notes": [
+    "This taskpack is intentionally spec_only until real implementation commands are authored.",
+    "Dry-run is allowed; automatic merge promotion must remain blocked."
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "1.0",
+  "phaseId": "phase3",
+  "title": "Channel Contract",
+  "executionMode": "spec_only",
+  "goal": "Define the channel contract work while preserving core ownership of message, session, audit, and evidence behavior.",
+  "allowedPaths": [
+    "src/channels",
+    "src/hub",
+    "src/skills",
+    "test/unit/channels",
+    "test/e2e/mock/friday-openclaw-parity-closure.e2e.test.ts"
+  ],
+  "implementationWorkers": [
+    {
+      "id": "phase3-channel-contract-spec",
+      "title": "Load the committed channel contract taskpack",
+      "runner": "command",
+      "mode": "implementation",
+      "steps": [
+        {
+          "label": "phase3-taskpack-spec",
+          "command": "node",
+          "args": [
+            "-e",
+            "console.log('phase3 taskpack spec validated')"
+          ]
+        }
+      ]
+    }
+  ],
+  "repairWorker": {
+    "id": "phase3-channel-contract-repair-spec",
+    "title": "Diagnose channel contract blockers without expanding connector scope",
+    "runner": "command",
+    "mode": "repair",
+    "steps": [
+      {
+        "label": "phase3-taskpack-repair-spec",
+        "command": "node",
+        "args": [
+          "-e",
+          "console.log('phase3 repair spec validated')"
+        ]
+      }
+    ]
+  },
+  "successCriteria": [
+    "Core retains message, session, audit, and evidence authority.",
+    "No long-tail connector expansion is introduced."
+  ],
+  "closureEvidence": [
+    "phase-3/run.json",
+    "phase-3/evidence/latest-impact.json"
+  ],
+  "forbiddenBoundaries": [
+    {
+      "id": "phase3-no-fleet-context-drift",
+      "description": "Phase 3 must not expand into fleet, browser, or agent runtime context surfaces.",
+      "pathPrefixes": [
+        "src/fleet",
+        "src/satellites",
+        "src/browser",
+        "src/agent/runtime",
+        "src/plugins"
+      ],
+      "verdict": "blocked"
+    }
+  ],
+  "notes": [
+    "This taskpack remains spec_only until curated channel implementation commands are authored."
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "1.0",
+  "phaseId": "phase6",
+  "title": "Final Closure",
+  "executionMode": "spec_only",
+  "goal": "Define the final closure, route matrix, and bug sweep expectations after product phases become automatable and merge cleanly to main.",
+  "allowedPaths": [
+    "scripts/e2e",
+    "docs/reports",
+    "test/e2e",
+    "test/integration",
+    "test/unit"
+  ],
+  "implementationWorkers": [
+    {
+      "id": "phase6-final-closure-spec",
+      "title": "Load the committed final closure taskpack",
+      "runner": "command",
+      "mode": "implementation",
+      "steps": [
+        {
+          "label": "phase6-taskpack-spec",
+          "command": "node",
+          "args": [
+            "-e",
+            "console.log('phase6 taskpack spec validated')"
+          ]
+        }
+      ]
+    }
+  ],
+  "repairWorker": {
+    "id": "phase6-final-closure-repair-spec",
+    "title": "Diagnose closeout blockers without widening phase scope",
+    "runner": "command",
+    "mode": "repair",
+    "steps": [
+      {
+        "label": "phase6-taskpack-repair-spec",
+        "command": "node",
+        "args": [
+          "-e",
+          "console.log('phase6 repair spec validated')"
+        ]
+      }
+    ]
+  },
+  "successCriteria": [
+    "Release gates, closeout gates, and bug sweep expectations are committed before final automation is enabled."
+  ],
+  "closureEvidence": [
+    "phase-6/run.json",
+    "phase-6/evidence/latest-impact.json",
+    "final-closeout/latest.json",
+    "final-closeout/latest.md"
+  ],
+  "forbiddenBoundaries": [
+    {
+      "id": "phase6-no-new-product-scope",
+      "description": "Phase 6 must not introduce new product surfaces; it is closure-only.",
+      "pathPrefixes": [
+        "src/skills",
+        "src/plugins",
+        "src/channels",
+        "src/hub",
+        "src/fleet",
+        "src/satellites",
+        "src/browser",
+        "src/agent/runtime"
+      ],
+      "verdict": "blocked"
+    }
+  ],
+  "notes": [
+    "This taskpack remains spec_only until all earlier product phases are automated."
+  ]
+}

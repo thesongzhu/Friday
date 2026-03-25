@@ -1,0 +1,75 @@
+{
+  "schemaVersion": "1.0",
+  "phaseId": "phase2",
+  "title": "Plugin SDK Preview",
+  "executionMode": "spec_only",
+  "goal": "Define the additive plugin SDK preview work without collapsing Friday's plugin and skills backbones into a single story.",
+  "allowedPaths": [
+    "src/plugins",
+    "src/api/http/routes/friday-plugin-routes.ts",
+    "docs/plugin-system-design.md",
+    "test/e2e/plugins",
+    "test/e2e/api/friday-api-plugins-routes.test.ts"
+  ],
+  "implementationWorkers": [
+    {
+      "id": "phase2-plugin-sdk-preview-spec",
+      "title": "Load the committed plugin SDK preview taskpack",
+      "runner": "command",
+      "mode": "implementation",
+      "steps": [
+        {
+          "label": "phase2-taskpack-spec",
+          "command": "node",
+          "args": [
+            "-e",
+            "console.log('phase2 taskpack spec validated')"
+          ]
+        }
+      ]
+    }
+  ],
+  "repairWorker": {
+    "id": "phase2-plugin-sdk-preview-repair-spec",
+    "title": "Diagnose plugin preview blockers without rewriting marketplace ownership",
+    "runner": "command",
+    "mode": "repair",
+    "steps": [
+      {
+        "label": "phase2-taskpack-repair-spec",
+        "command": "node",
+        "args": [
+          "-e",
+          "console.log('phase2 repair spec validated')"
+        ]
+      }
+    ]
+  },
+  "successCriteria": [
+    "Preview capability manifests remain distinct from the canonical skills lifecycle.",
+    "No arbitrary public package runtime is introduced."
+  ],
+  "closureEvidence": [
+    "phase-2/run.json",
+    "phase-2/evidence/latest-impact.json"
+  ],
+  "forbiddenBoundaries": [
+    {
+      "id": "phase2-no-skills-backbone-rewrite",
+      "description": "Phase 2 must not rewrite the skills lifecycle or create a second registry.",
+      "pathPrefixes": [
+        "src/skills",
+        "src/channels",
+        "src/hub",
+        "src/fleet",
+        "src/satellites",
+        "src/browser",
+        "src/agent/runtime"
+      ],
+      "verdict": "blocked"
+    }
+  ],
+  "notes": [
+    "This taskpack remains spec_only until concrete preview SDK implementation commands are authored."
+  ]
+}
