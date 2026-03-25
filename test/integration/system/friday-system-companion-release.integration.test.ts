@@ -31,6 +31,29 @@ async function runReleaseScript(
 }
 
 describeIfDarwin("Friday native companion release workflow", () => {
+  async function createRejectingHomebrewTap(prefix: string): Promise<string> {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+    const workRepo = path.join(tempRoot, "tap-work");
+    const remoteRepo = path.join(tempRoot, "tap-remote.git");
+
+    await fs.mkdir(workRepo, { recursive: true });
+    await execFileAsync("git", ["init", "-b", "main"], { cwd: workRepo });
+    await fs.writeFile(path.join(workRepo, "README.md"), "# friday tap\n", "utf8");
+    await execFileAsync("git", ["add", "README.md"], { cwd: workRepo });
+    await execFileAsync("git", ["-c", "user.name=Codex", "-c", "user.email=codex@openai.com", "commit", "-m", "init"], { cwd: workRepo });
+    await execFileAsync("git", ["clone", "--bare", workRepo, remoteRepo]);
+    await execFileAsync("git", ["remote", "add", "origin", remoteRepo], { cwd: workRepo });
+    await execFileAsync("git", ["push", "-u", "origin", "main"], { cwd: workRepo });
+    await fs.writeFile(
+      path.join(remoteRepo, "hooks", "pre-receive"),
+      "#!/bin/sh\necho 'remote rejected cask update' >&2\nexit 1\n",
+      "utf8",
+    );
+    await fs.chmod(path.join(remoteRepo, "hooks", "pre-receive"), 0o755);
+
+    return remoteRepo;
+  }
+
   it("runs the local release workflow and verifies the packaged app", async () => {
     const repoRoot = process.cwd();
     const releaseEnv = await runReleaseScript(
@@ -190,6 +213,37 @@ describeIfDarwin("Friday native companion release workflow", () => {
     const contents = await fs.readFile(evidencePath, "utf8");
     expect(contents).toContain("Status: pending");
     expect(contents).toContain("Release mode: local");
+  }, 180_000);
+
+  it("degrades to generated Homebrew metadata when tap publication fails", async () => {
+    const repoRoot = process.cwd();
+    const remoteRepo = await createRejectingHomebrewTap("friday-release-homebrew-fallback-");
+    const releaseResult = await runReleaseScript(
+      path.join(repoRoot, "scripts/ops/release-friday-companion-app.sh"),
+      {
+        FRIDAY_MACOS_RELEASE_MODE: "local",
+        FRIDAY_HOMEBREW_TAP_REPO: remoteRepo,
+        FRIDAY_HOMEBREW_TAP_GITHUB_TOKEN: "local-test-token",
+      },
+    );
+
+    expect(releaseResult.stderr).toContain("publishing Homebrew cask");
+    expect(releaseResult.stderr).toContain("failed to push cask update");
+    expect(releaseResult.stderr).toContain("Homebrew cask publication failed; continuing with generated cask only");
+
+    const releaseRecord = JSON.parse(
+      await fs.readFile(path.join(repoRoot, "dist", "macos", "FridayCompanion.release.json"), "utf8"),
+    ) as {
+      manifestJsonPath: string | null;
+    };
+    const manifest = JSON.parse(
+      await fs.readFile(releaseRecord.manifestJsonPath!, "utf8"),
+    ) as {
+      channels: { homebrew: { availability: string; tapRepo: string | null } };
+    };
+
+    expect(manifest.channels.homebrew.availability).toBe("generated");
+    expect(manifest.channels.homebrew.tapRepo).toBeNull();
   }, 180_000);
 
   it("rejects notarized release mode when Apple credentials are missing", async () => {
