@@ -1,0 +1,127 @@
+{
+  "schemaVersion": "2.0",
+  "id": "workspace-diff-review",
+  "name": "Workspace Diff Review",
+  "description": "Review the current workspace diff for structural risk, missing validation coverage, and likely next release steps.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": {
+    "name": "Friday"
+  },
+  "tags": [
+    "starter",
+    "starter.builder",
+    "review",
+    "repo",
+    "diff"
+  ],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 120000
+  },
+  "triggers": {
+    "intents": [
+      "workspace_diff_review"
+    ],
+    "phrases": [
+      "review current changes",
+      "review this diff",
+      "what is risky in my current workspace changes"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 93,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [
+      "git"
+    ],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "workspaceRoot",
+      "type": "string",
+      "required": false,
+      "label": "Workspace Root",
+      "help": "Optional workspace directory to inspect."
+    },
+    {
+      "key": "goal",
+      "type": "string",
+      "required": false,
+      "label": "Review Context",
+      "help": "Optional review brief or landing context."
+    }
+  ],
+  "outputs": [
+    {
+      "key": "summary",
+      "type": "string",
+      "description": "High-level diff review summary."
+    },
+    {
+      "key": "nextStep",
+      "type": "string",
+      "description": "Most useful next landing action."
+    },
+    {
+      "key": "details",
+      "type": "object",
+      "description": "Structured findings, changed files, and recommended checks."
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "filesystem-read",
+        "resource": "filesystem",
+        "action": "read",
+        "required": true,
+        "reason": "Read repository files and git metadata to review the current workspace diff."
+      },
+      {
+        "id": "shell-execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": false,
+        "reason": "Run bounded git inspection commands for status and diff summaries."
+      }
+    ],
+    "promptOn": [
+      "shell.execute"
+    ]
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": [
+      "starter_skill_invoked",
+      "starter_skill_suggested"
+    ]
+  }
+}

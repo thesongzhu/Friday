@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Release Doc Sync",
+  "description": "Prepare or apply bounded updates to README, CHANGELOG, and architecture docs.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "goal",
+        "apply",
+        "workspaceRoot"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "goal",
+      "inputKey": "goal",
+      "kind": "text",
+      "label": "Release Summary",
+      "required": false,
+      "help": "Optional release summary or change context."
+    },
+    {
+      "id": "apply",
+      "inputKey": "apply",
+      "kind": "boolean",
+      "label": "Apply Changes",
+      "required": false,
+      "help": "When enabled, Friday writes the managed block updates to disk."
+    },
+    {
+      "id": "workspaceRoot",
+      "inputKey": "workspaceRoot",
+      "kind": "text",
+      "label": "Workspace Root",
+      "required": false,
+      "help": "Optional directory to inspect."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Sync Docs",
+      "style": "primary"
+    }
+  ]
+}

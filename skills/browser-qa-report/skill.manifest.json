@@ -1,0 +1,123 @@
+{
+  "schemaVersion": "2.0",
+  "id": "browser-qa-report",
+  "name": "Browser QA Report",
+  "description": "Open a page in Friday's browser runtime, capture evidence, and return a structured QA report without modifying code.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": {
+    "name": "Friday"
+  },
+  "tags": [
+    "starter",
+    "starter.qa",
+    "browser",
+    "qa",
+    "evidence"
+  ],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 120000
+  },
+  "triggers": {
+    "intents": [
+      "browser_qa_report"
+    ],
+    "phrases": [
+      "qa this page",
+      "test this app in the browser",
+      "capture a browser qa report"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 93,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "goal",
+      "type": "string",
+      "required": false,
+      "label": "Goal",
+      "help": "Optional QA brief. Friday will extract a URL if one is present."
+    },
+    {
+      "key": "url",
+      "type": "string",
+      "required": false,
+      "label": "URL",
+      "help": "Optional URL to inspect. Defaults to the local Friday UI."
+    },
+    {
+      "key": "expectedText",
+      "type": "string",
+      "required": false,
+      "label": "Expected Text",
+      "help": "Optional visible text Friday should verify in the page snapshot."
+    }
+  ],
+  "outputs": [
+    {
+      "key": "summary",
+      "type": "string",
+      "description": "High-level QA outcome."
+    },
+    {
+      "key": "nextStep",
+      "type": "string",
+      "description": "Most useful next debugging or release action."
+    },
+    {
+      "key": "details",
+      "type": "object",
+      "description": "Structured evidence including screenshot path, console failures, and timings."
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "filesystem-read",
+        "resource": "filesystem",
+        "action": "read",
+        "required": false,
+        "reason": "Read lightweight workspace context if a local page under test needs it."
+      }
+    ],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": [
+      "starter_skill_invoked",
+      "starter_skill_suggested"
+    ]
+  }
+}
