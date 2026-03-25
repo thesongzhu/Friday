@@ -25,6 +25,7 @@ Supporting product-truth documents:
 - [SSD Gap Report](SSD-GAP-REPORT.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
 - [Extending Friday](EXTENDING.md)
+- [Workspace Context Files](workspace-context.md)
 - [Route Contract Migration](route-contract-migration.md)
 
 ## Reference

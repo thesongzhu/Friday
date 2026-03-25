@@ -24,6 +24,18 @@ Use this structure in your repo/workspace:
    └─ workflows/
 ```
 
+## 1.5) Workspace Context vs Skills
+
+Friday supports a thin workspace-context layer alongside executable extensions.
+
+- `AGENTS.md`, `SOUL.md`, `USER.md`, `MEMORY.md`, and `memory/YYYY-MM-DD.md` shape repo-local prompt context.
+- `skills/` hold reusable execution capability with manifests, permissions, and structured inputs and outputs.
+- agent automations and workflows orchestrate repeated or scheduled tasks.
+
+Keep `AGENTS.md` short and policy-focused. If a behavior needs validation, reuse, installability, or permissions, it belongs in a skill instead of prose.
+
+See [Workspace Context Files](workspace-context.md) for the recommended split.
+
 ## 2) Naming Conventions
 
 - Skill directory: kebab-case (`hello-skill`)

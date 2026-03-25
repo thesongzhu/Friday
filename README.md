@@ -107,6 +107,7 @@ Detailed boundary docs:
 ## Key Features
 
 - **Skills** — Discover, validate, and execute skills from directories or archives. Shell, Node, Python, HTTP.
+- **Workspace Context** — Repo-scoped `AGENTS.md`, `SOUL.md`, `USER.md`, `MEMORY.md`, and daily `memory/*.md` files shape agent behavior without turning reusable logic into prompt sprawl.
 - **Skills Lifecycle** — Catalog, install, update, verify, delete, and manage marketplace sources from `/skills`.
 - **Skills-First Marketplace Backbone** — Friday's marketplace direction continues to build on the skills lifecycle first. Workflow and agent assets may join the public ecosystem, but they extend the same trust, verification, install, and enable backbone rather than replacing it.
 - **Declarative Public Marketplace** — Public marketplace assets are moving to a declarative-first model with explicit permission previews, signature/hash checks, and framework-owned execution instead of arbitrary executable packages.
@@ -210,6 +211,20 @@ friday converters
 ```
 
 > **Note:** Skills are user-created — use the skill generator (`friday` CLI or API) or import from supported formats. See [docs/getting-started.md](docs/getting-started.md) for a full walkthrough.
+
+## Workspace Context Files
+
+Friday can load repo-level context on each agent run:
+
+- `AGENTS.md` for repo rules and task routing
+- `SOUL.md` for style and response discipline
+- `USER.md` for maintainer preferences
+- `MEMORY.md` for durable project facts
+- `memory/YYYY-MM-DD.md` for short-lived daily notes
+
+Use these files for guidance and context. Keep reusable execution logic in `skills/`, and move repeated routines into automations or workflows.
+
+Detailed guidance: [docs/workspace-context.md](docs/workspace-context.md)
 
 ## Validation Model
 
