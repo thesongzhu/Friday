@@ -127,6 +127,45 @@ describe("wave 2 and wave 3 Friday starter skills", () => {
     expect(closeSession).toHaveBeenCalledWith("canary-session-1");
   });
 
+  it("stores release-canary evidence under the requested workspace when no git root exists", async () => {
+    const { execute } = await import("../../../../skills/release-canary-check/index.mjs");
+    const workspaceRoot = makeTempDir("friday-release-canary-non-git-");
+
+    const result = await execute(
+      {
+        workspaceRoot,
+        url: "http://127.0.0.1:5173",
+      },
+      {
+        browser: {
+          inspectPage: vi.fn(async () => ({
+            sessionId: "canary-session-2",
+            tabId: "tab-1",
+            title: "Friday",
+            finalUrl: "http://127.0.0.1:5173",
+            requestedUrl: "http://127.0.0.1:5173",
+            status: 200,
+            snapshot: "Assistant Home",
+            screenshotPath: "/tmp/canary.png",
+            consoleErrors: [],
+            consoleWarnings: [],
+            pageErrors: [],
+            requestFailures: [],
+            timings: {
+              domContentLoadedMs: 120,
+              loadMs: 180,
+            },
+          })),
+          closeSession: vi.fn(async () => undefined),
+        },
+      },
+    );
+
+    const runPath = String(result.details.pages[0]?.runPath ?? "");
+    expect(runPath.startsWith(path.join(workspaceRoot, ".friday", "skills", "release-canary-check"))).toBe(true);
+    expect(existsSync(runPath)).toBe(true);
+  });
+
   it("summarizes recent commits in engineering-retro", async () => {
     const { execute } = await import("../../../../skills/engineering-retro/index.mjs");
     const repoRoot = makeTempDir("friday-engineering-retro-");
@@ -272,6 +311,30 @@ describe("wave 2 and wave 3 Friday starter skills", () => {
     expect(existsSync(applied.details.reportPath)).toBe(true);
   });
 
+  it("returns a blocked page-benchmark-report when the browser runtime is unavailable", async () => {
+    const { execute } = await import("../../../../skills/page-benchmark-report/index.mjs");
+    const workspaceRoot = makeTempDir("friday-page-benchmark-blocked-");
+
+    const result = await execute(
+      {
+        workspaceRoot,
+        url: "http://127.0.0.1:5173/assistant",
+      },
+      {
+        browser: {
+          inspectPage: vi.fn(async () => {
+            throw new Error("browserType.launch: Executable doesn't exist at /missing/chromium");
+          }),
+          closeSession: vi.fn(async () => undefined),
+        },
+      },
+    );
+
+    expect(result.summary).toContain("browser runtime is unavailable");
+    expect(result.details.runtimeUnavailable).toBe(true);
+    expect(result.details.baselinePath).toContain(".friday/skills/page-benchmark-report/baselines");
+  });
+
   it("blocks browser-qa-fix when broader QA errors are present", async () => {
     const { execute } = await import("../../../../skills/browser-qa-fix/index.mjs");
     const repoRoot = makeTempDir("friday-browser-qa-fix-blocked-");
@@ -311,6 +374,33 @@ describe("wave 2 and wave 3 Friday starter skills", () => {
 
     expect(result.summary).toContain("stopped before applying");
     expect(result.details.requiresApproval).toBe(true);
+    expect(readFileSync(path.join(repoRoot, "index.html"), "utf8")).toContain("<title>Vite App</title>");
+  });
+
+  it("returns a blocked browser-qa-fix when the browser runtime is unavailable", async () => {
+    const { execute } = await import("../../../../skills/browser-qa-fix/index.mjs");
+    const repoRoot = makeTempDir("friday-browser-qa-fix-runtime-blocked-");
+    initRepo(repoRoot);
+    writeFileSync(path.join(repoRoot, "index.html"), "<html><head><title>Vite App</title></head><body>Hello</body></html>\n");
+
+    const result = await execute(
+      {
+        workspaceRoot: repoRoot,
+        url: "http://127.0.0.1:5173",
+        apply: true,
+      },
+      {
+        browser: {
+          inspectPage: vi.fn(async () => {
+            throw new Error("browserType.launch: Executable doesn't exist at /missing/chromium");
+          }),
+          closeSession: vi.fn(async () => undefined),
+        },
+      },
+    );
+
+    expect(result.summary).toContain("browser runtime is unavailable");
+    expect(result.details.runtimeUnavailable).toBe(true);
     expect(readFileSync(path.join(repoRoot, "index.html"), "utf8")).toContain("<title>Vite App</title>");
   });
 });
