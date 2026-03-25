@@ -15,6 +15,10 @@ import {
 interface FakePlatformOptions {
   repo?: Partial<FridayRepoInspection>;
   hasChanges?: boolean;
+  dirtyWorkingTree?: boolean;
+  prChecksQueue?: Array<Array<{ name: string; status: "passed" | "failed" | "pending" | "missing"; url?: string }>>;
+  mainlineQueue?: FridayMainlineHealthVerdict[];
+  mergeShouldFail?: boolean;
 }
 
 const tempDirs: string[] = [];
@@ -39,7 +43,95 @@ function createTempGitRepo(): string {
   return dir;
 }
 
-function writeManifest(repoDir: string): string {
+function writeManifest(repoDir: string, phaseCount = 2): string {
+  const phases = [
+    {
+      id: "phase0",
+      number: 0,
+      slug: "automation-bootstrap",
+      title: "Automation Bootstrap",
+      summary: "Build the controller.",
+      dependsOn: [],
+      allowedPaths: ["src/automation/openclaw-adoption"],
+      successCriteria: ["controller exists"],
+      implementation: {
+        mode: "hybrid",
+        workers: [
+          {
+            id: "phase0-worker",
+            title: "Phase 0 worker",
+            runner: "command",
+            mode: "implementation",
+            steps: [{ label: "worker", command: "echo", args: ["worker"] }],
+          },
+        ],
+        repairPolicy: {
+          enabled: true,
+          maxAttempts: 2,
+          failureCodes: ["implementation_failed", "branch_gate_failed", "required_checks_missing", "required_checks_failed", "merge_failed", "mainline_red", "closure_failed"],
+          worker: {
+            id: "phase0-repair",
+            title: "Phase 0 repair",
+            runner: "command",
+            mode: "repair",
+            steps: [{ label: "repair", command: "echo", args: ["repair"] }],
+          },
+        },
+      },
+      promotion: {
+        requiredChecks: ["quality-gate"],
+        mergeStrategy: "squash",
+        mainlineHealthPolicy: "required-checks-green",
+        stabilizeSuffix: "stabilize",
+      },
+      closure: {
+        requiredEvidence: ["phase-0/run.json", "phase-0/evidence/latest.json"],
+      },
+      gates: {
+        fastLocal: [{ label: "fast", command: "echo", args: ["fast"] }],
+        prePr: [{ label: "pre", command: "echo", args: ["pre"] }],
+        postMerge: [{ label: "post", command: "echo", args: ["post"] }],
+        finalClosure: [{ label: "close", command: "echo", args: ["close"] }],
+      },
+    },
+    {
+      id: "phase1",
+      number: 1,
+      slug: "skills-foundation",
+      title: "Skills Foundation",
+      summary: "Strengthen skills.",
+      dependsOn: ["phase0"],
+      allowedPaths: ["src/skills"],
+      successCriteria: ["skills lifecycle closes"],
+      implementation: {
+        mode: "hybrid",
+        workers: [
+          {
+            id: "phase1-worker",
+            title: "Phase 1 worker",
+            runner: "command",
+            mode: "implementation",
+            steps: [{ label: "worker", command: "echo", args: ["worker"] }],
+          },
+        ],
+      },
+      promotion: {
+        requiredChecks: ["quality-gate"],
+        mergeStrategy: "squash",
+        mainlineHealthPolicy: "required-checks-green",
+        stabilizeSuffix: "stabilize",
+      },
+      closure: {
+        requiredEvidence: ["phase-1/run.json"],
+      },
+      gates: {
+        fastLocal: [],
+        prePr: [],
+        postMerge: [],
+      },
+    },
+  ].slice(0, phaseCount);
+
   const manifestPath = path.join(repoDir, "manifest.json");
   fs.writeFileSync(manifestPath, `${JSON.stringify({
     schemaVersion: "1.0",
@@ -54,40 +146,7 @@ function writeManifest(repoDir: string): string {
       maxAutoRepairAttempts: 2,
     },
     guardrails: ["keep canonical routes intact"],
-    phases: [
-      {
-        id: "phase0",
-        number: 0,
-        slug: "automation-bootstrap",
-        title: "Automation Bootstrap",
-        summary: "Build the controller.",
-        dependsOn: [],
-        allowedPaths: ["src/automation/openclaw-adoption"],
-        successCriteria: ["controller exists"],
-        implementation: { mode: "manual" },
-        gates: {
-          fastLocal: [{ label: "fast", command: "echo", args: ["fast"] }],
-          prePr: [{ label: "pre", command: "echo", args: ["pre"] }],
-          postMerge: [{ label: "post", command: "echo", args: ["post"] }],
-        },
-      },
-      {
-        id: "phase1",
-        number: 1,
-        slug: "skills-foundation",
-        title: "Skills Foundation",
-        summary: "Strengthen skills.",
-        dependsOn: ["phase0"],
-        allowedPaths: ["src/skills"],
-        successCriteria: ["skills lifecycle closes"],
-        implementation: { mode: "manual" },
-        gates: {
-          fastLocal: [],
-          prePr: [],
-          postMerge: [],
-        },
-      },
-    ],
+    phases,
   }, null, 2)}\n`, "utf-8");
   return manifestPath;
 }
@@ -106,7 +165,22 @@ function passedCommandResult(step: FridayPhaseCommand): FridayPhaseCommandResult
   };
 }
 
+function createMainlineVerdict(ok: boolean): FridayMainlineHealthVerdict {
+  return {
+    ok,
+    branch: "main",
+    headSha: ok ? "feedbeef1234" : "badc0de1234",
+    workflowRunId: ok ? 77 : 78,
+    workflowUrl: ok ? "https://example.com/runs/77" : "https://example.com/runs/78",
+    workflowConclusion: ok ? "success" : "failure",
+    requiredChecks: [{ name: "quality-gate", status: ok ? "passed" : "failed", url: "https://example.com/checks/quality-gate" }],
+    issues: ok ? [] : ["quality-gate failed on main"],
+  };
+}
+
 function createFakePlatform(options: FakePlatformOptions = {}): FridayPhaseAutomationPlatform {
+  let prChecksIndex = 0;
+  let mainlineIndex = 0;
   return {
     inspectRepo(repoRoot, mainBranch) {
       return {
@@ -114,7 +188,7 @@ function createFakePlatform(options: FakePlatformOptions = {}): FridayPhaseAutom
         currentBranch: "codex/openclaw-adoption-phase-0-automation-bootstrap",
         localMainHead: `${mainBranch}-local-head`,
         remoteMainHead: `${mainBranch}-remote-head`,
-        workingTreeClean: !options.hasChanges,
+        workingTreeClean: !options.dirtyWorkingTree,
         gitAvailable: true,
         ghAvailable: true,
         ghAuthenticated: true,
@@ -133,27 +207,26 @@ function createFakePlatform(options: FakePlatformOptions = {}): FridayPhaseAutom
       return "phase0-test-commit-sha";
     },
     pushBranch() {},
-    createOrReusePullRequest() {
-      return { number: 42, url: "https://example.com/pr/42", state: "OPEN", merged: false };
+    createOrReusePullRequest(input) {
+      return { number: 42, url: `https://example.com/pr/${input.branchName}`, state: "OPEN", merged: false };
     },
     waitForPullRequestChecks() {
-      return [{ name: "quality-gate", status: "passed", url: "https://example.com/checks/quality-gate" }];
+      const queued = options.prChecksQueue?.[prChecksIndex];
+      prChecksIndex += 1;
+      return queued ?? [{ name: "quality-gate", status: "passed", url: "https://example.com/checks/quality-gate" }];
     },
-    mergePullRequest() {},
-    waitForPullRequestMerge() {
-      return { number: 42, url: "https://example.com/pr/42", state: "MERGED", merged: true };
+    mergePullRequest() {
+      if (options.mergeShouldFail) {
+        throw new Error("merge failed");
+      }
     },
-    waitForMainChecks(): FridayMainlineHealthVerdict {
-      return {
-        ok: true,
-        branch: "main",
-        headSha: "feedbeef1234",
-        workflowRunId: 77,
-        workflowUrl: "https://example.com/runs/77",
-        workflowConclusion: "success",
-        requiredChecks: [{ name: "quality-gate", status: "passed", url: "https://example.com/checks/quality-gate" }],
-        issues: [],
-      };
+    waitForPullRequestMerge(repoRoot, branchName) {
+      return { number: 42, url: `https://example.com/pr/${branchName}`, state: "MERGED", merged: true };
+    },
+    waitForMainChecks() {
+      const verdict = options.mainlineQueue?.[mainlineIndex];
+      mainlineIndex += 1;
+      return verdict ?? createMainlineVerdict(true);
     },
   };
 }
@@ -185,27 +258,7 @@ describe("createFridayOpenClawPhaseController", () => {
     expect(report.manifestPath).toBe(manifestPath);
   });
 
-  it("starts the next phase and records implementing state", () => {
-    const repoDir = createTempGitRepo();
-    const manifestPath = writeManifest(repoDir);
-    const controller = createFridayOpenClawPhaseController({
-      cwd: repoDir,
-      manifestPath,
-      platform: createFakePlatform(),
-      nowIso: () => "2026-03-24T00:00:00.000Z",
-      runIdFactory: () => "run-1",
-    });
-
-    const result = controller.startNextPhase();
-    expect(result.ok).toBe(true);
-    expect(result.phaseId).toBe("phase0");
-    expect(result.branchName).toBe("codex/openclaw-adoption-phase-0-automation-bootstrap");
-
-    const state = controller.loadState();
-    expect(state.phases.phase0?.status).toBe("implementing");
-  });
-
-  it("promotes a phase in dry-run mode through the local gates", () => {
+  it("promotes a phase in dry-run mode and writes phase runtime evidence", () => {
     const repoDir = createTempGitRepo();
     const manifestPath = writeManifest(repoDir);
     const controller = createFridayOpenClawPhaseController({
@@ -219,13 +272,14 @@ describe("createFridayOpenClawPhaseController", () => {
     const result = controller.promotePhase({ phaseId: "phase0", dryRun: true });
     expect(result.ok).toBe(true);
     expect(result.status).toBe("ready_for_pr");
-    expect(result.run.gates.map((gate) => gate.gateId)).toEqual(["fast_local", "pre_pr"]);
+    expect(result.run.gates.map((gate) => gate.gateId)).toEqual(["implementation", "fast_local", "pre_pr"]);
+    expect(result.run.workers.map((worker) => worker.workerId)).toEqual(["phase0-worker"]);
 
-    const evidencePath = path.join(repoDir, ".friday", "automation", "openclaw-adoption", "evidence", "phase0", "latest.json");
-    expect(fs.existsSync(evidencePath)).toBe(true);
+    const runPath = path.join(repoDir, ".friday", "automation", "openclaw-adoption", "phase-0", "run.json");
+    expect(fs.existsSync(runPath)).toBe(true);
   });
 
-  it("promotes a phase end-to-end and unlocks the next phase", () => {
+  it("runs the next phase end-to-end and unlocks the following phase", () => {
     const repoDir = createTempGitRepo();
     const manifestPath = writeManifest(repoDir);
     const controller = createFridayOpenClawPhaseController({
@@ -236,7 +290,11 @@ describe("createFridayOpenClawPhaseController", () => {
       runIdFactory: () => "run-3",
     });
 
-    const result = controller.promotePhase({ phaseId: "phase0", prepareNext: true });
+    const result = controller.runNextPhase({ prepareNext: true });
+    expect("run" in result).toBe(true);
+    if (!("run" in result)) {
+      return;
+    }
     expect(result.ok).toBe(true);
     expect(result.status).toBe("done");
     expect(result.run.prNumber).toBe(42);
@@ -245,5 +303,53 @@ describe("createFridayOpenClawPhaseController", () => {
     const state = controller.loadState();
     expect(state.phases.phase0?.status).toBe("done");
     expect(state.phases.phase1?.status).toBe("implementing");
+  });
+
+  it("auto-stabilizes after a failing mainline verdict", () => {
+    const repoDir = createTempGitRepo();
+    const manifestPath = writeManifest(repoDir, 1);
+    const controller = createFridayOpenClawPhaseController({
+      cwd: repoDir,
+      manifestPath,
+      platform: createFakePlatform({
+        hasChanges: true,
+        mainlineQueue: [createMainlineVerdict(false), createMainlineVerdict(true)],
+      }),
+      nowIso: () => "2026-03-24T00:00:00.000Z",
+      runIdFactory: (() => {
+        const ids = ["run-4", "run-5"];
+        return () => ids.shift() ?? "run-x";
+      })(),
+    });
+
+    const result = controller.promotePhase({ phaseId: "phase0", prepareNext: false });
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("done");
+    expect(result.branchName).toContain("-stabilize");
+    expect(result.run.stabilizeBranchName).toContain("-stabilize");
+
+    const state = controller.loadState();
+    expect(state.phases.phase0?.status).toBe("done");
+    expect(state.phases.phase0?.repairAttempts).toBe(0);
+  });
+
+  it("writes a blocked closeout report when not all phases are complete", () => {
+    const repoDir = createTempGitRepo();
+    const manifestPath = writeManifest(repoDir);
+    const controller = createFridayOpenClawPhaseController({
+      cwd: repoDir,
+      manifestPath,
+      platform: createFakePlatform(),
+      nowIso: () => "2026-03-24T00:00:00.000Z",
+      runIdFactory: () => "run-6",
+    });
+
+    const result = controller.closeout();
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("blocked");
+    expect(result.blockers).toContain("phase0 is not complete");
+
+    const reportPath = path.join(repoDir, ".friday", "automation", "openclaw-adoption", "final-closeout", "latest.json");
+    expect(fs.existsSync(reportPath)).toBe(true);
   });
 });

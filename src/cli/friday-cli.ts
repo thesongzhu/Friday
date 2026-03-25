@@ -88,10 +88,11 @@ export interface ParsedArgs {
   initSkillId: string | undefined;
   // Daemon-related fields
   daemonSubcommand: "start" | "stop" | "restart" | "status" | undefined;
-  phasesSubcommand: "doctor" | "list" | "status" | "start-next" | "run-next" | "promote" | undefined;
+  phasesSubcommand: "doctor" | "list" | "status" | "start-next" | "run-next" | "promote" | "resume" | "stabilize" | "closeout" | undefined;
   phaseIdArg: string | undefined;
   manifestPath: string | undefined;
   prepareNext: boolean;
+  json: boolean;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -128,6 +129,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     phaseIdArg: undefined,
     manifestPath: undefined,
     prepareNext: true,
+    json: false,
   };
 
   if (args.length === 0) {
@@ -169,11 +171,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   if (cmd === "phases") {
     const sub = args[1];
-    const validSubs = ["doctor", "list", "status", "start-next", "run-next", "promote"] as const;
+    const validSubs = ["doctor", "list", "status", "start-next", "run-next", "promote", "resume", "stabilize", "closeout"] as const;
     if (sub && (validSubs as readonly string[]).includes(sub)) {
       result.phasesSubcommand = sub as (typeof validSubs)[number];
     }
-    if (sub === "promote" && args[2] && !args[2]!.startsWith("--")) {
+    if ((sub === "promote" || sub === "stabilize" || sub === "resume") && args[2] && !args[2]!.startsWith("--")) {
       result.phaseIdArg = args[2]!;
       i = 3;
     } else {
@@ -248,6 +250,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
     if (arg === "--manifest" && i + 1 < args.length) {
       result.manifestPath = args[i + 1]!;
       i += 2;
+      continue;
+    }
+
+    if (arg === "--json") {
+      result.json = true;
+      i += 1;
       continue;
     }
 
@@ -405,7 +413,7 @@ Usage:
   friday daemon start|stop|restart|status
       Manage the Friday background daemon process.
 
-  friday phases doctor|list|status|start-next|run-next|promote <phase-id>
+  friday phases doctor|list|status|start-next|run-next|promote|resume|stabilize <phase-id>|closeout
       Inspect and drive the OpenClaw adoption phase controller.
 
   friday --help
@@ -421,6 +429,7 @@ Options:
   --out <path>          Output directory or file path.
   --template <kind>     Template runtime for \`friday skills init\` (node or shell).
   --manifest <path>     Custom phase manifest path for \`friday phases\`.
+  --json                Emit machine-readable JSON for supported phase/status commands.
   --replace             Overwrite existing skill on collision.
   --dry-run             Preview conversion without installing.
   --prepare-next        After a successful promotion, mark the next phase as implementing.
@@ -1657,7 +1666,7 @@ async function cmdAuth(parsed: ParsedArgs): Promise<void> {
 function cmdPhases(parsed: ParsedArgs): void {
   const sub = parsed.phasesSubcommand;
   if (!sub) {
-    console.error("Usage: friday phases doctor|list|status|start-next|run-next|promote <phase-id> [--manifest <path>] [--dry-run]");
+    console.error("Usage: friday phases doctor|list|status|start-next|run-next|promote|resume|stabilize <phase-id>|closeout [--manifest <path>] [--dry-run] [--json]");
     process.exitCode = 1;
     return;
   }
@@ -1678,7 +1687,15 @@ function cmdPhases(parsed: ParsedArgs): void {
     }
     case "list":
     case "status": {
-      console.log(formatFridayOpenClawPhaseStates(controller.listPhaseStates()));
+      if (parsed.json) {
+        console.log(JSON.stringify({
+          paths: controller.getPaths(),
+          state: controller.loadState(),
+          phases: controller.listPhaseStates(),
+        }, null, 2));
+      } else {
+        console.log(formatFridayOpenClawPhaseStates(controller.listPhaseStates()));
+      }
       break;
     }
     case "start-next": {
@@ -1707,6 +1724,22 @@ function cmdPhases(parsed: ParsedArgs): void {
       }
       break;
     }
+    case "resume": {
+      const result = controller.resumePhase({
+        phaseId: parsed.phaseIdArg,
+        dryRun: parsed.dryRun,
+        prepareNext: parsed.prepareNext,
+      });
+      if ("run" in result) {
+        console.log(`${result.phaseId}: ${result.status} (${result.branchName})`);
+      } else {
+        console.log(result.message);
+      }
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+      break;
+    }
     case "promote": {
       if (!parsed.phaseIdArg) {
         console.error("Usage: friday phases promote <phase-id> [--manifest <path>] [--dry-run]");
@@ -1719,6 +1752,35 @@ function cmdPhases(parsed: ParsedArgs): void {
         prepareNext: parsed.prepareNext,
       });
       console.log(`${result.phaseId}: ${result.status} (${result.branchName})`);
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+      break;
+    }
+    case "stabilize": {
+      if (!parsed.phaseIdArg) {
+        console.error("Usage: friday phases stabilize <phase-id> [--manifest <path>] [--dry-run]");
+        process.exitCode = 1;
+        return;
+      }
+      const result = controller.stabilizePhase({
+        phaseId: parsed.phaseIdArg,
+        dryRun: parsed.dryRun,
+        prepareNext: parsed.prepareNext,
+      });
+      console.log(`${result.phaseId}: ${result.status} (${result.branchName})`);
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+      break;
+    }
+    case "closeout": {
+      const result = controller.closeout({ dryRun: parsed.dryRun });
+      if (parsed.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`${result.status}: ${result.reportPath}`);
+      }
       if (!result.ok) {
         process.exitCode = 1;
       }

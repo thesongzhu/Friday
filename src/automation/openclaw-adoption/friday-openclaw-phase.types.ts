@@ -2,17 +2,40 @@ export type FridayAutomationFailurePolicy = "limited-self-heal-then-pause" | "pa
 
 export type FridayPhaseStatus =
   | "planned"
+  | "syncing_main"
   | "implementing"
+  | "spawning_workers"
+  | "repairing"
   | "verifying"
   | "ready_for_pr"
+  | "committing"
+  | "opening_pr"
   | "pr_open"
+  | "waiting_required_checks"
   | "waiting_ci"
+  | "merging"
   | "merged_waiting_main"
+  | "waiting_mainline"
   | "stabilizing"
+  | "closing_phase"
   | "blocked"
   | "done";
 
 export type FridayMergeStrategy = "squash" | "merge" | "rebase";
+
+export type FridayPhaseWorkerRunner = "command";
+
+export type FridayPhaseWorkerMode = "implementation" | "repair" | "stabilize" | "closure";
+
+export type FridayPromotionFailureCode =
+  | "implementation_failed"
+  | "repair_failed"
+  | "branch_gate_failed"
+  | "required_checks_missing"
+  | "required_checks_failed"
+  | "merge_failed"
+  | "mainline_red"
+  | "closure_failed";
 
 export interface FridayPhaseCommand {
   label: string;
@@ -23,9 +46,43 @@ export interface FridayPhaseCommand {
   optional?: boolean;
 }
 
+export interface FridayPhaseWorkerSpec {
+  id: string;
+  title: string;
+  runner: FridayPhaseWorkerRunner;
+  mode?: FridayPhaseWorkerMode;
+  steps: FridayPhaseCommand[];
+  allowedPaths?: string[];
+  successCriteria?: string[];
+  outputContract?: string[];
+  continueOnFailure?: boolean;
+}
+
+export interface FridayPhaseRepairPolicy {
+  enabled?: boolean;
+  maxAttempts?: number;
+  failureCodes?: FridayPromotionFailureCode[];
+  worker?: FridayPhaseWorkerSpec;
+  guardrails?: string[];
+}
+
 export interface FridayPhaseImplementation {
-  mode: "manual" | "shell";
+  mode: "manual" | "shell" | "hybrid";
   command?: FridayPhaseCommand;
+  workers?: FridayPhaseWorkerSpec[];
+  repairPolicy?: FridayPhaseRepairPolicy;
+}
+
+export interface FridayPhasePromotionPolicy {
+  requiredChecks?: string[];
+  mergeStrategy?: FridayMergeStrategy;
+  mainlineHealthPolicy?: "required-checks-green";
+  stabilizeSuffix?: string;
+}
+
+export interface FridayPhaseClosurePolicy {
+  requiredEvidence: string[];
+  notes?: string[];
 }
 
 export interface FridayPhaseDefinition {
@@ -38,10 +95,13 @@ export interface FridayPhaseDefinition {
   allowedPaths: string[];
   successCriteria: string[];
   implementation: FridayPhaseImplementation;
+  promotion?: FridayPhasePromotionPolicy;
+  closure?: FridayPhaseClosurePolicy;
   gates: {
     fastLocal: FridayPhaseCommand[];
     prePr: FridayPhaseCommand[];
     postMerge: FridayPhaseCommand[];
+    finalClosure?: FridayPhaseCommand[];
   };
 }
 
@@ -73,9 +133,22 @@ export interface FridayPhaseCommandResult {
   optional: boolean;
 }
 
-export interface FridayPromotionGateResult {
-  gateId: "fast_local" | "pre_pr" | "post_merge_main";
+export interface FridayPhaseWorkerRunResult {
+  workerId: string;
+  title: string;
+  mode: FridayPhaseWorkerMode;
+  runner: FridayPhaseWorkerRunner;
   status: "passed" | "failed" | "skipped";
+  startedAt: string;
+  finishedAt: string;
+  steps: FridayPhaseCommandResult[];
+  notes: string[];
+}
+
+export interface FridayPromotionGateResult {
+  gateId: "implementation" | "repair" | "fast_local" | "pre_pr" | "post_merge_main" | "final_closure";
+  status: "passed" | "failed" | "skipped";
+  failureCode?: FridayPromotionFailureCode;
   results: FridayPhaseCommandResult[];
 }
 
@@ -90,6 +163,8 @@ export interface FridayPhaseSummaryState {
   updatedAt?: string;
   completedAt?: string;
   blockedReason?: string;
+  blockedCode?: FridayPromotionFailureCode;
+  repairAttempts?: number;
 }
 
 export interface FridayPhaseRunRecord {
@@ -97,6 +172,7 @@ export interface FridayPhaseRunRecord {
   phaseId: string;
   phaseNumber: number;
   branchName: string;
+  stabilizeBranchName?: string;
   status: FridayPhaseStatus;
   dryRun: boolean;
   startedAt: string;
@@ -107,8 +183,18 @@ export interface FridayPhaseRunRecord {
   prUrl?: string;
   mergedSha?: string;
   gates: FridayPromotionGateResult[];
+  workers: FridayPhaseWorkerRunResult[];
+  prChecks: Array<{
+    name: string;
+    status: "passed" | "failed" | "pending" | "missing";
+    url?: string;
+  }>;
   blockers: string[];
   notes: string[];
+  repairAttempts: number;
+  failureCode?: FridayPromotionFailureCode;
+  failurePolicy: FridayAutomationFailurePolicy;
+  closureEvidence: string[];
   mainline?: FridayMainlineHealthVerdict;
 }
 
@@ -180,12 +266,23 @@ export interface FridayPhasePromotionResult {
   run: FridayPhaseRunRecord;
 }
 
+export interface FridayPhaseCloseoutResult {
+  ok: boolean;
+  status: "blocked" | "done";
+  reportPath: string;
+  blockers: string[];
+  notes: string[];
+  gates: FridayPromotionGateResult[];
+}
+
 export interface FridayOpenClawPhaseControllerPaths {
   repoRoot: string;
   manifestPath: string;
   runtimeRoot: string;
   statePath: string;
+  programPath: string;
   evidenceRoot: string;
+  finalCloseoutRoot: string;
 }
 
 export interface FridayPhaseAutomationPlatform {

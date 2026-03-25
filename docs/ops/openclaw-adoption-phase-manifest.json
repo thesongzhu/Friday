@@ -41,7 +41,97 @@
         "Phase evidence is written to a stable runtime directory for every controller run."
       ],
       "implementation": {
-        "mode": "manual"
+        "mode": "hybrid",
+        "workers": [
+          {
+            "id": "phase0-controller-bootstrap",
+            "title": "Bootstrap controller automation state machine and evidence layout",
+            "runner": "command",
+            "mode": "implementation",
+            "steps": [
+              {
+                "label": "phase0-worker-marker",
+                "command": "node",
+                "args": [
+                  "-e",
+                  "console.log('phase0 automation bootstrap worker prepared')"
+                ]
+              }
+            ],
+            "allowedPaths": [
+              "src/automation/openclaw-adoption",
+              "src/cli",
+              "docs/ops/openclaw-adoption-phase-manifest.json",
+              "test/unit/automation/openclaw-adoption",
+              "test/unit/cli",
+              "package.json"
+            ],
+            "successCriteria": [
+              "Controller can execute implementation, repair, promotion, stabilize, and closeout flows.",
+              "Runtime evidence is emitted under .friday/automation/openclaw-adoption."
+            ]
+          }
+        ],
+        "repairPolicy": {
+          "enabled": true,
+          "maxAttempts": 2,
+          "failureCodes": [
+            "implementation_failed",
+            "branch_gate_failed",
+            "required_checks_missing",
+            "required_checks_failed",
+            "merge_failed",
+            "mainline_red",
+            "closure_failed"
+          ],
+          "worker": {
+            "id": "phase0-controller-repair",
+            "title": "Run targeted repair loop for controller promotion blockers",
+            "runner": "command",
+            "mode": "repair",
+            "steps": [
+              {
+                "label": "phase0-repair-marker",
+                "command": "node",
+                "args": [
+                  "-e",
+                  "console.log('phase0 repair worker prepared')"
+                ]
+              }
+            ],
+            "allowedPaths": [
+              "src/automation/openclaw-adoption",
+              "src/cli",
+              "docs/ops/openclaw-adoption-phase-manifest.json",
+              "test/unit/automation/openclaw-adoption",
+              "test/unit/cli",
+              "package.json"
+            ]
+          },
+          "guardrails": [
+            "Do not bypass GitHub required checks.",
+            "Do not rewrite unrelated repository history."
+          ]
+        }
+      },
+      "promotion": {
+        "requiredChecks": [
+          "quality-gate"
+        ],
+        "mergeStrategy": "squash",
+        "mainlineHealthPolicy": "required-checks-green",
+        "stabilizeSuffix": "stabilize"
+      },
+      "closure": {
+        "requiredEvidence": [
+          "program.json",
+          "phase-0/run.json",
+          "phase-0/evidence/latest.json",
+          "phase-0/evidence/latest.md"
+        ],
+        "notes": [
+          "Phase 0 must prove the real branch -> PR -> merge -> mainline path."
+        ]
       },
       "gates": {
         "fastLocal": [
@@ -102,6 +192,18 @@
               "doctor"
             ]
           }
+        ],
+        "finalClosure": [
+          {
+            "label": "phase0-closeout",
+            "command": "node",
+            "args": [
+              "dist/cli/friday-cli.js",
+              "phases",
+              "closeout",
+              "--dry-run"
+            ]
+          }
         ]
       }
     },
@@ -128,7 +230,74 @@
         "Official and allowlisted private skill sources are enforced as the only promotion paths."
       ],
       "implementation": {
-        "mode": "manual"
+        "mode": "hybrid",
+        "workers": [
+          {
+            "id": "phase1-skills-foundation",
+            "title": "Apply canonical skills foundation changes on the phase branch",
+            "runner": "command",
+            "mode": "implementation",
+            "steps": [
+              {
+                "label": "phase1-worker-marker",
+                "command": "node",
+                "args": [
+                  "-e",
+                  "console.log('phase1 skills foundation worker prepared')"
+                ]
+              }
+            ],
+            "allowedPaths": [
+              "src/skills",
+              "src/api/http/routes/friday-skill-routes.ts",
+              "docs/current-source-of-truth.md",
+              "test/e2e/skills",
+              "test/e2e/api/friday-api-skills-routes.test.ts",
+              "test/integration/marketplace"
+            ]
+          }
+        ],
+        "repairPolicy": {
+          "enabled": true,
+          "maxAttempts": 2,
+          "failureCodes": [
+            "implementation_failed",
+            "branch_gate_failed",
+            "required_checks_missing",
+            "required_checks_failed"
+          ],
+          "worker": {
+            "id": "phase1-skills-repair",
+            "title": "Repair skills lifecycle blockers without leaving canonical routes",
+            "runner": "command",
+            "mode": "repair",
+            "steps": [
+              {
+                "label": "phase1-repair-marker",
+                "command": "node",
+                "args": [
+                  "-e",
+                  "console.log('phase1 repair worker prepared')"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "promotion": {
+        "requiredChecks": [
+          "quality-gate"
+        ],
+        "mergeStrategy": "squash",
+        "mainlineHealthPolicy": "required-checks-green",
+        "stabilizeSuffix": "stabilize"
+      },
+      "closure": {
+        "requiredEvidence": [
+          "phase-1/run.json",
+          "phase-1/evidence/latest.json",
+          "phase-1/evidence/latest.md"
+        ]
       },
       "gates": {
         "fastLocal": [
@@ -187,7 +356,73 @@
         "The preview SDK surface is stable enough for documented first-party use without creating a second marketplace story."
       ],
       "implementation": {
-        "mode": "manual"
+        "mode": "hybrid",
+        "workers": [
+          {
+            "id": "phase2-plugin-sdk-preview",
+            "title": "Apply preview plugin SDK changes on the phase branch",
+            "runner": "command",
+            "mode": "implementation",
+            "steps": [
+              {
+                "label": "phase2-worker-marker",
+                "command": "node",
+                "args": [
+                  "-e",
+                  "console.log('phase2 plugin sdk worker prepared')"
+                ]
+              }
+            ],
+            "allowedPaths": [
+              "src/plugins",
+              "src/api/http/routes/friday-plugin-routes.ts",
+              "docs/plugin-system-design.md",
+              "test/e2e/plugins",
+              "test/e2e/api/friday-api-plugins-routes.test.ts"
+            ]
+          }
+        ],
+        "repairPolicy": {
+          "enabled": true,
+          "maxAttempts": 2,
+          "failureCodes": [
+            "implementation_failed",
+            "branch_gate_failed",
+            "required_checks_missing",
+            "required_checks_failed"
+          ],
+          "worker": {
+            "id": "phase2-plugin-repair",
+            "title": "Repair preview plugin SDK blockers",
+            "runner": "command",
+            "mode": "repair",
+            "steps": [
+              {
+                "label": "phase2-repair-marker",
+                "command": "node",
+                "args": [
+                  "-e",
+                  "console.log('phase2 repair worker prepared')"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "promotion": {
+        "requiredChecks": [
+          "quality-gate"
+        ],
+        "mergeStrategy": "squash",
+        "mainlineHealthPolicy": "required-checks-green",
+        "stabilizeSuffix": "stabilize"
+      },
+      "closure": {
+        "requiredEvidence": [
+          "phase-2/run.json",
+          "phase-2/evidence/latest.json",
+          "phase-2/evidence/latest.md"
+        ]
       },
       "gates": {
         "fastLocal": [
@@ -247,7 +482,73 @@
         "No long-tail connector expansion is introduced as part of the contract refactor."
       ],
       "implementation": {
-        "mode": "manual"
+        "mode": "hybrid",
+        "workers": [
+          {
+            "id": "phase3-channel-contract",
+            "title": "Apply channel contract and curated skill changes on the phase branch",
+            "runner": "command",
+            "mode": "implementation",
+            "steps": [
+              {
+                "label": "phase3-worker-marker",
+                "command": "node",
+                "args": [
+                  "-e",
+                  "console.log('phase3 channel contract worker prepared')"
+                ]
+              }
+            ],
+            "allowedPaths": [
+              "src/channels",
+              "src/hub",
+              "src/skills",
+              "test/unit/channels",
+              "test/e2e/mock/friday-openclaw-parity-closure.e2e.test.ts"
+            ]
+          }
+        ],
+        "repairPolicy": {
+          "enabled": true,
+          "maxAttempts": 2,
+          "failureCodes": [
+            "implementation_failed",
+            "branch_gate_failed",
+            "required_checks_missing",
+            "required_checks_failed"
+          ],
+          "worker": {
+            "id": "phase3-channel-repair",
+            "title": "Repair channel contract blockers on mature Friday surfaces",
+            "runner": "command",
+            "mode": "repair",
+            "steps": [
+              {
+                "label": "phase3-repair-marker",
+                "command": "node",
+                "args": [
+                  "-e",
+                  "console.log('phase3 repair worker prepared')"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "promotion": {
+        "requiredChecks": [
+          "quality-gate"
+        ],
+        "mergeStrategy": "squash",
+        "mainlineHealthPolicy": "required-checks-green",
+        "stabilizeSuffix": "stabilize"
+      },
+      "closure": {
+        "requiredEvidence": [
+          "phase-3/run.json",
+          "phase-3/evidence/latest.json",
+          "phase-3/evidence/latest.md"
+        ]
       },
       "gates": {
         "fastLocal": [
@@ -309,7 +610,75 @@
         "The implementation stays inside Friday's single-hub trust domain."
       ],
       "implementation": {
-        "mode": "manual"
+        "mode": "hybrid",
+        "workers": [
+          {
+            "id": "phase4-remote-node-browser",
+            "title": "Apply remote, node, and browser productization changes on the phase branch",
+            "runner": "command",
+            "mode": "implementation",
+            "steps": [
+              {
+                "label": "phase4-worker-marker",
+                "command": "node",
+                "args": [
+                  "-e",
+                  "console.log('phase4 remote/node/browser worker prepared')"
+                ]
+              }
+            ],
+            "allowedPaths": [
+              "src/browser",
+              "src/satellites",
+              "src/fleet",
+              "src/api/http/routes/friday-observability-routes.ts",
+              "test/unit/browser",
+              "test/unit/nodes",
+              "test/e2e/ui/friday-agent-os-browser-journeys.test.ts"
+            ]
+          }
+        ],
+        "repairPolicy": {
+          "enabled": true,
+          "maxAttempts": 2,
+          "failureCodes": [
+            "implementation_failed",
+            "branch_gate_failed",
+            "required_checks_missing",
+            "required_checks_failed"
+          ],
+          "worker": {
+            "id": "phase4-remote-node-browser-repair",
+            "title": "Repair remote and browser diagnostics blockers",
+            "runner": "command",
+            "mode": "repair",
+            "steps": [
+              {
+                "label": "phase4-repair-marker",
+                "command": "node",
+                "args": [
+                  "-e",
+                  "console.log('phase4 repair worker prepared')"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "promotion": {
+        "requiredChecks": [
+          "quality-gate"
+        ],
+        "mergeStrategy": "squash",
+        "mainlineHealthPolicy": "required-checks-green",
+        "stabilizeSuffix": "stabilize"
+      },
+      "closure": {
+        "requiredEvidence": [
+          "phase-4/run.json",
+          "phase-4/evidence/latest.json",
+          "phase-4/evidence/latest.md"
+        ]
       },
       "gates": {
         "fastLocal": [
@@ -369,7 +738,74 @@
         "Curated and allowlisted capability boundaries remain enforced."
       ],
       "implementation": {
-        "mode": "manual"
+        "mode": "hybrid",
+        "workers": [
+          {
+            "id": "phase5-context-and-automation",
+            "title": "Apply context engine and isolated automation session changes on the phase branch",
+            "runner": "command",
+            "mode": "implementation",
+            "steps": [
+              {
+                "label": "phase5-worker-marker",
+                "command": "node",
+                "args": [
+                  "-e",
+                  "console.log('phase5 context/automation worker prepared')"
+                ]
+              }
+            ],
+            "allowedPaths": [
+              "src/agent/runtime",
+              "src/memory",
+              "src/jobs",
+              "src/workflows",
+              "test/integration/memory",
+              "test/unit/workflows"
+            ]
+          }
+        ],
+        "repairPolicy": {
+          "enabled": true,
+          "maxAttempts": 2,
+          "failureCodes": [
+            "implementation_failed",
+            "branch_gate_failed",
+            "required_checks_missing",
+            "required_checks_failed"
+          ],
+          "worker": {
+            "id": "phase5-context-and-automation-repair",
+            "title": "Repair context engine and automation blockers",
+            "runner": "command",
+            "mode": "repair",
+            "steps": [
+              {
+                "label": "phase5-repair-marker",
+                "command": "node",
+                "args": [
+                  "-e",
+                  "console.log('phase5 repair worker prepared')"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "promotion": {
+        "requiredChecks": [
+          "quality-gate"
+        ],
+        "mergeStrategy": "squash",
+        "mainlineHealthPolicy": "required-checks-green",
+        "stabilizeSuffix": "stabilize"
+      },
+      "closure": {
+        "requiredEvidence": [
+          "phase-5/run.json",
+          "phase-5/evidence/latest.json",
+          "phase-5/evidence/latest.md"
+        ]
       },
       "gates": {
         "fastLocal": [
@@ -428,7 +864,78 @@
         "Each promoted surface has a happy path, denied path, and recovery path covered by the final sweep."
       ],
       "implementation": {
-        "mode": "manual"
+        "mode": "hybrid",
+        "workers": [
+          {
+            "id": "phase6-final-closure",
+            "title": "Run final closure and bug sweep preparation on the phase branch",
+            "runner": "command",
+            "mode": "implementation",
+            "steps": [
+              {
+                "label": "phase6-worker-marker",
+                "command": "node",
+                "args": [
+                  "-e",
+                  "console.log('phase6 final closure worker prepared')"
+                ]
+              }
+            ],
+            "allowedPaths": [
+              "scripts/e2e",
+              "docs/reports",
+              "test/e2e",
+              "test/integration",
+              "test/unit"
+            ]
+          }
+        ],
+        "repairPolicy": {
+          "enabled": true,
+          "maxAttempts": 2,
+          "failureCodes": [
+            "implementation_failed",
+            "branch_gate_failed",
+            "required_checks_missing",
+            "required_checks_failed",
+            "merge_failed",
+            "mainline_red",
+            "closure_failed"
+          ],
+          "worker": {
+            "id": "phase6-final-closure-repair",
+            "title": "Repair final closeout blockers and bug sweep regressions",
+            "runner": "command",
+            "mode": "repair",
+            "steps": [
+              {
+                "label": "phase6-repair-marker",
+                "command": "node",
+                "args": [
+                  "-e",
+                  "console.log('phase6 repair worker prepared')"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "promotion": {
+        "requiredChecks": [
+          "quality-gate"
+        ],
+        "mergeStrategy": "squash",
+        "mainlineHealthPolicy": "required-checks-green",
+        "stabilizeSuffix": "stabilize"
+      },
+      "closure": {
+        "requiredEvidence": [
+          "phase-6/run.json",
+          "phase-6/evidence/latest.json",
+          "phase-6/evidence/latest.md",
+          "final-closeout/latest.json",
+          "final-closeout/latest.md"
+        ]
       },
       "gates": {
         "fastLocal": [
@@ -460,6 +967,32 @@
           }
         ],
         "postMerge": [
+          {
+            "label": "closure-local",
+            "command": "npm",
+            "args": [
+              "run",
+              "test:e2e:closure:local"
+            ]
+          }
+        ],
+        "finalClosure": [
+          {
+            "label": "release-verify",
+            "command": "npm",
+            "args": [
+              "run",
+              "release:verify"
+            ]
+          },
+          {
+            "label": "closeout-final",
+            "command": "npm",
+            "args": [
+              "run",
+              "closeout:final"
+            ]
+          },
           {
             "label": "closure-local",
             "command": "npm",

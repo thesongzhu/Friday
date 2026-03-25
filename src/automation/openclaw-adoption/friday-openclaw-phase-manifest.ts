@@ -11,6 +11,35 @@ const FridayPhaseCommandSchema = z.object({
   optional: z.boolean().optional(),
 }).strict();
 
+const FridayPhaseWorkerSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  runner: z.literal("command"),
+  mode: z.enum(["implementation", "repair", "stabilize", "closure"]).optional(),
+  steps: z.array(FridayPhaseCommandSchema).min(1),
+  allowedPaths: z.array(z.string().min(1)).optional(),
+  successCriteria: z.array(z.string().min(1)).optional(),
+  outputContract: z.array(z.string().min(1)).optional(),
+  continueOnFailure: z.boolean().optional(),
+}).strict();
+
+const FridayPhaseRepairPolicySchema = z.object({
+  enabled: z.boolean().optional(),
+  maxAttempts: z.number().int().min(0).optional(),
+  failureCodes: z.array(z.enum([
+    "implementation_failed",
+    "repair_failed",
+    "branch_gate_failed",
+    "required_checks_missing",
+    "required_checks_failed",
+    "merge_failed",
+    "mainline_red",
+    "closure_failed",
+  ])).optional(),
+  worker: FridayPhaseWorkerSchema.optional(),
+  guardrails: z.array(z.string().min(1)).optional(),
+}).strict();
+
 const FridayPhaseDefinitionSchema = z.object({
   id: z.string().min(1),
   number: z.number().int().min(0),
@@ -21,13 +50,26 @@ const FridayPhaseDefinitionSchema = z.object({
   allowedPaths: z.array(z.string()),
   successCriteria: z.array(z.string()),
   implementation: z.object({
-    mode: z.enum(["manual", "shell"]),
+    mode: z.enum(["manual", "shell", "hybrid"]),
     command: FridayPhaseCommandSchema.optional(),
+    workers: z.array(FridayPhaseWorkerSchema).optional(),
+    repairPolicy: FridayPhaseRepairPolicySchema.optional(),
   }).strict(),
+  promotion: z.object({
+    requiredChecks: z.array(z.string().min(1)).optional(),
+    mergeStrategy: z.enum(["squash", "merge", "rebase"]).optional(),
+    mainlineHealthPolicy: z.literal("required-checks-green").optional(),
+    stabilizeSuffix: z.string().min(1).optional(),
+  }).strict().optional(),
+  closure: z.object({
+    requiredEvidence: z.array(z.string().min(1)).min(1),
+    notes: z.array(z.string().min(1)).optional(),
+  }).strict().optional(),
   gates: z.object({
     fastLocal: z.array(FridayPhaseCommandSchema),
     prePr: z.array(FridayPhaseCommandSchema),
     postMerge: z.array(FridayPhaseCommandSchema),
+    finalClosure: z.array(FridayPhaseCommandSchema).optional(),
   }).strict(),
 }).strict();
 
