@@ -169,7 +169,7 @@ function createMainlineVerdict(ok: boolean): FridayMainlineHealthVerdict {
   return {
     ok,
     branch: "main",
-    headSha: ok ? "feedbeef1234" : "badc0de1234",
+    headSha: ok ? "main-head-ok-1234" : "main-head-failed-1234",
     workflowRunId: ok ? 77 : 78,
     workflowUrl: ok ? "https://example.com/runs/77" : "https://example.com/runs/78",
     workflowConclusion: ok ? "success" : "failure",
