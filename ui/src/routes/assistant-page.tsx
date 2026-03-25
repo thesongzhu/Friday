@@ -23,6 +23,7 @@ import { fleetApi } from "@/lib/api/fleet";
 import {
   marketplaceApi,
   type FridayCreatorProfile,
+  type FridayMarketplaceAssetKind,
   type FridayMarketplaceRequestPost,
 } from "@/lib/api/marketplace";
 import { skillsApi } from "@/lib/api/skills";
@@ -134,6 +135,104 @@ const ASSISTANT_TASK_STORIES = [
     outcome: "A clarified plan with one decisive next action.",
   },
 ] as const;
+
+function splitSeedList(value: string): string[] {
+  return value
+    .split(/,|;|\band\b/gi)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function extractSection(goal: string, label: "constraints" | "risk" | "budget"): string | null {
+  const pattern = new RegExp(`${label}\\s*:\\s*([^\\n.]+)`, "i");
+  const match = goal.match(pattern);
+  return match?.[1]?.trim() ?? null;
+}
+
+function deriveAssistantRequestGoal(goal?: string): string {
+  if (!goal) {
+    return "";
+  }
+  return goal
+    .replace(/\s+constraints\s*:\s*[^.\n]+/gi, "")
+    .replace(/\s+risk\s*:\s*[^.\n]+/gi, "")
+    .replace(/\s+budget\s*:\s*[^.\n]+/gi, "")
+    .replace(/\.{2,}/g, ".")
+    .replace(/\s+\./g, ".")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function deriveAssistantRequestConstraints(
+  goal?: string,
+  intentResult?: FridayBeginnerIntentResolution | null,
+): string[] {
+  const constraints = new Set<string>();
+  const rawGoal = goal ?? "";
+  const explicitConstraints = extractSection(rawGoal, "constraints");
+  for (const entry of explicitConstraints ? splitSeedList(explicitConstraints) : []) {
+    constraints.add(entry);
+  }
+  if (/read[- ]only/i.test(rawGoal)) {
+    constraints.add("read-only");
+  }
+  if (/no outbound network access/i.test(rawGoal)) {
+    constraints.add("no outbound network access");
+  }
+  if (/no production writes?/i.test(rawGoal)) {
+    constraints.add("no production writes");
+  }
+  if (/no destructive actions?/i.test(rawGoal)) {
+    constraints.add("no destructive actions");
+  }
+  for (const assumption of intentResult?.assumptions ?? []) {
+    if (assumption.trim().length > 0) {
+      constraints.add(assumption.trim());
+    }
+  }
+  return [...constraints];
+}
+
+function deriveAssistantRequestRiskNotes(
+  goal?: string,
+  intentResult?: FridayBeginnerIntentResolution | null,
+): string | null {
+  return extractSection(goal ?? "", "risk") ?? intentResult?.fallbackPath ?? null;
+}
+
+function deriveAssistantBudgetSupportIntent(goal?: string): string | null {
+  const explicitBudget = extractSection(goal ?? "", "budget");
+  if (explicitBudget) {
+    return explicitBudget;
+  }
+  const inlineBudget = goal?.match(/\$\d+\s*(?:tip|support|budget)/i)?.[0];
+  return inlineBudget?.trim() ?? null;
+}
+
+function buildAssistantMarketplaceRequestHref(input: {
+  requestKind: FridayMarketplaceAssetKind;
+  goalSeed?: string;
+  intentResult?: FridayBeginnerIntentResolution | null;
+}): string {
+  const goal = input.goalSeed?.trim() || input.intentResult?.objective?.trim() || "";
+  const structuredGoal = deriveAssistantRequestGoal(goal) || goal;
+  const assetLabel =
+    input.requestKind === "workflow" || input.requestKind === "agent"
+      ? input.requestKind
+      : "skill";
+
+  return buildMarketplaceHref({
+    requestKind: input.requestKind,
+    goal,
+    title: structuredGoal ? `Need a ${assetLabel} for: ${structuredGoal}` : undefined,
+    desiredOutcome: structuredGoal
+      ? `A usable ${assetLabel} that solves: ${structuredGoal}`
+      : undefined,
+    constraints: deriveAssistantRequestConstraints(goal, input.intentResult),
+    riskNotes: deriveAssistantRequestRiskNotes(goal, input.intentResult),
+    budgetSupportIntent: deriveAssistantBudgetSupportIntent(goal),
+  });
+}
 
 function formatTimestamp(value?: string): string {
   if (!value) return "Not yet";
@@ -950,6 +1049,7 @@ export function AssistantPage() {
               marketplaceCreators={marketplaceCreators}
               marketplaceRequests={marketplaceRequests}
               marketplaceGoalSeed={goal.trim() || intentResult?.objective}
+              marketplaceIntentResult={intentResult}
               sources={sources}
               fleetOverview={fleetOverviewQuery.data}
               degradedSatellites={degradedSatellites}
@@ -1614,6 +1714,7 @@ function ActionCardsSection(props: {
   marketplaceCreators: FridayCreatorProfile[];
   marketplaceRequests: FridayMarketplaceRequestPost[];
   marketplaceGoalSeed?: string;
+  marketplaceIntentResult?: FridayBeginnerIntentResolution | null;
   sources: SkillSourceRecord[];
   fleetOverview?: FridayFleetOverviewResponse;
   degradedSatellites: FridayFleetSatelliteCard[];
@@ -1669,6 +1770,7 @@ function ActionCardsSection(props: {
           creators={props.marketplaceCreators}
           requests={props.marketplaceRequests}
           goalSeed={props.marketplaceGoalSeed}
+          intentResult={props.marketplaceIntentResult}
           onInstallSkill={props.onInstallSkill}
           onSupportAsset={props.onSupportMarketplaceAsset}
           installPending={props.installPending}
@@ -1702,6 +1804,7 @@ export function MarketplaceActionCard(props: {
   creators: FridayCreatorProfile[];
   requests: FridayMarketplaceRequestPost[];
   goalSeed?: string;
+  intentResult?: FridayBeginnerIntentResolution | null;
   onInstallSkill: (skillId: string, sourceId?: string) => void;
   onSupportAsset: (assetId: string) => void;
   installPending: boolean;
@@ -1802,21 +1905,33 @@ export function MarketplaceActionCard(props: {
             <Link
               className="inline-flex items-center justify-center rounded-2xl bg-[var(--accent-strong)] px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-[var(--accent-soft)]"
               data-testid="assistant-marketplace-request-skill"
-              to={buildMarketplaceHref({ requestKind: "skill", goal: props.goalSeed })}
+              to={buildAssistantMarketplaceRequestHref({
+                requestKind: "skill",
+                goalSeed: props.goalSeed,
+                intentResult: props.intentResult,
+              })}
             >
               Post skill request
             </Link>
             <Link
               className="inline-flex items-center justify-center rounded-2xl bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/[0.14]"
               data-testid="assistant-marketplace-request-workflow"
-              to={buildMarketplaceHref({ requestKind: "workflow", goal: props.goalSeed })}
+              to={buildAssistantMarketplaceRequestHref({
+                requestKind: "workflow",
+                goalSeed: props.goalSeed,
+                intentResult: props.intentResult,
+              })}
             >
               Post workflow request
             </Link>
             <Link
               className="inline-flex items-center justify-center rounded-2xl bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/[0.14]"
               data-testid="assistant-marketplace-request-agent"
-              to={buildMarketplaceHref({ requestKind: "agent", goal: props.goalSeed })}
+              to={buildAssistantMarketplaceRequestHref({
+                requestKind: "agent",
+                goalSeed: props.goalSeed,
+                intentResult: props.intentResult,
+              })}
             >
               Post agent request
             </Link>

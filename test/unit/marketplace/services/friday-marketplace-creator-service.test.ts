@@ -29,8 +29,34 @@ function createService(input?: { proofOfUsePolicy?: typeof DEFAULT_FRIDAY_MARKET
         },
       ]),
       listInstallations: vi.fn(async () => [
-        { listingId: "listing-1" },
-        { listingId: "listing-1" },
+        {
+          id: "install-1",
+          listingId: "listing-1",
+          tenantId: "tenant-2",
+          principalId: "principal-2",
+          assetType: "workflow",
+          packageName: "@friday/workflow-one",
+          packageVersion: "1.0.0",
+          status: "installed",
+          lastError: null,
+          installedAt: "2026-03-08T00:00:00.000Z",
+          createdAt: "2026-03-08T00:00:00.000Z",
+          updatedAt: "2026-03-08T00:00:00.000Z",
+        },
+        {
+          id: "install-2",
+          listingId: "listing-1",
+          tenantId: "tenant-3",
+          principalId: "principal-3",
+          assetType: "workflow",
+          packageName: "@friday/workflow-one",
+          packageVersion: "1.0.0",
+          status: "installed",
+          lastError: null,
+          installedAt: "2026-03-09T00:00:00.000Z",
+          createdAt: "2026-03-09T00:00:00.000Z",
+          updatedAt: "2026-03-09T00:00:00.000Z",
+        },
       ]),
       listAcceptedRequestCountsByCreator: vi.fn(async () => [
         { creatorId: "publisher:publisher-1", count: 2 },
@@ -235,5 +261,119 @@ describe("FridayMarketplaceCreatorService", () => {
     expect(creator?.reputation.overallScore).toBeGreaterThan(20);
     expect(creator?.reputation.proofOfUseScore).toBe(78);
     expect(creator?.reputation.outcomeReliabilityScore).toBe(89);
+  });
+
+  it("filters self-support, self-installs, and same-day duplicate actors out of creator reputation", async () => {
+    const { deps, service } = createService();
+
+    vi.mocked(deps.commerce.listSupportEvents).mockResolvedValueOnce([
+      {
+        id: "support-self",
+        creatorId: "publisher:publisher-1",
+        assetId: "listing:listing-1",
+        assetType: "workflow",
+        supporterTenantId: "tenant-1",
+        supporterPrincipalId: "principal-1",
+        amount: { amount: 1000, currency: "USD" },
+        message: null,
+        createdAt: "2026-03-08T00:00:00.000Z",
+      },
+      {
+        id: "support-dup-1",
+        creatorId: "publisher:publisher-1",
+        assetId: "listing:listing-1",
+        assetType: "workflow",
+        supporterTenantId: "tenant-2",
+        supporterPrincipalId: "principal-2",
+        amount: { amount: 1000, currency: "USD" },
+        message: null,
+        createdAt: "2026-03-08T10:00:00.000Z",
+      },
+      {
+        id: "support-dup-2",
+        creatorId: "publisher:publisher-1",
+        assetId: "listing:listing-1",
+        assetType: "workflow",
+        supporterTenantId: "tenant-2",
+        supporterPrincipalId: "principal-2",
+        amount: { amount: 1000, currency: "USD" },
+        message: null,
+        createdAt: "2026-03-08T15:00:00.000Z",
+      },
+      {
+        id: "support-valid",
+        creatorId: "publisher:publisher-1",
+        assetId: "listing:listing-1",
+        assetType: "workflow",
+        supporterTenantId: "tenant-4",
+        supporterPrincipalId: "principal-4",
+        amount: { amount: 1500, currency: "USD" },
+        message: null,
+        createdAt: "2026-03-09T10:00:00.000Z",
+      },
+    ]);
+    vi.mocked(deps.commerce.listInstallations).mockResolvedValueOnce([
+      {
+        id: "install-self",
+        listingId: "listing-1",
+        tenantId: "tenant-1",
+        principalId: "principal-1",
+        assetType: "workflow",
+        packageName: "@friday/workflow-one",
+        packageVersion: "1.0.0",
+        status: "installed",
+        lastError: null,
+        installedAt: "2026-03-08T00:00:00.000Z",
+        createdAt: "2026-03-08T00:00:00.000Z",
+        updatedAt: "2026-03-08T00:00:00.000Z",
+      },
+      {
+        id: "install-dup-1",
+        listingId: "listing-1",
+        tenantId: "tenant-2",
+        principalId: "principal-2",
+        assetType: "workflow",
+        packageName: "@friday/workflow-one",
+        packageVersion: "1.0.0",
+        status: "installed",
+        lastError: null,
+        installedAt: "2026-03-08T01:00:00.000Z",
+        createdAt: "2026-03-08T01:00:00.000Z",
+        updatedAt: "2026-03-08T01:00:00.000Z",
+      },
+      {
+        id: "install-dup-2",
+        listingId: "listing-1",
+        tenantId: "tenant-2",
+        principalId: "principal-2",
+        assetType: "workflow",
+        packageName: "@friday/workflow-one",
+        packageVersion: "1.0.0",
+        status: "installed",
+        lastError: null,
+        installedAt: "2026-03-08T03:00:00.000Z",
+        createdAt: "2026-03-08T03:00:00.000Z",
+        updatedAt: "2026-03-08T03:00:00.000Z",
+      },
+      {
+        id: "install-valid",
+        listingId: "listing-1",
+        tenantId: "tenant-4",
+        principalId: "principal-4",
+        assetType: "workflow",
+        packageName: "@friday/workflow-one",
+        packageVersion: "1.0.0",
+        status: "installed",
+        lastError: null,
+        installedAt: "2026-03-09T01:00:00.000Z",
+        createdAt: "2026-03-09T01:00:00.000Z",
+        updatedAt: "2026-03-09T01:00:00.000Z",
+      },
+    ]);
+
+    const [creator] = await service.listCreators();
+
+    expect(creator?.reputation.supportCount).toBe(2);
+    expect(creator?.reputation.installCount).toBe(2);
   });
 });

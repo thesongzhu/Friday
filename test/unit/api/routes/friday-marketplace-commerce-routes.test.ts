@@ -2,6 +2,11 @@ import { describe, it, expect, vi } from "vitest";
 import { createFridayMarketplaceCommerceRoutes } from "../../../../src/api/http/routes/friday-marketplace-commerce-routes.js";
 import type { FridayMarketplaceCommerceRoutesDeps } from "../../../../src/api/http/routes/friday-marketplace-commerce-routes.js";
 import { FridayDomainError } from "#errors";
+import type {
+  FridayListing,
+  FridayListingVersion,
+} from "../../../../src/marketplace/model/friday-marketplace.types.js";
+import { fridayMoney } from "../../../../src/marketplace/model/friday-marketplace.types.js";
 
 // ─── Test Helpers ───
 
@@ -77,6 +82,47 @@ function findRoute(routes: ReturnType<typeof createFridayMarketplaceCommerceRout
   const route = routes.find((r) => r.operationId === operationId);
   if (!route) throw new Error(`Route ${operationId} not found`);
   return route;
+}
+
+function baseListing(overrides?: Partial<FridayListing>): FridayListing {
+  return {
+    id: "listing-1",
+    publisherId: "pub-1",
+    slug: "test-listing",
+    status: "review",
+    currentVersionId: "prev-ver",
+    pendingVersionId: "ver-1",
+    tenantId: null,
+    tags: ["ai"],
+    createdAt: "2026-02-24T10:00:00.000Z",
+    updatedAt: "2026-02-24T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function baseVersion(overrides?: Partial<FridayListingVersion>): FridayListingVersion {
+  return {
+    id: "ver-1",
+    listingId: "listing-1",
+    versionNumber: 1,
+    status: "in_review",
+    title: "Test Listing",
+    description: "A test listing description",
+    longDescription: null,
+    screenshotUrls: [],
+    packageName: "@friday/test-pkg",
+    packageVersion: "1.0.0",
+    assetType: "workflow",
+    distributionMode: "declarative_public",
+    permissionManifest: {
+      permissions: [],
+      requiresExplicitApproval: false,
+    },
+    pricingPlan: { type: "one_time", price: fridayMoney(999, "USD") },
+    releaseNotes: null,
+    createdAt: "2026-02-24T10:00:00.000Z",
+    ...overrides,
+  };
 }
 
 // ─── Route Registration Tests ───
@@ -323,6 +369,64 @@ describe("marketplace.listings.get", () => {
 
     const ctx = createMockCtx({ params: { id: "nonexistent" } });
     await expect(route.handler(ctx)).rejects.toThrow(FridayDomainError);
+  });
+});
+
+describe("marketplace.listings.review", () => {
+  it("writes asset_published when an in-review listing is approved", async () => {
+    const learningEventWriter = vi.fn();
+    const deps = createMockDeps({
+      learningEventWriter,
+      learningUserId: "admin-001",
+      getListing: vi.fn().mockResolvedValue(baseListing()),
+      getListingVersion: vi.fn().mockResolvedValue(baseVersion()),
+    });
+    const routes = createFridayMarketplaceCommerceRoutes(deps);
+    const route = findRoute(routes, "marketplace.listings.review");
+
+    const result = await route.handler(createMockCtx({
+      params: { id: "listing-1" },
+      body: { versionId: "ver-1", decision: "approved" },
+      principal: { principalId: "reviewer-1", role: "admin", scopes: ["marketplace.admin"] },
+    }));
+
+    expect(result).toHaveProperty("listing");
+    expect(deps.saveListing).toHaveBeenCalledTimes(1);
+    expect(learningEventWriter).toHaveBeenCalledWith([
+      expect.objectContaining({
+        userId: "admin-001",
+        kind: "asset_published",
+        payload: expect.objectContaining({
+          assetId: "listing:listing-1",
+          assetKind: "workflow",
+          listingId: "listing-1",
+          versionId: "ver-1",
+          publisherId: "pub-1",
+          reviewerId: "reviewer-1",
+          promotionState: "public",
+        }),
+      }),
+    ]);
+  });
+
+  it("does not write asset_published when a listing review is rejected", async () => {
+    const learningEventWriter = vi.fn();
+    const deps = createMockDeps({
+      learningEventWriter,
+      learningUserId: "admin-001",
+      getListing: vi.fn().mockResolvedValue(baseListing()),
+      getListingVersion: vi.fn().mockResolvedValue(baseVersion()),
+    });
+    const routes = createFridayMarketplaceCommerceRoutes(deps);
+    const route = findRoute(routes, "marketplace.listings.review");
+
+    await route.handler(createMockCtx({
+      params: { id: "listing-1" },
+      body: { versionId: "ver-1", decision: "rejected" },
+      principal: { principalId: "reviewer-1", role: "admin", scopes: ["marketplace.admin"] },
+    }));
+
+    expect(learningEventWriter).not.toHaveBeenCalled();
   });
 });
 

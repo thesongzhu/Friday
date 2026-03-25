@@ -23,6 +23,22 @@ function normalizeKey(field: string): string {
     .replace(/^_|_$/g, "");
 }
 
+function readCorrectionPayload(payload: Record<string, unknown>): {
+  correctedField?: string;
+  newValue?: unknown;
+} {
+  const correctedField =
+    typeof payload["correctedField"] === "string"
+      ? payload["correctedField"]
+      : typeof payload["field"] === "string"
+        ? payload["field"]
+        : undefined;
+  const newValue =
+    payload["newValue"] !== undefined ? payload["newValue"] : payload["value"];
+
+  return { correctedField, newValue };
+}
+
 /** V001 DDL-allowed incident categories. */
 const VALID_INCIDENT_CATEGORIES = new Set([
   "tool",
@@ -101,10 +117,7 @@ export function createFridayPreferenceExtractionService(
 
       switch (event.kind) {
         case "user_correction": {
-          const correctedField = event.payload["correctedField"] as
-            | string
-            | undefined;
-          const newValue = event.payload["newValue"];
+          const { correctedField, newValue } = readCorrectionPayload(event.payload);
           if (correctedField && newValue !== undefined) {
             const key = `pref:${normalizeKey(correctedField)}`;
             signals.push(makeSignal("correction", key, newValue, 1.0));

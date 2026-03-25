@@ -81,11 +81,18 @@ export function summarizeCreatorSupport(
   );
 }
 
-export function buildMarketplaceHref(input?: {
+export interface FridayMarketplaceHrefInput {
   assetId?: string;
   requestKind?: FridayMarketplaceAssetKind;
   goal?: string;
-}): string {
+  title?: string;
+  desiredOutcome?: string;
+  constraints?: string[];
+  budgetSupportIntent?: string | null;
+  riskNotes?: string | null;
+}
+
+export function buildMarketplaceHref(input?: FridayMarketplaceHrefInput): string {
   const params = new URLSearchParams();
   if (input?.assetId) {
     params.set("asset", input.assetId);
@@ -95,6 +102,23 @@ export function buildMarketplaceHref(input?: {
   }
   if (input?.goal) {
     params.set("goal", input.goal);
+  }
+  if (input?.title) {
+    params.set("title", input.title);
+  }
+  if (input?.desiredOutcome) {
+    params.set("desiredOutcome", input.desiredOutcome);
+  }
+  for (const constraint of input?.constraints ?? []) {
+    if (constraint.trim().length > 0) {
+      params.append("constraint", constraint);
+    }
+  }
+  if (input?.budgetSupportIntent) {
+    params.set("budgetSupportIntent", input.budgetSupportIntent);
+  }
+  if (input?.riskNotes) {
+    params.set("riskNotes", input.riskNotes);
   }
 
   const query = params.toString();

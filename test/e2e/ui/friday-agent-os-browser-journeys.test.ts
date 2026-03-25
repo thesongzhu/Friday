@@ -177,9 +177,11 @@ describe("Friday Agent OS browser incentive journeys", () => {
     pageHandle = await env.newPage();
     await waitForAssistant(pageHandle);
 
-    const goal = "Prepare the weekly incident recap";
-    const expectedTitle = `Need a workflow for: ${goal}`;
-    const expectedOutcome = `A usable workflow that solves: ${goal}`;
+    const goal = "Prepare the weekly incident recap. Constraints: read-only, no outbound network access. Risk: avoid paging the on-call rotation. Budget: $50 tip.";
+    const requestGoal = goal;
+    const coreGoal = "Prepare the weekly incident recap.";
+    const expectedTitle = `Need a workflow for: ${coreGoal}`;
+    const expectedOutcome = `A usable workflow that solves: ${coreGoal}`;
     const encodedGoal = encodeURIComponent(goal).replace(/%20/g, "+");
 
     await pageHandle.page.getByTestId("assistant-goal-input").fill(goal);
@@ -194,9 +196,16 @@ describe("Friday Agent OS browser incentive journeys", () => {
 
     const workflowKindButton = pageHandle.page.getByTestId("marketplace-request-kind-workflow");
     expect(await workflowKindButton.getAttribute("data-active")).toBe("true");
-    expect(await pageHandle.page.getByTestId("marketplace-request-goal").inputValue()).toBe(goal);
+    expect(await pageHandle.page.getByTestId("marketplace-request-goal").inputValue()).toBe(requestGoal);
     expect(await pageHandle.page.getByTestId("marketplace-request-title").inputValue()).toBe(expectedTitle);
     expect(await pageHandle.page.getByTestId("marketplace-request-outcome").inputValue()).toBe(expectedOutcome);
+    expect(await pageHandle.page.getByTestId("marketplace-request-constraints").inputValue()).toBe(
+      "read-only\nno outbound network access",
+    );
+    expect(await pageHandle.page.getByTestId("marketplace-request-budget").inputValue()).toBe("$50 tip");
+    expect(await pageHandle.page.getByTestId("marketplace-request-risk-notes").inputValue()).toBe(
+      "avoid paging the on-call rotation",
+    );
 
     await pageHandle.page.getByTestId("marketplace-request-submit").click();
     await pageHandle.page.waitForFunction((title) => document.body.textContent?.includes(title) ?? false, expectedTitle);

@@ -10,6 +10,7 @@
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { FridayHttpContext } from "../../model/friday-api-common.types.js";
 import { FridayDomainError } from "#errors";
+import type { FridayLearningEventAppendInput } from "#ledger";
 import {
   FRIDAY_BILLING_EVENT_TYPES,
   FRIDAY_MARKETPLACE_ASSET_TYPES,
@@ -84,6 +85,10 @@ export interface FridayMarketplaceCommerceRoutesDeps {
   now: () => ISODateTime;
   /** Audit event sink. */
   auditSink?: MarketplaceAuditEventSink;
+  /** Optional learning event sink for incentive-alignment signals. */
+  learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
+  /** Default user to attribute runtime-generated learning events to. */
+  learningUserId?: string;
 
   // ─── Data Access (read) ───
   getPublisher: (id: UUID) => Promise<FridayPublisher | null>;
@@ -600,6 +605,29 @@ export function createFridayMarketplaceCommerceRoutes(
 
         await deps.saveListing(result.value.listing);
         await deps.saveListingVersion(result.value.version);
+        if (
+          body.decision === "approved" &&
+          deps.learningEventWriter &&
+          deps.learningUserId
+        ) {
+          deps.learningEventWriter([
+            {
+              eventId: deps.generateId(),
+              ts: deps.now(),
+              userId: deps.learningUserId,
+              kind: "asset_published",
+              payload: {
+                assetId: `listing:${result.value.listing.id}`,
+                assetKind: result.value.version.assetType,
+                listingId: result.value.listing.id,
+                versionId: result.value.version.id,
+                publisherId: result.value.listing.publisherId,
+                reviewerId: requirePrincipalId(ctx),
+                promotionState: "public",
+              },
+            },
+          ]);
+        }
         return { listing: result.value.listing, version: result.value.version };
       },
     },

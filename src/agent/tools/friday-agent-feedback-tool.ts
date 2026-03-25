@@ -75,6 +75,8 @@ export function createFridayAgentFeedbackTool(
           kind: "user_correction",
           payload: {
             feedbackKind: kind,
+            correctedField: field,
+            newValue: value,
             field,
             value,
             ...(context ? { context } : {}),

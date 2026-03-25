@@ -32,6 +32,22 @@ function normalizeFieldToKey(field: string): string {
     .replace(/^_|_$/g, "");
 }
 
+function readCorrectionPayload(payload: Record<string, unknown>): {
+  correctedField?: string;
+  newValue?: unknown;
+} {
+  const correctedField =
+    typeof payload["correctedField"] === "string"
+      ? payload["correctedField"]
+      : typeof payload["field"] === "string"
+        ? payload["field"]
+        : undefined;
+  const newValue =
+    payload["newValue"] !== undefined ? payload["newValue"] : payload["value"];
+
+  return { correctedField, newValue };
+}
+
 function subtractDays(iso: string, days: number): string {
   const ms = new Date(iso).getTime() - days * 24 * 60 * 60 * 1000;
   return new Date(ms).toISOString();
@@ -110,7 +126,7 @@ export function createFridayLearningPatternRecognitionService(
             string,
             unknown
           >;
-          const field = payload["correctedField"] as string | undefined;
+          const field = readCorrectionPayload(payload).correctedField;
           if (field) {
             const normalized = field
               .trim()
@@ -144,21 +160,21 @@ export function createFridayLearningPatternRecognitionService(
         if (facts.length > 0) {
           const contradictionWindow = subtractDays(nowIso, 30);
 
-          // Fetch all recent corrections and normalize their keys in JS
-          // so we match against the same normalized form used for fact keys.
           const recentCorrections = db
             .prepare(
-              `SELECT json_extract(payload_json, '$.correctedField') as field
+              `SELECT payload_json
                FROM learning_events
                WHERE user_id = ? AND kind = 'user_correction'
                AND ts >= ?`,
             )
-            .all(userId, contradictionWindow) as Array<{ field: string | null }>;
+            .all(userId, contradictionWindow) as Array<{ payload_json: string }>;
 
           const correctedNormalizedKeys = new Set<string>();
           for (const row of recentCorrections) {
-            if (row.field) {
-              correctedNormalizedKeys.add(normalizeFieldToKey(row.field));
+            const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+            const field = readCorrectionPayload(payload).correctedField;
+            if (field) {
+              correctedNormalizedKeys.add(normalizeFieldToKey(field));
             }
           }
 
@@ -211,8 +227,7 @@ export function createFridayLearningPatternRecognitionService(
             string,
             unknown
           >;
-          const field = payload["correctedField"] as string | undefined;
-          const newVal = payload["newValue"];
+          const { correctedField: field, newValue: newVal } = readCorrectionPayload(payload);
           if (field && newVal !== undefined) {
             const normalized = field
               .trim()

@@ -59,6 +59,47 @@ interface CreatorProfileBuildContext {
   publishersByCreator: Map<string, FridayPublisher>;
 }
 
+function actorKey(input: {
+  tenantId?: string | null;
+  principalId?: string | null;
+}): string | null {
+  const tenantId = input.tenantId?.trim();
+  const principalId = input.principalId?.trim();
+  if (!tenantId && !principalId) {
+    return null;
+  }
+  return `${tenantId ?? "unknown"}:${principalId ?? "unknown"}`;
+}
+
+function publisherActorKey(publisher: FridayPublisher | null | undefined): string | null {
+  if (!publisher) {
+    return null;
+  }
+  return actorKey({
+    tenantId: publisher.tenantId,
+    principalId: publisher.principalId,
+  });
+}
+
+function actorMatchesPublisher(
+  input: {
+    tenantId?: string | null;
+    principalId?: string | null;
+  },
+  publisher: FridayPublisher | null | undefined,
+): boolean {
+  const left = actorKey(input);
+  const right = publisherActorKey(publisher);
+  return left !== null && right !== null && left === right;
+}
+
+function dedupeKeyForDay(assetId: string, actor: string | null, createdAt: string): string | null {
+  if (!actor) {
+    return null;
+  }
+  return `${assetId}:${actor}:${createdAt.slice(0, 10)}`;
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
@@ -267,22 +308,7 @@ export class FridayMarketplaceCreatorService {
       }
     }
 
-    const supportByCreator = new Map<string, FridaySupportEvent[]>();
-    for (const event of supportEvents) {
-      const bucket = supportByCreator.get(event.creatorId);
-      if (bucket) {
-        bucket.push(event);
-      } else {
-        supportByCreator.set(event.creatorId, [event]);
-      }
-    }
-
     const installCountByAsset = new Map<string, number>();
-    for (const installation of installations) {
-      const assetId = `listing:${installation.listingId}`;
-      installCountByAsset.set(assetId, (installCountByAsset.get(assetId) ?? 0) + 1);
-    }
-
     const fulfilledRequestCountByCreator = new Map<string, number>();
     for (const entry of fulfilledRequestCounts) {
       fulfilledRequestCountByCreator.set(entry.creatorId, entry.count);
@@ -293,9 +319,78 @@ export class FridayMarketplaceCreatorService {
       publishersByCreator.set(`publisher:${publisher.id}`, publisher);
     }
 
+    const publisherByAssetId = new Map<string, FridayPublisher | null>();
+    for (const asset of assets) {
+      publisherByAssetId.set(asset.assetId, publishersByCreator.get(asset.creatorId) ?? null);
+    }
+
+    const seenInstallationActors = new Set<string>();
+    for (const installation of installations) {
+      const assetId = `listing:${installation.listingId}`;
+      const publisher = publisherByAssetId.get(assetId) ?? null;
+      if (actorMatchesPublisher(installation, publisher)) {
+        continue;
+      }
+      const dedupeKey = dedupeKeyForDay(
+        assetId,
+        actorKey(installation),
+        installation.createdAt,
+      );
+      if (dedupeKey && seenInstallationActors.has(dedupeKey)) {
+        continue;
+      }
+      if (dedupeKey) {
+        seenInstallationActors.add(dedupeKey);
+      }
+      installCountByAsset.set(assetId, (installCountByAsset.get(assetId) ?? 0) + 1);
+    }
+
+    const filteredSupportEvents: FridaySupportEvent[] = [];
+    const seenSupportActors = new Set<string>();
+    for (const event of supportEvents) {
+      const publisher =
+        publishersByCreator.get(event.creatorId) ??
+        publisherByAssetId.get(event.assetId) ??
+        null;
+      if (
+        actorMatchesPublisher(
+          {
+            tenantId: event.supporterTenantId,
+            principalId: event.supporterPrincipalId,
+          },
+          publisher,
+        )
+      ) {
+        continue;
+      }
+      const dedupeKey = dedupeKeyForDay(
+        event.assetId,
+        actorKey({
+          tenantId: event.supporterTenantId,
+          principalId: event.supporterPrincipalId,
+        }),
+        event.createdAt,
+      );
+      if (dedupeKey && seenSupportActors.has(dedupeKey)) {
+        continue;
+      }
+      if (dedupeKey) {
+        seenSupportActors.add(dedupeKey);
+      }
+      filteredSupportEvents.push(event);
+    }
+
     return {
       assetsByCreator,
-      supportByCreator,
+      supportByCreator: filteredSupportEvents.reduce((map, event) => {
+        const bucket = map.get(event.creatorId);
+        if (bucket) {
+          bucket.push(event);
+        } else {
+          map.set(event.creatorId, [event]);
+        }
+        return map;
+      }, new Map<string, FridaySupportEvent[]>()),
       permissionScoreByAsset,
       installCountByAsset,
       fulfilledRequestCountByCreator,
