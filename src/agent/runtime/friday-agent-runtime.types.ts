@@ -1,6 +1,7 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridayEvaluationContext, FridayEvaluationResult } from "#rules";
 import type { FridayConversationBlock } from "#sessions";
+import type { FridayWorkspaceContext } from "./friday-agent-workspace-context.js";
 
 import type {
   FridayAgentMessage,
@@ -31,6 +32,40 @@ export interface FridayAgentConversationContext {
   selectedBlocks?: FridayConversationBlock[];
   selectionReasons?: string[];
   replyToMessageId?: string;
+}
+
+export interface FridayContextEngineResolveInput {
+  task?: string;
+  conversationContext?: FridayAgentConversationContext;
+}
+
+export interface FridayContextEngineResolveResult {
+  workspaceContext?: FridayWorkspaceContext;
+  promptFragment?: string;
+}
+
+export interface FridayContextEngineAfterTurnInput {
+  runId: string;
+  sessionKey: string;
+  task: string;
+  response: string;
+  status: FridayAgentRunStatus;
+  summary?: string;
+  artifactDir?: string;
+  conversationContext?: FridayAgentConversationContext;
+}
+
+export interface FridayContextEngine {
+  ingest?: (input: FridayContextEngineResolveInput) => void | Promise<void>;
+  assemble?: (
+    input: FridayContextEngineResolveInput,
+  ) => FridayContextEngineResolveResult | null | undefined | Promise<FridayContextEngineResolveResult | null | undefined>;
+  compact?: (
+    input: FridayContextEngineResolveInput & {
+      assembled: FridayContextEngineResolveResult;
+    },
+  ) => FridayContextEngineResolveResult | null | undefined | Promise<FridayContextEngineResolveResult | null | undefined>;
+  afterTurn?: (input: FridayContextEngineAfterTurnInput) => void | Promise<void>;
 }
 
 export interface FridayAgentDelegationRequest {
@@ -226,4 +261,6 @@ export interface CreateFridayAgentRuntimeDeps {
   /** Optional deterministic delegation hook for top-level coordinator runs. */
   delegationHandler?: (input: FridayAgentDelegationRequest) =>
     Promise<FridayAgentDelegationResult | null>;
+  /** Optional preview context engine hooks. Must remain additive to the default prompt path. */
+  contextEngine?: FridayContextEngine;
 }

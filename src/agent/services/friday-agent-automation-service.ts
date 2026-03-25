@@ -6,6 +6,7 @@ import type {
   FridayAgentAutomationRecord,
   FridayAgentAutomationSchedulerBridge,
   FridayAgentAutomationService,
+  FridayAgentAutomationSessionTarget,
 } from "./friday-agent-automation-service.types.js";
 import {
   computeAutomationOutcomeScore,
@@ -19,6 +20,7 @@ import {
 const AUTOMATION_NOT_FOUND = "AGENT_AUTOMATION_NOT_FOUND";
 const AUTOMATION_DISABLED = "AGENT_AUTOMATION_DISABLED";
 const AUTOMATION_SCHEDULER_SYNC_FAILED = "AGENT_AUTOMATION_SCHEDULER_SYNC_FAILED";
+const AUTOMATION_INVALID_SESSION_TARGET = "AGENT_AUTOMATION_INVALID_SESSION_TARGET";
 
 const PROMOTION_STATE_RANK = {
   private: 0,
@@ -79,6 +81,51 @@ export function createFridayAgentAutomationService(
     }
   }
 
+  function resolveSessionTarget(input: {
+    sessionTarget?: FridayAgentAutomationSessionTarget | null;
+    sourceRunId?: string;
+  }): FridayAgentAutomationSessionTarget {
+    const sessionTarget = input.sessionTarget ?? { type: "isolated" as const };
+    if (sessionTarget.type === "isolated") {
+      return { type: "isolated" };
+    }
+
+    const providedSessionKey = typeof sessionTarget.sessionKey === "string"
+      ? sessionTarget.sessionKey.trim()
+      : "";
+    if (providedSessionKey.length > 0) {
+      return {
+        type: sessionTarget.type,
+        sessionKey: providedSessionKey,
+      };
+    }
+
+    if (sessionTarget.type === "current" && input.sourceRunId && deps.resolveSourceSessionKey) {
+      const resolved = deps.resolveSourceSessionKey(input.sourceRunId)?.trim();
+      if (resolved) {
+        return {
+          type: "current",
+          sessionKey: resolved,
+        };
+      }
+    }
+
+    throw new FridayDomainError(
+      AUTOMATION_INVALID_SESSION_TARGET,
+      "Automation sessionTarget requires a sessionKey or a sourceRunId with a resolvable session",
+      { httpStatus: 400 },
+    );
+  }
+
+  function resolveRunSessionKey(
+    sessionTarget: FridayAgentAutomationSessionTarget | undefined,
+  ): string | undefined {
+    if (!sessionTarget || sessionTarget.type === "isolated") {
+      return undefined;
+    }
+    return sessionTarget.sessionKey;
+  }
+
   return {
     attachSchedulerBridge(bridge) {
       schedulerBridge = bridge;
@@ -113,6 +160,10 @@ export function createFridayAgentAutomationService(
         workflowIds: params.workflowIds,
         triggerId: params.triggerId,
         schedule: params.schedule,
+        sessionTarget: resolveSessionTarget({
+          sessionTarget: params.sessionTarget,
+          sourceRunId: params.sourceRunId,
+        }),
         enabled: params.enabled ?? true,
         runCount: 0,
         estimatedTimeSavedMinutes: estimateAutomationTimeSavedMinutes({
@@ -166,9 +217,24 @@ export function createFridayAgentAutomationService(
         );
       }
 
+      const {
+        sessionTarget: requestedSessionTarget,
+        ...restPatch
+      } = patch;
+
       const updated = db.withWriteTransaction((writer) =>
         repository.update(writer, automationId, {
-          ...patch,
+          ...restPatch,
+          ...(requestedSessionTarget !== undefined
+            ? {
+                sessionTarget: requestedSessionTarget === null
+                  ? { type: "isolated" }
+                  : resolveSessionTarget({
+                      sessionTarget: requestedSessionTarget,
+                      sourceRunId: existing.sourceRunId,
+                    }),
+              }
+            : {}),
           updatedAt: nowIso(),
         }),
       );
@@ -222,13 +288,27 @@ export function createFridayAgentAutomationService(
       }
 
       const task = input?.taskOverride ?? automation.taskTemplate;
+      const sessionTarget = input?.sessionTarget
+        ? resolveSessionTarget({
+            sessionTarget: input.sessionTarget,
+            sourceRunId: automation.sourceRunId,
+          })
+        : resolveSessionTarget({
+            sessionTarget: automation.sessionTarget,
+            sourceRunId: automation.sourceRunId,
+          });
 
       const result = await startRun({
         task,
+        sessionKey: resolveRunSessionKey(sessionTarget),
         providerId: input?.providerId,
         model: input?.model,
         timezone: input?.timezone ?? automation.schedule?.timezone,
         timeoutMs: input?.timeoutMs,
+        executionContext: {
+          surface: "agent.automation",
+          interactive: false,
+        },
       });
 
       const nextInsights = updateAutomationInsightsAfterRun(automation, result);

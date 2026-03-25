@@ -7,6 +7,7 @@ import type {
   FridayAgentAutomationListFilters,
   FridayAgentAutomationRecord,
   FridayAgentAutomationRepository,
+  FridayAgentAutomationSessionTarget,
 } from "../services/friday-agent-automation-service.types.js";
 
 // ─── Row shape from SQLite ───
@@ -23,6 +24,8 @@ interface FridayAgentAutomationRow {
   trigger_id: string | null;
   schedule_cron_expr: string | null;
   schedule_tz: string | null;
+  session_target_kind: "isolated" | "named" | "current" | null;
+  session_target_session_key: string | null;
   enabled: number;
   last_run_id: string | null;
   last_run_at: string | null;
@@ -36,6 +39,18 @@ interface FridayAgentAutomationRow {
 }
 
 function rowToRecord(row: FridayAgentAutomationRow): FridayAgentAutomationRecord {
+  let sessionTarget: FridayAgentAutomationSessionTarget | undefined;
+  if (row.session_target_kind === "isolated") {
+    sessionTarget = { type: "isolated" };
+  } else if (row.session_target_kind === "named" && row.session_target_session_key) {
+    sessionTarget = { type: "named", sessionKey: row.session_target_session_key };
+  } else if (row.session_target_kind === "current") {
+    sessionTarget = {
+      type: "current",
+      ...(row.session_target_session_key ? { sessionKey: row.session_target_session_key } : {}),
+    };
+  }
+
   return {
     id: row.id,
     name: row.name,
@@ -59,6 +74,7 @@ function rowToRecord(row: FridayAgentAutomationRow): FridayAgentAutomationRecord
           timezone: row.schedule_tz ?? undefined,
         }
       : undefined,
+    sessionTarget,
     enabled: row.enabled === 1,
     lastRunId: row.last_run_id ?? undefined,
     lastRunAt: row.last_run_at ?? undefined,
@@ -72,19 +88,39 @@ function rowToRecord(row: FridayAgentAutomationRow): FridayAgentAutomationRecord
   };
 }
 
+function encodeSessionTarget(
+  sessionTarget: FridayAgentAutomationSessionTarget | undefined,
+): {
+  kind: FridayAgentAutomationRow["session_target_kind"];
+  sessionKey: string | null;
+} {
+  if (!sessionTarget || sessionTarget.type === "isolated") {
+    return { kind: "isolated", sessionKey: null };
+  }
+  if (sessionTarget.type === "named") {
+    return { kind: "named", sessionKey: sessionTarget.sessionKey };
+  }
+  return {
+    kind: "current",
+    sessionKey: sessionTarget.sessionKey ?? null,
+  };
+}
+
 // ─── Factory ───
 
 export function createFridayAgentAutomationRepository(): FridayAgentAutomationRepository {
   return {
     insert(db, record) {
+      const encodedSessionTarget = encodeSessionTarget(record.sessionTarget);
       db.prepare(
         `INSERT INTO friday_agent_automations (
           id, name, description, source_run_id, task_template,
           variables, skill_ids, workflow_ids, trigger_id, schedule_cron_expr, schedule_tz,
+          session_target_kind, session_target_session_key,
           enabled, last_run_id, last_run_at, run_count,
           estimated_time_saved_minutes, reuse_count, promotion_state, last_outcome_score,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         record.id,
         record.name,
@@ -97,6 +133,8 @@ export function createFridayAgentAutomationRepository(): FridayAgentAutomationRe
         record.triggerId ?? null,
         record.schedule?.cron ?? null,
         record.schedule?.timezone ?? null,
+        encodedSessionTarget.kind,
+        encodedSessionTarget.sessionKey,
         record.enabled ? 1 : 0,
         record.lastRunId ?? null,
         record.lastRunAt ?? null,
@@ -197,6 +235,15 @@ export function createFridayAgentAutomationRepository(): FridayAgentAutomationRe
         sets.push("schedule_tz = ?");
         params.push(patch.schedule?.cron ?? null);
         params.push(patch.schedule?.timezone ?? null);
+      }
+      if (patch.sessionTarget !== undefined) {
+        const encoded = patch.sessionTarget === null
+          ? encodeSessionTarget({ type: "isolated" })
+          : encodeSessionTarget(patch.sessionTarget);
+        sets.push("session_target_kind = ?");
+        sets.push("session_target_session_key = ?");
+        params.push(encoded.kind);
+        params.push(encoded.sessionKey);
       }
       if (patch.enabled !== undefined) {
         sets.push("enabled = ?");
