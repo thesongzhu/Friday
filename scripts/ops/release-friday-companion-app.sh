@@ -139,8 +139,13 @@ node "${REPO_DIR}/scripts/ops/write-friday-release-manifest.mjs" >/dev/null
 
 if [[ -n "${FRIDAY_HOMEBREW_TAP_REPO:-}" && -n "${FRIDAY_HOMEBREW_TAP_GITHUB_TOKEN:-}" ]]; then
   echo "[friday-companion-release] publishing Homebrew cask" >&2
-  bash "${REPO_DIR}/scripts/ops/publish-friday-homebrew-cask.sh" "${REPO_DIR}" >/dev/null
-  echo "[friday-companion-release] refreshing release manifest after Homebrew publication" >&2
+  if bash "${REPO_DIR}/scripts/ops/publish-friday-homebrew-cask.sh" "${REPO_DIR}" >/dev/null; then
+    echo "[friday-companion-release] refreshing release manifest after Homebrew publication" >&2
+  else
+    echo "[friday-companion-release] Homebrew cask publication failed; continuing with generated cask only" >&2
+    rm -f "${CHANNELS_DIR}/homebrew.json"
+    echo "[friday-companion-release] refreshing release manifest after Homebrew publication fallback" >&2
+  fi
   node "${REPO_DIR}/scripts/ops/write-friday-release-manifest.mjs" >/dev/null
 fi
 

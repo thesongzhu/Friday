@@ -7,6 +7,12 @@ and this project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-03-24
+
+### Fixed
+- macOS release no longer fails the entire tagged release when optional Homebrew tap publication is rejected; the workflow now continues with generated cask artifacts and release manifest metadata.
+- Homebrew tap publication now surfaces the underlying `git clone` / `git push` error output instead of failing with an opaque exit code.
+
 ## [0.4.1] - 2026-03-24
 
 ### Fixed
