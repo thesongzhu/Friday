@@ -1,0 +1,101 @@
+{
+  "schemaVersion": "2.0",
+  "id": "product-scope-review",
+  "name": "Product Scope Review",
+  "description": "Challenge a product idea or PRD for wedge clarity, scope control, and delivery risk before implementation.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": {
+    "name": "Friday"
+  },
+  "tags": [
+    "starter",
+    "starter.builder",
+    "product",
+    "scope",
+    "review"
+  ],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 120000
+  },
+  "triggers": {
+    "intents": [
+      "product_scope_review"
+    ],
+    "phrases": [
+      "review this product scope",
+      "challenge this scope",
+      "ceo review this plan"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 84,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "goal",
+      "type": "string",
+      "required": true,
+      "label": "Scope Statement",
+      "help": "Describe the idea, PRD, or release scope to review."
+    }
+  ],
+  "outputs": [
+    {
+      "key": "summary",
+      "type": "string",
+      "description": "High-level scope review result."
+    },
+    {
+      "key": "nextStep",
+      "type": "string",
+      "description": "The next product or planning action."
+    },
+    {
+      "key": "details",
+      "type": "object",
+      "description": "Scores, questions, and recommendations."
+    }
+  ],
+  "permissions": {
+    "grants": [],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": [
+      "starter_skill_invoked",
+      "starter_skill_suggested"
+    ]
+  }
+}

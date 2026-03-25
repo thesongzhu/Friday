@@ -138,8 +138,8 @@ describe("buildFridayAgentSystemPrompt", () => {
       version: "0.0.0-test",
     });
 
-    expect(prompt).toContain("Planning, browser QA, diff review, release docs, benchmark, canary, and security review requests");
-    expect(prompt).toContain("scoping, reviewing implementation plans, QAing a page, reviewing a diff, or syncing release docs");
+    expect(prompt).toContain("Planning, scope review, design review, browser QA, diff review, release docs, benchmark, canary, retro, QA-fix, and security review requests");
+    expect(prompt).toContain("scoping, design review, implementation plan review, QAing a page, benchmarking, canary checks, retros, reviewing a diff, or syncing release docs");
   });
 
   it("describes messaging and MCP truthfully from runtime capabilities", () => {

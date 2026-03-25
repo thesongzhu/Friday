@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Browser QA Fix",
+  "description": "Turn readonly browser evidence into a bounded low-risk HTML title fix inside the workspace.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "goal",
+        "url",
+        "targetFile",
+        "desiredTitle",
+        "apply"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "goal",
+      "inputKey": "goal",
+      "kind": "text",
+      "label": "Fix Goal",
+      "required": false,
+      "help": "Describe the bounded fix request or paste a URL."
+    },
+    {
+      "id": "url",
+      "inputKey": "url",
+      "kind": "text",
+      "label": "URL",
+      "required": false,
+      "help": "Optional page to inspect before preparing the fix."
+    },
+    {
+      "id": "targetFile",
+      "inputKey": "targetFile",
+      "kind": "text",
+      "label": "Target File",
+      "required": false,
+      "help": "Optional HTML file to patch."
+    },
+    {
+      "id": "desiredTitle",
+      "inputKey": "desiredTitle",
+      "kind": "text",
+      "label": "Desired Title",
+      "required": false,
+      "help": "Optional explicit title."
+    },
+    {
+      "id": "apply",
+      "inputKey": "apply",
+      "kind": "boolean",
+      "label": "Apply Changes",
+      "required": false,
+      "help": "Write the bounded fix when true."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Prepare Browser Fix",
+      "style": "primary"
+    }
+  ]
+}
