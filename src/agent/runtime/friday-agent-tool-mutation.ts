@@ -68,6 +68,12 @@ const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>)
       "implementation-plan-review",
       "browser-qa-report",
       "workspace-diff-review",
+      "page-benchmark-report",
+      "release-canary-check",
+      "engineering-retro",
+      "product-scope-review",
+      "design-plan-review",
+      "security-review",
     ]);
     return !readOnlySkills.has(skillId);
   },

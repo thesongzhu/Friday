@@ -172,6 +172,124 @@ const TEMPLATE_DEFINITIONS: FridayActionTemplateSummary[] = [
     ],
   },
   {
+    id: "page-benchmark-report",
+    label: "Benchmark this page",
+    description: "Collect repeated browser timings, compare them with a saved local baseline, and surface regressions or improvements.",
+    category: "skills",
+    parameters: [
+      {
+        key: "goal",
+        label: "Benchmark Goal or URL",
+        type: "text",
+        required: false,
+        placeholder: "Example: Benchmark http://127.0.0.1:5173/assistant after the latest UI changes.",
+      },
+    ],
+  },
+  {
+    id: "release-canary-check",
+    label: "Run release canary check",
+    description: "Inspect one or more pages after a change, capture browser evidence, and compare the result with the previous local canary run.",
+    category: "skills",
+    parameters: [
+      {
+        key: "goal",
+        label: "Canary Goal or URL",
+        type: "text",
+        required: false,
+        placeholder: "Example: Run a canary check on http://127.0.0.1:5173 and watch for new console errors.",
+      },
+    ],
+  },
+  {
+    id: "engineering-retro",
+    label: "Generate engineering retro",
+    description: "Summarize recent commits, contributor shape, evidence coverage, and follow-up risks for the latest delivery window.",
+    category: "skills",
+    parameters: [
+      {
+        key: "goal",
+        label: "Retro Scope",
+        type: "text",
+        required: false,
+        placeholder: "Example: Summarize what we shipped this sprint and where the delivery risks are clustering.",
+      },
+      {
+        key: "sinceDays",
+        label: "Since Days",
+        type: "text",
+        required: false,
+      },
+    ],
+  },
+  {
+    id: "product-scope-review",
+    label: "Review product scope",
+    description: "Challenge a product idea or PRD for scope discipline, wedge clarity, differentiation, and delivery risk.",
+    category: "skills",
+    parameters: [
+      {
+        key: "goal",
+        label: "Scope Statement",
+        type: "text",
+        required: true,
+        placeholder: "Example: Review whether this release scope is too broad for the first milestone.",
+      },
+    ],
+  },
+  {
+    id: "design-plan-review",
+    label: "Review design plan",
+    description: "Review a UI or page plan for information hierarchy, state coverage, accessibility, responsiveness, and interaction clarity.",
+    category: "skills",
+    parameters: [
+      {
+        key: "goal",
+        label: "Design Plan",
+        type: "text",
+        required: true,
+        placeholder: "Example: Review this page brief for missing states and accessibility gaps before implementation.",
+      },
+    ],
+  },
+  {
+    id: "security-review",
+    label: "Run security review",
+    description: "Run a bounded static audit across auth, proxy trust, execution, marketplace, and remote-access surfaces.",
+    category: "skills",
+    parameters: [
+      {
+        key: "goal",
+        label: "Security Scope",
+        type: "text",
+        required: false,
+        placeholder: "Example: Audit remote access and token handling before the next release.",
+      },
+    ],
+  },
+  {
+    id: "browser-qa-fix",
+    label: "Apply browser QA fix",
+    description: "Turn readonly browser evidence into a bounded low-risk HTML metadata fix, with Friday's existing mutation guardrails.",
+    category: "skills",
+    parameters: [
+      {
+        key: "goal",
+        label: "Fix Goal or URL",
+        type: "text",
+        required: false,
+        placeholder: "Example: Fix the page title on http://127.0.0.1:5173/settings.",
+      },
+      {
+        key: "targetFile",
+        label: "Target File",
+        type: "text",
+        required: false,
+        placeholder: "Example: ui/index.html",
+      },
+    ],
+  },
+  {
     id: "generate-skill",
     label: "Generate a skill",
     description: "Turn a plain-language goal into a tested skill draft.",
@@ -528,6 +646,24 @@ export function createFridayUixSurfaceService(
       }));
     }
     if (
+      text.includes("qa fix")
+      || text.includes("browser qa fix")
+      || text.includes("fix the page title")
+      || ((text.includes("fix") || text.includes("repair")) && (text.includes("page") || text.includes("browser") || text.includes("console error")))
+    ) {
+      return applyGuidance({
+        intent: "general_help",
+        confidence: 0.9,
+        summary: "This looks like a bounded browser QA fix request.",
+        routeTarget: "/assistant",
+        suggestedTemplateIds: ["browser-qa-fix", "browser-qa-report"],
+      }, buildAssistantGuidance({
+        text: textInput,
+        intent: "general_help",
+        persona,
+      }));
+    }
+    if (
       text.includes("qa this")
       || text.includes("browser qa")
       || text.includes("test this page")
@@ -541,6 +677,120 @@ export function createFridayUixSurfaceService(
         summary: "This looks like a browser QA request with evidence capture.",
         routeTarget: "/assistant",
         suggestedTemplateIds: ["browser-qa-report", "workspace-diff-review"],
+      }, buildAssistantGuidance({
+        text: textInput,
+        intent: "general_help",
+        persona,
+      }));
+    }
+    if (
+      text.includes("benchmark")
+      || text.includes("page speed")
+      || text.includes("web vitals")
+      || text.includes("performance regression")
+      || text.includes("lighthouse")
+    ) {
+      return applyGuidance({
+        intent: "general_help",
+        confidence: 0.9,
+        summary: "This looks like a page benchmark or performance baseline request.",
+        routeTarget: "/assistant",
+        suggestedTemplateIds: ["page-benchmark-report", "release-canary-check"],
+      }, buildAssistantGuidance({
+        text: textInput,
+        intent: "general_help",
+        persona,
+      }));
+    }
+    if (
+      text.includes("canary")
+      || text.includes("post deploy")
+      || text.includes("post-deploy")
+      || text.includes("monitor this deploy")
+      || text.includes("watch production")
+    ) {
+      return applyGuidance({
+        intent: "general_help",
+        confidence: 0.9,
+        summary: "This looks like a release canary or post-deploy check request.",
+        routeTarget: "/assistant",
+        suggestedTemplateIds: ["release-canary-check", "page-benchmark-report"],
+      }, buildAssistantGuidance({
+        text: textInput,
+        intent: "general_help",
+        persona,
+      }));
+    }
+    if (
+      text.includes("retro")
+      || text.includes("retrospective")
+      || text.includes("what did we ship")
+      || text.includes("sprint summary")
+    ) {
+      return applyGuidance({
+        intent: "general_help",
+        confidence: 0.88,
+        summary: "This looks like an engineering retrospective request.",
+        routeTarget: "/assistant",
+        suggestedTemplateIds: ["engineering-retro", "release-canary-check"],
+      }, buildAssistantGuidance({
+        text: textInput,
+        intent: "general_help",
+        persona,
+      }));
+    }
+    if (
+      text.includes("security review")
+      || text.includes("security audit")
+      || text.includes("threat model")
+      || text.includes("owasp")
+      || text.includes("token safety")
+      || text.includes("remote access audit")
+    ) {
+      return applyGuidance({
+        intent: "general_help",
+        confidence: 0.91,
+        summary: "This looks like a bounded security review request.",
+        routeTarget: "/assistant",
+        suggestedTemplateIds: ["security-review", "workspace-diff-review"],
+      }, buildAssistantGuidance({
+        text: textInput,
+        intent: "general_help",
+        persona,
+      }));
+    }
+    if (
+      text.includes("design review")
+      || text.includes("design critique")
+      || text.includes("ui review")
+      || text.includes("design plan")
+      || text.includes("accessibility review")
+    ) {
+      return applyGuidance({
+        intent: "general_help",
+        confidence: 0.9,
+        summary: "This looks like a design-plan review request.",
+        routeTarget: "/assistant",
+        suggestedTemplateIds: ["design-plan-review", "browser-qa-report"],
+      }, buildAssistantGuidance({
+        text: textInput,
+        intent: "general_help",
+        persona,
+      }));
+    }
+    if (
+      text.includes("scope review")
+      || text.includes("scope this product")
+      || text.includes("think bigger")
+      || text.includes("ceo review")
+      || text.includes("founder review")
+    ) {
+      return applyGuidance({
+        intent: "general_help",
+        confidence: 0.89,
+        summary: "This looks like a product scope or wedge review request.",
+        routeTarget: "/assistant",
+        suggestedTemplateIds: ["product-scope-review", "implementation-plan-review"],
       }, buildAssistantGuidance({
         text: textInput,
         intent: "general_help",
@@ -1495,6 +1745,135 @@ export function createFridayUixSurfaceService(
             guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Sync release docs",
             intent: "general_help",
             defaultSummary: "Friday synchronized the bounded release-facing docs for the current workspace changes.",
+          });
+          await deps.observability?.recordAssistantEvent({
+            userId: input.userId,
+            event: "template_executed",
+            summary: executed.response.summary,
+            result: executed.response,
+          });
+          return executed.response;
+        }
+        case "page-benchmark-report": {
+          const executed = await executeStarterSkillTemplate({
+            templateId: input.templateId,
+            userId: input.userId,
+            skillId: "page-benchmark-report",
+            parameters: input.parameters,
+            guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Benchmark this page",
+            intent: "general_help",
+            defaultSummary: "Friday benchmarked the page and compared the result with the saved local baseline.",
+          });
+          await deps.observability?.recordAssistantEvent({
+            userId: input.userId,
+            event: "template_executed",
+            summary: executed.response.summary,
+            result: executed.response,
+          });
+          return executed.response;
+        }
+        case "release-canary-check": {
+          const executed = await executeStarterSkillTemplate({
+            templateId: input.templateId,
+            userId: input.userId,
+            skillId: "release-canary-check",
+            parameters: input.parameters,
+            guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Run release canary check",
+            intent: "general_help",
+            defaultSummary: "Friday ran a release canary check and captured browser evidence.",
+          });
+          await deps.observability?.recordAssistantEvent({
+            userId: input.userId,
+            event: "template_executed",
+            summary: executed.response.summary,
+            result: executed.response,
+          });
+          return executed.response;
+        }
+        case "engineering-retro": {
+          const executed = await executeStarterSkillTemplate({
+            templateId: input.templateId,
+            userId: input.userId,
+            skillId: "engineering-retro",
+            parameters: input.parameters,
+            guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Generate engineering retro",
+            intent: "general_help",
+            defaultSummary: "Friday generated an engineering retro for the latest delivery window.",
+          });
+          await deps.observability?.recordAssistantEvent({
+            userId: input.userId,
+            event: "template_executed",
+            summary: executed.response.summary,
+            result: executed.response,
+          });
+          return executed.response;
+        }
+        case "product-scope-review": {
+          const executed = await executeStarterSkillTemplate({
+            templateId: input.templateId,
+            userId: input.userId,
+            skillId: "product-scope-review",
+            parameters: input.parameters,
+            guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Review product scope",
+            intent: "general_help",
+            defaultSummary: "Friday reviewed the product scope and highlighted wedge and delivery risks.",
+          });
+          await deps.observability?.recordAssistantEvent({
+            userId: input.userId,
+            event: "template_executed",
+            summary: executed.response.summary,
+            result: executed.response,
+          });
+          return executed.response;
+        }
+        case "design-plan-review": {
+          const executed = await executeStarterSkillTemplate({
+            templateId: input.templateId,
+            userId: input.userId,
+            skillId: "design-plan-review",
+            parameters: input.parameters,
+            guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Review design plan",
+            intent: "general_help",
+            defaultSummary: "Friday reviewed the design plan and highlighted missing states and interaction gaps.",
+          });
+          await deps.observability?.recordAssistantEvent({
+            userId: input.userId,
+            event: "template_executed",
+            summary: executed.response.summary,
+            result: executed.response,
+          });
+          return executed.response;
+        }
+        case "security-review": {
+          const executed = await executeStarterSkillTemplate({
+            templateId: input.templateId,
+            userId: input.userId,
+            skillId: "security-review",
+            parameters: input.parameters,
+            guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Run security review",
+            intent: "general_help",
+            defaultSummary: "Friday ran a bounded static security review and persisted a local threat-model report.",
+          });
+          await deps.observability?.recordAssistantEvent({
+            userId: input.userId,
+            event: "template_executed",
+            summary: executed.response.summary,
+            result: executed.response,
+          });
+          return executed.response;
+        }
+        case "browser-qa-fix": {
+          const executed = await executeStarterSkillTemplate({
+            templateId: input.templateId,
+            userId: input.userId,
+            skillId: "browser-qa-fix",
+            parameters: {
+              ...input.parameters,
+              apply: true,
+            },
+            guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Apply browser QA fix",
+            intent: "general_help",
+            defaultSummary: "Friday prepared or applied a bounded browser QA fix using the existing mutation guardrails.",
           });
           await deps.observability?.recordAssistantEvent({
             userId: input.userId,
