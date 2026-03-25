@@ -74,6 +74,11 @@ function createMockManager(overrides?: Partial<FridayBrowserManager>): FridayBro
     ),
     close: vi.fn().mockResolvedValue(undefined),
     getDiagnostics: vi.fn().mockReturnValue(presentation),
+    getDiagnosticsSummary: vi.fn().mockReturnValue({
+      presentation,
+      sessionCount: 1,
+      profiles: [],
+    }),
     listSessions: vi.fn().mockImplementation((profile?: string) => {
       const result: Array<{ sessionId: string; profile?: unknown; tabCount: number; activeTabId: string }> = [];
       for (const [sid, s] of sessions) {

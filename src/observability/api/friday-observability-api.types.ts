@@ -188,6 +188,23 @@ export interface FridayGetTraceResponse {
 
 export interface FridayGetObservabilityOverviewResponse {
   overview: DashboardOverview;
+  runtime?: {
+    browser?: FridayObservabilityBrowserRuntimeSummary;
+  };
+}
+
+export interface FridayObservabilityBrowserRuntimeSummary {
+  configuredMode: "auto" | "headless" | "host_chrome_visible";
+  activeMode: "headless" | "host_chrome_visible";
+  targetBrowser: string;
+  fallbackReason?: string;
+  sessionCount: number;
+  profiles: Array<{
+    name: string;
+    kind: "operator" | "automation" | "remote" | "custom";
+    sessionCount: number;
+    activeTabCount: number;
+  }>;
 }
 
 export interface FridayGetObservabilityTimeSeriesQuery {

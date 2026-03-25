@@ -9,6 +9,11 @@ export interface FridaySatelliteWithHeartbeatRow {
   display_name: string;
   pairing_status: string;
   trust_level: string;
+  transport: string;
+  platform: string;
+  arch: string;
+  app_version: string;
+  node_version: string;
   tags_json: string;
   last_seen_at: string | null;
   hb_ts: string | null;
@@ -53,6 +58,13 @@ export interface FridayWorkflowRunStatsRow {
   failed_1h: number;
 }
 
+export interface FridayPairingRequestRow {
+  id: string;
+  code: string;
+  status: "pending" | "approved" | "rejected" | "expired";
+  expires_at: string;
+}
+
 // ─── Repository interface ───
 
 export interface FridayFleetDashboardRepository {
@@ -62,6 +74,7 @@ export interface FridayFleetDashboardRepository {
   getWorkflowLoadBySatellite(db: Database.Database, satelliteId: string): FridayWorkflowLoadRow | null;
   getPairingStatusCounts(db: Database.Database): FridayPairingStatusCountRow[];
   getWorkflowRunStats(db: Database.Database, oneHourAgo: string): FridayWorkflowRunStatsRow;
+  getLatestPairingRequest(db: Database.Database, satelliteId: string): FridayPairingRequestRow | null;
   getCapabilities(db: Database.Database, satelliteId: string): Array<{
     key: string;
     available: number;
@@ -86,6 +99,7 @@ export function createFridayFleetDashboardRepository(): FridayFleetDashboardRepo
              GROUP BY satellite_id
            )
            SELECT s.id, s.display_name, s.type, s.pairing_status, s.trust_level, s.tags_json,
+                  s.transport, s.platform, s.arch, s.app_version, s.node_version,
                   s.last_seen_at,
                   h.ts AS hb_ts, h.cpu_percent, h.memory_percent, h.load_avg_1m, h.queue_depth, h.active_runs
            FROM satellites s
@@ -173,6 +187,20 @@ export function createFridayFleetDashboardRepository(): FridayFleetDashboardRepo
         )
         .get(oneHourAgo, oneHourAgo) as FridayWorkflowRunStatsRow | undefined;
       return row ?? { active_runs: 0, completed_1h: 0, failed_1h: 0 };
+    },
+
+    getLatestPairingRequest(db, satelliteId) {
+      return (
+        (db
+          .prepare(
+            `SELECT id, code, status, expires_at
+             FROM satellite_pairing_requests
+             WHERE satellite_id = ?
+             ORDER BY created_at DESC
+             LIMIT 1`,
+          )
+          .get(satelliteId) as FridayPairingRequestRow | undefined) ?? null
+      );
     },
 
     getCapabilities(db, satelliteId) {

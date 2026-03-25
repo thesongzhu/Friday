@@ -2726,6 +2726,25 @@ export async function createFridayHub(
     db: stateRuntime.sqlite,
     idGenerator,
     nowIso,
+    browserDiagnosticsProvider: () => {
+      if (!browserManager) {
+        return undefined;
+      }
+      const summary = browserManager.getDiagnosticsSummary();
+      return {
+        configuredMode: summary.presentation.configuredMode,
+        activeMode: summary.presentation.activeMode,
+        targetBrowser: summary.presentation.targetBrowser,
+        fallbackReason: summary.presentation.fallbackReason,
+        sessionCount: summary.sessionCount,
+        profiles: summary.profiles.map((profile) => ({
+          name: profile.name,
+          kind: profile.kind,
+          sessionCount: profile.sessionCount,
+          activeTabCount: profile.activeTabCount,
+        })),
+      };
+    },
   });
 
   // Wire the lazy learning context reference now that learning runtime is created.

@@ -115,6 +115,8 @@ export interface FridayFleetSatelliteDetailResponse {
     retryingNodes: number;
     blockedOfflineNodes: number;
   };
+  pairingDiagnostics: FridayFleetPairingDiagnostics;
+  routeSelection: FridayFleetRouteSelection;
   runtimeRecovery: FridayFleetSatelliteRuntimeRecovery;
   trustBreakdown: FridaySatelliteTrustBreakdown;
   healthBreakdown: FridaySatelliteHealthBreakdown;
@@ -168,6 +170,32 @@ export interface FridayFleetSatelliteRuntimeRecovery {
     | "requeue_expired_leases"
     | "expire_stale_messages"
     | "resume_blocked_work";
+}
+
+export interface FridayFleetPairingDiagnostics {
+  transport: "ws" | "http-poll" | "mixed" | "unknown";
+  heartbeatState: "fresh" | "stale" | "missing";
+  lastHeartbeatAt?: ISODateTime;
+  runtime: {
+    platform: string;
+    arch: string;
+    appVersion: string;
+    nodeVersion: string;
+  };
+  pendingRequest?: {
+    requestId: UUID;
+    pairingCode: string;
+    status: "pending" | "approved" | "rejected" | "expired";
+    expiresAt: ISODateTime;
+  };
+  requiresReauthorization: boolean;
+  reasons: string[];
+}
+
+export interface FridayFleetRouteSelection {
+  target: "/assistant" | "/fleet" | "/observability";
+  state: "monitor" | "recover" | "blocked";
+  reason: string;
 }
 
 // ─── Health Breakdown ───

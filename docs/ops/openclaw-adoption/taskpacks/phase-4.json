@@ -2,53 +2,64 @@
   "schemaVersion": "1.0",
   "phaseId": "phase4",
   "title": "Remote, Node, And Browser Productization",
-  "executionMode": "spec_only",
-  "goal": "Define diagnostics and browser profile work inside Friday's single-hub trust domain without opening deferred federation or mesh scope.",
+  "executionMode": "automated",
+  "goal": "Additive remote, browser, and operator diagnostics inside Friday's single-hub trust domain without opening deferred federation or mesh scope.",
   "allowedPaths": [
     "src/browser",
-    "src/satellites",
-    "src/fleet",
+    "src/api/fleet",
+    "src/api/model/friday-api-fleet.types.ts",
+    "src/observability/api",
+    "src/observability/services/friday-observability-api-service.ts",
+    "src/hub/friday-hub-bootstrap.ts",
     "src/api/http/routes/friday-observability-routes.ts",
+    "docs/ops/openclaw-adoption/taskpacks/phase-4.json",
     "test/unit/browser",
-    "test/unit/nodes",
+    "test/unit/api/fleet",
+    "test/unit/observability/services",
+    "test/unit/api/http/routes/friday-observability-routes.test.ts",
     "test/e2e/ui/friday-agent-os-browser-journeys.test.ts"
   ],
   "implementationWorkers": [
     {
-      "id": "phase4-remote-node-browser-spec",
-      "title": "Load the committed remote/node/browser taskpack",
+      "id": "phase4-remote-node-browser",
+      "title": "Add browser profile diagnostics and operator-facing fleet routing summaries",
       "runner": "command",
       "mode": "implementation",
       "steps": [
         {
-          "label": "phase4-taskpack-spec",
-          "command": "node",
+          "label": "phase4-targeted-tests",
+          "command": "npx",
           "args": [
-            "-e",
-            "console.log('phase4 taskpack spec validated')"
+            "vitest",
+            "run",
+            "test/unit/browser/friday-browser-manager.test.ts",
+            "test/unit/api/fleet/friday-fleet-dashboard-service.test.ts",
+            "test/unit/observability/services/friday-observability-api-service.test.ts",
+            "test/unit/api/http/routes/friday-observability-routes.test.ts"
           ]
         }
       ]
     }
   ],
   "repairWorker": {
-    "id": "phase4-remote-node-browser-repair-spec",
+    "id": "phase4-remote-node-browser-repair",
     "title": "Diagnose remote/browser blockers without leaving the single-hub trust model",
     "runner": "command",
     "mode": "repair",
     "steps": [
       {
-        "label": "phase4-taskpack-repair-spec",
-        "command": "node",
+        "label": "phase4-repair-check",
+        "command": "npm",
         "args": [
-          "-e",
-          "console.log('phase4 repair spec validated')"
+          "run",
+          "typecheck"
         ]
       }
     ]
   },
   "successCriteria": [
-    "Remote and browser work remains additive within existing fleet and observability authority.",
+    "Remote and browser diagnostics remain additive within existing fleet and observability authority.",
+    "Browser profile work stays bounded to operator, automation, and remote diagnostics instead of introducing a second browser runtime story.",
     "No federation, mesh, mDNS, or Tailscale-native discovery work is introduced."
   ],
   "closureEvidence": [
@@ -63,13 +74,13 @@
         "src/gateway",
         "src/agent/runtime",
         "src/plugins",
-        "src/channels",
-        "src/hub"
+        "src/channels"
       ],
       "verdict": "blocked"
     }
   ],
   "notes": [
-    "This taskpack remains spec_only until the diagnostics and browser profile worker commands are authored."
+    "Phase 4 stays additive: no new route family, no topology expansion, and no connector or plugin authority drift.",
+    "Operator routing summaries should point toward existing /fleet, /observability, and /assistant surfaces instead of creating a new control plane."
   ]
 }
