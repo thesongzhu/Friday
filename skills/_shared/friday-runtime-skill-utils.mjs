@@ -43,6 +43,57 @@ export function requireBrowserContext(ctx) {
   return ctx.browser;
 }
 
+function errorMessage(error) {
+  if (typeof error === "string") {
+    return error.trim();
+  }
+  if (error instanceof Error) {
+    return error.message.trim();
+  }
+  if (error && typeof error === "object" && typeof error.message === "string") {
+    return error.message.trim();
+  }
+  return "";
+}
+
+export function describeBrowserRuntimeFailure(error) {
+  const message = errorMessage(error);
+  if (!message) {
+    return null;
+  }
+  if (
+    message === "This skill requires Friday's readonly browser runtime context."
+    || /browserType\.launch:/i.test(message)
+    || /Executable doesn't exist/i.test(message)
+    || /Please run the following command/i.test(message)
+  ) {
+    return {
+      reason: message,
+      nextStep:
+        "Install Playwright browsers with `npx playwright install chromium`, or rerun Friday in a browser-enabled runtime, then retry this skill.",
+    };
+  }
+  return null;
+}
+
+export function browserRuntimeBlockedResult(input) {
+  const failure = describeBrowserRuntimeFailure(input.error);
+  if (!failure) {
+    return null;
+  }
+  return {
+    summary: `${input.skillLabel}: browser runtime is unavailable, so Friday returned a blocked report instead of failing the run.`,
+    nextStep: input.nextStep ?? failure.nextStep,
+    details: {
+      ...(input.details ?? {}),
+      runtimeUnavailable: true,
+      requiresRuntimeSetup: true,
+      blockedReason: failure.reason,
+      suggestedSkillId: input.suggestedSkillId,
+    },
+  };
+}
+
 export function asArray(value) {
   return Array.isArray(value) ? value : [];
 }

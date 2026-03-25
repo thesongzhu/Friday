@@ -157,10 +157,9 @@ export function createFridaySkillReadonlyRuntimeContext(
           });
           const snapshot = await browserManager.snapshotAria(sessionId, { tabId });
           const performanceTiming = await page.evaluate(() => {
-            const getEntriesByType = performance.getEntriesByType as unknown as
-              | ((entryType: string) => unknown[])
-              | undefined;
-            const navigationEntry = getEntriesByType?.("navigation")?.[0];
+            const getEntriesByType = performance.getEntriesByType.bind(performance) as unknown as
+              (entryType: string) => unknown[];
+            const navigationEntry = getEntriesByType("navigation")?.[0];
             if (!navigationEntry || typeof navigationEntry !== "object") {
               return {
                 domContentLoadedMs: null,

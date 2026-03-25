@@ -1589,7 +1589,12 @@ function PlanCardsSection(props: {
             const canSeedGoal = goalParameter && !String(currentValues.goal ?? "").trim() && props.seedGoal;
             const isRunning = props.templatePending && props.loadingTemplateId === template.id;
             return (
-              <article key={story.templateId} className="agent-subcard-strong">
+              <article
+                key={story.templateId}
+                className="agent-subcard-strong"
+                data-testid="assistant-task-story"
+                data-template-id={story.templateId}
+              >
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-xs uppercase tracking-[0.22em] text-white/35">{template.category}</p>

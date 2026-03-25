@@ -1,4 +1,4 @@
-import { type Browser, type BrowserContext, chromium, type Page } from "playwright";
+import type { Browser, BrowserContext, LaunchOptions, Page } from "playwright";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -11,6 +11,9 @@ const DEFAULT_MAX_TABS_PER_SESSION = 8;
 const DEFAULT_MAX_TOTAL_PAGES = 16;
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 20_000;
 const DEFAULT_ACTION_TIMEOUT_MS = 15_000;
+
+type FridayChromiumLaunchImpl = (options: LaunchOptions) => Promise<Browser>;
+type FridayChromiumConnectOverCdpImpl = (wsEndpoint: string) => Promise<Browser>;
 
 export type FridayBrowserPresentationMode =
   | "auto"
@@ -51,9 +54,9 @@ export interface CreateFridayBrowserManagerOptions {
   platform?: NodeJS.Platform;
   isCi?: boolean;
   /** Injectable chromium launcher for testing. */
-  launchImpl?: typeof chromium.launch;
+  launchImpl?: FridayChromiumLaunchImpl;
   /** Injectable CDP connector for testing. */
-  connectOverCdpImpl?: typeof chromium.connectOverCDP;
+  connectOverCdpImpl?: FridayChromiumConnectOverCdpImpl;
   /** Injectable host Chrome endpoint resolver for testing. */
   resolveHostChromeEndpointImpl?: typeof resolveHostChromeEndpoint;
   /** OC-009: Connect to an existing browser via CDP or pass extra launch args. */
@@ -215,6 +218,52 @@ export function browserArtifactDir(workspaceRoot: string, sessionId: string): st
   );
 }
 
+function resolvePlaywrightBrowsersCacheDir(platform: NodeJS.Platform): string | undefined {
+  let userHome = "";
+  try {
+    userHome = os.userInfo().homedir;
+  } catch {
+    userHome = os.homedir();
+  }
+  if (!userHome) {
+    return undefined;
+  }
+
+  const candidates =
+    platform === "darwin"
+      ? [path.join(userHome, "Library", "Caches", "ms-playwright")]
+      : platform === "linux"
+        ? [path.join(userHome, ".cache", "ms-playwright")]
+        : platform === "win32" && process.env.LOCALAPPDATA
+          ? [path.join(process.env.LOCALAPPDATA, "ms-playwright")]
+          : [];
+
+  return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
+function ensurePlaywrightBrowsersPath(platform: NodeJS.Platform): void {
+  if (typeof process.env.PLAYWRIGHT_BROWSERS_PATH === "string" && process.env.PLAYWRIGHT_BROWSERS_PATH.trim().length > 0) {
+    return;
+  }
+
+  const cacheDir = resolvePlaywrightBrowsersCacheDir(platform);
+  if (cacheDir) {
+    process.env.PLAYWRIGHT_BROWSERS_PATH = cacheDir;
+  }
+}
+
+async function launchPlaywrightChromium(options: LaunchOptions): Promise<Browser> {
+  const { chromium } = await import("playwright");
+  return chromium.launch(options);
+}
+
+async function connectPlaywrightChromiumOverCdp(
+  wsEndpoint: string,
+): Promise<Browser> {
+  const { chromium } = await import("playwright");
+  return chromium.connectOverCDP(wsEndpoint);
+}
+
 // ─── Host Chrome auto-discovery ───
 
 const DEFAULT_CDP_PORT = 9222;
@@ -372,8 +421,8 @@ export function createFridayBrowserManager(
   const workspaceRoot = opts.workspaceRoot;
   const platform = opts.platform ?? process.platform;
   const isCi = opts.isCi ?? process.env.CI === "true";
-  const launchFn = opts.launchImpl ?? chromium.launch.bind(chromium);
-  const connectOverCdp = opts.connectOverCdpImpl ?? chromium.connectOverCDP.bind(chromium);
+  const launchFn = opts.launchImpl ?? launchPlaywrightChromium;
+  const connectOverCdp = opts.connectOverCdpImpl ?? connectPlaywrightChromiumOverCdp;
   const resolveHostChromeEndpointFn = opts.resolveHostChromeEndpointImpl ?? resolveHostChromeEndpoint;
   // OC-009: Visible browser control — CDP connect or extra launch args
   let wsEndpoint = opts.hostBrowser?.wsEndpoint;
@@ -540,6 +589,7 @@ export function createFridayBrowserManager(
     let fallbackReason: string | undefined;
 
     async function launchPlaywrightBrowser(forceHeadless = headless): Promise<Browser> {
+      ensurePlaywrightBrowsersPath(platform);
       return launchFn({
         headless: forceHeadless,
         args: extraLaunchArgs.length > 0 ? extraLaunchArgs : undefined,
