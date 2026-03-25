@@ -9,6 +9,36 @@
 
 import type { FridayChannelAdapters } from "./friday-channel-adapters.types.js";
 
+export interface FridayChannelCoreAuthority {
+  messageRouting: true;
+  sessionMirroring: true;
+  audit: true;
+  evidence: true;
+}
+
+export interface FridayChannelPluginResponsibilities {
+  config: boolean;
+  auth: boolean;
+  pairing: boolean;
+  outboundDelivery: boolean;
+  threadResolution: boolean;
+  providerRetries: boolean;
+}
+
+export interface FridayChannelSupportProfile {
+  directMessages: boolean;
+  groupMessages: boolean;
+  threads: boolean;
+  typing: boolean;
+}
+
+export interface FridayChannelCapabilityContract {
+  coreAuthority: FridayChannelCoreAuthority;
+  pluginResponsibilities: FridayChannelPluginResponsibilities;
+  supports: FridayChannelSupportProfile;
+  curatedSkillIds?: string[];
+}
+
 // ─── Inbound Message ───
 
 export interface FridayChannelMessage {
@@ -83,6 +113,12 @@ export interface FridayChannelPlugin {
    * Returns the platform-assigned message ID.
    */
   send(options: FridayChannelSendOptions): Promise<{ messageId: string }>;
+
+  /**
+   * Optional contract metadata that makes the channel/core boundary explicit.
+   * Core remains authoritative for routing, session mirroring, audit, and evidence.
+   */
+  contract?: FridayChannelCapabilityContract;
 
   /**
    * Optional adapter set for modular channel architecture.

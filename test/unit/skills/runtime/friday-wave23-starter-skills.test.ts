@@ -411,4 +411,92 @@ describe("wave 2 and wave 3 Friday starter skills", () => {
     expect(result.details.runtimeUnavailable).toBe(true);
     expect(readFileSync(path.join(repoRoot, "index.html"), "utf8")).toContain("<title>Vite App</title>");
   });
+
+  it("reports channel contract and status for slack-channel-status", async () => {
+    const { execute } = await import("../../../../skills/slack-channel-status/index.mjs");
+
+    const result = await execute(
+      {},
+      {
+        channels: {
+          listChannels: async () => [
+            {
+              kind: "slack",
+              running: true,
+              status: "connected",
+              diagnostics: { mode: "socket" },
+              contract: {
+                coreAuthority: {
+                  messageRouting: true,
+                  sessionMirroring: true,
+                  audit: true,
+                  evidence: true,
+                },
+                pluginResponsibilities: {
+                  config: true,
+                  auth: true,
+                  pairing: false,
+                  outboundDelivery: true,
+                  threadResolution: true,
+                  providerRetries: false,
+                },
+                supports: {
+                  directMessages: true,
+                  groupMessages: true,
+                  threads: true,
+                  typing: false,
+                },
+                curatedSkillIds: ["slack-channel-status"],
+              },
+              allowlist: {
+                hasAllowedUsers: false,
+                allowedUsersCount: 0,
+                hasAllowedChats: false,
+                allowedChatsCount: 0,
+              },
+            },
+          ],
+          getChannel: async () => ({
+            kind: "slack",
+            running: true,
+            status: "connected",
+            diagnostics: { mode: "socket" },
+            contract: {
+              coreAuthority: {
+                messageRouting: true,
+                sessionMirroring: true,
+                audit: true,
+                evidence: true,
+              },
+              pluginResponsibilities: {
+                config: true,
+                auth: true,
+                pairing: false,
+                outboundDelivery: true,
+                threadResolution: true,
+                providerRetries: false,
+              },
+              supports: {
+                directMessages: true,
+                groupMessages: true,
+                threads: true,
+                typing: false,
+              },
+              curatedSkillIds: ["slack-channel-status"],
+            },
+            allowlist: {
+              hasAllowedUsers: false,
+              allowedUsersCount: 0,
+              hasAllowedChats: false,
+              allowedChatsCount: 0,
+            },
+          }),
+        },
+      },
+    );
+
+    expect(result.summary).toContain("Slack channel is connected");
+    expect(result.details.supportsThreads).toBe(true);
+    expect(result.details.curatedSkillIds).toEqual(["slack-channel-status"]);
+  });
 });

@@ -6,13 +6,14 @@ import {
   type FridayChannelRegistry,
 } from "#channels";
 
-function createMockPlugin(kind = "test"): FridayChannelPlugin {
+function createMockPlugin(kind = "test", overrides: Partial<FridayChannelPlugin> = {}): FridayChannelPlugin {
   return {
     kind,
     init: vi.fn(async () => {}),
     start: vi.fn(async (onMessage) => {}),
     stop: vi.fn(async () => {}),
     send: vi.fn(async () => ({ messageId: "sent-1" })),
+    ...overrides,
   };
 }
 
@@ -57,6 +58,59 @@ describe("FridayChannelRegistry", () => {
       registry.register(createMockPlugin("qq"));
       registry.register(createMockPlugin("lark"));
       expect(registry.list()).toEqual(["qq", "lark"]);
+    });
+
+    it("describes registered channel contracts and diagnostics", () => {
+      const plugin = createMockPlugin("discord", {
+        contract: {
+          coreAuthority: {
+            messageRouting: true,
+            sessionMirroring: true,
+            audit: true,
+            evidence: true,
+          },
+          pluginResponsibilities: {
+            config: true,
+            auth: true,
+            pairing: false,
+            outboundDelivery: true,
+            threadResolution: true,
+            providerRetries: false,
+          },
+          supports: {
+            directMessages: true,
+            groupMessages: true,
+            threads: true,
+            typing: true,
+          },
+          curatedSkillIds: ["discord-channel-status"],
+        },
+        adapters: {
+          status: {
+            status: () => "connected",
+            diagnostics: () => ({ mode: "gateway" }),
+          },
+        },
+      });
+
+      registry.register(plugin, { allowedUsers: ["u-1"], allowedChats: ["c-1", "c-2"] });
+
+      expect(registry.describe("discord")).toMatchObject({
+        kind: "discord",
+        status: "connected",
+        contract: {
+          supports: { threads: true },
+          curatedSkillIds: ["discord-channel-status"],
+        },
+        allowlist: {
+          hasAllowedUsers: true,
+          allowedUsersCount: 1,
+          hasAllowedChats: true,
+          allowedChatsCount: 2,
+        },
+      });
+
+      expect(registry.listViews()).toHaveLength(1);
     });
   });
 

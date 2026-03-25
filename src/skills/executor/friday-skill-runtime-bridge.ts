@@ -32,13 +32,14 @@ function cloneJson<T>(value: T): T {
 }
 
 export function createFridaySkillReadonlyRuntimeContext(
-  deps: Pick<CreateFridaySkillExecutorDeps, "getSelfHealingService" | "getSystemService" | "getBrowserManager">,
+  deps: Pick<CreateFridaySkillExecutorDeps, "getSelfHealingService" | "getSystemService" | "getBrowserManager" | "getChannelRegistry">,
   request: Pick<FridaySkillExecuteRequest, "userId" | "sessionId" | "skillId">,
 ): Omit<FridaySkillNodeRuntimeContext, "ai"> | undefined {
   const runtimeContext: Omit<FridaySkillNodeRuntimeContext, "ai"> = {};
   const systemService = deps.getSystemService?.();
   const selfHealingService = deps.getSelfHealingService?.();
   const browserManager = deps.getBrowserManager?.();
+  const channelRegistry = deps.getChannelRegistry?.();
 
   if (systemService) {
     runtimeContext.system = {
@@ -219,6 +220,17 @@ export function createFridaySkillReadonlyRuntimeContext(
       },
       async closeSession(sessionId: string) {
         await browserManager.close(sessionId);
+      },
+    };
+  }
+
+  if (channelRegistry) {
+    runtimeContext.channels = {
+      async listChannels() {
+        return cloneJson(channelRegistry.listViews());
+      },
+      async getChannel(kind: string) {
+        return cloneJson(channelRegistry.describe(kind) ?? null);
       },
     };
   }
