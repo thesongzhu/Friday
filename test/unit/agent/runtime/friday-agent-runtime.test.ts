@@ -4590,6 +4590,46 @@ describe("FridayAgentRuntime", () => {
     expect(capturedSystemPrompt).toBe("You are a test agent.");
   });
 
+  it("calls contextEngine.afterTurn for terminal runs without changing the result", async () => {
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "ok" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 2 },
+      ],
+    ]);
+    const afterTurn = vi.fn();
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      contextEngine: {
+        afterTurn,
+      },
+    });
+
+    const result = await runtime.executeRun({
+      task: "Hello",
+      sessionKey: "session-123",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(afterTurn).toHaveBeenCalledWith(expect.objectContaining({
+      runId: result.runId,
+      sessionKey: "session-123",
+      task: "Hello",
+      response: "ok",
+      status: "completed",
+      summary: "ok",
+    }));
+  });
+
   it("does not enrich system prompt when preferences are empty", async () => {
     let capturedSystemPrompt = "";
 

@@ -3,7 +3,10 @@ import type Database from "better-sqlite3";
 import type { FridaySqliteLayer } from "#state";
 import type { FridayLearningEventAppendInput } from "#ledger";
 
-import type { FridayAgentRuntimeResult } from "../runtime/friday-agent-runtime.types.js";
+import type {
+  FridayAgentExecutionContext,
+  FridayAgentRuntimeResult,
+} from "../runtime/friday-agent-runtime.types.js";
 
 export interface FridayAgentAutomationSchedule {
   type: "cron";
@@ -16,6 +19,11 @@ export type FridayAgentAutomationPromotionState =
   | "team"
   | "public_boost_eligible"
   | "public";
+
+export type FridayAgentAutomationSessionTarget =
+  | { type: "isolated" }
+  | { type: "named"; sessionKey: string }
+  | { type: "current"; sessionKey?: string };
 
 // ─── Persisted automation record ───
 
@@ -30,6 +38,7 @@ export interface FridayAgentAutomationRecord {
   workflowIds?: string[];
   triggerId?: string;
   schedule?: FridayAgentAutomationSchedule;
+  sessionTarget?: FridayAgentAutomationSessionTarget;
   enabled: boolean;
   lastRunId?: string;
   lastRunAt?: string;
@@ -54,6 +63,7 @@ export interface FridayAgentAutomationSaveInput {
   workflowIds?: string[];
   triggerId?: string;
   schedule?: FridayAgentAutomationSchedule;
+  sessionTarget?: FridayAgentAutomationSessionTarget;
   enabled?: boolean;
 }
 
@@ -72,6 +82,7 @@ export interface FridayAgentAutomationUpdateInput {
   workflowIds?: string[];
   triggerId?: string;
   schedule?: FridayAgentAutomationSchedule | null;
+  sessionTarget?: FridayAgentAutomationSessionTarget | null;
   enabled?: boolean;
 }
 
@@ -81,6 +92,7 @@ export interface FridayAgentAutomationRunInput {
   model?: string;
   timezone?: string;
   timeoutMs?: number;
+  sessionTarget?: FridayAgentAutomationSessionTarget;
 }
 
 // ─── Service interface ───
@@ -110,6 +122,7 @@ export interface FridayAgentAutomationRepository {
     id: string,
     patch: Partial<Omit<FridayAgentAutomationRecord, "id" | "createdAt" | "schedule">> & {
       schedule?: FridayAgentAutomationSchedule | null;
+      sessionTarget?: FridayAgentAutomationSessionTarget | null;
     },
   ): FridayAgentAutomationRecord | null;
   remove(db: Database.Database, id: string): boolean;
@@ -127,13 +140,16 @@ export interface CreateFridayAgentAutomationServiceDeps {
   repository: FridayAgentAutomationRepository;
   startRun: (input: {
     task: string;
+    sessionKey?: string;
     providerId?: string;
     model?: string;
     timezone?: string;
     timeoutMs?: number;
+    executionContext?: FridayAgentExecutionContext;
   }) => Promise<FridayAgentRuntimeResult>;
   idGenerator: () => string;
   nowIso: () => string;
   learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
   learningUserId?: string;
+  resolveSourceSessionKey?: (sourceRunId: string) => string | null;
 }
