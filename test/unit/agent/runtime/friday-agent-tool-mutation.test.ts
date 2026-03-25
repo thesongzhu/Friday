@@ -32,6 +32,16 @@ describe("isMutatingToolCall", () => {
     expect(isMutatingToolCall("skill_run", { skillId: "system-health-snapshot" })).toBe(false);
   });
 
+  it("classifies readonly wave-1 starter skill_run calls as non-mutating", () => {
+    expect(isMutatingToolCall("skill_run", { skillId: "idea-clarifier" })).toBe(false);
+    expect(isMutatingToolCall("skill_run", { skillId: "browser-qa-report" })).toBe(false);
+    expect(isMutatingToolCall("skill_run", { skillId: "workspace-diff-review" })).toBe(false);
+  });
+
+  it("classifies release-doc-sync skill_run as mutating", () => {
+    expect(isMutatingToolCall("skill_run", { skillId: "release-doc-sync" })).toBe(true);
+  });
+
   // ─── Always read-only ───
 
   it("classifies read as non-mutating", () => {

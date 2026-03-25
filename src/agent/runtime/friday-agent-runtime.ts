@@ -1968,6 +1968,10 @@ const READ_ONLY_DIAGNOSTIC_SKILL_IDS = new Set([
   "review-open-issues",
   "autofix-readiness-review",
   "failed-deploy-recovery-brief",
+  "idea-clarifier",
+  "implementation-plan-review",
+  "browser-qa-report",
+  "workspace-diff-review",
 ]);
 
 function normalizeDefaultRouteSentinel(value?: string): string | undefined {

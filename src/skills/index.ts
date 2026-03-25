@@ -188,6 +188,9 @@ export type {
   FridaySkillReadonlySystemContext,
   FridaySkillReadonlyDiagnosisContext,
   FridaySkillReadonlyAutofixContext,
+  FridaySkillReadonlyBrowserInspectOptions,
+  FridaySkillReadonlyBrowserInspection,
+  FridaySkillReadonlyBrowserContext,
   FridaySkillNodeRuntimeContext,
 } from "./executor/friday-skill-executor.types.js";
 export {

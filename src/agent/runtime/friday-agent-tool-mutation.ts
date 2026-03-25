@@ -64,6 +64,10 @@ const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>)
       "review-open-issues",
       "autofix-readiness-review",
       "failed-deploy-recovery-brief",
+      "idea-clarifier",
+      "implementation-plan-review",
+      "browser-qa-report",
+      "workspace-diff-review",
     ]);
     return !readOnlySkills.has(skillId);
   },

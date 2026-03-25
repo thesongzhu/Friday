@@ -308,4 +308,121 @@ describe("createFridayUixSurfaceService", () => {
       requiresApproval: true,
     });
   });
+
+  it("routes idea clarification requests to the new starter templates", () => {
+    const service = createFridayUixSurfaceService({
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+    });
+
+    const resolution = service.resolveIntent({
+      text: "Help me clarify this idea before I start building it",
+      userId: "user-1",
+    });
+
+    expect(resolution.intent).toBe("general_help");
+    expect(resolution.suggestedTemplateIds).toEqual([
+      "idea-clarifier",
+      "implementation-plan-review",
+    ]);
+  });
+
+  it("routes idea-clarifier through the bundled starter skill when a skill executor is available", async () => {
+    const execute = vi.fn(() => ({
+      runId: "skill-run-3",
+      result: Promise.resolve({
+        runId: "skill-run-3",
+        status: "completed",
+        output: {
+          summary: "Idea clarification: this looks like a workflow request with 2 major clarification gap(s).",
+          nextStep: "Answer the first question next: Who is the narrowest first user or operator for this change?",
+          details: {
+            suggestedSkillId: "implementation-plan-review",
+          },
+        },
+        stdout: "",
+        stderr: "",
+        durationMs: 10,
+      }),
+    }));
+    const service = createFridayUixSurfaceService({
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+      skillExecutor: {
+        execute,
+        cancel: vi.fn(),
+      },
+    });
+
+    const response = await service.executeTemplate({
+      templateId: "idea-clarifier",
+      userId: "user-1",
+      parameters: {
+        goal: "Clarify this idea before I build it",
+      },
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skillId: "idea-clarifier",
+        input: {
+          goal: "Clarify this idea before I build it",
+        },
+      }),
+    );
+    expect(response.summary).toContain("Idea clarification");
+    expect(response.result).toMatchObject({
+      skillId: "idea-clarifier",
+    });
+  });
+
+  it("routes release-doc-sync through the bundled starter skill with apply=true", async () => {
+    const execute = vi.fn(() => ({
+      runId: "skill-run-4",
+      result: Promise.resolve({
+        runId: "skill-run-4",
+        status: "completed",
+        output: {
+          summary: "Release doc sync: updated 3 documentation file(s).",
+          nextStep: "Review the generated doc diff, then run your normal release or landing checks.",
+          details: {
+            updatedFiles: ["README.md", "CHANGELOG.md", "docs/reference/ARCHITECTURE.md"],
+          },
+        },
+        stdout: "",
+        stderr: "",
+        durationMs: 11,
+      }),
+    }));
+    const service = createFridayUixSurfaceService({
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+      skillExecutor: {
+        execute,
+        cancel: vi.fn(),
+      },
+    });
+
+    const response = await service.executeTemplate({
+      templateId: "release-doc-sync",
+      userId: "user-1",
+      parameters: {
+        goal: "Sync the release docs for the assistant starter changes.",
+      },
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skillId: "release-doc-sync",
+        input: {
+          goal: "Sync the release docs for the assistant starter changes.",
+          apply: true,
+        },
+      }),
+    );
+    expect(response.summary).toContain("updated 3 documentation file");
+  });
 });

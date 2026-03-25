@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Browser QA Report",
+  "description": "Inspect a page with Friday's browser runtime and collect QA evidence.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "goal",
+        "url",
+        "expectedText"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "goal",
+      "inputKey": "goal",
+      "kind": "text",
+      "label": "QA Brief",
+      "required": false,
+      "help": "Describe what page or route you want Friday to inspect."
+    },
+    {
+      "id": "url",
+      "inputKey": "url",
+      "kind": "text",
+      "label": "URL",
+      "required": false,
+      "help": "Optional explicit page URL."
+    },
+    {
+      "id": "expectedText",
+      "inputKey": "expectedText",
+      "kind": "text",
+      "label": "Expected Text",
+      "required": false,
+      "help": "Optional text that should appear in the page snapshot."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Run QA",
+      "style": "primary"
+    }
+  ]
+}
