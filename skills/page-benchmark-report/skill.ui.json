@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Page Benchmark Report",
+  "description": "Collect repeated browser timings, compare them to a saved baseline, and surface regressions or improvements.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "goal",
+        "url",
+        "repeats",
+        "refreshBaseline"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "goal",
+      "inputKey": "goal",
+      "kind": "text",
+      "label": "Benchmark Goal",
+      "required": false,
+      "help": "Describe the page or paste a URL."
+    },
+    {
+      "id": "url",
+      "inputKey": "url",
+      "kind": "text",
+      "label": "URL",
+      "required": false,
+      "help": "Optional explicit benchmark URL."
+    },
+    {
+      "id": "repeats",
+      "inputKey": "repeats",
+      "kind": "number",
+      "label": "Repeats",
+      "required": false,
+      "help": "Number of browser samples to collect."
+    },
+    {
+      "id": "refreshBaseline",
+      "inputKey": "refreshBaseline",
+      "kind": "boolean",
+      "label": "Refresh Baseline",
+      "required": false,
+      "help": "Overwrite the saved local baseline."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Benchmark",
+      "style": "primary"
+    }
+  ]
+}

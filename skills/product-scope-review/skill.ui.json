@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Product Scope Review",
+  "description": "Review wedge clarity, scope discipline, and delivery risk before implementation.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "goal"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "goal",
+      "inputKey": "goal",
+      "kind": "text",
+      "label": "Scope Statement",
+      "required": true,
+      "help": "Paste the idea, scope note, or PRD excerpt."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Review Scope",
+      "style": "primary"
+    }
+  ]
+}

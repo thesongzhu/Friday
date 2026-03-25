@@ -248,7 +248,7 @@ describe("FridaySkillRegistry Lifecycle (Integration)", () => {
       expect(reg.list()).toHaveLength(0);
     });
 
-    it("loads the bundled diagnosis and recovery starter skills from the repo starter pack", async () => {
+    it("loads the bundled diagnosis, recovery, and gstack-style starter skills from the repo starter pack", async () => {
       const workspace = process.cwd();
       const skillsDir = path.join(workspace, "skills");
 
@@ -264,6 +264,13 @@ describe("FridaySkillRegistry Lifecycle (Integration)", () => {
       expect(reg.get("browser-qa-report")).not.toBeNull();
       expect(reg.get("workspace-diff-review")).not.toBeNull();
       expect(reg.get("release-doc-sync")).not.toBeNull();
+      expect(reg.get("page-benchmark-report")).not.toBeNull();
+      expect(reg.get("release-canary-check")).not.toBeNull();
+      expect(reg.get("engineering-retro")).not.toBeNull();
+      expect(reg.get("product-scope-review")).not.toBeNull();
+      expect(reg.get("design-plan-review")).not.toBeNull();
+      expect(reg.get("security-review")).not.toBeNull();
+      expect(reg.get("browser-qa-fix")).not.toBeNull();
     });
   });
 

@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Release Canary Check",
+  "description": "Inspect one or more pages after a change, capture evidence, and compare the result to the previous local canary run.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "goal",
+        "url",
+        "expectedText"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "goal",
+      "inputKey": "goal",
+      "kind": "text",
+      "label": "Canary Goal",
+      "required": false,
+      "help": "Describe the deploy check or paste one or more URLs."
+    },
+    {
+      "id": "url",
+      "inputKey": "url",
+      "kind": "text",
+      "label": "URL",
+      "required": false,
+      "help": "Optional single page to inspect."
+    },
+    {
+      "id": "expectedText",
+      "inputKey": "expectedText",
+      "kind": "text",
+      "label": "Expected Text",
+      "required": false,
+      "help": "Text that should be visible in the rendered page."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Run Canary Check",
+      "style": "primary"
+    }
+  ]
+}

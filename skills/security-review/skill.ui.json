@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Security Review",
+  "description": "Run a bounded static audit across auth, proxy trust, execution, and supply-chain surfaces, then persist a local threat-model report.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "goal"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "goal",
+      "inputKey": "goal",
+      "kind": "text",
+      "label": "Security Scope",
+      "required": false,
+      "help": "Optionally focus the audit on auth, remote access, tokens, or supply chain surfaces."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Run Security Review",
+      "style": "primary"
+    }
+  ]
+}
