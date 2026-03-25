@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Workspace Diff Review",
+  "description": "Review the current workspace diff before landing or shipping.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "workspaceRoot",
+        "goal"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "workspaceRoot",
+      "inputKey": "workspaceRoot",
+      "kind": "text",
+      "label": "Workspace Root",
+      "required": false,
+      "help": "Optional directory to inspect."
+    },
+    {
+      "id": "goal",
+      "inputKey": "goal",
+      "kind": "text",
+      "label": "Review Context",
+      "required": false,
+      "help": "Optional landing or release context."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Review Diff",
+      "style": "primary"
+    }
+  ]
+}

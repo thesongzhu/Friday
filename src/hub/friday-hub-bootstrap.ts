@@ -221,7 +221,7 @@ import type {
   FridayJobSchedulerService,
   FridayScheduledJobDefinition,
 } from "#jobs";
-import { createFridayBrowserManager } from "#browser";
+import { createFridayBrowserManager, type FridayBrowserManager } from "#browser";
 import { createXhsPageInteractions, createXhsSessionManager } from "#xhs";
 import {
   createFridayHeartbeatJob,
@@ -530,6 +530,8 @@ export async function createFridayHub(
     nowIso,
   });
 
+  let browserManager: FridayBrowserManager | undefined;
+
   // 7. Create executor with providerService injected for ai-inference BYOK path
   const executor = createFridaySkillExecutor({
     db: stateRuntime.sqlite,
@@ -540,6 +542,7 @@ export async function createFridayHub(
     providerService,
     getSystemService: () => systemService,
     getSelfHealingService: () => selfHealingApiService,
+    getBrowserManager: () => browserManager,
   });
 
   const rulesRepository = createFridayRulesRepository();
@@ -847,7 +850,7 @@ export async function createFridayHub(
   // Build browser + XHS runtime deps
   const browserHostConfig = resolveBrowserHostConfigFromEnv(process.env);
   const browserPresentationMode = resolveBrowserPresentationModeFromEnv(process.env);
-  const browserManager = createFridayBrowserManager({
+  browserManager = createFridayBrowserManager({
     workspaceRoot,
     presentationMode: browserPresentationMode,
     hostBrowser: browserHostConfig,

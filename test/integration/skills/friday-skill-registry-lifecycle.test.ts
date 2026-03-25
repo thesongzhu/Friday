@@ -259,6 +259,11 @@ describe("FridaySkillRegistry Lifecycle (Integration)", () => {
       expect(reg.get("review-open-issues")).not.toBeNull();
       expect(reg.get("autofix-readiness-review")).not.toBeNull();
       expect(reg.get("failed-deploy-recovery-brief")).not.toBeNull();
+      expect(reg.get("idea-clarifier")).not.toBeNull();
+      expect(reg.get("implementation-plan-review")).not.toBeNull();
+      expect(reg.get("browser-qa-report")).not.toBeNull();
+      expect(reg.get("workspace-diff-review")).not.toBeNull();
+      expect(reg.get("release-doc-sync")).not.toBeNull();
     });
   });
 

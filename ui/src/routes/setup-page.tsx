@@ -37,6 +37,11 @@ const DEFAULT_CHANNELS: ChannelKind[] = [
 ];
 
 const STARTER_SKILL_EXAMPLES: Record<string, string> = {
+  "idea-clarifier": "Clarify this idea and turn it into a concrete first milestone.",
+  "implementation-plan-review": "Review this implementation plan before I start coding.",
+  "browser-qa-report": "QA this page or app and show me the evidence.",
+  "workspace-diff-review": "Review the current changes and call out what is risky.",
+  "release-doc-sync": "Sync the release docs for the current workspace changes.",
   "repo-health-check": "Review repo health and tell me the next useful step.",
   "workspace-change-risk-review": "Review the current diff and call out change risk.",
   "release-readiness-check": "Check whether this workspace is ready to ship.",
@@ -582,9 +587,9 @@ export function SetupPage() {
                 Default boundaries
               </p>
               <div className="mt-4 space-y-3 text-sm leading-6 text-white/60">
-                <p>Starter skills are diagnostic-first: they summarize risk, readiness, logs, and service state before suggesting an action.</p>
+                <p>Starter skills are role-first: they can clarify ideas, review plans, inspect runtime health, and guide the next safe action without dropping you into a blank builder flow.</p>
                 <p>They are bundled with Friday, so there is nothing to install during setup.</p>
-                <p>They do not auto-restart services, delete files, or mutate system state in v1.</p>
+                <p>They can clarify ideas, review plans, QA pages, inspect diffs, and sync bounded docs before they reach for heavier automation.</p>
               </div>
             </div>
           </div>

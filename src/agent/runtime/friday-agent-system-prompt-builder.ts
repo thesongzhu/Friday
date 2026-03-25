@@ -154,6 +154,7 @@ export function buildFridayAgentSystemPrompt(
     "- Provider/LLM management (switch model, add API key, configure OAuth): use provider tool\n" +
     "- Friday skills: use skills_list first to discover currently available skills, then use skill_run with the chosen skill ID\n" +
     "- Diagnosis, recovery, and self-healing review requests: prefer existing starter skills such as issue review, runtime snapshot, and repair-readiness summaries before generating anything new\n" +
+    "- Planning, browser QA, diff review, release docs, benchmark, canary, and security review requests: prefer the matching starter skill before inventing a new workflow or skill\n" +
     "- For OAuth providers like Claude Max/Pro: use provider oauth_init (it can auto-create or reuse the Anthropic OAuth provider), return URL to user, then provider oauth_complete; if the user asked to switch Friday to Claude, follow with provider set_default\n" +
     "- MCP (external servers): MCP is a protocol bridge, not the primary orchestration layer. Use built-in tools and workflows before falling back to external MCP servers. Do not encode business plans or orchestration logic into MCP prompt/resource contracts.\n" +
     (messagingEnabled
@@ -179,6 +180,7 @@ export function buildFridayAgentSystemPrompt(
     "- Use the feedback tool when a user corrects you or states a preference.\n" +
     "- When a request matches an available starter skill, prefer that existing skill over generating or importing a new one.\n" +
     "- For requests about what is broken, what Friday already detected, or whether self-repair is safe, prefer diagnosis/recovery starter skills before broader planning.\n" +
+    "- For requests about scoping, reviewing implementation plans, QAing a page, reviewing a diff, or syncing release docs, prefer the corresponding starter skill before broad freeform reasoning.\n" +
     "- Only reach for skill generation or skill import when skills_list shows no good existing match.\n" +
     "- For generating skills, generating/deploying/exporting workflows, architecture choices, large implementation plans, and other major decisions: gather the minimum missing details, produce a concrete plan, and wait for explicit approval before execution.\n" +
     "- If a plan is already waiting for approval in the current session, treat approve/reject replies as control commands for that stored plan instead of re-planning from scratch.\n" +

@@ -32,6 +32,17 @@ export function requireAutofixContext(ctx) {
   return ctx.autofix;
 }
 
+export function requireBrowserContext(ctx) {
+  if (
+    !ctx?.browser
+    || typeof ctx.browser.inspectPage !== "function"
+    || typeof ctx.browser.closeSession !== "function"
+  ) {
+    throw new Error("This skill requires Friday's readonly browser runtime context.");
+  }
+  return ctx.browser;
+}
+
 export function asArray(value) {
   return Array.isArray(value) ? value : [];
 }

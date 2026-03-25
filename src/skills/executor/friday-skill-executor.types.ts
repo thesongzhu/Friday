@@ -1,5 +1,6 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridaySkillRunStore } from "#ledger";
+import type { FridayBrowserManager } from "#browser";
 import type { FridaySkillRegistry } from "../registry/friday-skill-registry.types.js";
 
 // ─── Shell executor types ───
@@ -53,11 +54,50 @@ export interface FridaySkillReadonlyAutofixContext {
   getAction(actionId: string): Promise<Record<string, unknown> | null>;
 }
 
+export interface FridaySkillReadonlyBrowserInspectOptions {
+  url: string;
+  sessionId?: string;
+  waitUntil?: "load" | "domcontentloaded" | "networkidle";
+  timeoutMs?: number;
+  screenshotName?: string;
+  viewport?: {
+    width: number;
+    height: number;
+  };
+}
+
+export interface FridaySkillReadonlyBrowserInspection {
+  sessionId: string;
+  tabId: string;
+  title: string;
+  finalUrl: string;
+  requestedUrl: string;
+  status: number | null;
+  snapshot: string;
+  screenshotPath: string | null;
+  consoleErrors: Array<{ type: string; text: string }>;
+  consoleWarnings: Array<{ type: string; text: string }>;
+  pageErrors: string[];
+  requestFailures: Array<{ url: string; method: string; failureText: string | null }>;
+  timings: {
+    domContentLoadedMs: number | null;
+    loadMs: number | null;
+  };
+}
+
+export interface FridaySkillReadonlyBrowserContext {
+  inspectPage(
+    input: FridaySkillReadonlyBrowserInspectOptions,
+  ): Promise<FridaySkillReadonlyBrowserInspection>;
+  closeSession(sessionId: string): Promise<void>;
+}
+
 export interface FridaySkillNodeRuntimeContext {
   ai?: FridaySkillAiHelperContext;
   system?: FridaySkillReadonlySystemContext;
   diagnosis?: FridaySkillReadonlyDiagnosisContext;
   autofix?: FridaySkillReadonlyAutofixContext;
+  browser?: FridaySkillReadonlyBrowserContext;
 }
 
 export interface FridaySkillReadonlySystemServiceLike {
@@ -134,6 +174,7 @@ export interface CreateFridaySkillExecutorDeps {
   providerService?: FridayProviderServiceLike;
   getSystemService?: () => FridaySkillReadonlySystemServiceLike | undefined;
   getSelfHealingService?: () => FridaySkillReadonlySelfHealingServiceLike | undefined;
+  getBrowserManager?: () => FridayBrowserManager | undefined;
 }
 
 /**

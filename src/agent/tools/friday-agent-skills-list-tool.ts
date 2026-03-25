@@ -15,8 +15,14 @@ function scoreSkill(skill: FridayRegisteredSkill): number {
   const tags = skill.manifest.tags ?? [];
   let score = 0;
   if (tags.includes("starter")) score += 100;
-  if (tags.includes("starter.diagnosis")) score += 25;
-  if (tags.includes("starter.recovery")) score += 30;
+  if (tags.includes("starter.recovery")) score += 35;
+  if (tags.includes("starter.diagnosis")) score += 30;
+  if (tags.includes("starter.builder")) score += 20;
+  if (tags.includes("starter.qa")) score += 18;
+  if (tags.includes("starter.release")) score += 16;
+  if (tags.includes("starter.security")) score += 14;
+  if (tags.includes("starter.retro")) score += 12;
+  if (tags.includes("starter.devops")) score += 10;
   if (skill.status === "installed") score += 10;
   if (skill.origin === "bundled") score += 5;
   return score;
