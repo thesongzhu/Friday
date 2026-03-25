@@ -1281,16 +1281,16 @@ export async function createFridayHub(
   const hasConfiguredSearchKey = Boolean(
     process.env.FRIDAY_SERPER_API_KEY?.trim() || process.env.FRIDAY_TAVILY_API_KEY?.trim(),
   );
+  const searchWarning = configuredSearchProvider === "serper" && !process.env.FRIDAY_SERPER_API_KEY?.trim()
+    ? 'Configured search provider "serper" is missing FRIDAY_SERPER_API_KEY; time-sensitive news lookup is unverified.'
+    : configuredSearchProvider === "tavily" && !process.env.FRIDAY_TAVILY_API_KEY?.trim()
+      ? 'Configured search provider "tavily" is missing FRIDAY_TAVILY_API_KEY; time-sensitive news lookup is unverified.'
+      : !configuredSearchProvider
+        ? "FRIDAY_SEARCH_PROVIDER is not configured; Friday will fall back to DuckDuckGo HTML search and time-sensitive news lookup is unverified."
+        : !hasConfiguredSearchKey && (configuredSearchProvider === "serper" || configuredSearchProvider === "tavily")
+          ? `Search provider "${configuredSearchProvider}" has no API key configured; time-sensitive news lookup is unverified.`
+          : undefined;
   if (process.env.NODE_ENV !== "test") {
-    const searchWarning = configuredSearchProvider === "serper" && !process.env.FRIDAY_SERPER_API_KEY?.trim()
-      ? 'Configured search provider "serper" is missing FRIDAY_SERPER_API_KEY; time-sensitive news lookup is unverified.'
-      : configuredSearchProvider === "tavily" && !process.env.FRIDAY_TAVILY_API_KEY?.trim()
-        ? 'Configured search provider "tavily" is missing FRIDAY_TAVILY_API_KEY; time-sensitive news lookup is unverified.'
-        : !configuredSearchProvider
-          ? "FRIDAY_SEARCH_PROVIDER is not configured; Friday will fall back to DuckDuckGo HTML search and time-sensitive news lookup is unverified."
-          : !hasConfiguredSearchKey && (configuredSearchProvider === "serper" || configuredSearchProvider === "tavily")
-            ? `Search provider "${configuredSearchProvider}" has no API key configured; time-sensitive news lookup is unverified.`
-            : undefined;
     if (searchWarning) {
       console.warn(`[friday] ${searchWarning}`);
     }
@@ -1519,6 +1519,75 @@ export async function createFridayHub(
       blockers,
       pendingPlanRunId: focusState?.pendingPlanRunId,
       terminalOutcome,
+    };
+  };
+
+  const getPublicSystemHealth: () => Promise<{
+    enabled: boolean;
+    remoteMode: "trusted_private_network" | "disabled" | "unavailable";
+    healthStatus?: "healthy" | "degraded" | "safe_mode" | "unavailable";
+    companionConnected?: boolean;
+    companionReadiness?: "ready" | "degraded" | "unavailable";
+    reasons?: string[];
+    warning?: string;
+  }> = async () => {
+    const remoteMode: "trusted_private_network" | "disabled" | "unavailable" = systemEnabled
+      ? (process.env.FRIDAY_SYSTEM_REMOTE_MODE === "disabled" ? "disabled" : "trusted_private_network")
+      : "unavailable";
+    if (!systemEnabled) {
+      return {
+        enabled: false,
+        remoteMode,
+        companionReadiness: "unavailable" as const,
+      };
+    }
+
+    if (!systemService) {
+      return {
+        enabled: true,
+        remoteMode,
+        healthStatus: "unavailable" as const,
+        companionConnected: false,
+        companionReadiness: "unavailable" as const,
+        reasons: ["system_service_unavailable"],
+        warning: "Agent OS is enabled, but the system runtime is unavailable in this process.",
+      };
+    }
+
+    const session = await systemService.getSession().catch(() => undefined);
+    if (!session) {
+      return {
+        enabled: true,
+        remoteMode,
+        healthStatus: "unavailable" as const,
+        companionConnected: false,
+        companionReadiness: "unavailable" as const,
+        reasons: ["system_session_unavailable"],
+        warning: "Agent OS is enabled, but the current system session could not be inspected.",
+      };
+    }
+
+    const companionReadiness: "ready" | "degraded" | "unavailable" = !session.health.companionConnected
+      ? "degraded"
+      : session.health.status === "healthy"
+        ? "ready"
+        : session.health.status === "unavailable"
+          ? "unavailable"
+          : "degraded";
+    const warning = !session.health.companionConnected
+      ? "System companion unavailable; Friday is continuing in degraded mode for local device actions."
+      : session.health.status !== "healthy"
+        ? `System runtime is not fully ready: ${session.health.reasons.join(", ")}`
+        : undefined;
+
+    return {
+      enabled: true,
+      remoteMode,
+      healthStatus: session.health.status,
+      companionConnected: session.health.companionConnected,
+      companionReadiness,
+      reasons: [...session.health.reasons],
+      ...(warning ? { warning } : {}),
     };
   };
 
@@ -3131,10 +3200,14 @@ export async function createFridayHub(
     observabilityService,
     system: systemRouteDeps,
     uix: { service: uixService },
-    systemHealth: {
-      enabled: systemEnabled,
-      remoteMode: systemEnabled ? (process.env.FRIDAY_SYSTEM_REMOTE_MODE === "disabled" ? "disabled" : "trusted_private_network") : "unavailable",
+    searchHealth: {
+      provider: configuredSearchProvider && configuredSearchProvider.length > 0
+        ? configuredSearchProvider
+        : "duckduckgo_html",
+      latestness: searchWarning ? "unverified" : "provider_backed",
+      ...(searchWarning ? { warning: searchWarning } : {}),
     },
+    systemHealth: getPublicSystemHealth,
     discovery,
     mcpServer,
     marketplaceEntitlementCheck,

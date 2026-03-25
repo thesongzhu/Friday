@@ -66,7 +66,11 @@ export function runFridayMigrations(
     // Apply migration in its own transaction
     const appliedAt = now().toISOString();
     const applyMigration = db.transaction(() => {
-      db.exec(migration.sql);
+      if (typeof migration.apply === "function") {
+        migration.apply(db);
+      } else {
+        db.exec(migration.sql);
+      }
       insertApplied.run(migration.version, migration.name, migration.checksum, appliedAt);
     });
 
