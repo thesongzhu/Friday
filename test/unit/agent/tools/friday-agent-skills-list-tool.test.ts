@@ -182,6 +182,32 @@ describe("createFridayAgentSkillsListTool", () => {
         }),
         buildRegisteredSkill({
           manifest: buildManifest({
+            id: "security-review",
+            name: "Security Review",
+            description: "Audit auth and token safety",
+            tags: ["starter", "starter.security"],
+            triggers: {
+              intents: ["security_review"],
+              phrases: ["run a security review"],
+              channels: ["*"],
+            },
+          }),
+        }),
+        buildRegisteredSkill({
+          manifest: buildManifest({
+            id: "engineering-retro",
+            name: "Engineering Retro",
+            description: "Summarize what shipped",
+            tags: ["starter", "starter.retro"],
+            triggers: {
+              intents: ["engineering_retro"],
+              phrases: ["run an engineering retro"],
+              channels: ["*"],
+            },
+          }),
+        }),
+        buildRegisteredSkill({
+          manifest: buildManifest({
             id: "custom-skill",
             name: "Custom Skill",
             description: "Other skill",
@@ -197,6 +223,8 @@ describe("createFridayAgentSkillsListTool", () => {
 
     expect(parsed.skills[0]?.skillId).toBe("review-open-issues");
     expect(parsed.skills[1]?.skillId).toBe("idea-clarifier");
+    expect(parsed.skills[2]?.skillId).toBe("security-review");
+    expect(parsed.skills[3]?.skillId).toBe("engineering-retro");
     expect(parsed.skills[0]?.starter).toBe(true);
     expect(parsed.skills[0]?.phrases).toEqual(["review open issues"]);
   });

@@ -171,6 +171,33 @@ export function parseGitStatusLines(stdout) {
     }));
 }
 
+export function safePathSegment(value, fallback = "artifact") {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const normalized = raw
+    .replace(/^https?:\/\//i, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return normalized || fallback;
+}
+
+export async function ensureDir(targetPath) {
+  await fsp.mkdir(targetPath, { recursive: true });
+  return targetPath;
+}
+
+export function skillEvidenceRoot(repoRoot, skillId) {
+  return path.join(repoRoot, ".friday", "skills", safePathSegment(skillId, "skill"));
+}
+
+export async function writeSkillEvidenceJson(repoRoot, skillId, relativeName, payload) {
+  const evidenceRoot = skillEvidenceRoot(repoRoot, skillId);
+  await ensureDir(path.dirname(path.join(evidenceRoot, relativeName)));
+  const targetPath = path.join(evidenceRoot, relativeName);
+  await fsp.writeFile(targetPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  return targetPath;
+}
+
 export function summarizeGitChanges(entries) {
   const changed = entries.filter((entry) => entry.code.trim() !== "??");
   const untracked = entries.filter((entry) => entry.code.trim() === "??");

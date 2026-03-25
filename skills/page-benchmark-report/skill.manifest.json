@@ -1,0 +1,137 @@
+{
+  "schemaVersion": "2.0",
+  "id": "page-benchmark-report",
+  "name": "Page Benchmark Report",
+  "description": "Run repeated readonly browser inspections, save a local baseline, and report regressions or improvements for a page.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": {
+    "name": "Friday"
+  },
+  "tags": [
+    "starter",
+    "starter.qa",
+    "benchmark",
+    "performance",
+    "evidence"
+  ],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 120000
+  },
+  "triggers": {
+    "intents": [
+      "page_benchmark_report"
+    ],
+    "phrases": [
+      "benchmark this page",
+      "check page performance",
+      "establish a page baseline"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 88,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "goal",
+      "type": "string",
+      "required": false,
+      "label": "Benchmark Goal",
+      "help": "Optional benchmark brief. Friday will extract a URL if one is present."
+    },
+    {
+      "key": "url",
+      "type": "string",
+      "required": false,
+      "label": "URL",
+      "help": "Optional URL to benchmark. Defaults to the local Friday UI."
+    },
+    {
+      "key": "repeats",
+      "type": "number",
+      "required": false,
+      "label": "Repeats",
+      "help": "How many readonly browser samples to collect. Defaults to 3."
+    },
+    {
+      "key": "refreshBaseline",
+      "type": "boolean",
+      "required": false,
+      "label": "Refresh Baseline",
+      "help": "When true, overwrite the saved local baseline with the current measurements."
+    }
+  ],
+  "outputs": [
+    {
+      "key": "summary",
+      "type": "string",
+      "description": "High-level benchmark result."
+    },
+    {
+      "key": "nextStep",
+      "type": "string",
+      "description": "The most useful next performance action."
+    },
+    {
+      "key": "details",
+      "type": "object",
+      "description": "Metrics, evidence paths, and comparison details."
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "filesystem-read",
+        "resource": "filesystem",
+        "action": "read",
+        "required": false,
+        "reason": "Read local workspace context if the benchmark target depends on repo files."
+      },
+      {
+        "id": "filesystem-write",
+        "resource": "filesystem",
+        "action": "write",
+        "required": false,
+        "reason": "Persist benchmark evidence and baselines under .friday."
+      }
+    ],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": [
+      "starter_skill_invoked",
+      "starter_skill_suggested"
+    ]
+  }
+}

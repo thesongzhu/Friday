@@ -38,8 +38,21 @@ describe("isMutatingToolCall", () => {
     expect(isMutatingToolCall("skill_run", { skillId: "workspace-diff-review" })).toBe(false);
   });
 
+  it("classifies readonly wave-2 and wave-3 starter skill_run calls as non-mutating", () => {
+    expect(isMutatingToolCall("skill_run", { skillId: "page-benchmark-report" })).toBe(false);
+    expect(isMutatingToolCall("skill_run", { skillId: "release-canary-check" })).toBe(false);
+    expect(isMutatingToolCall("skill_run", { skillId: "engineering-retro" })).toBe(false);
+    expect(isMutatingToolCall("skill_run", { skillId: "product-scope-review" })).toBe(false);
+    expect(isMutatingToolCall("skill_run", { skillId: "design-plan-review" })).toBe(false);
+    expect(isMutatingToolCall("skill_run", { skillId: "security-review" })).toBe(false);
+  });
+
   it("classifies release-doc-sync skill_run as mutating", () => {
     expect(isMutatingToolCall("skill_run", { skillId: "release-doc-sync" })).toBe(true);
+  });
+
+  it("classifies browser-qa-fix skill_run as mutating", () => {
+    expect(isMutatingToolCall("skill_run", { skillId: "browser-qa-fix" })).toBe(true);
   });
 
   // ─── Always read-only ───

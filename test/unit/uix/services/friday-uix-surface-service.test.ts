@@ -425,4 +425,139 @@ describe("createFridayUixSurfaceService", () => {
     );
     expect(response.summary).toContain("updated 3 documentation file");
   });
+
+  it("routes benchmark requests to the new wave-2 starter templates", () => {
+    const service = createFridayUixSurfaceService({
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+    });
+
+    const resolution = service.resolveIntent({
+      text: "Benchmark this page before I ship it",
+      userId: "user-1",
+    });
+
+    expect(resolution.intent).toBe("general_help");
+    expect(resolution.suggestedTemplateIds).toEqual([
+      "page-benchmark-report",
+      "release-canary-check",
+    ]);
+  });
+
+  it("routes security-review requests to the new wave-3 starter templates", () => {
+    const service = createFridayUixSurfaceService({
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+    });
+
+    const resolution = service.resolveIntent({
+      text: "Run a security review on auth and token safety",
+      userId: "user-1",
+    });
+
+    expect(resolution.intent).toBe("general_help");
+    expect(resolution.suggestedTemplateIds).toEqual([
+      "security-review",
+      "workspace-diff-review",
+    ]);
+  });
+
+  it("routes release-canary-check through the bundled starter skill when a skill executor is available", async () => {
+    const execute = vi.fn(() => ({
+      runId: "skill-run-5",
+      result: Promise.resolve({
+        runId: "skill-run-5",
+        status: "completed",
+        output: {
+          summary: "Release canary check: 1 page passed without blocking canary issues.",
+          nextStep: "Keep this canary report as the current local reference.",
+          details: {
+            pages: [],
+          },
+        },
+        stdout: "",
+        stderr: "",
+        durationMs: 11,
+      }),
+    }));
+    const service = createFridayUixSurfaceService({
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+      skillExecutor: {
+        execute,
+        cancel: vi.fn(),
+      },
+    });
+
+    const response = await service.executeTemplate({
+      templateId: "release-canary-check",
+      userId: "user-1",
+      parameters: {
+        goal: "Run a canary check on the assistant route.",
+      },
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skillId: "release-canary-check",
+        input: {
+          goal: "Run a canary check on the assistant route.",
+        },
+      }),
+    );
+    expect(response.summary).toContain("Release canary check");
+  });
+
+  it("routes browser-qa-fix through the bundled starter skill with apply=true", async () => {
+    const execute = vi.fn(() => ({
+      runId: "skill-run-6",
+      result: Promise.resolve({
+        runId: "skill-run-6",
+        status: "completed",
+        output: {
+          summary: "Browser QA fix: updated ui/index.html with a bounded title fix.",
+          nextStep: "Review the HTML diff and rerun browser QA.",
+          details: {
+            targetFile: "/repo/ui/index.html",
+          },
+        },
+        stdout: "",
+        stderr: "",
+        durationMs: 11,
+      }),
+    }));
+    const service = createFridayUixSurfaceService({
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+      skillExecutor: {
+        execute,
+        cancel: vi.fn(),
+      },
+    });
+
+    const response = await service.executeTemplate({
+      templateId: "browser-qa-fix",
+      userId: "user-1",
+      parameters: {
+        goal: "Fix the page title on the settings route.",
+        targetFile: "ui/index.html",
+      },
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skillId: "browser-qa-fix",
+        input: {
+          goal: "Fix the page title on the settings route.",
+          targetFile: "ui/index.html",
+          apply: true,
+        },
+      }),
+    );
+    expect(response.summary).toContain("bounded title fix");
+  });
 });

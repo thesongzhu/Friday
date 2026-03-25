@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Engineering Retro",
+  "description": "Summarize recent delivery themes, contributors, and local evidence into a retrospective.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "goal",
+        "sinceDays"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "goal",
+      "inputKey": "goal",
+      "kind": "text",
+      "label": "Retro Context",
+      "required": false,
+      "help": "Optional framing for the retrospective."
+    },
+    {
+      "id": "sinceDays",
+      "inputKey": "sinceDays",
+      "kind": "number",
+      "label": "Since Days",
+      "required": false,
+      "help": "How many days to review."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Generate Retro",
+      "style": "primary"
+    }
+  ]
+}

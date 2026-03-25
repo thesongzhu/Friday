@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Design Plan Review",
+  "description": "Review a UI plan for state coverage, accessibility, responsiveness, and hierarchy.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "goal"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "goal",
+      "inputKey": "goal",
+      "kind": "text",
+      "label": "Design Plan",
+      "required": true,
+      "help": "Paste the relevant UI or UX plan."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Review Design",
+      "style": "primary"
+    }
+  ]
+}
