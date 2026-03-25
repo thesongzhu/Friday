@@ -224,10 +224,18 @@ describe("wave 2 and wave 3 Friday starter skills", () => {
       ].join("\n"),
     );
 
-    const result = await execute({
-      workspaceRoot: repoRoot,
-      goal: "Audit token handling and proxy trust.",
-    });
+    const originalPath = process.env.PATH;
+    process.env.PATH = "";
+
+    let result;
+    try {
+      result = await execute({
+        workspaceRoot: repoRoot,
+        goal: "Audit token handling and proxy trust.",
+      });
+    } finally {
+      process.env.PATH = originalPath;
+    }
 
     expect(result.summary).toContain("Security review");
     expect(result.details.threatModel.length).toBeGreaterThan(0);
