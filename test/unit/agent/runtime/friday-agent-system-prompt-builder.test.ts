@@ -131,6 +131,17 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("repo-health-check");
   });
 
+  it("documents planning and QA starter-skill preference guidance", () => {
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["read", "skill_run", "skills_list"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+    });
+
+    expect(prompt).toContain("Planning, browser QA, diff review, release docs, benchmark, canary, and security review requests");
+    expect(prompt).toContain("scoping, reviewing implementation plans, QAing a page, reviewing a diff, or syncing release docs");
+  });
+
   it("describes messaging and MCP truthfully from runtime capabilities", () => {
     const withoutRuntimeSupport = buildFridayAgentSystemPrompt({
       toolNames: ["message", "mcp"],

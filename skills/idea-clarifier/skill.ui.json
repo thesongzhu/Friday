@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Idea Clarifier",
+  "description": "Turn a vague request into a bounded objective, open questions, and a next planning step.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "goal"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "goal",
+      "inputKey": "goal",
+      "kind": "text",
+      "label": "Goal",
+      "required": true,
+      "help": "Describe the idea or request in plain language."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Clarify",
+      "style": "primary"
+    }
+  ]
+}

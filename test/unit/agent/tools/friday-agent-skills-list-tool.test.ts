@@ -169,6 +169,19 @@ describe("createFridayAgentSkillsListTool", () => {
         }),
         buildRegisteredSkill({
           manifest: buildManifest({
+            id: "idea-clarifier",
+            name: "Idea Clarifier",
+            description: "Clarify an idea",
+            tags: ["starter", "starter.builder"],
+            triggers: {
+              intents: ["clarify_idea"],
+              phrases: ["clarify this idea"],
+              channels: ["*"],
+            },
+          }),
+        }),
+        buildRegisteredSkill({
+          manifest: buildManifest({
             id: "custom-skill",
             name: "Custom Skill",
             description: "Other skill",
@@ -183,6 +196,7 @@ describe("createFridayAgentSkillsListTool", () => {
     const parsed = JSON.parse(result.content) as { skills: Array<Record<string, unknown>> };
 
     expect(parsed.skills[0]?.skillId).toBe("review-open-issues");
+    expect(parsed.skills[1]?.skillId).toBe("idea-clarifier");
     expect(parsed.skills[0]?.starter).toBe(true);
     expect(parsed.skills[0]?.phrases).toEqual(["review open issues"]);
   });

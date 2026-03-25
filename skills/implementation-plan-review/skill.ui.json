@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Implementation Plan Review",
+  "description": "Review an implementation plan before coding or shipping.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "goal"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "goal",
+      "inputKey": "goal",
+      "kind": "text",
+      "label": "Plan Text",
+      "required": true,
+      "help": "Paste the implementation outline or describe the approach."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Review Plan",
+      "style": "primary"
+    }
+  ]
+}

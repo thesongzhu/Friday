@@ -97,6 +97,81 @@ export interface CreateFridayUixSurfaceServiceDeps {
 
 const TEMPLATE_DEFINITIONS: FridayActionTemplateSummary[] = [
   {
+    id: "idea-clarifier",
+    label: "Clarify an idea",
+    description: "Turn a vague request into a bounded objective, open questions, and a next planning step.",
+    category: "skills",
+    parameters: [
+      {
+        key: "goal",
+        label: "Goal",
+        type: "text",
+        required: true,
+        placeholder: "Example: Help me scope this idea into a concrete first milestone.",
+      },
+    ],
+  },
+  {
+    id: "implementation-plan-review",
+    label: "Review implementation plan",
+    description: "Review architecture, edge cases, tests, and rollback coverage before coding or shipping.",
+    category: "skills",
+    parameters: [
+      {
+        key: "goal",
+        label: "Plan Text",
+        type: "text",
+        required: true,
+        placeholder: "Example: Review this implementation plan for missing failure paths.",
+      },
+    ],
+  },
+  {
+    id: "browser-qa-report",
+    label: "QA this page or app",
+    description: "Open a page in Friday's browser runtime and collect a structured QA report with screenshot and console evidence.",
+    category: "skills",
+    parameters: [
+      {
+        key: "goal",
+        label: "QA Brief or URL",
+        type: "text",
+        required: false,
+        placeholder: "Example: QA http://127.0.0.1:5173/settings and flag console errors.",
+      },
+    ],
+  },
+  {
+    id: "workspace-diff-review",
+    label: "Review current changes",
+    description: "Inspect the current workspace diff for risky hotspots, missing tests, and the next landing-safe action.",
+    category: "skills",
+    parameters: [
+      {
+        key: "goal",
+        label: "Review Context",
+        type: "text",
+        required: false,
+        placeholder: "Example: Review the current changes before I land them.",
+      },
+    ],
+  },
+  {
+    id: "release-doc-sync",
+    label: "Sync release docs",
+    description: "Prepare or apply bounded README, changelog, and architecture updates for the current workspace changes.",
+    category: "skills",
+    parameters: [
+      {
+        key: "goal",
+        label: "Release Summary",
+        type: "text",
+        required: false,
+        placeholder: "Example: Sync the docs for the new assistant starter flows.",
+      },
+    ],
+  },
+  {
     id: "generate-skill",
     label: "Generate a skill",
     description: "Turn a plain-language goal into a tested skill draft.",
@@ -416,6 +491,98 @@ export function createFridayUixSurfaceService(
   ): FridayBeginnerIntentResolution {
     const text = textInput.trim().toLowerCase();
     const persona = userId ? resolvePersona(userId) : undefined;
+    if (
+      text.includes("clarify")
+      || text.includes("brainstorm")
+      || text.includes("scope this")
+      || (text.includes("idea") && !text.includes("workflow"))
+    ) {
+      return applyGuidance({
+        intent: "general_help",
+        confidence: 0.9,
+        summary: "This looks like a request to clarify or scope an idea before implementation.",
+        routeTarget: "/assistant",
+        suggestedTemplateIds: ["idea-clarifier", "implementation-plan-review"],
+      }, buildAssistantGuidance({
+        text: textInput,
+        intent: "general_help",
+        persona,
+      }));
+    }
+    if (
+      text.includes("implementation plan")
+      || text.includes("architecture review")
+      || text.includes("test matrix")
+      || text.includes("execution plan")
+    ) {
+      return applyGuidance({
+        intent: "general_help",
+        confidence: 0.92,
+        summary: "This looks like a request to review an execution plan before coding or shipping.",
+        routeTarget: "/assistant",
+        suggestedTemplateIds: ["implementation-plan-review", "workspace-diff-review"],
+      }, buildAssistantGuidance({
+        text: textInput,
+        intent: "general_help",
+        persona,
+      }));
+    }
+    if (
+      text.includes("qa this")
+      || text.includes("browser qa")
+      || text.includes("test this page")
+      || text.includes("test this app")
+      || text.includes("screenshot")
+      || text.includes("console error")
+    ) {
+      return applyGuidance({
+        intent: "general_help",
+        confidence: 0.91,
+        summary: "This looks like a browser QA request with evidence capture.",
+        routeTarget: "/assistant",
+        suggestedTemplateIds: ["browser-qa-report", "workspace-diff-review"],
+      }, buildAssistantGuidance({
+        text: textInput,
+        intent: "general_help",
+        persona,
+      }));
+    }
+    if (
+      text.includes("review current changes")
+      || text.includes("review this diff")
+      || text.includes("review my pr")
+      || text.includes("current workspace changes")
+    ) {
+      return applyGuidance({
+        intent: "general_help",
+        confidence: 0.9,
+        summary: "This looks like a request to review the current workspace diff before landing it.",
+        routeTarget: "/assistant",
+        suggestedTemplateIds: ["workspace-diff-review", "release-doc-sync"],
+      }, buildAssistantGuidance({
+        text: textInput,
+        intent: "general_help",
+        persona,
+      }));
+    }
+    if (
+      text.includes("sync release docs")
+      || text.includes("update changelog")
+      || text.includes("update readme")
+      || text.includes("document what shipped")
+    ) {
+      return applyGuidance({
+        intent: "general_help",
+        confidence: 0.91,
+        summary: "This looks like a bounded release documentation sync request.",
+        routeTarget: "/assistant",
+        suggestedTemplateIds: ["release-doc-sync", "workspace-diff-review"],
+      }, buildAssistantGuidance({
+        text: textInput,
+        intent: "general_help",
+        persona,
+      }));
+    }
     if (
       text.includes("deploy")
       || text.includes("publish workflow")
@@ -1243,6 +1410,99 @@ export function createFridayUixSurfaceService(
             result: responsePayload,
           });
           return responsePayload;
+        }
+        case "idea-clarifier": {
+          const executed = await executeStarterSkillTemplate({
+            templateId: input.templateId,
+            userId: input.userId,
+            skillId: "idea-clarifier",
+            parameters: input.parameters,
+            guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Clarify an idea",
+            intent: "general_help",
+            defaultSummary: "Friday clarified the idea and identified the next planning step.",
+          });
+          await deps.observability?.recordAssistantEvent({
+            userId: input.userId,
+            event: "template_executed",
+            summary: executed.response.summary,
+            result: executed.response,
+          });
+          return executed.response;
+        }
+        case "implementation-plan-review": {
+          const executed = await executeStarterSkillTemplate({
+            templateId: input.templateId,
+            userId: input.userId,
+            skillId: "implementation-plan-review",
+            parameters: input.parameters,
+            guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Review implementation plan",
+            intent: "general_help",
+            defaultSummary: "Friday reviewed the implementation plan and surfaced the main execution gaps.",
+          });
+          await deps.observability?.recordAssistantEvent({
+            userId: input.userId,
+            event: "template_executed",
+            summary: executed.response.summary,
+            result: executed.response,
+          });
+          return executed.response;
+        }
+        case "browser-qa-report": {
+          const executed = await executeStarterSkillTemplate({
+            templateId: input.templateId,
+            userId: input.userId,
+            skillId: "browser-qa-report",
+            parameters: input.parameters,
+            guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "QA this page or app",
+            intent: "general_help",
+            defaultSummary: "Friday ran a browser QA pass and collected evidence.",
+          });
+          await deps.observability?.recordAssistantEvent({
+            userId: input.userId,
+            event: "template_executed",
+            summary: executed.response.summary,
+            result: executed.response,
+          });
+          return executed.response;
+        }
+        case "workspace-diff-review": {
+          const executed = await executeStarterSkillTemplate({
+            templateId: input.templateId,
+            userId: input.userId,
+            skillId: "workspace-diff-review",
+            parameters: input.parameters,
+            guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Review current changes",
+            intent: "general_help",
+            defaultSummary: "Friday reviewed the current workspace diff and highlighted the main landing risks.",
+          });
+          await deps.observability?.recordAssistantEvent({
+            userId: input.userId,
+            event: "template_executed",
+            summary: executed.response.summary,
+            result: executed.response,
+          });
+          return executed.response;
+        }
+        case "release-doc-sync": {
+          const executed = await executeStarterSkillTemplate({
+            templateId: input.templateId,
+            userId: input.userId,
+            skillId: "release-doc-sync",
+            parameters: {
+              ...input.parameters,
+              apply: true,
+            },
+            guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Sync release docs",
+            intent: "general_help",
+            defaultSummary: "Friday synchronized the bounded release-facing docs for the current workspace changes.",
+          });
+          await deps.observability?.recordAssistantEvent({
+            userId: input.userId,
+            event: "template_executed",
+            summary: executed.response.summary,
+            result: executed.response,
+          });
+          return executed.response;
         }
         case "ask-for-help": {
           const responsePayload: FridayUixTemplateExecutionResponse = applyGuidance({
