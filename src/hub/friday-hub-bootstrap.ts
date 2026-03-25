@@ -180,7 +180,7 @@ import {
   parseFridayChannelsConfig,
   resolveFridayChannelSecretPolicy,
 } from "#channels";
-import type { FridayChannelMessage } from "#channels";
+import type { FridayChannelMessage, FridayChannelRegistry } from "#channels";
 import { createFridayChannelInboundDebouncer, createFridayChannelTypingController, sanitizeChannelInput } from "#channels";
 import { createFridayChannelSlowTaskNotifier } from "../channels/friday-channel-slow-task-notifier.js";
 import { resolveFridayPublicRunUrl } from "../agent/runtime/friday-public-run-url.js";
@@ -531,6 +531,7 @@ export async function createFridayHub(
   });
 
   let browserManager: FridayBrowserManager | undefined;
+  const channelRegistry: FridayChannelRegistry = createFridayChannelRegistry();
 
   // 7. Create executor with providerService injected for ai-inference BYOK path
   const executor = createFridaySkillExecutor({
@@ -543,6 +544,7 @@ export async function createFridayHub(
     getSystemService: () => systemService,
     getSelfHealingService: () => selfHealingApiService,
     getBrowserManager: () => browserManager,
+    getChannelRegistry: () => channelRegistry,
   });
 
   const rulesRepository = createFridayRulesRepository();
@@ -2293,7 +2295,6 @@ export async function createFridayHub(
 
   // ─── Channel registry ───
 
-  const channelRegistry = createFridayChannelRegistry();
   const webchatWsService = createWebchatWsService();
   const lineWebhookRelay = createLineWebhookListenerService();
   const whatsappWebhookRelay = createWhatsappWebhookService();

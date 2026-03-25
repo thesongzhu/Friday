@@ -144,6 +144,29 @@ export function createFridayWebchatChannel(deps: WebchatChannelDeps = {}): Frida
   const plugin: FridayChannelPlugin = {
     kind: "webchat",
     adapters,
+    contract: {
+      coreAuthority: {
+        messageRouting: true,
+        sessionMirroring: true,
+        audit: true,
+        evidence: true,
+      },
+      pluginResponsibilities: {
+        config: true,
+        auth: true,
+        pairing: false,
+        outboundDelivery: true,
+        threadResolution: false,
+        providerRetries: false,
+      },
+      supports: {
+        directMessages: true,
+        groupMessages: false,
+        threads: false,
+        typing: false,
+      },
+      curatedSkillIds: ["webchat-channel-status"],
+    },
 
     async init(rawConfig) {
       config = configAdapter.validate(rawConfig);

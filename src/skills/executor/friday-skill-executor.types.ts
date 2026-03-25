@@ -1,6 +1,11 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridaySkillRunStore } from "#ledger";
 import type { FridayBrowserManager } from "#browser";
+import type {
+  FridayChannelCapabilityContract,
+  FridayChannelRegistry,
+  FridayChannelStatus,
+} from "#channels";
 import type { FridaySkillRegistry } from "../registry/friday-skill-registry.types.js";
 
 // ─── Shell executor types ───
@@ -92,12 +97,32 @@ export interface FridaySkillReadonlyBrowserContext {
   closeSession(sessionId: string): Promise<void>;
 }
 
+export interface FridaySkillReadonlyChannelView {
+  kind: string;
+  running: boolean;
+  status: FridayChannelStatus;
+  diagnostics?: Record<string, unknown>;
+  contract?: FridayChannelCapabilityContract;
+  allowlist: {
+    hasAllowedUsers: boolean;
+    allowedUsersCount: number;
+    hasAllowedChats: boolean;
+    allowedChatsCount: number;
+  };
+}
+
+export interface FridaySkillReadonlyChannelsContext {
+  listChannels(): Promise<FridaySkillReadonlyChannelView[]>;
+  getChannel(kind: string): Promise<FridaySkillReadonlyChannelView | null>;
+}
+
 export interface FridaySkillNodeRuntimeContext {
   ai?: FridaySkillAiHelperContext;
   system?: FridaySkillReadonlySystemContext;
   diagnosis?: FridaySkillReadonlyDiagnosisContext;
   autofix?: FridaySkillReadonlyAutofixContext;
   browser?: FridaySkillReadonlyBrowserContext;
+  channels?: FridaySkillReadonlyChannelsContext;
 }
 
 export interface FridaySkillReadonlySystemServiceLike {
@@ -175,6 +200,7 @@ export interface CreateFridaySkillExecutorDeps {
   getSystemService?: () => FridaySkillReadonlySystemServiceLike | undefined;
   getSelfHealingService?: () => FridaySkillReadonlySelfHealingServiceLike | undefined;
   getBrowserManager?: () => FridayBrowserManager | undefined;
+  getChannelRegistry?: () => FridayChannelRegistry | undefined;
 }
 
 /**

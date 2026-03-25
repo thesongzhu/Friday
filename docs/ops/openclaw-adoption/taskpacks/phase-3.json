@@ -2,51 +2,57 @@
   "schemaVersion": "1.0",
   "phaseId": "phase3",
   "title": "Channel Contract",
-  "executionMode": "spec_only",
-  "goal": "Define the channel contract work while preserving core ownership of message, session, audit, and evidence behavior.",
+  "executionMode": "hybrid",
+  "goal": "Make the channel/core contract explicit while preserving core ownership of message, session, audit, and evidence behavior.",
   "allowedPaths": [
     "src/channels",
     "src/hub",
     "src/skills",
+    "skills",
+    "docs/ops/openclaw-adoption/taskpacks/phase-3.json",
     "test/unit/channels",
+    "test/unit/skills/executor",
     "test/e2e/mock/friday-openclaw-parity-closure.e2e.test.ts"
   ],
   "implementationWorkers": [
     {
-      "id": "phase3-channel-contract-spec",
-      "title": "Load the committed channel contract taskpack",
+      "id": "phase3-channel-contract",
+      "title": "Add explicit channel contract metadata, registry introspection, and curated readonly channel skills",
       "runner": "command",
       "mode": "implementation",
       "steps": [
         {
-          "label": "phase3-taskpack-spec",
-          "command": "node",
+          "label": "phase3-channel-tests",
+          "command": "npx",
           "args": [
-            "-e",
-            "console.log('phase3 taskpack spec validated')"
+            "vitest",
+            "run",
+            "test/unit/channels/friday-channel-registry.test.ts",
+            "test/unit/skills/executor/friday-skill-executor.test.ts"
           ]
         }
       ]
     }
   ],
   "repairWorker": {
-    "id": "phase3-channel-contract-repair-spec",
+    "id": "phase3-channel-contract-repair",
     "title": "Diagnose channel contract blockers without expanding connector scope",
     "runner": "command",
     "mode": "repair",
     "steps": [
       {
-        "label": "phase3-taskpack-repair-spec",
-        "command": "node",
+        "label": "phase3-channel-repair-check",
+        "command": "npm",
         "args": [
-          "-e",
-          "console.log('phase3 repair spec validated')"
+          "run",
+          "typecheck"
         ]
       }
     ]
   },
   "successCriteria": [
     "Core retains message, session, audit, and evidence authority.",
+    "Curated starter skills expose mature channel health and contract views without expanding connector scope.",
     "No long-tail connector expansion is introduced."
   ],
   "closureEvidence": [
@@ -68,6 +74,7 @@
     }
   ],
   "notes": [
-    "This taskpack remains spec_only until curated channel implementation commands are authored."
+    "Channel skills in this phase remain readonly and operator-safe; outbound message authority stays in core delivery paths.",
+    "Contract metadata must stay descriptive and additive instead of replacing runtime ownership."
   ]
 }

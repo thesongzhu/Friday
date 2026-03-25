@@ -11,6 +11,7 @@
 
 import type { FridayChannelStatus } from "./friday-channel-adapters.types.js";
 import type {
+  FridayChannelCapabilityContract,
   FridayChannelMessage,
   FridayChannelPlugin,
   FridayChannelSendOptions,
@@ -29,6 +30,20 @@ export interface FridayChannelRegistryEntry {
   plugin: FridayChannelPlugin;
   allowlist: FridayChannelAllowlistConfig;
   running: boolean;
+}
+
+export interface FridayChannelRegistryView {
+  kind: string;
+  running: boolean;
+  status: FridayChannelStatus;
+  diagnostics?: Record<string, unknown>;
+  contract?: FridayChannelCapabilityContract;
+  allowlist: {
+    hasAllowedUsers: boolean;
+    allowedUsersCount: number;
+    hasAllowedChats: boolean;
+    allowedChatsCount: number;
+  };
 }
 
 export type FridayChannelMessageHandler = (msg: FridayChannelMessage) => void;
@@ -67,6 +82,12 @@ export interface FridayChannelRegistry {
 
   /** List all registered channel kinds. */
   list(): string[];
+
+  /** Describe a registered channel with status, diagnostics, and contract metadata. */
+  describe(kind: string): FridayChannelRegistryView | undefined;
+
+  /** List channel views including status, diagnostics, and contract metadata. */
+  listViews(): FridayChannelRegistryView[];
 
   /** Send a message through a specific channel kind. */
   send(kind: string, options: FridayChannelSendOptions): Promise<{ messageId: string }>;
@@ -170,6 +191,15 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
   function formatStartError(reason: unknown): string {
     if (reason instanceof Error) return reason.message;
     return String(reason);
+  }
+
+  function buildAllowlistSummary(allowlist: FridayChannelAllowlistConfig) {
+    return {
+      hasAllowedUsers: allowlist.allowedUsers !== undefined,
+      allowedUsersCount: allowlist.allowedUsers?.length ?? 0,
+      hasAllowedChats: allowlist.allowedChats !== undefined,
+      allowedChatsCount: allowlist.allowedChats?.length ?? 0,
+    };
   }
 
   return {
@@ -324,6 +354,27 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
 
     list() {
       return Array.from(entries.keys());
+    },
+
+    describe(kind) {
+      const entry = entries.get(kind);
+      if (!entry) {
+        return undefined;
+      }
+      return {
+        kind,
+        running: entry.running,
+        status: this.status(kind),
+        diagnostics: this.diagnostics(kind),
+        contract: entry.plugin.contract,
+        allowlist: buildAllowlistSummary(entry.allowlist),
+      };
+    },
+
+    listViews() {
+      return this.list()
+        .map((kind) => this.describe(kind))
+        .filter((view): view is FridayChannelRegistryView => view !== undefined);
     },
 
     async send(kind, options) {

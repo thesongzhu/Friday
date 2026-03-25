@@ -1,9 +1,13 @@
 // ─── Core Types ───
 
 export type {
+  FridayChannelCapabilityContract,
+  FridayChannelCoreAuthority,
   FridayChannelMessage,
   FridayChannelSendOptions,
+  FridayChannelPluginResponsibilities,
   FridayChannelPlugin,
+  FridayChannelSupportProfile,
 } from "./friday-channel.types.js";
 
 // ─── Adapter Types ───
@@ -23,6 +27,7 @@ export type {
 export type {
   FridayChannelRegistry,
   FridayChannelRegistryEntry,
+  FridayChannelRegistryView,
   FridayChannelAllowlistConfig,
   FridayChannelStartFailure,
   FridayChannelStartSummary,
