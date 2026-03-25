@@ -291,6 +291,38 @@ describe("loadFridayWorkspaceContext", () => {
   });
 
   describe("task-aware relevant block selection", () => {
+    it("annotates identity and candidate files with selection metadata", async () => {
+      await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "Always follow repository instructions.");
+      await fs.writeFile(path.join(tmpDir, "SOUL.md"), "Stay concise.");
+      await fs.writeFile(path.join(tmpDir, "USER.md"), "User likes sourdough recipes.");
+      await fs.writeFile(path.join(tmpDir, "MEMORY.md"), "User prefers dark mode in editors.");
+
+      const ctx = await loadFridayWorkspaceContext(tmpDir, {
+        task: "How do I bake sourdough bread?",
+      });
+
+      const agentsFile = ctx.files.find((file) => file.name === "AGENTS.md");
+      const soulFile = ctx.files.find((file) => file.name === "SOUL.md");
+      const userFile = ctx.files.find((file) => file.name === "USER.md");
+      const memoryFile = ctx.files.find((file) => file.name === "MEMORY.md");
+
+      expect(agentsFile?.kind).toBe("identity");
+      expect(agentsFile?.selected).toBe(true);
+      expect(agentsFile?.selectionReason).toContain("identity block");
+
+      expect(soulFile?.kind).toBe("identity");
+      expect(soulFile?.selected).toBe(true);
+      expect(soulFile?.selectionReason).toContain("identity block");
+
+      expect(userFile?.kind).toBe("candidate");
+      expect(userFile?.selected).toBe(true);
+      expect(userFile?.selectionReason).toContain("task overlap");
+
+      expect(memoryFile?.kind).toBe("candidate");
+      expect(memoryFile?.selected).toBe(false);
+      expect(memoryFile?.selectionReason).toContain("not selected for the current task");
+    });
+
     it("keeps identity blocks and filters candidate blocks by task relevance", async () => {
       await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "Always follow repository instructions.");
       await fs.writeFile(path.join(tmpDir, "SOUL.md"), "Stay concise.");

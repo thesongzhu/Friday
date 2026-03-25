@@ -317,10 +317,42 @@ export async function loadFridayWorkspaceContext(
     });
   }
 
-  // Build prompt fragment from loaded files
-  const promptFragment = buildWorkspacePromptFragment(selectWorkspaceContextFiles(files, options));
+  const selectedFiles = selectWorkspaceContextFiles(files, options);
+  const selectedFileMap = new Map(
+    selectedFiles.map((file) => [`${file.filePath}::${file.name}`, file]),
+  );
+  const hasTaskAwareSelection = Boolean(
+    (options?.task && options.task.trim().length > 0)
+    || (options?.selectedBlocks && options.selectedBlocks.length > 0),
+  );
+  const annotatedFiles = files.map((file) => {
+    const selected = selectedFileMap.get(`${file.filePath}::${file.name}`);
+    if (selected) {
+      return {
+        ...file,
+        selected: true,
+        selectionScore: selected.selectionScore,
+        selectionReason: selected.selectionReason,
+      };
+    }
+    if (file.missing || !file.content?.trim()) {
+      return file;
+    }
+    if (file.kind === "candidate" && hasTaskAwareSelection) {
+      return {
+        ...file,
+        selected: false,
+        selectionScore: 0,
+        selectionReason: `${file.name} was not selected for the current task`,
+      };
+    }
+    return file;
+  });
 
-  return { files, promptFragment };
+  // Build prompt fragment from selected files
+  const promptFragment = buildWorkspacePromptFragment(selectedFiles);
+
+  return { files: annotatedFiles, promptFragment };
 }
 
 /**
