@@ -80,6 +80,22 @@ describe("validateFridayPluginManifest", () => {
     expect(result.permissions.promptOn).toEqual(["filesystem.write"]);
   });
 
+  it("accepts manifest with previewSdk metadata", () => {
+    const result = validateFridayPluginManifest(validManifest({
+      previewSdk: {
+        sdkVersion: "2026-03-preview",
+        capabilities: ["registerTool", "registerHooks"],
+        publisherId: "partner.weather",
+      },
+    }));
+
+    expect(result.previewSdk).toEqual({
+      sdkVersion: "2026-03-preview",
+      capabilities: ["registerTool", "registerHooks"],
+      publisherId: "partner.weather",
+    });
+  });
+
   // ─── Required fields ───
 
   it("rejects null input", () => {
@@ -208,6 +224,24 @@ describe("validateFridayPluginManifest", () => {
         promptOn: ["invalid.action"],
       },
     }))).toThrow("promptOn");
+  });
+
+  it("rejects previewSdk with invalid capability", () => {
+    expect(() => validateFridayPluginManifest(validManifest({
+      previewSdk: {
+        sdkVersion: "2026-03-preview",
+        capabilities: ["registerTool", "explodeRuntime"],
+      },
+    }))).toThrow("previewSdk");
+  });
+
+  it("rejects previewSdk without sdkVersion", () => {
+    expect(() => validateFridayPluginManifest(validManifest({
+      previewSdk: {
+        sdkVersion: "",
+        capabilities: ["registerTool"],
+      },
+    }))).toThrow("previewSdk");
   });
 
   // ─── Signature validation ───

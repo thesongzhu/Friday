@@ -2,51 +2,60 @@
   "schemaVersion": "1.0",
   "phaseId": "phase2",
   "title": "Plugin SDK Preview",
-  "executionMode": "spec_only",
-  "goal": "Define the additive plugin SDK preview work without collapsing Friday's plugin and skills backbones into a single story.",
+  "executionMode": "hybrid",
+  "goal": "Add preview SDK capability metadata and allowlisted-partner policy to the existing plugin surfaces without collapsing Friday's plugin and skills backbones into a single story.",
   "allowedPaths": [
     "src/plugins",
     "src/api/http/routes/friday-plugin-routes.ts",
+    "src/api/model/friday-api-plugin.types.ts",
     "docs/plugin-system-design.md",
+    "docs/ops/openclaw-adoption/taskpacks/phase-2.json",
     "test/e2e/plugins",
-    "test/e2e/api/friday-api-plugins-routes.test.ts"
+    "test/e2e/api/friday-api-plugins-routes.test.ts",
+    "test/unit/plugins",
+    "test/unit/api/http/routes"
   ],
   "implementationWorkers": [
     {
-      "id": "phase2-plugin-sdk-preview-spec",
-      "title": "Load the committed plugin SDK preview taskpack",
+      "id": "phase2-plugin-sdk-preview",
+      "title": "Add preview SDK capability summaries and allowlisted-partner policy to plugin lifecycle surfaces",
       "runner": "command",
       "mode": "implementation",
       "steps": [
         {
-          "label": "phase2-taskpack-spec",
-          "command": "node",
+          "label": "phase2-plugin-targeted-tests",
+          "command": "npx",
           "args": [
-            "-e",
-            "console.log('phase2 taskpack spec validated')"
+            "vitest",
+            "run",
+            "test/unit/plugins/manifest/friday-plugin-manifest-schema.test.ts",
+            "test/unit/plugins/services/friday-plugin-service.test.ts",
+            "test/unit/api/http/routes/friday-plugin-routes.test.ts",
+            "test/e2e/api/friday-api-plugins-routes.test.ts"
           ]
         }
       ]
     }
   ],
   "repairWorker": {
-    "id": "phase2-plugin-sdk-preview-repair-spec",
+    "id": "phase2-plugin-sdk-preview-repair",
     "title": "Diagnose plugin preview blockers without rewriting marketplace ownership",
     "runner": "command",
     "mode": "repair",
     "steps": [
       {
-        "label": "phase2-taskpack-repair-spec",
-        "command": "node",
+        "label": "phase2-plugin-repair-check",
+        "command": "npm",
         "args": [
-          "-e",
-          "console.log('phase2 repair spec validated')"
+          "run",
+          "typecheck"
         ]
       }
     ]
   },
   "successCriteria": [
     "Preview capability manifests remain distinct from the canonical skills lifecycle.",
+    "Only first-party and allowlisted partner plugins can declare preview SDK capabilities.",
     "No arbitrary public package runtime is introduced."
   ],
   "closureEvidence": [
@@ -70,6 +79,7 @@
     }
   ],
   "notes": [
-    "This taskpack remains spec_only until concrete preview SDK implementation commands are authored."
+    "Preview SDK metadata must stay additive to the existing /v1/plugins* and /v1/marketplace/plugins* surfaces.",
+    "Partner allowlisting must remain bounded and must not turn plugin distribution into a second marketplace backbone."
   ]
 }

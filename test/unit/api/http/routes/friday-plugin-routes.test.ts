@@ -102,6 +102,24 @@ describe("FridayPluginRoutes", () => {
         checksum: "abc",
         packageUrl: "url",
         updatedAt: NOW,
+        previewSdk: {
+          sdkVersion: "2026-03-preview",
+          capabilities: ["registerTool"],
+          publisherId: "partner.preview",
+        },
+        capabilitySummary: {
+          previewEnabled: true,
+          sdkVersion: "2026-03-preview",
+          requestedCapabilities: ["registerTool"],
+          supportedCapabilities: ["registerTool"],
+          unsupportedCapabilities: [],
+        },
+        policySummary: {
+          publisherProgram: "allowlisted_partner",
+          installAllowed: true,
+          enableAllowed: true,
+          reasons: [],
+        },
       })),
       listMarketplacePluginVersions: vi.fn(async () => [
         { version: "1.0.0", releasedAt: NOW, checksum: "abc123" },
@@ -262,7 +280,14 @@ describe("FridayPluginRoutes", () => {
   it("gets marketplace plugin detail", async () => {
     const route = findRoute("marketplace.plugins.get");
     const result = await route.handler(makeCtx({ params: { id: "friday.test.mp" } }));
-    expect(result).toMatchObject({ plugin: { id: "friday.test.mp" } });
+    expect(result).toMatchObject({
+      plugin: {
+        id: "friday.test.mp",
+        previewSdk: { sdkVersion: "2026-03-preview" },
+        capabilitySummary: { requestedCapabilities: ["registerTool"] },
+        policySummary: { publisherProgram: "allowlisted_partner" },
+      },
+    });
   });
 
   // ─── marketplace.plugins.versions.list ───

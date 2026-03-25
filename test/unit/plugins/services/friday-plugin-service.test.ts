@@ -92,6 +92,90 @@ describe("FridayPluginService", () => {
     expect(entity.trustMode).toBe("trust_on_install");
   });
 
+  it("surfaces preview capability and policy summaries for first-party preview plugins", () => {
+    const manifest = makeManifest("friday.test.preview", {
+      previewSdk: {
+        sdkVersion: "2026-03-preview",
+        capabilities: ["registerTool", "registerHooks"],
+      },
+    });
+
+    const entity = service.installPlugin({
+      manifest,
+      installPath: "/plugins/friday.test.preview",
+      source: "local",
+      userApproved: true,
+    });
+
+    expect(entity.capabilitySummary).toMatchObject({
+      previewEnabled: true,
+      sdkVersion: "2026-03-preview",
+      requestedCapabilities: ["registerTool", "registerHooks"],
+      supportedCapabilities: ["registerTool", "registerHooks"],
+      unsupportedCapabilities: [],
+    });
+    expect(entity.policySummary).toMatchObject({
+      publisherProgram: "first_party",
+      installAllowed: true,
+      enableAllowed: true,
+    });
+  });
+
+  it("blocks preview SDK installs for untrusted publishers", () => {
+    const manifest = makeManifest("partner.test.preview", {
+      previewSdk: {
+        sdkVersion: "2026-03-preview",
+        capabilities: ["registerTool"],
+        publisherId: "partner.test",
+      },
+    });
+
+    expect(() =>
+      service.installPlugin({
+        manifest,
+        installPath: "/plugins/partner.test.preview",
+        source: "local",
+        userApproved: true,
+      }),
+    ).toThrow(FridayDomainError);
+  });
+
+  it("allows preview SDK installs for allowlisted partners", () => {
+    const allowlistedService = createFridayPluginService({
+      sqlite: db,
+      registry,
+      resolver,
+      loader,
+      signatureVerifier,
+      previewPolicy: {
+        allowlistedPluginIds: ["partner.test.preview"],
+        allowlistedPublisherIds: ["partner.test"],
+      },
+      nowIso: () => NOW,
+      idGenerator: () => "test-id",
+      readFileAsBuffer: () => Buffer.from("mock-file-content"),
+    });
+
+    const entity = allowlistedService.installPlugin({
+      manifest: makeManifest("partner.test.preview", {
+        previewSdk: {
+          sdkVersion: "2026-03-preview",
+          capabilities: ["registerRoutes", "registerHooks"],
+          publisherId: "partner.test",
+        },
+      }),
+      installPath: "/plugins/partner.test.preview",
+      source: "local",
+      userApproved: true,
+    });
+
+    expect(entity.policySummary).toMatchObject({
+      publisherProgram: "allowlisted_partner",
+      installAllowed: true,
+      enableAllowed: true,
+    });
+  });
+
   it("computes and stores fingerprint for local install without packageBytes", () => {
     const manifest = makeManifest("friday.test.alpha");
     const entity = service.installPlugin({
@@ -423,7 +507,25 @@ describe("FridayPluginService", () => {
 
   it("searches marketplace when configured", async () => {
     const mockMarketplace: FridayPluginMarketplaceClient = {
-      search: vi.fn(async () => ({ items: [], total: 0 })),
+      search: vi.fn(async () => ({
+        items: [
+          {
+            id: "partner.preview.plugin",
+            name: "Preview Plugin",
+            description: "Test preview plugin",
+            version: "1.0.0",
+            author: "Partner",
+            downloads: 0,
+            updatedAt: NOW,
+            previewSdk: {
+              sdkVersion: "2026-03-preview",
+              capabilities: ["registerTool"],
+              publisherId: "partner.preview",
+            },
+          },
+        ],
+        total: 1,
+      })),
       getPluginDetail: vi.fn(async () => ({
         id: "test",
         name: "Test",
@@ -453,13 +555,78 @@ describe("FridayPluginService", () => {
       loader,
       marketplace: mockMarketplace,
       signatureVerifier,
+      previewPolicy: {
+        allowlistedPublisherIds: ["partner.preview"],
+      },
       nowIso: () => NOW,
       idGenerator: () => "test-id",
     });
 
     const result = await serviceWithMp.searchMarketplace({ query: "test" });
-    expect(result.items).toEqual([]);
+    expect(result.items[0]?.capabilitySummary).toMatchObject({
+      previewEnabled: true,
+      requestedCapabilities: ["registerTool"],
+    });
+    expect(result.items[0]?.policySummary).toMatchObject({
+      publisherProgram: "allowlisted_partner",
+      installAllowed: true,
+    });
     expect(mockMarketplace.search).toHaveBeenCalled();
+  });
+
+  it("enriches marketplace detail with preview policy summaries", async () => {
+    const mockMarketplace: FridayPluginMarketplaceClient = {
+      search: vi.fn(async () => ({ items: [], total: 0 })),
+      getPluginDetail: vi.fn(async () => ({
+        id: "partner.detail.preview",
+        name: "Detail Preview",
+        description: "Test",
+        version: "1.0.0",
+        author: "Partner",
+        downloads: 1,
+        manifest: makeManifest("partner.detail.preview", {
+          previewSdk: {
+            sdkVersion: "2026-03-preview",
+            capabilities: ["registerProvider"],
+            publisherId: "partner.detail",
+          },
+        }),
+        checksum: "abc",
+        packageUrl: "url",
+        updatedAt: NOW,
+      })),
+      listVersions: vi.fn(async () => []),
+      downloadPackage: vi.fn(async () => ({
+        packageBytes: Buffer.from("data"),
+        checksum: "checksum-123",
+        manifest: makeManifest("partner.detail.preview"),
+      })),
+    };
+
+    const serviceWithMp = createFridayPluginService({
+      sqlite: db,
+      registry,
+      resolver,
+      loader,
+      marketplace: mockMarketplace,
+      signatureVerifier,
+      previewPolicy: {
+        allowlistedPublisherIds: ["partner.detail"],
+      },
+      nowIso: () => NOW,
+      idGenerator: () => "test-id",
+    });
+
+    const detail = await serviceWithMp.getMarketplacePlugin("partner.detail.preview");
+
+    expect(detail.capabilitySummary).toMatchObject({
+      previewEnabled: true,
+      requestedCapabilities: ["registerProvider"],
+    });
+    expect(detail.policySummary).toMatchObject({
+      publisherProgram: "allowlisted_partner",
+      installAllowed: true,
+    });
   });
 
   it("lists marketplace plugin versions when configured", async () => {

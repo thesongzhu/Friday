@@ -5,7 +5,12 @@
  */
 
 import { FridayDomainError } from "#errors";
-import type { FridayPluginManifest } from "../model/friday-plugin.types.js";
+import type {
+  FridayPluginCapabilitySummary,
+  FridayPluginManifest,
+  FridayPluginPolicySummary,
+  FridayPluginSdkPreviewManifest,
+} from "../model/friday-plugin.types.js";
 import { FRIDAY_PLUGIN_ERROR_CODES } from "../model/friday-plugin.types.js";
 
 // ─── Types ───
@@ -18,6 +23,9 @@ export interface FridayMarketplacePluginSummary {
   author: string;
   downloads: number;
   updatedAt: string;
+  previewSdk?: FridayPluginSdkPreviewManifest;
+  capabilitySummary?: FridayPluginCapabilitySummary;
+  policySummary?: FridayPluginPolicySummary;
 }
 
 export interface FridayMarketplacePluginDetail {
@@ -31,6 +39,9 @@ export interface FridayMarketplacePluginDetail {
   checksum: string;
   packageUrl: string;
   updatedAt: string;
+  previewSdk?: FridayPluginSdkPreviewManifest;
+  capabilitySummary?: FridayPluginCapabilitySummary;
+  policySummary?: FridayPluginPolicySummary;
 }
 
 export interface FridayMarketplaceSearchQuery {

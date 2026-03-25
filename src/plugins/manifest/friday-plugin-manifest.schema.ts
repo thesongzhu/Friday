@@ -10,10 +10,13 @@ import type {
   FridayPluginManifest,
   FridayPluginPermissionGrant,
   FridayPluginPermissionPolicy,
+  FridayPluginSdkPreviewCapability,
+  FridayPluginSdkPreviewManifest,
 } from "../model/friday-plugin.types.js";
 import {
   FRIDAY_PLUGIN_ERROR_CODES,
   FRIDAY_PLUGIN_VALID_KINDS,
+  FRIDAY_PLUGIN_VALID_SDK_PREVIEW_CAPABILITIES,
 } from "../model/friday-plugin.types.js";
 
 // ─── Validation Helpers ───
@@ -128,6 +131,57 @@ function validatePermissions(permissions: unknown): FridayPluginPermissionPolicy
   return { grants, promptOn: p.promptOn as FridayPluginPermissionPolicy["promptOn"] };
 }
 
+function validatePreviewSdk(previewSdk: unknown): FridayPluginSdkPreviewManifest {
+  if (previewSdk == null || typeof previewSdk !== "object" || Array.isArray(previewSdk)) {
+    throw new FridayDomainError(
+      FRIDAY_PLUGIN_ERROR_CODES.MANIFEST_INVALID,
+      "previewSdk must be an object",
+      { httpStatus: 400 },
+    );
+  }
+
+  const p = previewSdk as Record<string, unknown>;
+  const errors: string[] = [];
+
+  if (!isNonEmptyString(p.sdkVersion)) {
+    errors.push("sdkVersion is required");
+  }
+
+  if (!Array.isArray(p.capabilities) || p.capabilities.length === 0) {
+    errors.push("capabilities must be a non-empty array");
+  } else {
+    for (const capability of p.capabilities) {
+      if (
+        typeof capability !== "string"
+        || !(FRIDAY_PLUGIN_VALID_SDK_PREVIEW_CAPABILITIES as readonly string[]).includes(capability)
+      ) {
+        errors.push(
+          `capabilities must contain only: ${FRIDAY_PLUGIN_VALID_SDK_PREVIEW_CAPABILITIES.join(", ")}`,
+        );
+        break;
+      }
+    }
+  }
+
+  if (p.publisherId !== undefined && !isNonEmptyString(p.publisherId)) {
+    errors.push("publisherId must be a non-empty string when provided");
+  }
+
+  if (errors.length > 0) {
+    throw new FridayDomainError(
+      FRIDAY_PLUGIN_ERROR_CODES.MANIFEST_INVALID,
+      `previewSdk: ${errors.join("; ")}`,
+      { httpStatus: 400 },
+    );
+  }
+
+  return {
+    sdkVersion: p.sdkVersion as string,
+    capabilities: p.capabilities as FridayPluginSdkPreviewCapability[],
+    publisherId: p.publisherId as string | undefined,
+  };
+}
+
 // ─── Main Validator ───
 
 /** Validates a parsed JSON object as a FridayPluginManifest. */
@@ -234,6 +288,8 @@ export function validateFridayPluginManifest(raw: unknown): FridayPluginManifest
   // Validate permissions separately (throws on error)
   const permissions = validatePermissions(m.permissions);
 
+  const previewSdk = m.previewSdk === undefined ? undefined : validatePreviewSdk(m.previewSdk);
+
   // Validate signature shape if present
   if (m.signature !== undefined) {
     if (m.signature == null || typeof m.signature !== "object") {
@@ -279,5 +335,6 @@ export function validateFridayPluginManifest(raw: unknown): FridayPluginManifest
     permissions,
     compatibility: m.compatibility as FridayPluginManifest["compatibility"],
     signature: m.signature as FridayPluginManifest["signature"],
+    previewSdk,
   };
 }
