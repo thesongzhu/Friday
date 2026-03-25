@@ -10,17 +10,23 @@ import { loadFridaySkillPackage } from "../manifest/friday-skill-package-loader.
 import { safeParseFridaySkillManifestV2 } from "../manifest/friday-skill-manifest.schema.js";
 import type { SkillManifestV2 } from "../model/friday-skill-manifest-v2.types.js";
 import type {
-  FridayMarketplaceCacheEntity,
   FridayMarketplaceSourceEntity,
   FridaySignatureVerificationResult,
   FridaySkillCatalogItem,
   FridaySkillCatalogQuery,
+  FridaySkillEligibility,
   FridaySkillEntity,
+  FridaySkillFailureEvidenceSummary,
   FridaySkillInstallationEntity,
+  FridaySkillInstallPlanSummary,
   FridaySkillInstallRequest,
   FridaySkillInstallResult,
+  FridaySkillPermissionPreview,
+  FridaySkillRequirementPreview,
+  FridaySkillVerificationStatus,
   FridaySkillVersionEntity,
   FridayTrustScoreBreakdown,
+  JsonValue,
 } from "../model/friday-skill-marketplace.types.js";
 import type { FridayMarketplaceCacheRepository } from "../persistence/friday-marketplace-cache-repository.js";
 import type { FridayMarketplaceSourceRepository } from "../persistence/friday-marketplace-source-repository.js";
@@ -93,6 +99,12 @@ export interface FridaySkillLifecycleSummary {
   managed: boolean;
   registryLoaded: boolean;
   currentManifest?: SkillManifestV2;
+  verificationStatus: FridaySkillVerificationStatus;
+  requirementPreview: FridaySkillRequirementPreview;
+  permissionPreview: FridaySkillPermissionPreview;
+  eligibility: FridaySkillEligibility;
+  installPlan: FridaySkillInstallPlanSummary;
+  latestFailure?: FridaySkillFailureEvidenceSummary;
 }
 
 export interface FridaySkillLifecycleDetail extends FridaySkillLifecycleSummary {
@@ -108,11 +120,18 @@ export interface FridaySkillCatalogViewItem extends FridaySkillCatalogItem {
   installedVersion?: string;
   updateAvailable: boolean;
   sourceDetails?: FridayMarketplaceSourceEntity;
+  verificationStatus: FridaySkillVerificationStatus;
+  requirementPreview: FridaySkillRequirementPreview;
+  permissionPreview: FridaySkillPermissionPreview;
+  eligibility: FridaySkillEligibility;
+  installPlan: FridaySkillInstallPlanSummary;
+  latestFailure?: FridaySkillFailureEvidenceSummary;
 }
 
 export interface FridaySkillInstallOutcome {
   skill: FridaySkillLifecycleDetail;
   installation: FridaySkillInstallResult;
+  evidence: FridaySkillVerificationEvidence;
 }
 
 export interface FridaySkillUpdateOutcome extends FridaySkillInstallOutcome {
@@ -196,7 +215,188 @@ function probeBin(command: string): boolean {
   return probe.status === 0;
 }
 
+function permissionToken(input: { resource: string; action: string }): string {
+  return `${input.resource}.${input.action}`;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function buildRequirementPreview(manifest?: SkillManifestV2): FridaySkillRequirementPreview {
+  const bins = manifest?.requirements.bins ?? [];
+  const env = manifest?.requirements.env ?? [];
+  const config = manifest?.requirements.config ?? [];
+  const supportedOs = manifest?.requirements.os ?? [];
+  const requiredCapabilities = manifest?.executionTargets.requiredCapabilities ?? [];
+  const currentOs = process.platform as "darwin" | "linux" | "win32";
+
+  return {
+    bins,
+    env,
+    config,
+    supportedOs,
+    requiredCapabilities,
+    missingBins: bins.filter((bin) => !probeBin(bin)),
+    missingEnv: env.filter((key) => {
+      const value = process.env[key];
+      return typeof value !== "string" || value.trim().length === 0;
+    }),
+    unresolvedConfig: [...config],
+    unsupportedOs: supportedOs.length > 0 && !supportedOs.includes(currentOs),
+  };
+}
+
+function buildPermissionPreview(manifest?: SkillManifestV2): FridaySkillPermissionPreview {
+  const grants = (manifest?.permissions.grants ?? []).map((grant) => ({
+    id: grant.id,
+    token: permissionToken({ resource: grant.resource, action: grant.action }),
+    resource: grant.resource,
+    action: grant.action,
+    required: grant.required,
+    reason: grant.reason,
+    selectors: grant.selectors as Record<string, JsonValue | undefined> | undefined,
+  }));
+
+  return {
+    required: uniqueStrings(grants.filter((grant) => grant.required).map((grant) => grant.token)),
+    optional: uniqueStrings(grants.filter((grant) => !grant.required).map((grant) => grant.token)),
+    promptOn: uniqueStrings(manifest?.permissions.promptOn ?? []),
+    grants,
+  };
+}
+
+function buildVerificationStatus(input: {
+  registered: FridayRegisteredSkill | null;
+  source: FridayMarketplaceSourceEntity | undefined;
+  catalogEntry: FridaySkillCatalogItem | null;
+}): FridaySkillVerificationStatus {
+  if (input.registered) {
+    return "local";
+  }
+
+  if (input.source && input.catalogEntry) {
+    if (!input.catalogEntry.signatureValid && input.source.trustPolicy === "strict") {
+      return "blocked";
+    }
+    if (input.catalogEntry.signatureValid && input.catalogEntry.trustScore >= 85) {
+      return "trusted";
+    }
+    return "warning";
+  }
+
+  return "unverified";
+}
+
+function buildEligibility(input: {
+  requirements: FridaySkillRequirementPreview;
+  permissions: FridaySkillPermissionPreview;
+  verificationStatus: FridaySkillVerificationStatus;
+}): FridaySkillEligibility {
+  const reasons: string[] = [];
+
+  if (input.requirements.unsupportedOs) {
+    reasons.push("Current OS is not supported by this skill.");
+  }
+  if (input.requirements.missingBins.length > 0) {
+    reasons.push(`Missing required binaries: ${input.requirements.missingBins.join(", ")}`);
+  }
+  if (input.requirements.missingEnv.length > 0) {
+    reasons.push(`Missing environment variables: ${input.requirements.missingEnv.join(", ")}`);
+  }
+  if (input.requirements.unresolvedConfig.length > 0) {
+    reasons.push(`Requires config values: ${input.requirements.unresolvedConfig.join(", ")}`);
+  }
+  if (input.requirements.requiredCapabilities.length > 0) {
+    reasons.push(`Requires capabilities: ${input.requirements.requiredCapabilities.join(", ")}`);
+  }
+  if (input.permissions.required.length > 0) {
+    reasons.push(`Requires operator-granted permissions: ${input.permissions.required.join(", ")}`);
+  }
+  if (input.permissions.promptOn.length > 0) {
+    reasons.push(`Will prompt at runtime for: ${input.permissions.promptOn.join(", ")}`);
+  }
+  if (input.verificationStatus === "warning") {
+    reasons.push("Source trust metadata requires operator review.");
+  }
+  if (input.verificationStatus === "blocked") {
+    reasons.push("Source trust policy blocks installation in the current state.");
+  }
+
+  const blocked = input.requirements.unsupportedOs
+    || input.requirements.missingBins.length > 0
+    || input.verificationStatus === "blocked";
+  const reviewRequired = input.requirements.missingEnv.length > 0
+    || input.requirements.unresolvedConfig.length > 0
+    || input.requirements.requiredCapabilities.length > 0
+    || input.permissions.required.length > 0
+    || input.permissions.promptOn.length > 0
+    || input.verificationStatus === "warning";
+
+  return {
+    verdict: blocked ? "blocked" : reviewRequired ? "needs_configuration" : "eligible",
+    installable: !blocked,
+    reviewRequired,
+    reasons,
+  };
+}
+
+function buildInstallPlan(input: {
+  sourceId?: string;
+  source?: FridayMarketplaceSourceEntity;
+  installedVersion?: string;
+  targetVersion?: string;
+  requirements: FridaySkillRequirementPreview;
+  permissions: FridaySkillPermissionPreview;
+  verificationStatus: FridaySkillVerificationStatus;
+}): FridaySkillInstallPlanSummary {
+  return {
+    strategy: input.installedVersion ? "update" : "install",
+    targetVersion: input.targetVersion,
+    sourceId: input.sourceId,
+    sourceTrustPolicy: input.source?.trustPolicy,
+    targetCount: 1,
+    verificationStatus: input.verificationStatus,
+    eligibility: buildEligibility({
+      requirements: input.requirements,
+      permissions: input.permissions,
+      verificationStatus: input.verificationStatus,
+    }),
+    requirements: input.requirements,
+    permissions: input.permissions,
+  };
+}
+
+function buildLatestFailure(installations: FridaySkillInstallationEntity[]): FridaySkillFailureEvidenceSummary | undefined {
+  const failed = installations.find((installation) =>
+    installation.status === "failed"
+    && typeof installation.lastError === "string"
+    && installation.lastError.trim().length > 0
+  );
+  if (!failed || !failed.lastError) {
+    return undefined;
+  }
+  return {
+    installationId: failed.id,
+    version: failed.version,
+    message: failed.lastError,
+    failedAt: failed.updatedAt,
+    satelliteId: failed.satelliteId,
+  };
+}
+
 function registryToSummary(skill: FridayRegisteredSkill): FridaySkillLifecycleSummary {
+  const requirementPreview = buildRequirementPreview(skill.manifest);
+  const permissionPreview = buildPermissionPreview(skill.manifest);
+  const verificationStatus: FridaySkillVerificationStatus = "local";
+  const installPlan = buildInstallPlan({
+    installedVersion: skill.manifest.version,
+    targetVersion: skill.manifest.version,
+    requirements: requirementPreview,
+    permissions: permissionPreview,
+    verificationStatus,
+  });
+
   return {
     skillId: skill.manifest.id,
     name: skill.manifest.name,
@@ -214,6 +414,11 @@ function registryToSummary(skill: FridayRegisteredSkill): FridaySkillLifecycleSu
     managed: skill.origin === "managed",
     registryLoaded: true,
     currentManifest: skill.manifest,
+    verificationStatus,
+    requirementPreview,
+    permissionPreview,
+    eligibility: installPlan.eligibility,
+    installPlan,
   };
 }
 
@@ -236,6 +441,68 @@ function persistedToSummary(skill: FridaySkillEntity, catalogEntry: FridaySkillC
     managed: skill.origin === "managed",
     registryLoaded: false,
     currentManifest: skill.currentManifest,
+    verificationStatus: "unverified",
+    requirementPreview: buildRequirementPreview(skill.currentManifest ?? catalogEntry?.manifest),
+    permissionPreview: buildPermissionPreview(skill.currentManifest ?? catalogEntry?.manifest),
+    eligibility: {
+      verdict: "eligible",
+      installable: true,
+      reviewRequired: false,
+      reasons: [],
+    },
+    installPlan: {
+      strategy: skill.installedVersion ? "update" : "install",
+      targetVersion: skill.latestVersion ?? catalogEntry?.version,
+      sourceId: catalogEntry?.sourceId,
+      sourceTrustPolicy: undefined,
+      targetCount: 1,
+      verificationStatus: "unverified",
+      eligibility: {
+        verdict: "eligible",
+        installable: true,
+        reviewRequired: false,
+        reasons: [],
+      },
+      requirements: buildRequirementPreview(skill.currentManifest ?? catalogEntry?.manifest),
+      permissions: buildPermissionPreview(skill.currentManifest ?? catalogEntry?.manifest),
+    },
+  };
+}
+
+function enrichSummary(input: {
+  summary: FridaySkillLifecycleSummary;
+  manifest?: SkillManifestV2;
+  source?: FridayMarketplaceSourceEntity;
+  catalogEntry: FridaySkillCatalogItem | null;
+  installations: FridaySkillInstallationEntity[];
+  registered: FridayRegisteredSkill | null;
+}): FridaySkillLifecycleSummary {
+  const manifest = input.manifest;
+  const requirementPreview = buildRequirementPreview(manifest);
+  const permissionPreview = buildPermissionPreview(manifest);
+  const verificationStatus = buildVerificationStatus({
+    registered: input.registered,
+    source: input.source,
+    catalogEntry: input.catalogEntry,
+  });
+  const installPlan = buildInstallPlan({
+    sourceId: input.summary.sourceId ?? input.catalogEntry?.sourceId,
+    source: input.source,
+    installedVersion: input.summary.installedVersion,
+    targetVersion: input.summary.latestVersion ?? input.catalogEntry?.version,
+    requirements: requirementPreview,
+    permissions: permissionPreview,
+    verificationStatus,
+  });
+
+  return {
+    ...input.summary,
+    verificationStatus,
+    requirementPreview,
+    permissionPreview,
+    eligibility: installPlan.eligibility,
+    installPlan,
+    latestFailure: buildLatestFailure(input.installations),
   };
 }
 
@@ -302,6 +569,8 @@ export function createFridaySkillLifecycleService(
       skillId,
       persisted?.latestVersion ?? persisted?.installedVersion ?? registered?.manifest.version,
     );
+    const source = getSource(catalogEntry?.sourceId);
+    const installations = getInstallations(skillId);
 
     if (registered) {
       const summary = registryToSummary(registered);
@@ -315,15 +584,29 @@ export function createFridaySkillLifecycleService(
           persisted.installedVersion ?? summary.installedVersion,
         );
       }
-      return summary;
+      return enrichSummary({
+        summary,
+        manifest: persisted?.currentManifest ?? registered.manifest ?? catalogEntry?.manifest,
+        source,
+        catalogEntry,
+        installations,
+        registered,
+      });
     }
 
     if (persisted) {
-      return persistedToSummary(persisted, catalogEntry);
+      return enrichSummary({
+        summary: persistedToSummary(persisted, catalogEntry),
+        manifest: persisted.currentManifest ?? catalogEntry?.manifest,
+        source,
+        catalogEntry,
+        installations,
+        registered: null,
+      });
     }
 
     if (catalogEntry) {
-      return {
+      const summary: FridaySkillLifecycleSummary = {
         skillId: catalogEntry.skillId,
         name: catalogEntry.skillName,
         description: catalogEntry.manifest.description,
@@ -339,7 +622,41 @@ export function createFridaySkillLifecycleService(
         sourceId: catalogEntry.sourceId,
         managed: true,
         registryLoaded: false,
+        currentManifest: catalogEntry.manifest,
+        verificationStatus: "unverified",
+        requirementPreview: buildRequirementPreview(catalogEntry.manifest),
+        permissionPreview: buildPermissionPreview(catalogEntry.manifest),
+        eligibility: {
+          verdict: "eligible",
+          installable: true,
+          reviewRequired: false,
+          reasons: [],
+        },
+        installPlan: {
+          strategy: "install",
+          targetVersion: catalogEntry.version,
+          sourceId: catalogEntry.sourceId,
+          sourceTrustPolicy: undefined,
+          targetCount: 1,
+          verificationStatus: "unverified",
+          eligibility: {
+            verdict: "eligible",
+            installable: true,
+            reviewRequired: false,
+            reasons: [],
+          },
+          requirements: buildRequirementPreview(catalogEntry.manifest),
+          permissions: buildPermissionPreview(catalogEntry.manifest),
+        },
       };
+      return enrichSummary({
+        summary,
+        manifest: catalogEntry.manifest,
+        source,
+        catalogEntry,
+        installations,
+        registered: null,
+      });
     }
 
     return null;
@@ -504,7 +821,8 @@ export function createFridaySkillLifecycleService(
     listSkills() {
       const summaries = new Map<string, FridaySkillLifecycleSummary>();
       for (const registered of deps.registry.list()) {
-        summaries.set(registered.manifest.id, registryToSummary(registered));
+        const summary = buildSummary(registered.manifest.id) ?? registryToSummary(registered);
+        summaries.set(registered.manifest.id, summary);
       }
       const persisted = deps.db.withReadConnection((db) =>
         deps.skillRepo.listAll(db),
@@ -522,12 +840,35 @@ export function createFridaySkillLifecycleService(
       const result = deps.discovery.search(query);
       const items = result.items.map((item) => {
         const summary = buildSummary(item.skillId);
+        const requirementPreview = summary?.requirementPreview ?? buildRequirementPreview(item.manifest);
+        const permissionPreview = summary?.permissionPreview ?? buildPermissionPreview(item.manifest);
+        const sourceDetails = getSource(item.sourceId);
+        const verificationStatus = summary?.verificationStatus ?? buildVerificationStatus({
+          registered: null,
+          source: sourceDetails,
+          catalogEntry: item,
+        });
+        const installPlan = summary?.installPlan ?? buildInstallPlan({
+          sourceId: item.sourceId,
+          source: sourceDetails,
+          installedVersion: summary?.installedVersion,
+          targetVersion: item.version,
+          requirements: requirementPreview,
+          permissions: permissionPreview,
+          verificationStatus,
+        });
         return {
           ...item,
           installed: Boolean(summary?.installedVersion || summary?.registryLoaded),
           installedVersion: summary?.installedVersion,
           updateAvailable: compareVersions(item.version, summary?.installedVersion),
-          sourceDetails: getSource(item.sourceId),
+          sourceDetails,
+          verificationStatus,
+          requirementPreview,
+          permissionPreview,
+          eligibility: summary?.eligibility ?? installPlan.eligibility,
+          installPlan,
+          latestFailure: summary?.latestFailure,
         };
       });
       return {
@@ -566,7 +907,11 @@ export function createFridaySkillLifecycleService(
             httpStatus: 404,
           });
         }
-        return { skill, installation };
+        const evidence = await this.verifySkill({
+          skillId: input.skillId,
+          userId: input.userId,
+        });
+        return { skill, installation, evidence };
       } catch (error) {
         await reportSkillFailure({
           userId: input.userId,
@@ -598,9 +943,14 @@ export function createFridaySkillLifecycleService(
             httpStatus: 404,
           });
         }
+        const evidence = await this.verifySkill({
+          skillId: input.skillId,
+          userId: input.userId,
+        });
         return {
           skill,
           installation,
+          evidence,
           updated: previousVersion !== installation.resolvedVersion,
           previousVersion,
         };

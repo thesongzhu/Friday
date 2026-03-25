@@ -20,6 +20,8 @@ function createMockDeps(
       }),
       getSource: vi.fn().mockReturnValue(null),
       listSources: vi.fn().mockReturnValue([]),
+      getSourceView: vi.fn().mockReturnValue(null),
+      listSourceViews: vi.fn().mockReturnValue([]),
       updateSource: vi.fn().mockReturnValue({
         id: "src-1",
         name: "Main",
@@ -138,6 +140,8 @@ describe("createFridaySkillMarketplaceRoutes", () => {
     }));
 
     expect(result).toHaveProperty("source.id", "src-1");
+    expect(result).toHaveProperty("source.trustSummary.policy", "warn");
+    expect(result).toHaveProperty("source.catalogSummary.cachedSkillCount", 0);
     expect(deps.sources.addSource).toHaveBeenCalledWith({
       name: "Main",
       baseUrl: "https://marketplace.example.com",
@@ -166,6 +170,50 @@ describe("createFridaySkillMarketplaceRoutes", () => {
     await expect(route.handler(createMockCtx({
       params: { id: "missing-source" },
     }))).rejects.toThrow(FridayDomainError);
+  });
+
+  it("returns source health summary for list routes", async () => {
+    const deps = createMockDeps({
+      sources: {
+        ...createMockDeps().sources,
+        listSourceViews: vi.fn().mockReturnValue([
+          {
+            id: "src-1",
+            name: "Main",
+            baseUrl: "https://marketplace.example.com",
+            enabled: true,
+            trustPolicy: "strict",
+            pinnedKeyIds: ["k1"],
+            createdAt: "2026-03-01T00:00:00.000Z",
+            updatedAt: "2026-03-01T00:00:00.000Z",
+            trustSummary: {
+              policy: "strict",
+              pinnedKeyCount: 1,
+              pinned: true,
+            },
+            catalogSummary: {
+              cachedSkillCount: 3,
+              cachedVersionCount: 5,
+              verifiedVersionCount: 4,
+              unsignedVersionCount: 1,
+              latestIndexedAt: "2026-03-01T00:00:00.000Z",
+              stale: false,
+            },
+            healthSummary: {
+              status: "warning",
+              reasons: ["1 cached version is unsigned."],
+            },
+          },
+        ]),
+      },
+    });
+    const routes = createFridaySkillMarketplaceRoutes(deps);
+    const route = findRoute(routes, "marketplace.sources.list");
+
+    const result = await route.handler(createMockCtx());
+    expect(result).toHaveProperty("items.0.trustSummary.policy", "strict");
+    expect(result).toHaveProperty("items.0.catalogSummary.cachedVersionCount", 5);
+    expect(result).toHaveProperty("items.0.healthSummary.status", "warning");
   });
 
   it("forwards catalog query to discovery service", async () => {
