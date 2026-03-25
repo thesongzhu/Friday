@@ -2,7 +2,7 @@
   "schemaVersion": "1.0",
   "phaseId": "phase3",
   "title": "Channel Contract",
-  "executionMode": "hybrid",
+  "executionMode": "automated",
   "goal": "Make the channel/core contract explicit while preserving core ownership of message, session, audit, and evidence behavior.",
   "allowedPaths": [
     "src/channels",
@@ -12,6 +12,7 @@
     "docs/ops/openclaw-adoption/taskpacks/phase-3.json",
     "test/unit/channels",
     "test/unit/skills/executor",
+    "test/unit/skills/runtime",
     "test/e2e/mock/friday-openclaw-parity-closure.e2e.test.ts"
   ],
   "implementationWorkers": [
@@ -28,7 +29,8 @@
             "vitest",
             "run",
             "test/unit/channels/friday-channel-registry.test.ts",
-            "test/unit/skills/executor/friday-skill-executor.test.ts"
+            "test/unit/skills/executor/friday-skill-executor.test.ts",
+            "test/unit/skills/runtime/friday-wave23-starter-skills.test.ts"
           ]
         }
       ]
