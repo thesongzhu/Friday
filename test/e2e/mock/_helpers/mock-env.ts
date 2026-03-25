@@ -27,6 +27,7 @@ import {
 import {
   createMockFetchRouter,
   type MockRouteEntry,
+  type MockFetchRouter,
 } from "./mock-fetch-router.js";
 import { PROVIDER_MATRIX, type ProviderMatrixEntry } from "./provider-matrix.js";
 
@@ -46,6 +47,8 @@ export interface MockHubEnv {
   baseUrl: string;
   stateDir: string;
   accessToken: string;
+  fetchRouter: MockFetchRouter;
+  installFetchRouter: () => void;
   providers: Record<string, InstalledMockProvider>;
   mocks: Record<FridayProviderApi, MockFetch>;
   /** Get mock by provider kind */
@@ -292,7 +295,10 @@ export async function createMockHubEnv(opts?: {
 
   // 6. Install router as globalThis.fetch
   const router = createMockFetchRouter(routes, originalFetch);
-  (globalThis as unknown as { fetch: unknown }).fetch = router;
+  const installFetchRouter = (): void => {
+    (globalThis as unknown as { fetch: unknown }).fetch = router;
+  };
+  installFetchRouter();
 
   // 7. Register providers via API
   const providers: Record<string, InstalledMockProvider> = {};
@@ -322,6 +328,8 @@ export async function createMockHubEnv(opts?: {
     baseUrl: hubBaseUrl,
     stateDir,
     accessToken,
+    fetchRouter: router,
+    installFetchRouter,
     providers,
     mocks: mocks as Record<FridayProviderApi, MockFetch>,
     mockFor(kind: FridayProviderKind): MockFetch {
