@@ -1,5 +1,10 @@
 import path from "node:path";
-import { asNumber, asString, requireBrowserContext } from "../_shared/friday-runtime-skill-utils.mjs";
+import {
+  asNumber,
+  asString,
+  browserRuntimeBlockedResult,
+  requireBrowserContext,
+} from "../_shared/friday-runtime-skill-utils.mjs";
 import {
   findRepoRoot,
   readJsonFile,
@@ -104,7 +109,6 @@ function compareAgainstBaseline(current, baseline) {
 }
 
 export async function execute(input = {}, ctx = {}) {
-  const browser = requireBrowserContext(ctx);
   const repoRoot = await findRepoRoot(readWorkspaceRoot(input));
   const url = pickUrl(input);
   const repeats = clampRepeats(input);
@@ -116,16 +120,54 @@ export async function execute(input = {}, ctx = {}) {
   const baselinePath = path.join(evidenceRoot, "baselines", `${slug}.json`);
   let baseline = await readJsonFile(baselinePath);
   let sessionId = "";
+  let browser;
+
+  try {
+    browser = requireBrowserContext(ctx);
+  } catch (error) {
+    const blocked = browserRuntimeBlockedResult({
+      error,
+      skillLabel: "Page benchmark report",
+      suggestedSkillId: "page-benchmark-report",
+      details: {
+        url,
+        repeats,
+        baselinePath,
+      },
+    });
+    if (blocked) {
+      return blocked;
+    }
+    throw error;
+  }
 
   try {
     const samples = [];
     for (let index = 0; index < repeats; index += 1) {
-      const inspection = await browser.inspectPage({
-        url,
-        sessionId: sessionId || undefined,
-        waitUntil: "load",
-        screenshotName: `benchmark-${index + 1}`,
-      });
+      let inspection;
+      try {
+        inspection = await browser.inspectPage({
+          url,
+          sessionId: sessionId || undefined,
+          waitUntil: "load",
+          screenshotName: `benchmark-${index + 1}`,
+        });
+      } catch (error) {
+        const blocked = browserRuntimeBlockedResult({
+          error,
+          skillLabel: "Page benchmark report",
+          suggestedSkillId: "page-benchmark-report",
+          details: {
+            url,
+            repeats,
+            baselinePath,
+          },
+        });
+        if (blocked) {
+          return blocked;
+        }
+        throw error;
+      }
       sessionId = inspection.sessionId;
       samples.push(inspection);
     }

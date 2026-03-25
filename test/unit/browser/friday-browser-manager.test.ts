@@ -136,6 +136,7 @@ describe("FridayBrowserManager", () => {
       await expect(manager.launch("s1")).rejects.toThrow("newContext failed");
       expect(mockBrowser.close).toHaveBeenCalled();
     });
+
   });
 
   // ─── getPage ───

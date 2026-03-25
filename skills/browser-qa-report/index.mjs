@@ -1,4 +1,8 @@
-import { requireBrowserContext, asString } from "../_shared/friday-runtime-skill-utils.mjs";
+import {
+  requireBrowserContext,
+  asString,
+  browserRuntimeBlockedResult,
+} from "../_shared/friday-runtime-skill-utils.mjs";
 
 const URL_PATTERN = /https?:\/\/[^\s)]+/i;
 
@@ -55,17 +59,50 @@ function buildFindings(inspection) {
 }
 
 export async function execute(input = {}, ctx = {}) {
-  const browser = requireBrowserContext(ctx);
   const url = pickUrl(input);
   const expectedText = asString(input.expectedText);
   let sessionId = "";
+  let browser;
 
   try {
-    const inspection = await browser.inspectPage({
-      url,
-      screenshotName: "browser-qa-report",
-      waitUntil: "load",
+    browser = requireBrowserContext(ctx);
+  } catch (error) {
+    const blocked = browserRuntimeBlockedResult({
+      error,
+      skillLabel: "Browser QA report",
+      suggestedSkillId: "browser-qa-report",
+      details: {
+        requestedUrl: url,
+      },
     });
+    if (blocked) {
+      return blocked;
+    }
+    throw error;
+  }
+
+  try {
+    let inspection;
+    try {
+      inspection = await browser.inspectPage({
+        url,
+        screenshotName: "browser-qa-report",
+        waitUntil: "load",
+      });
+    } catch (error) {
+      const blocked = browserRuntimeBlockedResult({
+        error,
+        skillLabel: "Browser QA report",
+        suggestedSkillId: "browser-qa-report",
+        details: {
+          requestedUrl: url,
+        },
+      });
+      if (blocked) {
+        return blocked;
+      }
+      throw error;
+    }
     sessionId = inspection.sessionId;
 
     const findings = buildFindings(inspection);

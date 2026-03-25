@@ -93,6 +93,29 @@ describe("wave 1 Friday starter skills", () => {
     expect(closeSession).toHaveBeenCalledWith("browser-session-1");
   });
 
+  it("returns a blocked browser-qa-report when the browser runtime is unavailable", async () => {
+    const { execute } = await import("../../../../skills/browser-qa-report/index.mjs");
+
+    const result = await execute(
+      {
+        goal: "QA http://127.0.0.1:5173/settings",
+      },
+      {
+        browser: {
+          inspectPage: vi.fn(async () => {
+            throw new Error("browserType.launch: Executable doesn't exist at /missing/chromium");
+          }),
+          closeSession: vi.fn(async () => undefined),
+        },
+      },
+    );
+
+    expect(result.summary).toContain("browser runtime is unavailable");
+    expect(result.details.runtimeUnavailable).toBe(true);
+    expect(result.details.requiresRuntimeSetup).toBe(true);
+    expect(result.details.blockedReason).toContain("Executable doesn't exist");
+  });
+
   it("runs workspace-diff-review on a live temp repo", async () => {
     const { execute } = await import("../../../../skills/workspace-diff-review/index.mjs");
     const repoRoot = makeTempDir("friday-diff-review-");

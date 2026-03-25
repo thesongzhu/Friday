@@ -1,6 +1,11 @@
 import * as fs from "node:fs/promises";
 import path from "node:path";
-import { asArray, asString, requireBrowserContext } from "../_shared/friday-runtime-skill-utils.mjs";
+import {
+  asArray,
+  asString,
+  browserRuntimeBlockedResult,
+  requireBrowserContext,
+} from "../_shared/friday-runtime-skill-utils.mjs";
 import {
   ensureDir,
   findRepoRoot,
@@ -146,7 +151,6 @@ function buildFindings(inspection, expectedTexts, previousRun) {
 }
 
 export async function execute(input = {}, ctx = {}) {
-  const browser = requireBrowserContext(ctx);
   const repoRoot = await findRepoRoot(readWorkspaceRoot(input));
   const evidenceRoot = skillEvidenceRoot(repoRoot, SKILL_ID);
   const urls = pickUrls(input);
@@ -154,16 +158,52 @@ export async function execute(input = {}, ctx = {}) {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const results = [];
   const sessions = new Set();
+  let browser;
+
+  try {
+    browser = requireBrowserContext(ctx);
+  } catch (error) {
+    const blocked = browserRuntimeBlockedResult({
+      error,
+      skillLabel: "Release canary check",
+      suggestedSkillId: "release-canary-check",
+      details: {
+        urls,
+        expectedTexts,
+      },
+    });
+    if (blocked) {
+      return blocked;
+    }
+    throw error;
+  }
 
   try {
     for (const url of urls) {
       const slug = safePathSegment(url, "default");
       const previousRun = await readLatestRun(evidenceRoot, slug);
-      const inspection = await browser.inspectPage({
-        url,
-        waitUntil: "load",
-        screenshotName: `canary-${slug}`,
-      });
+      let inspection;
+      try {
+        inspection = await browser.inspectPage({
+          url,
+          waitUntil: "load",
+          screenshotName: `canary-${slug}`,
+        });
+      } catch (error) {
+        const blocked = browserRuntimeBlockedResult({
+          error,
+          skillLabel: "Release canary check",
+          suggestedSkillId: "release-canary-check",
+          details: {
+            urls,
+            expectedTexts,
+          },
+        });
+        if (blocked) {
+          return blocked;
+        }
+        throw error;
+      }
       sessions.add(inspection.sessionId);
 
       const findings = buildFindings(inspection, expectedTexts, previousRun);
