@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { createFridayChannelRegistry } from "#channels";
 import { createFridaySkillExecutor } from "#skills";
 import { createFridaySkillRunStore } from "#ledger";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
@@ -389,6 +390,97 @@ export async function execute(_input, ctx) {
       incidentId: "incident-1",
       actionCount: 1,
       actionId: "action-1",
+    });
+
+    await fs.rm(scriptDir, { recursive: true, force: true });
+  });
+
+  it("injects readonly channel runtime helpers into node skills", async () => {
+    const fs = await import("node:fs/promises");
+    const scriptDir = await fs.mkdtemp("/tmp/friday-node-channels-");
+    await fs.writeFile(
+      `${scriptDir}/index.mjs`,
+      `
+export async function execute(_input, ctx) {
+  const channels = await ctx.channels.listChannels();
+  const discord = await ctx.channels.getChannel("discord");
+  return {
+    hasChannels: typeof ctx?.channels?.listChannels === "function",
+    channelCount: channels.length,
+    discordStatus: discord?.status,
+    discordThreads: Boolean(discord?.contract?.supports?.threads),
+  };
+}
+`,
+      "utf8",
+    );
+
+    const channelRegistry = createFridayChannelRegistry();
+    channelRegistry.register({
+      kind: "discord",
+      init: async () => {},
+      start: async () => {},
+      stop: async () => {},
+      send: async () => ({ messageId: "sent-1" }),
+      contract: {
+        coreAuthority: {
+          messageRouting: true,
+          sessionMirroring: true,
+          audit: true,
+          evidence: true,
+        },
+        pluginResponsibilities: {
+          config: true,
+          auth: true,
+          pairing: false,
+          outboundDelivery: true,
+          threadResolution: true,
+          providerRetries: false,
+        },
+        supports: {
+          directMessages: true,
+          groupMessages: true,
+          threads: true,
+          typing: true,
+        },
+      },
+      adapters: {
+        status: {
+          status: () => "connected",
+        },
+      },
+    });
+
+    const skill = makeRegisteredSkill({
+      id: "node-channel-runtime-skill",
+      runtimeKind: "node",
+      entrypoint: "index.mjs",
+      skillDir: scriptDir,
+    });
+
+    const skills = new Map<string, FridayRegisteredSkill>();
+    skills.set("node-channel-runtime-skill", skill);
+
+    const executor = createFridaySkillExecutor({
+      db,
+      registry: createMockRegistry(skills),
+      runStore,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2025-01-15T10:00:00.000Z",
+      getChannelRegistry: () => channelRegistry,
+    });
+
+    const result = await executor.execute({
+      ...baseRequest,
+      skillId: "node-channel-runtime-skill",
+    }).result;
+
+    expect(result.status).toBe("completed");
+    expect(result.output).toMatchObject({
+      hasChannels: true,
+      channelCount: 1,
+      discordStatus: "connected",
+      discordThreads: true,
     });
 
     await fs.rm(scriptDir, { recursive: true, force: true });

@@ -43,6 +43,17 @@ export function requireBrowserContext(ctx) {
   return ctx.browser;
 }
 
+export function requireChannelsContext(ctx) {
+  if (
+    !ctx?.channels
+    || typeof ctx.channels.listChannels !== "function"
+    || typeof ctx.channels.getChannel !== "function"
+  ) {
+    throw new Error("This skill requires Friday's readonly channels runtime context.");
+  }
+  return ctx.channels;
+}
+
 function errorMessage(error) {
   if (typeof error === "string") {
     return error.trim();

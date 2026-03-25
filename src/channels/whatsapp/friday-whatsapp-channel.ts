@@ -194,6 +194,29 @@ export function createFridayWhatsappChannel(deps: WhatsappChannelDeps = {}): Fri
   const plugin: FridayChannelPlugin = {
     kind: "whatsapp",
     adapters,
+    contract: {
+      coreAuthority: {
+        messageRouting: true,
+        sessionMirroring: true,
+        audit: true,
+        evidence: true,
+      },
+      pluginResponsibilities: {
+        config: true,
+        auth: true,
+        pairing: true,
+        outboundDelivery: true,
+        threadResolution: false,
+        providerRetries: false,
+      },
+      supports: {
+        directMessages: true,
+        groupMessages: false,
+        threads: false,
+        typing: false,
+      },
+      curatedSkillIds: ["whatsapp-channel-status"],
+    },
 
     async init(rawConfig) {
       config = configAdapter.validate(rawConfig);

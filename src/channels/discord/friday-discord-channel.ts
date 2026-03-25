@@ -315,6 +315,29 @@ export function createFridayDiscordChannel(deps: DiscordChannelDeps = {}): Frida
   const plugin: FridayChannelPlugin = {
     kind: "discord",
     adapters,
+    contract: {
+      coreAuthority: {
+        messageRouting: true,
+        sessionMirroring: true,
+        audit: true,
+        evidence: true,
+      },
+      pluginResponsibilities: {
+        config: true,
+        auth: true,
+        pairing: false,
+        outboundDelivery: true,
+        threadResolution: true,
+        providerRetries: false,
+      },
+      supports: {
+        directMessages: true,
+        groupMessages: true,
+        threads: true,
+        typing: true,
+      },
+      curatedSkillIds: ["discord-channel-status"],
+    },
 
     async init(rawConfig) {
       config = configAdapter.validate(rawConfig);

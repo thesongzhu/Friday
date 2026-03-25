@@ -179,6 +179,29 @@ export function createFridayTelegramChannel(deps: TelegramChannelDeps = {}): Fri
   const plugin: FridayChannelPlugin = {
     kind: "telegram",
     adapters,
+    contract: {
+      coreAuthority: {
+        messageRouting: true,
+        sessionMirroring: true,
+        audit: true,
+        evidence: true,
+      },
+      pluginResponsibilities: {
+        config: true,
+        auth: true,
+        pairing: false,
+        outboundDelivery: true,
+        threadResolution: false,
+        providerRetries: true,
+      },
+      supports: {
+        directMessages: true,
+        groupMessages: true,
+        threads: false,
+        typing: false,
+      },
+      curatedSkillIds: ["telegram-channel-status"],
+    },
 
     async init(rawConfig) {
       config = configAdapter.validate(rawConfig);

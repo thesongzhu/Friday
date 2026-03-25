@@ -177,6 +177,29 @@ export function createFridaySlackChannel(deps: SlackChannelDeps = {}): FridayCha
   const plugin: FridayChannelPlugin = {
     kind: "slack",
     adapters,
+    contract: {
+      coreAuthority: {
+        messageRouting: true,
+        sessionMirroring: true,
+        audit: true,
+        evidence: true,
+      },
+      pluginResponsibilities: {
+        config: true,
+        auth: true,
+        pairing: false,
+        outboundDelivery: true,
+        threadResolution: true,
+        providerRetries: false,
+      },
+      supports: {
+        directMessages: true,
+        groupMessages: true,
+        threads: true,
+        typing: false,
+      },
+      curatedSkillIds: ["slack-channel-status"],
+    },
 
     async init(rawConfig) {
       config = configAdapter.validate(rawConfig);
