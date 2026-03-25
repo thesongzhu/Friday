@@ -46,6 +46,11 @@ import {
   createFridayLocalDaemonService,
   formatFridayDaemonStatus,
 } from "../daemon/friday-daemon-runtime.js";
+import {
+  createFridayOpenClawPhaseController,
+  formatFridayOpenClawDoctorReport,
+  formatFridayOpenClawPhaseStates,
+} from "../automation/openclaw-adoption/index.js";
 import { runFridayCliLoop } from "./friday-cli-run-loop.js";
 import { FRIDAY_VERSION } from "../lib/version.js";
 import { resolveStateDir } from "../state/paths/friday-state-dir-resolver.js";
@@ -54,7 +59,7 @@ import { runFridayCliAuthLoginAnthropic } from "./friday-cli-auth.js";
 // ─── Arg parser ───
 
 export interface ParsedArgs {
-  command: "start" | "list" | "run" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth" | "skills" | "daemon";
+  command: "start" | "list" | "run" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth" | "skills" | "daemon" | "phases";
   skillDirs: string[];
   port: number | undefined;
   skillId: string | undefined;
@@ -83,6 +88,11 @@ export interface ParsedArgs {
   initSkillId: string | undefined;
   // Daemon-related fields
   daemonSubcommand: "start" | "stop" | "restart" | "status" | undefined;
+  phasesSubcommand: "doctor" | "list" | "status" | "start-next" | "run-next" | "promote" | "resume" | "stabilize" | "closeout" | undefined;
+  phaseIdArg: string | undefined;
+  manifestPath: string | undefined;
+  prepareNext: boolean;
+  json: boolean;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -115,6 +125,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
     template: undefined,
     initSkillId: undefined,
     daemonSubcommand: undefined,
+    phasesSubcommand: undefined,
+    phaseIdArg: undefined,
+    manifestPath: undefined,
+    prepareNext: true,
+    json: false,
   };
 
   if (args.length === 0) {
@@ -127,7 +142,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     return result;
   }
 
-  const validCommands = ["start", "list", "run", "status", "import", "convert", "converters", "pack", "auth", "skills", "daemon"] as const;
+  const validCommands = ["start", "list", "run", "status", "import", "convert", "converters", "pack", "auth", "skills", "daemon", "phases"] as const;
   type ValidCommand = (typeof validCommands)[number];
 
   if ((validCommands as readonly string[]).includes(cmd)) {
@@ -136,6 +151,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     result.command = "help";
     return result;
   }
+
+  let i = 1;
 
   // For "converters" command, no additional args needed
   if (cmd === "converters") {
@@ -152,7 +169,20 @@ export function parseArgs(argv: string[]): ParsedArgs {
     return result;
   }
 
-  let i = 1;
+  if (cmd === "phases") {
+    const sub = args[1];
+    const validSubs = ["doctor", "list", "status", "start-next", "run-next", "promote", "resume", "stabilize", "closeout"] as const;
+    if (sub && (validSubs as readonly string[]).includes(sub)) {
+      result.phasesSubcommand = sub as (typeof validSubs)[number];
+    }
+    if ((sub === "promote" || sub === "stabilize" || sub === "resume") && args[2] && !args[2]!.startsWith("--")) {
+      result.phaseIdArg = args[2]!;
+      i = 3;
+    } else {
+      i = 2;
+    }
+  }
+
   while (i < args.length) {
     const arg = args[i]!;
 
@@ -217,6 +247,18 @@ export function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
 
+    if (arg === "--manifest" && i + 1 < args.length) {
+      result.manifestPath = args[i + 1]!;
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--json") {
+      result.json = true;
+      i += 1;
+      continue;
+    }
+
     if (arg === "--split-operations") {
       result.splitOperations = true;
       i += 1;
@@ -255,6 +297,18 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
     if (arg === "--no-browser") {
       result.noBrowser = true;
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--prepare-next") {
+      result.prepareNext = true;
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--no-prepare-next") {
+      result.prepareNext = false;
       i += 1;
       continue;
     }
@@ -359,6 +413,9 @@ Usage:
   friday daemon start|stop|restart|status
       Manage the Friday background daemon process.
 
+  friday phases doctor|list|status|start-next|run-next|promote|resume|stabilize <phase-id>|closeout
+      Inspect and drive the OpenClaw adoption phase controller.
+
   friday --help
       Show this help message.
 
@@ -371,8 +428,12 @@ Options:
   --target <path>       Install target (managed, workspace, or a custom path).
   --out <path>          Output directory or file path.
   --template <kind>     Template runtime for \`friday skills init\` (node or shell).
+  --manifest <path>     Custom phase manifest path for \`friday phases\`.
+  --json                Emit machine-readable JSON for supported phase/status commands.
   --replace             Overwrite existing skill on collision.
   --dry-run             Preview conversion without installing.
+  --prepare-next        After a successful promotion, mark the next phase as implementing.
+  --no-prepare-next     Do not auto-unlock the next phase after promotion.
   --split-operations    Create one skill per OpenAPI operation (default).
   --no-split-operations Combine all OpenAPI operations into one skill.
   --skill-id-prefix <s> Prefix for generated skill IDs.
@@ -1602,6 +1663,132 @@ async function cmdAuth(parsed: ParsedArgs): Promise<void> {
   }
 }
 
+function cmdPhases(parsed: ParsedArgs): void {
+  const sub = parsed.phasesSubcommand;
+  if (!sub) {
+    console.error("Usage: friday phases doctor|list|status|start-next|run-next|promote|resume|stabilize <phase-id>|closeout [--manifest <path>] [--dry-run] [--json]");
+    process.exitCode = 1;
+    return;
+  }
+
+  const controller = createFridayOpenClawPhaseController({
+    cwd: process.cwd(),
+    manifestPath: parsed.manifestPath,
+  });
+
+  switch (sub) {
+    case "doctor": {
+      const report = controller.doctor();
+      console.log(formatFridayOpenClawDoctorReport(report));
+      if (!report.ok) {
+        process.exitCode = 1;
+      }
+      break;
+    }
+    case "list":
+    case "status": {
+      if (parsed.json) {
+        console.log(JSON.stringify({
+          paths: controller.getPaths(),
+          state: controller.loadState(),
+          phases: controller.listPhaseStates(),
+        }, null, 2));
+      } else {
+        console.log(formatFridayOpenClawPhaseStates(controller.listPhaseStates()));
+      }
+      break;
+    }
+    case "start-next": {
+      const result = controller.startNextPhase({ dryRun: parsed.dryRun });
+      console.log(result.message);
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+      break;
+    }
+    case "run-next": {
+      const result = controller.runNextPhase({
+        dryRun: parsed.dryRun,
+        prepareNext: parsed.prepareNext,
+      });
+      if ("run" in result) {
+        console.log(`${result.phaseId}: ${result.status} (${result.branchName})`);
+        if (!result.ok) {
+          process.exitCode = 1;
+        }
+      } else {
+        console.log(result.message);
+        if (!result.ok) {
+          process.exitCode = 1;
+        }
+      }
+      break;
+    }
+    case "resume": {
+      const result = controller.resumePhase({
+        phaseId: parsed.phaseIdArg,
+        dryRun: parsed.dryRun,
+        prepareNext: parsed.prepareNext,
+      });
+      if ("run" in result) {
+        console.log(`${result.phaseId}: ${result.status} (${result.branchName})`);
+      } else {
+        console.log(result.message);
+      }
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+      break;
+    }
+    case "promote": {
+      if (!parsed.phaseIdArg) {
+        console.error("Usage: friday phases promote <phase-id> [--manifest <path>] [--dry-run]");
+        process.exitCode = 1;
+        return;
+      }
+      const result = controller.promotePhase({
+        phaseId: parsed.phaseIdArg,
+        dryRun: parsed.dryRun,
+        prepareNext: parsed.prepareNext,
+      });
+      console.log(`${result.phaseId}: ${result.status} (${result.branchName})`);
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+      break;
+    }
+    case "stabilize": {
+      if (!parsed.phaseIdArg) {
+        console.error("Usage: friday phases stabilize <phase-id> [--manifest <path>] [--dry-run]");
+        process.exitCode = 1;
+        return;
+      }
+      const result = controller.stabilizePhase({
+        phaseId: parsed.phaseIdArg,
+        dryRun: parsed.dryRun,
+        prepareNext: parsed.prepareNext,
+      });
+      console.log(`${result.phaseId}: ${result.status} (${result.branchName})`);
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+      break;
+    }
+    case "closeout": {
+      const result = controller.closeout({ dryRun: parsed.dryRun });
+      if (parsed.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`${result.status}: ${result.reportPath}`);
+      }
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+      break;
+    }
+  }
+}
+
 function cmdStatus(): void {
   const version = FRIDAY_VERSION;
   const stateDir = resolveStateDir();
@@ -1732,6 +1919,9 @@ async function main(): Promise<void> {
       break;
     case "daemon":
       await cmdDaemon(parsed);
+      break;
+    case "phases":
+      cmdPhases(parsed);
       break;
     case "help":
     default:

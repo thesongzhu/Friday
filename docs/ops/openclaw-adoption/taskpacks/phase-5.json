@@ -1,0 +1,74 @@
+{
+  "schemaVersion": "1.0",
+  "phaseId": "phase5",
+  "title": "Context Engine And Isolated Automation",
+  "executionMode": "spec_only",
+  "goal": "Define context engine and isolated automation session work without bypassing approval, evidence, or the canonical fallback context path.",
+  "allowedPaths": [
+    "src/agent/runtime",
+    "src/memory",
+    "src/jobs",
+    "src/workflows",
+    "test/integration/memory",
+    "test/unit/workflows"
+  ],
+  "implementationWorkers": [
+    {
+      "id": "phase5-context-automation-spec",
+      "title": "Load the committed context and automation taskpack",
+      "runner": "command",
+      "mode": "implementation",
+      "steps": [
+        {
+          "label": "phase5-taskpack-spec",
+          "command": "node",
+          "args": [
+            "-e",
+            "console.log('phase5 taskpack spec validated')"
+          ]
+        }
+      ]
+    }
+  ],
+  "repairWorker": {
+    "id": "phase5-context-automation-repair-spec",
+    "title": "Diagnose context and automation blockers without bypassing audit or approval",
+    "runner": "command",
+    "mode": "repair",
+    "steps": [
+      {
+        "label": "phase5-taskpack-repair-spec",
+        "command": "node",
+        "args": [
+          "-e",
+          "console.log('phase5 repair spec validated')"
+        ]
+      }
+    ]
+  },
+  "successCriteria": [
+    "Context engine hooks stay additive and preserve default fallback behavior.",
+    "Automation session targets remain approval- and evidence-aware."
+  ],
+  "closureEvidence": [
+    "phase-5/run.json",
+    "phase-5/evidence/latest-impact.json"
+  ],
+  "forbiddenBoundaries": [
+    {
+      "id": "phase5-no-hidden-runtime-bypass",
+      "description": "Phase 5 must not introduce hidden runtime bypasses around evidence or approval.",
+      "pathPrefixes": [
+        "src/api/runtime",
+        "src/channels",
+        "src/plugins",
+        "src/fleet",
+        "src/satellites"
+      ],
+      "verdict": "blocked"
+    }
+  ],
+  "notes": [
+    "This taskpack remains spec_only until concrete context-engine and automation worker commands are authored."
+  ]
+}

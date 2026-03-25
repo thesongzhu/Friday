@@ -54,6 +54,10 @@ describe("parseArgs", () => {
       expect(parseArgs(argv("skills", "init", "demo-skill")).command).toBe("skills");
     });
 
+    it("parses phases command", () => {
+      expect(parseArgs(argv("phases", "doctor")).command).toBe("phases");
+    });
+
     it("falls back to help for unknown command", () => {
       expect(parseArgs(argv("bogus")).command).toBe("help");
     });
@@ -232,6 +236,61 @@ describe("parseArgs", () => {
     });
   });
 
+  describe("phases command", () => {
+    it("parses phases doctor", () => {
+      const result = parseArgs(argv("phases", "doctor"));
+      expect(result.command).toBe("phases");
+      expect(result.phasesSubcommand).toBe("doctor");
+    });
+
+    it("parses phases promote with manifest and dry-run", () => {
+      const result = parseArgs(argv(
+        "phases",
+        "promote",
+        "phase0",
+        "--manifest",
+        "docs/ops/openclaw-adoption-phase-manifest.json",
+        "--dry-run",
+        "--no-prepare-next",
+      ));
+      expect(result.command).toBe("phases");
+      expect(result.phasesSubcommand).toBe("promote");
+      expect(result.phaseIdArg).toBe("phase0");
+      expect(result.manifestPath).toBe("docs/ops/openclaw-adoption-phase-manifest.json");
+      expect(result.dryRun).toBe(true);
+      expect(result.prepareNext).toBe(false);
+    });
+
+    it("parses phases resume with explicit phase id", () => {
+      const result = parseArgs(argv("phases", "resume", "phase1"));
+      expect(result.command).toBe("phases");
+      expect(result.phasesSubcommand).toBe("resume");
+      expect(result.phaseIdArg).toBe("phase1");
+    });
+
+    it("parses phases stabilize with explicit phase id", () => {
+      const result = parseArgs(argv("phases", "stabilize", "phase2", "--dry-run"));
+      expect(result.command).toBe("phases");
+      expect(result.phasesSubcommand).toBe("stabilize");
+      expect(result.phaseIdArg).toBe("phase2");
+      expect(result.dryRun).toBe(true);
+    });
+
+    it("parses phases status with json output", () => {
+      const result = parseArgs(argv("phases", "status", "--json"));
+      expect(result.command).toBe("phases");
+      expect(result.phasesSubcommand).toBe("status");
+      expect(result.json).toBe(true);
+    });
+
+    it("parses phases closeout", () => {
+      const result = parseArgs(argv("phases", "closeout", "--dry-run"));
+      expect(result.command).toBe("phases");
+      expect(result.phasesSubcommand).toBe("closeout");
+      expect(result.dryRun).toBe(true);
+    });
+  });
+
   describe("new flags default values", () => {
     it("replace defaults to false", () => {
       const result = parseArgs(argv("start"));
@@ -281,6 +340,11 @@ describe("parseArgs", () => {
     it("noRefresh defaults to false", () => {
       const result = parseArgs(argv("start"));
       expect(result.noRefresh).toBe(false);
+    });
+
+    it("json defaults to false", () => {
+      const result = parseArgs(argv("start"));
+      expect(result.json).toBe(false);
     });
   });
 
