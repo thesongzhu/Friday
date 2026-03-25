@@ -130,7 +130,7 @@ function createFakePlatform(options: FakePlatformOptions = {}): FridayPhaseAutom
       return passedCommandResult(step);
     },
     commitAll() {
-      return "abc123def456";
+      return "phase0-test-commit-sha";
     },
     pushBranch() {},
     createOrReusePullRequest() {
