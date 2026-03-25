@@ -1,10 +1,13 @@
+import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { randomUUID } from "node:crypto";
 import { FridayDomainError } from "#errors";
 import { loadFridayOpenClawPhaseManifest } from "./friday-openclaw-phase-manifest.js";
+import { loadFridayOpenClawPhaseTaskpack } from "./friday-openclaw-phase-taskpack.js";
 import type {
+  FridayArchitectureImpactReport,
+  FridayArchitectureImpactVerdict,
   FridayMainlineHealthVerdict,
   FridayMergeStrategy,
   FridayOpenClawPhaseControllerPaths,
@@ -21,6 +24,7 @@ import type {
   FridayPhaseStartResult,
   FridayPhaseStatus,
   FridayPhaseSummaryState,
+  FridayPhaseTaskpack,
   FridayPhaseWorkerRunResult,
   FridayPhaseWorkerSpec,
   FridayPromotionFailureCode,
@@ -90,6 +94,7 @@ function resolvePaths(options: CreateFridayOpenClawPhaseControllerOptions): Frid
     programPath: join(runtimeRoot, "program.json"),
     evidenceRoot: join(runtimeRoot, "evidence"),
     finalCloseoutRoot: join(runtimeRoot, "final-closeout"),
+    taskpackRoot: join(repoRoot, "docs", "ops", "openclaw-adoption", "taskpacks"),
   };
 }
 
@@ -142,6 +147,70 @@ function phaseRuntimePaths(paths: FridayOpenClawPhaseControllerPaths, phase: Fri
     evidenceDir,
     legacyEvidenceDir,
   };
+}
+
+function resolveTaskpackPath(paths: FridayOpenClawPhaseControllerPaths, phase: FridayPhaseDefinition): string {
+  return phase.taskpackPath
+    ? join(paths.repoRoot, phase.taskpackPath)
+    : join(paths.taskpackRoot, `phase-${String(phase.number)}.json`);
+}
+
+function loadTaskpackBundle(paths: FridayOpenClawPhaseControllerPaths, phase: FridayPhaseDefinition): {
+  path: string;
+  revision: string;
+  taskpack: FridayPhaseTaskpack;
+} {
+  const taskpackPath = resolveTaskpackPath(paths, phase);
+  const raw = readFileSync(taskpackPath, "utf-8");
+  const revision = createHash("sha256").update(raw).digest("hex").slice(0, 12);
+  return {
+    path: taskpackPath,
+    revision,
+    taskpack: loadFridayOpenClawPhaseTaskpack(taskpackPath),
+  };
+}
+
+function renderArchitectureImpactMarkdown(report: FridayArchitectureImpactReport): string[] {
+  const lines = [
+    "# Architecture Impact",
+    "",
+    `- Verdict: ${report.verdict}`,
+    `- Summary: ${report.summary}`,
+    "",
+    "## Changed Paths",
+    "",
+    ...(report.changedPaths.length > 0 ? report.changedPaths.map((path) => `- ${path}`) : ["- None"]),
+    "",
+    "## Out Of Bounds",
+    "",
+    ...(report.outOfBoundsPaths.length > 0 ? report.outOfBoundsPaths.map((path) => `- ${path}`) : ["- None"]),
+    "",
+    "## Contract Diff",
+    "",
+    `- Verdict: ${report.contractDiff.verdict}`,
+    ...(report.contractDiff.notes.length > 0 ? report.contractDiff.notes.map((note) => `- ${note}`) : ["- None"]),
+    "",
+    "## Boundary Matches",
+    "",
+  ];
+
+  if (report.matches.length === 0) {
+    lines.push("- None");
+  } else {
+    for (const match of report.matches) {
+      lines.push(`- ${match.id}: ${match.verdict}`);
+      lines.push(`  - ${match.description}`);
+      for (const path of match.matchedPaths) {
+        lines.push(`  - ${path}`);
+      }
+    }
+  }
+
+  lines.push("");
+  lines.push("## Notes");
+  lines.push("");
+  lines.push(...(report.notes.length > 0 ? report.notes.map((note) => `- ${note}`) : ["- None"]));
+  return lines;
 }
 
 function renderGateMarkdown(gate: FridayPromotionGateResult): string[] {
@@ -208,12 +277,16 @@ function writeRunEvidence(
     `- Status: ${run.status}`,
     `- Branch: ${run.branchName}`,
     ...(run.stabilizeBranchName ? [`- Stabilize Branch: ${run.stabilizeBranchName}`] : []),
+    ...(run.taskpackPath ? [`- Taskpack: ${relative(paths.repoRoot, run.taskpackPath) || run.taskpackPath}`] : []),
+    ...(run.taskpackRevision ? [`- Taskpack Revision: ${run.taskpackRevision}`] : []),
     `- Dry Run: ${run.dryRun ? "yes" : "no"}`,
     `- Started At: ${run.startedAt}`,
     `- Updated At: ${run.updatedAt}`,
     `- Attempt: ${String(run.attempt)}`,
     `- Repair Attempts: ${String(run.repairAttempts)}`,
     ...(run.failureCode ? [`- Failure Code: ${run.failureCode}`] : []),
+    ...(run.impactVerdict ? [`- Impact Verdict: ${run.impactVerdict}`] : []),
+    ...(run.blockedBoundary ? [`- Blocked Boundary: ${run.blockedBoundary}`] : []),
     ...(run.commitSha ? [`- Commit SHA: ${run.commitSha}`] : []),
     ...(run.prUrl ? [`- PR: ${run.prUrl}`] : []),
     ...(run.mergedSha ? [`- Merged SHA: ${run.mergedSha}`] : []),
@@ -274,6 +347,17 @@ function writeRunEvidence(
   writeFileSync(join(runtime.evidenceDir, "latest.md"), md, "utf-8");
   writeFileSync(join(runtime.legacyEvidenceDir, "latest.json"), json, "utf-8");
   writeFileSync(join(runtime.legacyEvidenceDir, "latest.md"), md, "utf-8");
+
+  if (run.architectureImpact) {
+    const impactJson = `${JSON.stringify(run.architectureImpact, null, 2)}\n`;
+    const impactMd = `${renderArchitectureImpactMarkdown(run.architectureImpact).join("\n").trimEnd()}\n`;
+    writeFileSync(join(runtime.evidenceDir, `${run.runId}-impact.json`), impactJson, "utf-8");
+    writeFileSync(join(runtime.evidenceDir, `${run.runId}-impact.md`), impactMd, "utf-8");
+    writeFileSync(join(runtime.evidenceDir, "latest-impact.json"), impactJson, "utf-8");
+    writeFileSync(join(runtime.evidenceDir, "latest-impact.md"), impactMd, "utf-8");
+    writeFileSync(join(runtime.legacyEvidenceDir, "latest-impact.json"), impactJson, "utf-8");
+    writeFileSync(join(runtime.legacyEvidenceDir, "latest-impact.md"), impactMd, "utf-8");
+  }
 }
 
 function writeCloseoutEvidence(
@@ -409,7 +493,13 @@ function resolveMaxRepairAttempts(manifest: FridayPhaseManifest, phase: FridayPh
   return phase.implementation.repairPolicy?.maxAttempts ?? manifest.repo.maxAutoRepairAttempts;
 }
 
-function normalizeWorkers(phase: FridayPhaseDefinition): FridayPhaseWorkerSpec[] {
+function normalizeWorkers(phase: FridayPhaseDefinition, taskpack?: FridayPhaseTaskpack): FridayPhaseWorkerSpec[] {
+  if (taskpack?.implementationWorkers && taskpack.implementationWorkers.length > 0) {
+    return taskpack.implementationWorkers.map((worker) => ({
+      ...worker,
+      mode: worker.mode ?? "implementation",
+    }));
+  }
   if (phase.implementation.workers && phase.implementation.workers.length > 0) {
     return phase.implementation.workers.map((worker) => ({
       ...worker,
@@ -430,17 +520,119 @@ function normalizeWorkers(phase: FridayPhaseDefinition): FridayPhaseWorkerSpec[]
   return [];
 }
 
+function resolveRepairWorker(phase: FridayPhaseDefinition, taskpack?: FridayPhaseTaskpack): FridayPhaseWorkerSpec | undefined {
+  return taskpack?.repairWorker ?? phase.implementation.repairPolicy?.worker;
+}
+
+function resolveGateCommands(
+  phase: FridayPhaseDefinition,
+  taskpack: FridayPhaseTaskpack | undefined,
+  gateId: keyof FridayPhaseDefinition["gates"],
+): FridayPhaseCommand[] {
+  const taskpackCommands = taskpack?.gates?.[gateId];
+  if (taskpackCommands && taskpackCommands.length > 0) {
+    return taskpackCommands;
+  }
+  return phase.gates[gateId] ?? [];
+}
+
+function pathMatchesPrefix(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}/`);
+}
+
+function classifyPublicContractChange(path: string): boolean {
+  return path.startsWith("src/api/http/routes/")
+    || path.startsWith("src/api/runtime/")
+    || path === "docs/current-source-of-truth.md";
+}
+
+function buildArchitectureImpactReport(
+  phase: FridayPhaseDefinition,
+  taskpack: FridayPhaseTaskpack,
+  changedPaths: string[],
+): FridayArchitectureImpactReport {
+  const outOfBoundsPaths = changedPaths.filter((path) => !taskpack.allowedPaths.some((allowed) => pathMatchesPrefix(path, allowed)));
+  const matches = taskpack.forbiddenBoundaries
+    .map((boundary) => {
+      const matchedPaths = changedPaths.filter((path) => boundary.pathPrefixes.some((prefix) => pathMatchesPrefix(path, prefix)));
+      if (matchedPaths.length === 0) {
+        return null;
+      }
+      return {
+        id: boundary.id,
+        description: boundary.description,
+        verdict: boundary.verdict ?? "blocked",
+        matchedPaths,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null);
+
+  const contractNotes: string[] = [];
+  let contractVerdict: FridayArchitectureImpactReport["contractDiff"]["verdict"] = "unchanged";
+
+  if (outOfBoundsPaths.length > 0) {
+    contractVerdict = "blocked";
+    contractNotes.push("Tracked changes escaped the taskpack allowedPaths boundary.");
+  } else if (changedPaths.some((path) => classifyPublicContractChange(path))) {
+    contractVerdict = "additive";
+    contractNotes.push("Tracked changes touch public route or contract-bearing surfaces.");
+  }
+
+  if (matches.some((match) => match.verdict === "blocked")) {
+    contractVerdict = "blocked";
+    contractNotes.push("One or more forbidden architecture boundaries were matched.");
+  }
+
+  let verdict: FridayArchitectureImpactVerdict = "no_impact";
+  if (outOfBoundsPaths.length > 0 || matches.some((match) => match.verdict === "blocked")) {
+    verdict = "blocked";
+  } else if (changedPaths.some((path) => classifyPublicContractChange(path))) {
+    verdict = "additive_public";
+  } else if (changedPaths.length > 0) {
+    verdict = "additive_internal";
+  }
+
+  const notes: string[] = [];
+  if (changedPaths.length === 0) {
+    notes.push(`No tracked changes detected for ${phase.id} at architecture review time.`);
+  }
+  if (taskpack.executionMode === "spec_only") {
+    notes.push("Taskpack is spec_only; dry-run validation is allowed, but automatic merge promotion must stay blocked.");
+  }
+
+  return {
+    phaseId: phase.id,
+    verdict,
+    summary: verdict === "blocked"
+      ? "Architecture impact exceeded the allowed phase boundary."
+      : verdict === "additive_public"
+        ? "Only additive public-surface changes were detected."
+        : verdict === "additive_internal"
+          ? "Only additive internal changes were detected."
+          : "No tracked architecture impact detected.",
+    changedPaths,
+    outOfBoundsPaths,
+    contractDiff: {
+      verdict: contractVerdict,
+      notes: contractNotes,
+    },
+    matches,
+    notes,
+  };
+}
+
 function shouldAllowRepair(
   manifest: FridayPhaseManifest,
   phase: FridayPhaseDefinition,
+  taskpack: FridayPhaseTaskpack,
   run: FridayPhaseRunRecord,
   failureCode: FridayPromotionFailureCode,
 ): boolean {
   if (manifest.repo.failurePolicy === "pause-immediately") {
     return false;
   }
-  const policy = phase.implementation.repairPolicy;
-  if (!policy || policy.enabled === false || !policy.worker) {
+  const policy = phase.implementation.repairPolicy ?? { enabled: true };
+  if (policy.enabled === false || !resolveRepairWorker(phase, taskpack)) {
     return false;
   }
   if (run.repairAttempts >= resolveMaxRepairAttempts(manifest, phase)) {
@@ -570,6 +762,30 @@ function defaultPlatform(): FridayPhaseAutomationPlatform {
 
     hasChanges(repoRoot) {
       return ensureOk("git", ["status", "--porcelain"], repoRoot).length > 0;
+    },
+
+    listChangedPaths(repoRoot) {
+      const result = runProcess("git", ["status", "--porcelain"], repoRoot);
+      if (result.status !== 0) {
+        throw new FridayDomainError(
+          "OPENCLAW_ADOPTION_COMMAND_FAILED",
+          `git status --porcelain failed: ${result.stderr.trim() || result.stdout.trim() || "unknown error"}`,
+          { httpStatus: 500 },
+        );
+      }
+      const raw = (result.stdout ?? "").replace(/\n+$/, "");
+      if (raw.length === 0) {
+        return [];
+      }
+      return raw
+        .split("\n")
+        .map((line) => line.trimEnd())
+        .filter((line) => line.length >= 4)
+        .map((line) => {
+          const payload = line.slice(3).trim();
+          const renameMarker = " -> ";
+          return payload.includes(renameMarker) ? payload.split(renameMarker).at(-1) ?? payload : payload;
+        });
     },
 
     runCommand(step, options) {
@@ -821,6 +1037,26 @@ export function createFridayOpenClawPhaseController(
     if (repo.localMainHead && repo.remoteMainHead && repo.localMainHead !== repo.remoteMainHead) {
       warnings.push("Local main does not match origin/main");
     }
+    for (const phase of manifest.phases) {
+      const taskpackPath = resolveTaskpackPath(paths, phase);
+      if (!existsSync(taskpackPath)) {
+        blockers.push(`Taskpack not found for ${phase.id}: ${relative(paths.repoRoot, taskpackPath)}`);
+        continue;
+      }
+      try {
+        const bundle = loadTaskpackBundle(paths, phase);
+        if (bundle.taskpack.phaseId !== phase.id) {
+          blockers.push(`Taskpack phase mismatch for ${phase.id}: ${relative(paths.repoRoot, taskpackPath)}`);
+        }
+        if (bundle.taskpack.executionMode === "spec_only") {
+          warnings.push(`${phase.id} taskpack is spec_only and cannot auto-promote yet.`);
+        }
+      } catch (error) {
+        blockers.push(
+          `Taskpack parse failed for ${phase.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
 
     return {
       ok: blockers.length === 0,
@@ -857,6 +1093,7 @@ export function createFridayOpenClawPhaseController(
     }
 
     const branchName = deriveBranchName(manifest, nextPhase);
+    const taskpackBundle = loadTaskpackBundle(paths, nextPhase);
     const repo = platform.inspectRepo(paths.repoRoot, manifest.repo.mainBranch);
     if (!repo.workingTreeClean) {
       return {
@@ -866,6 +1103,16 @@ export function createFridayOpenClawPhaseController(
         branchName,
         status: "blocked",
         message: "Working tree is not clean; cannot start the next phase safely.",
+      };
+    }
+    if (!input.dryRun && taskpackBundle.taskpack.executionMode !== "automated") {
+      return {
+        ok: false,
+        dryRun: false,
+        phaseId: nextPhase.id,
+        branchName,
+        status: "blocked",
+        message: `Taskpack for ${nextPhase.id} is spec_only and cannot be auto-promoted yet.`,
       };
     }
 
@@ -889,7 +1136,7 @@ export function createFridayOpenClawPhaseController(
       branchName,
       status: "implementing",
       message: input.dryRun
-        ? `Dry run: would prepare ${nextPhase.id} on ${branchName}.`
+        ? `Dry run: would prepare ${nextPhase.id} on ${branchName} using ${relative(paths.repoRoot, taskpackBundle.path) || taskpackBundle.path}.`
         : `Prepared ${nextPhase.id} on ${branchName}.`,
     };
   }
@@ -897,6 +1144,7 @@ export function createFridayOpenClawPhaseController(
   function makeRunRecord(
     manifest: FridayPhaseManifest,
     phase: FridayPhaseDefinition,
+    taskpackBundle: { path: string; revision: string; taskpack: FridayPhaseTaskpack },
     input: { dryRun?: boolean },
     state: FridayPhaseControllerState,
     stabilize = false,
@@ -908,6 +1156,8 @@ export function createFridayOpenClawPhaseController(
       phaseNumber: phase.number,
       branchName: deriveBranchName(manifest, phase),
       stabilizeBranchName: stabilize ? deriveStabilizeBranchName(manifest, phase) : undefined,
+      taskpackPath: taskpackBundle.path,
+      taskpackRevision: taskpackBundle.revision,
       status: stabilize ? "stabilizing" : "implementing",
       dryRun: Boolean(input.dryRun),
       startedAt: nowIso(),
@@ -920,7 +1170,11 @@ export function createFridayOpenClawPhaseController(
       notes: [],
       repairAttempts: 0,
       failurePolicy: manifest.repo.failurePolicy,
-      closureEvidence: phase.closure?.requiredEvidence ? [...phase.closure.requiredEvidence] : [],
+      closureEvidence: taskpackBundle.taskpack.closureEvidence?.length
+        ? [...taskpackBundle.taskpack.closureEvidence]
+        : phase.closure?.requiredEvidence
+          ? [...phase.closure.requiredEvidence]
+          : [],
     };
   }
 
@@ -990,15 +1244,16 @@ export function createFridayOpenClawPhaseController(
   function runRepairWorker(
     manifest: FridayPhaseManifest,
     phase: FridayPhaseDefinition,
+    taskpack: FridayPhaseTaskpack,
     run: FridayPhaseRunRecord,
     state: FridayPhaseControllerState,
     failureCode: FridayPromotionFailureCode,
     note: string,
   ): boolean {
-    if (!shouldAllowRepair(manifest, phase, run, failureCode)) {
+    if (!shouldAllowRepair(manifest, phase, taskpack, run, failureCode)) {
       return false;
     }
-    const repairWorker = phase.implementation.repairPolicy?.worker;
+    const repairWorker = resolveRepairWorker(phase, taskpack);
     if (!repairWorker) {
       return false;
     }
@@ -1022,13 +1277,14 @@ export function createFridayOpenClawPhaseController(
   function runImplementationAndBranchGates(
     manifest: FridayPhaseManifest,
     phase: FridayPhaseDefinition,
+    taskpack: FridayPhaseTaskpack,
     run: FridayPhaseRunRecord,
     state: FridayPhaseControllerState,
     stabilize = false,
   ): boolean {
     const workers = stabilize
-      ? (phase.implementation.repairPolicy?.worker ? [{ ...phase.implementation.repairPolicy.worker, mode: "stabilize" as const }] : normalizeWorkers(phase))
-      : normalizeWorkers(phase);
+      ? (resolveRepairWorker(phase, taskpack) ? [{ ...resolveRepairWorker(phase, taskpack)!, mode: "stabilize" as const }] : normalizeWorkers(phase, taskpack))
+      : normalizeWorkers(phase, taskpack);
 
     let rerunWorkers = true;
     while (true) {
@@ -1044,6 +1300,7 @@ export function createFridayOpenClawPhaseController(
             const repaired = runRepairWorker(
               manifest,
               phase,
+              taskpack,
               run,
               state,
               "implementation_failed",
@@ -1064,14 +1321,33 @@ export function createFridayOpenClawPhaseController(
         rerunWorkers = false;
       }
 
+      const architectureReport = buildArchitectureImpactReport(phase, taskpack, platform.listChangedPaths(paths.repoRoot));
+      run.architectureImpact = architectureReport;
+      run.impactVerdict = architectureReport.verdict;
+      const architectureGate: FridayPromotionGateResult = {
+        gateId: "architecture_impact",
+        status: architectureReport.verdict === "blocked" ? "failed" : "passed",
+        failureCode: architectureReport.verdict === "blocked" ? "architecture_blocked" : undefined,
+        results: [],
+      };
+      run.gates.push(architectureGate);
+      if (architectureReport.verdict === "blocked") {
+        run.failureCode = "architecture_blocked";
+        run.blockedBoundary = architectureReport.matches.find((match) => match.verdict === "blocked")?.id
+          ?? (architectureReport.outOfBoundsPaths.length > 0 ? "allowed_paths" : undefined);
+        run.blockers.push("Architecture impact exceeded the taskpack boundary.");
+        return false;
+      }
+
       run.status = "verifying";
-      const fastGate = runGate("fast_local", phase.gates.fastLocal, "branch_gate_failed");
+      const fastGate = runGate("fast_local", resolveGateCommands(phase, taskpack, "fastLocal"), "branch_gate_failed");
       run.gates.push(fastGate);
       if (fastGate.status === "failed") {
         run.failureCode = "branch_gate_failed";
         const repaired = runRepairWorker(
           manifest,
           phase,
+          taskpack,
           run,
           state,
           "branch_gate_failed",
@@ -1085,13 +1361,14 @@ export function createFridayOpenClawPhaseController(
         return false;
       }
 
-      const prePrGate = runGate("pre_pr", phase.gates.prePr, "branch_gate_failed");
+      const prePrGate = runGate("pre_pr", resolveGateCommands(phase, taskpack, "prePr"), "branch_gate_failed");
       run.gates.push(prePrGate);
       if (prePrGate.status === "failed") {
         run.failureCode = "branch_gate_failed";
         const repaired = runRepairWorker(
           manifest,
           phase,
+          taskpack,
           run,
           state,
           "branch_gate_failed",
@@ -1114,6 +1391,11 @@ export function createFridayOpenClawPhaseController(
     if (!nextPhase || nextPhase.id === phase.id) {
       return;
     }
+    const nextTaskpack = loadTaskpackBundle(paths, nextPhase);
+    if (nextTaskpack.taskpack.executionMode !== "automated") {
+      run.notes.push(`Next phase ${nextPhase.id} stays planned because ${relative(paths.repoRoot, nextTaskpack.path) || nextTaskpack.path} is spec_only.`);
+      return;
+    }
     const nextBranch = deriveBranchName(manifest, nextPhase);
     platform.checkoutPhaseBranch(paths.repoRoot, nextBranch, manifest.repo.mainBranch);
     state.phases[nextPhase.id] = {
@@ -1127,14 +1409,15 @@ export function createFridayOpenClawPhaseController(
 
   function runPostMergeAndClosureGates(
     phase: FridayPhaseDefinition,
+    taskpack: FridayPhaseTaskpack,
     run: FridayPhaseRunRecord,
   ): FridayPromotionFailureCode | null {
-    const postMergeGate = runGate("post_merge_main", phase.gates.postMerge, "closure_failed");
+    const postMergeGate = runGate("post_merge_main", resolveGateCommands(phase, taskpack, "postMerge"), "closure_failed");
     run.gates.push(postMergeGate);
     if (postMergeGate.status === "failed") {
       return "closure_failed";
     }
-    const finalClosureCommands = phase.gates.finalClosure ?? [];
+    const finalClosureCommands = resolveGateCommands(phase, taskpack, "finalClosure");
     if (finalClosureCommands.length > 0) {
       const finalGate = runGate("final_closure", finalClosureCommands, "closure_failed");
       run.gates.push(finalGate);
@@ -1153,13 +1436,25 @@ export function createFridayOpenClawPhaseController(
   }): FridayPhasePromotionResult {
     const manifest = loadManifest();
     const phase = findPhase(manifest, input.phaseId);
+    const taskpackBundle = loadTaskpackBundle(paths, phase);
     const state = loadState();
-    const run = makeRunRecord(manifest, phase, input, state, Boolean(input.stabilize));
+    const run = makeRunRecord(manifest, phase, taskpackBundle, input, state, Boolean(input.stabilize));
     const activeBranch = run.stabilizeBranchName ?? run.branchName;
+    run.notes.push(`Loaded taskpack ${relative(paths.repoRoot, taskpackBundle.path) || taskpackBundle.path} (${taskpackBundle.revision}).`);
 
     const dependenciesDone = phase.dependsOn.every((phaseId) => state.phases[phaseId]?.status === "done");
     if (!dependenciesDone) {
       return blockRun(state, phase, run, "implementation_failed", `Dependencies incomplete for ${phase.id}: ${phase.dependsOn.join(", ")}`);
+    }
+    if (!input.dryRun && taskpackBundle.taskpack.executionMode !== "automated") {
+      run.notes.push(`Loaded ${relative(paths.repoRoot, taskpackBundle.path) || taskpackBundle.path}.`);
+      return blockRun(
+        state,
+        phase,
+        run,
+        "implementation_failed",
+        `Taskpack for ${phase.id} is spec_only and cannot auto-promote yet.`,
+      );
     }
 
     const repo = platform.inspectRepo(paths.repoRoot, manifest.repo.mainBranch);
@@ -1185,9 +1480,22 @@ export function createFridayOpenClawPhaseController(
       platform.checkoutPhaseBranch(paths.repoRoot, activeBranch, manifest.repo.mainBranch);
     }
 
-    const branchReady = runImplementationAndBranchGates(manifest, phase, run, state, Boolean(input.stabilize));
+    const branchReady = runImplementationAndBranchGates(
+      manifest,
+      phase,
+      taskpackBundle.taskpack,
+      run,
+      state,
+      Boolean(input.stabilize),
+    );
     if (!branchReady) {
-      return blockRun(state, phase, run, run.failureCode ?? "implementation_failed", run.blockers.at(-1) ?? "Implementation or branch gates failed.");
+      return blockRun(
+        state,
+        phase,
+        run,
+        run.failureCode ?? "implementation_failed",
+        run.blockers.at(-1) ?? "Implementation or branch gates failed.",
+      );
     }
 
     if (input.dryRun) {
@@ -1242,6 +1550,7 @@ export function createFridayOpenClawPhaseController(
       const repaired = runRepairWorker(
         manifest,
         phase,
+        taskpackBundle.taskpack,
         run,
         state,
         failureCode,
@@ -1257,7 +1566,14 @@ export function createFridayOpenClawPhaseController(
         );
       }
 
-      const branchReadyAfterRepair = runImplementationAndBranchGates(manifest, phase, run, state, Boolean(input.stabilize));
+      const branchReadyAfterRepair = runImplementationAndBranchGates(
+        manifest,
+        phase,
+        taskpackBundle.taskpack,
+        run,
+        state,
+        Boolean(input.stabilize),
+      );
       if (!branchReadyAfterRepair) {
         return blockRun(state, phase, run, run.failureCode ?? "branch_gate_failed", run.blockers.at(-1) ?? "Repair rerun failed.");
       }
@@ -1280,7 +1596,7 @@ export function createFridayOpenClawPhaseController(
       platform.waitForPullRequestMerge(paths.repoRoot, activeBranch);
     } catch (error) {
       run.notes.push(`Merge step failed on ${activeBranch}: ${error instanceof Error ? error.message : String(error)}`);
-      if (!input.stabilize && shouldAllowRepair(manifest, phase, run, "merge_failed")) {
+      if (!input.stabilize && shouldAllowRepair(manifest, phase, taskpackBundle.taskpack, run, "merge_failed")) {
         updatePhaseState(state, phase, run);
         writeRunAndState(phase, run, state);
         return stabilizePhase({
@@ -1306,7 +1622,7 @@ export function createFridayOpenClawPhaseController(
       requiredChecks,
     });
     if (!run.mainline.ok) {
-      if (!input.stabilize && shouldAllowRepair(manifest, phase, run, "mainline_red")) {
+      if (!input.stabilize && shouldAllowRepair(manifest, phase, taskpackBundle.taskpack, run, "mainline_red")) {
         run.notes.push("Mainline health failed after merge; escalating to stabilize branch.");
         updatePhaseState(state, phase, run);
         writeRunAndState(phase, run, state);
@@ -1321,9 +1637,9 @@ export function createFridayOpenClawPhaseController(
     }
 
     run.status = "closing_phase";
-    const closureFailure = runPostMergeAndClosureGates(phase, run);
+    const closureFailure = runPostMergeAndClosureGates(phase, taskpackBundle.taskpack, run);
     if (closureFailure) {
-      if (!input.stabilize && shouldAllowRepair(manifest, phase, run, closureFailure)) {
+      if (!input.stabilize && shouldAllowRepair(manifest, phase, taskpackBundle.taskpack, run, closureFailure)) {
         run.notes.push("Post-merge closure failed; escalating to stabilize branch.");
         updatePhaseState(state, phase, run);
         writeRunAndState(phase, run, state);
@@ -1394,6 +1710,10 @@ export function createFridayOpenClawPhaseController(
       if (phaseState?.status !== "done") {
         blockers.push(`${phase.id} is not complete`);
       }
+      const taskpackPath = resolveTaskpackPath(paths, phase);
+      if (!existsSync(taskpackPath)) {
+        blockers.push(`${phase.id} is missing committed taskpack`);
+      }
       const runtime = phaseRuntimePaths(paths, phase);
       if (!existsSync(runtime.runPath)) {
         blockers.push(`${phase.id} is missing phase runtime evidence`);
@@ -1403,18 +1723,23 @@ export function createFridayOpenClawPhaseController(
     const lastPhase = manifest.phases.at(-1);
     const gates: FridayPromotionGateResult[] = [];
     if (lastPhase) {
-      const finalCommands = lastPhase.gates.finalClosure ?? [];
-      if (finalCommands.length > 0 && blockers.length === 0) {
-        if (input.dryRun) {
-          gates.push({
-            gateId: "final_closure",
-            status: "skipped",
-            results: [],
-          });
-          notes.push("Dry run: skipped final closure commands.");
-        } else {
-          gates.push(runGate("final_closure", finalCommands, "closure_failed"));
+      try {
+        const taskpack = loadTaskpackBundle(paths, lastPhase).taskpack;
+        const finalCommands = resolveGateCommands(lastPhase, taskpack, "finalClosure");
+        if (finalCommands.length > 0 && blockers.length === 0) {
+          if (input.dryRun) {
+            gates.push({
+              gateId: "final_closure",
+              status: "skipped",
+              results: [],
+            });
+            notes.push("Dry run: skipped final closure commands.");
+          } else {
+            gates.push(runGate("final_closure", finalCommands, "closure_failed"));
+          }
         }
+      } catch (error) {
+        blockers.push(`Final phase taskpack could not be loaded: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 

@@ -1,0 +1,75 @@
+{
+  "schemaVersion": "1.0",
+  "phaseId": "phase4",
+  "title": "Remote, Node, And Browser Productization",
+  "executionMode": "spec_only",
+  "goal": "Define diagnostics and browser profile work inside Friday's single-hub trust domain without opening deferred federation or mesh scope.",
+  "allowedPaths": [
+    "src/browser",
+    "src/satellites",
+    "src/fleet",
+    "src/api/http/routes/friday-observability-routes.ts",
+    "test/unit/browser",
+    "test/unit/nodes",
+    "test/e2e/ui/friday-agent-os-browser-journeys.test.ts"
+  ],
+  "implementationWorkers": [
+    {
+      "id": "phase4-remote-node-browser-spec",
+      "title": "Load the committed remote/node/browser taskpack",
+      "runner": "command",
+      "mode": "implementation",
+      "steps": [
+        {
+          "label": "phase4-taskpack-spec",
+          "command": "node",
+          "args": [
+            "-e",
+            "console.log('phase4 taskpack spec validated')"
+          ]
+        }
+      ]
+    }
+  ],
+  "repairWorker": {
+    "id": "phase4-remote-node-browser-repair-spec",
+    "title": "Diagnose remote/browser blockers without leaving the single-hub trust model",
+    "runner": "command",
+    "mode": "repair",
+    "steps": [
+      {
+        "label": "phase4-taskpack-repair-spec",
+        "command": "node",
+        "args": [
+          "-e",
+          "console.log('phase4 repair spec validated')"
+        ]
+      }
+    ]
+  },
+  "successCriteria": [
+    "Remote and browser work remains additive within existing fleet and observability authority.",
+    "No federation, mesh, mDNS, or Tailscale-native discovery work is introduced."
+  ],
+  "closureEvidence": [
+    "phase-4/run.json",
+    "phase-4/evidence/latest-impact.json"
+  ],
+  "forbiddenBoundaries": [
+    {
+      "id": "phase4-no-topology-expansion",
+      "description": "Phase 4 must not expand Friday beyond the current single-hub trust domain.",
+      "pathPrefixes": [
+        "src/gateway",
+        "src/agent/runtime",
+        "src/plugins",
+        "src/channels",
+        "src/hub"
+      ],
+      "verdict": "blocked"
+    }
+  ],
+  "notes": [
+    "This taskpack remains spec_only until the diagnostics and browser profile worker commands are authored."
+  ]
+}

@@ -11,8 +11,14 @@ export type {
   FridayPhaseImplementation,
   FridayPhasePromotionPolicy,
   FridayPhaseClosurePolicy,
+  FridayArchitectureImpactVerdict,
+  FridayContractDiffVerdict,
+  FridayArchitectureBoundaryRule,
+  FridayArchitectureImpactMatch,
+  FridayArchitectureImpactReport,
   FridayPhaseDefinition,
   FridayPhaseManifest,
+  FridayPhaseTaskpack,
   FridayPhaseCommandResult,
   FridayPhaseWorkerRunResult,
   FridayPromotionGateResult,
@@ -34,6 +40,11 @@ export {
   parseFridayOpenClawPhaseManifest,
   loadFridayOpenClawPhaseManifest,
 } from "./friday-openclaw-phase-manifest.js";
+export {
+  FRIDAY_OPENCLAW_PHASE_TASKPACK_SCHEMA,
+  parseFridayOpenClawPhaseTaskpack,
+  loadFridayOpenClawPhaseTaskpack,
+} from "./friday-openclaw-phase-taskpack.js";
 export {
   createFridayOpenClawPhaseController,
   formatFridayOpenClawDoctorReport,

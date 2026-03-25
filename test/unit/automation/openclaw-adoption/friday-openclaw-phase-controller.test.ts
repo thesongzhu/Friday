@@ -15,6 +15,7 @@ import {
 interface FakePlatformOptions {
   repo?: Partial<FridayRepoInspection>;
   hasChanges?: boolean;
+  changedPaths?: string[];
   dirtyWorkingTree?: boolean;
   prChecksQueue?: Array<Array<{ name: string; status: "passed" | "failed" | "pending" | "missing"; url?: string }>>;
   mainlineQueue?: FridayMainlineHealthVerdict[];
@@ -53,29 +54,14 @@ function writeManifest(repoDir: string, phaseCount = 2): string {
       summary: "Build the controller.",
       dependsOn: [],
       allowedPaths: ["src/automation/openclaw-adoption"],
+      taskpackPath: "docs/ops/openclaw-adoption/taskpacks/phase-0.json",
       successCriteria: ["controller exists"],
       implementation: {
         mode: "hybrid",
-        workers: [
-          {
-            id: "phase0-worker",
-            title: "Phase 0 worker",
-            runner: "command",
-            mode: "implementation",
-            steps: [{ label: "worker", command: "echo", args: ["worker"] }],
-          },
-        ],
         repairPolicy: {
           enabled: true,
           maxAttempts: 2,
-          failureCodes: ["implementation_failed", "branch_gate_failed", "required_checks_missing", "required_checks_failed", "merge_failed", "mainline_red", "closure_failed"],
-          worker: {
-            id: "phase0-repair",
-            title: "Phase 0 repair",
-            runner: "command",
-            mode: "repair",
-            steps: [{ label: "repair", command: "echo", args: ["repair"] }],
-          },
+          failureCodes: ["implementation_failed", "architecture_blocked", "branch_gate_failed", "required_checks_missing", "required_checks_failed", "merge_failed", "mainline_red", "closure_failed"],
         },
       },
       promotion: {
@@ -102,18 +88,10 @@ function writeManifest(repoDir: string, phaseCount = 2): string {
       summary: "Strengthen skills.",
       dependsOn: ["phase0"],
       allowedPaths: ["src/skills"],
+      taskpackPath: "docs/ops/openclaw-adoption/taskpacks/phase-1.json",
       successCriteria: ["skills lifecycle closes"],
       implementation: {
         mode: "hybrid",
-        workers: [
-          {
-            id: "phase1-worker",
-            title: "Phase 1 worker",
-            runner: "command",
-            mode: "implementation",
-            steps: [{ label: "worker", command: "echo", args: ["worker"] }],
-          },
-        ],
       },
       promotion: {
         requiredChecks: ["quality-gate"],
@@ -131,6 +109,77 @@ function writeManifest(repoDir: string, phaseCount = 2): string {
       },
     },
   ].slice(0, phaseCount);
+
+  const taskpackRoot = path.join(repoDir, "docs", "ops", "openclaw-adoption", "taskpacks");
+  fs.mkdirSync(taskpackRoot, { recursive: true });
+  fs.writeFileSync(path.join(taskpackRoot, "phase-0.json"), `${JSON.stringify({
+    schemaVersion: "1.0",
+    phaseId: "phase0",
+    title: "Automation Bootstrap",
+    executionMode: "automated",
+    goal: "Bootstrap controller taskpacks.",
+    allowedPaths: ["src/automation/openclaw-adoption"],
+    implementationWorkers: [
+      {
+        id: "phase0-worker",
+        title: "Phase 0 worker",
+        runner: "command",
+        mode: "implementation",
+        steps: [{ label: "worker", command: "echo", args: ["worker"] }],
+      },
+    ],
+    repairWorker: {
+      id: "phase0-repair",
+      title: "Phase 0 repair",
+      runner: "command",
+      mode: "repair",
+      steps: [{ label: "repair", command: "echo", args: ["repair"] }],
+    },
+    successCriteria: ["controller exists"],
+    gates: {
+      fastLocal: [{ label: "fast", command: "echo", args: ["fast"] }],
+      prePr: [{ label: "pre", command: "echo", args: ["pre"] }],
+      postMerge: [{ label: "post", command: "echo", args: ["post"] }],
+      finalClosure: [{ label: "close", command: "echo", args: ["close"] }],
+    },
+    closureEvidence: ["phase-0/run.json", "phase-0/evidence/latest.json", "phase-0/evidence/latest-impact.json"],
+    forbiddenBoundaries: [
+      {
+        id: "phase0-no-api-routes",
+        description: "Phase 0 cannot edit API route surfaces.",
+        pathPrefixes: ["src/api/http/routes"],
+        verdict: "blocked",
+      },
+    ],
+  }, null, 2)}\n`, "utf-8");
+
+  fs.writeFileSync(path.join(taskpackRoot, "phase-1.json"), `${JSON.stringify({
+    schemaVersion: "1.0",
+    phaseId: "phase1",
+    title: "Skills Foundation",
+    executionMode: "spec_only",
+    goal: "Define skills taskpack.",
+    allowedPaths: ["src/skills"],
+    implementationWorkers: [
+      {
+        id: "phase1-worker",
+        title: "Phase 1 worker",
+        runner: "command",
+        mode: "implementation",
+        steps: [{ label: "worker", command: "echo", args: ["worker"] }],
+      },
+    ],
+    successCriteria: ["skills lifecycle closes"],
+    closureEvidence: ["phase-1/run.json"],
+    forbiddenBoundaries: [
+      {
+        id: "phase1-no-plugin-drift",
+        description: "Phase 1 cannot touch plugins.",
+        pathPrefixes: ["src/plugins"],
+        verdict: "blocked",
+      },
+    ],
+  }, null, 2)}\n`, "utf-8");
 
   const manifestPath = path.join(repoDir, "manifest.json");
   fs.writeFileSync(manifestPath, `${JSON.stringify({
@@ -200,6 +249,9 @@ function createFakePlatform(options: FakePlatformOptions = {}): FridayPhaseAutom
     hasChanges() {
       return Boolean(options.hasChanges);
     },
+    listChangedPaths() {
+      return [...(options.changedPaths ?? [])];
+    },
     runCommand(step) {
       return passedCommandResult(step);
     },
@@ -256,6 +308,7 @@ describe("createFridayOpenClawPhaseController", () => {
     expect(report.ok).toBe(true);
     expect(report.blockers).toEqual([]);
     expect(report.manifestPath).toBe(manifestPath);
+    expect(report.warnings).toContain("phase1 taskpack is spec_only and cannot auto-promote yet.");
   });
 
   it("promotes a phase in dry-run mode and writes phase runtime evidence", () => {
@@ -272,14 +325,18 @@ describe("createFridayOpenClawPhaseController", () => {
     const result = controller.promotePhase({ phaseId: "phase0", dryRun: true });
     expect(result.ok).toBe(true);
     expect(result.status).toBe("ready_for_pr");
-    expect(result.run.gates.map((gate) => gate.gateId)).toEqual(["implementation", "fast_local", "pre_pr"]);
+    expect(result.run.gates.map((gate) => gate.gateId)).toEqual(["implementation", "architecture_impact", "fast_local", "pre_pr"]);
     expect(result.run.workers.map((worker) => worker.workerId)).toEqual(["phase0-worker"]);
+    expect(result.run.taskpackRevision).toBeTruthy();
+    expect(result.run.architectureImpact?.verdict).toBe("no_impact");
 
     const runPath = path.join(repoDir, ".friday", "automation", "openclaw-adoption", "phase-0", "run.json");
     expect(fs.existsSync(runPath)).toBe(true);
+    const impactPath = path.join(repoDir, ".friday", "automation", "openclaw-adoption", "phase-0", "evidence", "latest-impact.json");
+    expect(fs.existsSync(impactPath)).toBe(true);
   });
 
-  it("runs the next phase end-to-end and unlocks the following phase", () => {
+  it("runs the next phase end-to-end and leaves spec-only successors planned", () => {
     const repoDir = createTempGitRepo();
     const manifestPath = writeManifest(repoDir);
     const controller = createFridayOpenClawPhaseController({
@@ -302,7 +359,7 @@ describe("createFridayOpenClawPhaseController", () => {
 
     const state = controller.loadState();
     expect(state.phases.phase0?.status).toBe("done");
-    expect(state.phases.phase1?.status).toBe("implementing");
+    expect(state.phases.phase1?.status).not.toBe("implementing");
   });
 
   it("auto-stabilizes after a failing mainline verdict", () => {
@@ -331,6 +388,66 @@ describe("createFridayOpenClawPhaseController", () => {
     const state = controller.loadState();
     expect(state.phases.phase0?.status).toBe("done");
     expect(state.phases.phase0?.repairAttempts).toBe(0);
+  });
+
+  it("dry-runs a committed spec-only taskpack without allowing merge promotion", () => {
+    const repoDir = createTempGitRepo();
+    const manifestPath = writeManifest(repoDir);
+    const statePath = path.join(repoDir, ".friday", "automation", "openclaw-adoption", "program.json");
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(statePath, `${JSON.stringify({
+      schemaVersion: "1.0",
+      programId: "openclaw-adoption",
+      phases: {
+        phase0: {
+          phaseId: "phase0",
+          status: "done",
+          branchName: "codex/openclaw-adoption-phase-0-automation-bootstrap",
+          updatedAt: "2026-03-24T00:00:00.000Z",
+          completedAt: "2026-03-24T00:00:00.000Z",
+        },
+      },
+      runs: [],
+      updatedAt: "2026-03-24T00:00:00.000Z",
+    }, null, 2)}\n`, "utf-8");
+
+    const controller = createFridayOpenClawPhaseController({
+      cwd: repoDir,
+      manifestPath,
+      platform: createFakePlatform(),
+      nowIso: () => "2026-03-24T00:00:00.000Z",
+      runIdFactory: () => "run-5a",
+    });
+
+    const dryRun = controller.promotePhase({ phaseId: "phase1", dryRun: true, prepareNext: false });
+    expect(dryRun.ok).toBe(true);
+    expect(dryRun.status).toBe("ready_for_pr");
+    expect(dryRun.run.taskpackPath).toContain("phase-1.json");
+
+    const blocked = controller.promotePhase({ phaseId: "phase1", dryRun: false, prepareNext: false });
+    expect(blocked.ok).toBe(false);
+    expect(blocked.run.status).toBe("blocked");
+    expect(blocked.run.blockers).toContain("Taskpack for phase1 is spec_only and cannot auto-promote yet.");
+  });
+
+  it("blocks when tracked changes exceed the committed taskpack boundary", () => {
+    const repoDir = createTempGitRepo();
+    const manifestPath = writeManifest(repoDir, 1);
+    const controller = createFridayOpenClawPhaseController({
+      cwd: repoDir,
+      manifestPath,
+      platform: createFakePlatform({
+        changedPaths: ["src/api/http/routes/friday-plugin-routes.ts"],
+      }),
+      nowIso: () => "2026-03-24T00:00:00.000Z",
+      runIdFactory: () => "run-5b",
+    });
+
+    const result = controller.promotePhase({ phaseId: "phase0", dryRun: true });
+    expect(result.ok).toBe(false);
+    expect(result.run.failureCode).toBe("architecture_blocked");
+    expect(result.run.blockedBoundary).toBe("phase0-no-api-routes");
+    expect(result.run.architectureImpact?.verdict).toBe("blocked");
   });
 
   it("writes a blocked closeout report when not all phases are complete", () => {

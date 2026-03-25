@@ -1,0 +1,117 @@
+{
+  "schemaVersion": "1.0",
+  "phaseId": "phase0",
+  "title": "Automation Bootstrap And Guardrails",
+  "executionMode": "automated",
+  "goal": "Promote the openclaw adoption controller from manifest-only promotion logic to committed taskpack execution with architecture guardrails and runtime evidence.",
+  "allowedPaths": [
+    "src/automation/openclaw-adoption",
+    "src/cli",
+    "docs/ops/openclaw-adoption",
+    "docs/ops/openclaw-adoption-phase-manifest.json",
+    "test/unit/automation/openclaw-adoption",
+    "test/unit/cli",
+    "package.json"
+  ],
+  "implementationWorkers": [
+    {
+      "id": "phase0-controller-bootstrap",
+      "title": "Bootstrap taskpack-aware controller behavior",
+      "runner": "command",
+      "mode": "implementation",
+      "steps": [
+        {
+          "label": "phase0-taskpack-marker",
+          "command": "node",
+          "args": [
+            "-e",
+            "console.log('phase0 taskpack loaded')"
+          ]
+        }
+      ],
+      "allowedPaths": [
+        "src/automation/openclaw-adoption",
+        "src/cli",
+        "docs/ops/openclaw-adoption",
+        "docs/ops/openclaw-adoption-phase-manifest.json",
+        "test/unit/automation/openclaw-adoption",
+        "test/unit/cli",
+        "package.json"
+      ],
+      "successCriteria": [
+        "Taskpacks are committed and discoverable.",
+        "The controller records taskpack revision and architecture impact evidence."
+      ],
+      "outputContract": [
+        "Runtime state under .friday/automation/openclaw-adoption",
+        "Architecture impact evidence under phase-0/evidence"
+      ]
+    }
+  ],
+  "repairWorker": {
+    "id": "phase0-controller-repair",
+    "title": "Repair controller promotion blockers without bypassing checks",
+    "runner": "command",
+    "mode": "repair",
+    "steps": [
+      {
+        "label": "phase0-repair-marker",
+        "command": "node",
+        "args": [
+          "-e",
+          "console.log('phase0 taskpack repair loaded')"
+        ]
+      }
+    ]
+  },
+  "successCriteria": [
+    "The controller loads committed taskpacks instead of relying on inline placeholder workers.",
+    "The controller can dry-run the next phase and write architecture impact evidence.",
+    "Phase 0 stays inside automation and docs surfaces only."
+  ],
+  "gates": {
+    "fastLocal": [
+      {
+        "label": "phase0-unit-tests",
+        "command": "npx",
+        "args": [
+          "vitest",
+          "run",
+          "test/unit/cli/friday-cli.test.ts",
+          "test/unit/automation/openclaw-adoption/friday-openclaw-phase-controller.test.ts",
+          "test/unit/automation/openclaw-adoption/friday-openclaw-phase-taskpack.test.ts"
+        ]
+      }
+    ]
+  },
+  "closureEvidence": [
+    "program.json",
+    "phase-0/run.json",
+    "phase-0/evidence/latest.json",
+    "phase-0/evidence/latest.md",
+    "phase-0/evidence/latest-impact.json",
+    "phase-0/evidence/latest-impact.md"
+  ],
+  "forbiddenBoundaries": [
+    {
+      "id": "phase0-no-product-surface-edits",
+      "description": "Phase 0 must not mutate product surfaces such as skills, plugins, channels, fleet, satellites, or agent runtime core.",
+      "pathPrefixes": [
+        "src/skills",
+        "src/plugins",
+        "src/channels",
+        "src/hub",
+        "src/fleet",
+        "src/satellites",
+        "src/browser",
+        "src/agent/runtime",
+        "src/api/http/routes"
+      ],
+      "verdict": "blocked"
+    }
+  ],
+  "notes": [
+    "This taskpack is the last gate before phase0 merge.",
+    "Any architecture drift outside automation/docs must block instead of auto-repairing."
+  ]
+}

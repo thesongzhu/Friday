@@ -29,6 +29,7 @@ export type FridayPhaseWorkerMode = "implementation" | "repair" | "stabilize" | 
 
 export type FridayPromotionFailureCode =
   | "implementation_failed"
+  | "architecture_blocked"
   | "repair_failed"
   | "branch_gate_failed"
   | "required_checks_missing"
@@ -56,6 +57,42 @@ export interface FridayPhaseWorkerSpec {
   successCriteria?: string[];
   outputContract?: string[];
   continueOnFailure?: boolean;
+}
+
+export type FridayArchitectureImpactVerdict =
+  | "no_impact"
+  | "additive_internal"
+  | "additive_public"
+  | "blocked";
+
+export type FridayContractDiffVerdict = "unchanged" | "additive" | "blocked";
+
+export interface FridayArchitectureBoundaryRule {
+  id: string;
+  description: string;
+  pathPrefixes: string[];
+  verdict?: FridayArchitectureImpactVerdict;
+}
+
+export interface FridayArchitectureImpactMatch {
+  id: string;
+  description: string;
+  verdict: FridayArchitectureImpactVerdict;
+  matchedPaths: string[];
+}
+
+export interface FridayArchitectureImpactReport {
+  phaseId: string;
+  verdict: FridayArchitectureImpactVerdict;
+  summary: string;
+  changedPaths: string[];
+  outOfBoundsPaths: string[];
+  contractDiff: {
+    verdict: FridayContractDiffVerdict;
+    notes: string[];
+  };
+  matches: FridayArchitectureImpactMatch[];
+  notes: string[];
 }
 
 export interface FridayPhaseRepairPolicy {
@@ -93,6 +130,7 @@ export interface FridayPhaseDefinition {
   summary: string;
   dependsOn: string[];
   allowedPaths: string[];
+  taskpackPath?: string;
   successCriteria: string[];
   implementation: FridayPhaseImplementation;
   promotion?: FridayPhasePromotionPolicy;
@@ -121,6 +159,22 @@ export interface FridayPhaseManifest {
   phases: FridayPhaseDefinition[];
 }
 
+export interface FridayPhaseTaskpack {
+  schemaVersion: "1.0";
+  phaseId: string;
+  title: string;
+  executionMode: "automated" | "spec_only";
+  goal: string;
+  allowedPaths: string[];
+  implementationWorkers: FridayPhaseWorkerSpec[];
+  repairWorker?: FridayPhaseWorkerSpec;
+  successCriteria: string[];
+  gates?: Partial<FridayPhaseDefinition["gates"]>;
+  closureEvidence?: string[];
+  forbiddenBoundaries: FridayArchitectureBoundaryRule[];
+  notes?: string[];
+}
+
 export interface FridayPhaseCommandResult {
   label: string;
   command: string;
@@ -146,7 +200,7 @@ export interface FridayPhaseWorkerRunResult {
 }
 
 export interface FridayPromotionGateResult {
-  gateId: "implementation" | "repair" | "fast_local" | "pre_pr" | "post_merge_main" | "final_closure";
+  gateId: "implementation" | "architecture_impact" | "repair" | "fast_local" | "pre_pr" | "post_merge_main" | "final_closure";
   status: "passed" | "failed" | "skipped";
   failureCode?: FridayPromotionFailureCode;
   results: FridayPhaseCommandResult[];
@@ -173,6 +227,8 @@ export interface FridayPhaseRunRecord {
   phaseNumber: number;
   branchName: string;
   stabilizeBranchName?: string;
+  taskpackPath?: string;
+  taskpackRevision?: string;
   status: FridayPhaseStatus;
   dryRun: boolean;
   startedAt: string;
@@ -190,11 +246,14 @@ export interface FridayPhaseRunRecord {
     url?: string;
   }>;
   blockers: string[];
+  blockedBoundary?: string;
   notes: string[];
   repairAttempts: number;
   failureCode?: FridayPromotionFailureCode;
   failurePolicy: FridayAutomationFailurePolicy;
   closureEvidence: string[];
+  impactVerdict?: FridayArchitectureImpactVerdict;
+  architectureImpact?: FridayArchitectureImpactReport;
   mainline?: FridayMainlineHealthVerdict;
 }
 
@@ -283,6 +342,7 @@ export interface FridayOpenClawPhaseControllerPaths {
   programPath: string;
   evidenceRoot: string;
   finalCloseoutRoot: string;
+  taskpackRoot: string;
 }
 
 export interface FridayPhaseAutomationPlatform {
@@ -290,6 +350,7 @@ export interface FridayPhaseAutomationPlatform {
   syncMain(repoRoot: string, mainBranch: string): void;
   checkoutPhaseBranch(repoRoot: string, branchName: string, mainBranch: string): void;
   hasChanges(repoRoot: string): boolean;
+  listChangedPaths(repoRoot: string): string[];
   runCommand(
     step: FridayPhaseCommand,
     options: { repoRoot: string; nowIso: () => string },

@@ -28,6 +28,7 @@ const FridayPhaseRepairPolicySchema = z.object({
   maxAttempts: z.number().int().min(0).optional(),
   failureCodes: z.array(z.enum([
     "implementation_failed",
+    "architecture_blocked",
     "repair_failed",
     "branch_gate_failed",
     "required_checks_missing",
@@ -48,6 +49,7 @@ const FridayPhaseDefinitionSchema = z.object({
   summary: z.string().min(1),
   dependsOn: z.array(z.string()),
   allowedPaths: z.array(z.string()),
+  taskpackPath: z.string().min(1).optional(),
   successCriteria: z.array(z.string()),
   implementation: z.object({
     mode: z.enum(["manual", "shell", "hybrid"]),

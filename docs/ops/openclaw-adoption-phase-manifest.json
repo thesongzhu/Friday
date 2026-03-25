@@ -29,11 +29,13 @@
       "allowedPaths": [
         "src/automation/openclaw-adoption",
         "src/cli",
+        "docs/ops/openclaw-adoption",
         "docs/ops/openclaw-adoption-phase-manifest.json",
         "test/unit/automation/openclaw-adoption",
         "test/unit/cli",
         "package.json"
       ],
+      "taskpackPath": "docs/ops/openclaw-adoption/taskpacks/phase-0.json",
       "successCriteria": [
         "The controller can inspect git and GitHub readiness and report blockers without mutating repository state.",
         "The controller can prepare the next phase branch and record implementing state.",
@@ -224,6 +226,7 @@
         "test/e2e/api/friday-api-skills-routes.test.ts",
         "test/integration/marketplace"
       ],
+      "taskpackPath": "docs/ops/openclaw-adoption/taskpacks/phase-1.json",
       "successCriteria": [
         "The canonical skills lifecycle exposes eligibility, permission preview, installation, verification, and failure evidence.",
         "Curated first-party skills can be installed, verified, enabled, and diagnosed through the same lifecycle.",
@@ -350,6 +353,7 @@
         "test/e2e/plugins",
         "test/e2e/api/friday-api-plugins-routes.test.ts"
       ],
+      "taskpackPath": "docs/ops/openclaw-adoption/taskpacks/phase-2.json",
       "successCriteria": [
         "A preview plugin capability manifest exists and is enforced during install and enablement.",
         "First-party and allowlisted partner plugins can complete install, verify, enable, execute, and audit flows.",
@@ -476,6 +480,7 @@
         "test/unit/channels",
         "test/e2e/mock/friday-openclaw-parity-closure.e2e.test.ts"
       ],
+      "taskpackPath": "docs/ops/openclaw-adoption/taskpacks/phase-3.json",
       "successCriteria": [
         "Core-owned message, session, audit, and evidence flows remain canonical across channels.",
         "Curated channel-facing skills complete discover, authorize, act, verify, and audit loops on supported channels.",
@@ -604,6 +609,7 @@
         "test/unit/nodes",
         "test/e2e/ui/friday-agent-os-browser-journeys.test.ts"
       ],
+      "taskpackPath": "docs/ops/openclaw-adoption/taskpacks/phase-4.json",
       "successCriteria": [
         "Remote and node failures produce visible diagnosis, route evidence, and recovery guidance.",
         "Browser profiles enforce separate artifacts, permissions, and cleanup semantics.",
@@ -732,6 +738,7 @@
         "test/integration/memory",
         "test/unit/workflows"
       ],
+      "taskpackPath": "docs/ops/openclaw-adoption/taskpacks/phase-5.json",
       "successCriteria": [
         "Context assembly is extensible without breaking the canonical fallback behavior.",
         "Automation and cron targets can bind to current, named, or isolated sessions with explicit evidence semantics.",
@@ -858,6 +865,7 @@
         "test/integration",
         "test/unit"
       ],
+      "taskpackPath": "docs/ops/openclaw-adoption/taskpacks/phase-6.json",
       "successCriteria": [
         "Main is green under GitHub quality-gate and repository release gates.",
         "The new skills, plugins, channels, remote/node, browser, automation, and context paths all close end to end.",
