@@ -816,20 +816,11 @@ export function createFridayOpenClawPhaseController(
       return { ok: true, dryRun: true, phaseId: phase.id, status: run.status, branchName, run };
     }
 
-    if (!platform.hasChanges(paths.repoRoot) && existingState.prNumber == null) {
-      run.status = "blocked";
-      run.blockers.push("No local changes detected to promote and no existing PR is associated with this phase.");
-      run.updatedAt = nowIso();
-      updatePhaseState(state, phase, run);
-      writeRunAndState(phase, run, state);
-      return { ok: false, dryRun: false, phaseId: phase.id, status: run.status, branchName, run };
-    }
-
     if (platform.hasChanges(paths.repoRoot)) {
       run.commitSha = platform.commitAll(paths.repoRoot, buildDefaultCommitMessage(phase));
       run.notes.push(`Committed phase changes on ${branchName}.`);
     } else {
-      run.notes.push(`No new commit created; reusing existing PR path for ${branchName}.`);
+      run.notes.push(`No new local commit created; attempting to reuse or create the PR path for ${branchName}.`);
     }
 
     platform.pushBranch(paths.repoRoot, branchName);
