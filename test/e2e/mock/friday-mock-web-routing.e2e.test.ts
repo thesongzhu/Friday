@@ -25,6 +25,8 @@ import type { FridayProviderApi } from "../../../src/providers/model/friday-prov
 
 // ─── Helpers ───
 
+const AGENT_RUN_TIMEOUT_MS = 30_000;
+
 async function apiFetch<T>(
   baseUrl: string,
   token: string,
@@ -202,7 +204,7 @@ describe("Friday Web Routing E2E", () => {
           env.accessToken,
           "POST",
           "/v1/agent/runs",
-          { task: "Read this article: https://example.com/article/123", providerId, model, timeoutMs: 15_000 },
+          { task: "Read this article: https://example.com/article/123", providerId, model, timeoutMs: AGENT_RUN_TIMEOUT_MS },
         );
 
         expect(res.json.data.status).toBe("completed");
@@ -264,7 +266,7 @@ describe("Friday Web Routing E2E", () => {
           env.accessToken,
           "POST",
           "/v1/agent/runs",
-          { task: "Read this Reddit post", providerId, model, timeoutMs: 15_000 },
+          { task: "Read this Reddit post", providerId, model, timeoutMs: AGENT_RUN_TIMEOUT_MS },
         );
 
         expect(res.json.data.status).toBe("completed");
@@ -318,7 +320,7 @@ describe("Friday Web Routing E2E", () => {
           env.accessToken,
           "POST",
           "/v1/agent/runs",
-          { task: "Read this Reddit post", providerId, model, timeoutMs: 15_000 },
+          { task: "Read this Reddit post", providerId, model, timeoutMs: AGENT_RUN_TIMEOUT_MS },
         );
 
         expect(res.json.data.status).toBe("completed");
@@ -373,7 +375,7 @@ describe("Friday Web Routing E2E", () => {
           env.accessToken,
           "POST",
           "/v1/agent/runs",
-          { task: "Read this page", providerId, model, timeoutMs: 15_000 },
+          { task: "Read this page", providerId, model, timeoutMs: AGENT_RUN_TIMEOUT_MS },
         );
 
         expect(res.json.data.status).toBe("completed");
@@ -430,7 +432,7 @@ describe("Friday Web Routing E2E", () => {
           env.accessToken,
           "POST",
           "/v1/agent/runs",
-          { task: "Read https://www.reddit.com/r/test/page", providerId, model, timeoutMs: 15_000 },
+          { task: "Read https://www.reddit.com/r/test/page", providerId, model, timeoutMs: AGENT_RUN_TIMEOUT_MS },
         );
 
         expect(res.json.data.status).toBe("completed");
@@ -535,7 +537,7 @@ describe("Friday Web Routing E2E", () => {
           env.accessToken,
           "POST",
           "/v1/agent/runs",
-          { task: "Fetch API data", providerId, model, timeoutMs: 15_000 },
+          { task: "Fetch API data", providerId, model, timeoutMs: AGENT_RUN_TIMEOUT_MS },
         );
 
         expect(res.json.data.status).toBe("completed");

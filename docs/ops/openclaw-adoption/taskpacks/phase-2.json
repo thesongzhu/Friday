@@ -2,7 +2,7 @@
   "schemaVersion": "1.0",
   "phaseId": "phase2",
   "title": "Plugin SDK Preview",
-  "executionMode": "hybrid",
+  "executionMode": "automated",
   "goal": "Add preview SDK capability metadata and allowlisted-partner policy to the existing plugin surfaces without collapsing Friday's plugin and skills backbones into a single story.",
   "allowedPaths": [
     "src/plugins",

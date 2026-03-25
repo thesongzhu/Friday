@@ -215,6 +215,39 @@ describeIfDarwin("Friday native companion release workflow", () => {
     expect(contents).toContain("Release mode: local");
   }, 180_000);
 
+  it("excludes prior source release artifacts from subsequent npm/source builds", async () => {
+    const repoRoot = process.cwd();
+    const scriptPath = path.join(repoRoot, "scripts/ops/build-friday-source-distribution.sh");
+    const packageVersion = JSON.parse(await fs.readFile(path.join(repoRoot, "package.json"), "utf8")) as {
+      version: string;
+    };
+    const sourceArtifactEntry = `package/dist/releases/source/friday-${packageVersion.version}.tgz`;
+    const sourceMetadataEntry = `${sourceArtifactEntry}.artifact.json`;
+
+    const firstBuild = await runReleaseScript(scriptPath, {});
+    const firstArtifactPath = firstBuild.stdout.trim();
+    const firstListing = await execFileAsync("tar", ["-tzf", firstArtifactPath], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    });
+
+    expect(firstListing.stdout).not.toContain(sourceArtifactEntry);
+    expect(firstListing.stdout).not.toContain(sourceMetadataEntry);
+
+    const secondBuild = await runReleaseScript(scriptPath, {});
+    const secondArtifactPath = secondBuild.stdout.trim();
+    const secondListing = await execFileAsync("tar", ["-tzf", secondArtifactPath], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    });
+
+    expect(secondArtifactPath).toBe(firstArtifactPath);
+    expect(secondListing.stdout).not.toContain(sourceArtifactEntry);
+    expect(secondListing.stdout).not.toContain(sourceMetadataEntry);
+  }, 180_000);
+
   it("degrades to generated Homebrew metadata when tap publication fails", async () => {
     const repoRoot = process.cwd();
     const remoteRepo = await createRejectingHomebrewTap("friday-release-homebrew-fallback-");

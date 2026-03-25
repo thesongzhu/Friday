@@ -2,54 +2,63 @@
   "schemaVersion": "1.0",
   "phaseId": "phase6",
   "title": "Final Closure",
-  "executionMode": "spec_only",
-  "goal": "Define the final closure, route matrix, and bug sweep expectations after product phases become automatable and merge cleanly to main.",
+  "executionMode": "automated",
+  "goal": "Reconcile merged phase history into runtime evidence, validate committed taskpack truth, and run final closure gates without adding new product scope.",
   "allowedPaths": [
+    "src/automation/openclaw-adoption",
+    "docs/ops/openclaw-adoption/taskpacks",
+    "scripts/ops",
     "scripts/e2e",
     "docs/reports",
     "test/e2e",
     "test/integration",
-    "test/unit"
+    "test/unit/automation/openclaw-adoption"
   ],
   "implementationWorkers": [
     {
-      "id": "phase6-final-closure-spec",
-      "title": "Load the committed final closure taskpack",
+      "id": "phase6-final-closure",
+      "title": "Validate committed taskpacks and closure reconciliation before running final gates",
       "runner": "command",
       "mode": "implementation",
       "steps": [
         {
-          "label": "phase6-taskpack-spec",
-          "command": "node",
+          "label": "phase6-automation-tests",
+          "command": "npx",
           "args": [
-            "-e",
-            "console.log('phase6 taskpack spec validated')"
+            "vitest",
+            "run",
+            "test/unit/automation/openclaw-adoption/friday-openclaw-phase-taskpack.test.ts",
+            "test/unit/automation/openclaw-adoption/friday-openclaw-phase-controller.test.ts"
           ]
         }
       ]
     }
   ],
   "repairWorker": {
-    "id": "phase6-final-closure-repair-spec",
+    "id": "phase6-final-closure-repair",
     "title": "Diagnose closeout blockers without widening phase scope",
     "runner": "command",
     "mode": "repair",
     "steps": [
       {
-        "label": "phase6-taskpack-repair-spec",
-        "command": "node",
+        "label": "phase6-repair-check",
+        "command": "npm",
         "args": [
-          "-e",
-          "console.log('phase6 repair spec validated')"
+          "run",
+          "typecheck"
         ]
       }
     ]
   },
   "successCriteria": [
-    "Release gates, closeout gates, and bug sweep expectations are committed before final automation is enabled."
+    "Merged phases 0-5 can be reconciled from GitHub and git truth into runtime state and evidence without manual status edits.",
+    "Committed taskpacks parse cleanly and match the actual additive boundaries of the shipped phases.",
+    "Final release, closeout, and closure-local gates pass without adding new product surfaces."
   ],
   "closureEvidence": [
     "phase-6/run.json",
+    "phase-6/evidence/latest.json",
+    "phase-6/evidence/latest.md",
     "phase-6/evidence/latest-impact.json",
     "final-closeout/latest.json",
     "final-closeout/latest.md"
@@ -72,6 +81,7 @@
     }
   ],
   "notes": [
-    "This taskpack remains spec_only until all earlier product phases are automated."
+    "Phase 6 is closure-only: it may reconcile and validate history, but it may not expand product scope.",
+    "Final closeout must be based on merged PR truth rather than manual state edits."
   ]
 }

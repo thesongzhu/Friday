@@ -23,7 +23,19 @@ OUTPUT_DIR="${FRIDAY_SOURCE_RELEASE_OUTPUT_DIR:-${REPO_DIR}/dist/releases/source
 mkdir -p "${OUTPUT_DIR}"
 
 VERSION="$("${NODE_BIN}" -p "require('${REPO_DIR}/package.json').version")"
-PACKAGE_TGZ="$("${NPM_BIN}" pack --ignore-scripts --silent --pack-destination "${OUTPUT_DIR}" "${REPO_DIR}" | tail -n 1 | tr -d '\r')"
+PACKAGE_PREFIX="friday-${VERSION}"
+
+# Never let previously generated source release artifacts re-enter the next package.
+rm -f "${OUTPUT_DIR}/${PACKAGE_PREFIX}.tgz" "${OUTPUT_DIR}/${PACKAGE_PREFIX}.tgz.artifact.json"
+
+PACK_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/friday-source-dist.XXXXXX")"
+cleanup() {
+  rm -rf "${PACK_TEMP_DIR}"
+}
+trap cleanup EXIT
+
+PACKAGE_TGZ="$("${NPM_BIN}" pack --ignore-scripts --silent --pack-destination "${PACK_TEMP_DIR}" "${REPO_DIR}" | tail -n 1 | tr -d '\r')"
+mv "${PACK_TEMP_DIR}/${PACKAGE_TGZ}" "${OUTPUT_DIR}/${PACKAGE_TGZ}"
 
 ARTIFACT_PATH="${OUTPUT_DIR}/${PACKAGE_TGZ}"
 DOWNLOAD_BASE_URL="${FRIDAY_RELEASE_DOWNLOAD_BASE_URL:-https://github.com/thesongzhu/Friday/releases/download/v${VERSION}}"
