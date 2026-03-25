@@ -279,6 +279,22 @@ export interface FridayPluginApi {
 }
 ```
 
+Preview SDK policy:
+
+- Preview registration metadata is additive and explicit. Plugins may declare a `previewSdk` block in `friday.plugin.json` with:
+  - `sdkVersion`
+  - `capabilities`: `registerTool`, `registerChannel`, `registerProvider`, `registerSkillPack`, `registerRoutes`, `registerHooks`
+  - optional `publisherId`
+- Declaring `previewSdk` does **not** create a second marketplace backbone and does **not** replace the canonical skills lifecycle.
+- Preview SDK installs and enablement are bounded to:
+  - first-party plugins (`friday.*`)
+  - explicitly allowlisted partner plugins or publishers
+- Untrusted plugins may still participate in the existing bounded plugin lifecycle, but they may not claim preview SDK registration surfaces.
+- Route families remain unchanged:
+  - `/v1/plugins*`
+  - `/v1/marketplace/plugins*`
+- API responses may add `capabilitySummary` and `policySummary`, but must not rename or replace the existing lifecycle routes.
+
 Lifecycle state machine:
 
 - `install -> configured -> enabled -> running -> disabled -> uninstalled`

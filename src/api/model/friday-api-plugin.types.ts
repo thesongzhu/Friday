@@ -3,10 +3,10 @@
  */
 
 import type {
+  FridayPluginCapabilitySummary,
   FridayPluginEntity,
-  FridayPluginKind,
-  FridayPluginSource,
-  FridayPluginStatus,
+  FridayPluginPolicySummary,
+  FridayPluginSdkPreviewManifest,
 } from "#plugins";
 
 // ─── List Plugins ───
@@ -61,6 +61,9 @@ export interface FridayMarketplaceSearchResponse {
     author: string;
     downloads: number;
     updatedAt: string;
+    previewSdk?: FridayPluginSdkPreviewManifest;
+    capabilitySummary?: FridayPluginCapabilitySummary;
+    policySummary?: FridayPluginPolicySummary;
   }>;
   total: number;
 }
@@ -76,6 +79,9 @@ export interface FridayMarketplacePluginDetailResponse {
     author: string;
     downloads: number;
     updatedAt: string;
+    previewSdk?: FridayPluginSdkPreviewManifest;
+    capabilitySummary?: FridayPluginCapabilitySummary;
+    policySummary?: FridayPluginPolicySummary;
   };
 }
 

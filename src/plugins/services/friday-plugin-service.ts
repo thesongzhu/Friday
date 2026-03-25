@@ -11,8 +11,18 @@ import {
   FRIDAY_CORE_CHANNEL_PLUGIN_IDS,
   FRIDAY_PLUGIN_ERROR_CODES,
   FRIDAY_PLUGIN_MANIFEST_FILENAME,
+  FRIDAY_PLUGIN_SDK_PREVIEW_VERSION,
+  FRIDAY_PLUGIN_VALID_SDK_PREVIEW_CAPABILITIES,
 } from "../model/friday-plugin.types.js";
-import type { FridayPluginEntity, FridayPluginListQuery, FridayPluginManifest } from "../model/friday-plugin.types.js";
+import type {
+  FridayPluginCapabilitySummary,
+  FridayPluginEntity,
+  FridayPluginListQuery,
+  FridayPluginManifest,
+  FridayPluginPolicySummary,
+  FridayPluginPublisherProgram,
+  FridayPluginSdkPreviewCapability,
+} from "../model/friday-plugin.types.js";
 import type {
   CreateFridayPluginServiceDeps,
   FridayPluginInstallInput,
@@ -35,6 +45,7 @@ export function createFridayPluginService(
     loader,
     marketplace,
     signatureVerifier,
+    previewPolicy,
     nowIso,
   } = deps;
 
@@ -43,6 +54,13 @@ export function createFridayPluginService(
   );
 
   const coreIds = new Set<string>(FRIDAY_CORE_CHANNEL_PLUGIN_IDS);
+  const supportedCapabilities = new Set<FridayPluginSdkPreviewCapability>(
+    previewPolicy?.supportedCapabilities ?? FRIDAY_PLUGIN_VALID_SDK_PREVIEW_CAPABILITIES,
+  );
+  const firstPartyIdPrefixes = previewPolicy?.firstPartyIdPrefixes ?? ["friday."];
+  const allowlistedPluginIds = new Set(previewPolicy?.allowlistedPluginIds ?? []);
+  const allowlistedPublisherIds = new Set(previewPolicy?.allowlistedPublisherIds ?? []);
+  const supportedSdkVersion = previewPolicy?.sdkVersion ?? FRIDAY_PLUGIN_SDK_PREVIEW_VERSION;
 
   /**
    * Builds synthetic package bytes from a local install directory by reading
@@ -88,13 +106,100 @@ export function createFridayPluginService(
     }
   }
 
+  function classifyPublisherProgram(
+    pluginId: string,
+    manifest: FridayPluginManifest,
+  ): FridayPluginPublisherProgram {
+    if (firstPartyIdPrefixes.some((prefix) => pluginId.startsWith(prefix))) {
+      return "first_party";
+    }
+    if (
+      allowlistedPluginIds.has(pluginId)
+      || (manifest.previewSdk?.publisherId !== undefined && allowlistedPublisherIds.has(manifest.previewSdk.publisherId))
+    ) {
+      return "allowlisted_partner";
+    }
+    return "untrusted";
+  }
+
+  function buildCapabilitySummary(manifest: FridayPluginManifest): FridayPluginCapabilitySummary {
+    const requestedCapabilities = manifest.previewSdk?.capabilities ?? [];
+    const supportedList = requestedCapabilities.filter((capability) => supportedCapabilities.has(capability));
+    const unsupportedList = requestedCapabilities.filter((capability) => !supportedCapabilities.has(capability));
+
+    return {
+      previewEnabled: manifest.previewSdk !== undefined,
+      sdkVersion: manifest.previewSdk?.sdkVersion ?? null,
+      requestedCapabilities,
+      supportedCapabilities: supportedList,
+      unsupportedCapabilities: unsupportedList,
+    };
+  }
+
+  function buildPolicySummary(
+    pluginId: string,
+    manifest: FridayPluginManifest,
+  ): FridayPluginPolicySummary {
+    const capabilitySummary = buildCapabilitySummary(manifest);
+    const publisherProgram = classifyPublisherProgram(pluginId, manifest);
+    const reasons: string[] = [];
+
+    if (manifest.previewSdk?.sdkVersion && manifest.previewSdk.sdkVersion !== supportedSdkVersion) {
+      reasons.push(
+        `Preview SDK version "${manifest.previewSdk.sdkVersion}" is not supported by this hub. Expected "${supportedSdkVersion}".`,
+      );
+    }
+
+    if (capabilitySummary.unsupportedCapabilities.length > 0) {
+      reasons.push(
+        `Unsupported preview capabilities: ${capabilitySummary.unsupportedCapabilities.join(", ")}`,
+      );
+    }
+
+    if (manifest.previewSdk !== undefined && publisherProgram === "untrusted") {
+      reasons.push("Preview SDK plugins are limited to first-party and allowlisted partner publishers.");
+    }
+
+    const allowed = reasons.length === 0;
+
+    return {
+      publisherProgram,
+      installAllowed: allowed,
+      enableAllowed: allowed,
+      reasons,
+    };
+  }
+
+  function assertPreviewPolicy(pluginId: string, manifest: FridayPluginManifest): void {
+    if (manifest.previewSdk === undefined) {
+      return;
+    }
+    const policySummary = buildPolicySummary(pluginId, manifest);
+    if (!policySummary.installAllowed) {
+      throw new FridayDomainError(
+        FRIDAY_PLUGIN_ERROR_CODES.PREVIEW_POLICY_BLOCKED,
+        `Preview SDK policy blocked plugin "${pluginId}"`,
+        { httpStatus: 403, details: { pluginId, policySummary } },
+      );
+    }
+  }
+
+  function enrichPluginEntity(entity: FridayPluginEntity): FridayPluginEntity {
+    return {
+      ...entity,
+      capabilitySummary: buildCapabilitySummary(entity.manifest),
+      policySummary: buildPolicySummary(entity.id, entity.manifest),
+    };
+  }
+
   return {
     listPlugins(query?: FridayPluginListQuery): FridayPluginEntity[] {
-      return registry.list(query);
+      return registry.list(query).map((entity) => enrichPluginEntity(entity));
     },
 
     getPlugin(pluginId: string): FridayPluginEntity | null {
-      return registry.get(pluginId);
+      const entity = registry.get(pluginId);
+      return entity ? enrichPluginEntity(entity) : null;
     },
 
     listPluginVersions(pluginId: string) {
@@ -111,6 +216,8 @@ export function createFridayPluginService(
 
     installPlugin(input: FridayPluginInstallInput): FridayPluginEntity {
       const { manifest, installPath, source, packageBytes, userApproved } = input;
+
+      assertPreviewPolicy(manifest.id, manifest);
 
       // Check not already installed
       const existing = registry.get(manifest.id);
@@ -217,11 +324,20 @@ export function createFridayPluginService(
         nowIso: now,
       });
 
-      return entity;
+      return enrichPluginEntity(entity);
     },
 
     async enablePlugin(pluginId: string): Promise<FridayPluginEntity> {
       const entity = requirePlugin(pluginId);
+      const policySummary = buildPolicySummary(pluginId, entity.manifest);
+
+      if (!policySummary.enableAllowed) {
+        throw new FridayDomainError(
+          FRIDAY_PLUGIN_ERROR_CODES.PREVIEW_POLICY_BLOCKED,
+          `Preview SDK policy blocked enablement for plugin "${pluginId}"`,
+          { httpStatus: 403, details: { pluginId, policySummary } },
+        );
+      }
 
       if (entity.status === "enabled" || entity.status === "running") {
         throw new FridayDomainError(
@@ -250,7 +366,7 @@ export function createFridayPluginService(
       // Load the plugin via loader to keep runtime state in sync
       await loader.load(loadPlan);
 
-      return requirePlugin(pluginId);
+      return enrichPluginEntity(requirePlugin(pluginId));
     },
 
     async disablePlugin(pluginId: string): Promise<FridayPluginEntity> {
@@ -291,7 +407,7 @@ export function createFridayPluginService(
         registry.setEnabled(pluginId, false, nowIso());
       }
 
-      return requirePlugin(pluginId);
+      return enrichPluginEntity(requirePlugin(pluginId));
     },
 
     async uninstallPlugin(pluginId: string, force?: boolean): Promise<void> {
@@ -334,7 +450,36 @@ export function createFridayPluginService(
         // This keeps marketplace discovery UI/API paths functional in local mode.
         return { items: [], total: 0 };
       }
-      return marketplace.search(query);
+      const result = await marketplace.search(query);
+      return {
+        ...result,
+        items: result.items.map((item) => {
+          const manifest = item.previewSdk
+            ? {
+                schemaVersion: "1.0" as const,
+                id: item.id,
+                version: item.version,
+                name: item.name,
+                description: item.description,
+                kinds: [],
+                entrypoints: {},
+                permissions: { grants: [], promptOn: [] },
+                compatibility: { minHubVersion: "0.0.0", apiVersion: "1" as const },
+                previewSdk: item.previewSdk,
+              }
+            : undefined;
+
+          return {
+            ...item,
+            capabilitySummary: manifest
+              ? buildCapabilitySummary(manifest)
+              : item.capabilitySummary,
+            policySummary: manifest
+              ? buildPolicySummary(item.id, manifest)
+              : item.policySummary,
+          };
+        }),
+      };
     },
 
     async listMarketplacePluginVersions(pluginId: string) {
@@ -361,7 +506,12 @@ export function createFridayPluginService(
           { httpStatus: 503 },
         );
       }
-      return marketplace.getPluginDetail(pluginId);
+      const detail = await marketplace.getPluginDetail(pluginId);
+      return {
+        ...detail,
+        capabilitySummary: buildCapabilitySummary(detail.manifest),
+        policySummary: buildPolicySummary(detail.id, detail.manifest),
+      };
     },
 
     async installFromMarketplace(pluginId: string): Promise<FridayPluginEntity> {

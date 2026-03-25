@@ -42,6 +42,7 @@ export const FRIDAY_PLUGIN_ERROR_CODES = {
   SIGNATURE_INVALID: "PLUGIN_SIGNATURE_INVALID",
   TRUST_FINGERPRINT_MISMATCH: "PLUGIN_TRUST_FINGERPRINT_MISMATCH",
   DISCOVERY_FAILED: "PLUGIN_DISCOVERY_FAILED",
+  PREVIEW_POLICY_BLOCKED: "PLUGIN_PREVIEW_POLICY_BLOCKED",
 } as const;
 
 export const FRIDAY_PLUGIN_VALID_STATUSES: readonly FridayPluginStatus[] = [
@@ -74,6 +75,17 @@ export const FRIDAY_PLUGIN_VALID_TRUST_MODES: readonly FridayPluginTrustMode[] =
   "trust_on_install",
 ];
 
+export const FRIDAY_PLUGIN_SDK_PREVIEW_VERSION = "2026-03-preview" as const;
+
+export const FRIDAY_PLUGIN_VALID_SDK_PREVIEW_CAPABILITIES: readonly FridayPluginSdkPreviewCapability[] = [
+  "registerTool",
+  "registerChannel",
+  "registerProvider",
+  "registerSkillPack",
+  "registerRoutes",
+  "registerHooks",
+];
+
 // ─── Core Types ───
 
 export type FridayPluginKind =
@@ -96,6 +108,19 @@ export type FridayPluginStatus =
   | "uninstalled";
 
 export type FridayPluginTrustMode = "signed" | "trust_on_install";
+
+export type FridayPluginSdkPreviewCapability =
+  | "registerTool"
+  | "registerChannel"
+  | "registerProvider"
+  | "registerSkillPack"
+  | "registerRoutes"
+  | "registerHooks";
+
+export type FridayPluginPublisherProgram =
+  | "first_party"
+  | "allowlisted_partner"
+  | "untrusted";
 
 // ─── Permission Types ───
 
@@ -159,6 +184,27 @@ export interface FridayPluginSignature {
   value: string;
 }
 
+export interface FridayPluginSdkPreviewManifest {
+  sdkVersion: string;
+  capabilities: FridayPluginSdkPreviewCapability[];
+  publisherId?: string;
+}
+
+export interface FridayPluginCapabilitySummary {
+  previewEnabled: boolean;
+  sdkVersion: string | null;
+  requestedCapabilities: FridayPluginSdkPreviewCapability[];
+  supportedCapabilities: FridayPluginSdkPreviewCapability[];
+  unsupportedCapabilities: FridayPluginSdkPreviewCapability[];
+}
+
+export interface FridayPluginPolicySummary {
+  publisherProgram: FridayPluginPublisherProgram;
+  installAllowed: boolean;
+  enableAllowed: boolean;
+  reasons: string[];
+}
+
 // ─── Manifest ───
 
 export interface FridayPluginManifest {
@@ -176,6 +222,7 @@ export interface FridayPluginManifest {
     apiVersion: "1";
   };
   signature?: FridayPluginSignature;
+  previewSdk?: FridayPluginSdkPreviewManifest;
 }
 
 // ─── Persistence Entity ───
@@ -203,6 +250,8 @@ export interface FridayPluginEntity {
   updatedAt: string;
   lastErrorCode: string | null;
   lastErrorMessage: string | null;
+  capabilitySummary?: FridayPluginCapabilitySummary;
+  policySummary?: FridayPluginPolicySummary;
 }
 
 export interface FridayPluginDependencyEntity {

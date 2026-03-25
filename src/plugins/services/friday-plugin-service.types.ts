@@ -7,6 +7,7 @@ import type {
   FridayPluginEntity,
   FridayPluginListQuery,
   FridayPluginManifest,
+  FridayPluginSdkPreviewCapability,
 } from "../model/friday-plugin.types.js";
 import type { FridayPluginRegistryService } from "./friday-plugin-registry-service.js";
 import type { FridayPluginDependencyResolver } from "./friday-plugin-dependency-resolver.js";
@@ -68,6 +69,14 @@ export interface FridayPluginInstallInput {
   userApproved?: boolean;
 }
 
+export interface FridayPluginPreviewPolicyConfig {
+  sdkVersion?: string;
+  supportedCapabilities?: FridayPluginSdkPreviewCapability[];
+  firstPartyIdPrefixes?: string[];
+  allowlistedPluginIds?: string[];
+  allowlistedPublisherIds?: string[];
+}
+
 // ─── Deps ───
 
 export interface CreateFridayPluginServiceDeps {
@@ -77,6 +86,7 @@ export interface CreateFridayPluginServiceDeps {
   loader: FridayPluginLoader;
   marketplace?: FridayPluginMarketplaceClient;
   signatureVerifier: FridayPluginSignatureVerifier;
+  previewPolicy?: FridayPluginPreviewPolicyConfig;
   nowIso: () => string;
   idGenerator: () => string;
   /** Read a file from disk as a Buffer. Used to compute fingerprints for local installs. */
