@@ -79,11 +79,33 @@ export interface CreateFridayBrowserManagerOptions {
 
 // ─── Profile metadata ───
 
+export type FridayBrowserProfileKind =
+  | "operator"
+  | "automation"
+  | "remote"
+  | "custom";
+
 export interface BrowserProfileMetadata {
   /** Profile name (e.g. "chrome", "openclaw", "default"). */
   name: string;
+  /** Canonical Friday profile intent used for diagnostics and routing. */
+  kind: FridayBrowserProfileKind;
   /** When the profile session was created. */
   createdAt: number;
+}
+
+export interface FridayBrowserProfileSummary {
+  name: string;
+  kind: FridayBrowserProfileKind;
+  sessionCount: number;
+  sessionIds: string[];
+  activeTabCount: number;
+}
+
+export interface FridayBrowserDiagnosticsSummary {
+  presentation: FridayBrowserPresentationState;
+  sessionCount: number;
+  profiles: FridayBrowserProfileSummary[];
 }
 
 // ─── Session state ───
@@ -115,6 +137,7 @@ export interface FridayBrowserManager {
   snapshotAria(sessionId: string, opts?: { tabId?: string }, signal?: AbortSignal): Promise<string>;
   close(sessionId?: string): Promise<void>;
   getDiagnostics(): FridayBrowserPresentationState;
+  getDiagnosticsSummary(): FridayBrowserDiagnosticsSummary;
   /** List sessions for a given profile name, or all if no profile specified. */
   listSessions(profile?: string): Array<{ sessionId: string; profile?: BrowserProfileMetadata; tabCount: number; activeTabId: string }>;
   /** Get sessions matching a profile name. */
@@ -216,6 +239,14 @@ export function browserArtifactDir(workspaceRoot: string, sessionId: string): st
     "browser",
     sanitizeArtifactPathSegment(sessionId),
   );
+}
+
+function inferBrowserProfileKind(profile?: string): FridayBrowserProfileKind {
+  const normalized = profile?.trim().toLowerCase();
+  if (normalized === "operator") return "operator";
+  if (normalized === "automation") return "automation";
+  if (normalized === "remote") return "remote";
+  return "custom";
 }
 
 function resolvePlaywrightBrowsersCacheDir(platform: NodeJS.Platform): string | undefined {
@@ -684,7 +715,13 @@ export function createFridayBrowserManager(
           tabCounter: 1,
           connectedOverCdp,
           presentation,
-          profile: profile ? { name: profile, createdAt: Date.now() } : undefined,
+          profile: profile
+            ? {
+                name: profile,
+                kind: inferBrowserProfileKind(profile),
+                createdAt: Date.now(),
+              }
+            : undefined,
         };
 
         sessions.set(sessionId, session);
@@ -820,6 +857,34 @@ export function createFridayBrowserManager(
     return { ...lastPresentation };
   }
 
+  function getDiagnosticsSummary(): FridayBrowserDiagnosticsSummary {
+    const profiles = new Map<string, FridayBrowserProfileSummary>();
+    for (const [sessionId, session] of sessions) {
+      const profile = session.profile;
+      if (!profile) continue;
+      const existing = profiles.get(profile.name);
+      if (existing) {
+        existing.sessionCount += 1;
+        existing.sessionIds.push(sessionId);
+        existing.activeTabCount += session.tabs.size;
+        continue;
+      }
+      profiles.set(profile.name, {
+        name: profile.name,
+        kind: profile.kind,
+        sessionCount: 1,
+        sessionIds: [sessionId],
+        activeTabCount: session.tabs.size,
+      });
+    }
+
+    return {
+      presentation: getDiagnostics(),
+      sessionCount: sessions.size,
+      profiles: Array.from(profiles.values()).sort((left, right) => left.name.localeCompare(right.name)),
+    };
+  }
+
   function listSessions(
     profile?: string,
   ): Array<{ sessionId: string; profile?: BrowserProfileMetadata; tabCount: number; activeTabId: string }> {
@@ -855,6 +920,7 @@ export function createFridayBrowserManager(
     snapshotAria,
     close,
     getDiagnostics,
+    getDiagnosticsSummary,
     listSessions,
     getSessionsByProfile,
     get sessions() {

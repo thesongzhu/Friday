@@ -24,6 +24,7 @@ export type {
 
   // Dashboard API
   FridayGetObservabilityOverviewResponse,
+  FridayObservabilityBrowserRuntimeSummary,
   FridayGetObservabilityTimeSeriesQuery,
   FridayGetObservabilityTimeSeriesResponse,
 
