@@ -1,0 +1,475 @@
+{
+  "schemaVersion": "1.0",
+  "programId": "openclaw-adoption",
+  "title": "Friday OpenClaw Adoption Program",
+  "repo": {
+    "mainBranch": "main",
+    "branchPrefix": "codex/openclaw-adoption-phase",
+    "mergeStrategy": "squash",
+    "requiredChecks": [
+      "quality-gate"
+    ],
+    "failurePolicy": "limited-self-heal-then-pause",
+    "maxAutoRepairAttempts": 2
+  },
+  "guardrails": [
+    "Do not create a second registry outside the canonical skills lifecycle and marketplace source backbone.",
+    "Do not move Friday away from its operator-first, bounded-autonomy product contract.",
+    "Do not expand long-tail connectors before the packaging, trust, and verification layers are closed.",
+    "Do not promote a phase unless the branch gates, required PR checks, and post-merge main checks all pass."
+  ],
+  "phases": [
+    {
+      "id": "phase0",
+      "number": 0,
+      "slug": "automation-bootstrap",
+      "title": "Automation Bootstrap And Guardrails",
+      "summary": "Build the repository-local phase controller, machine-readable manifest, evidence flow, and GitHub promotion loop before product-surface work begins.",
+      "dependsOn": [],
+      "allowedPaths": [
+        "src/automation/openclaw-adoption",
+        "src/cli",
+        "docs/ops/openclaw-adoption-phase-manifest.json",
+        "test/unit/automation/openclaw-adoption",
+        "test/unit/cli",
+        "package.json"
+      ],
+      "successCriteria": [
+        "The controller can inspect git and GitHub readiness and report blockers without mutating repository state.",
+        "The controller can prepare the next phase branch and record implementing state.",
+        "The controller can promote a prepared phase through gates, PR creation, merge, and post-merge main verification.",
+        "Phase evidence is written to a stable runtime directory for every controller run."
+      ],
+      "implementation": {
+        "mode": "manual"
+      },
+      "gates": {
+        "fastLocal": [
+          {
+            "label": "phase0-unit-tests",
+            "command": "npx",
+            "args": [
+              "vitest",
+              "run",
+              "test/unit/cli/friday-cli.test.ts",
+              "test/unit/automation/openclaw-adoption/friday-openclaw-phase-controller.test.ts"
+            ]
+          }
+        ],
+        "prePr": [
+          {
+            "label": "typecheck",
+            "command": "npm",
+            "args": [
+              "run",
+              "typecheck"
+            ]
+          },
+          {
+            "label": "lint",
+            "command": "npm",
+            "args": [
+              "run",
+              "lint"
+            ]
+          },
+          {
+            "label": "phase0-unit-tests",
+            "command": "npx",
+            "args": [
+              "vitest",
+              "run",
+              "test/unit/cli/friday-cli.test.ts",
+              "test/unit/automation/openclaw-adoption/friday-openclaw-phase-controller.test.ts"
+            ]
+          }
+        ],
+        "postMerge": [
+          {
+            "label": "build",
+            "command": "npm",
+            "args": [
+              "run",
+              "build"
+            ]
+          },
+          {
+            "label": "doctor",
+            "command": "node",
+            "args": [
+              "dist/cli/friday-cli.js",
+              "phases",
+              "doctor"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "phase1",
+      "number": 1,
+      "slug": "skills-foundation",
+      "title": "Skills Foundation",
+      "summary": "Strengthen the skill manifest, installation, verification, permissions, and curated first-party skill catalog.",
+      "dependsOn": [
+        "phase0"
+      ],
+      "allowedPaths": [
+        "src/skills",
+        "src/api/http/routes/friday-skill-routes.ts",
+        "docs/current-source-of-truth.md",
+        "test/e2e/skills",
+        "test/e2e/api/friday-api-skills-routes.test.ts",
+        "test/integration/marketplace"
+      ],
+      "successCriteria": [
+        "The canonical skills lifecycle exposes eligibility, permission preview, installation, verification, and failure evidence.",
+        "Curated first-party skills can be installed, verified, enabled, and diagnosed through the same lifecycle.",
+        "Official and allowlisted private skill sources are enforced as the only promotion paths."
+      ],
+      "implementation": {
+        "mode": "manual"
+      },
+      "gates": {
+        "fastLocal": [
+          {
+            "label": "skills-lifecycle-tests",
+            "command": "npx",
+            "args": [
+              "vitest",
+              "run",
+              "test/e2e/skills/friday-skill-lifecycle.test.ts",
+              "test/e2e/api/friday-api-skills-routes.test.ts"
+            ]
+          }
+        ],
+        "prePr": [
+          {
+            "label": "release-verify",
+            "command": "npm",
+            "args": [
+              "run",
+              "release:verify"
+            ]
+          }
+        ],
+        "postMerge": [
+          {
+            "label": "closeout-final",
+            "command": "npm",
+            "args": [
+              "run",
+              "closeout:final"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "phase2",
+      "number": 2,
+      "slug": "plugin-sdk-preview",
+      "title": "Public Plugin SDK Preview",
+      "summary": "Expose a preview plugin SDK for first-party and allowlisted partners while preserving Friday's declarative-first install policy.",
+      "dependsOn": [
+        "phase1"
+      ],
+      "allowedPaths": [
+        "src/plugins",
+        "src/api/http/routes/friday-plugin-routes.ts",
+        "docs/plugin-system-design.md",
+        "test/e2e/plugins",
+        "test/e2e/api/friday-api-plugins-routes.test.ts"
+      ],
+      "successCriteria": [
+        "A preview plugin capability manifest exists and is enforced during install and enablement.",
+        "First-party and allowlisted partner plugins can complete install, verify, enable, execute, and audit flows.",
+        "The preview SDK surface is stable enough for documented first-party use without creating a second marketplace story."
+      ],
+      "implementation": {
+        "mode": "manual"
+      },
+      "gates": {
+        "fastLocal": [
+          {
+            "label": "plugin-lifecycle-tests",
+            "command": "npx",
+            "args": [
+              "vitest",
+              "run",
+              "test/e2e/plugins/friday-plugin-local-lifecycle.test.ts",
+              "test/e2e/plugins/friday-plugin-marketplace-lifecycle.test.ts",
+              "test/e2e/api/friday-api-plugins-routes.test.ts"
+            ]
+          }
+        ],
+        "prePr": [
+          {
+            "label": "release-verify",
+            "command": "npm",
+            "args": [
+              "run",
+              "release:verify"
+            ]
+          }
+        ],
+        "postMerge": [
+          {
+            "label": "closeout-final",
+            "command": "npm",
+            "args": [
+              "run",
+              "closeout:final"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "phase3",
+      "number": 3,
+      "slug": "channel-contract-and-curated-skills",
+      "title": "Channel Contract And Curated User-Facing Skills",
+      "summary": "Harden the channel extension contract and introduce curated channel-facing skills on Friday's existing mature surfaces.",
+      "dependsOn": [
+        "phase2"
+      ],
+      "allowedPaths": [
+        "src/channels",
+        "src/hub",
+        "src/skills",
+        "test/unit/channels",
+        "test/e2e/mock/friday-openclaw-parity-closure.e2e.test.ts"
+      ],
+      "successCriteria": [
+        "Core-owned message, session, audit, and evidence flows remain canonical across channels.",
+        "Curated channel-facing skills complete discover, authorize, act, verify, and audit loops on supported channels.",
+        "No long-tail connector expansion is introduced as part of the contract refactor."
+      ],
+      "implementation": {
+        "mode": "manual"
+      },
+      "gates": {
+        "fastLocal": [
+          {
+            "label": "channel-regression-tests",
+            "command": "npx",
+            "args": [
+              "vitest",
+              "run",
+              "test/unit/channels/friday-channel-registry.test.ts",
+              "test/unit/channels/friday-channel-security.test.ts",
+              "test/e2e/mock/friday-openclaw-parity-closure.e2e.test.ts"
+            ]
+          }
+        ],
+        "prePr": [
+          {
+            "label": "release-verify",
+            "command": "npm",
+            "args": [
+              "run",
+              "release:verify"
+            ]
+          }
+        ],
+        "postMerge": [
+          {
+            "label": "closeout-final",
+            "command": "npm",
+            "args": [
+              "run",
+              "closeout:final"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "phase4",
+      "number": 4,
+      "slug": "remote-node-browser-productization",
+      "title": "Remote, Node, And Browser Productization",
+      "summary": "Productize pairing diagnostics, route evidence, browser profiles, and operator-visible recovery on the existing single-hub trust model.",
+      "dependsOn": [
+        "phase3"
+      ],
+      "allowedPaths": [
+        "src/browser",
+        "src/satellites",
+        "src/fleet",
+        "src/api/http/routes/friday-observability-routes.ts",
+        "test/unit/browser",
+        "test/unit/nodes",
+        "test/e2e/ui/friday-agent-os-browser-journeys.test.ts"
+      ],
+      "successCriteria": [
+        "Remote and node failures produce visible diagnosis, route evidence, and recovery guidance.",
+        "Browser profiles enforce separate artifacts, permissions, and cleanup semantics.",
+        "The implementation stays inside Friday's single-hub trust domain."
+      ],
+      "implementation": {
+        "mode": "manual"
+      },
+      "gates": {
+        "fastLocal": [
+          {
+            "label": "browser-and-node-tests",
+            "command": "npx",
+            "args": [
+              "vitest",
+              "run",
+              "test/unit/browser/friday-browser-manager.test.ts",
+              "test/unit/nodes/friday-satellite-nodes-service.test.ts"
+            ]
+          }
+        ],
+        "prePr": [
+          {
+            "label": "release-verify",
+            "command": "npm",
+            "args": [
+              "run",
+              "release:verify"
+            ]
+          }
+        ],
+        "postMerge": [
+          {
+            "label": "closeout-final",
+            "command": "npm",
+            "args": [
+              "run",
+              "closeout:final"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "phase5",
+      "number": 5,
+      "slug": "context-engine-and-isolated-automation",
+      "title": "Context Engine And Isolated Automation Sessions",
+      "summary": "Introduce a preview context engine surface and isolated automation session targets without bypassing audit, evidence, or approval.",
+      "dependsOn": [
+        "phase4"
+      ],
+      "allowedPaths": [
+        "src/agent/runtime",
+        "src/memory",
+        "src/jobs",
+        "src/workflows",
+        "test/integration/memory",
+        "test/unit/workflows"
+      ],
+      "successCriteria": [
+        "Context assembly is extensible without breaking the canonical fallback behavior.",
+        "Automation and cron targets can bind to current, named, or isolated sessions with explicit evidence semantics.",
+        "Curated and allowlisted capability boundaries remain enforced."
+      ],
+      "implementation": {
+        "mode": "manual"
+      },
+      "gates": {
+        "fastLocal": [
+          {
+            "label": "memory-and-automation-tests",
+            "command": "npx",
+            "args": [
+              "vitest",
+              "run",
+              "test/integration/memory/friday-memory-file-sync-integration.test.ts",
+              "test/unit/workflows/friday-workflow-cron-utils.test.ts"
+            ]
+          }
+        ],
+        "prePr": [
+          {
+            "label": "release-verify",
+            "command": "npm",
+            "args": [
+              "run",
+              "release:verify"
+            ]
+          }
+        ],
+        "postMerge": [
+          {
+            "label": "closeout-final",
+            "command": "npm",
+            "args": [
+              "run",
+              "closeout:final"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "phase6",
+      "number": 6,
+      "slug": "final-mainline-closure",
+      "title": "Final Mainline Closure And Bug Sweep",
+      "summary": "Run the final mainline closure, route matrix, and bug sweep after all product phases are merged.",
+      "dependsOn": [
+        "phase5"
+      ],
+      "allowedPaths": [
+        "scripts/e2e",
+        "docs/reports",
+        "test/e2e",
+        "test/integration",
+        "test/unit"
+      ],
+      "successCriteria": [
+        "Main is green under GitHub quality-gate and repository release gates.",
+        "The new skills, plugins, channels, remote/node, browser, automation, and context paths all close end to end.",
+        "Each promoted surface has a happy path, denied path, and recovery path covered by the final sweep."
+      ],
+      "implementation": {
+        "mode": "manual"
+      },
+      "gates": {
+        "fastLocal": [
+          {
+            "label": "closure-local",
+            "command": "npm",
+            "args": [
+              "run",
+              "test:e2e:closure:local"
+            ]
+          }
+        ],
+        "prePr": [
+          {
+            "label": "release-verify",
+            "command": "npm",
+            "args": [
+              "run",
+              "release:verify"
+            ]
+          },
+          {
+            "label": "closeout-final",
+            "command": "npm",
+            "args": [
+              "run",
+              "closeout:final"
+            ]
+          }
+        ],
+        "postMerge": [
+          {
+            "label": "closure-local",
+            "command": "npm",
+            "args": [
+              "run",
+              "test:e2e:closure:local"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

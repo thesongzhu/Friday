@@ -54,6 +54,10 @@ describe("parseArgs", () => {
       expect(parseArgs(argv("skills", "init", "demo-skill")).command).toBe("skills");
     });
 
+    it("parses phases command", () => {
+      expect(parseArgs(argv("phases", "doctor")).command).toBe("phases");
+    });
+
     it("falls back to help for unknown command", () => {
       expect(parseArgs(argv("bogus")).command).toBe("help");
     });
@@ -229,6 +233,32 @@ describe("parseArgs", () => {
       expect(result.skillsSubcommand).toBe("init");
       expect(result.initSkillId).toBe("demo-skill");
       expect(result.template).toBeUndefined();
+    });
+  });
+
+  describe("phases command", () => {
+    it("parses phases doctor", () => {
+      const result = parseArgs(argv("phases", "doctor"));
+      expect(result.command).toBe("phases");
+      expect(result.phasesSubcommand).toBe("doctor");
+    });
+
+    it("parses phases promote with manifest and dry-run", () => {
+      const result = parseArgs(argv(
+        "phases",
+        "promote",
+        "phase0",
+        "--manifest",
+        "docs/ops/openclaw-adoption-phase-manifest.json",
+        "--dry-run",
+        "--no-prepare-next",
+      ));
+      expect(result.command).toBe("phases");
+      expect(result.phasesSubcommand).toBe("promote");
+      expect(result.phaseIdArg).toBe("phase0");
+      expect(result.manifestPath).toBe("docs/ops/openclaw-adoption-phase-manifest.json");
+      expect(result.dryRun).toBe(true);
+      expect(result.prepareNext).toBe(false);
     });
   });
 
