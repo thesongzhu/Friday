@@ -9,6 +9,7 @@ import type {
   FridayArchitectureImpactReport,
   FridayArchitectureImpactVerdict,
   FridayMainlineHealthVerdict,
+  FridayMergedPullRequestRecord,
   FridayMergeStrategy,
   FridayOpenClawPhaseControllerPaths,
   FridayPhaseAutomationPlatform,
@@ -29,6 +30,7 @@ import type {
   FridayPhaseWorkerSpec,
   FridayPromotionFailureCode,
   FridayPromotionGateResult,
+  FridayPullRequestDetail,
   FridayPullRequestRecord,
   FridayRepoInspection,
 } from "./friday-openclaw-phase.types.js";
@@ -621,6 +623,41 @@ function buildArchitectureImpactReport(
   };
 }
 
+function normalizeChangedPaths(changedPaths: string[]): string[] {
+  return [...new Set(changedPaths.map((path) => path.trim()).filter((path) => path.length > 0))].sort();
+}
+
+function resolvePhaseClosureEvidence(phase: FridayPhaseDefinition, taskpack: FridayPhaseTaskpack): string[] {
+  const configured = taskpack.closureEvidence?.length
+    ? taskpack.closureEvidence
+    : phase.closure?.requiredEvidence ?? [];
+  return [...new Set(configured)];
+}
+
+function selectMergedPullRequestForPhase(
+  manifest: FridayPhaseManifest,
+  phase: FridayPhaseDefinition,
+  pullRequests: FridayMergedPullRequestRecord[],
+): FridayMergedPullRequestRecord | null {
+  const exactBranch = deriveBranchName(manifest, phase);
+  const branchPrefix = `${manifest.repo.branchPrefix}-${String(phase.number)}-`;
+  const candidates = pullRequests
+    .filter((pullRequest) => pullRequest.baseRefName === manifest.repo.mainBranch)
+    .filter((pullRequest) => pullRequest.headRefName === exactBranch || pullRequest.headRefName.startsWith(branchPrefix))
+    .sort((left, right) => {
+      const exactScore = Number(right.headRefName === exactBranch) - Number(left.headRefName === exactBranch);
+      if (exactScore !== 0) {
+        return exactScore;
+      }
+      const mergedAtDiff = Date.parse(right.mergedAt ?? "") - Date.parse(left.mergedAt ?? "");
+      if (!Number.isNaN(mergedAtDiff) && mergedAtDiff !== 0) {
+        return mergedAtDiff;
+      }
+      return right.number - left.number;
+    });
+  return candidates[0] ?? null;
+}
+
 function shouldAllowRepair(
   manifest: FridayPhaseManifest,
   phase: FridayPhaseDefinition,
@@ -900,6 +937,68 @@ function defaultPlatform(): FridayPhaseAutomationPlatform {
       );
     },
 
+    listMergedPullRequests(input) {
+      const result = runProcess(
+        "gh",
+        ["pr", "list", "--state", "merged", "--base", input.baseBranch, "--limit", "100", "--json", "number,title,url,headRefName,baseRefName,mergedAt"],
+        input.repoRoot,
+      );
+      if (result.status !== 0 || result.stdout.trim().length === 0) {
+        return [];
+      }
+      const parsed = JSON.parse(result.stdout) as Array<{
+        number: number;
+        title: string;
+        url: string;
+        headRefName: string;
+        baseRefName: string;
+        mergedAt?: string | null;
+      }>;
+      return parsed
+        .filter((pullRequest) => pullRequest.headRefName.startsWith(input.headPrefix))
+        .map((pullRequest) => ({
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: pullRequest.url,
+          state: "MERGED",
+          merged: true,
+          headRefName: pullRequest.headRefName,
+          baseRefName: pullRequest.baseRefName,
+          mergedAt: pullRequest.mergedAt ?? undefined,
+        }));
+    },
+
+    readPullRequestDetail(repoRoot, prNumber) {
+      const raw = ensureOk(
+        "gh",
+        ["pr", "view", String(prNumber), "--json", "number,title,url,state,mergedAt,headRefName,baseRefName,mergeCommit,files"],
+        repoRoot,
+      );
+      const parsed = JSON.parse(raw) as {
+        number: number;
+        title: string;
+        url: string;
+        state: string;
+        mergedAt?: string | null;
+        headRefName: string;
+        baseRefName: string;
+        mergeCommit?: { oid?: string | null } | null;
+        files?: Array<{ path?: string | null }>;
+      };
+      return {
+        number: parsed.number,
+        title: parsed.title,
+        url: parsed.url,
+        state: parsed.state,
+        merged: Boolean(parsed.mergedAt),
+        headRefName: parsed.headRefName,
+        baseRefName: parsed.baseRefName,
+        mergedAt: parsed.mergedAt ?? undefined,
+        mergeCommitSha: parsed.mergeCommit?.oid ?? undefined,
+        changedPaths: normalizeChangedPaths((parsed.files ?? []).map((file) => file.path ?? "")),
+      };
+    },
+
     waitForMainChecks(input) {
       const issues: string[] = [];
       let selectedRun: { databaseId: number; status: string; conclusion: string | null; url: string } | undefined;
@@ -993,6 +1092,108 @@ export function createFridayOpenClawPhaseController(
   function writeRunAndState(phase: FridayPhaseDefinition, run: FridayPhaseRunRecord, state: FridayPhaseControllerState): void {
     writeRunEvidence(paths, phase, run);
     saveState(state);
+  }
+
+  function reconcileMergedPhaseHistory(
+    manifest: FridayPhaseManifest,
+    state: FridayPhaseControllerState,
+    input: { dryRun?: boolean } = {},
+  ): {
+    blockers: string[];
+    notes: string[];
+    reconciledPhaseIds: Set<string>;
+  } {
+    const blockers: string[] = [];
+    const notes: string[] = [];
+    const reconciledPhaseIds = new Set<string>();
+    const mergedPullRequests = platform.listMergedPullRequests({
+      repoRoot: paths.repoRoot,
+      baseBranch: manifest.repo.mainBranch,
+      headPrefix: `${manifest.repo.branchPrefix}-`,
+    });
+
+    for (const phase of manifest.phases) {
+      const runtime = phaseRuntimePaths(paths, phase);
+      const phaseState = state.phases[phase.id];
+      if (phaseState?.status === "done" && existsSync(runtime.runPath)) {
+        continue;
+      }
+
+      let taskpackBundle;
+      try {
+        taskpackBundle = loadTaskpackBundle(paths, phase);
+      } catch (error) {
+        blockers.push(`${phase.id} taskpack could not be loaded during reconciliation: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+
+      const matchedPullRequest = selectMergedPullRequestForPhase(manifest, phase, mergedPullRequests);
+      if (!matchedPullRequest) {
+        continue;
+      }
+
+      let pullRequestDetail: FridayPullRequestDetail;
+      try {
+        pullRequestDetail = platform.readPullRequestDetail(paths.repoRoot, matchedPullRequest.number);
+      } catch (error) {
+        blockers.push(`${phase.id} pull request details could not be loaded during reconciliation: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+
+      const changedPaths = normalizeChangedPaths(pullRequestDetail.changedPaths);
+      const architectureImpact = buildArchitectureImpactReport(phase, taskpackBundle.taskpack, changedPaths);
+      const mergedAt = pullRequestDetail.mergedAt ?? nowIso();
+      const run: FridayPhaseRunRecord = {
+        runId: `reconciled-${phase.id}-${(pullRequestDetail.mergeCommitSha ?? `pr-${String(pullRequestDetail.number)}`).slice(0, 12)}`,
+        phaseId: phase.id,
+        phaseNumber: phase.number,
+        branchName: pullRequestDetail.headRefName,
+        taskpackPath: taskpackBundle.path,
+        taskpackRevision: taskpackBundle.revision,
+        status: architectureImpact.verdict === "blocked" ? "blocked" : "done",
+        dryRun: Boolean(input.dryRun),
+        startedAt: mergedAt,
+        updatedAt: mergedAt,
+        attempt: state.runs.filter((item) => item.phaseId === phase.id).length + 1,
+        commitSha: pullRequestDetail.mergeCommitSha,
+        prNumber: pullRequestDetail.number,
+        prUrl: pullRequestDetail.url,
+        mergedSha: pullRequestDetail.mergeCommitSha,
+        gates: [{
+          gateId: "architecture_impact",
+          status: architectureImpact.verdict === "blocked" ? "failed" : "passed",
+          failureCode: architectureImpact.verdict === "blocked" ? "architecture_blocked" : undefined,
+          results: [],
+        }],
+        workers: [],
+        prChecks: [],
+        blockers: architectureImpact.verdict === "blocked"
+          ? ["Reconciled merged PR exceeded the committed phase boundary."]
+          : [],
+        notes: [
+          `Reconciled from merged PR #${String(pullRequestDetail.number)} (${pullRequestDetail.url}).`,
+          `Resolved head branch ${pullRequestDetail.headRefName}.`,
+        ],
+        repairAttempts: 0,
+        failureCode: architectureImpact.verdict === "blocked" ? "architecture_blocked" : undefined,
+        failurePolicy: manifest.repo.failurePolicy,
+        closureEvidence: resolvePhaseClosureEvidence(phase, taskpackBundle.taskpack),
+        impactVerdict: architectureImpact.verdict,
+        architectureImpact,
+      };
+
+      updatePhaseState(state, phase, run);
+      if (!input.dryRun) {
+        writeRunAndState(phase, run, state);
+      }
+      reconciledPhaseIds.add(phase.id);
+      notes.push(`Reconciled ${phase.id} from merged PR #${String(pullRequestDetail.number)}.`);
+      if (architectureImpact.verdict === "blocked") {
+        blockers.push(`${phase.id} merged PR violates the committed taskpack boundary.`);
+      }
+    }
+
+    return { blockers, notes, reconciledPhaseIds };
   }
 
   function updatePhaseState(state: FridayPhaseControllerState, phase: FridayPhaseDefinition, run: FridayPhaseRunRecord): void {
@@ -1170,11 +1371,7 @@ export function createFridayOpenClawPhaseController(
       notes: [],
       repairAttempts: 0,
       failurePolicy: manifest.repo.failurePolicy,
-      closureEvidence: taskpackBundle.taskpack.closureEvidence?.length
-        ? [...taskpackBundle.taskpack.closureEvidence]
-        : phase.closure?.requiredEvidence
-          ? [...phase.closure.requiredEvidence]
-          : [],
+      closureEvidence: resolvePhaseClosureEvidence(phase, taskpackBundle.taskpack),
     };
   }
 
@@ -1704,18 +1901,22 @@ export function createFridayOpenClawPhaseController(
     const state = loadState();
     const blockers: string[] = [];
     const notes: string[] = [];
+    const reconciliation = reconcileMergedPhaseHistory(manifest, state, input);
+    blockers.push(...reconciliation.blockers);
+    notes.push(...reconciliation.notes);
 
     for (const phase of manifest.phases) {
       const phaseState = state.phases[phase.id];
       if (phaseState?.status !== "done") {
         blockers.push(`${phase.id} is not complete`);
       }
-      const taskpackPath = resolveTaskpackPath(paths, phase);
-      if (!existsSync(taskpackPath)) {
-        blockers.push(`${phase.id} is missing committed taskpack`);
+      try {
+        loadTaskpackBundle(paths, phase);
+      } catch (error) {
+        blockers.push(`${phase.id} taskpack could not be loaded: ${error instanceof Error ? error.message : String(error)}`);
       }
       const runtime = phaseRuntimePaths(paths, phase);
-      if (!existsSync(runtime.runPath)) {
+      if (!existsSync(runtime.runPath) && !(input.dryRun && reconciliation.reconciledPhaseIds.has(phase.id))) {
         blockers.push(`${phase.id} is missing phase runtime evidence`);
       }
     }

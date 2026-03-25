@@ -2,53 +2,55 @@
   "schemaVersion": "1.0",
   "phaseId": "phase1",
   "title": "Skills Foundation",
-  "executionMode": "spec_only",
-  "goal": "Define the canonical additive-only skills foundation work before any automatic product mutation is attempted.",
+  "executionMode": "automated",
+  "goal": "Keep the canonical additive-only skills foundation work honest after it shipped, including lifecycle eligibility, verification, and marketplace source summaries.",
   "allowedPaths": [
     "src/skills",
-    "src/api/http/routes/friday-skill-routes.ts",
     "src/api/http/routes/friday-skill-marketplace-routes.ts",
-    "docs/current-source-of-truth.md",
+    "docs/ops/openclaw-adoption/taskpacks/phase-1.json",
     "test/e2e/skills",
     "test/e2e/api/friday-api-skills-routes.test.ts",
     "test/integration/marketplace",
     "test/unit/skills/marketplace",
-    "test/unit/api/http/routes"
+    "test/unit/api/routes/friday-skill-marketplace-routes.test.ts"
   ],
   "implementationWorkers": [
     {
-      "id": "phase1-skills-foundation-spec",
-      "title": "Load the committed skills foundation taskpack",
+      "id": "phase1-skills-foundation",
+      "title": "Exercise the shipped skills foundation lifecycle and marketplace source summaries",
       "runner": "command",
       "mode": "implementation",
       "steps": [
         {
-          "label": "phase1-taskpack-spec",
-          "command": "node",
+          "label": "phase1-skills-tests",
+          "command": "npx",
           "args": [
-            "-e",
-            "console.log('phase1 taskpack spec validated')"
+            "vitest",
+            "run",
+            "test/unit/api/routes/friday-skill-marketplace-routes.test.ts",
+            "test/unit/skills/marketplace/friday-marketplace-source-service.test.ts",
+            "test/unit/skills/marketplace/friday-skill-lifecycle-service.test.ts"
           ]
         }
       ],
       "outputContract": [
-        "Taskpack can be dry-run without mutating repo state",
-        "Architecture boundaries are explicit before automation is enabled"
+        "Eligibility, permission preview, install planning, and verification summaries remain inside canonical skills surfaces",
+        "Marketplace source trust and cache health remain additive to existing source-management routes"
       ]
     }
   ],
   "repairWorker": {
-    "id": "phase1-skills-foundation-repair-spec",
+    "id": "phase1-skills-foundation-repair",
     "title": "Diagnose skills foundation blockers without leaving canonical routes",
     "runner": "command",
     "mode": "repair",
     "steps": [
       {
-        "label": "phase1-taskpack-repair-spec",
-        "command": "node",
+        "label": "phase1-skills-repair-check",
+        "command": "npm",
         "args": [
-          "-e",
-          "console.log('phase1 repair spec validated')"
+          "run",
+          "typecheck"
         ]
       }
     ]
@@ -78,7 +80,7 @@
     }
   ],
   "notes": [
-    "This taskpack is intentionally spec_only until real implementation commands are authored.",
-    "Dry-run is allowed; automatic merge promotion must remain blocked."
+    "Phase 1 is shipped and remains additive-only inside the canonical skills and marketplace-source surfaces.",
+    "No second skills registry or source-management backbone may be introduced during closure."
   ]
 }

@@ -272,6 +272,18 @@ export interface FridayPullRequestRecord {
   merged: boolean;
 }
 
+export interface FridayMergedPullRequestRecord extends FridayPullRequestRecord {
+  title: string;
+  headRefName: string;
+  baseRefName: string;
+  mergedAt?: string;
+  mergeCommitSha?: string;
+}
+
+export interface FridayPullRequestDetail extends FridayMergedPullRequestRecord {
+  changedPaths: string[];
+}
+
 export interface FridayMainlineHealthVerdict {
   ok: boolean;
   branch: string;
@@ -376,6 +388,12 @@ export interface FridayPhaseAutomationPlatform {
     strategy: FridayMergeStrategy;
   }): void;
   waitForPullRequestMerge(repoRoot: string, branchName: string): FridayPullRequestRecord;
+  listMergedPullRequests(input: {
+    repoRoot: string;
+    baseBranch: string;
+    headPrefix: string;
+  }): FridayMergedPullRequestRecord[];
+  readPullRequestDetail(repoRoot: string, prNumber: number): FridayPullRequestDetail;
   waitForMainChecks(input: {
     repoRoot: string;
     branch: string;
