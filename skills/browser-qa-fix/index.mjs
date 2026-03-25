@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import path from "node:path";
 import {
   asString,
+  browserRuntimeBlockedResult,
   compact,
   requireBrowserContext,
 } from "../_shared/friday-runtime-skill-utils.mjs";
@@ -104,7 +105,6 @@ function planTitlePatch(html, desiredTitle) {
 }
 
 export async function execute(input = {}, ctx = {}) {
-  const browser = requireBrowserContext(ctx);
   const repoRoot = await findRepoRoot(readWorkspaceRoot(input));
   const apply = input.apply === true;
   const evidencePath = typeof input.evidencePath === "string" && input.evidencePath.trim().length > 0
@@ -114,15 +114,54 @@ export async function execute(input = {}, ctx = {}) {
   const url = pickUrl(input) || asString(evidence?.url);
   let inspection = null;
   let sessionId = "";
+  let browser;
+
+  try {
+    browser = requireBrowserContext(ctx);
+  } catch (error) {
+    const blocked = browserRuntimeBlockedResult({
+      error,
+      skillLabel: "Browser QA fix",
+      suggestedSkillId: "browser-qa-report",
+      details: {
+        apply,
+        repoRoot,
+        url,
+      },
+    });
+    if (blocked) {
+      return blocked;
+    }
+    throw error;
+  }
 
   try {
     if (url) {
-      inspection = await browser.inspectPage({
-        url,
-        waitUntil: "load",
-        screenshotName: "browser-qa-fix",
-      });
-      sessionId = inspection.sessionId;
+      try {
+        inspection = await browser.inspectPage({
+          url,
+          waitUntil: "load",
+          screenshotName: "browser-qa-fix",
+        });
+        sessionId = inspection.sessionId;
+      } catch (error) {
+        if (!evidence) {
+          const blocked = browserRuntimeBlockedResult({
+            error,
+            skillLabel: "Browser QA fix",
+            suggestedSkillId: "browser-qa-report",
+            details: {
+              apply,
+              repoRoot,
+              url,
+            },
+          });
+          if (blocked) {
+            return blocked;
+          }
+        }
+        throw error;
+      }
     }
 
     if (!inspection && !evidence) {

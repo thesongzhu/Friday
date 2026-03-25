@@ -25,14 +25,15 @@ export function readWorkspaceRoot(input) {
 }
 
 export async function findRepoRoot(startDir) {
-  let current = path.resolve(startDir);
+  const initialDir = path.resolve(startDir);
+  let current = initialDir;
   while (true) {
     if (fs.existsSync(path.join(current, ".git"))) {
       return current;
     }
     const parent = path.dirname(current);
     if (parent === current) {
-      return current;
+      return initialDir;
     }
     current = parent;
   }
