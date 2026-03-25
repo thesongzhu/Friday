@@ -252,6 +252,9 @@ export function createFridayPluginRoutes(
             author: detail.author,
             downloads: detail.downloads,
             updatedAt: detail.updatedAt,
+            previewSdk: detail.previewSdk,
+            capabilitySummary: detail.capabilitySummary,
+            policySummary: detail.policySummary,
           },
         };
       },

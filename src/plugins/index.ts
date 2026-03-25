@@ -5,6 +5,8 @@ export type {
   FridayPluginSource,
   FridayPluginStatus,
   FridayPluginTrustMode,
+  FridayPluginSdkPreviewCapability,
+  FridayPluginPublisherProgram,
   FridayPluginPermissionResource,
   FridayPluginPermissionAction,
   FridayPluginPermissionGrant,
@@ -12,6 +14,9 @@ export type {
   FridayPluginPermissionPolicy,
   FridayPluginPromptOnAction,
   FridayPluginSignature,
+  FridayPluginSdkPreviewManifest,
+  FridayPluginCapabilitySummary,
+  FridayPluginPolicySummary,
   FridayPluginManifest,
   FridayPluginEntity,
   FridayPluginDependencyEntity,
@@ -38,6 +43,8 @@ export {
   FRIDAY_PLUGIN_VALID_KINDS,
   FRIDAY_PLUGIN_VALID_SOURCES,
   FRIDAY_PLUGIN_VALID_TRUST_MODES,
+  FRIDAY_PLUGIN_SDK_PREVIEW_VERSION,
+  FRIDAY_PLUGIN_VALID_SDK_PREVIEW_CAPABILITIES,
 } from "./model/friday-plugin.types.js";
 
 // ─── Manifest ───
@@ -115,6 +122,7 @@ export { createFridayPluginMarketplaceClient } from "./services/friday-plugin-ma
 export type {
   FridayPluginService,
   FridayPluginInstallInput,
+  FridayPluginPreviewPolicyConfig,
   FridayPluginVersionInfo,
   FridayMarketplacePluginVersionInfo,
   CreateFridayPluginServiceDeps,
