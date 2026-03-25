@@ -302,6 +302,31 @@ function defaultPlatform(): FridayPhaseAutomationPlatform {
     };
   }
 
+  function readPrCheckRollup(branchName: string, repoRoot: string) {
+    const result = runProcess(
+      "gh",
+      ["pr", "view", branchName, "--json", "statusCheckRollup"],
+      repoRoot,
+    );
+    if (result.status !== 0 || result.stdout.trim().length === 0) {
+      return [] as Array<{
+        name: string;
+        status?: string;
+        conclusion?: string;
+        detailsUrl?: string;
+      }>;
+    }
+    const parsed = JSON.parse(result.stdout) as {
+      statusCheckRollup?: Array<{
+        name?: string;
+        status?: string;
+        conclusion?: string;
+        detailsUrl?: string;
+      }>;
+    };
+    return parsed.statusCheckRollup ?? [];
+  }
+
   function listMainRuns(repoRoot: string, headSha: string) {
     const result = runProcess(
       "gh",
@@ -432,45 +457,45 @@ function defaultPlatform(): FridayPhaseAutomationPlatform {
     },
 
     waitForPullRequestChecks(input) {
-      const watch = runProcess(
-        "gh",
-        ["pr", "checks", input.branchName, "--required", "--watch", "--interval", "15", "--fail-fast"],
-        input.repoRoot,
-      );
-      if (watch.status !== 0) {
-        const statusResult = runProcess(
-          "gh",
-          ["pr", "checks", input.branchName, "--required", "--json", "name,bucket,link"],
-          input.repoRoot,
-        );
-        if (statusResult.status !== 0) {
-          throw new FridayDomainError(
-            "OPENCLAW_ADOPTION_CHECKS_FAILED",
-            `Required PR checks failed for ${input.branchName}: ${watch.stderr.trim() || watch.stdout.trim() || "unknown error"}`,
-            { httpStatus: 500 },
-          );
+      let latest: Array<{
+        name: string;
+        status: "passed" | "failed" | "pending" | "missing";
+        url?: string;
+      }> = input.requiredChecks.map((required) => ({ name: required, status: "missing" as const }));
+
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        const rollup = readPrCheckRollup(input.branchName, input.repoRoot);
+        latest = input.requiredChecks.map((required) => {
+          const match = rollup.find((item) => item.name === required);
+          if (!match) {
+            return { name: required, status: "missing" as const };
+          }
+          const normalizedStatus = (match.status ?? "").toUpperCase();
+          const normalizedConclusion = (match.conclusion ?? "").toUpperCase();
+          if (normalizedConclusion === "SUCCESS") {
+            return { name: required, status: "passed" as const, url: match.detailsUrl };
+          }
+          if (normalizedStatus === "IN_PROGRESS" || normalizedStatus === "QUEUED" || normalizedStatus === "PENDING" || normalizedConclusion.length === 0) {
+            return { name: required, status: "pending" as const, url: match.detailsUrl };
+          }
+          return { name: required, status: "failed" as const, url: match.detailsUrl };
+        });
+
+        const hasTerminalFailure = latest.some((check) => check.status === "failed");
+        if (hasTerminalFailure) {
+          return latest;
         }
+
+        const allRequiredVisible = latest.every((check) => check.status !== "missing");
+        const allPassed = latest.every((check) => check.status === "passed");
+        if (allRequiredVisible && allPassed) {
+          return latest;
+        }
+
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_000);
       }
 
-      const finalStatus = ensureOk(
-        "gh",
-        ["pr", "checks", input.branchName, "--required", "--json", "name,bucket,link"],
-        input.repoRoot,
-      );
-      const parsed = JSON.parse(finalStatus) as Array<{ name: string; bucket: string; link?: string }>;
-      return input.requiredChecks.map((required) => {
-        const match = parsed.find((item) => item.name === required);
-        if (!match) {
-          return { name: required, status: "missing" as const };
-        }
-        if (match.bucket === "pass") {
-          return { name: required, status: "passed" as const, url: match.link };
-        }
-        if (match.bucket === "pending") {
-          return { name: required, status: "pending" as const, url: match.link };
-        }
-        return { name: required, status: "failed" as const, url: match.link };
-      });
+      return latest;
     },
 
     mergePullRequest(input) {
