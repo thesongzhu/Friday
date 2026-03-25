@@ -1,8 +1,10 @@
 import type {
   FridayFleetOverviewResponse,
+  FridayFleetPairingDiagnostics,
   FridayFleetRemediationAction,
   FridayFleetRemediationActionExecutionResult,
   FridayFleetRemediationPlan,
+  FridayFleetRouteSelection,
   FridayFleetSatelliteCard,
   FridayFleetSatelliteDetailResponse,
   FridayFleetSatelliteRuntimeRecovery,
@@ -22,7 +24,10 @@ import type {
   FridayFleetDashboardService,
 } from "./friday-fleet-dashboard-service.types.js";
 import { createFridayFleetDashboardRepository } from "./friday-fleet-dashboard-repository.js";
-import type { FridaySatelliteWithHeartbeatRow } from "./friday-fleet-dashboard-repository.js";
+import type {
+  FridayPairingRequestRow,
+  FridaySatelliteWithHeartbeatRow,
+} from "./friday-fleet-dashboard-repository.js";
 import { calculateSatelliteHealth, healthStateFromScore } from "./friday-fleet-health-calculator.js";
 import { calculateSatelliteTrust } from "./friday-fleet-trust-calculator.js";
 import type { JsonObject } from "#workflows";
@@ -97,6 +102,95 @@ function buildSatelliteCard(
     activeRuns: row.active_runs ?? undefined,
     tags: parseJsonOr<string[]>(row.tags_json, []),
     alerts,
+  };
+}
+
+function buildPairingDiagnostics(
+  row: FridaySatelliteWithHeartbeatRow,
+  pendingRequest: FridayPairingRequestRow | null,
+  nowMs: number,
+): FridayFleetPairingDiagnostics {
+  const heartbeatAgeMs = row.hb_ts ? nowMs - new Date(row.hb_ts).getTime() : null;
+  const heartbeatState = !row.hb_ts
+    ? "missing"
+    : heartbeatAgeMs !== null && heartbeatAgeMs <= 30_000
+      ? "fresh"
+      : "stale";
+
+  const reasons: string[] = [];
+  if (row.pairing_status === "pending") {
+    reasons.push("Satellite pairing is still pending operator approval.");
+  } else if (row.pairing_status === "revoked") {
+    reasons.push("Satellite trust has been revoked and must be re-authorized before recovery continues.");
+  }
+
+  if (heartbeatState === "missing") {
+    reasons.push("No recent heartbeat has been recorded for this satellite.");
+  } else if (heartbeatState === "stale") {
+    reasons.push("Heartbeat telemetry is stale and runtime recovery should stay operator-visible.");
+  }
+
+  return {
+    transport:
+      row.transport === "ws" || row.transport === "http-poll" || row.transport === "mixed"
+        ? row.transport
+        : "unknown",
+    heartbeatState,
+    lastHeartbeatAt: row.hb_ts ?? undefined,
+    runtime: {
+      platform: row.platform,
+      arch: row.arch,
+      appVersion: row.app_version,
+      nodeVersion: row.node_version,
+    },
+    pendingRequest: pendingRequest
+      ? {
+          requestId: pendingRequest.id,
+          pairingCode: pendingRequest.code,
+          status: pendingRequest.status,
+          expiresAt: pendingRequest.expires_at,
+        }
+      : undefined,
+    requiresReauthorization: row.pairing_status === "pending" || row.pairing_status === "revoked",
+    reasons,
+  };
+}
+
+function buildRouteSelection(
+  detail: Pick<FridayFleetSatelliteDetailResponse, "workflowLoad" | "healthBreakdown" | "runtimeRecovery" | "pairingDiagnostics" | "queue">,
+): FridayFleetRouteSelection {
+  if (detail.pairingDiagnostics.requiresReauthorization) {
+    return {
+      target: "/fleet",
+      state: "blocked",
+      reason: "Pairing and trust recovery must finish in Fleet before Friday resumes bounded node work.",
+    };
+  }
+
+  if (detail.workflowLoad.blockedOfflineNodes > 0) {
+    return {
+      target: "/assistant",
+      state: "recover",
+      reason: "Already-dispatched work is blocked offline and needs operator-guided continuation.",
+    };
+  }
+
+  if (
+    detail.healthBreakdown.state !== "healthy"
+    || detail.queue.failed > 0
+    || detail.queue.deadLetter > 0
+  ) {
+    return {
+      target: "/fleet",
+      state: "recover",
+      reason: "Fleet recovery is the next safe surface for heartbeat, queue, and remediation work.",
+    };
+  }
+
+  return {
+    target: "/observability",
+    state: "monitor",
+    reason: "No immediate repair is required; monitor runtime health and diagnostics in Observability.",
   };
 }
 
@@ -510,6 +604,7 @@ export function createFridayFleetDashboardService(
         const caps = repo.getCapabilities(db, satelliteId);
         const queueStats = repo.getQueueStatsBySatellite(db, satelliteId);
         const workflowLoad = repo.getWorkflowLoadBySatellite(db, satelliteId);
+        const latestPairingRequest = repo.getLatestPairingRequest(db, satelliteId);
 
         const heartbeatAgeMs =
           row.hb_ts ? nowMs - new Date(row.hb_ts).getTime() : null;
@@ -534,6 +629,8 @@ export function createFridayFleetDashboardService(
           recentSecurityFindingsCount: 0,
         });
 
+        const pairingDiagnostics = buildPairingDiagnostics(row, latestPairingRequest, nowMs);
+
         const detailBase = {
           satellite: card,
           capabilities: caps.map((c) => ({
@@ -554,16 +651,22 @@ export function createFridayFleetDashboardService(
             retryingNodes: workflowLoad?.retrying_nodes ?? 0,
             blockedOfflineNodes: workflowLoad?.blocked_offline_nodes ?? 0,
           },
+          pairingDiagnostics,
           trustBreakdown,
           healthBreakdown,
         } satisfies Omit<
           FridayFleetSatelliteDetailResponse,
-          "remediation" | "runtimeRecovery"
+          "remediation" | "runtimeRecovery" | "routeSelection"
         >;
 
+        const runtimeRecovery = buildRuntimeRecovery(detailBase);
         const detail: Omit<FridayFleetSatelliteDetailResponse, "remediation"> = {
           ...detailBase,
-          runtimeRecovery: buildRuntimeRecovery(detailBase),
+          runtimeRecovery,
+          routeSelection: buildRouteSelection({
+            ...detailBase,
+            runtimeRecovery,
+          }),
         };
 
         return {

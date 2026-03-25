@@ -366,6 +366,32 @@ describe("FridayBrowserManager", () => {
       expect(manager.options.actionTimeoutMs).toBe(15_000);
       expect(manager.options.allowedOrigins).toEqual([]);
     });
+
+    it("summarizes canonical browser profiles for diagnostics", async () => {
+      const manager = createFridayBrowserManager({
+        workspaceRoot: "/tmp/test",
+        launchImpl: launchImpl as never,
+      });
+
+      await manager.launch("s1", undefined, "operator");
+      await manager.launch("s2", undefined, "automation");
+
+      const summary = manager.getDiagnosticsSummary();
+
+      expect(summary.sessionCount).toBe(2);
+      expect(summary.profiles).toEqual([
+        expect.objectContaining({
+          name: "automation",
+          kind: "automation",
+          sessionCount: 1,
+        }),
+        expect.objectContaining({
+          name: "operator",
+          kind: "operator",
+          sessionCount: 1,
+        }),
+      ]);
+    });
   });
 });
 

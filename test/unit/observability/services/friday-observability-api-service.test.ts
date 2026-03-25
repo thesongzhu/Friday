@@ -16,18 +16,36 @@ describe("createFridayObservabilityApiService", () => {
     }
   });
 
-  function createService() {
+  function createService(options?: {
+    browserDiagnosticsProvider?: Parameters<typeof createFridayObservabilityApiService>[0]["browserDiagnosticsProvider"];
+  }) {
     const db = createTestDb();
     allocatedDbs.push(db);
     return createFridayObservabilityApiService({
       db,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      browserDiagnosticsProvider: options?.browserDiagnosticsProvider,
     });
   }
 
   it("exposes overview and time-series data for assistant events", async () => {
-    const service = createService();
+    const service = createService({
+      browserDiagnosticsProvider: () => ({
+        configuredMode: "auto",
+        activeMode: "headless",
+        targetBrowser: "Playwright Chromium",
+        sessionCount: 2,
+        profiles: [
+          {
+            name: "operator",
+            kind: "operator",
+            sessionCount: 1,
+            activeTabCount: 1,
+          },
+        ],
+      }),
+    });
 
     await service.recordAssistantEvent({
       userId: "user-1",
@@ -52,6 +70,8 @@ describe("createFridayObservabilityApiService", () => {
 
     expect(overview.overview.traces.totalTraces).toBeGreaterThanOrEqual(1);
     expect(overview.overview.audit.totalEntries).toBeGreaterThanOrEqual(1);
+    expect(overview.runtime?.browser?.sessionCount).toBe(2);
+    expect(overview.runtime?.browser?.profiles[0]?.kind).toBe("operator");
     expect(series.series.metricName).toBe("friday.uix.intents.total");
     expect(series.series.points.some((point) => point.value > 0)).toBe(true);
   });

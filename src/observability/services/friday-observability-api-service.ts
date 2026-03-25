@@ -36,6 +36,7 @@ import type {
   FridayListAlertsResponse,
   FridayListSlosQuery,
   FridayListSlosResponse,
+  FridayObservabilityBrowserRuntimeSummary,
   FridaySearchAuditEntriesQuery,
   FridaySearchAuditEntriesResponse,
   FridaySearchTracesQuery,
@@ -281,6 +282,7 @@ export interface CreateFridayObservabilityApiServiceDeps {
   db?: FridaySqliteLayer;
   idGenerator: () => string;
   nowIso: () => string;
+  browserDiagnosticsProvider?: () => FridayObservabilityBrowserRuntimeSummary | undefined;
 }
 
 export const FRIDAY_BUILT_IN_SELF_HEALING_ALERT_RULE_ID = "builtin-self-healing-repeat-failures";
@@ -1720,7 +1722,11 @@ export function createFridayObservabilityApiService(
   const routes: FridayObservabilityRoutesDeps = {
     overview: {
       async get(): Promise<FridayGetObservabilityOverviewResponse> {
-        return { overview: await dashboard.getOverview() };
+        const runtimeBrowser = deps.browserDiagnosticsProvider?.();
+        return {
+          overview: await dashboard.getOverview(),
+          ...(runtimeBrowser ? { runtime: { browser: runtimeBrowser } } : {}),
+        };
       },
     },
     timeSeries: {

@@ -89,10 +89,10 @@ describe("FridayFleetDashboardService", () => {
   function insertPairingRequest(id: string, status: string) {
     db.writer
       .prepare(
-        `INSERT INTO satellite_pairing_requests (id, code, nonce, status, expires_at, created_at, updated_at)
-         VALUES (?, 'code-123', 'nonce-456', ?, ?, ?, ?)`,
+        `INSERT INTO satellite_pairing_requests (id, satellite_id, code, nonce, status, expires_at, created_at, updated_at)
+         VALUES (?, ?, 'code-123', 'nonce-456', ?, ?, ?, ?)`,
       )
-      .run(id, status, "2099-01-01T00:00:00.000Z", NOW, NOW);
+      .run(id, "sat-pending", status, "2099-01-01T00:00:00.000Z", NOW, NOW);
   }
 
   function insertOutboxMessage(
@@ -262,6 +262,8 @@ describe("FridayFleetDashboardService", () => {
     expect(detail!.capabilities[0].available).toBe(true);
     expect(detail!.healthBreakdown).toBeTruthy();
     expect(detail!.trustBreakdown).toBeTruthy();
+    expect(detail!.pairingDiagnostics.transport).toBe("ws");
+    expect(detail!.routeSelection.target).toBe("/observability");
   });
 
   it("returns null for unknown satellite", () => {
@@ -286,6 +288,8 @@ describe("FridayFleetDashboardService", () => {
     expect(detail?.remediation.reasons).toContain(
       "Heartbeat, degraded health, or stale telemetry currently block safe fleet remediation.",
     );
+    expect(detail?.routeSelection.target).toBe("/fleet");
+    expect(detail?.routeSelection.state).toBe("recover");
   });
 
   it("marks revoked satellites as halted runtime recovery", () => {
@@ -297,6 +301,24 @@ describe("FridayFleetDashboardService", () => {
     expect(detail?.runtimeRecovery.requiresOperatorIntervention).toBe(true);
     expect(detail?.runtimeRecovery.continuationMode).toBe("already_dispatched_only");
     expect(detail?.runtimeRecovery.offlinePlanningMode).toBe("deferred");
+    expect(detail?.pairingDiagnostics.requiresReauthorization).toBe(true);
+    expect(detail?.routeSelection.target).toBe("/fleet");
+    expect(detail?.routeSelection.state).toBe("blocked");
+  });
+
+  it("returns pending pairing diagnostics for satellites awaiting approval", () => {
+    insertSatellite("sat-pending", { pairingStatus: "pending" });
+    insertPairingRequest("pair-1", "pending");
+
+    const detail = service.getSatelliteDetail("sat-pending");
+
+    expect(detail?.pairingDiagnostics.pendingRequest).toMatchObject({
+      requestId: "pair-1",
+      pairingCode: "code-123",
+      status: "pending",
+    });
+    expect(detail?.pairingDiagnostics.requiresReauthorization).toBe(true);
+    expect(detail?.routeSelection.target).toBe("/fleet");
   });
 
   it("returns remediation plan helper data", () => {
@@ -370,6 +392,7 @@ describe("FridayFleetDashboardService", () => {
   });
 
   it("returns pending pairing count", () => {
+    insertSatellite("sat-pending", { pairingStatus: "pending" });
     insertPairingRequest("pr-1", "pending");
     insertPairingRequest("pr-2", "pending");
     insertPairingRequest("pr-3", "approved");

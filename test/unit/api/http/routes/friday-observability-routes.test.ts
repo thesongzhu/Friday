@@ -44,6 +44,15 @@ function makeDeps(): FridayObservabilityRoutesDeps {
           health: null,
           generatedAt: "2026-01-01T00:00:00Z",
         },
+        runtime: {
+          browser: {
+            configuredMode: "auto",
+            activeMode: "headless",
+            targetBrowser: "Playwright Chromium",
+            sessionCount: 1,
+            profiles: [],
+          },
+        },
       }),
     },
     timeSeries: {
@@ -128,8 +137,9 @@ describe("B-005 FridayObservabilityRoutes", () => {
       const route = findRoute(routes, "observability.overview");
 
       expect(route.method).toBe("GET");
-      await route.handler(makeCtx());
+      const result = await route.handler(makeCtx()) as Awaited<ReturnType<typeof deps.overview.get>>;
       expect(deps.overview.get).toHaveBeenCalledTimes(1);
+      expect(result.runtime?.browser?.sessionCount).toBe(1);
     });
 
     it("GET /v1/observability/time-series delegates to get", async () => {
