@@ -21,7 +21,6 @@ import {
   type MockHubEnv,
 } from "./_helpers/mock-env.js";
 import { resetMockCounters } from "../../_mocks/mock-llm-providers.js";
-import type { MockFetchRouter } from "./_helpers/mock-fetch-router.js";
 import type { FridayProviderApi } from "../../../src/providers/model/friday-provider.types.js";
 
 // ─── Helpers ───
@@ -161,6 +160,7 @@ describe("Friday Web Routing E2E", () => {
   }, 15_000);
 
   beforeEach(() => {
+    env.installFetchRouter();
     for (const mock of Object.values(env.mocks)) {
       mock.reset();
     }
@@ -170,7 +170,7 @@ describe("Friday Web Routing E2E", () => {
   describe("web_fetch with well-structured HTML", () => {
     it("returns parsed article text (not raw HTML)", async () => {
       const mock = env.mockFor("anthropic");
-      const router = globalThis.fetch as unknown as MockFetchRouter;
+      const router = env.fetchRouter;
 
       // Use example.com — DNS-resolvable public domain
       const articleRoute = {
@@ -232,7 +232,7 @@ describe("Friday Web Routing E2E", () => {
   describe("web_fetch with JS-rendered pages (Reddit, Twitter, SPAs)", () => {
     it("returns JS-rendered error for React SPA shell", async () => {
       const mock = env.mockFor("anthropic");
-      const router = globalThis.fetch as unknown as MockFetchRouter;
+      const router = env.fetchRouter;
 
       // URL rewriting sends www.reddit.com → old.reddit.com, so route must match the rewritten host
       const spaRoute = {
@@ -288,7 +288,7 @@ describe("Friday Web Routing E2E", () => {
 
     it("extracts content via Readability for Reddit-like page (Rule 2 no longer triggers)", async () => {
       const mock = env.mockFor("anthropic");
-      const router = globalThis.fetch as unknown as MockFetchRouter;
+      const router = env.fetchRouter;
 
       // URL rewriting sends www.reddit.com → old.reddit.com, so route must match the rewritten host
       const redditRoute = {
@@ -343,7 +343,7 @@ describe("Friday Web Routing E2E", () => {
 
     it("returns error for empty SPA shell", async () => {
       const mock = env.mockFor("anthropic");
-      const router = globalThis.fetch as unknown as MockFetchRouter;
+      const router = env.fetchRouter;
 
       // Use example.org — DNS-resolvable public domain
       const emptyRoute = {
@@ -392,7 +392,7 @@ describe("Friday Web Routing E2E", () => {
   describe("web_fetch → browser fallback chain", () => {
     it("agent retries with browser after web_fetch JS-rendered error", async () => {
       const mock = env.mockFor("anthropic");
-      const router = globalThis.fetch as unknown as MockFetchRouter;
+      const router = env.fetchRouter;
 
       // URL rewriting sends www.reddit.com → old.reddit.com, so route must match the rewritten host
       const spaRoute = {
@@ -508,7 +508,7 @@ describe("Friday Web Routing E2E", () => {
   describe("web_fetch parseHtml parameter", () => {
     it("returns raw JSON when parseHtml=false", async () => {
       const mock = env.mockFor("anthropic");
-      const router = globalThis.fetch as unknown as MockFetchRouter;
+      const router = env.fetchRouter;
 
       // Use example.com — DNS-resolvable public domain
       const jsonRoute = {

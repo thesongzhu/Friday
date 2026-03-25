@@ -9,6 +9,74 @@ import {
 } from "../_shared/devops-skill-utils.mjs";
 
 const SKILL_ID = "security-review";
+const MAX_SCAN_FILE_BYTES = 512 * 1024;
+
+function walkScanFiles(rootDir, collected = []) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(rootDir, { withFileTypes: true });
+  } catch {
+    return collected;
+  }
+  for (const entry of entries) {
+    const fullPath = path.join(rootDir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === ".git" || entry.name === "node_modules" || entry.name === "dist") {
+        continue;
+      }
+      walkScanFiles(fullPath, collected);
+      continue;
+    }
+    if (!entry.isFile()) {
+      continue;
+    }
+    try {
+      const stat = fs.statSync(fullPath);
+      if (stat.size > MAX_SCAN_FILE_BYTES) {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+    collected.push(fullPath);
+  }
+  return collected;
+}
+
+function collectFallbackMatches(targets, pattern, limit = 200) {
+  const matcher = new RegExp(pattern, "i");
+  const files = targets.flatMap((entry) => walkScanFiles(entry, []));
+  const matches = [];
+
+  for (const filePath of files) {
+    if (matches.length >= limit) {
+      break;
+    }
+    let content = "";
+    try {
+      content = fs.readFileSync(filePath, "utf8");
+    } catch {
+      continue;
+    }
+    if (content.includes("\0")) {
+      continue;
+    }
+    const lines = content.split("\n");
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index] ?? "";
+      matcher.lastIndex = 0;
+      if (!matcher.test(line)) {
+        continue;
+      }
+      matches.push(`${filePath}:${String(index + 1)}:${line}`);
+      if (matches.length >= limit) {
+        break;
+      }
+    }
+  }
+
+  return matches;
+}
 
 function summarizeMatches(lines, limit = 6) {
   return lines
@@ -33,12 +101,16 @@ async function scan(repoRoot, pattern, globs = ["src", "skills", "ui"]) {
     cwd: repoRoot,
     timeoutMs: 20_000,
   });
-  const lines = result.ok
+  const rgLines = result.ok
     ? result.stdout.split("\n").map((line) => line.trim()).filter(Boolean)
     : [];
+  const fallbackLines = rgLines.length > 0
+    ? []
+    : collectFallbackMatches(targets.length > 0 ? targets : [repoRoot], pattern);
+  const lines = rgLines.length > 0 ? rgLines : fallbackLines;
   return {
-    ok: result.ok,
-    command: result.command,
+    ok: result.ok || fallbackLines.length > 0,
+    command: fallbackLines.length > 0 ? `${result.command} || node-fallback` : result.command,
     count: lines.length,
     sample: summarizeMatches(lines),
   };
