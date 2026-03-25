@@ -9,6 +9,7 @@ import type { FridayHttpContext, FridayRouteDefinition } from "../../model/frida
 import type {
   FridayMarketplaceCacheService,
   FridayMarketplaceDiscoveryService,
+  FridayMarketplaceSourceEntity,
   FridayMarketplaceSourceService,
   FridayMarketplaceSyncService,
   FridayMarketplaceTrustPolicy,
@@ -206,6 +207,44 @@ function requireSourceExists(
   }
 }
 
+function toFallbackSourceView(source: FridayMarketplaceSourceEntity) {
+  const reasons = source.enabled ? [] : ["Source is disabled."];
+  return {
+    ...source,
+    trustSummary: {
+      policy: source.trustPolicy,
+      pinnedKeyCount: source.pinnedKeyIds.length,
+      pinned: source.pinnedKeyIds.length > 0,
+    },
+    catalogSummary: {
+      cachedSkillCount: 0,
+      cachedVersionCount: 0,
+      verifiedVersionCount: 0,
+      unsignedVersionCount: 0,
+      latestIndexedAt: undefined,
+      stale: false,
+    },
+    healthSummary: {
+      status: reasons.length === 0 ? "healthy" : "warning",
+      reasons,
+    },
+  };
+}
+
+function getSourceView(service: FridayMarketplaceSourceService, id: string) {
+  const view = service.getSourceView?.(id);
+  if (view) {
+    return view;
+  }
+  const source = service.getSource(id);
+  return source ? toFallbackSourceView(source) : null;
+}
+
+function listSourceViews(service: FridayMarketplaceSourceService, enabledOnly?: boolean) {
+  return service.listSourceViews?.(enabledOnly)
+    ?? service.listSources(enabledOnly).map((source) => toFallbackSourceView(source));
+}
+
 function buildInstallInput(body: unknown) {
   const record = asRecord(body);
   const skillId = asNonEmptyString(record.skillId);
@@ -256,7 +295,7 @@ export function createFridaySkillMarketplaceRoutes(
       async handler(ctx: Ctx) {
         const query = ctx.query as Record<string, string | undefined>;
         const enabledOnly = parseOptionalBoolean(query.enabledOnly, "enabledOnly");
-        const items = deps.sources.listSources(enabledOnly);
+        const items = listSourceViews(deps.sources, enabledOnly);
         return { items, total: items.length };
       },
     },
@@ -268,7 +307,7 @@ export function createFridaySkillMarketplaceRoutes(
       rateLimitPolicyId: "marketplace.write",
       async handler(ctx: Ctx) {
         const source = deps.sources.addSource(buildSourceCreateInput(ctx.body));
-        return { source };
+        return { source: getSourceView(deps.sources, source.id) ?? toFallbackSourceView(source) };
       },
     },
     {
@@ -278,7 +317,7 @@ export function createFridaySkillMarketplaceRoutes(
       auth: { public: false, anyOfScopes: ["marketplace.read"] },
       async handler(ctx: Ctx) {
         const { id } = ctx.params as { id: string };
-        const source = deps.sources.getSource(id);
+        const source = getSourceView(deps.sources, id);
         if (!source) {
           throw new FridayDomainError("MARKETPLACE_SOURCE_NOT_FOUND", `Source "${id}" not found`, { httpStatus: 404 });
         }
@@ -295,7 +334,7 @@ export function createFridaySkillMarketplaceRoutes(
         const { id } = ctx.params as { id: string };
         requireSourceExists(deps, id);
         const source = deps.sources.updateSource(id, buildSourcePatchInput(ctx.body));
-        return { source };
+        return { source: getSourceView(deps.sources, source.id) ?? toFallbackSourceView(source) };
       },
     },
     {
@@ -308,7 +347,7 @@ export function createFridaySkillMarketplaceRoutes(
         const { id } = ctx.params as { id: string };
         requireSourceExists(deps, id);
         deps.sources.enableSource(id);
-        return { source: deps.sources.getSource(id) };
+        return { source: getSourceView(deps.sources, id) };
       },
     },
     {
@@ -321,7 +360,7 @@ export function createFridaySkillMarketplaceRoutes(
         const { id } = ctx.params as { id: string };
         requireSourceExists(deps, id);
         deps.sources.disableSource(id);
-        return { source: deps.sources.getSource(id) };
+        return { source: getSourceView(deps.sources, id) };
       },
     },
     {

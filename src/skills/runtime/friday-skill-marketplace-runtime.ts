@@ -64,6 +64,7 @@ export function createFridaySkillMarketplaceRuntime(
   const sources = createFridayMarketplaceSourceService({
     db: deps.db,
     sourceRepo,
+    cacheRepo,
     idGenerator: deps.idGenerator,
     nowIso: deps.nowIso,
   });

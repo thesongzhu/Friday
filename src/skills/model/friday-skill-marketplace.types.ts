@@ -106,6 +106,32 @@ export interface FridayMarketplaceSourceEntity {
   updatedAt: ISODateTime;
 }
 
+export interface FridayMarketplaceSourceCatalogSummary {
+  cachedSkillCount: number;
+  cachedVersionCount: number;
+  verifiedVersionCount: number;
+  unsignedVersionCount: number;
+  latestIndexedAt?: ISODateTime;
+  stale: boolean;
+}
+
+export interface FridayMarketplaceSourceTrustSummary {
+  policy: FridayMarketplaceTrustPolicy;
+  pinnedKeyCount: number;
+  pinned: boolean;
+}
+
+export interface FridayMarketplaceSourceHealthSummary {
+  status: "healthy" | "warning";
+  reasons: string[];
+}
+
+export interface FridayMarketplaceSourceView extends FridayMarketplaceSourceEntity {
+  trustSummary: FridayMarketplaceSourceTrustSummary;
+  catalogSummary: FridayMarketplaceSourceCatalogSummary;
+  healthSummary: FridayMarketplaceSourceHealthSummary;
+}
+
 export interface FridayMarketplaceCacheEntity {
   id: UUID;
   sourceId: UUID;
@@ -205,6 +231,69 @@ export interface FridaySkillCatalogItem {
   trustScore: number;
   starter: boolean;
   manifest: SkillManifestV2;
+}
+
+export type FridaySkillVerificationStatus =
+  | "local"
+  | "trusted"
+  | "warning"
+  | "blocked"
+  | "unverified";
+
+export interface FridaySkillRequirementPreview {
+  bins: string[];
+  env: string[];
+  config: string[];
+  supportedOs: Array<"darwin" | "linux" | "win32">;
+  requiredCapabilities: string[];
+  missingBins: string[];
+  missingEnv: string[];
+  unresolvedConfig: string[];
+  unsupportedOs: boolean;
+}
+
+export interface FridaySkillPermissionPreviewGrant {
+  id: string;
+  token: string;
+  resource: string;
+  action: string;
+  required: boolean;
+  reason: string;
+  selectors?: Record<string, JsonValue | undefined>;
+}
+
+export interface FridaySkillPermissionPreview {
+  required: string[];
+  optional: string[];
+  promptOn: string[];
+  grants: FridaySkillPermissionPreviewGrant[];
+}
+
+export interface FridaySkillEligibility {
+  verdict: "eligible" | "needs_configuration" | "blocked";
+  installable: boolean;
+  reviewRequired: boolean;
+  reasons: string[];
+}
+
+export interface FridaySkillInstallPlanSummary {
+  strategy: "install" | "update";
+  targetVersion?: string;
+  sourceId?: string;
+  sourceTrustPolicy?: FridayMarketplaceTrustPolicy;
+  targetCount: number;
+  verificationStatus: FridaySkillVerificationStatus;
+  eligibility: FridaySkillEligibility;
+  requirements: FridaySkillRequirementPreview;
+  permissions: FridaySkillPermissionPreview;
+}
+
+export interface FridaySkillFailureEvidenceSummary {
+  installationId: string;
+  version: string;
+  message: string;
+  failedAt: ISODateTime;
+  satelliteId?: UUID;
 }
 
 // ─── Remote Index Documents ───

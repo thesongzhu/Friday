@@ -57,6 +57,19 @@ export interface FridayMarketplaceCacheRepository {
     staleCutoff: string,
   ): string[];
 
+  summarizeSource(
+    db: Database.Database,
+    sourceId: UUID,
+    staleCutoff: string,
+  ): {
+    cachedSkillCount: number;
+    cachedVersionCount: number;
+    verifiedVersionCount: number;
+    unsignedVersionCount: number;
+    latestIndexedAt?: string;
+    stale: boolean;
+  };
+
   deleteBySourceId(db: Database.Database, sourceId: UUID): number;
 
   pruneOlderThan(db: Database.Database, cutoff: string): number;
@@ -196,6 +209,36 @@ export function createFridayMarketplaceCacheRepository(): FridayMarketplaceCache
         )
         .all(staleCutoff) as Array<{ source_id: string }>;
       return rows.map((r) => r.source_id);
+    },
+
+    summarizeSource(db, sourceId, staleCutoff) {
+      const row = db.prepare(
+        `SELECT
+           COUNT(*) AS cached_version_count,
+           COUNT(DISTINCT skill_id) AS cached_skill_count,
+           SUM(CASE WHEN signature_valid = 1 THEN 1 ELSE 0 END) AS verified_version_count,
+           MAX(indexed_at) AS latest_indexed_at
+         FROM marketplace_cache
+         WHERE source_id = ?`,
+      ).get(sourceId) as {
+        cached_version_count: number;
+        cached_skill_count: number;
+        verified_version_count: number | null;
+        latest_indexed_at: string | null;
+      };
+
+      const cachedVersionCount = Number(row.cached_version_count ?? 0);
+      const verifiedVersionCount = Number(row.verified_version_count ?? 0);
+      const latestIndexedAt = row.latest_indexed_at ?? undefined;
+
+      return {
+        cachedSkillCount: Number(row.cached_skill_count ?? 0),
+        cachedVersionCount,
+        verifiedVersionCount,
+        unsignedVersionCount: Math.max(0, cachedVersionCount - verifiedVersionCount),
+        latestIndexedAt,
+        stale: latestIndexedAt ? latestIndexedAt < staleCutoff : false,
+      };
     },
 
     deleteBySourceId(db, sourceId) {

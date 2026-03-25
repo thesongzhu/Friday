@@ -7,10 +7,13 @@
   "allowedPaths": [
     "src/skills",
     "src/api/http/routes/friday-skill-routes.ts",
+    "src/api/http/routes/friday-skill-marketplace-routes.ts",
     "docs/current-source-of-truth.md",
     "test/e2e/skills",
     "test/e2e/api/friday-api-skills-routes.test.ts",
-    "test/integration/marketplace"
+    "test/integration/marketplace",
+    "test/unit/skills/marketplace",
+    "test/unit/api/http/routes"
   ],
   "implementationWorkers": [
     {
