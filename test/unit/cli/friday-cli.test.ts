@@ -42,6 +42,12 @@ describe("parseArgs", () => {
       expect(parseArgs(argv("list")).command).toBe("list");
     });
 
+    it("marks subcommand help without downgrading the parsed command", () => {
+      const result = parseArgs(argv("list", "--help"));
+      expect(result.command).toBe("list");
+      expect(result.showHelp).toBe(true);
+    });
+
     it("parses run command", () => {
       expect(parseArgs(argv("run", "my-skill")).command).toBe("run");
     });
@@ -202,6 +208,12 @@ describe("parseArgs", () => {
     it("parses converters command", () => {
       expect(parseArgs(argv("converters")).command).toBe("converters");
     });
+
+    it("marks converters --help as help without executing the command", () => {
+      const result = parseArgs(argv("converters", "--help"));
+      expect(result.command).toBe("converters");
+      expect(result.showHelp).toBe(true);
+    });
   });
 
   describe("pack command", () => {
@@ -233,6 +245,14 @@ describe("parseArgs", () => {
       expect(result.skillsSubcommand).toBe("init");
       expect(result.initSkillId).toBe("demo-skill");
       expect(result.template).toBeUndefined();
+    });
+
+    it("preserves skills init parsing when help is requested", () => {
+      const result = parseArgs(argv("skills", "init", "demo-skill", "--help"));
+      expect(result.command).toBe("skills");
+      expect(result.skillsSubcommand).toBe("init");
+      expect(result.initSkillId).toBe("demo-skill");
+      expect(result.showHelp).toBe(true);
     });
   });
 
@@ -288,6 +308,13 @@ describe("parseArgs", () => {
       expect(result.command).toBe("phases");
       expect(result.phasesSubcommand).toBe("closeout");
       expect(result.dryRun).toBe(true);
+    });
+
+    it("preserves phases subcommand parsing when help is requested", () => {
+      const result = parseArgs(argv("phases", "doctor", "--help"));
+      expect(result.command).toBe("phases");
+      expect(result.phasesSubcommand).toBe("doctor");
+      expect(result.showHelp).toBe(true);
     });
   });
 
@@ -345,6 +372,11 @@ describe("parseArgs", () => {
     it("json defaults to false", () => {
       const result = parseArgs(argv("start"));
       expect(result.json).toBe(false);
+    });
+
+    it("showHelp defaults to false", () => {
+      const result = parseArgs(argv("start"));
+      expect(result.showHelp).toBe(false);
     });
   });
 
