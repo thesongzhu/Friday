@@ -6,9 +6,9 @@ import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridayWorkflowGeneratorService, FridayWorkflowProductService } from "#workflows";
 import type {
   FridayActionTemplateSummary,
-  FridayUixAssistantDiagnostics,
   FridayBeginnerIntentResolution,
   FridayGuidedWizardState,
+  FridayUixAssistantDiagnostics,
   FridayUixTemplateExecutionResponse,
   FridayUixWizardResponse,
 } from "../../api/model/friday-api-uix-surface.types.js";

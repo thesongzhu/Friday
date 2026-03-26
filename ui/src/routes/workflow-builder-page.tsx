@@ -1,9 +1,11 @@
 import "@xyflow/react/dist/style.css";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from "react";
 import {
   Background,
+  BaseEdge,
   Controls,
+  EdgeLabelRenderer,
   Handle,
   MarkerType,
   MiniMap,
@@ -12,9 +14,12 @@ import {
   ReactFlowProvider,
   applyEdgeChanges,
   applyNodeChanges,
+  getBezierPath,
+  useReactFlow,
   type Connection,
   type Edge,
   type EdgeChange,
+  type EdgeProps,
   type Node,
   type NodeChange,
   type NodeProps,
@@ -56,7 +61,15 @@ import type {
   FridayWorkflowTemplateEntity,
   WorkflowNodeType,
 } from "@/lib/api/types";
+import { cn } from "@/lib/utils/cn";
 import { createDefaultRawGraph, createDefaultSpec, createDefaultVisual, getDefaultNodeConfig, getNextNodeName } from "@/lib/workflows/defaults";
+import {
+  describeWorkflowEdgeLabel,
+  edgeKeyFor,
+  summarizeWorkflowValidationIssues,
+  type BuilderValidationIssueSummary,
+  type BuilderValidationTone,
+} from "@/lib/workflows/builder-canvas";
 import { applyDagreLayout } from "@/lib/workflows/flow-layout";
 import { draftToEditorGraph, editorGraphToDraftBundle } from "@/lib/workflows/editor-adapters";
 import {
@@ -65,8 +78,20 @@ import {
   type FridayWorkflowBuilderFocus,
 } from "@/lib/workflows/view-models";
 
-type FlowNode = Node<FridayWorkflowNodeDefinition, "workflow_node">;
-type FlowEdge = Edge<NonNullable<FridayWorkflowEditorEdge["data"]>>;
+type FlowNodeData = FridayWorkflowNodeDefinition & {
+  __ui?: {
+    issueTone?: BuilderValidationTone;
+    issueCount?: number;
+  };
+};
+
+type FlowEdgeData = NonNullable<FridayWorkflowEditorEdge["data"]> & {
+  issueTone?: BuilderValidationTone;
+  issueCount?: number;
+};
+
+type FlowNode = Node<FlowNodeData, "workflow_node">;
+type FlowEdge = Edge<FlowEdgeData, "workflow_edge">;
 
 interface EditorSnapshot {
   nodes: FlowNode[];
@@ -101,6 +126,16 @@ const EDGE_BRANCH_OPTIONS: Array<{ value: "" | FridayWorkflowSpecEdgeWhen; label
   { value: "failure", label: "Failure" },
   { value: "true", label: "True" },
   { value: "false", label: "False" },
+];
+
+const NODE_LIBRARY_DND_MIME = "application/friday-workflow-node-type";
+
+const NODE_LIBRARY_ENTRIES: Array<{ type: WorkflowNodeType; label: string }> = [
+  { type: "action", label: "Action" },
+  { type: "ai", label: "AI / Tool" },
+  { type: "condition", label: "Condition" },
+  { type: "data", label: "Transform" },
+  { type: "approval", label: "Approval" },
 ];
 
 function parseFocus(value: string | null): FridayWorkflowBuilderFocus {
@@ -167,10 +202,6 @@ function describeIntegrationMode(input: {
     label: "Prefer workflow node",
     reason: "This user-owned template should be checked against the current deploy and validation surface.",
   };
-}
-
-function edgeKeyFor(input: { source: string; target: string; branch?: string }): string {
-  return `${input.source}:${input.target}:${input.branch ?? "any"}`;
 }
 
 function defaultStepTypeForNodeType(nodeType: WorkflowNodeType): FridayWorkflowNodeDefinition["stepType"] {
@@ -265,6 +296,7 @@ function toFlowEdges(edges: FridayWorkflowEditorEdge[], selectedEdgeIds: string[
   const selected = new Set(selectedEdgeIds);
   return edges.map((edge) => ({
     ...edge,
+    type: "workflow_edge",
     selected: selected.has(edge.id),
     markerEnd: { type: MarkerType.ArrowClosed, color: "rgba(236, 245, 255, 0.8)" },
     style: { stroke: "rgba(236, 245, 255, 0.65)", strokeWidth: 1.6 },
@@ -295,7 +327,14 @@ function flowToEditorGraph(input: {
       target: edge.target,
       sourceHandle: edge.sourceHandle ?? undefined,
       targetHandle: edge.targetHandle ?? undefined,
-      data: edge.data,
+      data: edge.data
+        ? {
+            condition: edge.data.condition,
+            branch: edge.data.branch,
+            edgeKey: edge.data.edgeKey,
+            bendPoints: edge.data.bendPoints,
+          }
+        : undefined,
     })),
     viewport: input.viewport,
     selectedNodeId: input.selectedNodeIds[0],
@@ -339,18 +378,55 @@ function nodeTypeBadge(node: FridayWorkflowNodeDefinition): string {
   return node.stepType ?? node.type;
 }
 
+function syncNodeSelection(nodes: FlowNode[], selectedNodeIds: string[]): FlowNode[] {
+  const selected = new Set(selectedNodeIds);
+  return nodes.map((node) => (
+    node.selected === selected.has(node.id)
+      ? node
+      : { ...node, selected: selected.has(node.id) }
+  ));
+}
+
+function syncEdgeSelection(edges: FlowEdge[], selectedEdgeIds: string[]): FlowEdge[] {
+  const selected = new Set(selectedEdgeIds);
+  return edges.map((edge) => (
+    edge.selected === selected.has(edge.id)
+      ? edge
+      : { ...edge, selected: selected.has(edge.id) }
+  ));
+}
+
+function issueToneToStatusTone(tone?: BuilderValidationTone): "warning" | "danger" | "neutral" {
+  if (tone === "danger") return "danger";
+  if (tone === "warning") return "warning";
+  return "neutral";
+}
+
+function issueToneToEdgeStroke(tone?: BuilderValidationTone, selected?: boolean): string {
+  if (tone === "danger") return "rgba(251, 113, 133, 0.9)";
+  if (tone === "warning") return "rgba(251, 191, 36, 0.9)";
+  if (selected) return "rgba(110, 231, 183, 0.92)";
+  return "rgba(236, 245, 255, 0.65)";
+}
+
 function WorkflowCanvasNode(props: NodeProps<FlowNode>) {
   const { data: node, selected } = props;
   const isCondition = node.type === "condition";
   const isTrigger = node.type === "trigger";
   const integrationMode = typeof node.rawArgs?.integrationMode === "string" ? node.rawArgs.integrationMode : null;
   const taskProfile = typeof node.rawArgs?.taskProfile === "string" ? node.rawArgs.taskProfile : null;
+  const issueTone = node.__ui?.issueTone;
+  const issueCount = node.__ui?.issueCount ?? 0;
 
   return (
     <div
       className={`min-w-[220px] rounded-[24px] border px-4 py-3 shadow-[0_18px_45px_rgba(0,0,0,0.28)] ${
         selected
           ? "border-emerald-300/55 bg-slate-950/96 ring-1 ring-emerald-300/30"
+          : issueTone === "danger"
+            ? "border-rose-300/50 bg-slate-950/96 ring-1 ring-rose-300/20"
+            : issueTone === "warning"
+              ? "border-amber-300/45 bg-slate-950/94 ring-1 ring-amber-300/18"
           : "border-white/[0.12] bg-slate-950/92"
       }`}
     >
@@ -361,7 +437,14 @@ function WorkflowCanvasNode(props: NodeProps<FlowNode>) {
             <p className="text-xs uppercase tracking-[0.2em] text-white/40">{nodeTypeBadge(node)}</p>
             <p className="mt-1 text-sm font-semibold text-white">{node.name}</p>
           </div>
-          <StatusPill tone={selected ? "success" : "neutral"}>{node.type}</StatusPill>
+          <div className="flex flex-col items-end gap-2">
+            <StatusPill tone={selected ? "success" : "neutral"}>{node.type}</StatusPill>
+            {issueCount > 0 ? (
+              <StatusPill tone={issueToneToStatusTone(issueTone)}>
+                {issueCount} issue{issueCount > 1 ? "s" : ""}
+              </StatusPill>
+            ) : null}
+          </div>
         </div>
         <p className="text-xs text-white/56">{node.stepRef ?? "No bound ref yet"}</p>
         <div className="flex flex-wrap gap-2">
@@ -387,8 +470,59 @@ function WorkflowCanvasNode(props: NodeProps<FlowNode>) {
   );
 }
 
+function WorkflowCanvasEdge(props: EdgeProps<FlowEdge>) {
+  const { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected, markerEnd } = props;
+  const [path, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+  const edgeStroke = issueToneToEdgeStroke(data?.issueTone, selected);
+  const label = describeWorkflowEdgeLabel(data, {
+    includeFallback: selected || Boolean(data?.issueCount),
+  });
+
+  return (
+    <>
+      <BaseEdge
+        path={path}
+        markerEnd={markerEnd}
+        style={{
+          stroke: edgeStroke,
+          strokeWidth: selected ? 2.6 : data?.issueTone ? 2.2 : 1.6,
+        }}
+      />
+      {label ? (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            }}
+            className={cn(
+              "pointer-events-none absolute rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-white shadow-[0_14px_28px_rgba(0,0,0,0.32)]",
+              data?.issueTone === "danger" && "border-rose-300/45 bg-rose-400/12 text-rose-100",
+              data?.issueTone === "warning" && "border-amber-300/40 bg-amber-400/12 text-amber-100",
+              !data?.issueTone && "border-white/[0.14] bg-slate-950/92 text-white/74",
+            )}
+          >
+            <span>{label}</span>
+            {data?.issueCount ? <span className="ml-2 text-[10px] tracking-[0.12em] text-white/75">{data.issueCount}</span> : null}
+          </div>
+        </EdgeLabelRenderer>
+      ) : null}
+    </>
+  );
+}
+
 const WORKFLOW_NODE_TYPES = {
   workflow_node: WorkflowCanvasNode,
+};
+
+const WORKFLOW_EDGE_TYPES = {
+  workflow_edge: WorkflowCanvasEdge,
 };
 
 export function WorkflowBuilderPage() {
@@ -402,6 +536,7 @@ export function WorkflowBuilderPage() {
 function WorkflowBuilderEditor() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const reactFlow = useReactFlow<FlowNode, FlowEdge>();
   const [searchParams, setSearchParams] = useSearchParams();
   const [title, setTitle] = useState("");
   const [selectedTaskProfileId, setSelectedTaskProfileId] = useState<AgentTaskProfileId>("planning");
@@ -422,6 +557,7 @@ function WorkflowBuilderEditor() {
     nodes: number;
     edges: number;
   } | null>(null);
+  const [isCanvasDropActive, setIsCanvasDropActive] = useState(false);
   const [publishedVersionNumber, setPublishedVersionNumber] = useState<number | null>(null);
   const [localDraftOverride, setLocalDraftOverride] = useState<FridayWorkflowDraftEntity | null>(null);
   const historyRef = useRef<EditorSnapshot[]>([]);
@@ -493,6 +629,71 @@ function WorkflowBuilderEditor() {
     template: selectedTemplate,
     stableTemplate: selectedStableTemplate,
   });
+
+  const issueSummaries = useMemo(() => summarizeWorkflowValidationIssues(compileReport?.validation), [compileReport]);
+
+  const selectedNodeIssueSummary = selectedNode
+    ? issueSummaries.nodeIssues.get(selectedNode.id) ?? null
+    : null;
+
+  const selectedEdgeIssueSummary = selectedEdge
+    ? issueSummaries.edgeIssues.get(
+      edgeKeyFor({
+        source: selectedEdge.source,
+        target: selectedEdge.target,
+        branch: selectedEdge.data?.branch,
+      }),
+    ) ?? null
+    : null;
+
+  const canvasNodes = useMemo(() => (
+    nodes.map((node) => {
+      const summary = issueSummaries.nodeIssues.get(node.id);
+      return {
+        ...node,
+        data: summary
+          ? {
+              ...node.data,
+              __ui: {
+                issueTone: summary.tone,
+                issueCount: summary.count,
+              },
+            }
+          : {
+              ...node.data,
+              __ui: undefined,
+            },
+      };
+    })
+  ), [nodes, issueSummaries.nodeIssues]);
+
+  const canvasEdges = useMemo(() => (
+    edges.map((edge) => {
+      const summary = issueSummaries.edgeIssues.get(
+        edge.data?.edgeKey
+          ?? edgeKeyFor({
+            source: edge.source,
+            target: edge.target,
+            branch: edge.data?.branch,
+          }),
+      );
+      const stroke = issueToneToEdgeStroke(summary?.tone, edge.selected);
+      return {
+        ...edge,
+        type: "workflow_edge",
+        data: {
+          ...(edge.data ?? {}),
+          issueTone: summary?.tone,
+          issueCount: summary?.count,
+        },
+        markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
+        style: {
+          stroke,
+          strokeWidth: edge.selected ? 2.6 : summary?.tone ? 2.2 : 1.6,
+        },
+      } satisfies FlowEdge;
+    })
+  ), [edges, issueSummaries.edgeIssues]);
 
   const groupedRegularTemplates = useMemo(() => ({
     builtin: regularTemplates.filter((item) => item.kind === "builtin"),
@@ -689,11 +890,11 @@ function WorkflowBuilderEditor() {
     pushHistory?: boolean;
     dirty?: boolean;
   }) => {
-    const nextNodes = input.nodes ?? nodes;
-    const nextEdges = input.edges ?? edges;
-    const nextViewport = input.viewport ?? viewport;
     const nextSelectedNodeIds = input.selectedNodeIds ?? selectedNodeIds;
     const nextSelectedEdgeIds = input.selectedEdgeIds ?? selectedEdgeIds;
+    const nextNodes = syncNodeSelection(input.nodes ?? nodes, nextSelectedNodeIds);
+    const nextEdges = syncEdgeSelection(input.edges ?? edges, nextSelectedEdgeIds);
+    const nextViewport = input.viewport ?? viewport;
     setNodes(nextNodes);
     setEdges(nextEdges);
     setViewport(nextViewport);
@@ -747,9 +948,9 @@ function WorkflowBuilderEditor() {
       visual: bundle.visual,
     });
     setLocalDraftOverride(result.draft);
-    lastManualSaveAtRef.current = new Date().toISOString();
-    setDirty(false);
-    return result.draft;
+      lastManualSaveAtRef.current = new Date().toISOString();
+      setDirty(false);
+      return result.draft;
   };
 
   useEffect(() => {
@@ -1038,14 +1239,14 @@ function WorkflowBuilderEditor() {
     updateGraph({ nodes: nextNodes, pushHistory: true });
   };
 
-  const addNode = (type: WorkflowNodeType) => {
+  const addNode = (type: WorkflowNodeType, position?: { x: number; y: number }) => {
     const nodeId = `${type}-${Math.random().toString(36).slice(2, 8)}`;
     const existingNames = nodes.map((node) => node.data.name);
     const config = getDefaultNodeConfig(type);
     const nextNode: FlowNode = {
       id: nodeId,
       type: "workflow_node",
-      position: {
+      position: position ?? {
         x: 160 + nodes.length * 56,
         y: 140 + (nodes.length % 4) * 82,
       },
@@ -1055,7 +1256,7 @@ function WorkflowBuilderEditor() {
         type,
         name: getNextNodeName(type, existingNames),
         config,
-        stepType: type === "ai" ? "tool_call" : undefined,
+        stepType: defaultStepTypeForNodeType(type),
         stepRef:
           "skillId" in config
             ? config.skillId
@@ -1075,6 +1276,106 @@ function WorkflowBuilderEditor() {
       selectedEdgeIds: [],
       pushHistory: true,
     });
+  };
+
+  const handlePaletteDragStart = (event: ReactDragEvent<HTMLButtonElement>, type: WorkflowNodeType) => {
+    if (!activeDraft || readonlyReason) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.setData(NODE_LIBRARY_DND_MIME, type);
+    event.dataTransfer.setData("text/plain", type);
+    event.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleCanvasDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes(NODE_LIBRARY_DND_MIME)) {
+      return;
+    }
+    event.preventDefault();
+    setIsCanvasDropActive(Boolean(activeDraft) && !readonlyReason);
+    event.dataTransfer.dropEffect = activeDraft && !readonlyReason ? "move" : "none";
+  };
+
+  const handleCanvasDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes(NODE_LIBRARY_DND_MIME)) {
+      return;
+    }
+    event.preventDefault();
+    setIsCanvasDropActive(false);
+    if (!activeDraft) {
+      toast.error("Create or open a draft before dropping nodes onto the canvas.");
+      return;
+    }
+    if (readonlyReason) {
+      toast.error(readonlyReason);
+      return;
+    }
+    const droppedType = event.dataTransfer.getData(NODE_LIBRARY_DND_MIME) as WorkflowNodeType;
+    if (!droppedType) {
+      return;
+    }
+    addNode(
+      droppedType,
+      reactFlow.screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      }),
+    );
+  };
+
+  const focusValidationIssue = (issue: FridayWorkflowBuilderValidationReport["issues"][number]) => {
+    if (issue.stepId) {
+      const node = nodes.find((candidate) => candidate.id === issue.stepId);
+      if (node) {
+        updateGraph({
+          selectedNodeIds: [node.id],
+          selectedEdgeIds: [],
+          dirty: false,
+        });
+        void reactFlow.setCenter(
+          node.position.x + ((node.width ?? 240) / 2),
+          node.position.y + ((node.height ?? 124) / 2),
+          {
+            zoom: Math.max(viewport.zoom, 0.9),
+            duration: 260,
+          },
+        );
+        return;
+      }
+    }
+    if (issue.edgeRef) {
+      const edge = edges.find((candidate) => (
+        edgeKeyFor({
+          source: candidate.source,
+          target: candidate.target,
+          branch: candidate.data?.branch,
+        }) === edgeKeyFor({
+          source: issue.edgeRef!.from,
+          target: issue.edgeRef!.to,
+          branch: issue.edgeRef!.when,
+        })
+      ));
+      if (edge) {
+        updateGraph({
+          selectedNodeIds: [],
+          selectedEdgeIds: [edge.id],
+          dirty: false,
+        });
+        const sourceNode = nodes.find((candidate) => candidate.id === edge.source);
+        const targetNode = nodes.find((candidate) => candidate.id === edge.target);
+        if (sourceNode && targetNode) {
+          void reactFlow.setCenter(
+            (sourceNode.position.x + targetNode.position.x) / 2 + 120,
+            (sourceNode.position.y + targetNode.position.y) / 2 + 60,
+            {
+              zoom: Math.max(viewport.zoom, 0.85),
+              duration: 260,
+            },
+          );
+        }
+      }
+    }
   };
 
   const removeSelection = () => {
@@ -1356,21 +1657,17 @@ function WorkflowBuilderEditor() {
 
         <ShellCard eyebrow="Node Library" title="Add workflow nodes">
           <div className="grid gap-3 sm:grid-cols-2">
-            {([
-              { type: "action", label: "Action" },
-              { type: "ai", label: "AI / Tool" },
-              { type: "condition", label: "Condition" },
-              { type: "data", label: "Transform" },
-              { type: "approval", label: "Approval" },
-            ] as const).map((entry) => (
+            {NODE_LIBRARY_ENTRIES.map((entry) => (
               <button
                 key={entry.type}
                 type="button"
+                draggable={Boolean(activeDraft) && !readonlyReason}
+                onDragStart={(event) => handlePaletteDragStart(event, entry.type)}
                 onClick={() => addNode(entry.type)}
                 className="agent-selection-card text-left"
               >
                 <p className="font-medium text-white">{entry.label}</p>
-                <p className="mt-1 text-xs text-white/55">Drop a new {entry.label.toLowerCase()} node onto the canvas.</p>
+                <p className="mt-1 text-xs text-white/55">Drag onto the canvas or click to add a new {entry.label.toLowerCase()} node.</p>
               </button>
             ))}
           </div>
@@ -1447,22 +1744,37 @@ function WorkflowBuilderEditor() {
                 <span>Autosave: {formatTimestamp(lastAutosaveAtRef.current ?? activeDraft.autosave.lastSavedAt)}</span>
               </div>
             </div>
-            <div className="h-[700px] overflow-hidden rounded-[28px] border border-white/[0.08] bg-slate-950/88">
+            <div
+              className={cn(
+                "h-[700px] overflow-hidden rounded-[28px] border bg-slate-950/88 transition",
+                isCanvasDropActive ? "border-emerald-300/45 ring-1 ring-emerald-300/25" : "border-white/[0.08]",
+              )}
+              onDragOver={handleCanvasDragOver}
+              onDrop={handleCanvasDrop}
+              onDragLeave={() => setIsCanvasDropActive(false)}
+            >
               <ReactFlow
-                nodes={nodes}
-                edges={edges}
+                nodes={canvasNodes}
+                edges={canvasEdges}
                 nodeTypes={WORKFLOW_NODE_TYPES}
+                edgeTypes={WORKFLOW_EDGE_TYPES}
                 onNodesChange={handleNodesChange}
                 onEdgesChange={handleEdgesChange}
                 onConnect={handleConnect}
                 onNodeDragStop={() => pushHistory()}
                 onEdgeClick={(_, edge) => {
-                  setSelectedEdgeIds([edge.id]);
-                  setSelectedNodeIds([]);
+                  updateGraph({
+                    selectedEdgeIds: [edge.id],
+                    selectedNodeIds: [],
+                    dirty: false,
+                  });
                 }}
                 onNodeClick={(_, node) => {
-                  setSelectedNodeIds([node.id]);
-                  setSelectedEdgeIds([]);
+                  updateGraph({
+                    selectedNodeIds: [node.id],
+                    selectedEdgeIds: [],
+                    dirty: false,
+                  });
                 }}
                 onSelectionChange={({ nodes: selectedNodes, edges: selectedCanvasEdges }) => {
                   setSelectedNodeIds(selectedNodes.map((node) => node.id));
@@ -1481,7 +1793,13 @@ function WorkflowBuilderEditor() {
                   pannable
                   zoomable
                   nodeStrokeWidth={3}
-                  nodeColor={(node) => node.selected ? "rgba(110,231,183,0.85)" : "rgba(148,163,184,0.45)"}
+                  nodeColor={(node) => {
+                    const issueTone = (node.data as FlowNodeData | undefined)?.__ui?.issueTone;
+                    if (node.selected) return "rgba(110,231,183,0.85)";
+                    if (issueTone === "danger") return "rgba(251,113,133,0.8)";
+                    if (issueTone === "warning") return "rgba(251,191,36,0.78)";
+                    return "rgba(148,163,184,0.45)";
+                  }}
                   className="!rounded-2xl !border !border-white/[0.08] !bg-slate-950/85"
                 />
                 <Controls className="!rounded-2xl !border !border-white/[0.08] !bg-slate-950/85" />
@@ -1512,6 +1830,12 @@ function WorkflowBuilderEditor() {
         >
           {selectedNode ? (
             <div className="space-y-4 text-sm text-white/72">
+              {selectedNodeIssueSummary ? (
+                <ValidationSummaryCard
+                  title="Node issues"
+                  summary={selectedNodeIssueSummary}
+                />
+              ) : null}
               <label className="grid gap-2">
                 <span className="font-medium text-white">Name</span>
                 <input
@@ -1696,6 +2020,12 @@ function WorkflowBuilderEditor() {
             </div>
           ) : selectedEdge ? (
             <div className="space-y-4 text-sm text-white/72">
+              {selectedEdgeIssueSummary ? (
+                <ValidationSummaryCard
+                  title="Edge issues"
+                  summary={selectedEdgeIssueSummary}
+                />
+              ) : null}
               <div className="grid gap-3 sm:grid-cols-2">
                 <BuilderMetric label="Source" value={selectedEdge.source} />
                 <BuilderMetric label="Target" value={selectedEdge.target} />
@@ -1753,28 +2083,6 @@ function WorkflowBuilderEditor() {
                   Publish
                 </ActionButton>
               </div>
-              {compileReport ? (
-                <div className="agent-subcard p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-medium text-white">Compile report</p>
-                    <StatusPill tone={compileReport.validation.valid ? "success" : "warning"}>
-                      {compileReport.validation.valid ? "valid" : "issues"}
-                    </StatusPill>
-                  </div>
-                  <p className="mt-2 text-sm text-white/66">
-                    Nodes: {compileReport.nodes} · Edges: {compileReport.edges}
-                  </p>
-                  <div className="mt-3 space-y-2 text-xs text-white/55">
-                    {compileReport.validation.issues.length === 0 ? (
-                      <p>No validation issues.</p>
-                    ) : compileReport.validation.issues.map((issue) => (
-                      <p key={`${issue.stage}:${issue.code}:${issue.message}`}>
-                        {issue.stage}: {issue.message}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
               {publishedVersionNumber ? (
                 <div className="rounded-[22px] border border-emerald-300/16 bg-emerald-300/[0.08] p-4">
                   <p className="font-medium text-emerald-100">Publish result</p>
@@ -1806,6 +2114,12 @@ function WorkflowBuilderEditor() {
           ) : (
             <p className="text-sm text-white/55">Select a draft, node, or edge to inspect it here.</p>
           )}
+          {compileReport ? (
+            <CompileReportPanel
+              report={compileReport}
+              onFocusIssue={focusValidationIssue}
+            />
+          ) : null}
         </ShellCard>
 
         {(["builtin", "skill", "user"] as const).map((groupKey) => (
@@ -1854,6 +2168,97 @@ function BuilderMetric(props: { label: string; value: string }) {
     <div className="agent-metric-card">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/45">{props.label}</p>
       <p className="mt-3 break-words text-sm text-white">{props.value}</p>
+    </div>
+  );
+}
+
+function ValidationSummaryCard(props: { title: string; summary: BuilderValidationIssueSummary }) {
+  return (
+    <div className="agent-subcard p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="font-medium text-white">{props.title}</p>
+        <StatusPill tone={issueToneToStatusTone(props.summary.tone)}>
+          {props.summary.count} issue{props.summary.count > 1 ? "s" : ""}
+        </StatusPill>
+      </div>
+      <div className="mt-3 space-y-2 text-xs text-white/58">
+        {props.summary.issues.map((issue) => (
+          <p key={`${props.title}:${issue.code}:${issue.message}`}>
+            {issue.stage}: {issue.message}
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function describeIssueLocation(issue: FridayWorkflowBuilderValidationReport["issues"][number]): string | null {
+  if (issue.stepId) {
+    return `Node ${issue.stepId}`;
+  }
+  if (issue.edgeRef) {
+    const edgeLabel = describeWorkflowEdgeLabel({
+      branch: issue.edgeRef.when,
+      condition: undefined,
+    });
+    return edgeLabel
+      ? `Edge ${issue.edgeRef.from} -> ${issue.edgeRef.to} · ${edgeLabel}`
+      : `Edge ${issue.edgeRef.from} -> ${issue.edgeRef.to}`;
+  }
+  return null;
+}
+
+function CompileReportPanel(props: {
+  report: {
+    validation: FridayWorkflowBuilderValidationReport;
+    nodes: number;
+    edges: number;
+  };
+  onFocusIssue: (issue: FridayWorkflowBuilderValidationReport["issues"][number]) => void;
+}) {
+  return (
+    <div className="mt-4 agent-subcard p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="font-medium text-white">Compile report</p>
+        <StatusPill tone={props.report.validation.valid ? "success" : "warning"}>
+          {props.report.validation.valid ? "valid" : "issues"}
+        </StatusPill>
+      </div>
+      <p className="mt-2 text-sm text-white/66">
+        Nodes: {props.report.nodes} · Edges: {props.report.edges}
+      </p>
+      <div className="mt-3 space-y-2">
+        {props.report.validation.issues.length === 0 ? (
+          <p className="text-xs text-white/55">No validation issues.</p>
+        ) : props.report.validation.issues.map((issue) => {
+          const location = describeIssueLocation(issue);
+          const focusable = Boolean(issue.stepId || issue.edgeRef);
+          return (
+            <button
+              key={`${issue.stage}:${issue.code}:${issue.message}:${location ?? "global"}`}
+              type="button"
+              disabled={!focusable}
+              onClick={() => props.onFocusIssue(issue)}
+              className={cn(
+                "w-full rounded-[18px] border px-3 py-3 text-left transition",
+                issue.severity === "error"
+                  ? "border-rose-300/20 bg-rose-300/[0.06] hover:bg-rose-300/[0.1]"
+                  : "border-amber-300/18 bg-amber-300/[0.05] hover:bg-amber-300/[0.08]",
+                !focusable && "cursor-default opacity-80 hover:bg-inherit",
+              )}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/52">{issue.stage}</p>
+                <StatusPill tone={issue.severity === "error" ? "danger" : "warning"}>{issue.severity}</StatusPill>
+              </div>
+              <p className="mt-2 text-sm text-white">{issue.message}</p>
+              {location ? (
+                <p className="mt-2 text-xs text-white/55">{location} · click to focus</p>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
