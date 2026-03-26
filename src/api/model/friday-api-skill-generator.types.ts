@@ -1,10 +1,15 @@
 import type {
   FridayGeneratedSkillDraft,
   FridayGeneratedSkillValidationIssue,
+  FridaySkillGenerationExplicitTestSummary,
   FridaySkillGenerationSession,
   FridaySkillGenerationTurn,
   FridaySkillGenerationTurnMode,
 } from "#skills/generator";
+import type {
+  FridayHarnessQaVerdictV1,
+  FridayTemplateHarnessSummary,
+} from "#harness";
 
 import type { FridaySkillUiSchemaV1 } from "#skills/generator";
 
@@ -54,12 +59,7 @@ export interface FridayGenerateResponse {
   draft: FridayGeneratedSkillDraft;
 }
 
-export interface FridaySkillGeneratorTestSummary {
-  ok: boolean;
-  executable: boolean;
-  issues: FridayGeneratedSkillValidationIssue[];
-  durationMs: number;
-}
+export type FridaySkillGeneratorTestSummary = FridaySkillGenerationExplicitTestSummary;
 
 export interface FridaySkillGenerationEvidence {
   sessionId: string;
@@ -78,6 +78,8 @@ export interface FridaySkillGenerationEvidence {
     ready: boolean;
     reason: string;
   };
+  qaVerdict?: FridayHarnessQaVerdictV1 | null;
+  harness?: FridayTemplateHarnessSummary | null;
   savedSkillIdentity?: {
     skillId: string;
     skillDir?: string;

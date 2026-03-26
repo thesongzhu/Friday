@@ -1,4 +1,9 @@
 import type { SkillManifestV2 } from "#skills";
+import type {
+  FridayHarnessQaVerdictV1,
+  FridayTemplateHarnessStage,
+  FridayTemplateHarnessSummary,
+} from "#harness";
 
 import type { FridaySkillUiSchemaV1 } from "./friday-skill-ui-schema.types.js";
 
@@ -26,6 +31,12 @@ export interface FridaySkillGenerationSession {
   openQuestions: string[];
   decisions: string[];
   draftSkillId?: string;
+  explicitTest?: FridaySkillGenerationExplicitTestSummary;
+  harnessStage?: FridayTemplateHarnessStage;
+  planningSpecId?: string;
+  deliveryContractId?: string;
+  qaVerdictId?: string;
+  handoffArtifactId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -98,4 +109,17 @@ export interface FridayGeneratedSkillValidationReport {
   issues: FridayGeneratedSkillValidationIssue[];
   repaired: boolean;
   repairAttempts: number;
+}
+
+export interface FridaySkillGenerationExplicitTestSummary {
+  ok: boolean;
+  executable: boolean;
+  issues: FridayGeneratedSkillValidationIssue[];
+  durationMs: number;
+  testedAt: string;
+}
+
+export interface FridaySkillGenerationHarnessSnapshot {
+  harness?: FridayTemplateHarnessSummary | null;
+  qaVerdict?: FridayHarnessQaVerdictV1 | null;
 }

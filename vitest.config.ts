@@ -30,6 +30,7 @@ const pathAliases = {
   "#acceptance": resolve(__dirname, "src/acceptance/index.ts"),
   "#retry": resolve(__dirname, "src/retry/index.ts"),
   "#playbook": resolve(__dirname, "src/playbook/index.ts"),
+  "#harness": resolve(__dirname, "src/harness/index.ts"),
   "#routing": resolve(__dirname, "src/routing/index.ts"),
   "#daemon": resolve(__dirname, "src/daemon/index.ts"),
   "#tui": resolve(__dirname, "src/tui/index.ts"),

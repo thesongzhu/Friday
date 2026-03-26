@@ -196,6 +196,7 @@
     "#acceptance": "./dist/acceptance/index.js",
     "#retry": "./dist/retry/index.js",
     "#playbook": "./dist/playbook/index.js",
+    "#harness": "./dist/harness/index.js",
     "#routing": "./dist/routing/index.js",
     "#daemon": "./dist/daemon/index.js",
     "#tui": "./dist/tui/index.js",

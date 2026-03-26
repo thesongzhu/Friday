@@ -270,7 +270,10 @@ describe("FridayUixRoutes", () => {
     await route.handler(
         makeCtx({
         params: { templateId: "generate-workflow" },
-        body: { parameters: { goal: "Deploy the release workflow" } },
+        body: {
+          parameters: { goal: "Deploy the release workflow" },
+          assistantSessionKey: "ui:assistant:assistant-shell",
+        },
       }),
     );
 
@@ -278,6 +281,44 @@ describe("FridayUixRoutes", () => {
       templateId: "generate-workflow",
       userId: "user-1",
       parameters: { goal: "Deploy the release workflow" },
+      assistantSessionKey: "ui:assistant:assistant-shell",
+    });
+  });
+
+  it("passes through assistant session binding for wizard start and continue", async () => {
+    const service = makeService();
+    const routes = createFridayUixRoutes({ service });
+    const startRoute = routes.find((entry) => entry.operationId === "uix.wizards.start")!;
+    const continueRoute = routes.find((entry) => entry.operationId === "uix.wizards.continue")!;
+
+    await startRoute.handler(
+      makeCtx({
+        params: { wizardId: "guided-assistant" },
+        body: { assistantSessionKey: "ui:assistant:assistant-shell" },
+      }),
+    );
+    await continueRoute.handler(
+      makeCtx({
+        params: { wizardId: "guided-assistant" },
+        body: {
+          contextId: "ctx-1",
+          values: { goal: "Generate a skill" },
+          assistantSessionKey: "ui:assistant:assistant-shell",
+        },
+      }),
+    );
+
+    expect(service.startWizard).toHaveBeenCalledWith({
+      wizardId: "guided-assistant",
+      userId: "user-1",
+      assistantSessionKey: "ui:assistant:assistant-shell",
+    });
+    expect(service.continueWizard).toHaveBeenCalledWith({
+      wizardId: "guided-assistant",
+      contextId: "ctx-1",
+      userId: "user-1",
+      values: { goal: "Generate a skill" },
+      assistantSessionKey: "ui:assistant:assistant-shell",
     });
   });
 

@@ -1,5 +1,6 @@
 import type { FridayIssueCard } from "./friday-api-self-healing.types.js";
 import type { FridayAssistantWorkflowCard } from "./friday-api-workflow.types.js";
+import type { FridayTemplateHarnessSummary } from "#harness";
 import type {
   FridayAgentContextCostSummary,
   FridayAgentPreprocessorKind,
@@ -68,6 +69,11 @@ export interface FridayUixTemplatesResponse {
   templates: FridayActionTemplateSummary[];
 }
 
+export interface FridayExecuteUixTemplateRequest {
+  parameters?: Record<string, unknown>;
+  assistantSessionKey?: string;
+}
+
 export interface FridayUixTemplateExecutionResponse {
   templateId: string;
   status: "preview" | "executed";
@@ -81,10 +87,15 @@ export interface FridayUixTemplateExecutionResponse {
   successTest?: string;
   fallbackPath?: string;
   state?: FridayBeginnerIntentResolution["state"];
+  harness?: FridayTemplateHarnessSummary;
 }
 
 export interface FridayUixIssuesResponse {
   items: FridayIssueCard[];
+}
+
+export interface FridayStartUixWizardRequest {
+  assistantSessionKey?: string;
 }
 
 export interface FridayUixWizardResponse {
@@ -98,6 +109,13 @@ export interface FridayUixWizardResponse {
   successTest?: string;
   fallbackPath?: string;
   state?: FridayBeginnerIntentResolution["state"];
+  harness?: FridayTemplateHarnessSummary;
+}
+
+export interface FridayContinueUixWizardRequest {
+  contextId: string;
+  values?: Record<string, unknown>;
+  assistantSessionKey?: string;
 }
 
 export interface FridayUixAssistantDiagnosticsRun {

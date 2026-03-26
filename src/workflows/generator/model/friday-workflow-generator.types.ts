@@ -9,6 +9,11 @@ import type {
   FridayWorkflowVisualGraphV1,
   WorkflowFailurePolicyV2,
 } from "#workflows";
+import type {
+  FridayHarnessQaVerdictV1,
+  FridayTemplateHarnessStage,
+  FridayTemplateHarnessSummary,
+} from "#harness";
 
 // ─── Session status ───
 
@@ -36,6 +41,11 @@ export interface FridayWorkflowGenerationSession {
   draftWorkflowId?: string;
   workflowId?: string;
   workflowVersionId?: string;
+  harnessStage?: FridayTemplateHarnessStage;
+  planningSpecId?: string;
+  deliveryContractId?: string;
+  qaVerdictId?: string;
+  handoffArtifactId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -145,4 +155,9 @@ export interface FridayWorkflowGenerationTurnResponse {
   questions?: string[];
   draft?: FridayGeneratedWorkflowDraft;
   errors?: FridayGeneratedWorkflowValidationIssue[];
+}
+
+export interface FridayWorkflowGenerationHarnessSnapshot {
+  harness?: FridayTemplateHarnessSummary | null;
+  qaVerdict?: FridayHarnessQaVerdictV1 | null;
 }

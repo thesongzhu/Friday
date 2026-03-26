@@ -13,6 +13,7 @@ export type {
   FridayGeneratedWorkflowValidationReport,
   FridayGeneratedWorkflowDraft,
   FridayWorkflowGenerationTurnResponse,
+  FridayWorkflowGenerationHarnessSnapshot,
 } from "./model/friday-workflow-generator.types.js";
 
 // Prompts

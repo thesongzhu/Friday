@@ -4,6 +4,115 @@ import { FridayDomainError } from "#errors";
 import { createFridayUixSurfaceService } from "../../../../src/uix/services/friday-uix-surface-service.js";
 
 describe("createFridayUixSurfaceService", () => {
+  it("writes the latest harness summary into assistant focus for skill generation", async () => {
+    const sessionService = {
+      getOrCreateSession: vi.fn(async () => ({ key: "ui:assistant:assistant-shell" })),
+      getConversationFocus: vi.fn(async () => ({
+        currentTopicSummary: "Previous topic",
+        updatedAt: "2026-03-07T09:59:00.000Z",
+      })),
+      setConversationFocus: vi.fn(async () => ({ key: "ui:assistant:assistant-shell" })),
+    };
+    const service = createFridayUixSurfaceService({
+      idGenerator: () => "uix-session-1",
+      sessionService: sessionService as never,
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+      skillGenerator: {
+        startSession: vi.fn(async () => ({
+          session: { sessionId: "skill-session-1" },
+          mode: "completed",
+          draft: {
+            manifest: { id: "generated-skill" },
+            validation: { ok: true },
+          },
+        })),
+        getHarnessSummary: vi.fn(async () => ({
+          stage: "qa_verdict",
+          handoffArtifactId: "handoff-1",
+          summary: "Skill draft is ready for review.",
+        })),
+      } as never,
+    });
+
+    await service.executeTemplate({
+      templateId: "generate-skill",
+      userId: "user-1",
+      parameters: { goal: "Build a summary skill" },
+      assistantSessionKey: "ui:assistant:assistant-shell",
+    });
+
+    expect(sessionService.getOrCreateSession).toHaveBeenCalledWith("ui:assistant:assistant-shell");
+    expect(sessionService.setConversationFocus).toHaveBeenCalledWith(
+      "ui:assistant:assistant-shell",
+      expect.objectContaining({
+        currentTopicSummary: "Previous topic",
+        lastHarnessStage: "qa_verdict",
+        lastHandoffArtifactId: "handoff-1",
+        lastHarnessSummary: "Skill draft is ready for review.",
+      }),
+    );
+  });
+
+  it("writes harness focus for wizard clarification continuations", async () => {
+    const sessionService = {
+      getOrCreateSession: vi.fn(async () => ({ key: "ui:assistant:assistant-shell" })),
+      getConversationFocus: vi.fn(async () => null),
+      setConversationFocus: vi.fn(async () => ({ key: "ui:assistant:assistant-shell" })),
+    };
+    const service = createFridayUixSurfaceService({
+      idGenerator: () => "wizard-context-1",
+      sessionService: sessionService as never,
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+        reportStructuredFailure: vi.fn(),
+      } as never,
+      workflowGenerator: {
+        startSession: vi.fn(async () => ({
+          session: { sessionId: "workflow-session-1" },
+          mode: "clarification_required",
+          questions: ["Which repository should Friday change first?"],
+        })),
+        submitTurn: vi.fn(async () => ({
+          session: { sessionId: "workflow-session-1" },
+          mode: "completed",
+          workflow: {
+            workflowId: "wf-1",
+          },
+        })),
+        getHarnessSummary: vi.fn(async () => ({
+          stage: "handoff_ready",
+          handoffArtifactId: "handoff-workflow-1",
+          summary: "Workflow draft is blocked on browser QA evidence.",
+        })),
+      } as never,
+      workflowProduct: {} as never,
+    });
+
+    const started = service.startWizard({
+      wizardId: "guided-assistant",
+      userId: "user-1",
+      assistantSessionKey: "ui:assistant:assistant-shell",
+    });
+
+    await service.continueWizard({
+      wizardId: "guided-assistant",
+      contextId: started.wizard.contextId,
+      userId: "user-1",
+      values: { goal: "Generate a release workflow" },
+    });
+
+    expect(sessionService.setConversationFocus).toHaveBeenCalledWith(
+      "ui:assistant:assistant-shell",
+      expect.objectContaining({
+        lastHarnessStage: "handoff_ready",
+        lastHandoffArtifactId: "handoff-workflow-1",
+        lastHarnessSummary: "Workflow draft is blocked on browser QA evidence.",
+      }),
+    );
+  });
+
   it("marks destructive requests as blocked by policy during intent resolution", () => {
     const service = createFridayUixSurfaceService({
       selfHealing: {

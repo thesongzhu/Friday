@@ -2925,6 +2925,7 @@ export async function createFridayHub(
   const uixService = createFridayUixSurfaceService({
     db: stateRuntime.sqlite,
     idGenerator,
+    sessionService: hubSessionService,
     skillGenerator,
     skillExecutor: executor,
     workflowGenerator,

@@ -12,12 +12,14 @@ import type {
   FridayBeginSystemRemotePasskeyAssertionResponse,
   FridayBeginSystemRemotePasskeyRegistrationRequest,
   FridayBeginSystemRemotePasskeyRegistrationResponse,
+  FridayContinueAssistantWizardRequest,
   FridayDiagnosisIncidentStatus,
   FridayCreateSystemRemoteSessionRequest,
   FridayCreateSystemRemoteSessionResponse,
   FridayDeleteSystemRemoteDeviceResponse,
   FridayDeleteSystemRemotePasskeyResponse,
   FridayDeleteSystemRemoteSessionResponse,
+  FridayExecuteAssistantTemplateRequest,
   FridayExecuteSystemIntentRequest,
   FridayExecuteSystemIntentResponse,
   FridayFixPlanRecord,
@@ -510,35 +512,46 @@ export function createFridayOperatorClient(options: FridayOperatorClientOptions)
       return transport.get<FridayUixTemplatesResponse>("/v1/uix/templates");
     },
 
-    async executeAssistantTemplate(input: {
-      templateId: string;
-      parameters?: Record<string, unknown>;
-    }): Promise<FridayUixTemplateExecutionResponse> {
-      return transport.post<{ parameters?: Record<string, unknown> }, FridayUixTemplateExecutionResponse>(
+    async executeAssistantTemplate(
+      input: FridayExecuteAssistantTemplateRequest,
+    ): Promise<FridayUixTemplateExecutionResponse> {
+      return transport.post<{
+        parameters?: Record<string, unknown>;
+        assistantSessionKey?: string;
+      }, FridayUixTemplateExecutionResponse>(
         `/v1/uix/templates/${encodeURIComponent(input.templateId)}/execute`,
-        { parameters: input.parameters ?? {} },
+        {
+          parameters: input.parameters ?? {},
+          assistantSessionKey: input.assistantSessionKey,
+        },
       );
     },
 
-    async startAssistantWizard(wizardId: string): Promise<FridayGuidedWizardState> {
-      const data = await transport.post<Record<string, never>, FridayUixWizardResponse>(
+    async startAssistantWizard(
+      wizardId: string,
+      assistantSessionKey?: string,
+    ): Promise<FridayGuidedWizardState> {
+      const data = await transport.post<{ assistantSessionKey?: string }, FridayUixWizardResponse>(
         `/v1/uix/wizards/${encodeURIComponent(wizardId)}/start`,
-        {},
+        { assistantSessionKey },
       );
       return data.wizard;
     },
 
-    async continueAssistantWizard(input: {
-      wizardId: string;
-      contextId: string;
-      values?: Record<string, unknown>;
-    }): Promise<FridayUixWizardResponse> {
+    async continueAssistantWizard(
+      input: FridayContinueAssistantWizardRequest,
+    ): Promise<FridayUixWizardResponse> {
       return transport.post<
-        { contextId: string; values?: Record<string, unknown> },
+        {
+          contextId: string;
+          values?: Record<string, unknown>;
+          assistantSessionKey?: string;
+        },
         FridayUixWizardResponse
       >(`/v1/uix/wizards/${encodeURIComponent(input.wizardId)}/continue`, {
         contextId: input.contextId,
         values: input.values ?? {},
+        assistantSessionKey: input.assistantSessionKey,
       });
     },
 

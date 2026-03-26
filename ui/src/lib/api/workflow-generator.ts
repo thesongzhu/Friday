@@ -4,6 +4,7 @@ import type {
   FridayWorkflowGeneratorGetSessionResponse,
   FridayWorkflowGeneratorSubmitMessageResponse,
   FridayWorkflowGeneratorGenerateResponse,
+  FridayWorkflowGeneratorEvidenceResponse,
   FridayWorkflowGeneratorApproveResponse,
 } from "./types";
 
@@ -71,6 +72,14 @@ export const workflowGeneratorApi = {
     return apiClient.post<Record<string, never>, FridayWorkflowGeneratorApproveResponse>(
       `/v1/workflows/generator/sessions/${encodeURIComponent(sessionId)}/approve`,
       {},
+    );
+  },
+
+  async getEvidence(
+    sessionId: string,
+  ): Promise<FridayWorkflowGeneratorEvidenceResponse> {
+    return apiClient.get<FridayWorkflowGeneratorEvidenceResponse>(
+      `/v1/workflows/generator/sessions/${encodeURIComponent(sessionId)}/evidence`,
     );
   },
 
