@@ -53,7 +53,7 @@ describe("Friday starter skills closeout", () => {
     }
   });
 
-  it("keeps only the wave-1 fixed assistant cards while exposing all gstack-style starter skills", { timeout: CLOSEOUT_TIMEOUT_MS }, async () => {
+  it("surfaces the expanded assistant starter cards while exposing all gstack-style starter skills", { timeout: CLOSEOUT_TIMEOUT_MS }, async () => {
     env = await createFridayBrowserE2eEnv();
 
     const templates = await env.apiFetch<{
@@ -130,15 +130,18 @@ describe("Friday starter skills closeout", () => {
     await pageHandle.page.goto("/assistant");
     await pageHandle.page.waitForSelector('[data-testid="assistant-goal-input"]');
     const starterStories = pageHandle.page.locator('[data-testid="assistant-task-story"]');
-    expect(await starterStories.count()).toBe(5);
+    expect(await starterStories.count()).toBe(8);
     const starterText = (await starterStories.allTextContents()).join("\n");
+    expect(starterText).toContain("Open workflow builder");
     expect(starterText).toContain("Clarify an idea");
     expect(starterText).toContain("Review implementation plan");
     expect(starterText).toContain("QA this page or app");
     expect(starterText).toContain("Review current changes");
     expect(starterText).toContain("Sync release docs");
-    expect(starterText).not.toContain("Benchmark this page");
-    expect(starterText).not.toContain("Run security review");
+    expect(starterText).toContain("Review integration mode");
+    expect(starterText).toContain("Review context governance");
+    expect(starterText).not.toContain("Page Benchmark Report");
+    expect(starterText).not.toContain("Security Review");
 
     await pageHandle.page.goto("/skills?skillId=page-benchmark-report");
     await pageHandle.page.waitForFunction(
