@@ -31,6 +31,20 @@ export interface BuilderPaletteGroup {
   entries: BuilderPaletteEntry[];
 }
 
+export interface BuilderValidationIssueNavigationItem {
+  key: string;
+  issue: FridayWorkflowBuilderValidationIssue;
+  targetKey: string;
+  targetKind: "node" | "edge";
+}
+
+export interface BuilderDropTargetNodeInput {
+  id: string;
+  position: { x: number; y: number };
+  width?: number;
+  height?: number;
+}
+
 export const BUILDER_NODE_PALETTE: BuilderPaletteEntry[] = [
   {
     type: "action",
@@ -143,6 +157,75 @@ export function snapFlowPositionToGrid(
     x: Math.round(input.x / gridSize) * gridSize,
     y: Math.round(input.y / gridSize) * gridSize,
   };
+}
+
+export function validationIssueTargetKeyFor(issue: FridayWorkflowBuilderValidationIssue): string | null {
+  if (issue.stepId) {
+    return issue.stepId;
+  }
+  if (issue.edgeRef) {
+    return edgeKeyFor({
+      source: issue.edgeRef.from,
+      target: issue.edgeRef.to,
+      branch: issue.edgeRef.when,
+    });
+  }
+  return null;
+}
+
+export function validationIssueKeyFor(
+  issue: FridayWorkflowBuilderValidationIssue,
+  index: number,
+): string {
+  return [
+    issue.stage,
+    issue.code,
+    validationIssueTargetKeyFor(issue) ?? "global",
+    String(index),
+  ].join("::");
+}
+
+export function buildValidationIssueNavigationItems(
+  validation?: FridayWorkflowBuilderValidationReport | null,
+): BuilderValidationIssueNavigationItem[] {
+  return (validation?.issues ?? []).flatMap((issue, index) => {
+    const targetKey = validationIssueTargetKeyFor(issue);
+    if (!targetKey) {
+      return [];
+    }
+    return [{
+      key: validationIssueKeyFor(issue, index),
+      issue,
+      targetKey,
+      targetKind: issue.stepId ? "node" : "edge",
+    }];
+  });
+}
+
+export function findClosestDropTargetNodeId(
+  nodes: BuilderDropTargetNodeInput[],
+  position: { x: number; y: number },
+  options?: { thresholdPx?: number; fallbackWidth?: number; fallbackHeight?: number },
+): string | null {
+  const thresholdPx = Math.max(1, options?.thresholdPx ?? 220);
+  const fallbackWidth = Math.max(1, options?.fallbackWidth ?? 240);
+  const fallbackHeight = Math.max(1, options?.fallbackHeight ?? 124);
+
+  let closestId: string | null = null;
+  let closestDistance = Number.POSITIVE_INFINITY;
+
+  for (const node of nodes) {
+    const centerX = node.position.x + ((node.width ?? fallbackWidth) / 2);
+    const centerY = node.position.y + ((node.height ?? fallbackHeight) / 2);
+    const distance = Math.hypot(centerX - position.x, centerY - position.y);
+    if (distance > thresholdPx || distance >= closestDistance) {
+      continue;
+    }
+    closestId = node.id;
+    closestDistance = distance;
+  }
+
+  return closestId;
 }
 
 function toneRank(severity: FridayWorkflowBuilderValidationIssue["severity"]): number {
