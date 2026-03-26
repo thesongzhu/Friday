@@ -4,6 +4,7 @@ import { AGENT_OS_NAV_ITEMS, resolvePageTitle } from "../../../ui/src/lib/routes
 describe("agent os navigation", () => {
   it("keeps the shell focused on the assistant-first control flow", () => {
     expect(AGENT_OS_NAV_ITEMS.map((item) => item.path)).toEqual([
+      "/home",
       "/assistant",
       "/marketplace",
       "/workflows",
@@ -17,7 +18,9 @@ describe("agent os navigation", () => {
   });
 
   it("maps the assistant and deferred legacy routes to the correct titles", () => {
-    expect(resolvePageTitle("/")).toBe("Assistant");
+    expect(resolvePageTitle("/")).toBe("Home");
+    expect(resolvePageTitle("/home")).toBe("Home");
+    expect(resolvePageTitle("/flow/build-new")).toBe("Guided Flow");
     expect(resolvePageTitle("/assistant")).toBe("Assistant");
     expect(resolvePageTitle("/marketplace")).toBe("Marketplace");
     expect(resolvePageTitle("/skills")).toBe("Skills");
