@@ -120,6 +120,11 @@ export interface FinalizeFridayConversationFocusInput {
   replyAnchorMessageId?: string;
   replyAnchorSequence?: number;
   pendingPlanRunId?: string | null;
+  harnessFocus?: {
+    stage?: string;
+    handoffArtifactId?: string;
+    summary?: string;
+  } | null;
   nowIso: string;
 }
 
@@ -152,6 +157,21 @@ function createEvidenceBlockCandidate(
     messages: [],
     fallbackOnly: false,
   };
+}
+
+function formatHarnessHandoffSummary(
+  focusState?: FridaySessionConversationFocusState | null,
+): string | null {
+  if (!focusState?.lastHarnessSummary) {
+    return null;
+  }
+  return normalizeText([
+    focusState.lastHarnessStage ? `stage ${focusState.lastHarnessStage}` : undefined,
+    `summary ${focusState.lastHarnessSummary}`,
+    focusState.lastHandoffArtifactId
+      ? `handoff artifact ${focusState.lastHandoffArtifactId}`
+      : undefined,
+  ].filter((value): value is string => Boolean(value)).join("; "));
 }
 
 function normalizeText(text: string): string {
@@ -749,6 +769,25 @@ function buildConversationBlockSelection(input: {
     });
   }
 
+  if (
+    focusState?.lastHarnessSummary
+    && (input.turnKind === "follow_up" || input.turnKind === "continue_active_task")
+  ) {
+    const harnessSummary = formatHarnessHandoffSummary(focusState);
+    if (harnessSummary) {
+      registerCandidate({
+        block: {
+          id: "evidence:harness",
+          source: "harness_block",
+          summary: harnessSummary,
+          score: 89,
+          reason: "Persisted harness handoff is preferred over replaying broader topic history for resume-style follow-ups.",
+        },
+        messages: [],
+      });
+    }
+  }
+
   const useCrossTopicRecapWindow =
     input.turnKind === "follow_up"
     && (
@@ -1170,6 +1209,21 @@ export function finalizeFridayConversationFocus(
   input: FinalizeFridayConversationFocusInput,
 ): FridaySessionConversationFocusState {
   const previous = input.focusState ?? null;
+  const harnessStage = input.harnessFocus === undefined
+    ? previous?.lastHarnessStage
+    : input.harnessFocus === null
+      ? undefined
+      : input.harnessFocus.stage;
+  const handoffArtifactId = input.harnessFocus === undefined
+    ? previous?.lastHandoffArtifactId
+    : input.harnessFocus === null
+      ? undefined
+      : input.harnessFocus.handoffArtifactId;
+  const harnessSummary = input.harnessFocus === undefined
+    ? previous?.lastHarnessSummary
+    : input.harnessFocus === null
+      ? undefined
+      : input.harnessFocus.summary;
   const currentTopicSummary = input.turnKind === "new_topic"
     ? summarizeTopic(input.task)
     : previous?.currentTopicSummary ?? summarizeTopic(input.task);
@@ -1205,6 +1259,9 @@ export function finalizeFridayConversationFocus(
       ? undefined
       : input.pendingPlanRunId ?? previous?.pendingPlanRunId,
     lastTurnKind: input.turnKind,
+    lastHarnessStage: harnessStage,
+    lastHandoffArtifactId: handoffArtifactId,
+    lastHarnessSummary: harnessSummary,
     updatedAt: input.nowIso,
   };
 }

@@ -85,6 +85,7 @@ import type {
 } from "../../learning/services/friday-self-healing-api-service.js";
 import type { FridayAgentLoopRunDetails } from "../../learning/services/friday-agent-loop-service.js";
 import type { FridaySkillGenerationEvidence } from "../../api/model/friday-api-skill-generator.types.js";
+import type { FridayWorkflowGenerationEvidence } from "../../api/model/friday-api-workflow.types.js";
 import type {
   FridayBeginnerIntentResolution,
   FridayUixTemplateExecutionResponse,
@@ -106,6 +107,8 @@ type CounterMetricName =
   | "friday.skills.generator.sessions.total"
   | "friday.skills.generator.tests.total"
   | "friday.skills.generator.failures.total"
+  | "friday.workflows.generator.sessions.total"
+  | "friday.workflows.generator.failures.total"
   | "friday.workflows.deployments.total"
   | "friday.workflows.deploy_failures.total"
   | "friday.workflows.exports.total"
@@ -119,6 +122,7 @@ type HistogramMetricName =
   | "friday.learning.action.duration_ms"
   | "friday.agent_loop.duration_ms"
   | "friday.skills.generator.duration_ms"
+  | "friday.workflows.generator.duration_ms"
   | "friday.workflows.deploy.duration_ms"
   | "friday.uix.intent.duration_ms"
   | "friday.uix.template.duration_ms"
@@ -255,6 +259,21 @@ export interface FridayObservabilityApiService {
     ok?: boolean;
     evidence?: FridaySkillGenerationEvidence | null;
   }): Promise<void>;
+  recordWorkflowGeneratorEvent(input: {
+    sessionId: string;
+    userId: string;
+    event:
+      | "session_started"
+      | "draft_generated"
+      | "draft_saved"
+      | "generation_failed"
+      | "approve_blocked"
+      | "verdict_ready"
+      | "handoff_written";
+    summary: string;
+    ok?: boolean;
+    evidence?: FridayWorkflowGenerationEvidence | null;
+  }): Promise<void>;
   recordAssistantEvent(input: {
     userId: string;
     event: "intent_resolved" | "template_executed" | "wizard_started" | "wizard_continued";
@@ -304,6 +323,8 @@ const COUNTER_METRICS: Array<{ name: CounterMetricName; module: FridayObservabil
   { name: "friday.skills.generator.sessions.total", module: "skills" },
   { name: "friday.skills.generator.tests.total", module: "skills" },
   { name: "friday.skills.generator.failures.total", module: "skills" },
+  { name: "friday.workflows.generator.sessions.total", module: "workflows" },
+  { name: "friday.workflows.generator.failures.total", module: "workflows" },
   { name: "friday.workflows.deployments.total", module: "workflows" },
   { name: "friday.workflows.deploy_failures.total", module: "workflows" },
   { name: "friday.workflows.exports.total", module: "workflows" },
@@ -318,6 +339,7 @@ const HISTOGRAM_METRICS: Array<{ name: HistogramMetricName; module: FridayObserv
   { name: "friday.learning.action.duration_ms", module: "learning" },
   { name: "friday.agent_loop.duration_ms", module: "learning" },
   { name: "friday.skills.generator.duration_ms", module: "skills" },
+  { name: "friday.workflows.generator.duration_ms", module: "workflows" },
   { name: "friday.workflows.deploy.duration_ms", module: "workflows" },
   { name: "friday.uix.intent.duration_ms", module: "uix" },
   { name: "friday.uix.template.duration_ms", module: "uix" },
@@ -2309,6 +2331,34 @@ export function createFridayObservabilityApiService(
         metadata: {
           ok: input.ok ?? null,
           approvalReady: input.evidence?.approvalReadiness.ready ?? null,
+        },
+      }, async () => input.evidence ?? null);
+      maybeEvaluateAlerts();
+    },
+    async recordWorkflowGeneratorEvent(input) {
+      const successMetric = input.event === "generation_failed" || input.event === "approve_blocked"
+        ? undefined
+        : "friday.workflows.generator.sessions.total";
+      const failureMetric = input.event === "generation_failed" || input.event === "approve_blocked" || input.ok === false
+        ? "friday.workflows.generator.failures.total"
+        : undefined;
+      await this.observeAsync({
+        module: "workflows",
+        operationName: `workflows.${input.event}`,
+        actionCategory: "execute",
+        action: `workflows.${input.event}`,
+        resourceType: "workflow_generation_session",
+        resourceId: input.sessionId,
+        resourceDisplayName: input.sessionId,
+        actor: { type: "user", id: input.userId, displayName: input.userId },
+        description: input.summary,
+        successMetric,
+        failureMetric,
+        durationMetric: "friday.workflows.generator.duration_ms",
+        metadata: {
+          ok: input.ok ?? null,
+          approvalReady: input.evidence?.approvalReadiness.ready ?? null,
+          verdict: input.evidence?.qaVerdict?.verdict ?? null,
         },
       }, async () => input.evidence ?? null);
       maybeEvaluateAlerts();

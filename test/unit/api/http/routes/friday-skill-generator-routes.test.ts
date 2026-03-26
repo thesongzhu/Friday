@@ -132,6 +132,13 @@ function makeMockGeneratorService(): FridaySkillGeneratorService {
           ...makeMockSession().session,
           draftSkillId: "test-skill",
           status: "ready_for_review",
+          explicitTest: {
+            ok: true,
+            executable: true,
+            issues: [],
+            durationMs: 12,
+            testedAt: NOW,
+          },
         },
         turns: [
           {
@@ -146,6 +153,9 @@ function makeMockGeneratorService(): FridaySkillGeneratorService {
       };
     }),
     generateDraft: vi.fn(async () => makeMockDraft()),
+    recordExplicitTestResult: vi.fn(async () => undefined),
+    getQaVerdict: vi.fn(async () => null),
+    getHarnessSummary: vi.fn(async () => null),
     approveAndSave: vi.fn(async () => ({
       sessionId: "sess-1",
       skillId: "test-skill",
@@ -171,6 +181,7 @@ function makeMockGeneratorService(): FridaySkillGeneratorService {
           executable: true,
           issues: [],
           durationMs: 12,
+          testedAt: NOW,
         },
         approvalReadiness: {
           ready: true,
@@ -407,7 +418,7 @@ describe("FridaySkillGeneratorRoutes", () => {
 
   describe("POST /v1/skills/generator/sessions/:sessionId/test", () => {
     it("runs the explicit draft self-test", async () => {
-      const { routes } = createRoutes();
+      const { routes, generatorService } = createRoutes();
       const route = routes.find(
         (r) => r.operationId === "skills.generator.sessions.test",
       )!;
@@ -418,6 +429,13 @@ describe("FridaySkillGeneratorRoutes", () => {
 
       expect(result.test.ok).toBe(true);
       expect(result.test.executable).toBe(true);
+      expect(generatorService.recordExplicitTestResult).toHaveBeenCalledWith(
+        "sess-1",
+        expect.objectContaining({
+          ok: true,
+          executable: true,
+        }),
+      );
     });
   });
 

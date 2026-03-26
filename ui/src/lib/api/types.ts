@@ -449,11 +449,49 @@ export interface ApproveResponse {
   evidence: SkillGenerationEvidence;
 }
 
+export type FridayTemplateHarnessStage =
+  | "planning_spec"
+  | "delivery_contract"
+  | "draft_generation"
+  | "qa_verdict"
+  | "handoff_ready"
+  | "completed";
+
+export type FridayHarnessQaVerdict = "pass" | "fail" | "blocked";
+
+export interface FridayTemplateHarnessSummary {
+  stage: FridayTemplateHarnessStage;
+  planningSpecId?: string;
+  deliveryContractId?: string;
+  qaVerdictId?: string;
+  handoffArtifactId?: string;
+  verdict?: FridayHarnessQaVerdict;
+  summary?: string;
+}
+
+export interface FridayHarnessQaVerdictRecord {
+  artifactId: string;
+  version: 1;
+  scopeKind: "skill_generator" | "workflow_generator" | "uix_template" | "uix_wizard";
+  scopeId: string;
+  deliveryContractId: string;
+  verdict: FridayHarnessQaVerdict;
+  summary: string;
+  passedCriteria: string[];
+  failedCriteria: string[];
+  blockedReasons: string[];
+  warnings: string[];
+  evidenceRefs: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SkillGeneratorTestSummary {
   ok: boolean;
   executable: boolean;
   issues: GeneratedSkillValidationIssue[];
   durationMs: number;
+  testedAt: string;
 }
 
 export interface SkillGenerationEvidence {
@@ -473,10 +511,28 @@ export interface SkillGenerationEvidence {
     ready: boolean;
     reason: string;
   };
+  qaVerdict?: FridayHarnessQaVerdictRecord | null;
+  harness?: FridayTemplateHarnessSummary | null;
   savedSkillIdentity?: {
     skillId: string;
     skillDir?: string;
   };
+}
+
+export interface WorkflowGenerationEvidence {
+  sessionId: string;
+  validationSummary: {
+    ok: boolean;
+    repaired: boolean;
+    repairAttempts: number;
+    issueCount: number;
+  };
+  approvalReadiness: {
+    ready: boolean;
+    reason: string;
+  };
+  qaVerdict?: FridayHarnessQaVerdictRecord | null;
+  harness?: FridayTemplateHarnessSummary | null;
 }
 
 // ─── Skills registry list types ───
@@ -1345,6 +1401,10 @@ export interface FridayWorkflowGeneratorGenerateResponse {
   draft: FridayGeneratedWorkflowDraft;
 }
 
+export interface FridayWorkflowGeneratorEvidenceResponse {
+  evidence: WorkflowGenerationEvidence;
+}
+
 export interface FridayWorkflowGeneratorApproveResponse {
   sessionId: string;
   workflowId: string;
@@ -1352,6 +1412,7 @@ export interface FridayWorkflowGeneratorApproveResponse {
   versionNumber: number;
   slug: string;
   published: boolean;
+  evidence?: WorkflowGenerationEvidence;
 }
 
 export interface AssistantDiagnosticsRunSummary {

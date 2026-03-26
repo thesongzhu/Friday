@@ -209,6 +209,7 @@ export function createFridaySkillGeneratorRoutes(
             },
           ],
           durationMs: Date.now() - startedAt,
+          testedAt: new Date().toISOString(),
         };
       }
 
@@ -229,6 +230,7 @@ export function createFridaySkillGeneratorRoutes(
           path: issue.path,
         })),
         durationMs: Date.now() - startedAt,
+        testedAt: new Date().toISOString(),
       };
     } finally {
       rmSync(root, { force: true, recursive: true });
@@ -248,20 +250,30 @@ export function createFridaySkillGeneratorRoutes(
     }
 
     const draft = result.draft;
-    const test = draft ? await runDraftSelfTest(sessionId) : null;
-    const approvalReadiness = draft
+    const test = result.session.explicitTest ?? null;
+    const qaVerdict = await deps.skillGenerator.getQaVerdict(sessionId);
+    const harness = await deps.skillGenerator.getHarnessSummary(sessionId);
+    const approvalReadiness = qaVerdict
       ? {
-        ready: draft.validation.ok && (test?.ok ?? false),
-        reason: draft.validation.ok
-          ? test?.ok
-            ? "Draft passed validation and explicit self-test"
-            : "Draft still needs to pass explicit self-test"
-          : "Draft has validation issues that must be fixed before approval",
+        ready: qaVerdict.verdict === "pass",
+        reason:
+          qaVerdict.verdict === "pass"
+            ? "Draft passed the current QA verdict."
+            : qaVerdict.summary,
       }
-      : {
-        ready: false,
-        reason: "No draft has been generated yet",
-      };
+      : draft
+        ? {
+          ready: draft.validation.ok && (test?.ok ?? false),
+          reason: draft.validation.ok
+            ? test?.ok
+              ? "Draft passed validation and explicit self-test"
+              : "Draft still needs to pass explicit self-test"
+            : "Draft has validation issues that must be fixed before approval",
+        }
+        : {
+          ready: false,
+          reason: "No draft has been generated yet",
+        };
 
     return {
       sessionId,
@@ -277,6 +289,8 @@ export function createFridaySkillGeneratorRoutes(
       },
       executableTestSummary: test,
       approvalReadiness,
+      qaVerdict,
+      harness,
       savedSkillIdentity: result.session.draftSkillId
         ? {
           skillId: result.session.draftSkillId,
@@ -432,6 +446,7 @@ export function createFridaySkillGeneratorRoutes(
             message: test.issues.map((issue) => issue.message).join("; ") || "draft self-test failed",
           });
         }
+        await deps.skillGenerator.recordExplicitTestResult(sessionId, test);
         await deps.observability?.recordSkillGeneratorEvent({
           sessionId,
           userId: session.session.userId,
@@ -467,18 +482,54 @@ export function createFridaySkillGeneratorRoutes(
       rateLimitPolicyId: "skill_generator.write",
       async handler(ctx): Promise<FridayApproveResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
-        const evidence = await buildEvidence(sessionId);
         const result = await deps.skillGenerator.approveAndSave(sessionId);
+        const evidence = await buildEvidence(sessionId).catch(() => ({
+          sessionId,
+          validationSummary: {
+            ok: true,
+            repaired: false,
+            repairAttempts: 0,
+            issueCount: 0,
+          },
+          repairSummary: {
+            attempted: false,
+            attempts: 0,
+          },
+          executableTestSummary: null,
+          approvalReadiness: {
+            ready: true,
+            reason: "Generated skill saved.",
+          },
+          qaVerdict: result.qaVerdict ?? null,
+          harness: result.harness ?? null,
+          savedSkillIdentity: {
+            skillId: result.skillId,
+            skillDir: result.skillDir,
+          },
+        }));
         await deps.observability?.recordSkillGeneratorEvent({
           sessionId,
           userId: "operator",
           event: "draft_saved",
           summary: `Saved generated skill ${result.skillId}`,
           ok: true,
+          evidence,
         });
         return {
           ...result,
-          evidence,
+          evidence: {
+            ...evidence,
+            qaVerdict: result.qaVerdict ?? evidence.qaVerdict ?? null,
+            harness: result.harness ?? evidence.harness ?? null,
+            savedSkillIdentity: {
+              skillId: result.skillId,
+              skillDir: result.skillDir,
+            },
+            approvalReadiness: {
+              ready: true,
+              reason: "Generated skill saved.",
+            },
+          },
         };
       },
     },

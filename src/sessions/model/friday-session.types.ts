@@ -13,6 +13,7 @@ export type FridayConversationBlockSource =
   | "assistant_anchor"
   | "recent_user"
   | "focus_topic"
+  | "harness_block"
   | "active_run"
   | "pending_plan"
   | "status_anchor"
@@ -132,6 +133,9 @@ export interface FridaySessionConversationFocusState {
   activeSubagentIds?: string[];
   pendingPlanRunId?: string;
   lastTurnKind?: FridayConversationTurnKind;
+  lastHarnessStage?: string;
+  lastHandoffArtifactId?: string;
+  lastHarnessSummary?: string;
   updatedAt: string;
 }
 

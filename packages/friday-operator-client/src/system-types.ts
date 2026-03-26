@@ -1270,6 +1270,32 @@ export interface FridayUixTemplatesResponse {
   templates: FridayActionTemplateSummary[];
 }
 
+export type FridayTemplateHarnessStage =
+  | "planning_spec"
+  | "delivery_contract"
+  | "draft_generation"
+  | "qa_verdict"
+  | "handoff_ready"
+  | "completed";
+
+export type FridayHarnessQaVerdict = "pass" | "fail" | "blocked";
+
+export interface FridayTemplateHarnessSummary {
+  stage: FridayTemplateHarnessStage;
+  planningSpecId?: string;
+  deliveryContractId?: string;
+  qaVerdictId?: string;
+  handoffArtifactId?: string;
+  verdict?: FridayHarnessQaVerdict;
+  summary?: string;
+}
+
+export interface FridayExecuteAssistantTemplateRequest {
+  templateId: string;
+  parameters?: Record<string, unknown>;
+  assistantSessionKey?: string;
+}
+
 export interface FridayUixTemplateExecutionResponse {
   templateId: string;
   status: "preview" | "executed";
@@ -1283,6 +1309,7 @@ export interface FridayUixTemplateExecutionResponse {
   successTest?: string;
   fallbackPath?: string;
   state?: FridayBeginnerIntentResolution["state"];
+  harness?: FridayTemplateHarnessSummary | null;
 }
 
 export interface FridayUixIssuesResponse {
@@ -1300,6 +1327,19 @@ export interface FridayUixWizardResponse {
   successTest?: string;
   fallbackPath?: string;
   state?: FridayBeginnerIntentResolution["state"];
+  harness?: FridayTemplateHarnessSummary | null;
+}
+
+export interface FridayStartAssistantWizardRequest {
+  wizardId: string;
+  assistantSessionKey?: string;
+}
+
+export interface FridayContinueAssistantWizardRequest {
+  wizardId: string;
+  contextId: string;
+  values?: Record<string, unknown>;
+  assistantSessionKey?: string;
 }
 
 export type FridayObservabilityModule =

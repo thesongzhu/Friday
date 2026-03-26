@@ -74,6 +74,7 @@ describe("createFridayOperatorClient", () => {
         .mockResolvedValueOnce({ summary: "generate a skill", suggestedTemplateIds: ["generate-skill"] })
         .mockResolvedValueOnce({ templateId: "generate-skill", status: "executed", summary: "ok", routeTarget: "/assistant" })
         .mockResolvedValueOnce({ wizard: { wizardId: "guided-assistant", contextId: "ctx-1", title: "Guided Assistant", status: "awaiting_input", currentStepId: "goal", steps: [], collectedValues: {} } })
+        .mockResolvedValueOnce({ wizard: { wizardId: "guided-assistant", contextId: "ctx-1", title: "Guided Assistant", status: "ready", currentStepId: "clarification", steps: [], collectedValues: { goal: "Generate a skill" } } })
         .mockResolvedValueOnce({ action: { actionId: "action-1" } }),
       patch: vi.fn(),
       del: vi.fn(),
@@ -88,8 +89,15 @@ describe("createFridayOperatorClient", () => {
     await client.executeAssistantTemplate({
       templateId: "generate-skill",
       parameters: { goal: "Summarize git changes" },
+      assistantSessionKey: "ui:assistant:assistant-shell",
     });
-    await client.startAssistantWizard("guided-assistant");
+    await client.startAssistantWizard("guided-assistant", "ui:assistant:assistant-shell");
+    await client.continueAssistantWizard({
+      wizardId: "guided-assistant",
+      contextId: "ctx-1",
+      values: { goal: "Generate a skill" },
+      assistantSessionKey: "ui:assistant:assistant-shell",
+    });
     await client.approveAutoFixAction("action-1", "Looks safe");
     await client.listAssistantIssues(5);
 
@@ -103,8 +111,16 @@ describe("createFridayOperatorClient", () => {
     expect(transport.get).toHaveBeenCalledWith("/v1/uix/templates");
     expect(transport.post).toHaveBeenCalledWith("/v1/uix/templates/generate-skill/execute", {
       parameters: { goal: "Summarize git changes" },
+      assistantSessionKey: "ui:assistant:assistant-shell",
     });
-    expect(transport.post).toHaveBeenCalledWith("/v1/uix/wizards/guided-assistant/start", {});
+    expect(transport.post).toHaveBeenCalledWith("/v1/uix/wizards/guided-assistant/start", {
+      assistantSessionKey: "ui:assistant:assistant-shell",
+    });
+    expect(transport.post).toHaveBeenCalledWith("/v1/uix/wizards/guided-assistant/continue", {
+      contextId: "ctx-1",
+      values: { goal: "Generate a skill" },
+      assistantSessionKey: "ui:assistant:assistant-shell",
+    });
     expect(transport.post).toHaveBeenCalledWith("/v1/auto-fix/actions/action-1/approve", {
       reason: "Looks safe",
     });
