@@ -266,6 +266,7 @@ export type FridayAuditResourceType =
   | "incident"
   | "auto_fix_action"
   | "skill_generation_session"
+  | "workflow_generation_session"
   | "preference"
   | "credential"
   | "alert_rule"

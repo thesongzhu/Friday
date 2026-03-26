@@ -85,6 +85,7 @@ import { buildSkillGeneratorHref, buildSkillHref } from "@/lib/skills/view-model
 import { buildWorkflowBuilderHref, buildWorkflowHref } from "@/lib/workflows/view-models";
 
 const OPERATOR_ID = "assistant-shell";
+const ASSISTANT_UIX_SESSION_KEY = `ui:assistant:${OPERATOR_ID}`;
 const ASSISTANT_OUTCOME_RECEIPT_COOLDOWN_KEY = "friday.assistant.outcome-receipt.cooldowns";
 const ACTIVE_ASSISTANT_RUN_STATUSES = [
   "pending",
@@ -686,6 +687,7 @@ export function AssistantPage() {
     mutationFn: (input: {
       templateId: string;
       parameters?: Record<string, unknown>;
+      assistantSessionKey?: string;
     }) => systemApi.executeAssistantTemplate(input),
     onSuccess: (result) => {
       toast.success(result.summary);
@@ -1064,6 +1066,7 @@ export function AssistantPage() {
     executeTemplateMutation.mutate({
       templateId: template.id,
       parameters: templateValues[template.id],
+      assistantSessionKey: ASSISTANT_UIX_SESSION_KEY,
     });
   };
 

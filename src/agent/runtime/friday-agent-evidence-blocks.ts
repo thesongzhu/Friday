@@ -25,6 +25,10 @@ const CAPABILITY_HINTS =
   /\b(capabilities?|what can\b|can (?:friday|you)\b.*\bdo\b|enabled|disabled|deployment|runtime facts?|messaging|discord|mcp|desktop companion|provider mutations?|read[- ]?only)\b/i;
 const CHINESE_CAPABILITY_HINTS =
   /(能力|能做什么|启用|禁用|部署|运行时|discord|mcp|桌面伴侣|提供者修改|只读)/i;
+const HARNESS_RESUME_HINTS =
+  /\b(continue|resume|keep going|pick up|carry on|stuck|where .*stuck|that (?:skill|workflow)|the (?:skill|workflow)|that generator|that draft)\b/i;
+const CHINESE_HARNESS_RESUME_HINTS =
+  /(继续|恢复|接着|接上|卡在哪|卡住了|那个(?:skill|workflow|技能|工作流)|那个草稿|那个生成器)/;
 
 export interface BuildFridayEvidenceBlocksInput {
   task: string;
@@ -156,6 +160,27 @@ function shouldIncludeCapabilitiesEvidence(input: BuildFridayEvidenceBlocksInput
   return CAPABILITY_HINTS.test(input.task) || CHINESE_CAPABILITY_HINTS.test(input.task);
 }
 
+function shouldIncludeHarnessEvidence(input: BuildFridayEvidenceBlocksInput): boolean {
+  if (!input.focusState?.lastHarnessSummary) {
+    return false;
+  }
+  if (input.turnKind === "status_check" || input.turnKind === "continue_active_task") {
+    return true;
+  }
+  if (input.turnKind !== "follow_up") {
+    return false;
+  }
+  return HARNESS_RESUME_HINTS.test(input.task) || CHINESE_HARNESS_RESUME_HINTS.test(input.task);
+}
+
+function formatHarnessSummary(focusState: FridaySessionConversationFocusState): string {
+  return normalizeText([
+    focusState.lastHarnessStage ? `stage ${focusState.lastHarnessStage}` : undefined,
+    focusState.lastHarnessSummary ? `summary ${focusState.lastHarnessSummary}` : undefined,
+    focusState.lastHandoffArtifactId ? `handoff artifact ${focusState.lastHandoffArtifactId}` : undefined,
+  ].filter((value): value is string => Boolean(value)).join("; "));
+}
+
 export function buildFridayEvidenceBlocks(
   input: BuildFridayEvidenceBlocksInput,
 ): FridayEvidenceBlock[] {
@@ -252,6 +277,16 @@ export function buildFridayEvidenceBlocks(
         reason: "Planning gate state selected as deterministic evidence for approval/clarification follow-ups.",
       });
     }
+  }
+
+  if (input.focusState && shouldIncludeHarnessEvidence(input)) {
+    blocks.push({
+      id: "evidence:harness",
+      source: "harness_block",
+      summary: formatHarnessSummary(input.focusState),
+      score: input.turnKind === "continue_active_task" ? 93 : 89,
+      reason: "Persisted harness handoff selected to resume a generated skill/workflow without reconstructing it from chat history.",
+    });
   }
 
   return blocks

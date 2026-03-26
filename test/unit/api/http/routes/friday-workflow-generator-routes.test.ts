@@ -45,7 +45,7 @@ function makeMockService(): FridayWorkflowGeneratorService {
           sessionId,
           userId: "u-1",
           channel: "test",
-          status: "collecting_requirements" as const,
+          status: "ready_for_review" as const,
           goal: "test",
           requirementsSummary: "",
           openQuestions: [],
@@ -54,6 +54,13 @@ function makeMockService(): FridayWorkflowGeneratorService {
           updatedAt: "2026-01-01T00:00:00.000Z",
         },
         turns: [],
+        draft: {
+          spec: {} as never,
+          visual: {} as never,
+          tests: [],
+          compiledGraph: {} as never,
+          validation: { ok: true, issues: [], repaired: false, repairAttempts: 0 },
+        },
       };
     }),
     generateDraft: vi.fn(async () => ({
@@ -71,6 +78,8 @@ function makeMockService(): FridayWorkflowGeneratorService {
       slug: "test-workflow",
       published: true,
     })),
+    getQaVerdict: vi.fn(async () => null),
+    getHarnessSummary: vi.fn(async () => null),
     cancelSession: vi.fn(async () => undefined),
   };
 }
@@ -102,8 +111,8 @@ describe("FridayWorkflowGeneratorRoutes", () => {
     workflowGenerator: service,
   });
 
-  it("creates exactly 6 routes", () => {
-    expect(routes).toHaveLength(6);
+  it("creates exactly 7 routes", () => {
+    expect(routes).toHaveLength(7);
   });
 
   it("has correct operation IDs", () => {
@@ -112,6 +121,7 @@ describe("FridayWorkflowGeneratorRoutes", () => {
       "workflows.generator.sessions.approve",
       "workflows.generator.sessions.cancel",
       "workflows.generator.sessions.create",
+      "workflows.generator.sessions.evidence.get",
       "workflows.generator.sessions.generate",
       "workflows.generator.sessions.get",
       "workflows.generator.sessions.messages.create",
@@ -124,6 +134,7 @@ describe("FridayWorkflowGeneratorRoutes", () => {
     expect(methods.get("workflows.generator.sessions.get")).toBe("GET");
     expect(methods.get("workflows.generator.sessions.messages.create")).toBe("POST");
     expect(methods.get("workflows.generator.sessions.generate")).toBe("POST");
+    expect(methods.get("workflows.generator.sessions.evidence.get")).toBe("GET");
     expect(methods.get("workflows.generator.sessions.approve")).toBe("POST");
     expect(methods.get("workflows.generator.sessions.cancel")).toBe("DELETE");
   });
@@ -134,6 +145,7 @@ describe("FridayWorkflowGeneratorRoutes", () => {
     expect(paths.get("workflows.generator.sessions.get")).toBe("/v1/workflows/generator/sessions/:sessionId");
     expect(paths.get("workflows.generator.sessions.messages.create")).toBe("/v1/workflows/generator/sessions/:sessionId/messages");
     expect(paths.get("workflows.generator.sessions.generate")).toBe("/v1/workflows/generator/sessions/:sessionId/generate");
+    expect(paths.get("workflows.generator.sessions.evidence.get")).toBe("/v1/workflows/generator/sessions/:sessionId/evidence");
     expect(paths.get("workflows.generator.sessions.approve")).toBe("/v1/workflows/generator/sessions/:sessionId/approve");
     expect(paths.get("workflows.generator.sessions.cancel")).toBe("/v1/workflows/generator/sessions/:sessionId");
   });

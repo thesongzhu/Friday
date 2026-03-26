@@ -1,6 +1,15 @@
 import { FridayDomainError } from "#errors";
 import { createFridayProviderInferenceClient } from "#skills/generator";
 import type { FridayProviderInferenceClient } from "#skills/generator";
+import {
+  buildHarnessSchemaTest,
+  createFridayTemplateHarnessService,
+  type FridayHarnessDeliveryContractV1,
+  type FridayHarnessPlanningSpecV1,
+  type FridayHarnessQaVerdictV1,
+  type FridayTemplateHarnessSummary,
+  type FridayTemplateHarnessStage,
+} from "#harness";
 import { createFridayWorkflowCompiler } from "../../compiler/friday-workflow-compiler.js";
 import { createFridayWorkflowValidator } from "../../compiler/friday-workflow-validator.js";
 import type { FridayWorkflowSpecTestCase, FridayWorkflowSpecV1 } from "../../model/friday-workflow-spec.types.js";
@@ -298,6 +307,11 @@ export function createFridayWorkflowGeneratorService(
     createFridayProviderInferenceClient({
       providerService: deps.providerService,
     });
+  const harness = createFridayTemplateHarnessService({
+    db: deps.db,
+    idGenerator: deps.idGenerator,
+    nowIso: deps.nowIso,
+  });
   const specVersionRepo = createFridayWorkflowBuilderSpecVersionRepository();
 
   const compiler = createFridayWorkflowCompiler({
@@ -363,6 +377,340 @@ export function createFridayWorkflowGeneratorService(
   function getRecentTurns(turns: FridayWorkflowGenerationTurn[]): FridayWorkflowGenerationTurn[] {
     if (turns.length <= MAX_RECENT_TURNS) return turns;
     return turns.slice(turns.length - MAX_RECENT_TURNS);
+  }
+
+  function parseCurrentRequirements(
+    session: FridayWorkflowGenerationSession,
+  ): FridayWorkflowGenerationRequirements | null {
+    if (!session.requirementsSummary.trim()) return null;
+    try {
+      const parsed = JSON.parse(session.requirementsSummary) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as FridayWorkflowGenerationRequirements;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  function extractStringArray(
+    source: Record<string, unknown>,
+    key: string,
+  ): string[] {
+    const value = source[key];
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  }
+
+  function workflowRequirementsRequireBrowserQa(
+    requirements: FridayWorkflowGenerationRequirements | null,
+  ): boolean {
+    if (!requirements) return false;
+    const candidate = requirements as unknown as Record<string, unknown>;
+    if (candidate["requiresBrowserQa"] === true || candidate["browserQaRequired"] === true) {
+      return true;
+    }
+    const evidenceRequirements = candidate["evidenceRequirements"];
+    return Array.isArray(evidenceRequirements) && evidenceRequirements.includes("browser_qa");
+  }
+
+  function buildHarnessSummaryFromSession(
+    session: FridayWorkflowGenerationSession,
+    qaVerdict?: FridayHarnessQaVerdictV1 | null,
+  ): FridayTemplateHarnessSummary | null {
+    if (!harness.enabled || !session.harnessStage) return null;
+    return harness.buildSummary({
+      stage: session.harnessStage,
+      planningSpecId: session.planningSpecId,
+      deliveryContractId: session.deliveryContractId,
+      qaVerdictId: session.qaVerdictId,
+      handoffArtifactId: session.handoffArtifactId,
+      summary: qaVerdict?.summary,
+    });
+  }
+
+  function buildWorkflowPlanningSpecArtifact(
+    session: FridayWorkflowGenerationSession,
+    requirements: FridayWorkflowGenerationRequirements | null,
+  ): FridayHarnessPlanningSpecV1 {
+    const summary =
+      requirements?.goal
+      ?? (requirements?.plannedSteps[0]?.intent
+        ? `${requirements.goal}: ${requirements.plannedSteps[0].intent}`
+        : session.goal);
+    return {
+      artifactId: session.planningSpecId ?? deps.idGenerator(),
+      version: 1,
+      scopeKind: "workflow_generator",
+      scopeId: session.sessionId,
+      objective: session.goal,
+      summary,
+      assumptions: requirements?.assumptions ?? [],
+      unknowns: [...session.openQuestions],
+      outOfScope: extractStringArray(requirements as unknown as Record<string, unknown> ?? {}, "outOfScope"),
+      constraints: extractStringArray(requirements as unknown as Record<string, unknown> ?? {}, "constraints"),
+      successTests: requirements?.testScenarios.map((scenario) => scenario.name) ?? [],
+      openQuestions: [...session.openQuestions],
+      createdAt: deps.nowIso(),
+      updatedAt: deps.nowIso(),
+    };
+  }
+
+  function buildWorkflowDeliveryContractArtifact(
+    session: FridayWorkflowGenerationSession,
+    planningSpec: FridayHarnessPlanningSpecV1,
+    requirements: FridayWorkflowGenerationRequirements | null,
+  ): FridayHarnessDeliveryContractV1 {
+    const evidenceRequirements: FridayHarnessDeliveryContractV1["evidenceRequirements"] = [
+      "generator_validation",
+      "workflow_acceptance",
+    ];
+    if (workflowRequirementsRequireBrowserQa(requirements)) {
+      evidenceRequirements.push("browser_qa");
+    }
+    return {
+      artifactId: session.deliveryContractId ?? deps.idGenerator(),
+      version: 1,
+      scopeKind: "workflow_generator",
+      scopeId: session.sessionId,
+      planningSpecId: planningSpec.artifactId,
+      deliverableKind: "workflow",
+      deliverables: [
+        requirements?.goal ?? session.goal,
+      ],
+      doneDefinition: [
+        "Generated workflow draft passes validation.",
+        "Compiled graph and generated tests are present.",
+        ...(evidenceRequirements.includes("browser_qa")
+          ? ["Required browser QA evidence is attached."]
+          : []),
+      ],
+      acceptanceCriteria: [
+        "validation.ok must be true",
+        "compiled graph must contain nodes",
+        "generated tests must be present",
+        ...(evidenceRequirements.includes("browser_qa")
+          ? ["browser QA evidence must be present"]
+          : []),
+      ],
+      evidenceRequirements,
+      riskFlags: extractStringArray(requirements as unknown as Record<string, unknown> ?? {}, "riskFlags"),
+      blockedBy: [...session.openQuestions],
+      createdAt: deps.nowIso(),
+      updatedAt: deps.nowIso(),
+    };
+  }
+
+  function resolveWorkflowHarnessStage(input: {
+    session: FridayWorkflowGenerationSession;
+    qaVerdict?: FridayHarnessQaVerdictV1 | null;
+  }): FridayTemplateHarnessStage {
+    if (input.session.status === "saved") return "completed";
+    if (input.session.status === "approved") return "handoff_ready";
+    if (input.session.status === "ready_for_review" || input.qaVerdict) return "qa_verdict";
+    if (input.session.deliveryContractId) return "delivery_contract";
+    return "planning_spec";
+  }
+
+  function buildWorkflowNextActions(input: {
+    session: FridayWorkflowGenerationSession;
+    qaVerdict?: FridayHarnessQaVerdictV1 | null;
+  }): string[] {
+    if (input.qaVerdict?.verdict === "blocked") {
+      return input.qaVerdict.blockedReasons.map((reason) =>
+        reason.includes("browser")
+          ? "Attach the required browser QA evidence."
+          : reason,
+      );
+    }
+    if (input.qaVerdict?.verdict === "fail") {
+      return ["Fix the failing workflow draft issues and regenerate the workflow."];
+    }
+    if (input.session.status === "ready_for_review") {
+      return ["Approve and save the generated workflow."];
+    }
+    if (input.session.status === "needs_clarification") {
+      return ["Answer the remaining clarification question(s)."];
+    }
+    return [];
+  }
+
+  async function syncWorkflowHarness(
+    session: FridayWorkflowGenerationSession,
+    draft?: FridayGeneratedWorkflowDraft,
+  ): Promise<{
+    session: FridayWorkflowGenerationSession;
+    qaVerdict: FridayHarnessQaVerdictV1 | null;
+    harnessSummary: FridayTemplateHarnessSummary | null;
+  }> {
+    if (!harness.enabled) {
+      return { session, qaVerdict: null, harnessSummary: null };
+    }
+
+    const requirements = parseCurrentRequirements(session);
+    const planningSpec = harness.createOrUpdatePlanningSpec(
+      buildWorkflowPlanningSpecArtifact(session, requirements),
+    );
+
+    const contract = session.status === "needs_clarification" && session.openQuestions.length > 0
+      ? null
+      : harness.createOrUpdateDeliveryContract(
+        buildWorkflowDeliveryContractArtifact(session, planningSpec, requirements),
+      );
+
+    let qaVerdict: FridayHarnessQaVerdictV1 | null = null;
+    if (draft && contract) {
+      const missingEvidenceReasons: string[] = [];
+      if (contract.evidenceRequirements.includes("browser_qa")) {
+        missingEvidenceReasons.push("Required browser QA evidence has not been attached.");
+      }
+      qaVerdict = await harness.evaluateQaVerdict({
+        existingQaVerdictId: session.qaVerdictId,
+        scopeKind: "workflow_generator",
+        scopeId: session.sessionId,
+        deliveryContract: contract,
+        missingEvidenceReasons,
+        evidenceRefs: [
+          `workflow-generator-session:${session.sessionId}`,
+          `workflow-draft:${draft.spec.workflowId}`,
+          `workflow-compiled:${draft.compiledGraph.workflowVersionId}`,
+        ],
+        artifactContent: {
+          validation: {
+            ok: draft.validation.ok,
+            issueCount: draft.validation.issues.length,
+          },
+          spec: {
+            workflowId: draft.spec.workflowId,
+            stepCount: draft.spec.steps.length,
+            outputCount: draft.spec.outputs.length,
+          },
+          tests: {
+            count: draft.tests.length,
+          },
+          visual: {
+            nodeCount: draft.visual.nodes.length,
+            edgeCount: draft.visual.edges.length,
+          },
+          compiledGraph: {
+            nodeCount: draft.compiledGraph.graph.nodes.length,
+            edgeCount: draft.compiledGraph.graph.edges.length,
+          },
+        },
+        tests: [
+          buildHarnessSchemaTest({
+            id: `${session.sessionId}:workflow:validation`,
+            name: "Workflow draft validation passes",
+            schema: {
+              type: "object",
+              properties: {
+                validation: {
+                  type: "object",
+                  properties: {
+                    ok: { const: true },
+                  },
+                  required: ["ok"],
+                },
+              },
+              required: ["validation"],
+            },
+            priority: 10,
+            shortCircuit: true,
+          }),
+          buildHarnessSchemaTest({
+            id: `${session.sessionId}:workflow:tests`,
+            name: "Workflow draft includes generated tests",
+            schema: {
+              type: "object",
+              properties: {
+                tests: {
+                  type: "object",
+                  properties: {
+                    count: { type: "number", minimum: 1 },
+                  },
+                  required: ["count"],
+                },
+              },
+              required: ["tests"],
+            },
+            priority: 20,
+            shortCircuit: true,
+          }),
+          buildHarnessSchemaTest({
+            id: `${session.sessionId}:workflow:compiled`,
+            name: "Compiled workflow graph contains nodes",
+            schema: {
+              type: "object",
+              properties: {
+                compiledGraph: {
+                  type: "object",
+                  properties: {
+                    nodeCount: { type: "number", minimum: 1 },
+                  },
+                  required: ["nodeCount"],
+                },
+              },
+              required: ["compiledGraph"],
+            },
+            priority: 30,
+            shortCircuit: true,
+          }),
+        ],
+      });
+    }
+
+    const effectiveQaVerdict =
+      qaVerdict ?? (session.qaVerdictId ? harness.getQaVerdict(session.qaVerdictId) : null);
+    const stage = resolveWorkflowHarnessStage({ session, qaVerdict: effectiveQaVerdict });
+    const handoff = harness.createOrUpdateHandoffArtifact({
+      artifactId: session.handoffArtifactId ?? deps.idGenerator(),
+      version: 1,
+      scopeKind: "workflow_generator",
+      scopeId: session.sessionId,
+      stage,
+      summary: effectiveQaVerdict?.summary
+        ?? (session.status === "needs_clarification"
+          ? "Waiting for one more answer before generation can continue."
+          : session.status === "saved"
+            ? "Generated workflow saved."
+            : "Workflow generator state recorded."),
+      completedWork: [
+        "Planning spec recorded.",
+        contract?.artifactId ? "Delivery contract recorded." : "",
+        draft ? "Draft generated." : "",
+      ].filter(Boolean),
+      remainingWork: buildWorkflowNextActions({ session, qaVerdict: effectiveQaVerdict }),
+      blockers: [
+        ...(effectiveQaVerdict?.blockedReasons ?? []),
+        ...(session.status === "needs_clarification" ? session.openQuestions : []),
+      ],
+      nextActions: buildWorkflowNextActions({ session, qaVerdict: effectiveQaVerdict }),
+      artifactRefs: [
+        planningSpec.artifactId,
+        contract?.artifactId,
+        effectiveQaVerdict?.artifactId,
+      ].filter((value): value is string => typeof value === "string"),
+      createdAt: deps.nowIso(),
+      updatedAt: deps.nowIso(),
+    });
+
+    const nextSession: FridayWorkflowGenerationSession = {
+      ...session,
+      harnessStage: stage,
+      planningSpecId: planningSpec.artifactId,
+      deliveryContractId:
+        contract?.artifactId
+        ?? (session.status === "approved" || session.status === "saved" ? session.deliveryContractId : undefined),
+      qaVerdictId: effectiveQaVerdict?.artifactId,
+      handoffArtifactId: handoff.artifactId,
+    };
+
+    return {
+      session: nextSession,
+      qaVerdict: effectiveQaVerdict,
+      harnessSummary: buildHarnessSummaryFromSession(nextSession, effectiveQaVerdict),
+    };
   }
 
   function buildAvailableSkillContext(): FridayWorkflowGeneratorSkillContext[] {
@@ -736,7 +1084,8 @@ export function createFridayWorkflowGeneratorService(
         updatedAt: deps.nowIso(),
       };
 
-      repo.updateSession(updatedSession);
+      const syncedUpdated = await syncWorkflowHarness(updatedSession);
+      repo.updateSession(syncedUpdated.session);
 
       // Add assistant turn
       const assistantContent =
@@ -757,30 +1106,32 @@ export function createFridayWorkflowGeneratorService(
       if (analyzerResult.state === "ready_for_generation") {
         try {
           const draft = await runGenerationPipeline(
-            updatedSession,
+            syncedUpdated.session,
             analyzerResult.requirements,
             input.requestedModel,
           );
 
           const finalSession: FridayWorkflowGenerationSession = {
-            ...updatedSession,
+            ...syncedUpdated.session,
             status: draft.validation.ok ? "ready_for_review" : "failed",
             draftWorkflowId: draft.spec.workflowId,
             updatedAt: deps.nowIso(),
           };
-          repo.updateSession(finalSession);
+          const syncedFinal = await syncWorkflowHarness(finalSession, draft);
+          repo.updateSession(syncedFinal.session);
 
-          return buildTurnResponse(finalSession, analyzerResult, draft);
+          return buildTurnResponse(syncedFinal.session, analyzerResult, draft);
         } catch (err) {
           const failedSession: FridayWorkflowGenerationSession = {
-            ...updatedSession,
+            ...syncedUpdated.session,
             status: "failed",
             updatedAt: deps.nowIso(),
           };
-          repo.updateSession(failedSession);
+          const syncedFailed = await syncWorkflowHarness(failedSession);
+          repo.updateSession(syncedFailed.session);
 
           return {
-            session: failedSession,
+            session: syncedFailed.session,
             mode: "generation_failed",
             errors: [
               {
@@ -795,7 +1146,7 @@ export function createFridayWorkflowGeneratorService(
         }
       }
 
-      return buildTurnResponse(updatedSession, analyzerResult);
+      return buildTurnResponse(syncedUpdated.session, analyzerResult);
     },
 
     async submitTurn(
@@ -817,6 +1168,7 @@ export function createFridayWorkflowGeneratorService(
       }
 
       const now = deps.nowIso();
+      deleteDraft(sessionId);
 
       // Add user turn
       const userTurn: FridayWorkflowGenerationTurn = {
@@ -855,10 +1207,12 @@ export function createFridayWorkflowGeneratorService(
             ? [`User provided: ${input.message}`]
             : []),
         ],
+        draftWorkflowId: undefined,
         updatedAt: deps.nowIso(),
       };
 
-      repo.updateSession(updatedSession);
+      const syncedUpdated = await syncWorkflowHarness(updatedSession);
+      repo.updateSession(syncedUpdated.session);
 
       // Add assistant turn
       const assistantContent =
@@ -879,30 +1233,32 @@ export function createFridayWorkflowGeneratorService(
       if (analyzerResult.state === "ready_for_generation") {
         try {
           const draft = await runGenerationPipeline(
-            updatedSession,
+            syncedUpdated.session,
             analyzerResult.requirements,
             input.requestedModel,
           );
 
           const finalSession: FridayWorkflowGenerationSession = {
-            ...updatedSession,
+            ...syncedUpdated.session,
             status: draft.validation.ok ? "ready_for_review" : "failed",
             draftWorkflowId: draft.spec.workflowId,
             updatedAt: deps.nowIso(),
           };
-          repo.updateSession(finalSession);
+          const syncedFinal = await syncWorkflowHarness(finalSession, draft);
+          repo.updateSession(syncedFinal.session);
 
-          return buildTurnResponse(finalSession, analyzerResult, draft);
+          return buildTurnResponse(syncedFinal.session, analyzerResult, draft);
         } catch (err) {
           const failedSession: FridayWorkflowGenerationSession = {
-            ...updatedSession,
+            ...syncedUpdated.session,
             status: "failed",
             updatedAt: deps.nowIso(),
           };
-          repo.updateSession(failedSession);
+          const syncedFailed = await syncWorkflowHarness(failedSession);
+          repo.updateSession(syncedFailed.session);
 
           return {
-            session: failedSession,
+            session: syncedFailed.session,
             mode: "generation_failed",
             errors: [
               {
@@ -917,7 +1273,7 @@ export function createFridayWorkflowGeneratorService(
         }
       }
 
-      return buildTurnResponse(updatedSession, analyzerResult);
+      return buildTurnResponse(syncedUpdated.session, analyzerResult);
     },
 
     async getSession(sessionId: string) {
@@ -964,35 +1320,55 @@ export function createFridayWorkflowGeneratorService(
       const generatingSession: FridayWorkflowGenerationSession = {
         ...session,
         status: "generating",
+        draftWorkflowId: undefined,
         updatedAt: deps.nowIso(),
       };
-      repo.updateSession(generatingSession);
+      const syncedGenerating = await syncWorkflowHarness(generatingSession);
+      repo.updateSession(syncedGenerating.session);
 
       try {
         const draft = await runGenerationPipeline(
-          generatingSession,
+          syncedGenerating.session,
           requirements,
           requestedModel,
         );
 
         const finalSession: FridayWorkflowGenerationSession = {
-          ...generatingSession,
+          ...syncedGenerating.session,
           status: draft.validation.ok ? "ready_for_review" : "failed",
           draftWorkflowId: draft.spec.workflowId,
           updatedAt: deps.nowIso(),
         };
-        repo.updateSession(finalSession);
+        const syncedFinal = await syncWorkflowHarness(finalSession, draft);
+        repo.updateSession(syncedFinal.session);
 
         return draft;
       } catch (err) {
         const failedSession: FridayWorkflowGenerationSession = {
-          ...generatingSession,
+          ...syncedGenerating.session,
           status: "failed",
           updatedAt: deps.nowIso(),
         };
-        repo.updateSession(failedSession);
+        const syncedFailed = await syncWorkflowHarness(failedSession);
+        repo.updateSession(syncedFailed.session);
         throw err;
       }
+    },
+
+    async getQaVerdict(sessionId: string) {
+      const session = requireSession(sessionId);
+      if (!session.qaVerdictId || !harness.enabled) {
+        return null;
+      }
+      return harness.getQaVerdict(session.qaVerdictId);
+    },
+
+    async getHarnessSummary(sessionId: string) {
+      const session = requireSession(sessionId);
+      const qaVerdict = session.qaVerdictId && harness.enabled
+        ? harness.getQaVerdict(session.qaVerdictId)
+        : null;
+      return buildHarnessSummaryFromSession(session, qaVerdict);
     },
 
     async approveAndSave(sessionId: string) {
@@ -1020,6 +1396,18 @@ export function createFridayWorkflowGeneratorService(
         throw new FridayDomainError(
           "VALIDATION_ERROR",
           "Cannot approve a draft with validation errors.",
+          { httpStatus: 422 },
+        );
+      }
+
+      const syncedReview = await syncWorkflowHarness(session, draft);
+      repo.updateSession(syncedReview.session);
+
+      if (harness.enabled && syncedReview.qaVerdict?.verdict !== "pass") {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          syncedReview.qaVerdict?.summary
+            ?? "Cannot approve the draft until the QA verdict passes.",
           { httpStatus: 422 },
         );
       }
@@ -1058,20 +1446,22 @@ export function createFridayWorkflowGeneratorService(
 
       // Update session status to approved then saved
       const approvedSession: FridayWorkflowGenerationSession = {
-        ...session,
+        ...syncedReview.session,
         status: "approved",
         workflowId: workflow.id,
         workflowVersionId: publishedVersion.id,
         updatedAt: deps.nowIso(),
       };
-      repo.updateSession(approvedSession);
+      const syncedApproved = await syncWorkflowHarness(approvedSession);
+      repo.updateSession(syncedApproved.session);
 
       const savedSession: FridayWorkflowGenerationSession = {
-        ...approvedSession,
+        ...syncedApproved.session,
         status: "saved",
         updatedAt: deps.nowIso(),
       };
-      repo.updateSession(savedSession);
+      const syncedSaved = await syncWorkflowHarness(savedSession);
+      repo.updateSession(syncedSaved.session);
 
       // Clean up persisted draft
       deleteDraft(sessionId);
@@ -1083,6 +1473,8 @@ export function createFridayWorkflowGeneratorService(
         versionNumber: publishedVersion.versionNumber,
         slug: workflow.slug,
         published: true,
+        harness: syncedSaved.harnessSummary,
+        qaVerdict: syncedReview.qaVerdict,
       };
     },
 
@@ -1102,7 +1494,8 @@ export function createFridayWorkflowGeneratorService(
         status: "cancelled",
         updatedAt: deps.nowIso(),
       };
-      repo.updateSession(cancelledSession);
+      const syncedCancelled = await syncWorkflowHarness(cancelledSession);
+      repo.updateSession(syncedCancelled.session);
 
       // Clean up persisted draft
       deleteDraft(sessionId);

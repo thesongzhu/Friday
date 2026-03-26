@@ -11,6 +11,8 @@ export type {
   FridayGeneratedSkillDraft,
   FridayGeneratedSkillValidationIssue,
   FridayGeneratedSkillValidationReport,
+  FridaySkillGenerationExplicitTestSummary,
+  FridaySkillGenerationHarnessSnapshot,
 } from "./model/friday-skill-generator.types.js";
 export type {
   FridaySkillUiFieldKind,

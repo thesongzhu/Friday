@@ -24,6 +24,7 @@ import type {
 } from "#workflows";
 import type { FridayCompiledWorkflowGraphV2, FridayWorkflowBuilderValidationReport, FridayWorkflowDraftEntity, FridayWorkflowSpecV1, FridayWorkflowVisualGraphV1 } from "#workflows";
 import type { FridayAgentTaskProfileId } from "#agent";
+import type { FridayHarnessQaVerdictV1, FridayTemplateHarnessSummary } from "#harness";
 import type { FridayPage, FridayPaginationQuery } from "./friday-api-common.types.js";
 
 // Re-export needed types
@@ -421,6 +422,26 @@ export interface FridayWorkflowGeneratorGenerateResponse {
   draft: FridayGeneratedWorkflowDraft;
 }
 
+export interface FridayWorkflowGenerationEvidence {
+  sessionId: string;
+  validationSummary: {
+    ok: boolean;
+    repaired: boolean;
+    repairAttempts: number;
+    issueCount: number;
+  };
+  approvalReadiness: {
+    ready: boolean;
+    reason: string;
+  };
+  qaVerdict?: FridayHarnessQaVerdictV1 | null;
+  harness?: FridayTemplateHarnessSummary | null;
+}
+
+export interface FridayWorkflowGeneratorEvidenceResponse {
+  evidence: FridayWorkflowGenerationEvidence;
+}
+
 export interface FridayWorkflowGeneratorApproveResponse {
   sessionId: string;
   workflowId: string;
@@ -428,6 +449,7 @@ export interface FridayWorkflowGeneratorApproveResponse {
   versionNumber: number;
   slug: string;
   published: boolean;
+  evidence?: FridayWorkflowGenerationEvidence;
 }
 
 export interface FridayWorkflowGeneratorCancelResponse {

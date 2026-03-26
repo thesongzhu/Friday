@@ -4,6 +4,15 @@ import { tmpdir } from "node:os";
 
 import { FridayDomainError } from "#errors";
 import { resolveSafeInstallDir, resolveSafePath } from "#utilities";
+import {
+  buildHarnessSchemaTest,
+  createFridayTemplateHarnessService,
+  type FridayHarnessDeliveryContractV1,
+  type FridayHarnessPlanningSpecV1,
+  type FridayHarnessQaVerdictV1,
+  type FridayTemplateHarnessStage,
+  type FridayTemplateHarnessSummary,
+} from "#harness";
 
 import type { SkillManifestV2 } from "#skills";
 import { applyFridaySkillManifestDefaults } from "#skills";
@@ -18,6 +27,7 @@ import type {
   FridayGeneratedSkillFile,
   FridayGeneratedSkillValidationIssue,
   FridayGeneratedSkillValidationReport,
+  FridaySkillGenerationExplicitTestSummary,
   FridaySkillGenerationSession,
   FridaySkillGenerationTurn,
   FridaySkillGenerationTurnRequest,
@@ -407,6 +417,11 @@ export function createFridaySkillGeneratorService(
     createFridayProviderInferenceClient({
       providerService: deps.providerService,
     });
+  const harness = createFridayTemplateHarnessService({
+    db: deps.db,
+    idGenerator: deps.idGenerator,
+    nowIso: deps.nowIso,
+  });
 
   // ─── Draft persistence via memory_items ───
 
@@ -465,6 +480,438 @@ export function createFridaySkillGeneratorService(
       return;
     }
     repo.createSession(session);
+  }
+
+  function parseCurrentSpec(
+    session: FridaySkillGenerationSession,
+  ): Record<string, unknown> | null {
+    if (!session.specSummary.trim()) return null;
+    try {
+      const parsed = JSON.parse(session.specSummary) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  function extractStringArray(
+    source: Record<string, unknown>,
+    key: string,
+  ): string[] {
+    const value = source[key];
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  }
+
+  function extractString(
+    source: Record<string, unknown>,
+    key: string,
+  ): string | undefined {
+    const value = source[key];
+    return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+  }
+
+  function skillSpecRequiresBrowserQa(spec: Record<string, unknown>): boolean {
+    const explicitBoolean = spec["requiresBrowserQa"] ?? spec["browserQaRequired"];
+    if (explicitBoolean === true) return true;
+    const requirements = spec["evidenceRequirements"];
+    if (Array.isArray(requirements) && requirements.includes("browser_qa")) {
+      return true;
+    }
+    return false;
+  }
+
+  function buildHarnessSummaryFromSession(
+    session: FridaySkillGenerationSession,
+    qaVerdict?: FridayHarnessQaVerdictV1 | null,
+  ): FridayTemplateHarnessSummary | null {
+    if (!harness.enabled || !session.harnessStage) return null;
+    return harness.buildSummary({
+      stage: session.harnessStage,
+      planningSpecId: session.planningSpecId,
+      deliveryContractId: session.deliveryContractId,
+      qaVerdictId: session.qaVerdictId,
+      handoffArtifactId: session.handoffArtifactId,
+      summary: qaVerdict?.summary,
+    });
+  }
+
+  function buildSkillPlanningSpecArtifact(
+    session: FridaySkillGenerationSession,
+    spec: Record<string, unknown> | null,
+  ): FridayHarnessPlanningSpecV1 {
+    const summary =
+      (spec ? extractString(spec, "summary") ?? extractString(spec, "description") ?? extractString(spec, "name") : undefined)
+      ?? session.goal;
+    return {
+      artifactId: session.planningSpecId ?? deps.idGenerator(),
+      version: 1,
+      scopeKind: "skill_generator",
+      scopeId: session.sessionId,
+      objective: session.goal,
+      summary,
+      assumptions: spec ? extractStringArray(spec, "assumptions") : [],
+      unknowns: [...session.openQuestions],
+      outOfScope: spec ? extractStringArray(spec, "outOfScope") : [],
+      constraints: spec ? extractStringArray(spec, "constraints") : [],
+      successTests: spec ? extractStringArray(spec, "successTests") : [],
+      openQuestions: [...session.openQuestions],
+      createdAt: deps.nowIso(),
+      updatedAt: deps.nowIso(),
+    };
+  }
+
+  function buildSkillDeliveryContractArtifact(
+    session: FridaySkillGenerationSession,
+    planningSpec: FridayHarnessPlanningSpecV1,
+    spec: Record<string, unknown> | null,
+  ): FridayHarnessDeliveryContractV1 {
+    const evidenceRequirements: FridayHarnessDeliveryContractV1["evidenceRequirements"] = [
+      "generator_validation",
+      "skill_self_test",
+      "skill_verification",
+    ];
+    if (spec && skillSpecRequiresBrowserQa(spec)) {
+      evidenceRequirements.push("browser_qa");
+    }
+    return {
+      artifactId: session.deliveryContractId ?? deps.idGenerator(),
+      version: 1,
+      scopeKind: "skill_generator",
+      scopeId: session.sessionId,
+      planningSpecId: planningSpec.artifactId,
+      deliverableKind: "skill",
+      deliverables: [
+        extractString(spec ?? {}, "name") ?? session.goal,
+      ],
+      doneDefinition: [
+        "Generated skill draft passes validation.",
+        "Explicit draft self-test passes.",
+        "Staged package verification passes before save.",
+        ...(evidenceRequirements.includes("browser_qa")
+          ? ["Required browser QA evidence is attached."]
+          : []),
+      ],
+      acceptanceCriteria: [
+        "validation.ok must be true",
+        "explicit self-test must pass",
+        "staged verification must pass",
+        ...(evidenceRequirements.includes("browser_qa")
+          ? ["browser QA evidence must be present"]
+          : []),
+      ],
+      evidenceRequirements,
+      riskFlags: spec ? extractStringArray(spec, "riskFlags") : [],
+      blockedBy: [...session.openQuestions],
+      createdAt: deps.nowIso(),
+      updatedAt: deps.nowIso(),
+    };
+  }
+
+  async function runStagedDraftVerification(
+    sessionId: string,
+    draft: FridayGeneratedSkillDraft,
+  ): Promise<{ packageLoaded: boolean; packageValidated: boolean; error?: string }> {
+    const settings = await deps.configManager.getSkillRegistrySettings(".");
+    const skillsDir = settings.managedSkillsDir;
+    const tempDir = join(tmpdir(), `friday-skill-verify-${sessionId}`);
+    mkdirSync(tempDir, { recursive: true });
+
+    try {
+      const manifestPath = resolveSafePath(tempDir, "skill.manifest.json");
+      mkdirSync(dirname(manifestPath), { recursive: true });
+      writeFileSync(manifestPath, JSON.stringify(withStabilizedLifecycleTags(draft.manifest), null, 2), "utf-8");
+
+      const uiPath = resolveSafePath(tempDir, "skill.ui.json");
+      mkdirSync(dirname(uiPath), { recursive: true });
+      writeFileSync(uiPath, JSON.stringify(draft.uiSchema, null, 2), "utf-8");
+
+      for (const file of draft.files) {
+        const filePath = resolveSafePath(tempDir, file.path);
+        mkdirSync(dirname(filePath), { recursive: true });
+        writeFileSync(filePath, file.content, "utf-8");
+        const ext = extname(file.path).toLowerCase();
+        if (ext === ".sh" || ext === ".bash" || file.executable) {
+          chmodSync(filePath, 0o755);
+        }
+      }
+
+      const loadResult = loadFridaySkillPackage({
+        skillDir: tempDir,
+        workspaceDir: skillsDir,
+      });
+      if (!loadResult.ok) {
+        return {
+          packageLoaded: false,
+          packageValidated: false,
+          error: loadResult.error.message,
+        };
+      }
+
+      const validation = validateFridaySkillPackage({
+        loaded: loadResult.value,
+        workspaceDir: skillsDir,
+        hubVersion: FRIDAY_HUB_COMPAT_VERSION,
+        supportedApiVersions: SUPPORTED_API_VERSIONS,
+      });
+      if (!validation.ok) {
+        return {
+          packageLoaded: true,
+          packageValidated: false,
+          error: validation.issues
+            .filter((issue) => issue.severity === "error")
+            .map((issue) => issue.message)
+            .join("; "),
+        };
+      }
+
+      return {
+        packageLoaded: true,
+        packageValidated: true,
+      };
+    } catch (error) {
+      return {
+        packageLoaded: false,
+        packageValidated: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      try {
+        rmSync(tempDir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup.
+      }
+    }
+  }
+
+  function resolveSkillHarnessStage(input: {
+    session: FridaySkillGenerationSession;
+    qaVerdict?: FridayHarnessQaVerdictV1 | null;
+  }): FridayTemplateHarnessStage {
+    if (input.session.status === "saved") return "completed";
+    if (input.session.status === "approved") return "handoff_ready";
+    if (input.session.status === "ready_for_review" || input.qaVerdict) return "qa_verdict";
+    if (input.session.deliveryContractId) return "delivery_contract";
+    return "planning_spec";
+  }
+
+  function buildSkillNextActions(input: {
+    session: FridaySkillGenerationSession;
+    qaVerdict?: FridayHarnessQaVerdictV1 | null;
+  }): string[] {
+    if (input.qaVerdict?.verdict === "blocked") {
+      return input.qaVerdict.blockedReasons.map((reason) =>
+        reason.includes("self-test")
+          ? "Run the explicit draft self-test."
+          : reason.includes("browser")
+            ? "Attach the required browser QA evidence."
+            : reason,
+      );
+    }
+    if (input.qaVerdict?.verdict === "fail") {
+      return ["Fix the failing draft issues and regenerate the skill."];
+    }
+    if (input.session.status === "ready_for_review") {
+      return ["Approve and save the generated skill."];
+    }
+    if (input.session.status === "needs_clarification") {
+      return ["Answer the remaining clarification question(s)."];
+    }
+    return [];
+  }
+
+  async function syncSkillHarness(
+    session: FridaySkillGenerationSession,
+    draft?: FridayGeneratedSkillDraft,
+  ): Promise<{
+    session: FridaySkillGenerationSession;
+    qaVerdict: FridayHarnessQaVerdictV1 | null;
+    harnessSummary: FridayTemplateHarnessSummary | null;
+  }> {
+    if (!harness.enabled) {
+      return { session, qaVerdict: null, harnessSummary: null };
+    }
+
+    const spec = parseCurrentSpec(session);
+    const planningSpec = harness.createOrUpdatePlanningSpec(
+      buildSkillPlanningSpecArtifact(session, spec),
+    );
+
+    const contract = session.status === "needs_clarification" && session.openQuestions.length > 0
+      ? null
+      : harness.createOrUpdateDeliveryContract(
+        buildSkillDeliveryContractArtifact(session, planningSpec, spec),
+      );
+
+    let qaVerdict: FridayHarnessQaVerdictV1 | null = null;
+    if (draft && contract) {
+      const missingEvidenceReasons: string[] = [];
+      if (contract.evidenceRequirements.includes("skill_self_test") && !session.explicitTest) {
+        missingEvidenceReasons.push("Explicit self-test has not been run yet.");
+      }
+      if (contract.evidenceRequirements.includes("browser_qa")) {
+        missingEvidenceReasons.push("Required browser QA evidence has not been attached.");
+      }
+
+      const stagedVerification = await runStagedDraftVerification(session.sessionId, draft);
+      if (!stagedVerification.packageLoaded && !stagedVerification.error) {
+        missingEvidenceReasons.push("Staged verification could not produce a package load result.");
+      }
+
+      qaVerdict = await harness.evaluateQaVerdict({
+        existingQaVerdictId: session.qaVerdictId,
+        scopeKind: "skill_generator",
+        scopeId: session.sessionId,
+        deliveryContract: contract,
+        missingEvidenceReasons,
+        evidenceRefs: [
+          `skill-generator-session:${session.sessionId}`,
+          ...(session.explicitTest ? [`skill-self-test:${session.sessionId}`] : []),
+          ...(stagedVerification.error ? [`skill-verification-error:${stagedVerification.error}`] : ["skill-verification:staged"]),
+        ],
+        artifactContent: {
+          validation: {
+            ok: draft.validation.ok,
+            issueCount: draft.validation.issues.length,
+          },
+          selfTest: session.explicitTest
+            ? {
+              ok: session.explicitTest.ok,
+              executable: session.explicitTest.executable,
+            }
+            : null,
+          verification: {
+            packageLoaded: stagedVerification.packageLoaded,
+            packageValidated: stagedVerification.packageValidated,
+            error: stagedVerification.error ?? null,
+          },
+          manifest: {
+            id: draft.manifest.id,
+            name: draft.manifest.name,
+            runtimeKind: draft.runtimeKind,
+          },
+          fileInventory: {
+            count: draft.files.length,
+          },
+        },
+        tests: [
+          buildHarnessSchemaTest({
+            id: `${session.sessionId}:skill:validation`,
+            name: "Draft validation passes",
+            schema: {
+              type: "object",
+              properties: {
+                validation: {
+                  type: "object",
+                  properties: {
+                    ok: { const: true },
+                  },
+                  required: ["ok"],
+                },
+              },
+              required: ["validation"],
+            },
+            priority: 10,
+            shortCircuit: true,
+          }),
+          buildHarnessSchemaTest({
+            id: `${session.sessionId}:skill:self-test`,
+            name: "Explicit self-test passes",
+            schema: {
+              type: "object",
+              properties: {
+                selfTest: {
+                  type: "object",
+                  properties: {
+                    ok: { const: true },
+                  },
+                  required: ["ok"],
+                },
+              },
+              required: ["selfTest"],
+            },
+            priority: 20,
+            shortCircuit: true,
+          }),
+          buildHarnessSchemaTest({
+            id: `${session.sessionId}:skill:verification`,
+            name: "Staged verification passes",
+            schema: {
+              type: "object",
+              properties: {
+                verification: {
+                  type: "object",
+                  properties: {
+                    packageLoaded: { const: true },
+                    packageValidated: { const: true },
+                  },
+                  required: ["packageLoaded", "packageValidated"],
+                },
+              },
+              required: ["verification"],
+            },
+            priority: 30,
+            shortCircuit: true,
+          }),
+        ],
+      });
+    }
+
+    const effectiveQaVerdict =
+      qaVerdict ?? (session.qaVerdictId ? harness.getQaVerdict(session.qaVerdictId) : null);
+
+    const stage = resolveSkillHarnessStage({ session, qaVerdict: effectiveQaVerdict });
+    const handoff = harness.createOrUpdateHandoffArtifact({
+      artifactId: session.handoffArtifactId ?? deps.idGenerator(),
+      version: 1,
+      scopeKind: "skill_generator",
+      scopeId: session.sessionId,
+      stage,
+      summary: effectiveQaVerdict?.summary
+        ?? (session.status === "needs_clarification"
+          ? "Waiting for one more answer before generation can continue."
+          : session.status === "saved"
+            ? "Generated skill saved."
+            : "Skill generator state recorded."),
+      completedWork: [
+        planningSpec.artifactId ? "Planning spec recorded." : "",
+        contract?.artifactId ? "Delivery contract recorded." : "",
+        draft ? "Draft generated." : "",
+      ].filter(Boolean),
+      remainingWork: buildSkillNextActions({ session, qaVerdict: effectiveQaVerdict }),
+      blockers: [
+        ...(effectiveQaVerdict?.blockedReasons ?? []),
+        ...(session.status === "needs_clarification" ? session.openQuestions : []),
+      ],
+      nextActions: buildSkillNextActions({ session, qaVerdict: effectiveQaVerdict }),
+      artifactRefs: [
+        planningSpec.artifactId,
+        contract?.artifactId,
+        effectiveQaVerdict?.artifactId,
+      ].filter((value): value is string => typeof value === "string"),
+      createdAt: deps.nowIso(),
+      updatedAt: deps.nowIso(),
+    });
+
+    const nextSession: FridaySkillGenerationSession = {
+      ...session,
+      harnessStage: stage,
+      planningSpecId: planningSpec.artifactId,
+      deliveryContractId:
+        contract?.artifactId
+        ?? (session.status === "approved" || session.status === "saved" ? session.deliveryContractId : undefined),
+      qaVerdictId: effectiveQaVerdict?.artifactId,
+      handoffArtifactId: handoff.artifactId,
+    };
+
+    return {
+      session: nextSession,
+      qaVerdict: effectiveQaVerdict,
+      harnessSummary: buildHarnessSummaryFromSession(nextSession, effectiveQaVerdict),
+    };
   }
 
   function normalizeLifecycleTags(tags: readonly string[]): string[] {
@@ -872,7 +1319,8 @@ export function createFridaySkillGeneratorService(
         updatedAt: deps.nowIso(),
       };
 
-      persistSession(updatedSession);
+      const syncedUpdated = await syncSkillHarness(updatedSession);
+      persistSession(syncedUpdated.session);
 
       // Add assistant turn with questions or spec
       const assistantContent =
@@ -893,30 +1341,33 @@ export function createFridaySkillGeneratorService(
       if (analyzerResult.state === "ready_for_generation") {
         try {
           const draft = await runGenerationPipeline(
-            updatedSession,
+            syncedUpdated.session,
             analyzerResult.spec,
             input.requestedModel,
           );
 
           const finalSession: FridaySkillGenerationSession = {
-            ...updatedSession,
+            ...syncedUpdated.session,
             status: draft.validation.ok ? "ready_for_review" : "failed",
             draftSkillId: draft.manifest.id,
+            explicitTest: undefined,
             updatedAt: deps.nowIso(),
           };
-          persistSession(finalSession);
+          const syncedFinal = await syncSkillHarness(finalSession, draft);
+          persistSession(syncedFinal.session);
 
-          return buildTurnResponse(finalSession, analyzerResult, draft);
+          return buildTurnResponse(syncedFinal.session, analyzerResult, draft);
         } catch (err) {
           const failedSession: FridaySkillGenerationSession = {
-            ...updatedSession,
+            ...syncedUpdated.session,
             status: "failed",
             updatedAt: deps.nowIso(),
           };
-          persistSession(failedSession);
+          const syncedFailed = await syncSkillHarness(failedSession);
+          persistSession(syncedFailed.session);
 
           return {
-            session: failedSession,
+            session: syncedFailed.session,
             mode: "generation_failed",
             errors: [
               {
@@ -930,7 +1381,7 @@ export function createFridaySkillGeneratorService(
         }
       }
 
-      return buildTurnResponse(updatedSession, analyzerResult);
+      return buildTurnResponse(syncedUpdated.session, analyzerResult);
     },
 
     async submitTurn(
@@ -952,6 +1403,7 @@ export function createFridaySkillGeneratorService(
       }
 
       const now = deps.nowIso();
+      deleteDraft(sessionId);
 
       // Add user turn
       const userTurn: FridaySkillGenerationTurn = {
@@ -990,10 +1442,13 @@ export function createFridaySkillGeneratorService(
             ? [`User provided: ${input.message}`]
             : []),
         ],
+        draftSkillId: undefined,
+        explicitTest: undefined,
         updatedAt: deps.nowIso(),
       };
 
-      persistSession(updatedSession);
+      const syncedUpdated = await syncSkillHarness(updatedSession);
+      persistSession(syncedUpdated.session);
 
       // Add assistant turn
       const assistantContent =
@@ -1014,30 +1469,33 @@ export function createFridaySkillGeneratorService(
       if (analyzerResult.state === "ready_for_generation") {
         try {
           const draft = await runGenerationPipeline(
-            updatedSession,
+            syncedUpdated.session,
             analyzerResult.spec,
             input.requestedModel,
           );
 
           const finalSession: FridaySkillGenerationSession = {
-            ...updatedSession,
+            ...syncedUpdated.session,
             status: draft.validation.ok ? "ready_for_review" : "failed",
             draftSkillId: draft.manifest.id,
+            explicitTest: undefined,
             updatedAt: deps.nowIso(),
           };
-          persistSession(finalSession);
+          const syncedFinal = await syncSkillHarness(finalSession, draft);
+          persistSession(syncedFinal.session);
 
-          return buildTurnResponse(finalSession, analyzerResult, draft);
+          return buildTurnResponse(syncedFinal.session, analyzerResult, draft);
         } catch (err) {
           const failedSession: FridaySkillGenerationSession = {
-            ...updatedSession,
+            ...syncedUpdated.session,
             status: "failed",
             updatedAt: deps.nowIso(),
           };
-          persistSession(failedSession);
+          const syncedFailed = await syncSkillHarness(failedSession);
+          persistSession(syncedFailed.session);
 
           return {
-            session: failedSession,
+            session: syncedFailed.session,
             mode: "generation_failed",
             errors: [
               {
@@ -1051,7 +1509,7 @@ export function createFridaySkillGeneratorService(
         }
       }
 
-      return buildTurnResponse(updatedSession, analyzerResult);
+      return buildTurnResponse(syncedUpdated.session, analyzerResult);
     },
 
     async getSession(sessionId: string) {
@@ -1106,35 +1564,79 @@ export function createFridaySkillGeneratorService(
       const generatingSession: FridaySkillGenerationSession = {
         ...session,
         status: "generating",
+        draftSkillId: undefined,
+        explicitTest: undefined,
         updatedAt: deps.nowIso(),
       };
-      persistSession(generatingSession);
+      const syncedGenerating = await syncSkillHarness(generatingSession);
+      persistSession(syncedGenerating.session);
 
       try {
         const draft = await runGenerationPipeline(
-          generatingSession,
+          syncedGenerating.session,
           spec,
           requestedModel,
         );
 
         const finalSession: FridaySkillGenerationSession = {
-          ...generatingSession,
+          ...syncedGenerating.session,
           status: draft.validation.ok ? "ready_for_review" : "failed",
           draftSkillId: draft.manifest.id,
+          explicitTest: undefined,
           updatedAt: deps.nowIso(),
         };
-        persistSession(finalSession);
+        const syncedFinal = await syncSkillHarness(finalSession, draft);
+        persistSession(syncedFinal.session);
 
         return draft;
       } catch (err) {
         const failedSession: FridaySkillGenerationSession = {
-          ...generatingSession,
+          ...syncedGenerating.session,
           status: "failed",
           updatedAt: deps.nowIso(),
         };
-        persistSession(failedSession);
+        const syncedFailed = await syncSkillHarness(failedSession);
+        persistSession(syncedFailed.session);
         throw err;
       }
+    },
+
+    async recordExplicitTestResult(
+      sessionId: string,
+      test: FridaySkillGenerationExplicitTestSummary,
+    ): Promise<void> {
+      const session = requireSession(sessionId);
+      const draft = loadDraft(sessionId);
+      if (!draft) {
+        throw new FridayDomainError(
+          "GENERATOR_DRAFT_NOT_FOUND",
+          "No draft found for session. Generate a draft first.",
+          { httpStatus: 404 },
+        );
+      }
+      const updatedSession: FridaySkillGenerationSession = {
+        ...session,
+        explicitTest: test,
+        updatedAt: deps.nowIso(),
+      };
+      const synced = await syncSkillHarness(updatedSession, draft);
+      persistSession(synced.session);
+    },
+
+    async getQaVerdict(sessionId: string) {
+      const session = requireSession(sessionId);
+      if (!session.qaVerdictId || !harness.enabled) {
+        return null;
+      }
+      return harness.getQaVerdict(session.qaVerdictId);
+    },
+
+    async getHarnessSummary(sessionId: string) {
+      const session = requireSession(sessionId);
+      const qaVerdict = session.qaVerdictId && harness.enabled
+        ? harness.getQaVerdict(session.qaVerdictId)
+        : null;
+      return buildHarnessSummaryFromSession(session, qaVerdict);
     },
 
     async approveAndSave(sessionId: string) {
@@ -1162,6 +1664,18 @@ export function createFridaySkillGeneratorService(
         throw new FridayDomainError(
           "VALIDATION_ERROR",
           "Cannot approve a draft with validation errors.",
+          { httpStatus: 422 },
+        );
+      }
+
+      const syncedReview = await syncSkillHarness(session, draft);
+      persistSession(syncedReview.session);
+
+      if (harness.enabled && syncedReview.qaVerdict?.verdict !== "pass") {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          syncedReview.qaVerdict?.summary
+            ?? "Cannot approve the draft until the QA verdict passes.",
           { httpStatus: 422 },
         );
       }
@@ -1284,11 +1798,12 @@ export function createFridaySkillGeneratorService(
 
       // Update session status
       const approvedSession: FridaySkillGenerationSession = {
-        ...session,
+        ...syncedReview.session,
         status: "approved",
         updatedAt: deps.nowIso(),
       };
-      persistSession(approvedSession);
+      const syncedApproved = await syncSkillHarness(approvedSession);
+      persistSession(syncedApproved.session);
 
       // Update lifecycle status to "installed"
       await deps.memoryStateService.updateSkillStatus(
@@ -1298,11 +1813,12 @@ export function createFridaySkillGeneratorService(
 
       // Save final status
       const savedSession: FridaySkillGenerationSession = {
-        ...approvedSession,
+        ...syncedApproved.session,
         status: "saved",
         updatedAt: deps.nowIso(),
       };
-      persistSession(savedSession);
+      const syncedSaved = await syncSkillHarness(savedSession);
+      persistSession(syncedSaved.session);
 
       // Refresh the skill registry
       let registryRefreshed = false;
@@ -1329,6 +1845,8 @@ export function createFridaySkillGeneratorService(
           packageValidated: true,
           registryRefreshed,
         },
+        harness: syncedSaved.harnessSummary,
+        qaVerdict: syncedReview.qaVerdict,
       };
     },
 
@@ -1344,7 +1862,8 @@ export function createFridaySkillGeneratorService(
         status: "cancelled",
         updatedAt: deps.nowIso(),
       };
-      persistSession(cancelledSession);
+      const syncedCancelled = await syncSkillHarness(cancelledSession);
+      persistSession(syncedCancelled.session);
 
       // Clean up persisted draft
       deleteDraft(sessionId);

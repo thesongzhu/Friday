@@ -1,5 +1,7 @@
 import { FridayDomainError } from "#errors";
 import type { FridayAgentRuntime } from "#agent";
+import type { FridayTemplateHarnessSummary } from "#harness";
+import type { FridaySessionService } from "#sessions";
 import type { FridaySqliteLayer } from "#state";
 import type { FridaySkillExecutor } from "#skills";
 import type { FridaySkillGeneratorService } from "#skills/generator";
@@ -37,6 +39,7 @@ interface FridayWizardContextRecord extends FridayGuidedWizardState {
   workflowSessionId?: string;
   flowKind?: "skill" | "workflow";
   resolvedIntent?: FridayBeginnerIntentResolution["intent"];
+  assistantSessionKey?: string;
 }
 
 export interface FridayUixSurfaceService {
@@ -67,16 +70,19 @@ export interface FridayUixSurfaceService {
     templateId: string;
     userId: string;
     parameters: Record<string, unknown>;
+    assistantSessionKey?: string;
   }): Promise<FridayUixTemplateExecutionResponse>;
   startWizard(input: {
     wizardId: string;
     userId: string;
+    assistantSessionKey?: string;
   }): FridayUixWizardResponse;
   continueWizard(input: {
     wizardId: string;
     contextId: string;
     userId: string;
     values: Record<string, unknown>;
+    assistantSessionKey?: string;
   }): Promise<FridayUixWizardResponse>;
   listIssues(input: {
     userId: string;
@@ -93,6 +99,7 @@ export interface CreateFridayUixSurfaceServiceDeps {
   selfHealing: FridaySelfHealingApiService;
   skillExecutor?: FridaySkillExecutor;
   agentRuntime?: FridayAgentRuntime;
+  sessionService?: FridaySessionService;
   observability?: FridayObservabilityApiService;
   preferenceRepo?: FridayUixUserPreferenceRepository;
   learningContextBuilder?: (input: { userId: string; nowIso: string }) => { preferences: Record<string, unknown> };
@@ -637,6 +644,24 @@ export function createFridayUixSurfaceService(
     };
   }
 
+  async function syncAssistantHarnessFocus(input: {
+    assistantSessionKey?: string;
+    harness?: FridayTemplateHarnessSummary | null;
+  }): Promise<void> {
+    if (!deps.sessionService || !input.assistantSessionKey || !input.harness) {
+      return;
+    }
+    await deps.sessionService.getOrCreateSession(input.assistantSessionKey);
+    const currentFocus = await deps.sessionService.getConversationFocus(input.assistantSessionKey).catch(() => null);
+    await deps.sessionService.setConversationFocus(input.assistantSessionKey, {
+      ...(currentFocus ?? { updatedAt: nowIso() }),
+      lastHarnessStage: input.harness.stage,
+      lastHandoffArtifactId: input.harness.handoffArtifactId,
+      lastHarnessSummary: input.harness.summary,
+      updatedAt: nowIso(),
+    });
+  }
+
   function resolveIntentFromText(
     textInput: string,
     userId?: string,
@@ -960,6 +985,20 @@ export function createFridayUixSurfaceService(
       ...input,
       persona,
     });
+  }
+
+  async function loadSkillHarnessSummary(sessionId: string): Promise<FridayTemplateHarnessSummary | null> {
+    if (typeof deps.skillGenerator?.getHarnessSummary !== "function") {
+      return null;
+    }
+    return deps.skillGenerator.getHarnessSummary(sessionId);
+  }
+
+  async function loadWorkflowHarnessSummary(sessionId: string): Promise<FridayTemplateHarnessSummary | null> {
+    if (typeof deps.workflowGenerator?.getHarnessSummary !== "function") {
+      return null;
+    }
+    return deps.workflowGenerator.getHarnessSummary(sessionId);
   }
 
   async function startWorkflowSession(input: {
@@ -1324,6 +1363,7 @@ export function createFridayUixSurfaceService(
             userId: input.userId,
             channel: "assistant",
           });
+          const harness = await loadSkillHarnessSummary(response.session.sessionId);
           const responsePayload: FridayUixTemplateExecutionResponse = applyGuidance({
             templateId: input.templateId,
             status: "executed",
@@ -1339,11 +1379,16 @@ export function createFridayUixSurfaceService(
               draftSkillId: response.draft?.manifest.id,
               validationOk: response.draft?.validation.ok,
             },
+            harness: harness ?? undefined,
           }, buildGuidance({
             text: goal,
             intent: "generate_skill",
             questions: response.questions,
           }));
+          await syncAssistantHarnessFocus({
+            assistantSessionKey: input.assistantSessionKey,
+            harness,
+          });
           await deps.observability?.recordAssistantEvent({
             userId: input.userId,
             event: "template_executed",
@@ -1380,6 +1425,9 @@ export function createFridayUixSurfaceService(
               userId: input.userId,
             });
           const previewResponse = response.response;
+          const harness = previewResponse?.session.sessionId ?? sessionId
+            ? await loadWorkflowHarnessSummary(previewResponse?.session.sessionId ?? sessionId!)
+            : null;
           const responsePayload: FridayUixTemplateExecutionResponse = response.workflow
             ? applyGuidance({
               templateId: input.templateId,
@@ -1391,6 +1439,7 @@ export function createFridayUixSurfaceService(
                 mode: response.response?.mode,
               },
               workflow: response.workflow,
+              harness: harness ?? undefined,
             }, buildGuidance({
               text: goal || response.workflow.workflowName,
               intent: "generate_workflow",
@@ -1414,11 +1463,16 @@ export function createFridayUixSurfaceService(
                 deployReady: false,
                 questions: previewResponse!.questions ?? [],
               },
+              harness: harness ?? undefined,
             }, buildGuidance({
               text: goal,
               intent: "generate_workflow",
               questions: previewResponse!.questions ?? [],
             }));
+          await syncAssistantHarnessFocus({
+            assistantSessionKey: input.assistantSessionKey,
+            harness,
+          });
           await deps.observability?.recordAssistantEvent({
             userId: input.userId,
             event: "template_executed",
@@ -1978,6 +2032,7 @@ export function createFridayUixSurfaceService(
       const context: FridayWizardContextRecord = {
         wizardId: input.wizardId,
         contextId: deps.idGenerator(),
+        assistantSessionKey: input.assistantSessionKey,
         title: "Guided Assistant",
         status: "awaiting_input",
         currentStepId: "goal",
@@ -2021,6 +2076,8 @@ export function createFridayUixSurfaceService(
             httpStatus: 404,
           });
         }
+        const assistantSessionKey = input.assistantSessionKey ?? context.assistantSessionKey;
+        context.assistantSessionKey = assistantSessionKey;
 
       if (context.currentStepId === "goal") {
         const goal = typeof input.values.goal === "string" ? input.values.goal.trim() : "";
@@ -2042,6 +2099,7 @@ export function createFridayUixSurfaceService(
           context.flowKind = "workflow";
           const response = await startWorkflowSession({ goal, userId: input.userId });
           context.workflowSessionId = response.response.session.sessionId;
+          const harness = await loadWorkflowHarnessSummary(context.workflowSessionId);
           if (!response.workflow) {
             context.currentStepId = "clarification";
             context.status = "awaiting_input";
@@ -2063,11 +2121,16 @@ export function createFridayUixSurfaceService(
                 deployReady: false,
                 questions: response.response.questions ?? [],
               },
+              harness: harness ?? undefined,
             }, buildUserGuidance(input.userId, {
               text: goal,
               intent: resolvedIntent.intent,
               questions: response.response.questions ?? [],
             }));
+            await syncAssistantHarnessFocus({
+              assistantSessionKey,
+              harness,
+            });
             await deps.observability?.recordAssistantEvent({
               userId: input.userId,
               event: "wizard_continued",
@@ -2100,10 +2163,15 @@ export function createFridayUixSurfaceService(
                   deployment: deployed.deployment,
                 },
                 workflow: deployed.workflow,
+                harness: harness ?? undefined,
               }, buildUserGuidance(input.userId, {
                 text: goal,
                 intent: resolvedIntent.intent,
               }));
+              await syncAssistantHarnessFocus({
+                assistantSessionKey,
+                harness,
+              });
               await deps.observability?.recordAssistantEvent({
                 userId: input.userId,
                 event: "wizard_continued",
@@ -2121,12 +2189,17 @@ export function createFridayUixSurfaceService(
                 questions: response.workflow.questions,
                 sessionId: response.workflow.sessionId,
               }),
+              harness: harness ?? undefined,
             }, buildUserGuidance(input.userId, {
               text: goal,
               intent: resolvedIntent.intent,
               blockedByPolicy: true,
               unknowns: response.workflow.questions,
             }));
+            await syncAssistantHarnessFocus({
+              assistantSessionKey,
+              harness,
+            });
             await deps.observability?.recordAssistantEvent({
               userId: input.userId,
               event: "wizard_continued",
@@ -2145,10 +2218,15 @@ export function createFridayUixSurfaceService(
             result: {
               sessionId: response.workflow.sessionId,
             },
+            harness: harness ?? undefined,
           }, buildUserGuidance(input.userId, {
             text: goal,
             intent: resolvedIntent.intent,
           }));
+          await syncAssistantHarnessFocus({
+            assistantSessionKey,
+            harness,
+          });
           await deps.observability?.recordAssistantEvent({
             userId: input.userId,
             event: "wizard_continued",
@@ -2171,6 +2249,7 @@ export function createFridayUixSurfaceService(
           userId: input.userId,
           channel: "assistant",
         });
+        const harness = await loadSkillHarnessSummary(response.session.sessionId);
         context.skillSessionId = response.session.sessionId;
         if (response.mode === "clarification_required") {
           context.currentStepId = "clarification";
@@ -2184,11 +2263,16 @@ export function createFridayUixSurfaceService(
               mode: response.mode,
               questions: response.questions ?? [],
             },
+            harness: harness ?? undefined,
           }, buildUserGuidance(input.userId, {
             text: goal,
             intent: "generate_skill",
             questions: response.questions ?? [],
           }));
+          await syncAssistantHarnessFocus({
+            assistantSessionKey,
+            harness,
+          });
           await deps.observability?.recordAssistantEvent({
             userId: input.userId,
             event: "wizard_continued",
@@ -2208,10 +2292,15 @@ export function createFridayUixSurfaceService(
             draftSkillId: response.draft?.manifest.id,
             validationOk: response.draft?.validation.ok,
           },
+          harness: harness ?? undefined,
         }, buildUserGuidance(input.userId, {
           text: goal,
           intent: "generate_skill",
         }));
+        await syncAssistantHarnessFocus({
+          assistantSessionKey,
+          harness,
+        });
         await deps.observability?.recordAssistantEvent({
           userId: input.userId,
           event: "wizard_continued",
@@ -2238,6 +2327,7 @@ export function createFridayUixSurfaceService(
             message: answer,
             userId: input.userId,
           });
+          const harness = await loadWorkflowHarnessSummary(context.workflowSessionId);
           if (!response.workflow) {
             context.collectedValues.questions = response.response.questions ?? [];
             const wizardResponse = applyGuidance({
@@ -2257,11 +2347,16 @@ export function createFridayUixSurfaceService(
                 deployReady: false,
                 questions: response.response.questions ?? [],
               },
+              harness: harness ?? undefined,
             }, buildUserGuidance(input.userId, {
               text: String(context.collectedValues.goal ?? "Workflow"),
               intent: context.resolvedIntent ?? "generate_workflow",
               questions: response.response.questions ?? [],
             }));
+            await syncAssistantHarnessFocus({
+              assistantSessionKey,
+              harness,
+            });
             await deps.observability?.recordAssistantEvent({
               userId: input.userId,
               event: "wizard_continued",
@@ -2289,15 +2384,20 @@ export function createFridayUixSurfaceService(
               const wizardResponse = applyGuidance({
                 ...makeWizard(context),
                 summary: deployed.workflow.summary,
-                result: {
-                  sessionId: context.workflowSessionId,
-                  deployment: deployed.deployment,
-                },
-                workflow: deployed.workflow,
-              }, buildUserGuidance(input.userId, {
-                text: String(context.collectedValues.goal ?? "Workflow"),
-                intent: context.resolvedIntent ?? "deploy_workflow",
+              result: {
+                sessionId: context.workflowSessionId,
+                deployment: deployed.deployment,
+              },
+              workflow: deployed.workflow,
+              harness: harness ?? undefined,
+            }, buildUserGuidance(input.userId, {
+              text: String(context.collectedValues.goal ?? "Workflow"),
+              intent: context.resolvedIntent ?? "deploy_workflow",
               }));
+              await syncAssistantHarnessFocus({
+                assistantSessionKey,
+                harness,
+              });
               await deps.observability?.recordAssistantEvent({
                 userId: input.userId,
                 event: "wizard_continued",
@@ -2315,12 +2415,17 @@ export function createFridayUixSurfaceService(
                 questions: response.workflow.questions,
                 sessionId: response.workflow.sessionId,
               }),
+              harness: harness ?? undefined,
             }, buildUserGuidance(input.userId, {
               text: String(context.collectedValues.goal ?? "Workflow"),
               intent: context.resolvedIntent ?? "deploy_workflow",
               blockedByPolicy: true,
               unknowns: response.workflow.questions,
             }));
+            await syncAssistantHarnessFocus({
+              assistantSessionKey,
+              harness,
+            });
             await deps.observability?.recordAssistantEvent({
               userId: input.userId,
               event: "wizard_continued",
@@ -2339,10 +2444,15 @@ export function createFridayUixSurfaceService(
               sessionId: context.workflowSessionId,
             },
             workflow: response.workflow,
+            harness: harness ?? undefined,
           }, buildUserGuidance(input.userId, {
             text: String(context.collectedValues.goal ?? "Workflow"),
             intent: context.resolvedIntent ?? "generate_workflow",
           }));
+          await syncAssistantHarnessFocus({
+            assistantSessionKey,
+            harness,
+          });
           await deps.observability?.recordAssistantEvent({
             userId: input.userId,
             event: "wizard_continued",
@@ -2367,6 +2477,7 @@ export function createFridayUixSurfaceService(
         const response = await deps.skillGenerator.submitTurn(context.skillSessionId, {
           message: answer,
         });
+        const harness = await loadSkillHarnessSummary(context.skillSessionId);
         if (response.mode === "clarification_required") {
           context.collectedValues.questions = response.questions ?? [];
           const wizardResponse = applyGuidance({
@@ -2377,11 +2488,16 @@ export function createFridayUixSurfaceService(
               mode: response.mode,
               questions: response.questions ?? [],
             },
+            harness: harness ?? undefined,
           }, buildUserGuidance(input.userId, {
             text: String(context.collectedValues.goal ?? "Skill"),
             intent: "generate_skill",
             questions: response.questions ?? [],
           }));
+          await syncAssistantHarnessFocus({
+            assistantSessionKey,
+            harness,
+          });
           await deps.observability?.recordAssistantEvent({
             userId: input.userId,
             event: "wizard_continued",
@@ -2401,10 +2517,15 @@ export function createFridayUixSurfaceService(
             draftSkillId: response.draft?.manifest.id,
             validationOk: response.draft?.validation.ok,
           },
+          harness: harness ?? undefined,
         }, buildUserGuidance(input.userId, {
           text: String(context.collectedValues.goal ?? "Skill"),
           intent: "generate_skill",
         }));
+        await syncAssistantHarnessFocus({
+          assistantSessionKey,
+          harness,
+        });
         await deps.observability?.recordAssistantEvent({
           userId: input.userId,
           event: "wizard_continued",

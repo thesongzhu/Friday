@@ -18,6 +18,9 @@ describe("friday-agent-evidence-blocks", () => {
     activeRunId: "run-2",
     activeSubagentIds: ["sub-1"],
     pendingPlanRunId: "plan-1",
+    lastHarnessStage: "handoff_ready",
+    lastHandoffArtifactId: "handoff-1",
+    lastHarnessSummary: "Workflow draft is blocked on browser QA evidence.",
     updatedAt: "2026-03-17T10:00:00.000Z",
   };
 
@@ -189,5 +192,18 @@ describe("friday-agent-evidence-blocks", () => {
     expect(blocks.some((block) =>
       block.source === "delegated_task_block"
       && block.summary.includes("response CHILD_OK"))).toBe(true);
+  });
+
+  it("adds harness handoff evidence for resume-style follow-ups", () => {
+    const blocks = buildFridayEvidenceBlocks({
+      task: "继续那个 workflow",
+      turnKind: "continue_active_task",
+      focusState,
+    });
+
+    expect(blocks.find((block) => block.source === "harness_block")?.summary)
+      .toContain("handoff artifact handoff-1");
+    expect(blocks.find((block) => block.source === "harness_block")?.summary)
+      .toContain("Workflow draft is blocked on browser QA evidence.");
   });
 });
