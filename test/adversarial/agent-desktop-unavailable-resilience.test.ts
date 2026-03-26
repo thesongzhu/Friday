@@ -68,7 +68,6 @@ describe("Agent dependency-missing resilience", () => {
           }),
         });
         const body = (await response.json()) as AgentRunEnvelope;
-
         expect(response.status).toBe(200);
         expect(body.ok).toBe(true);
         expect(body.data.status).toBe("failed");

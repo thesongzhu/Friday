@@ -24,6 +24,17 @@ const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>)
     ]);
     return !readOnlyActions.has(action);
   },
+  desktop: (args) => {
+    const action = typeof args.action === "string" ? args.action : "";
+    const readOnlyActions = new Set([
+      "screenshot",
+      "inspect_element",
+      "search_elements",
+      "check_permissions",
+      "session_info",
+    ]);
+    return !readOnlyActions.has(action);
+  },
   browser: (args) => {
     // browser actions that mutate state
     let action = typeof args.action === "string" ? args.action : "";
