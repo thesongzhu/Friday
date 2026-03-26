@@ -102,3 +102,51 @@ export function inferFridaySubagentProfile(task: string, label?: string): Friday
   }
   return "explore";
 }
+
+const DIRECT_WRITE_HINTS =
+  /\b(write|edit|modify|update|patch|rewrite|rename|delete|remove)\b/i;
+const IMPLEMENTATION_HINTS =
+  /\b(fix|implement|refactor)\b/i;
+const IMPLEMENTATION_DOMAINS =
+  /\b(file|files|code|repo|repository|workflow|skill|test|tests|docs|document|folder|directory|workspace|project)\b/i;
+const BROWSER_MUTATION_HINTS =
+  /\b(open|navigate|click|type|fill|select|press|drag|upload|take|capture|attach)\b/i;
+const BROWSER_MUTATION_DOMAINS =
+  /\b(browser|page|site|website|url|screenshot|screen shot|image|tab)\b|https?:\/\/|(?:^|\s)[\w-]+\.(com|net|org|io|dev|app)\b/i;
+const EXEC_MUTATION_HINTS =
+  /\b(run|execute|launch|start|stop|restart|deploy|build|install|lint|typecheck|migrate|publish|release|export)\b/i;
+const EXEC_MUTATION_DOMAINS =
+  /\b(command|shell|bash|script|server|service|process|package|dependency|tests?|build|deployment|release|migration)\b/i;
+const MESSAGE_MUTATION_HINTS =
+  /\b(send|post|reply|attach|upload|publish)\b/i;
+const MESSAGE_MUTATION_DOMAINS =
+  /\b(discord|slack|telegram|message|email|screenshot|file|artifact)\b/i;
+
+export function taskLikelyNeedsWriteAccessForSubagent(task: string, label?: string): boolean {
+  const text = `${label ?? ""}\n${task}`.trim();
+  if (text.length === 0) {
+    return false;
+  }
+
+  if (DIRECT_WRITE_HINTS.test(text)) {
+    return true;
+  }
+
+  if (IMPLEMENTATION_HINTS.test(text) && IMPLEMENTATION_DOMAINS.test(text)) {
+    return true;
+  }
+
+  if (BROWSER_MUTATION_HINTS.test(text) && BROWSER_MUTATION_DOMAINS.test(text)) {
+    return true;
+  }
+
+  if (EXEC_MUTATION_HINTS.test(text) && EXEC_MUTATION_DOMAINS.test(text)) {
+    return true;
+  }
+
+  if (MESSAGE_MUTATION_HINTS.test(text) && MESSAGE_MUTATION_DOMAINS.test(text)) {
+    return true;
+  }
+
+  return false;
+}

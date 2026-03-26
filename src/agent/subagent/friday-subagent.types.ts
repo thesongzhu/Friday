@@ -6,7 +6,10 @@ import type {
 import type { FridayAgentEventEmitter } from "../runtime/friday-agent-event-emitter.js";
 import type { FridayAgentTaskProfileInput } from "../runtime/friday-agent-task-profile.js";
 import type { FridayAgentRunConstraints } from "../model/friday-agent.types.js";
-import type { FridaySubagentProfileId } from "./friday-subagent-profile.js";
+import type {
+  FridaySubagentProfileId,
+  FridaySubagentProfileInput,
+} from "./friday-subagent-profile.js";
 
 // ─── Sub-agent run status ───
 
@@ -130,7 +133,7 @@ export interface FridaySubagentRegistrySpawnInput {
   label?: string;
   providerId?: string;
   model?: string;
-  profile?: FridaySubagentProfileId;
+  profile?: FridaySubagentProfileId | FridaySubagentProfileInput;
   timezone?: string;
   timeoutMs?: number;
   conversationContext?: FridayAgentConversationContext;
