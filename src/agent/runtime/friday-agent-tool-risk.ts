@@ -40,7 +40,7 @@ export function getApprovalRequiredReasonForExecCommand(command: string): string
     .some((filePath) => requiresApprovalForProtectedArtifactPath(filePath));
 
   if (touchesProtectedArtifact && DESTRUCTIVE_COMMAND_KEYWORD_RE.test(lowerCommand)) {
-    return "Deleting backup/dump/snapshot-like artifacts requires explicit approval in the current run context.";
+    return "Deleting backup/dump/snapshot-like artifacts is destructive and requires explicit approval in the current run context.";
   }
 
   if (DESTRUCTIVE_PROGRAMS.has(program)) {
