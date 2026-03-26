@@ -3,15 +3,71 @@ import type {
   FridayWorkflowBuilderValidationReport,
   FridayWorkflowEditorEdge,
   FridayWorkflowSpecEdgeWhen,
+  WorkflowNodeType,
 } from "@/lib/api/types";
 
 export type BuilderValidationTone = "warning" | "danger";
+export type BuilderPaletteGroupId = "execution" | "logic" | "data";
+
+export interface BuilderPaletteEntry {
+  type: Exclude<WorkflowNodeType, "trigger">;
+  label: string;
+  description: string;
+  groupId: BuilderPaletteGroupId;
+  groupLabel: string;
+}
 
 export interface BuilderValidationIssueSummary {
   tone: BuilderValidationTone;
   issues: FridayWorkflowBuilderValidationIssue[];
   count: number;
+  primaryIssueMessage: string;
+  remainingCount: number;
 }
+
+export interface BuilderPaletteGroup {
+  id: BuilderPaletteGroupId;
+  label: string;
+  entries: BuilderPaletteEntry[];
+}
+
+export const BUILDER_NODE_PALETTE: BuilderPaletteEntry[] = [
+  {
+    type: "action",
+    label: "Action",
+    description: "Call a stable skill or external operation as a concrete workflow step.",
+    groupId: "execution",
+    groupLabel: "Execution",
+  },
+  {
+    type: "ai",
+    label: "AI / Tool",
+    description: "Run an AI completion or direct tool invocation inside the workflow graph.",
+    groupId: "execution",
+    groupLabel: "Execution",
+  },
+  {
+    type: "condition",
+    label: "Condition",
+    description: "Branch on true/false or success/failure logic without editing raw JSON.",
+    groupId: "logic",
+    groupLabel: "Logic",
+  },
+  {
+    type: "approval",
+    label: "Approval",
+    description: "Gate execution behind a human review or owner/operator approval step.",
+    groupId: "logic",
+    groupLabel: "Logic",
+  },
+  {
+    type: "data",
+    label: "Transform",
+    description: "Map, template, or reshape data between workflow steps.",
+    groupId: "data",
+    groupLabel: "Data",
+  },
+];
 
 export function edgeKeyFor(input: { source: string; target: string; branch?: string }): string {
   return `${input.source}:${input.target}:${input.branch ?? "any"}`;
@@ -46,6 +102,49 @@ export function describeWorkflowEdgeLabel(
   return options?.includeFallback ? "Always" : null;
 }
 
+export function buildBuilderPaletteGroups(options?: { query?: string }): BuilderPaletteGroup[] {
+  const normalizedQuery = options?.query?.trim().toLowerCase() ?? "";
+  const filteredEntries =
+    normalizedQuery.length === 0
+      ? BUILDER_NODE_PALETTE
+      : BUILDER_NODE_PALETTE.filter((entry) => (
+          entry.label.toLowerCase().includes(normalizedQuery)
+          || entry.groupLabel.toLowerCase().includes(normalizedQuery)
+          || entry.description.toLowerCase().includes(normalizedQuery)
+        ));
+
+  const groups = new Map<BuilderPaletteGroupId, BuilderPaletteGroup>();
+  for (const entry of filteredEntries) {
+    const existing = groups.get(entry.groupId);
+    if (existing) {
+      existing.entries.push(entry);
+      continue;
+    }
+    groups.set(entry.groupId, {
+      id: entry.groupId,
+      label: entry.groupLabel,
+      entries: [entry],
+    });
+  }
+
+  return [
+    groups.get("execution"),
+    groups.get("logic"),
+    groups.get("data"),
+  ].filter((group): group is BuilderPaletteGroup => Boolean(group));
+}
+
+export function snapFlowPositionToGrid(
+  input: { x: number; y: number },
+  options?: { gridSize?: number },
+): { x: number; y: number } {
+  const gridSize = Math.max(1, options?.gridSize ?? 28);
+  return {
+    x: Math.round(input.x / gridSize) * gridSize,
+    y: Math.round(input.y / gridSize) * gridSize,
+  };
+}
+
 function toneRank(severity: FridayWorkflowBuilderValidationIssue["severity"]): number {
   if (severity === "error") return 2;
   if (severity === "warning") return 1;
@@ -67,6 +166,8 @@ function appendIssue(
       tone: toneFromSeverity(issue.severity),
       issues: [issue],
       count: 1,
+      primaryIssueMessage: issue.message,
+      remainingCount: 0,
     });
     return;
   }
@@ -80,19 +181,26 @@ function appendIssue(
     tone: nextTone,
     issues: [...existing.issues, issue],
     count: existing.count + 1,
+    primaryIssueMessage: existing.primaryIssueMessage,
+    remainingCount: existing.count,
   });
 }
 
 export function summarizeWorkflowValidationIssues(validation?: FridayWorkflowBuilderValidationReport | null): {
   nodeIssues: Map<string, BuilderValidationIssueSummary>;
   edgeIssues: Map<string, BuilderValidationIssueSummary>;
+  globalIssues: FridayWorkflowBuilderValidationIssue[];
+  focusableIssues: FridayWorkflowBuilderValidationIssue[];
 } {
   const nodeIssues = new Map<string, BuilderValidationIssueSummary>();
   const edgeIssues = new Map<string, BuilderValidationIssueSummary>();
+  const globalIssues: FridayWorkflowBuilderValidationIssue[] = [];
+  const focusableIssues: FridayWorkflowBuilderValidationIssue[] = [];
 
   for (const issue of validation?.issues ?? []) {
     if (issue.stepId) {
       appendIssue(nodeIssues, issue.stepId, issue);
+      focusableIssues.push(issue);
     }
     if (issue.edgeRef) {
       appendIssue(
@@ -104,8 +212,12 @@ export function summarizeWorkflowValidationIssues(validation?: FridayWorkflowBui
         }),
         issue,
       );
+      focusableIssues.push(issue);
+    }
+    if (!issue.stepId && !issue.edgeRef) {
+      globalIssues.push(issue);
     }
   }
 
-  return { nodeIssues, edgeIssues };
+  return { nodeIssues, edgeIssues, globalIssues, focusableIssues };
 }
