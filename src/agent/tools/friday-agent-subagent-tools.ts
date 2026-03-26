@@ -6,6 +6,7 @@ import type {
   FridaySubagentRegistry,
   FridaySubagentRunStatus,
 } from "../subagent/friday-subagent.types.js";
+import type { FridaySubagentProfileId } from "../subagent/friday-subagent-profile.js";
 import { getFridayAgentToolExecutionContext } from "../runtime/friday-agent-tool-execution-context.js";
 import {
   errorResult,
@@ -77,6 +78,11 @@ function createSpawnSubagentTool(
           type: "string",
           description: "Optional model override for the sub-agent (defaults to parent's model).",
         },
+        profile: {
+          type: "string",
+          enum: ["explore", "plan", "debug", "review"],
+          description: "Optional built-in sub-agent profile. Defaults to heuristic routing based on the task.",
+        },
         timeoutMs: {
           type: "number",
           description: "Optional timeout in milliseconds (default: 180000 = 3 minutes).",
@@ -93,6 +99,7 @@ function createSpawnSubagentTool(
       const task = readStringParam(args, "task", { required: true });
       const label = readStringParam(args, "label");
       const model = readStringParam(args, "model");
+      const profile = readStringParam(args, "profile") as FridaySubagentProfileId | undefined;
       const timeoutMs = readNumberParam(args, "timeoutMs", { integer: true });
       const wait = args.wait === true;
       const toolExecutionContext = getFridayAgentToolExecutionContext(signal);
@@ -103,6 +110,7 @@ function createSpawnSubagentTool(
           taskPrompt: toolExecutionContext?.taskPrompt,
           label,
           model,
+          profile,
           timezone: subagentContext.timezone,
           timeoutMs,
           conversationContext: toolExecutionContext?.conversationContext,
@@ -157,6 +165,7 @@ function createSpawnSubagentTool(
           subagentId: detached.subagentId,
           childRunId: detached.childRunId,
           childSessionKey: detached.childSessionKey,
+          ...(profile ? { profile } : {}),
           statusSnapshot,
           ...(outcome ? { outcome } : {}),
           message,

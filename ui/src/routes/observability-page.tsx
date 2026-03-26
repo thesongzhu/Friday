@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ShellCard, StatusPill } from "@/components/core/primitives";
+import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { systemApi } from "@/lib/api/system";
 import {
   buildObservabilityActionQueue,
@@ -38,6 +39,7 @@ function buildRecentWindow(minutes: number) {
 function parseFocus(value: string | null): FridayObservabilityFocus {
   if (
     value === "alerts" ||
+    value === "assistant" ||
     value === "health" ||
     value === "acceptance" ||
     value === "retry" ||
@@ -267,6 +269,12 @@ export function ObservabilityPage() {
     refetchInterval: 15_000,
   });
 
+  const assistantDiagnosticsQuery = useQuery({
+    queryKey: ["observability", "assistant-diagnostics"],
+    queryFn: () => assistantDiagnosticsApi.get(),
+    refetchInterval: 10_000,
+  });
+
   const acknowledgeAlertMutation = useMutation({
     mutationFn: (input: { alertId: string; note?: string }) =>
       systemApi.acknowledgeObservabilityAlert(input.alertId, input.note),
@@ -295,6 +303,28 @@ export function ObservabilityPage() {
   const retryCircuitBreakers = retryCircuitBreakersQuery.data ?? [];
   const retryCostSummary = retryCostSummaryQuery.data;
   const rulesAuditLog = rulesAuditLogQuery.data ?? [];
+  const assistantDiagnostics = assistantDiagnosticsQuery.data;
+  const latestAssistantRun = assistantDiagnostics?.recentRuns[0] ?? null;
+  const assistantMcpStateCounts = (assistantDiagnostics?.mcpServerStates ?? []).reduce(
+    (summary, state) => {
+      summary[state.state] += 1;
+      return summary;
+    },
+    {
+      configured: 0,
+      discoverable: 0,
+      loaded: 0,
+      deferred: 0,
+    },
+  );
+  const workspaceContextComponent =
+    latestAssistantRun?.contextCostSummary?.components.find((component) => component.kind === "workspace_context") ?? null;
+  const pathRuleCount = typeof workspaceContextComponent?.metadata?.pathRuleCount === "number"
+    ? workspaceContextComponent.metadata.pathRuleCount
+    : 0;
+  const candidatePaths = Array.isArray(workspaceContextComponent?.metadata?.candidatePaths)
+    ? workspaceContextComponent?.metadata?.candidatePaths.filter((value): value is string => typeof value === "string")
+    : [];
 
   const actionQueue = useMemo(
     () =>
@@ -351,6 +381,23 @@ export function ObservabilityPage() {
           };
         }
         return null;
+      case "assistant":
+        if (!assistantDiagnostics) {
+          return {
+            title: "Assistant diagnostics are loading",
+            summary: "Friday is gathering task profiles, MCP server states, and recent context-cost summaries.",
+            detail: "Use this focus to inspect context governance and task profile choices without leaving observability.",
+            tone: "neutral",
+          };
+        }
+        return {
+          title: latestAssistantRun?.task ?? "Assistant diagnostics",
+          summary: latestAssistantRun?.taskProfile
+            ? `${latestAssistantRun.taskProfile.label} profile on the latest assistant run.`
+            : "No recent assistant run is available yet.",
+          detail: `MCP loaded ${assistantMcpStateCounts.loaded}, deferred ${assistantMcpStateCounts.deferred}, path rules ${pathRuleCount}.`,
+          tone: assistantMcpStateCounts.deferred > 0 || pathRuleCount > 0 ? "warning" : "success",
+        };
       case "health":
         if (!highlightedHealthComponent) return null;
         return {
@@ -440,6 +487,9 @@ export function ObservabilityPage() {
     focus,
     highlightedIssue,
     highlightedAlert,
+    assistantDiagnostics,
+    assistantMcpStateCounts.deferred,
+    assistantMcpStateCounts.loaded,
     highlightedHealthComponent,
     highlightedAcceptance,
     highlightedEscalation,
@@ -449,6 +499,8 @@ export function ObservabilityPage() {
     traces,
     auditEntries,
     overview,
+    latestAssistantRun,
+    pathRuleCount,
   ]);
 
   const maxPoint = Math.max(1, ...(series?.points ?? []).map((point) => point.value));
@@ -466,6 +518,7 @@ export function ObservabilityPage() {
       >
         <div className="mb-4 flex flex-wrap gap-2">
           <FocusChip label="Overview" active={focus === "overview"} to={buildObservabilityHref({ focus: "overview" })} />
+          <FocusChip label="Assistant" active={focus === "assistant"} to={buildObservabilityHref({ focus: "assistant" })} />
           <FocusChip label="Alerts" active={focus === "alerts"} to={buildObservabilityHref({ focus: "alerts" })} />
           <FocusChip label="Health" active={focus === "health"} to={buildObservabilityHref({ focus: "health" })} />
           <FocusChip label="Acceptance" active={focus === "acceptance"} to={buildObservabilityHref({ focus: "acceptance" })} />
@@ -547,6 +600,90 @@ export function ObservabilityPage() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        {focus === "overview" || focus === "assistant" ? (
+          <ShellCard eyebrow="Assistant diagnostics" title="Context governance, MCP loading, and task profiles">
+            {assistantDiagnostics ? (
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <ObservabilityTile
+                    icon={<BellRing className="h-4 w-4" />}
+                    label="MCP loaded"
+                    value={String(assistantMcpStateCounts.loaded)}
+                    detail={`${assistantMcpStateCounts.configured} configured · ${assistantMcpStateCounts.discoverable} discoverable`}
+                  />
+                  <ObservabilityTile
+                    icon={<RotateCcw className="h-4 w-4" />}
+                    label="Deferred"
+                    value={String(assistantMcpStateCounts.deferred)}
+                    detail="Deferred servers stay out of the default context until they are needed."
+                  />
+                  <ObservabilityTile
+                    icon={<Mail className="h-4 w-4" />}
+                    label="Path rules"
+                    value={String(pathRuleCount)}
+                    detail={candidatePaths.length > 0 ? candidatePaths.slice(0, 2).join(" · ") : "No path-specific rule candidates surfaced."}
+                  />
+                  <ObservabilityTile
+                    icon={<Activity className="h-4 w-4" />}
+                    label="Preprocessors"
+                    value={String(assistantDiagnostics.supportedPreprocessors.length)}
+                    detail={assistantDiagnostics.supportedPreprocessors.join(", ")}
+                  />
+                </div>
+                {latestAssistantRun ? (
+                  <div className="agent-subcard p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-white">{latestAssistantRun.task}</p>
+                        <p className="text-xs text-white/50">
+                          {latestAssistantRun.taskProfile?.label ?? "No task profile"} · {latestAssistantRun.status}
+                        </p>
+                      </div>
+                      <StatusPill tone={latestAssistantRun.status === "completed" ? "success" : latestAssistantRun.status === "failed" ? "danger" : "warning"}>
+                        {latestAssistantRun.status}
+                      </StatusPill>
+                    </div>
+                    <div className="mt-3 grid gap-2 text-xs text-white/55">
+                      <p>Workspace context: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "workspace_context")?.estimatedChars ?? 0} chars</p>
+                      <p>Starter skills: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "starter_skills")?.estimatedChars ?? 0} chars</p>
+                      <p>MCP: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "mcp")?.estimatedChars ?? 0} chars</p>
+                      <p>Subagents: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "subagents")?.estimatedChars ?? 0} chars</p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-white/60">No recent assistant runs have been recorded yet.</p>
+                )}
+                <div className="space-y-3">
+                  {(assistantDiagnostics.mcpServerStates ?? []).length === 0 ? (
+                    <p className="text-sm text-white/60">No MCP servers are configured for this runtime.</p>
+                  ) : (
+                    assistantDiagnostics.mcpServerStates.map((state) => (
+                      <div key={state.serverId} className="agent-subcard p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="font-medium text-white">{state.serverId}</p>
+                            <p className="text-xs text-white/50">
+                              {state.transport} · {state.lazyDiscovery ? "lazy discovery" : "eager discovery"}
+                            </p>
+                          </div>
+                          <StatusPill tone={state.state === "loaded" ? "success" : state.state === "deferred" ? "warning" : "neutral"}>
+                            {state.state}
+                          </StatusPill>
+                        </div>
+                        <p className="mt-3 text-xs text-white/55">
+                          Tools {state.toolCount ?? 0} · Resources {state.resourceCount ?? 0} · Prompts {state.promptCount ?? 0}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-white/60">Loading assistant diagnostics...</p>
+            )}
+          </ShellCard>
+        ) : null}
+
         <ShellCard eyebrow="Live alerts" title="Investigate, acknowledge, or hand off to guided recovery">
           {alerts.length > 0 ? (
             <div className="space-y-3">

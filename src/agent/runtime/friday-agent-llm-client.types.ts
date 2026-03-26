@@ -52,6 +52,7 @@ export interface FridayAgentLlmStreamParams {
   systemPrompt: string;
   messages: FridayAgentMessage[];
   tools: FridayAgentToolDefinition[];
+  temperature?: number;
   signal: AbortSignal;
 }
 

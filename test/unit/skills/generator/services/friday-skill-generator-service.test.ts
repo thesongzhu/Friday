@@ -129,7 +129,10 @@ function makeMockDb(options?: {
             ),
           };
         }
-        if (sql.startsWith("SELECT * FROM memory_items WHERE namespace = ? AND key = ?")) {
+        if (
+          sql.startsWith("SELECT * FROM memory_items WHERE namespace = ? AND key = ?")
+          || sql.startsWith("SELECT value_json FROM memory_items WHERE namespace = ? AND key = ?")
+        ) {
           return {
             get: vi.fn((namespace: string, key: string) => {
               return store.get(`${namespace}:${key}`) ?? undefined;
@@ -765,6 +768,9 @@ describe("FridaySkillGeneratorService", () => {
         expect(draft).toBeDefined();
         expect(draft.manifest.id).toBe("test-skill");
         expect(draft.validation.ok).toBe(true);
+        expect(draft.manifest.tags).toEqual(
+          expect.arrayContaining(["generated", "generated.draft"]),
+        );
       } finally {
         restoreFetch();
       }
@@ -903,6 +909,63 @@ describe("FridaySkillGeneratorService", () => {
         await expect(
           service.approveAndSave(startResult.session.sessionId),
         ).rejects.toThrow("Cannot approve session in 'needs_clarification' status");
+      } finally {
+        restoreFetch();
+      }
+    });
+
+    it("promotes generated drafts to stabilized manifests with evidence", async () => {
+      const analyzerResponse = {
+        state: "needs_clarification",
+        questions: ["What?"],
+        spec: {
+          goal: "Echo",
+          inputs: [{ key: "query", type: "string", required: true, label: "Query" }],
+          outputs: [{ key: "result", type: "string", description: "Result" }],
+          runtimeKind: "shell",
+        },
+      };
+      const manifest = makeManifest({
+        runtime: {
+          kind: "shell",
+          entrypoint: "run.sh",
+          minHubVersion: "0.1.0",
+          apiVersion: "1",
+          timeoutMsDefault: 30000,
+        },
+      });
+      const files: FridayGeneratedSkillFile[] = [
+        {
+          path: "run.sh",
+          language: "bash",
+          executable: true,
+          content: "#!/usr/bin/env bash\ncat <<'EOF'\n{\"result\":\"ok\"}\nEOF\n",
+        },
+      ];
+      const uiSchema = makeUiSchema();
+
+      mockFetchForLlm([analyzerResponse, manifest, files, uiSchema]);
+
+      try {
+        const startResult = await service.startSession({
+          goal: "Echo shell skill",
+          userId: "user-1",
+          channel: "discord",
+        });
+
+        await service.generateDraft(startResult.session.sessionId);
+        const result = await service.approveAndSave(startResult.session.sessionId);
+
+        expect(result.promotionStage).toBe("stabilized");
+        expect(result.promotedManifestTags).toEqual(
+          expect.arrayContaining(["generated", "skill.stabilized", "cli-backed"]),
+        );
+        expect(result.promotedManifestTags).not.toContain("generated.draft");
+        expect(result.evidence).toEqual({
+          packageLoaded: true,
+          packageValidated: true,
+          registryRefreshed: true,
+        });
       } finally {
         restoreFetch();
       }

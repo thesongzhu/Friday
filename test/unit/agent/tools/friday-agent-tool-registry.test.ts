@@ -37,7 +37,9 @@ function stubRuntime(): FridayAgentRuntime {
 function stubMcpAdapter(): FridayMcpAdapter {
   return {
     listServers: vi.fn().mockReturnValue([{ id: "filesystem", command: "npx" }]),
+    listServerStates: vi.fn().mockReturnValue([]),
     listTools: vi.fn(),
+    searchTools: vi.fn(),
     callTool: vi.fn(),
     listResources: vi.fn(),
     readResource: vi.fn(),

@@ -155,6 +155,9 @@ export function createFridayAgentSkillGeneratorTool(
               skillDir: result.skillDir,
               savedFiles: result.savedFiles,
               registryRefreshed: result.registryRefreshed,
+              promotionStage: result.promotionStage,
+              promotedManifestTags: result.promotedManifestTags,
+              evidence: result.evidence,
             });
           }
 

@@ -99,6 +99,9 @@ export interface FridayApproveResponse {
   skillDir: string;
   savedFiles: string[];
   registryRefreshed: boolean;
+  promotionStage: "stabilized";
+  promotedManifestTags: string[];
+  evidence: FridaySkillGenerationEvidence;
 }
 
 export interface FridayCancelSessionResponse {

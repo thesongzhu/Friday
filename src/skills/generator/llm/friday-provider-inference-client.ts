@@ -20,6 +20,7 @@ import type {
   FridayInferenceResult,
   FridayProviderInferenceClient,
 } from "./friday-provider-inference-client.types.js";
+import { resolveFridayAgentTaskProfile } from "../../../agent/runtime/friday-agent-task-profile.js";
 
 import {
   createFridayProviderComplexityClassifier,
@@ -51,13 +52,14 @@ function buildRequestBody(
   api: FridayProviderApi,
   model: string,
   messages: ChatMessage[],
+  temperature?: number,
 ): Record<string, unknown> {
   switch (api) {
     case "openai-completions":
       return {
         model,
         messages,
-        temperature: 0,
+        temperature: temperature ?? 0,
         response_format: { type: "json_object" },
       };
     case "openai-responses": {
@@ -79,7 +81,7 @@ function buildRequestBody(
       return {
         model,
         input,
-        temperature: 0,
+        temperature: temperature ?? 0,
         text: { format: { type: "json_object" } },
       };
     }
@@ -91,7 +93,7 @@ function buildRequestBody(
         system: systemMsg?.content ?? "",
         messages: nonSystem,
         max_tokens: 8192,
-        temperature: 0,
+        temperature: temperature ?? 0,
       };
     }
     case "google-generative-ai":
@@ -110,7 +112,7 @@ function buildRequestBody(
               ],
             }
           : undefined,
-        generationConfig: { temperature: 0, responseMimeType: "application/json" },
+        generationConfig: { temperature: temperature ?? 0, responseMimeType: "application/json" },
       };
     case "ollama":
       return {
@@ -118,7 +120,7 @@ function buildRequestBody(
         messages,
         stream: false,
         format: "json",
-        options: { temperature: 0 },
+        options: { temperature: temperature ?? 0 },
       };
   }
 }
@@ -325,6 +327,7 @@ export function createFridayProviderInferenceClient(
 
   return {
     async infer<T>(request: FridayInferenceRequest): Promise<FridayInferenceResult<T>> {
+      const resolvedTaskProfile = resolveFridayAgentTaskProfile(request.taskProfile ?? "deterministic");
       let messages: ChatMessage[] = [
         { role: "system", content: request.prompt.system },
         { role: "user", content: request.prompt.user },
@@ -350,7 +353,7 @@ export function createFridayProviderInferenceClient(
                 const body = buildRequestBody(api, model, [
                   { role: "system", content: withOAuthSystemPrefix(prompt.system, oauthMode) },
                   { role: "user", content: prompt.user },
-                ]);
+                ], resolvedTaskProfile.temperature);
                 const resp = await fetch(url, {
                   method: "POST",
                   headers,
@@ -422,7 +425,7 @@ export function createFridayProviderInferenceClient(
                   : m,
               )
             : messages;
-          let body = buildRequestBody(api, model, effectiveMessages);
+          let body = buildRequestBody(api, model, effectiveMessages, resolvedTaskProfile.temperature);
 
           // Apply Anthropic prompt caching when applicable
           if (api === "anthropic-messages") {

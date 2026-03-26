@@ -5,6 +5,7 @@ import type {
   FridayMcpAdapter,
   FridayMcpCallToolInput,
   FridayMcpCallToolResult,
+  FridayMcpDiscoveryState,
   FridayMcpGetPromptInput,
   FridayMcpGetPromptResult,
   FridayMcpPromptDescriptor,
@@ -12,6 +13,7 @@ import type {
   FridayMcpReadResourceResult,
   FridayMcpResourceDescriptor,
   FridayMcpServerConfig,
+  FridayMcpServerState,
   FridayMcpServerPolicy,
   FridayMcpToolDescriptor,
   FridayMcpTransport,
@@ -29,6 +31,7 @@ interface CreateFridayMcpAdapterOptions {
   servers: FridayMcpServerConfig[];
   requestTimeoutMs?: number;
   spawnImpl?: SpawnLike;
+  lazyDiscovery?: boolean;
 }
 
 interface JsonRpcResponseError {
@@ -178,7 +181,7 @@ export function buildSafeChildEnv(
 ): Record<string, string> {
   const safe: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && isSafeEnvVar(key) && !isForbiddenEnvVar(key)) {
+    if (typeof value === "string" && isSafeEnvVar(key) && !isForbiddenEnvVar(key)) {
       safe[key] = value;
     }
   }
@@ -304,13 +307,53 @@ export function createFridayMcpAdapter(
 ): FridayMcpAdapter {
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const spawnImpl = options.spawnImpl ?? spawn;
+  const lazyDiscovery = options.lazyDiscovery ?? true;
   const servers = dedupeServers(options.servers);
   const serverById = new Map(servers.map((server) => [server.id, server]));
   const rateLimitWindows = new Map<string, number[]>();
+  const serverStateCache = new Map<string, FridayMcpServerState>(
+    servers.map((server) => [
+      server.id,
+      {
+        serverId: server.id,
+        transport: server.transport ?? "stdio",
+        state: lazyDiscovery ? "deferred" : "configured",
+        lazyDiscovery,
+      } satisfies FridayMcpServerState,
+    ]),
+  );
+
+  function markServerState(
+    serverId: string,
+    nextState: FridayMcpDiscoveryState,
+    extras?: Partial<FridayMcpServerState>,
+  ): void {
+    const previous = serverStateCache.get(serverId) ?? {
+      serverId,
+      transport: "stdio" as FridayMcpTransport,
+      state: lazyDiscovery ? "deferred" : "configured",
+      lazyDiscovery,
+    };
+    serverStateCache.set(serverId, {
+      ...previous,
+      ...extras,
+      state: nextState,
+    });
+  }
 
   return {
     listServers(): readonly FridayMcpServerConfig[] {
       return servers;
+    },
+
+    listServerStates(): readonly FridayMcpServerState[] {
+      return servers.map((server) =>
+        serverStateCache.get(server.id) ?? {
+          serverId: server.id,
+          transport: server.transport ?? "stdio",
+          state: lazyDiscovery ? "deferred" : "configured",
+          lazyDiscovery,
+        });
     },
 
     async listTools(input): Promise<FridayMcpToolDescriptor[]> {
@@ -321,6 +364,7 @@ export function createFridayMcpAdapter(
 
       const collected: FridayMcpToolDescriptor[] = [];
       for (const server of targets) {
+        markServerState(server.id, "discoverable");
         const correlationId = nextCorrelationId(server.id, "tools.list");
         const tools = await withMcpSession({
           server,
@@ -358,10 +402,29 @@ export function createFridayMcpAdapter(
         });
 
         const filtered = applyToolAllowlist(server.policy, tools);
+        markServerState(server.id, "loaded", {
+          toolCount: filtered.length,
+          lastLoadedAt: new Date().toISOString(),
+        });
         collected.push(...filtered);
       }
 
       return collected;
+    },
+
+    async searchTools(input): Promise<FridayMcpToolDescriptor[]> {
+      const query = input.query.trim().toLowerCase();
+      const tools = await this.listTools({
+        serverId: input.serverId,
+        signal: input.signal,
+      });
+      if (query.length === 0) {
+        return tools;
+      }
+      return tools.filter((tool) =>
+        tool.name.toLowerCase().includes(query)
+        || (tool.description ?? "").toLowerCase().includes(query),
+      );
     },
 
     async callTool(input: FridayMcpCallToolInput): Promise<FridayMcpCallToolResult> {
@@ -369,10 +432,11 @@ export function createFridayMcpAdapter(
       const server = requireServer(serverById, input.serverId, routeId);
       const correlationId = nextCorrelationId(server.id, `tools.call.${input.toolName}`);
 
+      markServerState(server.id, "discoverable");
       enforceToolAllowlist(server, input.toolName, routeId, correlationId);
       enforceRateLimit(server, input.toolName, rateLimitWindows, routeId, correlationId);
 
-      return withMcpSession({
+      const result = await withMcpSession({
         server,
         signal: input.signal,
         spawnImpl,
@@ -399,6 +463,10 @@ export function createFridayMcpAdapter(
           };
         },
       });
+      markServerState(server.id, "loaded", {
+        lastLoadedAt: new Date().toISOString(),
+      });
+      return result;
     },
 
     async listResources(input): Promise<FridayMcpResourceDescriptor[]> {
@@ -409,6 +477,7 @@ export function createFridayMcpAdapter(
 
       const collected: FridayMcpResourceDescriptor[] = [];
       for (const server of targets) {
+        markServerState(server.id, "discoverable");
         const correlationId = nextCorrelationId(server.id, "resources.list");
         const resources = await withMcpSession({
           server,
@@ -445,6 +514,10 @@ export function createFridayMcpAdapter(
           },
         });
 
+        markServerState(server.id, "loaded", {
+          resourceCount: resources.length,
+          lastLoadedAt: new Date().toISOString(),
+        });
         collected.push(...resources);
       }
 
@@ -456,7 +529,8 @@ export function createFridayMcpAdapter(
       const server = requireServer(serverById, input.serverId, routeId);
       const correlationId = nextCorrelationId(server.id, "resources.read");
 
-      return withMcpSession({
+      markServerState(server.id, "discoverable");
+      const result = await withMcpSession({
         server,
         signal: input.signal,
         spawnImpl,
@@ -480,6 +554,10 @@ export function createFridayMcpAdapter(
           };
         },
       });
+      markServerState(server.id, "loaded", {
+        lastLoadedAt: new Date().toISOString(),
+      });
+      return result;
     },
 
     async listPrompts(input): Promise<FridayMcpPromptDescriptor[]> {
@@ -490,6 +568,7 @@ export function createFridayMcpAdapter(
 
       const collected: FridayMcpPromptDescriptor[] = [];
       for (const server of targets) {
+        markServerState(server.id, "discoverable");
         const correlationId = nextCorrelationId(server.id, "prompts.list");
         const prompts = await withMcpSession({
           server,
@@ -526,6 +605,10 @@ export function createFridayMcpAdapter(
           },
         });
 
+        markServerState(server.id, "loaded", {
+          promptCount: prompts.length,
+          lastLoadedAt: new Date().toISOString(),
+        });
         collected.push(...prompts);
       }
 
@@ -537,7 +620,8 @@ export function createFridayMcpAdapter(
       const server = requireServer(serverById, input.serverId, routeId);
       const correlationId = nextCorrelationId(server.id, `prompts.get.${input.name}`);
 
-      return withMcpSession({
+      markServerState(server.id, "discoverable");
+      const result = await withMcpSession({
         server,
         signal: input.signal,
         spawnImpl,
@@ -564,6 +648,10 @@ export function createFridayMcpAdapter(
           };
         },
       });
+      markServerState(server.id, "loaded", {
+        lastLoadedAt: new Date().toISOString(),
+      });
+      return result;
     },
   };
 }

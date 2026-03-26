@@ -287,6 +287,7 @@ describe("loadFridayWorkspaceContext", () => {
       const ctx = await loadFridayWorkspaceContext(tmpDir);
       // Total should be capped
       expect(ctx.promptFragment.length).toBeLessThan(70_000); // Some overhead for headers
+      expect(ctx.summary.promptChars).toBe(ctx.promptFragment.length);
     });
   });
 
@@ -416,6 +417,24 @@ describe("loadFridayWorkspaceContext", () => {
 
       expect(ctx.promptFragment).toContain("sourdough recipes");
       expect(ctx.promptFragment).toContain("dark mode in editors");
+    });
+
+    it("loads path-scoped rules only when task paths match", async () => {
+      const ruleDir = path.join(tmpDir, ".friday", "rules", "path", "src");
+      await fs.mkdir(ruleDir, { recursive: true });
+      await fs.writeFile(
+        path.join(ruleDir, "agent.md"),
+        "Only use the agent runtime edit path for src/agent work.",
+      );
+
+      const ctx = await loadFridayWorkspaceContext(tmpDir, {
+        task: "Please update src/agent/runtime/friday-agent-runtime.ts to add task profile support.",
+      });
+
+      expect(ctx.promptFragment).toContain("agent runtime edit path");
+      expect(ctx.summary.pathRuleCount).toBe(1);
+      expect(ctx.summary.selectedPathRuleCount).toBe(1);
+      expect(ctx.summary.candidatePaths).toContain("src/agent/runtime/friday-agent-runtime.ts");
     });
   });
 });

@@ -12,6 +12,8 @@ import type {
   FridayAgentRunStatus,
   FridayAgentTestResult,
 } from "../model/friday-agent.types.js";
+import type { FridayAgentContextCostSummary } from "../runtime/friday-agent-runtime.types.js";
+import type { FridayResolvedAgentTaskProfile } from "../runtime/friday-agent-task-profile.js";
 
 // ─── Row shape from SQLite ───
 
@@ -41,6 +43,8 @@ interface FridayAgentRunRow {
   response_text: string | null;
   summary: string | null;
   artifact_dir: string | null;
+  context_cost_summary_json: string | null;
+  task_profile_json: string | null;
 }
 
 function rowToRecord(row: FridayAgentRunRow): FridayAgentRunRecord {
@@ -80,6 +84,12 @@ function rowToRecord(row: FridayAgentRunRow): FridayAgentRunRecord {
     responseText: row.response_text ?? undefined,
     summary: row.summary ?? undefined,
     artifactDir: row.artifact_dir ?? undefined,
+    contextCostSummary: row.context_cost_summary_json
+      ? (JSON.parse(row.context_cost_summary_json) as FridayAgentContextCostSummary)
+      : undefined,
+    taskProfile: row.task_profile_json
+      ? (JSON.parse(row.task_profile_json) as FridayResolvedAgentTaskProfile)
+      : undefined,
   };
 }
 
@@ -127,6 +137,8 @@ export interface FridayAgentRunRepository {
       responseText?: string;
       summary?: string;
       artifactDir?: string;
+      contextCostSummary?: FridayAgentContextCostSummary;
+      taskProfile?: FridayResolvedAgentTaskProfile;
     },
   ): FridayAgentRunRecord | null;
 
@@ -262,6 +274,14 @@ export function createFridayAgentRunRepository(): FridayAgentRunRepository {
       if (input.artifactDir !== undefined) {
         sets.push("artifact_dir = ?");
         params.push(input.artifactDir);
+      }
+      if (input.contextCostSummary !== undefined) {
+        sets.push("context_cost_summary_json = ?");
+        params.push(JSON.stringify(input.contextCostSummary));
+      }
+      if (input.taskProfile !== undefined) {
+        sets.push("task_profile_json = ?");
+        params.push(JSON.stringify(input.taskProfile));
       }
 
       if (sets.length === 0) {

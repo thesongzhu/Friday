@@ -62,6 +62,41 @@ describe("createFridayMcpAdapter — runtime adversarial behavior", () => {
     });
   });
 
+  it("tracks discovery state transitions for lazy MCP servers", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as {
+        id?: number;
+        method?: string;
+      };
+
+      if (payload.method === "initialize") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 1, { protocolVersion: "2024-11-05" }));
+      }
+      if (payload.method === "tools/list") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 2, {
+          tools: [{ name: "search", description: "Search docs", inputSchema: { type: "object" } }],
+        }));
+      }
+      return okHttpResponse("{}");
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const adapter = createFridayMcpAdapter({
+      servers: [
+        {
+          id: "lazy-http",
+          transport: "http",
+          url: "https://mcp.example.com/rpc",
+        },
+      ],
+    });
+
+    expect(adapter.listServerStates()[0]?.state).toBe("deferred");
+    await adapter.searchTools({ query: "search", serverId: "lazy-http" });
+    expect(adapter.listServerStates()[0]?.state).toBe("loaded");
+    expect(adapter.listServerStates()[0]?.toolCount).toBe(1);
+  });
+
   it("enforces local rate limit policy for repeated tool calls", async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body ?? "{}")) as {

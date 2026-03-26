@@ -9,6 +9,7 @@ import type {
   FridayAgentRunRecord,
   FridayAgentRunStatus,
   FridayAgentRuntimeResult,
+  FridayAgentTaskProfileInput,
 } from "#agent";
 import { FridayDomainError } from "#errors";
 import { isValidCronExpression } from "#jobs";
@@ -50,6 +51,7 @@ export interface FridayAgentRoutesDeps {
     timeoutMs?: number;
     requireReview?: boolean;
     constraints?: { readOnly?: boolean };
+    taskProfile?: FridayAgentTaskProfileInput;
     executionContext?: {
       surface?: string;
       interactive?: boolean;
@@ -206,6 +208,36 @@ export function createFridayAgentRoutes(
           };
         }
 
+        let taskProfile: FridayAgentTaskProfileInput | undefined;
+        if (
+          body.taskProfile !== undefined
+          && typeof body.taskProfile === "object"
+          && body.taskProfile !== null
+          && !Array.isArray(body.taskProfile)
+        ) {
+          const input = body.taskProfile as Record<string, unknown>;
+          const id = input.id;
+          const reasoningEffort = input.reasoningEffort;
+          const temperature = input.temperature;
+          taskProfile = {
+            ...(id === "default" || id === "deterministic" || id === "planning" || id === "review" || id === "creative"
+              ? { id }
+              : {}),
+            ...(typeof input.model === "string" && input.model.trim().length > 0
+              ? { model: input.model.trim() }
+              : {}),
+            ...(typeof temperature === "number" && Number.isFinite(temperature)
+              ? { temperature }
+              : {}),
+            ...(reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high"
+              ? { reasoningEffort }
+              : {}),
+            ...(typeof input.reason === "string" && input.reason.trim().length > 0
+              ? { reason: input.reason.trim() }
+              : {}),
+          };
+        }
+
         const principalInput = ctx.principal
           ? {
             principalId: ctx.principal.principalId,
@@ -223,6 +255,7 @@ export function createFridayAgentRoutes(
           timeoutMs,
           requireReview,
           constraints,
+          taskProfile,
           executionContext,
           ...principalInput,
         });

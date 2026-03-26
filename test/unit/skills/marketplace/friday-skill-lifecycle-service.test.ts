@@ -196,6 +196,8 @@ describe("FridaySkillLifecycleService", () => {
       installed: true,
       installedVersion: "1.0.0",
       updateAvailable: true,
+      originType: "generated",
+      maturity: "stable",
       verificationStatus: "trusted",
       eligibility: {
         verdict: "needs_configuration",
@@ -213,6 +215,8 @@ describe("FridaySkillLifecycleService", () => {
       skillId: "skill.alpha",
       installedVersion: "1.0.0",
       latestVersion: "1.1.0",
+      originType: "generated",
+      maturity: "stable",
       verificationStatus: "trusted",
       eligibility: {
         verdict: "needs_configuration",
@@ -223,6 +227,48 @@ describe("FridaySkillLifecycleService", () => {
     expect(detail?.installations).toHaveLength(1);
     expect(detail?.installPlan.targetVersion).toBe("1.1.0");
     expect(detail?.latestFailure).toBeUndefined();
+  });
+
+  it("derives cli-backed origin and verified maturity for shell-oriented skills", () => {
+    const { lifecycle, sourceRepo, cacheRepo } = createLifecycle();
+    const manifest = createTestManifest({
+      id: "skill.cli",
+      name: "CLI Helper",
+      runtime: {
+        kind: "shell",
+        entrypoint: "run.sh",
+        minHubVersion: "0.1.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30_000,
+      },
+      tags: ["cli"],
+    });
+
+    db.withWriteTransaction((writer) => {
+      sourceRepo.insertSource(writer, "src-cli", {
+        name: "Friday Skills",
+        baseUrl: "https://skills.example.com",
+        trustPolicy: "warn",
+        pinnedKeyIds: [],
+      }, NOW);
+      cacheRepo.upsertCacheEntry(writer, {
+        id: "cache-cli",
+        sourceId: "src-cli",
+        skillId: "skill.cli",
+        version: "1.0.0",
+        manifestJson: JSON.stringify(manifest),
+        signatureValid: true,
+        indexedAt: NOW,
+        trustScore: 91,
+        nowIso: NOW,
+      });
+    });
+
+    const detail = lifecycle.getSkill("skill.cli");
+    expect(detail).toMatchObject({
+      originType: "cli-backed",
+      maturity: "verified",
+    });
   });
 
   it("reports verification failures to self-healing and marks deleted skills unavailable", async () => {

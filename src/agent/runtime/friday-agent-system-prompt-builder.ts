@@ -153,6 +153,7 @@ export function buildFridayAgentSystemPrompt(
     "- Local computer orchestration: use system first for snapshots, app/project handoff, approvals, and control leases; fall back to desktop only when system intent resolution is insufficient\n" +
     "- Provider/LLM management (switch model, add API key, configure OAuth): use provider tool\n" +
     "- Friday skills: use skills_list first to discover currently available skills, then use skill_run with the chosen skill ID\n" +
+    "- For local repo and ops tasks, prefer CLI-backed starter skills before reaching for MCP or generating a new skill\n" +
     "- Diagnosis, recovery, and self-healing review requests: prefer existing starter skills such as issue review, runtime snapshot, and repair-readiness summaries before generating anything new\n" +
     "- Planning, scope review, design review, browser QA, diff review, release docs, benchmark, canary, retro, QA-fix, and security review requests: prefer the matching starter skill before inventing a new workflow or skill\n" +
     "- For OAuth providers like Claude Max/Pro: use provider oauth_init (it can auto-create or reuse the Anthropic OAuth provider), return URL to user, then provider oauth_complete; if the user asked to switch Friday to Claude, follow with provider set_default\n" +
@@ -179,6 +180,7 @@ export function buildFridayAgentSystemPrompt(
     "- When asked about your current deployment capabilities, use capabilities before answering. Use the prompt for model/version framing, not for guessing runtime state.\n" +
     "- Use the feedback tool when a user corrects you or states a preference.\n" +
     "- When a request matches an available starter skill, prefer that existing skill over generating or importing a new one.\n" +
+    "- When a matching CLI-backed starter skill exists for a local repo or ops task, prefer it before MCP.\n" +
     "- For requests about what is broken, what Friday already detected, or whether self-repair is safe, prefer diagnosis/recovery starter skills before broader planning.\n" +
     "- For requests about scoping, design review, implementation plan review, QAing a page, benchmarking, canary checks, retros, reviewing a diff, or syncing release docs, prefer the corresponding starter skill before broad freeform reasoning.\n" +
     "- Only reach for skill generation or skill import when skills_list shows no good existing match.\n" +

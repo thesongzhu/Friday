@@ -1,5 +1,12 @@
 import { apiClient } from "./client";
-import type { AgentRunRecord, AgentRunStatus, AgentAutomation, AgentRuntimeResult, SubagentRecord } from "./types";
+import type {
+  AgentAutomation,
+  AgentRunRecord,
+  AgentRunStatus,
+  AgentRuntimeResult,
+  AgentTaskProfileInput,
+  SubagentRecord,
+} from "./types";
 
 // ─── Request / Response shapes ───
 
@@ -15,6 +22,7 @@ interface StartRunInput {
     interactive?: boolean;
     browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
   };
+  taskProfile?: AgentTaskProfileInput;
 }
 
 interface StartRunResponse {
@@ -68,6 +76,7 @@ export const agentApi = {
       sessionKey: input.sessionKey,
       constraints: input.readOnly ? { readOnly: true } : undefined,
       executionContext: input.executionContext,
+      taskProfile: input.taskProfile,
     };
     return apiClient.post<typeof payload, StartRunResponse>("/v1/agent/runs", payload);
   },

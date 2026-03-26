@@ -1,4 +1,5 @@
 export type FridayMcpTransport = "stdio" | "http";
+export type FridayMcpDiscoveryState = "configured" | "discoverable" | "loaded" | "deferred";
 
 export interface FridayMcpServerRateLimitPolicy {
   maxCalls: number;
@@ -21,6 +22,17 @@ export interface FridayMcpServerConfig {
   headers?: Record<string, string>;
   policy?: FridayMcpServerPolicy;
   timeoutMs?: number;
+}
+
+export interface FridayMcpServerState {
+  serverId: string;
+  transport: FridayMcpTransport;
+  state: FridayMcpDiscoveryState;
+  lazyDiscovery: boolean;
+  toolCount?: number;
+  resourceCount?: number;
+  promptCount?: number;
+  lastLoadedAt?: string;
 }
 
 export interface FridayMcpToolDescriptor {
@@ -82,7 +94,9 @@ export interface FridayMcpGetPromptResult {
 
 export interface FridayMcpAdapter {
   listServers(): readonly FridayMcpServerConfig[];
+  listServerStates(): readonly FridayMcpServerState[];
   listTools(input?: { serverId?: string; signal?: AbortSignal }): Promise<FridayMcpToolDescriptor[]>;
+  searchTools(input: { query: string; serverId?: string; signal?: AbortSignal }): Promise<FridayMcpToolDescriptor[]>;
   callTool(input: FridayMcpCallToolInput): Promise<FridayMcpCallToolResult>;
   listResources(input?: { serverId?: string; signal?: AbortSignal }): Promise<FridayMcpResourceDescriptor[]>;
   readResource(input: FridayMcpReadResourceInput): Promise<FridayMcpReadResourceResult>;

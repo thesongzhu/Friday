@@ -81,6 +81,14 @@ export interface FridaySkillVerificationEvidence {
   };
 }
 
+export type FridaySkillOriginType =
+  | "generated"
+  | "stabilized"
+  | "cli-backed"
+  | "mcp-backed";
+
+export type FridaySkillMaturity = "draft" | "verified" | "stable";
+
 export interface FridaySkillLifecycleSummary {
   skillId: string;
   name: string;
@@ -99,6 +107,8 @@ export interface FridaySkillLifecycleSummary {
   managed: boolean;
   registryLoaded: boolean;
   currentManifest?: SkillManifestV2;
+  originType: FridaySkillOriginType;
+  maturity: FridaySkillMaturity;
   verificationStatus: FridaySkillVerificationStatus;
   requirementPreview: FridaySkillRequirementPreview;
   permissionPreview: FridaySkillPermissionPreview;
@@ -120,6 +130,8 @@ export interface FridaySkillCatalogViewItem extends FridaySkillCatalogItem {
   installedVersion?: string;
   updateAvailable: boolean;
   sourceDetails?: FridayMarketplaceSourceEntity;
+  originType: FridaySkillOriginType;
+  maturity: FridaySkillMaturity;
   verificationStatus: FridaySkillVerificationStatus;
   requirementPreview: FridaySkillRequirementPreview;
   permissionPreview: FridaySkillPermissionPreview;
@@ -221,6 +233,56 @@ function permissionToken(input: { resource: string; action: string }): string {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function deriveSkillOriginType(manifest?: SkillManifestV2): FridaySkillOriginType {
+  const tags = manifest?.tags ?? [];
+  const tagSet = new Set(tags.map((tag) => tag.toLowerCase()));
+  if (tagSet.has("mcp") || tagSet.has("mcp-backed") || tagSet.has("starter.mcp")) {
+    return "mcp-backed";
+  }
+  if (
+    manifest?.runtime.kind === "shell"
+    || manifest?.runtime.kind === "python"
+    || tagSet.has("cli")
+    || tagSet.has("cli-backed")
+  ) {
+    return "cli-backed";
+  }
+  if (tagSet.has("stable") || tagSet.has("stabilized") || tagSet.has("skill.stabilized")) {
+    return "stabilized";
+  }
+  return "generated";
+}
+
+function deriveSkillMaturity(input: {
+  manifest?: SkillManifestV2;
+  verificationStatus: FridaySkillVerificationStatus;
+  installedVersion?: string;
+  registryLoaded: boolean;
+  status: string;
+  starter: boolean;
+  originType: FridaySkillOriginType;
+}): FridaySkillMaturity {
+  const tags = new Set((input.manifest?.tags ?? []).map((tag) => tag.toLowerCase()));
+  if (tags.has("draft") || tags.has("generated.draft")) {
+    return "draft";
+  }
+
+  const verified = input.verificationStatus === "trusted"
+    || input.verificationStatus === "local";
+  const stableByLifecycle = input.starter
+    || input.registryLoaded
+    || input.status === "installed"
+    || input.originType === "stabilized";
+
+  if (verified && stableByLifecycle) {
+    return "stable";
+  }
+  if (verified || Boolean(input.installedVersion)) {
+    return "verified";
+  }
+  return "draft";
 }
 
 function buildRequirementPreview(manifest?: SkillManifestV2): FridaySkillRequirementPreview {
@@ -389,6 +451,16 @@ function registryToSummary(skill: FridayRegisteredSkill): FridaySkillLifecycleSu
   const requirementPreview = buildRequirementPreview(skill.manifest);
   const permissionPreview = buildPermissionPreview(skill.manifest);
   const verificationStatus: FridaySkillVerificationStatus = "local";
+  const originType = deriveSkillOriginType(skill.manifest);
+  const maturity = deriveSkillMaturity({
+    manifest: skill.manifest,
+    verificationStatus,
+    installedVersion: skill.manifest.version,
+    registryLoaded: true,
+    status: skill.status,
+    starter: (skill.manifest.tags ?? []).includes("starter"),
+    originType,
+  });
   const installPlan = buildInstallPlan({
     installedVersion: skill.manifest.version,
     targetVersion: skill.manifest.version,
@@ -414,6 +486,8 @@ function registryToSummary(skill: FridayRegisteredSkill): FridaySkillLifecycleSu
     managed: skill.origin === "managed",
     registryLoaded: true,
     currentManifest: skill.manifest,
+    originType,
+    maturity,
     verificationStatus,
     requirementPreview,
     permissionPreview,
@@ -423,6 +497,17 @@ function registryToSummary(skill: FridayRegisteredSkill): FridaySkillLifecycleSu
 }
 
 function persistedToSummary(skill: FridaySkillEntity, catalogEntry: FridaySkillCatalogItem | null): FridaySkillLifecycleSummary {
+  const manifest = skill.currentManifest ?? catalogEntry?.manifest;
+  const originType = deriveSkillOriginType(manifest);
+  const maturity = deriveSkillMaturity({
+    manifest,
+    verificationStatus: "unverified",
+    installedVersion: skill.installedVersion,
+    registryLoaded: false,
+    status: skill.status,
+    starter: (skill.currentManifest?.tags ?? catalogEntry?.manifest.tags ?? []).includes("starter"),
+    originType,
+  });
   return {
     skillId: skill.id,
     name: skill.name,
@@ -441,6 +526,8 @@ function persistedToSummary(skill: FridaySkillEntity, catalogEntry: FridaySkillC
     managed: skill.origin === "managed",
     registryLoaded: false,
     currentManifest: skill.currentManifest,
+    originType,
+    maturity,
     verificationStatus: "unverified",
     requirementPreview: buildRequirementPreview(skill.currentManifest ?? catalogEntry?.manifest),
     permissionPreview: buildPermissionPreview(skill.currentManifest ?? catalogEntry?.manifest),
@@ -485,6 +572,7 @@ function enrichSummary(input: {
     source: input.source,
     catalogEntry: input.catalogEntry,
   });
+  const originType = deriveSkillOriginType(manifest ?? input.summary.currentManifest);
   const installPlan = buildInstallPlan({
     sourceId: input.summary.sourceId ?? input.catalogEntry?.sourceId,
     source: input.source,
@@ -497,6 +585,16 @@ function enrichSummary(input: {
 
   return {
     ...input.summary,
+    originType,
+    maturity: deriveSkillMaturity({
+      manifest: manifest ?? input.summary.currentManifest,
+      verificationStatus,
+      installedVersion: input.summary.installedVersion,
+      registryLoaded: input.summary.registryLoaded,
+      status: input.summary.status,
+      starter: input.summary.starter,
+      originType,
+    }),
     verificationStatus,
     requirementPreview,
     permissionPreview,
@@ -623,6 +721,8 @@ export function createFridaySkillLifecycleService(
         managed: true,
         registryLoaded: false,
         currentManifest: catalogEntry.manifest,
+        originType: deriveSkillOriginType(catalogEntry.manifest),
+        maturity: "draft",
         verificationStatus: "unverified",
         requirementPreview: buildRequirementPreview(catalogEntry.manifest),
         permissionPreview: buildPermissionPreview(catalogEntry.manifest),
@@ -863,6 +963,8 @@ export function createFridaySkillLifecycleService(
           installedVersion: summary?.installedVersion,
           updateAvailable: compareVersions(item.version, summary?.installedVersion),
           sourceDetails,
+          originType: summary?.originType ?? deriveSkillOriginType(item.manifest),
+          maturity: summary?.maturity ?? "draft",
           verificationStatus,
           requirementPreview,
           permissionPreview,

@@ -13,7 +13,29 @@ function makeAdapter(): FridayMcpAdapter {
         args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
       },
     ]),
+    listServerStates: vi.fn().mockReturnValue([
+      {
+        serverId: "filesystem",
+        transport: "stdio",
+        state: "deferred",
+        lazyDiscovery: true,
+      },
+    ]),
     listTools: vi.fn().mockResolvedValue([
+      {
+        serverId: "filesystem",
+        name: "read_file",
+        description: "Read a file",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: { type: "string" },
+          },
+          required: ["path"],
+        },
+      },
+    ]),
+    searchTools: vi.fn().mockResolvedValue([
       {
         serverId: "filesystem",
         name: "read_file",
@@ -71,6 +93,17 @@ describe("createFridayAgentMcpTool", () => {
     expect(payload.items[0]?.transport).toBe("stdio");
   });
 
+  it("lists MCP server discovery states", async () => {
+    const adapter = makeAdapter();
+    const tool = createFridayAgentMcpTool({ mcpAdapter: adapter });
+
+    const result = await tool.execute({ action: "list_server_states" }, new AbortController().signal);
+    expect(result.isError).toBeUndefined();
+    const payload = JSON.parse(result.content) as { count: number; items: Array<{ state: string }> };
+    expect(payload.count).toBe(1);
+    expect(payload.items[0]?.state).toBe("deferred");
+  });
+
   it("lists MCP tools for a server filter", async () => {
     const adapter = makeAdapter();
     const tool = createFridayAgentMcpTool({ mcpAdapter: adapter });
@@ -88,6 +121,23 @@ describe("createFridayAgentMcpTool", () => {
     const payload = JSON.parse(result.content) as { count: number; items: Array<{ name: string }> };
     expect(payload.count).toBe(1);
     expect(payload.items[0]?.name).toBe("read_file");
+  });
+
+  it("searches MCP tools without loading full prompt/resource results", async () => {
+    const adapter = makeAdapter();
+    const tool = createFridayAgentMcpTool({ mcpAdapter: adapter });
+
+    const result = await tool.execute(
+      { action: "search_tools", serverId: "filesystem", query: "read" },
+      new AbortController().signal,
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(adapter.searchTools).toHaveBeenCalledWith({
+      query: "read",
+      serverId: "filesystem",
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it("calls an MCP tool with args", async () => {
