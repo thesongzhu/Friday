@@ -73,11 +73,20 @@ describe("API Runtime — Workflow Generator Registration", () => {
     });
 
     const allRoutes = runtime.routes.getRoutes();
-    const generatorRoutes = allRoutes.filter((r) =>
-      r.operationId.startsWith("workflows.generator."),
-    );
+    const generatorRouteIds = allRoutes
+      .filter((r) => r.operationId.startsWith("workflows.generator."))
+      .map((r) => r.operationId)
+      .sort();
 
-    expect(generatorRoutes.length).toBe(6);
+    expect(generatorRouteIds).toEqual([
+      "workflows.generator.sessions.approve",
+      "workflows.generator.sessions.cancel",
+      "workflows.generator.sessions.create",
+      "workflows.generator.sessions.evidence.get",
+      "workflows.generator.sessions.generate",
+      "workflows.generator.sessions.get",
+      "workflows.generator.sessions.messages.create",
+    ]);
   });
 
   it("does not register generator routes when workflowGenerator is omitted", () => {
