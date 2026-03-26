@@ -112,6 +112,17 @@ describe("isMutatingToolCall", () => {
     expect(isMutatingToolCall("system", { action: "approve" })).toBe(true);
   });
 
+  it("classifies readonly desktop actions as non-mutating", () => {
+    expect(isMutatingToolCall("desktop", { action: "session_info" })).toBe(false);
+    expect(isMutatingToolCall("desktop", { action: "screenshot" })).toBe(false);
+    expect(isMutatingToolCall("desktop", { action: "check_permissions" })).toBe(false);
+  });
+
+  it("classifies mutating desktop actions as mutating", () => {
+    expect(isMutatingToolCall("desktop", { action: "execute" })).toBe(true);
+    expect(isMutatingToolCall("desktop", { action: "start_recording" })).toBe(true);
+  });
+
   it("classifies readonly gateway actions as non-mutating", () => {
     expect(isMutatingToolCall("gateway", { action: "status" })).toBe(false);
     expect(isMutatingToolCall("gateway", { action: "config_get" })).toBe(false);
