@@ -15,6 +15,7 @@ const ObservabilityPage = lazy(async () => import("@/routes/observability-page")
 const SettingsPage = lazy(async () => import("@/routes/settings-page").then((module) => ({ default: module.SettingsPage })));
 const SetupPage = lazy(async () => import("@/routes/setup-page").then((module) => ({ default: module.SetupPage })));
 const SkillsPage = lazy(async () => import("@/routes/skills-page").then((module) => ({ default: module.SkillsPage })));
+const WorkflowBuilderPage = lazy(async () => import("@/routes/workflow-builder-page").then((module) => ({ default: module.WorkflowBuilderPage })));
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
 
 function FullscreenMessage(props: { title: string; detail: string }) {
@@ -186,6 +187,14 @@ export const router = createBrowserRouter([
             element: (
               <RouteSuspense title="Loading workflows" detail="Friday is preparing workflow deploy and visualization surfaces.">
                 <WorkflowsPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "workflows/builder",
+            element: (
+              <RouteSuspense title="Loading workflow builder" detail="Friday is preparing template-first workflow authoring surfaces.">
+                <WorkflowBuilderPage />
               </RouteSuspense>
             ),
           },

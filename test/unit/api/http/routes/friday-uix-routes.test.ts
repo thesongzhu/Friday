@@ -39,6 +39,13 @@ function makeService(): FridayUixSurfaceService {
         parameters: [],
       },
     ]),
+    getDiagnostics: vi.fn(() => ({
+      generatedAt: NOW,
+      taskProfilePresets: [],
+      recentRuns: [],
+      mcpServerStates: [],
+      supportedPreprocessors: [],
+    })),
     listPreferences: vi.fn(() => ({
       items: [
         {
@@ -169,10 +176,11 @@ function makeService(): FridayUixSurfaceService {
 describe("FridayUixRoutes", () => {
   it("creates assistant route definitions", () => {
     const routes = createFridayUixRoutes({ service: makeService() });
-    expect(routes).toHaveLength(10);
+    expect(routes).toHaveLength(11);
     expect(routes.map((route) => route.operationId)).toEqual([
       "uix.intents.resolve",
       "uix.templates.list",
+      "uix.diagnostics.get",
       "uix.preferences.list",
       "uix.preferences.update",
       "uix.preferences.delete",
@@ -228,6 +236,19 @@ describe("FridayUixRoutes", () => {
         ],
       },
     });
+  });
+
+  it("returns assistant diagnostics", async () => {
+    const service = makeService();
+    const routes = createFridayUixRoutes({ service });
+    const route = routes.find((entry) => entry.operationId === "uix.diagnostics.get")!;
+
+    const result = await route.handler(makeCtx()) as {
+      assistant: { generatedAt: string };
+    };
+
+    expect(service.getDiagnostics).toHaveBeenCalledWith({ userId: "user-1" });
+    expect(result.assistant.generatedAt).toBe(NOW);
   });
 
   it("returns the resolved communication persona", async () => {

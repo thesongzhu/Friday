@@ -269,4 +269,42 @@ describe("createFridayAgentSkillsListTool", () => {
     expect(parsed.count).toBe(1);
     expect(parsed.skills[0]?.skillId).toBe("repo-health-check");
   });
+
+  it("prioritizes CLI-backed starter skills for local repo and ops work", async () => {
+    const tool = createFridayAgentSkillsListTool({
+      skillRegistry: createRegistry([
+        buildRegisteredSkill({
+          manifest: buildManifest({
+            id: "repo-health-check",
+            name: "Repo Health Check",
+            description: "Inspect repo health",
+            tags: ["starter", "starter.devops", "starter.cli", "cli-backed", "skill.stabilized"],
+          }),
+          origin: "bundled",
+          status: "installed",
+        }),
+        buildRegisteredSkill({
+          manifest: buildManifest({
+            id: "workspace-diff-review",
+            name: "Workspace Diff Review",
+            description: "Review risky changes",
+            tags: ["starter", "starter.devops"],
+          }),
+          origin: "bundled",
+          status: "installed",
+        }),
+      ]),
+    });
+
+    const result = await tool.execute(
+      { q: "repo health" },
+      new AbortController().signal,
+    );
+    const parsed = JSON.parse(result.content) as { skills: Array<Record<string, unknown>> };
+
+    expect(parsed.skills[0]?.skillId).toBe("repo-health-check");
+    expect(parsed.skills[0]?.tags).toEqual(
+      expect.arrayContaining(["starter.cli", "cli-backed", "skill.stabilized"]),
+    );
+  });
 });

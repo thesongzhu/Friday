@@ -1,5 +1,12 @@
 import type { FridayIssueCard } from "./friday-api-self-healing.types.js";
 import type { FridayAssistantWorkflowCard } from "./friday-api-workflow.types.js";
+import type {
+  FridayAgentContextCostSummary,
+  FridayAgentPreprocessorKind,
+  FridayAgentRunStatus,
+  FridayMcpServerState,
+  FridayResolvedAgentTaskProfile,
+} from "#agent";
 
 export interface FridayBeginnerIntentResolution {
   intent:
@@ -91,4 +98,26 @@ export interface FridayUixWizardResponse {
   successTest?: string;
   fallbackPath?: string;
   state?: FridayBeginnerIntentResolution["state"];
+}
+
+export interface FridayUixAssistantDiagnosticsRun {
+  runId: string;
+  task: string;
+  status: FridayAgentRunStatus;
+  startedAt?: string;
+  completedAt?: string;
+  contextCostSummary?: FridayAgentContextCostSummary;
+  taskProfile?: FridayResolvedAgentTaskProfile;
+}
+
+export interface FridayUixAssistantDiagnostics {
+  generatedAt: string;
+  taskProfilePresets: FridayResolvedAgentTaskProfile[];
+  recentRuns: FridayUixAssistantDiagnosticsRun[];
+  mcpServerStates: FridayMcpServerState[];
+  supportedPreprocessors: FridayAgentPreprocessorKind[];
+}
+
+export interface FridayUixDiagnosticsResponse {
+  assistant: FridayUixAssistantDiagnostics;
 }

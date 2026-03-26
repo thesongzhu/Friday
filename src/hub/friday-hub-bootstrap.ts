@@ -125,8 +125,11 @@ import {
   createFridayAgentWorkflowGeneratorTool,
   createFridayMcpAdapter,
   createFridaySubagentRegistry,
-  createFridayWorkspaceContextEngine,
+  inferFridaySubagentProfile,
+  loadFridayWorkspaceContext,
   parseFridayMcpServersFromEnv,
+  resolveFridayAgentTaskProfile,
+  createFridayWorkspaceContextEngine,
   resolveFridayContextEnginePromptFragment,
 } from "#agent";
 import { buildMcpServerToolFilter } from "./friday-mcp-safe-catalog.js";
@@ -2015,6 +2018,9 @@ export async function createFridayHub(
     };
   }) => {
     let workspaceContext: string | undefined;
+    let workspaceContextSummary:
+      | Awaited<ReturnType<typeof loadFridayWorkspaceContext>>["summary"]
+      | undefined;
     try {
       const ctx = await resolveFridayContextEnginePromptFragment(agentContextEngine, {
         task: input.task,
@@ -2023,6 +2029,7 @@ export async function createFridayHub(
       if (ctx.promptFragment) {
         workspaceContext = ctx.promptFragment;
       }
+      workspaceContextSummary = ctx.workspaceContext?.summary;
     } catch {
       // Non-fatal: workspace context loading failure should not block agent runs.
     }
@@ -2053,7 +2060,7 @@ export async function createFridayHub(
         triggerPhrases: skill.manifest.triggers.phrases ?? [],
         tags: skill.manifest.tags ?? [],
       }));
-    return buildFridayAgentSystemPrompt({
+    const prompt = buildFridayAgentSystemPrompt({
       toolNames: input.toolNames,
       modelIdentity: agentModelIdentity,
       version: FRIDAY_VERSION,
@@ -2082,6 +2089,66 @@ export async function createFridayHub(
         selfLearningEnabled: input.toolNames.includes("feedback"),
       },
     });
+    const starterSkillChars = starterSkills.reduce((sum, skill) =>
+      sum
+      + skill.skillId.length
+      + skill.purpose.length
+      + skill.triggerPhrases.join(", ").length
+      + (skill.tags ?? []).join(", ").length,
+    0);
+    const mcpStates = mcpAdapter?.listServerStates() ?? [];
+    const components = [
+      workspaceContextSummary && workspaceContextSummary.promptChars > 0
+        ? {
+            kind: "workspace_context" as const,
+            estimatedChars: workspaceContextSummary.promptChars,
+            count: workspaceContextSummary.selectedFileCount,
+            metadata: {
+              pathRuleCount: workspaceContextSummary.selectedPathRuleCount,
+              candidatePaths: workspaceContextSummary.candidatePaths,
+            },
+          }
+        : null,
+      starterSkills.length > 0
+        ? {
+            kind: "starter_skills" as const,
+            estimatedChars: starterSkillChars,
+            count: starterSkills.length,
+          }
+        : null,
+      mcpStates.length > 0
+        ? {
+            kind: "mcp" as const,
+            estimatedChars: JSON.stringify(mcpStates.map((state) => ({
+              serverId: state.serverId,
+              state: state.state,
+              toolCount: state.toolCount,
+            }))).length,
+            count: mcpStates.length,
+            metadata: {
+              states: mcpStates.reduce<Record<string, number>>((acc, state) => {
+                acc[state.state] = (acc[state.state] ?? 0) + 1;
+                return acc;
+              }, {}),
+            },
+          }
+        : null,
+      input.toolNames.includes("spawn_subagent")
+        ? {
+            kind: "subagents" as const,
+            estimatedChars: 96,
+            count: 1,
+            metadata: { enabled: true },
+          }
+        : null,
+    ].filter((component): component is NonNullable<typeof component> => component !== null);
+    return {
+      prompt,
+      contextCostSummary: {
+        totalEstimatedChars: components.reduce((sum, component) => sum + component.estimatedChars, 0),
+        components,
+      },
+    };
   };
 
   // Lazy reference for learning context — assigned after selfLearningRuntime is created.
@@ -2131,6 +2198,7 @@ export async function createFridayHub(
         taskPrompt: input.taskPrompt,
         providerId: input.providerId,
         model: input.model,
+        profile: inferFridaySubagentProfile(input.task),
         timezone: input.timezone,
         timeoutMs: input.timeoutMs,
         conversationContext: input.conversationContext,
@@ -2854,6 +2922,33 @@ export async function createFridayHub(
     observability: observabilityService,
     preferenceRepo: uixUserPreferenceRepository,
     learningContextBuilder: (input) => _learningContextRef?.buildContext(input) ?? { preferences: {} },
+    diagnosticsBuilder: () => ({
+      generatedAt: nowIso(),
+      taskProfilePresets: [
+        resolveFridayAgentTaskProfile("default"),
+        resolveFridayAgentTaskProfile("deterministic"),
+        resolveFridayAgentTaskProfile("planning"),
+        resolveFridayAgentTaskProfile("review"),
+        resolveFridayAgentTaskProfile("creative"),
+      ],
+      recentRuns: stateRuntime.sqlite.withReadConnection((db) =>
+        agentRunRepo.list(db, { limit: 8 }).map((run) => ({
+          runId: run.id,
+          task: run.task,
+          status: run.status,
+          startedAt: run.startedAt,
+          completedAt: run.completedAt,
+          contextCostSummary: run.contextCostSummary,
+          taskProfile: run.taskProfile,
+        }))),
+      mcpServerStates: [...(mcpAdapter?.listServerStates() ?? [])],
+      supportedPreprocessors: [
+        "test_output",
+        "log_excerpt",
+        "browser_snapshot",
+        "diff_excerpt",
+      ],
+    }),
     nowIso,
   });
 

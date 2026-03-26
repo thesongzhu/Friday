@@ -467,6 +467,7 @@ export function createFridaySkillGeneratorRoutes(
       rateLimitPolicyId: "skill_generator.write",
       async handler(ctx): Promise<FridayApproveResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
+        const evidence = await buildEvidence(sessionId);
         const result = await deps.skillGenerator.approveAndSave(sessionId);
         await deps.observability?.recordSkillGeneratorEvent({
           sessionId,
@@ -475,7 +476,10 @@ export function createFridaySkillGeneratorRoutes(
           summary: `Saved generated skill ${result.skillId}`,
           ok: true,
         });
-        return result;
+        return {
+          ...result,
+          evidence,
+        };
       },
     },
 

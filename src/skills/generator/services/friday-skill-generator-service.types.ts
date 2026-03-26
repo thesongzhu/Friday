@@ -41,6 +41,13 @@ export interface FridaySkillGeneratorService {
     skillDir: string;
     savedFiles: string[];
     registryRefreshed: boolean;
+    promotionStage: "stabilized";
+    promotedManifestTags: string[];
+    evidence: {
+      packageLoaded: boolean;
+      packageValidated: boolean;
+      registryRefreshed: boolean;
+    };
   }>;
 
   cancelSession(sessionId: string): Promise<void>;

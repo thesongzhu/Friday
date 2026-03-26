@@ -467,6 +467,43 @@ export function createFridaySkillGeneratorService(
     repo.createSession(session);
   }
 
+  function normalizeLifecycleTags(tags: readonly string[]): string[] {
+    return [...new Set(tags.map((tag) => tag.trim()).filter((tag) => tag.length > 0))];
+  }
+
+  function withDraftLifecycleTags(manifest: SkillManifestV2): SkillManifestV2 {
+    const baseTags = normalizeLifecycleTags(
+      manifest.tags.filter((tag) => !["stable", "stabilized", "skill.stabilized"].includes(tag)),
+    );
+    const nextTags = new Set<string>(baseTags);
+    nextTags.add("generated");
+    nextTags.add("generated.draft");
+    if (manifest.runtime.kind === "shell" || manifest.runtime.kind === "python") {
+      nextTags.add("cli-backed");
+    }
+    return {
+      ...manifest,
+      tags: [...nextTags],
+    };
+  }
+
+  function withStabilizedLifecycleTags(manifest: SkillManifestV2): SkillManifestV2 {
+    const nextTags = new Set<string>(
+      normalizeLifecycleTags(
+        manifest.tags.filter((tag) => tag !== "generated.draft"),
+      ),
+    );
+    nextTags.add("generated");
+    nextTags.add("skill.stabilized");
+    if (manifest.runtime.kind === "shell" || manifest.runtime.kind === "python") {
+      nextTags.add("cli-backed");
+    }
+    return {
+      ...manifest,
+      tags: [...nextTags],
+    };
+  }
+
   async function runRequirementsAnalyzer(
     session: FridaySkillGenerationSession,
     turns: FridaySkillGenerationTurn[],
@@ -482,6 +519,7 @@ export function createFridaySkillGeneratorService(
     const result = await llm.infer<RequirementsAnalyzerResponse>({
       prompt,
       requestedModel,
+      taskProfile: "planning",
     });
     return result.parsed;
   }
@@ -535,6 +573,7 @@ export function createFridaySkillGeneratorService(
       const result = await llm.infer<unknown>({
         prompt,
         requestedModel,
+        taskProfile: "deterministic",
       });
       parsed = result.parsed;
     } catch (err) {
@@ -581,6 +620,7 @@ export function createFridaySkillGeneratorService(
       const result = await llm.infer<unknown>({
         prompt,
         requestedModel,
+        taskProfile: "review",
       });
       parsed = result.parsed;
     } catch (err) {
@@ -613,6 +653,7 @@ export function createFridaySkillGeneratorService(
       const result = await llm.infer<unknown>({
         prompt,
         requestedModel,
+        taskProfile: "deterministic",
       });
       parsed = result.parsed;
     } catch (err) {
@@ -754,7 +795,7 @@ export function createFridaySkillGeneratorService(
     }
 
     const draft: FridayGeneratedSkillDraft = {
-      manifest: repairedManifest,
+      manifest: withDraftLifecycleTags(repairedManifest),
       files: repairedFiles,
       uiSchema: repairedUiSchema,
       runtimeKind:
@@ -1132,6 +1173,7 @@ export function createFridaySkillGeneratorService(
       const skillsDir = settings.managedSkillsDir;
       const skillId = draft.manifest.id;
       const finalSkillDir = resolveSafeInstallDir(skillsDir, skillId);
+      const promotedManifest = withStabilizedLifecycleTags(draft.manifest);
 
       // ── Stage: Write to temp directory first ──
       const tempDir = join(tmpdir(), `friday-skill-${sessionId}`);
@@ -1145,7 +1187,7 @@ export function createFridaySkillGeneratorService(
         mkdirSync(dirname(manifestPath), { recursive: true });
         writeFileSync(
           manifestPath,
-          JSON.stringify(draft.manifest, null, 2),
+          JSON.stringify(promotedManifest, null, 2),
           "utf-8",
         );
         savedFiles.push("skill.manifest.json");
@@ -1280,6 +1322,13 @@ export function createFridaySkillGeneratorService(
         skillDir: finalSkillDir,
         savedFiles,
         registryRefreshed,
+        promotionStage: "stabilized",
+        promotedManifestTags: promotedManifest.tags,
+        evidence: {
+          packageLoaded: true,
+          packageValidated: true,
+          registryRefreshed,
+        },
       };
     },
 

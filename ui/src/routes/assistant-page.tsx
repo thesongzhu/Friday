@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner";
 import { useAgentRunEvents } from "@/hooks/use-agent-run-events";
 import { agentApi } from "@/lib/api/agent";
+import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { fleetApi } from "@/lib/api/fleet";
 import {
   marketplaceApi,
@@ -46,6 +47,8 @@ import type {
   FridayWorkflowOverview,
 } from "@/lib/api/system-types";
 import type {
+  AgentTaskProfileId,
+  AssistantDiagnostics,
   AgentRunRecord,
   FridayFleetOverviewResponse,
   FridayFleetSatelliteCard,
@@ -79,7 +82,7 @@ import {
 } from "@/lib/marketplace/view-models";
 import { buildObservabilityHref } from "@/lib/observability/view-models";
 import { buildSkillHref } from "@/lib/skills/view-models";
-import { buildWorkflowHref } from "@/lib/workflows/view-models";
+import { buildWorkflowBuilderHref, buildWorkflowHref } from "@/lib/workflows/view-models";
 
 const OPERATOR_ID = "assistant-shell";
 const ASSISTANT_OUTCOME_RECEIPT_COOLDOWN_KEY = "friday.assistant.outcome-receipt.cooldowns";
@@ -104,6 +107,12 @@ const QUICK_INTENTS = [
 ] as const;
 
 const ASSISTANT_TASK_STORIES = [
+  {
+    templateId: "workflow-builder-launch",
+    title: "Open workflow builder",
+    description: "Jump straight into the template-first builder so you can instantiate a stable starter, create a draft, and publish from one place.",
+    outcome: "A direct path from idea to draft lifecycle without bouncing back to the control plane first.",
+  },
   {
     templateId: "idea-clarifier",
     title: "Clarify an idea",
@@ -133,6 +142,18 @@ const ASSISTANT_TASK_STORIES = [
     title: "Sync release docs",
     description: "Keep README, changelog, and architecture notes aligned with what actually changed in the workspace.",
     outcome: "A bounded documentation sync instead of stale release-facing docs.",
+  },
+  {
+    templateId: "integration-mode-review",
+    title: "Review integration mode",
+    description: "See whether a capability should stay as a stable skill, shift to CLI-first execution, or remain MCP-backed before you add more tool surface.",
+    outcome: "A clearer decision on skill vs CLI vs MCP before the surface area sprawls.",
+  },
+  {
+    templateId: "context-governance-review",
+    title: "Review context governance",
+    description: "Inspect task profiles, MCP loading, preprocessors, and context cost so the assistant stays predictable and cheaper to run.",
+    outcome: "A diagnostics-first path to trim context and choose the right task profile.",
   },
 ] as const;
 
@@ -341,6 +362,54 @@ function compactText(text?: string): string {
   return text.length > 180 ? `${text.slice(0, 177)}...` : text;
 }
 
+function formatEstimatedChars(value?: number): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "0";
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(1)}k`;
+  }
+  return String(Math.round(value));
+}
+
+function summarizeContextCostComponent(
+  run: Pick<AgentRunRecord, "contextCostSummary"> | Pick<AssistantDiagnostics["recentRuns"][number], "contextCostSummary"> | null | undefined,
+  kind: "workspace_context" | "starter_skills" | "mcp" | "subagents",
+): string {
+  const component = run?.contextCostSummary?.components.find((entry) => entry.kind === kind);
+  if (!component) return "0";
+  const countLabel = typeof component.count === "number" ? `${component.count} / ` : "";
+  return `${countLabel}${formatEstimatedChars(component.estimatedChars)} chars`;
+}
+
+function summarizeMcpServerStates(states: AssistantDiagnostics["mcpServerStates"]) {
+  const summary = {
+    configured: 0,
+    discoverable: 0,
+    loaded: 0,
+    deferred: 0,
+  };
+  for (const state of states) {
+    summary[state.state] += 1;
+  }
+  return summary;
+}
+
+function isCliFirstSkill(skill: Pick<SkillLifecycleSummary, "originType" | "tags">) {
+  return skill.originType === "cli-backed" || skill.tags.includes("starter.cli") || skill.tags.includes("cli-backed");
+}
+
+function describeSkillIntegrationMode(skill: Pick<SkillLifecycleSummary, "originType" | "tags">): string {
+  if (skill.originType === "cli-backed" || isCliFirstSkill(skill)) {
+    return "CLI-backed";
+  }
+  if (skill.originType === "mcp-backed") {
+    return "MCP-backed";
+  }
+  if (skill.originType === "stabilized") {
+    return "Stable skill";
+  }
+  return "Generated";
+}
+
 function readOutcomeReceiptCooldowns(): Record<string, string> {
   if (typeof window === "undefined") {
     return {};
@@ -388,6 +457,7 @@ function buildAutomationsPrefillHref(receipt: FridayAssistantOutcomeReceipt): st
 
 export function AssistantPage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [goal, setGoal] = useState("");
   const [intentResult, setIntentResult] = useState<FridayBeginnerIntentResolution | null>(null);
@@ -395,6 +465,7 @@ export function AssistantPage() {
   const [suppressedOutcomeTaskKeys, setSuppressedOutcomeTaskKeys] = useState<string[]>(() =>
     getActiveOutcomeReceiptCooldownTaskKeys(),
   );
+  const [selectedTaskProfileId, setSelectedTaskProfileId] = useState<AgentTaskProfileId>("default");
   const setupStarterApplied = useRef(false);
 
   const sessionQuery = useQuery({
@@ -466,6 +537,12 @@ export function AssistantPage() {
     queryKey: ["assistant-shell", "agent-runs"],
     queryFn: () => agentApi.listRuns({ limit: 8 }),
     refetchInterval: 5_000,
+  });
+
+  const diagnosticsQuery = useQuery({
+    queryKey: ["assistant-shell", "diagnostics"],
+    queryFn: () => assistantDiagnosticsApi.get(),
+    refetchInterval: 10_000,
   });
 
   const workflowsQuery = useQuery({
@@ -844,6 +921,8 @@ export function AssistantPage() {
       ) ?? null,
     [agentRunsQuery.data],
   );
+  const latestAssistantRun = (agentRunsQuery.data ?? [])[0] ?? null;
+  const displayedAssistantRun = activeAssistantRun ?? latestAssistantRun;
   const latestOutcomeReceipt = useMemo(
     () => deriveAssistantOutcomeReceipt({
       runs: agentRunsQuery.data ?? [],
@@ -854,6 +933,35 @@ export function AssistantPage() {
   );
   const assistantRunEvents = useAgentRunEvents(activeAssistantRun?.id ?? null, {
     enabled: activeAssistantRun !== null,
+  });
+
+  useEffect(() => {
+    const nextProfileId = activeAssistantRun?.taskProfile?.id ?? latestAssistantRun?.taskProfile?.id;
+    if (!nextProfileId) {
+      return;
+    }
+    setSelectedTaskProfileId((current) => (current === "default" ? nextProfileId : current));
+  }, [activeAssistantRun?.taskProfile?.id, latestAssistantRun?.taskProfile?.id]);
+
+  const rerunMutation = useMutation({
+    mutationFn: (input: { task: string; taskProfileId: AgentTaskProfileId }) =>
+      agentApi.startRun({
+        task: input.task,
+        executionContext: {
+          surface: "assistant",
+          interactive: true,
+        },
+        taskProfile: {
+          id: input.taskProfileId,
+        },
+      }),
+    onSuccess: async (_, input) => {
+      toast.success(`Started a rerun with the ${input.taskProfileId} profile.`);
+      await invalidateAssistantShell(queryClient);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not start the rerun");
+    },
   });
 
   const degradedSatellites = useMemo(
@@ -936,6 +1044,28 @@ export function AssistantPage() {
     setGoal(starterGoal);
     resolveIntentMutation.mutate(starterGoal);
   }, [location.state, resolveIntentMutation]);
+
+  const handleExecuteTemplate = (template: FridayActionTemplateSummary) => {
+    if (template.id === "workflow-builder-launch") {
+      navigate(buildWorkflowBuilderHref());
+      toast.success("Opened the workflow builder.");
+      return;
+    }
+    if (template.id === "integration-mode-review") {
+      navigate("/skills");
+      toast.success("Opened the skills surface for integration review.");
+      return;
+    }
+    if (template.id === "context-governance-review") {
+      navigate(buildObservabilityHref({ focus: "assistant" }));
+      toast.success("Opened assistant diagnostics.");
+      return;
+    }
+    executeTemplateMutation.mutate({
+      templateId: template.id,
+      parameters: templateValues[template.id],
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -1029,11 +1159,7 @@ export function AssistantPage() {
                   },
                 }));
               }}
-              onExecuteTemplate={(template) =>
-                executeTemplateMutation.mutate({
-                  templateId: template.id,
-                  parameters: templateValues[template.id],
-                })}
+              onExecuteTemplate={handleExecuteTemplate}
               loadingTemplateId={
                 executeTemplateMutation.variables?.templateId
               }
@@ -1093,11 +1219,27 @@ export function AssistantPage() {
 
           <div className="space-y-6">
             <AssistantRunPulseCard
-              run={activeAssistantRun}
-              progress={assistantRunEvents.progress}
+              run={displayedAssistantRun}
+              progress={activeAssistantRun
+                ? assistantRunEvents.progress
+                : {
+                    phase: displayedAssistantRun?.status,
+                    elapsedMs: displayedAssistantRun?.durationMs ?? 0,
+                    subagentCount: 0,
+                    activeTool: undefined,
+                    eta: undefined,
+                  }}
+              diagnostics={diagnosticsQuery.data}
+              selectedTaskProfileId={selectedTaskProfileId}
+              onTaskProfileChange={setSelectedTaskProfileId}
+              onRerun={(run) =>
+                rerunMutation.mutate({
+                  task: run.task,
+                  taskProfileId: selectedTaskProfileId,
+                })}
               onApprovePlan={(runId) => approvePlanMutation.mutate(runId)}
               onRejectPlan={(runId) => rejectPlanMutation.mutate(runId)}
-              planPending={approvePlanMutation.isPending || rejectPlanMutation.isPending}
+              planPending={approvePlanMutation.isPending || rejectPlanMutation.isPending || rerunMutation.isPending}
             />
 
             <RecoveryCommandCenterSection paths={recoveryPaths} />
@@ -1223,16 +1365,49 @@ function AssistantRunPulseCard(props: {
     activeTool?: string;
     eta?: number;
   };
+  diagnostics?: AssistantDiagnostics;
+  selectedTaskProfileId: AgentTaskProfileId;
+  onTaskProfileChange: (taskProfileId: AgentTaskProfileId) => void;
+  onRerun: (run: AgentRunRecord) => void;
   onApprovePlan: (runId: string) => void;
   onRejectPlan: (runId: string) => void;
   planPending: boolean;
 }) {
+  const presetOptions = props.diagnostics?.taskProfilePresets ?? [];
+  const mcpSummary = summarizeMcpServerStates(props.diagnostics?.mcpServerStates ?? []);
+
   if (!props.run) {
     return (
       <ShellCard eyebrow="Live task pulse" title="No operator run is active right now">
-        <p className="text-sm text-white/58">
-          Assistant will surface active operator work here once a long-running task is in flight.
-        </p>
+        <div className="space-y-4 text-sm text-white/58">
+          <p>Assistant will surface active operator work here once a long-running task is in flight.</p>
+          <label className="grid gap-2 text-sm">
+            <span className="font-medium text-white">Default task profile</span>
+            <select
+              value={props.selectedTaskProfileId}
+              onChange={(event) => props.onTaskProfileChange(event.target.value as AgentTaskProfileId)}
+              className="agent-input"
+            >
+              {presetOptions.length > 0 ? presetOptions.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.label} · {preset.reasoningEffort}
+                </option>
+              )) : (
+                <option value={props.selectedTaskProfileId}>{props.selectedTaskProfileId}</option>
+              )}
+            </select>
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <MetricStat label="MCP loaded" value={String(mcpSummary.loaded)} tone={mcpSummary.loaded > 0 ? "success" : "neutral"} />
+            <MetricStat label="MCP deferred" value={String(mcpSummary.deferred)} tone={mcpSummary.deferred > 0 ? "warning" : "neutral"} />
+          </div>
+          <Link
+            className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+            to={buildObservabilityHref({ focus: "assistant" })}
+          >
+            Open assistant diagnostics
+          </Link>
+        </div>
       </ShellCard>
     );
   }
@@ -1250,6 +1425,37 @@ function AssistantRunPulseCard(props: {
         <MetricStat label="ETA" value={typeof props.progress.eta === "number" ? `up to ${formatRunDuration(props.progress.eta)}` : "unknown"} />
         <MetricStat label="Subagents" value={String(props.progress.subagentCount)} tone={props.progress.subagentCount > 0 ? "success" : "neutral"} />
         <MetricStat label="Active tool" value={props.progress.activeTool ?? "none"} />
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="grid gap-2 text-sm">
+          <span className="font-medium text-white">Task profile</span>
+          <select
+            value={props.selectedTaskProfileId}
+            onChange={(event) => props.onTaskProfileChange(event.target.value as AgentTaskProfileId)}
+            className="agent-input"
+          >
+            {presetOptions.length > 0 ? presetOptions.map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                {preset.label} · {preset.reasoningEffort}
+              </option>
+            )) : (
+              <option value={props.selectedTaskProfileId}>{props.selectedTaskProfileId}</option>
+            )}
+          </select>
+        </label>
+        <div className="grid gap-2 text-xs text-white/55">
+          <p className="font-medium uppercase tracking-[0.18em] text-white/40">Context cost</p>
+          <p>Workspace: {summarizeContextCostComponent(run, "workspace_context")}</p>
+          <p>Skills: {summarizeContextCostComponent(run, "starter_skills")}</p>
+          <p>MCP: {summarizeContextCostComponent(run, "mcp")}</p>
+          <p>Subagents: {summarizeContextCostComponent(run, "subagents")}</p>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <MetricStat label="MCP configured" value={String(mcpSummary.configured)} tone={mcpSummary.configured > 0 ? "success" : "neutral"} />
+        <MetricStat label="MCP loaded" value={String(mcpSummary.loaded)} tone={mcpSummary.loaded > 0 ? "success" : "neutral"} />
+        <MetricStat label="MCP discoverable" value={String(mcpSummary.discoverable)} tone={mcpSummary.discoverable > 0 ? "warning" : "neutral"} />
+        <MetricStat label="MCP deferred" value={String(mcpSummary.deferred)} tone={mcpSummary.deferred > 0 ? "warning" : "neutral"} />
       </div>
       <p className="mt-4 text-sm leading-6 text-white/62">{run.task}</p>
       {run.status === "awaiting_clarification" && run.planReview?.gate?.clarificationQuestions?.length ? (
@@ -1273,6 +1479,15 @@ function AssistantRunPulseCard(props: {
           to={`/command-center?runId=${encodeURIComponent(run.id)}`}
         >
           Open live run
+        </Link>
+        <ActionButton tone="secondary" disabled={props.planPending} onClick={() => props.onRerun(run)}>
+          Re-run with profile
+        </ActionButton>
+        <Link
+          className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+          to={buildObservabilityHref({ focus: "assistant" })}
+        >
+          Open diagnostics
         </Link>
         {run.status === "awaiting_plan_approval" ? (
           <>
@@ -1984,9 +2199,14 @@ function WorkflowActionCard(props: {
           <p className="text-xs uppercase tracking-[0.2em] text-white/45">Workflows</p>
           <h3 className="mt-1 text-lg font-semibold text-white">Generate, deploy, rerun, export</h3>
         </div>
-        <Link className="text-sm text-[var(--accent-soft)] hover:text-white" to="/workflows">
-          Open all
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link className="text-sm text-[var(--accent-soft)] hover:text-white" to="/workflows/builder">
+            Open builder
+          </Link>
+          <Link className="text-sm text-[var(--accent-soft)] hover:text-white" to="/workflows">
+            Open all
+          </Link>
+        </div>
       </div>
       <div className="space-y-3">
         {props.workflowOverviews.slice(0, 3).map((overview) => (
@@ -2021,6 +2241,16 @@ function WorkflowActionCard(props: {
               ) : null}
               <Link
                 className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                to={buildWorkflowBuilderHref({
+                  workflowId: overview.workflow.id,
+                  draftId: overview.latestDraft?.draftId,
+                  focus: overview.latestDraft ? "draft" : "templates",
+                })}
+              >
+                Open builder
+              </Link>
+              <Link
+                className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
                 to={buildWorkflowHref(
                   overview.workflow.id,
                   overview.latestRun?.status === "failed" ? "recovery" : overview.latestDraft ? "deploy" : "details",
@@ -2035,6 +2265,7 @@ function WorkflowActionCard(props: {
                 `Latest draft: ${overview.latestDraft?.title ?? "none"}`,
                 `Published version: ${overview.publishedVersion ? `v${overview.publishedVersion.versionNumber}` : "none"}`,
                 `Latest run: ${overview.latestRun?.status ?? "not run yet"}`,
+                `Builder handoff: ${overview.latestDraft ? "draft context ready" : "template-first start"}`,
               ]}
             />
           </div>
@@ -2084,6 +2315,13 @@ function SkillsActionCard(props: {
             </div>
             <p className="text-sm text-white/65">{compactText(skill.description)}</p>
             <div className="mt-3 flex flex-wrap gap-2">
+              <StatusPill>{describeSkillIntegrationMode(skill)}</StatusPill>
+              <StatusPill tone={skill.maturity === "stable" ? "success" : skill.maturity === "verified" ? "warning" : "neutral"}>
+                {skill.maturity}
+              </StatusPill>
+              {isCliFirstSkill(skill) ? <StatusPill tone="success">CLI-first</StatusPill> : null}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
               <ActionButton disabled={props.verifyPending} onClick={() => props.onVerifySkill(skill.skillId)}>
                 Verify
               </ActionButton>
@@ -2094,7 +2332,7 @@ function SkillsActionCard(props: {
               ) : null}
               <Link
                 className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
-                to={buildSkillHref(skill.skillId, skill.updateAvailable ? "install" : "verify")}
+                to={buildSkillHref(skill.skillId, "details")}
               >
                 Details
               </Link>
@@ -2105,6 +2343,7 @@ function SkillsActionCard(props: {
                 `Installed version: ${skill.installedVersion ?? "not installed"}`,
                 `Latest version: ${skill.latestVersion ?? "unknown"}`,
                 `Source: ${skill.sourceId ?? skill.source}`,
+                `Integration mode: ${describeSkillIntegrationMode(skill)}`,
               ]}
             />
           </div>
@@ -2121,6 +2360,14 @@ function SkillsActionCard(props: {
               </StatusPill>
             </div>
             <p className="text-sm text-white/65">Install directly from the assistant, then jump to skills only if you need deeper detail.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {skill.originType ? <StatusPill>{skill.originType}</StatusPill> : null}
+              {skill.maturity ? (
+                <StatusPill tone={skill.maturity === "stable" ? "success" : skill.maturity === "verified" ? "warning" : "neutral"}>
+                  {skill.maturity}
+                </StatusPill>
+              ) : null}
+            </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <ActionButton disabled={props.installPending} onClick={() => props.onInstallSkill(skill.skillId, skill.sourceId)}>
                 Install
@@ -2321,7 +2568,7 @@ function SystemActionCard(props: {
       <div className="mt-3 flex flex-wrap gap-2">
         <Link
           className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
-          to={buildObservabilityHref({ focus: "overview" })}
+          to={buildObservabilityHref({ focus: "assistant" })}
         >
           Open observability
         </Link>

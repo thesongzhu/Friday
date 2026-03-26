@@ -40,11 +40,13 @@ import type {
   FridayAgentExecutionContext,
   FridayAgentRuntime,
   FridayAgentRuntimeResult,
+  FridayAgentSystemPromptBuildResult,
 } from "./friday-agent-runtime.types.js";
 import { evaluateFridayAnswerAlignment } from "./friday-agent-answer-alignment.js";
 import { notifyFridayContextEngineAfterTurn } from "./friday-agent-context-engine.js";
 import { attachFridayAgentToolExecutionContext } from "./friday-agent-tool-execution-context.js";
 import { shouldDelegateFridayAgentTask } from "./friday-agent-delegation-policy.js";
+import { resolveFridayAgentTaskProfile } from "./friday-agent-task-profile.js";
 import { isMutatingToolCall } from "./friday-agent-tool-mutation.js";
 import { getApprovalRequiredReasonForToolCall } from "./friday-agent-tool-risk.js";
 
@@ -287,6 +289,14 @@ export function createFridayAgentRuntime(
         ?? normalizeDefaultRouteSentinel(providerId);
       const requestedModel = normalizeDefaultRouteSentinel(params.model)
         ?? normalizeDefaultRouteSentinel(model);
+      const resolvedTaskProfile = resolveFridayAgentTaskProfile({
+        id: params.taskProfile?.id ?? "default",
+        model: params.taskProfile?.model ?? requestedModel,
+        temperature: params.taskProfile?.temperature,
+        reasoningEffort: params.taskProfile?.reasoningEffort,
+        reason: params.taskProfile?.reason,
+      });
+      let latestContextCostSummary: FridayAgentRuntimeResult["contextCostSummary"];
       const mirrorAssistantResponse = async (
         response: string,
         toolCalls?: FridayAgentToolCallRecord[],
@@ -590,6 +600,8 @@ export function createFridayAgentRuntime(
             planReview: clarificationPlanReview,
             responseText: clarificationResponse,
             summary: deriveSummary(clarificationResponse),
+            contextCostSummary: latestContextCostSummary,
+            taskProfile: resolvedTaskProfile,
           }),
         );
 
@@ -611,6 +623,7 @@ export function createFridayAgentRuntime(
           usageInput: totalInputTokens,
           usageOutput: totalOutputTokens,
           finalResponse: clarificationResponse,
+          taskProfile: resolvedTaskProfile,
         };
       };
 
@@ -646,6 +659,7 @@ export function createFridayAgentRuntime(
                 errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
                 errorMessage: message,
                 summary: deriveSummary(message),
+                taskProfile: resolvedTaskProfile,
               }),
             );
 
@@ -668,6 +682,7 @@ export function createFridayAgentRuntime(
               durationMs,
               usageInput: 0,
               usageOutput: 0,
+              taskProfile: resolvedTaskProfile,
               summary: deriveSummary(message),
             });
           }
@@ -699,6 +714,7 @@ export function createFridayAgentRuntime(
             id: runId,
             status: "planning",
             startedAt: nowIso(),
+            taskProfile: resolvedTaskProfile,
           }),
         );
 
@@ -733,6 +749,7 @@ export function createFridayAgentRuntime(
             repo.update(writer, {
               id: runId,
               planReview,
+              taskProfile: resolvedTaskProfile,
             }),
           );
 
@@ -748,6 +765,7 @@ export function createFridayAgentRuntime(
                 errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
                 errorMessage: `Plan rejected by review gate: ${decision.reason ?? "no reason"}`,
                 planReview,
+                taskProfile: resolvedTaskProfile,
               }),
             );
 
@@ -770,6 +788,7 @@ export function createFridayAgentRuntime(
               durationMs,
               usageInput: 0,
               usageOutput: 0,
+              taskProfile: resolvedTaskProfile,
               summary: deriveSummary(`Plan rejected: ${decision.reason ?? "no reason"}`),
             });
           }
@@ -788,6 +807,7 @@ export function createFridayAgentRuntime(
           repo.update(writer, {
             id: runId,
             planReview,
+            taskProfile: resolvedTaskProfile,
           }),
         );
 
@@ -804,7 +824,11 @@ export function createFridayAgentRuntime(
           })
         ) {
           db.withWriteTransaction((writer) =>
-            repo.update(writer, { id: runId, status: "executing" }),
+            repo.update(writer, {
+              id: runId,
+              status: "executing",
+              taskProfile: resolvedTaskProfile,
+            }),
           );
           handleTrackedEvent("agent.run.executing", {
             runId,
@@ -825,6 +849,7 @@ export function createFridayAgentRuntime(
             constraints,
             principalId,
             conversationContext,
+            taskProfile: resolvedTaskProfile,
           });
 
           if (delegated) {
@@ -898,6 +923,8 @@ export function createFridayAgentRuntime(
                 responseText: terminalResponse,
                 summary: summaryText || undefined,
                 artifactDir: persistedArtifacts.artifactDir,
+                contextCostSummary: latestContextCostSummary,
+                taskProfile: resolvedTaskProfile,
               }),
             );
 
@@ -920,6 +947,8 @@ export function createFridayAgentRuntime(
                 durationMs,
                 usageInput: totalInputTokens,
                 usageOutput: totalOutputTokens,
+                contextCostSummary: latestContextCostSummary,
+                taskProfile: resolvedTaskProfile,
                 images: delegatedImages.length > 0 ? delegatedImages : undefined,
                 summary: summaryText || undefined,
                 artifactDir: persistedArtifacts.artifactDir,
@@ -954,6 +983,8 @@ export function createFridayAgentRuntime(
               durationMs,
               usageInput: totalInputTokens,
               usageOutput: totalOutputTokens,
+              contextCostSummary: latestContextCostSummary,
+              taskProfile: resolvedTaskProfile,
               images: delegatedImages.length > 0 ? delegatedImages : undefined,
               summary: summaryText || undefined,
               artifactDir: persistedArtifacts.artifactDir,
@@ -981,7 +1012,7 @@ export function createFridayAgentRuntime(
         );
 
         // ─── Build system prompt dynamically from current tool set ───
-        const baseSystemPrompt = systemPromptBuilder
+        const promptBuildResult = systemPromptBuilder
           ? await Promise.resolve(systemPromptBuilder({
             toolNames: [...toolMap.keys()],
             nowIso: runTimeContext.nowIso,
@@ -991,6 +1022,12 @@ export function createFridayAgentRuntime(
             conversationContext,
           }))
           : (staticSystemPrompt ?? "You are an AI assistant.");
+        const baseSystemPrompt = typeof promptBuildResult === "string"
+          ? promptBuildResult
+          : promptBuildResult.prompt;
+        latestContextCostSummary = typeof promptBuildResult === "string"
+          ? undefined
+          : promptBuildResult.contextCostSummary;
 
         // ─── Enrich system prompt with learned user preferences ───
         let effectiveSystemPrompt = baseSystemPrompt;
@@ -1039,6 +1076,7 @@ export function createFridayAgentRuntime(
               systemPrompt: effectiveSystemPrompt,
               messages,
               tools,
+              temperature: resolvedTaskProfile.temperature,
               signal: runAbortController.signal,
               eventEmitter,
               runId,
@@ -1525,6 +1563,8 @@ export function createFridayAgentRuntime(
               completedAt: nowIso(),
               durationMs,
               responseText: responseText || undefined,
+              contextCostSummary: latestContextCostSummary,
+              taskProfile: resolvedTaskProfile,
             }),
           );
 
@@ -1538,6 +1578,8 @@ export function createFridayAgentRuntime(
             durationMs,
             usageInput: totalInputTokens,
             usageOutput: totalOutputTokens,
+            contextCostSummary: latestContextCostSummary,
+            taskProfile: resolvedTaskProfile,
             summary: deriveSummary(responseText),
           });
         }
@@ -1563,7 +1605,12 @@ export function createFridayAgentRuntime(
         if (selfTestService) {
           // Transition to testing
           db.withWriteTransaction((writer) =>
-            repo.update(writer, { id: runId, status: "testing" }),
+            repo.update(writer, {
+              id: runId,
+              status: "testing",
+              contextCostSummary: latestContextCostSummary,
+              taskProfile: resolvedTaskProfile,
+            }),
           );
           currentPhase = "testing";
           emitProgressEvent();
@@ -1637,6 +1684,8 @@ export function createFridayAgentRuntime(
                 responseText: responseText || undefined,
                 summary: summaryText || undefined,
                 artifactDir: persistedArtifacts.artifactDir,
+                contextCostSummary: latestContextCostSummary,
+                taskProfile: resolvedTaskProfile,
               }),
             );
 
@@ -1660,6 +1709,8 @@ export function createFridayAgentRuntime(
               durationMs,
               usageInput: totalInputTokens,
               usageOutput: totalOutputTokens,
+              contextCostSummary: latestContextCostSummary,
+              taskProfile: resolvedTaskProfile,
               summary: summaryText || undefined,
               artifactDir: persistedArtifacts.artifactDir,
             });
@@ -1715,6 +1766,8 @@ export function createFridayAgentRuntime(
               responseText: failureResponse,
               summary: summaryText || undefined,
               artifactDir: persistedArtifacts.artifactDir,
+              contextCostSummary: latestContextCostSummary,
+              taskProfile: resolvedTaskProfile,
             }),
           );
 
@@ -1742,6 +1795,8 @@ export function createFridayAgentRuntime(
             durationMs,
             usageInput: totalInputTokens,
             usageOutput: totalOutputTokens,
+            contextCostSummary: latestContextCostSummary,
+            taskProfile: resolvedTaskProfile,
             summary: summaryText || undefined,
             artifactDir: persistedArtifacts.artifactDir,
           });
@@ -1777,6 +1832,8 @@ export function createFridayAgentRuntime(
             responseText: responseText || undefined,
             summary: summaryText || undefined,
             artifactDir: persistedArtifacts.artifactDir,
+            contextCostSummary: latestContextCostSummary,
+            taskProfile: resolvedTaskProfile,
           }),
         );
 
@@ -1798,6 +1855,8 @@ export function createFridayAgentRuntime(
           durationMs,
           usageInput: totalInputTokens,
           usageOutput: totalOutputTokens,
+          contextCostSummary: latestContextCostSummary,
+          taskProfile: resolvedTaskProfile,
           images: extractedImages.length > 0 ? extractedImages : undefined,
           summary: summaryText || undefined,
           artifactDir: persistedArtifacts.artifactDir,
@@ -1838,6 +1897,8 @@ export function createFridayAgentRuntime(
             responseText: responseText || undefined,
             summary: summaryText || undefined,
             artifactDir: persistedArtifacts.artifactDir,
+            contextCostSummary: latestContextCostSummary,
+            taskProfile: resolvedTaskProfile,
           }),
         );
 
@@ -1858,6 +1919,8 @@ export function createFridayAgentRuntime(
           durationMs,
           usageInput: totalInputTokens,
           usageOutput: totalOutputTokens,
+          contextCostSummary: latestContextCostSummary,
+          taskProfile: resolvedTaskProfile,
           summary: summaryText || undefined,
           artifactDir: persistedArtifacts.artifactDir,
         });
@@ -3303,6 +3366,7 @@ interface StreamLlmResponseParams {
   systemPrompt: string;
   messages: FridayAgentMessage[];
   tools: FridayAgentToolDefinition[];
+  temperature?: number;
   signal: AbortSignal;
   eventEmitter: CreateFridayAgentRuntimeDeps["eventEmitter"];
   runId: string;
@@ -3346,6 +3410,7 @@ async function streamLlmResponse(
     systemPrompt: params.systemPrompt,
     messages: params.messages,
     tools: params.tools,
+    temperature: params.temperature,
     signal: params.signal,
   });
 

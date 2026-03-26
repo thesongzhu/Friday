@@ -11,7 +11,9 @@ import {
 
 type McpAction =
   | "list_servers"
+  | "list_server_states"
   | "list_tools"
+  | "search_tools"
   | "call_tool"
   | "list_resources"
   | "read_resource"
@@ -20,7 +22,9 @@ type McpAction =
 
 const VALID_ACTIONS = new Set<McpAction>([
   "list_servers",
+  "list_server_states",
   "list_tools",
+  "search_tools",
   "call_tool",
   "list_resources",
   "read_resource",
@@ -41,7 +45,7 @@ export function createFridayAgentMcpTool(
     name: "mcp",
     description:
       "Bridge to external MCP servers. " +
-      "Actions: list_servers, list_tools, call_tool, list_resources, read_resource, list_prompts, get_prompt.",
+      "Actions: list_servers, list_server_states, list_tools, search_tools, call_tool, list_resources, read_resource, list_prompts, get_prompt.",
     parameters: {
       type: "object",
       properties: {
@@ -49,7 +53,9 @@ export function createFridayAgentMcpTool(
           type: "string",
           enum: [
             "list_servers",
+            "list_server_states",
             "list_tools",
+            "search_tools",
             "call_tool",
             "list_resources",
             "read_resource",
@@ -65,6 +71,10 @@ export function createFridayAgentMcpTool(
         toolName: {
           type: "string",
           description: "MCP tool name. Required for call_tool.",
+        },
+        query: {
+          type: "string",
+          description: "Search query for MCP tool discovery. Used by search_tools.",
         },
         promptName: {
           type: "string",
@@ -99,8 +109,12 @@ export function createFridayAgentMcpTool(
         switch (action) {
           case "list_servers":
             return handleListServers();
+          case "list_server_states":
+            return handleListServerStates();
           case "list_tools":
             return await handleListTools(args, signal);
+          case "search_tools":
+            return await handleSearchTools(args, signal);
           case "call_tool":
             return await handleCallTool(args, signal);
           case "list_resources":
@@ -157,12 +171,32 @@ export function createFridayAgentMcpTool(
     });
   }
 
+  function handleListServerStates(): FridayAgentToolResult {
+    return jsonResult({
+      count: mcpAdapter.listServerStates().length,
+      items: mcpAdapter.listServerStates(),
+    });
+  }
+
   async function handleListTools(
     args: Record<string, unknown>,
     signal: AbortSignal,
   ): Promise<FridayAgentToolResult> {
     const serverId = readStringParam(args, "serverId");
     const tools = await mcpAdapter.listTools({ serverId, signal });
+    return jsonResult({
+      count: tools.length,
+      items: tools,
+    });
+  }
+
+  async function handleSearchTools(
+    args: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<FridayAgentToolResult> {
+    const serverId = readStringParam(args, "serverId");
+    const query = readStringParam(args, "query", { required: true });
+    const tools = await mcpAdapter.searchTools({ query, serverId, signal });
     return jsonResult({
       count: tools.length,
       items: tools,

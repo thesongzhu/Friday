@@ -71,6 +71,9 @@ export type {
   FridayContextEngine,
   FridayAgentDelegationRequest,
   FridayAgentDelegationResult,
+  FridayAgentContextCostComponent,
+  FridayAgentContextCostSummary,
+  FridayAgentSystemPromptBuildResult,
   FridayAgentResumeRunParams,
   FridayAgentExecutionContext,
   CreateFridayAgentRuntimeDeps,
@@ -110,6 +113,19 @@ export type {
   CreateFridayAgentLlmClientDeps,
 } from "./runtime/friday-agent-llm-client.types.js";
 export { createFridayAgentLlmClient } from "./runtime/friday-agent-llm-client.js";
+export type {
+  FridayAgentTaskProfileId,
+  FridayAgentTaskProfileEffort,
+  FridayAgentTaskProfileInput,
+  FridayResolvedAgentTaskProfile,
+} from "./runtime/friday-agent-task-profile.js";
+export { resolveFridayAgentTaskProfile } from "./runtime/friday-agent-task-profile.js";
+export type {
+  FridayAgentPreprocessorKind,
+  FridayAgentPreprocessorInput,
+  FridayAgentPreprocessorResult,
+} from "./runtime/friday-agent-preprocessors.js";
+export { preprocessFridayAgentContent } from "./runtime/friday-agent-preprocessors.js";
 
 // ─── Event emitter ───
 
@@ -256,11 +272,13 @@ export { buildFridayEvidenceBlocks } from "./runtime/friday-agent-evidence-block
 
 export type {
   FridayMcpServerConfig,
+  FridayMcpServerState,
   FridayMcpToolDescriptor,
   FridayMcpCallToolInput,
   FridayMcpCallToolResult,
   FridayMcpResourceDescriptor,
   FridayMcpPromptDescriptor,
+  FridayMcpDiscoveryState,
   FridayMcpTransport,
   FridayMcpServerPolicy,
   FridayMcpAdapter,
@@ -271,6 +289,12 @@ export {
   isFridayMcpAdapterError,
   parseFridayMcpServersFromEnv,
 } from "./mcp/friday-mcp-adapter.js";
+export type {
+  FridayIntegrationRecommendation,
+  FridayIntegrationRecommendationInput,
+  FridayIntegrationRecommendationResult,
+} from "./mcp/friday-mcp-cli-recommendation.js";
+export { recommendFridayIntegrationMode } from "./mcp/friday-mcp-cli-recommendation.js";
 
 // ─── Tool helpers ───
 
@@ -356,6 +380,15 @@ export {
 
 export { buildFridaySubagentSystemPrompt } from "./subagent/friday-subagent-system-prompt.js";
 export type { BuildSubagentSystemPromptParams } from "./subagent/friday-subagent-system-prompt.js";
+export type {
+  FridaySubagentProfileId,
+  FridaySubagentProfileInput,
+  FridayResolvedSubagentProfile,
+} from "./subagent/friday-subagent-profile.js";
+export {
+  inferFridaySubagentProfile,
+  resolveFridaySubagentProfile,
+} from "./subagent/friday-subagent-profile.js";
 
 export { createFridaySubagentRegistry } from "./subagent/friday-subagent-registry.js";
 

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BadgeCheck, Download, Package, RefreshCcw, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { skillsApi } from "@/lib/api/skills";
+import { buildObservabilityHref } from "@/lib/observability/view-models";
 import { trackStarterSkillBatch, trackStarterSkillEvent } from "@/lib/skills/starter-skill-telemetry";
 import {
   buildSkillHref,
@@ -18,6 +19,55 @@ import {
 function formatTimestamp(value?: string): string {
   if (!value) return "Unknown";
   return new Date(value).toLocaleString();
+}
+
+function isCliFirstSkill(input: { originType?: string; tags: string[] }) {
+  return input.originType === "cli-backed" || input.tags.includes("starter.cli") || input.tags.includes("cli-backed");
+}
+
+function toneForMaturity(maturity?: "draft" | "verified" | "stable"): "neutral" | "success" | "warning" {
+  if (maturity === "stable") return "success";
+  if (maturity === "verified") return "warning";
+  return "neutral";
+}
+
+function formatOriginType(originType?: "generated" | "stabilized" | "cli-backed" | "mcp-backed"): string {
+  if (originType === "cli-backed") return "CLI-backed";
+  if (originType === "mcp-backed") return "MCP-backed";
+  if (originType === "stabilized") return "Stabilized";
+  return "Generated";
+}
+
+function formatMaturity(maturity?: "draft" | "verified" | "stable"): string {
+  if (maturity === "stable") return "Stable";
+  if (maturity === "verified") return "Verified";
+  return "Draft";
+}
+
+function describeIntegrationMode(input: {
+  originType?: "generated" | "stabilized" | "cli-backed" | "mcp-backed";
+  tags: string[];
+}): string {
+  if (input.originType === "cli-backed" || isCliFirstSkill(input)) {
+    return "Prefer CLI-backed skill";
+  }
+  if (input.originType === "mcp-backed") {
+    return "Prefer MCP-backed skill";
+  }
+  if (input.originType === "stabilized") {
+    return "Prefer stable skill";
+  }
+  return "Prefer generated draft until verification proves it should be stabilized";
+}
+
+function describeStabilizationPath(input: {
+  originType?: "generated" | "stabilized" | "cli-backed" | "mcp-backed";
+  maturity?: "draft" | "verified" | "stable";
+}): string {
+  if (input.originType === "stabilized" || input.originType === "cli-backed" || input.originType === "mcp-backed") {
+    return `generated -> ${input.originType} -> ${input.maturity ?? "draft"}`;
+  }
+  return `draft -> ${input.maturity ?? "draft"}`;
 }
 
 export function SkillsPage() {
@@ -202,19 +252,11 @@ export function SkillsPage() {
                 Friday uses this page as the operator detail view for a skill that Assistant has already recommended.
                 The core lifecycle stays click-first: starter pack first, then managed installs, trust evidence, updates, and repair actions.
               </p>
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-4">
                 <SkillMetric label="Selected skill" value={detail?.name ?? selectedCatalog?.skillName ?? selectedSkillId} />
                 <SkillMetric label="Lifecycle state" value={detail?.status ?? "catalog"} />
-                <SkillMetric
-                  label="Verification"
-                  value={
-                    detail?.verification
-                      ? detail.verification.ok
-                        ? "verified"
-                        : "needs repair"
-                      : "not verified"
-                  }
-                />
+                <SkillMetric label="Origin" value={formatOriginType(detail?.originType ?? selectedCatalog?.originType)} />
+                <SkillMetric label="Maturity" value={formatMaturity(detail?.maturity ?? selectedCatalog?.maturity)} />
               </div>
             </div>
           ) : (
@@ -247,6 +289,9 @@ export function SkillsPage() {
                     <div className="flex items-center gap-2">
                       <StatusPill tone="success">starter</StatusPill>
                       <StatusPill tone={toneForSkillLifecycle(skill)}>{skill.status}</StatusPill>
+                      <StatusPill>{formatOriginType(skill.originType)}</StatusPill>
+                      <StatusPill tone={toneForMaturity(skill.maturity)}>{formatMaturity(skill.maturity)}</StatusPill>
+                      {isCliFirstSkill(skill) ? <StatusPill tone="success">CLI-first</StatusPill> : null}
                     </div>
                   </div>
                   <p className="mt-2 text-sm text-white/60">
@@ -280,13 +325,22 @@ export function SkillsPage() {
                       <p className="font-medium text-white">{skill.name}</p>
                       <p className="text-xs text-white/50">{skill.skillId}</p>
                     </div>
-                    <StatusPill tone={toneForSkillLifecycle(skill)}>
-                      {skill.updateAvailable ? "update available" : skill.status}
-                    </StatusPill>
+                    <div className="flex items-center gap-2">
+                      <StatusPill tone={toneForSkillLifecycle(skill)}>
+                        {skill.updateAvailable ? "update available" : skill.status}
+                      </StatusPill>
+                      <StatusPill>{formatOriginType(skill.originType)}</StatusPill>
+                      <StatusPill tone={toneForMaturity(skill.maturity)}>{formatMaturity(skill.maturity)}</StatusPill>
+                    </div>
                   </div>
                   <p className="mt-2 text-sm text-white/60">
                     {skill.description || "No description available."}
                   </p>
+                  {isCliFirstSkill(skill) ? (
+                    <p className="mt-2 text-xs text-emerald-100/75">
+                      CLI-first: this skill is already shaped to prefer direct local execution over heavier tool bridges.
+                    </p>
+                  ) : null}
                 </button>
               ))
             )}
@@ -353,6 +407,12 @@ export function SkillsPage() {
                   <p className="mt-2 text-sm text-white/60">
                     Version {item.version} · {item.publisher ?? "Unknown publisher"}
                   </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {item.originType ? <StatusPill>{formatOriginType(item.originType)}</StatusPill> : null}
+                    {item.maturity ? (
+                      <StatusPill tone={toneForMaturity(item.maturity)}>{formatMaturity(item.maturity)}</StatusPill>
+                    ) : null}
+                  </div>
                 </button>
               ))
             )}
@@ -376,18 +436,21 @@ export function SkillsPage() {
             <p className="text-sm text-white/60">Select an installed skill or catalog item to inspect lifecycle evidence.</p>
           ) : detail ? (
             <div className="space-y-4 text-sm text-white/75">
-                <div className="agent-subcard p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="font-medium text-white">{detail.name}</p>
-                      <p className="text-xs text-white/50">{detail.skillId}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {detail.starter ? <StatusPill tone="success">starter pack</StatusPill> : null}
-                      <StatusPill tone={toneForSkillLifecycle(detail)}>
-                        {detail.installedVersion ?? detail.latestVersion ?? "unversioned"}
-                      </StatusPill>
-                    </div>
+              <div className="agent-subcard p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-white">{detail.name}</p>
+                    <p className="text-xs text-white/50">{detail.skillId}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {detail.starter ? <StatusPill tone="success">starter pack</StatusPill> : null}
+                    <StatusPill tone={toneForSkillLifecycle(detail)}>
+                      {detail.installedVersion ?? detail.latestVersion ?? "unversioned"}
+                    </StatusPill>
+                    <StatusPill>{formatOriginType(detail.originType)}</StatusPill>
+                    <StatusPill tone={toneForMaturity(detail.maturity)}>{formatMaturity(detail.maturity)}</StatusPill>
+                    {isCliFirstSkill(detail) ? <StatusPill tone="success">CLI-first</StatusPill> : null}
+                  </div>
                 </div>
                 <p className="mt-3 text-white/60">
                   {detail.description || "No description recorded for this skill."}
@@ -400,6 +463,8 @@ export function SkillsPage() {
                   <p>Installed version: {detail.installedVersion ?? "not installed"}</p>
                   <p>Latest version: {detail.latestVersion ?? "unknown"}</p>
                   <p>Starter pack: {detail.starter ? "yes" : "no"}</p>
+                  <p>Origin type: {formatOriginType(detail.originType)}</p>
+                  <p>Maturity: {formatMaturity(detail.maturity)}</p>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-3">
                   {detail.installedVersion ? (
@@ -439,6 +504,12 @@ export function SkillsPage() {
                       Remove
                     </ActionButton>
                   ) : null}
+                  <Link
+                    className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                    to={buildObservabilityHref({ focus: "assistant" })}
+                  >
+                    Open diagnostics
+                  </Link>
                 </div>
               </div>
 
@@ -486,6 +557,36 @@ export function SkillsPage() {
                         </p>
                       ))
                     )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="agent-subcard p-4">
+                  <p className="font-medium text-white">Stabilization</p>
+                  <div className="mt-3 space-y-2 text-xs text-white/55">
+                    <p>Path: {describeStabilizationPath(detail)}</p>
+                    <p>Promotion stage: {detail.originType === "generated" ? "draft" : "stabilized"}</p>
+                    <p>Lifecycle tags: {detail.tags.length > 0 ? detail.tags.join(", ") : "none"}</p>
+                    <p>
+                      Verification state: {detail.verification ? (detail.verification.ok ? "evidence passed" : "needs repair") : "not verified"}
+                    </p>
+                  </div>
+                </div>
+                <div className="agent-subcard p-4">
+                  <p className="font-medium text-white">Integration Mode</p>
+                  <div className="mt-3 space-y-2 text-xs text-white/55">
+                    <p>Recommendation: {describeIntegrationMode(detail)}</p>
+                    <p>
+                      CLI-first reason: {isCliFirstSkill(detail)
+                        ? "Local execution is already preferred by manifest tags or lifecycle origin."
+                        : "No CLI-first lifecycle signal yet."}
+                    </p>
+                    <p>
+                      MCP fit: {detail.originType === "mcp-backed"
+                        ? "Keep MCP when remote/shared resources are part of the contract."
+                        : "Prefer stable skill or CLI path before adding more MCP surface."}
+                    </p>
                   </div>
                 </div>
               </div>

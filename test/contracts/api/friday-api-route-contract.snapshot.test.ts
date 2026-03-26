@@ -167,6 +167,26 @@ const stubSkillGenerator: FridaySkillGeneratorService = {
     skillDir: "stub",
     savedFiles: [],
     registryRefreshed: false,
+    promotionStage: "stabilized" as const,
+    promotedManifestTags: [],
+    evidence: {
+      sessionId: "stub",
+      validationSummary: {
+        ok: true,
+        repaired: false,
+        repairAttempts: 0,
+        issueCount: 0,
+      },
+      repairSummary: {
+        attempted: false,
+        attempts: 0,
+      },
+      executableTestSummary: null,
+      approvalReadiness: {
+        ready: true,
+        reason: "stub",
+      },
+    },
   }),
   cancelSession: async () => {},
 };
@@ -242,6 +262,13 @@ const stubUixService = {
     suggestedTemplateIds: [],
   }),
   listTemplates: () => [],
+  getDiagnostics: () => ({
+    generatedAt: FIXED_NOW,
+    taskProfilePresets: [],
+    recentRuns: [],
+    mcpServerStates: [],
+    supportedPreprocessors: [],
+  }),
   executeTemplate: async () => ({
     templateId: "stub",
     status: "preview" as const,

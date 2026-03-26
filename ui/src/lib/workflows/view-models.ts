@@ -10,6 +10,11 @@ export type FridayWorkflowFocus =
   | "export"
   | "history";
 
+export type FridayWorkflowBuilderFocus =
+  | "templates"
+  | "draft"
+  | "publish";
+
 export interface FridayWorkflowClickAction {
   title: string;
   summary: string;
@@ -35,6 +40,21 @@ export function buildWorkflowHref(
     focus,
   });
   return `/workflows?${params.toString()}`;
+}
+
+export function buildWorkflowBuilderHref(input?: {
+  templateId?: string;
+  workflowId?: string;
+  draftId?: string;
+  focus?: FridayWorkflowBuilderFocus;
+}): string {
+  const params = new URLSearchParams();
+  if (input?.templateId) params.set("templateId", input.templateId);
+  if (input?.workflowId) params.set("workflowId", input.workflowId);
+  if (input?.draftId) params.set("draftId", input.draftId);
+  if (input?.focus) params.set("focus", input.focus);
+  const query = params.toString();
+  return query.length > 0 ? `/workflows/builder?${query}` : "/workflows/builder";
 }
 
 export function summarizeWorkflowAttention(

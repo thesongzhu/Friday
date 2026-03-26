@@ -48,4 +48,20 @@ describe("buildFridaySubagentSystemPrompt", () => {
 
     expect(prompt).toContain("agent:run:parent-xyz");
   });
+
+  it("includes profile guidance when provided", () => {
+    const prompt = buildFridaySubagentSystemPrompt({
+      task: "Review the current diff",
+      profileLabel: "Review",
+      profileDescription: "Read-only risk review",
+      profileInstructions: ["Prioritize regressions first."],
+      parentSessionKey: "agent:run:parent-xyz",
+      depth: 1,
+    });
+
+    expect(prompt).toContain("## Profile");
+    expect(prompt).toContain("Review");
+    expect(prompt).toContain("Read-only risk review");
+    expect(prompt).toContain("Prioritize regressions first.");
+  });
 });

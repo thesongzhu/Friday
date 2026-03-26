@@ -256,6 +256,13 @@ describe("API Runtime — Extended Route Registration", () => {
         service: {
           resolveIntent: vi.fn(),
           listTemplates: vi.fn(() => []),
+          getDiagnostics: vi.fn(() => ({
+            generatedAt: "2026-03-25T00:00:00.000Z",
+            taskProfilePresets: [],
+            recentRuns: [],
+            mcpServerStates: [],
+            supportedPreprocessors: [],
+          })),
           executeTemplate: vi.fn(),
           startWizard: vi.fn(),
           continueWizard: vi.fn(),

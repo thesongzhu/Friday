@@ -170,6 +170,40 @@ describe("createFridayProviderInferenceClient", () => {
     }
   });
 
+  it("applies task-profile temperature overrides to provider requests", async () => {
+    const mockProvider = createMockProvider({});
+
+    let capturedBody: Record<string, unknown> = {};
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+      capturedBody = JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>;
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: "{\"state\":\"ready_for_generation\",\"spec\":{}}" } }],
+        }),
+      };
+    }) as typeof fetch;
+
+    try {
+      const client = createFridayProviderInferenceClient({
+        providerService: mockProvider,
+      });
+
+      await client.infer<{ state: string }>({
+        prompt: {
+          system: "You are a test assistant",
+          user: "Test input",
+        },
+        taskProfile: "creative",
+      });
+
+      expect(capturedBody.temperature).toBe(0.35);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("infer sends OAuth identity headers and system prefix for OAuth providers", async () => {
     const oauthProfile: FridayProviderProfile = {
       id: "oauth-provider",

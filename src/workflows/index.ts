@@ -300,3 +300,11 @@ export {
   createFridayGeneratedWorkflowValidator,
   createFridayWorkflowGeneratorService,
 } from "./generator/index.js";
+
+export type { FridayStableWorkflowTemplate } from "./templates/friday-stable-workflow-templates.js";
+export {
+  FRIDAY_STABLE_WORKFLOW_TEMPLATES,
+  createFridayStableWorkflowDraftBundle,
+  getFridayStableWorkflowTemplate,
+  listFridayStableWorkflowTemplates,
+} from "./templates/friday-stable-workflow-templates.js";

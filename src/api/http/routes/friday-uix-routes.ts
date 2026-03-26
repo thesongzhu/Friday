@@ -3,6 +3,7 @@ import type { FridayUixSurfaceService } from "../../../uix/services/friday-uix-s
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
   FridayBeginnerIntentResolution,
+  FridayUixDiagnosticsResponse,
   FridayUixIssuesResponse,
   FridayUixTemplateExecutionResponse,
   FridayUixTemplatesResponse,
@@ -73,6 +74,18 @@ export function createFridayUixRoutes(
       async handler(ctx): Promise<FridayUixTemplatesResponse> {
         requireUserId(ctx.principal);
         return { templates: deps.service.listTemplates() };
+      },
+    },
+    {
+      operationId: "uix.diagnostics.get",
+      method: "GET",
+      path: "/v1/uix/diagnostics",
+      auth: { public: false, anyOfScopes: ["skill.read", "diagnosis.read", "agent.run"] },
+      async handler(ctx): Promise<FridayUixDiagnosticsResponse> {
+        const userId = requireUserId(ctx.principal);
+        return {
+          assistant: deps.service.getDiagnostics({ userId }),
+        };
       },
     },
     {

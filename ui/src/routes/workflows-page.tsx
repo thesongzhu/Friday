@@ -5,9 +5,11 @@ import { GitBranch, Package, PlayCircle, RefreshCcw } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { workflowsApi } from "@/lib/api/workflows";
+import { buildObservabilityHref } from "@/lib/observability/view-models";
 import { systemApi } from "@/lib/api/system";
 import { systemKeys } from "@/lib/system/query-keys";
 import {
+  buildWorkflowBuilderHref,
   buildWorkflowGuidedSteps,
   buildWorkflowHref,
   summarizeWorkflowAttention,
@@ -259,6 +261,24 @@ export function WorkflowsPage() {
                   >
                     Operator details
                   </Link>
+                  <Link
+                    className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                    to={buildWorkflowBuilderHref({
+                      workflowId: selectedWorkflow.id,
+                      draftId: overviewQuery.data.latestDraft?.draftId,
+                      focus: overviewQuery.data.latestDraft ? "draft" : "templates",
+                    })}
+                  >
+                    Open builder
+                  </Link>
+                  <Link
+                    className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                    to={buildObservabilityHref({
+                      focus: overviewQuery.data.latestRun?.status === "failed" ? "traces" : "overview",
+                    })}
+                  >
+                    Open diagnostics
+                  </Link>
                 </div>
               </div>
             </div>
@@ -271,33 +291,66 @@ export function WorkflowsPage() {
           eyebrow="Workflow library"
           title="Choose which workflow Friday should operate next"
           aside={
-            <StatusPill tone={workflows.length > 0 ? "success" : "neutral"}>
-              {workflows.length} tracked
-            </StatusPill>
+            <div className="flex items-center gap-2">
+              <StatusPill tone={workflows.length > 0 ? "success" : "neutral"}>
+                {workflows.length} tracked
+              </StatusPill>
+              <Link
+                className="inline-flex items-center rounded-2xl bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/[0.14]"
+                to="/workflows/builder"
+              >
+                Open builder
+              </Link>
+            </div>
           }
         >
           <div className="space-y-3">
             {workflows.map((workflow) => (
-              <button
+              <div
                 key={workflow.id}
-                type="button"
-                onClick={() => handleSelectWorkflow(workflow.id)}
                 className="agent-selection-card"
                 data-active={workflow.id === selectedWorkflowId}
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="font-medium text-white">{workflow.name}</p>
-                    <p className="text-xs text-white/50">{workflow.slug}</p>
+                <button
+                  type="button"
+                  onClick={() => handleSelectWorkflow(workflow.id)}
+                  className="w-full text-left"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-white">{workflow.name}</p>
+                      <p className="text-xs text-white/50">{workflow.slug}</p>
+                    </div>
+                    <StatusPill tone={workflow.publishedVersionNumber ? "success" : "warning"}>
+                      v{workflow.latestVersionNumber}
+                    </StatusPill>
                   </div>
-                  <StatusPill tone={workflow.publishedVersionNumber ? "success" : "warning"}>
-                    v{workflow.latestVersionNumber}
-                  </StatusPill>
+                  <p className="mt-3 text-sm text-white/60">
+                    {workflow.description || "No description provided yet."}
+                  </p>
+                </button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Link
+                    className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                    to={buildWorkflowBuilderHref({
+                      workflowId: workflow.id,
+                      focus: workflow.id === selectedWorkflowId && overviewQuery.data?.latestDraft ? "draft" : "templates",
+                      draftId:
+                        workflow.id === selectedWorkflowId
+                          ? overviewQuery.data?.latestDraft?.draftId
+                          : undefined,
+                    })}
+                  >
+                    Open builder
+                  </Link>
+                  <Link
+                    className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                    to={buildWorkflowHref(workflow.id, "details")}
+                  >
+                    Control plane
+                  </Link>
                 </div>
-                <p className="mt-3 text-sm text-white/60">
-                  {workflow.description || "No description provided yet."}
-                </p>
-              </button>
+              </div>
             ))}
             {workflows.length === 0 ? (
               <p className="text-sm text-white/60">No workflows have been created yet.</p>

@@ -427,6 +427,7 @@ export function createFridayWorkflowGeneratorService(
     const result = await llm.infer<WorkflowRequirementsAnalyzerResponse>({
       prompt,
       requestedModel,
+      taskProfile: "planning",
     });
     return result.parsed;
   }
@@ -440,6 +441,7 @@ export function createFridayWorkflowGeneratorService(
     const result = await llm.infer<FridayWorkflowSpecV1>({
       prompt,
       requestedModel,
+      taskProfile: "deterministic",
     });
     return result.parsed;
   }
@@ -452,6 +454,7 @@ export function createFridayWorkflowGeneratorService(
     const result = await llm.infer<unknown>({
       prompt,
       requestedModel,
+      taskProfile: "creative",
     });
     return normalizeVisualLayout(result.parsed, spec);
   }
@@ -464,6 +467,7 @@ export function createFridayWorkflowGeneratorService(
     const result = await llm.infer<unknown>({
       prompt,
       requestedModel,
+      taskProfile: "review",
     });
     return normalizeGeneratedTests(result.parsed, spec);
   }

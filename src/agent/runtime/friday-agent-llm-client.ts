@@ -30,6 +30,7 @@ interface AnthropicMessageRequest {
   messages: Array<{ role: string; content: unknown }>;
   tools: AnthropicToolDefinition[];
   stream: true;
+  temperature?: number;
 }
 
 interface OpenAiFunctionDefinition {
@@ -95,6 +96,7 @@ async function* handleAnthropicStream(
     })),
     tools: params.tools.map(toAnthropicTool),
     stream: true,
+    ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
   };
 
   const response = await fetchFn(`${baseUrl}/v1/messages`, {
@@ -167,6 +169,7 @@ async function* handleOllamaStream(
     model: params.model,
     messages,
     stream: false,
+    ...(params.temperature !== undefined ? { options: { temperature: params.temperature } } : {}),
     ...(tools ? { tools } : {}),
   };
 
@@ -269,6 +272,7 @@ async function* handleOpenAIStream(
       model: params.model,
       input,
       stream: true,
+      ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
       ...(openAiTools.length > 0
         ? {
             tools: openAiTools.map((tool) => ({
@@ -287,6 +291,7 @@ async function* handleOpenAIStream(
       model: params.model,
       messages,
       stream: true,
+      ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
       ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
       ...(openAiTools.length > 0
         ? {

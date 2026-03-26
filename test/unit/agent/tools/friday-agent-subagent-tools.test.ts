@@ -163,6 +163,26 @@ describe("FridayAgentSubagentTools", () => {
       expect(String(parsed.message)).toContain("completion snapshot");
     });
 
+    it("passes through built-in profile selection", async () => {
+      const registry = mockRegistry();
+      const tools = createFridayAgentSubagentTools({
+        registry,
+        subagentContext: makeContext(),
+      });
+
+      const spawnTool = tools.find((t) => t.name === "spawn_subagent")!;
+      const result = await spawnTool.execute(
+        { task: "Review the diff for regressions", profile: "review" },
+        signal(),
+      );
+
+      const parsed = JSON.parse(result.content) as Record<string, unknown>;
+      expect(parsed.profile).toBe("review");
+      expect(registry.spawnDetached).toHaveBeenCalledWith(expect.objectContaining({
+        profile: "review",
+      }));
+    });
+
     it("returns completed result when wait=true (blocking)", async () => {
       const registry = mockRegistry();
       const tools = createFridayAgentSubagentTools({
