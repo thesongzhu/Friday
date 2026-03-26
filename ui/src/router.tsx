@@ -15,6 +15,7 @@ const ObservabilityPage = lazy(async () => import("@/routes/observability-page")
 const SettingsPage = lazy(async () => import("@/routes/settings-page").then((module) => ({ default: module.SettingsPage })));
 const SetupPage = lazy(async () => import("@/routes/setup-page").then((module) => ({ default: module.SetupPage })));
 const SkillsPage = lazy(async () => import("@/routes/skills-page").then((module) => ({ default: module.SkillsPage })));
+const SkillGeneratorPage = lazy(async () => import("@/routes/skill-generator-page").then((module) => ({ default: module.SkillGeneratorPage })));
 const WorkflowBuilderPage = lazy(async () => import("@/routes/workflow-builder-page").then((module) => ({ default: module.WorkflowBuilderPage })));
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
 
@@ -179,6 +180,14 @@ export const router = createBrowserRouter([
             element: (
               <RouteSuspense title="Loading skills" detail="Friday is preparing the skills lifecycle surface.">
                 <SkillsPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "skills/generator",
+            element: (
+              <RouteSuspense title="Loading skill generator" detail="Friday is preparing the skill generator workflow.">
+                <SkillGeneratorPage />
               </RouteSuspense>
             ),
           },

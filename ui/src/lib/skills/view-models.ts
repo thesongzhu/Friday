@@ -19,6 +19,25 @@ export function buildSkillHref(skillId?: string | null, focus: FridaySkillFocus 
   return query.length > 0 ? `/skills?${query}` : "/skills";
 }
 
+export function buildSkillGeneratorHref(input?: {
+  sessionId?: string;
+  goal?: string;
+  from?: "assistant" | "skills";
+}): string {
+  const params = new URLSearchParams();
+  if (input?.sessionId) {
+    params.set("sessionId", input.sessionId);
+  }
+  if (input?.goal) {
+    params.set("goal", input.goal);
+  }
+  if (input?.from) {
+    params.set("from", input.from);
+  }
+  const query = params.toString();
+  return query.length > 0 ? `/skills/generator?${query}` : "/skills/generator";
+}
+
 export function toneForSkillLifecycle(
   skill: Pick<SkillLifecycleSummary, "status" | "updateAvailable">,
 ): "neutral" | "success" | "warning" | "danger" {

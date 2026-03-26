@@ -81,7 +81,7 @@ import {
   summarizeMarketplaceRequestState,
 } from "@/lib/marketplace/view-models";
 import { buildObservabilityHref } from "@/lib/observability/view-models";
-import { buildSkillHref } from "@/lib/skills/view-models";
+import { buildSkillGeneratorHref, buildSkillHref } from "@/lib/skills/view-models";
 import { buildWorkflowBuilderHref, buildWorkflowHref } from "@/lib/workflows/view-models";
 
 const OPERATOR_ID = "assistant-shell";
@@ -1103,9 +1103,11 @@ export function AssistantPage() {
                   sourceRunId: receipt.runId,
                 })}
               onPackage={(receipt) => {
-                const packageGoal = `Create a reusable skill I can enable for this task: ${receipt.task}`;
-                setGoal(packageGoal);
-                resolveIntentMutation.mutate(packageGoal);
+                navigate(buildSkillGeneratorHref({
+                  goal: `Create a reusable skill I can enable for this task: ${receipt.task}`,
+                  from: "assistant",
+                }));
+                toast.success("Opened the skill generator.");
               }}
               onPublishLater={(receipt) => {
                 setSuppressedOutcomeTaskKeys(setOutcomeReceiptCooldown(receipt.task));

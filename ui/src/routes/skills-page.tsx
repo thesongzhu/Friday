@@ -6,8 +6,10 @@ import { toast } from "sonner";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { skillsApi } from "@/lib/api/skills";
 import { buildObservabilityHref } from "@/lib/observability/view-models";
+import { readLastSkillGeneratorSessionId } from "@/lib/skills/generator-session";
 import { trackStarterSkillBatch, trackStarterSkillEvent } from "@/lib/skills/starter-skill-telemetry";
 import {
+  buildSkillGeneratorHref,
   buildSkillHref,
   buildSkillOperatorSections,
   chooseInitialSkillId,
@@ -74,6 +76,7 @@ export function SkillsPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
+  const [recentGeneratorSessionId, setRecentGeneratorSessionId] = useState<string | null>(null);
   const requestedSkillId = searchParams.get("skillId");
   const requestedFocus = searchParams.get("focus");
   const focus: FridaySkillFocus =
@@ -102,6 +105,10 @@ export function SkillsPage() {
   const skills = skillsQuery.data ?? [];
   const catalog = catalogQuery.data?.items ?? [];
   const sections = buildSkillOperatorSections({ skills, catalog });
+
+  useEffect(() => {
+    setRecentGeneratorSessionId(readLastSkillGeneratorSessionId());
+  }, []);
 
   useEffect(() => {
     if (sections.starter.length === 0) return;
@@ -227,6 +234,43 @@ export function SkillsPage() {
   return (
     <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
       <div className="space-y-4">
+        <ShellCard
+          eyebrow="Generator"
+          title="Package a skill from a guided session"
+          aside={<StatusPill tone={recentGeneratorSessionId ? "success" : "neutral"}>{recentGeneratorSessionId ? "resume ready" : "new session"}</StatusPill>}
+        >
+          <div className="space-y-4 text-sm text-white/70">
+            <p>
+              Use the dedicated generator surface when you want clarification questions, draft generation, test evidence,
+              and the final approve receipt in one place.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <Link
+                className="inline-flex items-center rounded-2xl bg-[var(--accent-strong)] px-4 py-2 text-sm font-medium text-slate-950 hover:bg-[var(--accent-soft)]"
+                to={buildSkillGeneratorHref({
+                  goal: detail ? `Create or stabilize a reusable skill for: ${detail.name}` : undefined,
+                  from: "skills",
+                })}
+              >
+                <Package className="mr-2 h-4 w-4" />
+                Open generator
+              </Link>
+              {recentGeneratorSessionId ? (
+                <Link
+                  className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                  to={buildSkillGeneratorHref({
+                    sessionId: recentGeneratorSessionId,
+                    from: "skills",
+                  })}
+                >
+                  <RefreshCcw className="mr-2 h-4 w-4" />
+                  Resume last session
+                </Link>
+              ) : null}
+            </div>
+          </div>
+        </ShellCard>
+
         <ShellCard
           eyebrow="Assistant Handoff"
           title="Install, verify, and repair skills without touching code"
