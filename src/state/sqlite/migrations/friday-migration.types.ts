@@ -1,10 +1,16 @@
 import * as crypto from "node:crypto";
+import type Database from "better-sqlite3";
 
 export interface FridaySqliteMigration {
   version: number;
   name: string;
   sql: string;
   checksum: string;
+  /**
+   * Optional imperative apply hook for migrations that need conditional or
+   * idempotent schema repair logic beyond static SQL text.
+   */
+  apply?: (db: Database.Database) => void;
   /**
    * Legacy checksums accepted for already-applied migrations.
    * Use for backward compatibility when historical migration SQL text changed.

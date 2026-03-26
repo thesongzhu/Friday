@@ -60,6 +60,7 @@ import { runFridayCliAuthLoginAnthropic } from "./friday-cli-auth.js";
 
 export interface ParsedArgs {
   command: "start" | "list" | "run" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth" | "skills" | "daemon" | "phases";
+  showHelp: boolean;
   skillDirs: string[];
   port: number | undefined;
   skillId: string | undefined;
@@ -95,12 +96,17 @@ export interface ParsedArgs {
   json: boolean;
 }
 
+function isHelpFlag(value: string | undefined): boolean {
+  return value === "--help" || value === "-h" || value === "help";
+}
+
 export function parseArgs(argv: string[]): ParsedArgs {
   // Strip node + script path
   const args = argv.slice(2);
 
   const result: ParsedArgs = {
     command: "help",
+    showHelp: false,
     skillDirs: [],
     port: undefined,
     skillId: undefined,
@@ -137,8 +143,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
 
   const cmd = args[0]!;
-  if (cmd === "--help" || cmd === "-h" || cmd === "help") {
+  if (isHelpFlag(cmd)) {
     result.command = "help";
+    result.showHelp = true;
     return result;
   }
 
@@ -151,6 +158,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     result.command = "help";
     return result;
   }
+
+  result.showHelp = args.slice(1).some((arg) => isHelpFlag(arg));
 
   let i = 1;
 
@@ -377,7 +386,118 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
 // ─── Usage ───
 
-function printUsage(): void {
+function printUsage(parsed?: ParsedArgs): void {
+  const command = parsed?.command;
+
+  if (command === "start") {
+    console.log(`
+friday start [--skills-dir <path>] [--port <n>] [--host <addr>]
+
+Boot the hub, load skills, and keep the process running.
+Default host: 127.0.0.1 (loopback only). Use --host 0.0.0.0 for network access.
+    `.trim());
+    return;
+  }
+
+  if (command === "list") {
+    console.log(`
+friday list [--skills-dir <path>]
+
+Load skills and print them in a table, then exit.
+    `.trim());
+    return;
+  }
+
+  if (command === "run") {
+    console.log(`
+friday run <skill-id> [--input key=value ...] [--skills-dir <path>]
+
+Boot the hub, run a single skill, print result, then exit.
+    `.trim());
+    return;
+  }
+
+  if (command === "status") {
+    console.log(`
+friday status
+
+Show daemon/runtime status summary for the current state directory.
+    `.trim());
+    return;
+  }
+
+  if (command === "import") {
+    console.log(`
+friday import <source> [--from <format>] [--target <path>] [--replace] [--dry-run] [--no-refresh]
+
+Detect, convert, validate, install, and refresh registry for a skill source.
+    `.trim());
+    return;
+  }
+
+  if (command === "convert") {
+    console.log(`
+friday convert <source> --out <dir> [--from <format>] [--split-operations] [--skill-id-prefix <prefix>]
+
+Convert a skill source to Friday package(s) without installing.
+    `.trim());
+    return;
+  }
+
+  if (command === "converters") {
+    console.log(`
+friday converters
+
+List installed converters and supported source formats.
+    `.trim());
+    return;
+  }
+
+  if (command === "pack") {
+    console.log(`
+friday pack <skill-dir> --out <file.tgz>
+
+Package a native Friday skill directory into a .friday.tgz archive.
+    `.trim());
+    return;
+  }
+
+  if (command === "skills") {
+    console.log(`
+friday skills init <skill-id> [--template node|shell] [--out <dir>]
+
+Create a minimal local skill template with manifest, entrypoint, and SKILL.md.
+    `.trim());
+    return;
+  }
+
+  if (command === "auth") {
+    console.log(`
+friday auth login anthropic [--provider-id <id>] [--code <code#state>] [--no-browser]
+
+Authenticate the Anthropic provider through the CLI helper flow.
+    `.trim());
+    return;
+  }
+
+  if (command === "daemon") {
+    console.log(`
+friday daemon start|stop|restart|status
+
+Manage the Friday background daemon process.
+    `.trim());
+    return;
+  }
+
+  if (command === "phases") {
+    console.log(`
+friday phases doctor|list|status|start-next|run-next|promote|resume|stabilize <phase-id>|closeout [--manifest <path>] [--dry-run] [--json]
+
+Inspect and drive the OpenClaw adoption phase controller.
+    `.trim());
+    return;
+  }
+
   console.log(`
 friday — Friday AI automation CLI
 
@@ -1886,6 +2006,12 @@ async function main(): Promise<void> {
   loadProcessEnvFromDotEnvFile();
   const parsed = parseArgs(process.argv);
 
+  if (parsed.showHelp) {
+    printUsage(parsed.command === "help" ? undefined : parsed);
+    await finalizeCliCommand(parsed.command);
+    return;
+  }
+
   switch (parsed.command) {
     case "start":
       await cmdStart(parsed);
@@ -1925,7 +2051,7 @@ async function main(): Promise<void> {
       break;
     case "help":
     default:
-      printUsage();
+      printUsage(parsed.command === "help" ? undefined : parsed);
       break;
   }
 

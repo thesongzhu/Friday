@@ -492,30 +492,44 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // Register health routes FIRST (public, no auth)
   for (const route of createFridayHealthRoutes({
     version: serverVersion,
-    getCapabilities: () => ({
-      schemaVersion: "1.0",
-      auth: {
-        allowPasswordlessLocalLogin: deps.allowPasswordlessLocalLogin ?? false,
-        allowLocalBypassLogin: deps.allowLocalBypassLogin ?? false,
-      },
-      plugins: {
-        runtimeMode: deps.pluginRuntimeMode ?? "stub",
-        marketplaceAvailable: deps.pluginMarketplaceAvailable ?? false,
-      },
-      marketplace: {
-        commerceEnabled: deps.marketplaceCommerce !== undefined,
-        skillSourceEnabled: deps.skillMarketplace !== undefined,
-        pluginMarketplaceEnabled: deps.pluginMarketplaceAvailable ?? false,
-      },
-      channels: {
-        supportedKinds: deps.supportedChannelKinds ?? [],
-        enabledKinds: deps.enabledChannelKinds ?? [],
-      },
-      system: deps.systemHealth ?? {
-        enabled: false,
-        remoteMode: "unavailable",
-      },
-    }),
+    getCapabilities: async () => {
+      const searchHealth = typeof deps.searchHealth === "function"
+        ? await Promise.resolve(deps.searchHealth())
+        : deps.searchHealth;
+      const systemHealth = typeof deps.systemHealth === "function"
+        ? await Promise.resolve(deps.systemHealth())
+        : deps.systemHealth;
+
+      return {
+        schemaVersion: "1.0" as const,
+        auth: {
+          allowPasswordlessLocalLogin: deps.allowPasswordlessLocalLogin ?? false,
+          allowLocalBypassLogin: deps.allowLocalBypassLogin ?? false,
+        },
+        plugins: {
+          runtimeMode: deps.pluginRuntimeMode ?? "stub",
+          marketplaceAvailable: deps.pluginMarketplaceAvailable ?? false,
+        },
+        marketplace: {
+          commerceEnabled: deps.marketplaceCommerce !== undefined,
+          skillSourceEnabled: deps.skillMarketplace !== undefined,
+          pluginMarketplaceEnabled: deps.pluginMarketplaceAvailable ?? false,
+        },
+        channels: {
+          supportedKinds: deps.supportedChannelKinds ?? [],
+          enabledKinds: deps.enabledChannelKinds ?? [],
+        },
+        search: searchHealth ?? {
+          provider: "duckduckgo_html",
+          latestness: "unverified" as const,
+        },
+        system: systemHealth ?? {
+          enabled: false,
+          remoteMode: "unavailable" as const,
+          companionReadiness: "unavailable" as const,
+        },
+      };
+    },
   })) {
     routes.register(route);
   }

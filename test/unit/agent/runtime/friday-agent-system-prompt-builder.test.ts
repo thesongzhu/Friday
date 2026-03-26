@@ -76,6 +76,8 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("destructive/high-risk");
     expect(prompt).toContain("approval or confirmation");
     expect(prompt).toContain("backups");
+    expect(prompt).toContain("start with a hard stop");
+    expect(prompt).toContain("exact targets plus backup handling");
   });
 
   it("documents minimal clarification and artifact honesty rules", () => {
@@ -100,6 +102,8 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("carry forward the real source content or a faithful summary");
     expect(prompt).toContain("Do not write placeholders like 'Contents of X'");
     expect(prompt).toContain("clearly labeled blocker section");
+    expect(prompt).toContain("low-risk retries/reversible fixes may auto-run");
+    expect(prompt).toContain("verification and rollback gates remain mandatory");
   });
 
   it("documents starter skill discovery and usage guidance", () => {

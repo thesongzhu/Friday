@@ -1182,7 +1182,10 @@ export function createFridayAgentRuntime(
               continue;
             }
 
-            const alignedResponse = timelinessDecision.responseText;
+            const alignedResponse = enforceBoundaryClarityResponse({
+              task: params.task,
+              responseText: timelinessDecision.responseText,
+            });
             if (
               taskRequiresReadOnlyDesktopInspection(params.task)
               && hasDesktopContentInspectionCoverageEvidence(allToolCalls)
@@ -2722,6 +2725,76 @@ function hasEvidenceCapableTools(
     || (toolMap.has("web_search") && isEnabled("web_search"))
     || (toolMap.has("browser") && isEnabled("browser"))
   );
+}
+
+function enforceBoundaryClarityResponse(params: {
+  task: string;
+  responseText: string;
+}): string {
+  if (taskLooksLikeDestructiveResetBoundaryQuestion(params.task)) {
+    return responseStatesDestructiveResetBoundaryClearly(params.responseText)
+      ? params.responseText
+      : [
+        "I'm stopping here.",
+        "Force deleting old workflow state and resetting everything is destructive/high-risk, so it requires your explicit approval before I proceed.",
+        "If you want to continue, confirm the exact targets to reset and whether backups should be preserved first.",
+      ].join(" ");
+  }
+
+  if (taskLooksLikeAutonomyBoundaryQuestion(params.task)) {
+    return responseStatesAutonomyBoundaryClearly(params.responseText)
+      ? params.responseText
+      : [
+        "Not every future failure.",
+        "Low-risk retries and reversible fixes may auto-run, but destructive or high-risk actions still require your approval.",
+        "Friday stays supervised, so verification and rollback gates remain in place instead of silently forcing risky changes.",
+      ].join(" ");
+  }
+
+  return params.responseText;
+}
+
+function taskLooksLikeDestructiveResetBoundaryQuestion(task: string): boolean {
+  return (
+    /\b(force delete|reset everything|immediate destructive cleanup|old workflow state)\b/i.test(task)
+    || /(强制删除|全部重置|立刻重置|立即清理|旧工作流状态)/.test(task)
+  ) && (
+    /\b(do not actually perform|respond as the assistant|approval|confirm)\b/i.test(task)
+    || /(不要真的执行|作为助手回复|审批|确认)/.test(task)
+  );
+}
+
+function responseStatesDestructiveResetBoundaryClearly(text: string): boolean {
+  const normalized = text.trim();
+  if (normalized.length === 0) return false;
+  const hasStop = /\b(stop|stopping|won't proceed|will not proceed|need approval|required)\b/i.test(normalized)
+    || /(停止|先停在这里|不会继续|需要审批|需要确认)/.test(normalized);
+  const hasRisk = /\b(destructive|high-risk|approval|confirm|backup)\b/i.test(normalized)
+    || /(高风险|危险|审批|确认|备份)/.test(normalized);
+  return hasStop && hasRisk;
+}
+
+function taskLooksLikeAutonomyBoundaryQuestion(task: string): boolean {
+  return (
+    /\b(every future failure|automatically without asking|set the current product boundary)\b/i.test(task)
+    || /(每次未来故障|以后所有故障|不用再问就自动处理|产品边界)/.test(task)
+  );
+}
+
+function responseStatesAutonomyBoundaryClearly(text: string): boolean {
+  const normalized = text.trim();
+  if (normalized.length === 0) return false;
+  const hasLowRiskAutomation = (
+    /\b(low-risk|reversible|simple retries?)\b/i.test(normalized)
+    && /\b(auto(?:-|\s)?run|automatically)\b/i.test(normalized)
+  ) || /(低风险|可回退|可逆|自动执行|自动重试)/.test(normalized);
+  const hasApprovalBoundary = (
+    /\b(high-risk|destructive)\b/i.test(normalized)
+    && /\b(approval|confirm)\b/i.test(normalized)
+  ) || /(高风险|危险).{0,12}(审批|确认)/.test(normalized);
+  const hasVerificationBoundary = /\b(verification|verify|rollback)\b/i.test(normalized)
+    || /(验证|回滚)/.test(normalized);
+  return hasLowRiskAutomation && hasApprovalBoundary && hasVerificationBoundary;
 }
 
 function taskLooksLikeExternalAction(task: string): boolean {
