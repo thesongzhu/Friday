@@ -10,9 +10,13 @@ import type {
   FridayCreateDraftResponse,
   FridayExportDraftBundleResponse,
   FridayGetDraftResponse,
+  FridayGetWorkflowBuilderTemplateResponse,
   FridayImportWorkflowBundleRequest,
   FridayImportWorkflowBundleResponse,
+  FridayInstantiateWorkflowBuilderTemplateRequest,
+  FridayInstantiateWorkflowBuilderTemplateResponse,
   FridayListDraftsResponse,
+  FridayListWorkflowBuilderTemplatesResponse,
   FridayPublishDraftRequest,
   FridayPublishDraftResponse,
   FridayReleaseWorkflowLockRequest,
@@ -24,12 +28,12 @@ import type {
 } from "../../model/friday-api-workflow.types.js";
 
 export interface FridayWorkflowBuilderTemplateRoutesDeps {
-  listTemplates: (query: { scope?: string }) => unknown;
-  getTemplate: (templateId: string) => unknown;
+  listTemplates: (query: { scope?: string }) => FridayListWorkflowBuilderTemplatesResponse;
+  getTemplate: (templateId: string) => FridayGetWorkflowBuilderTemplateResponse;
   instantiateTemplate: (
     templateId: string,
-    body: { workflowId: UUID; title: string; ownerUserId?: string },
-  ) => unknown;
+    body: FridayInstantiateWorkflowBuilderTemplateRequest,
+  ) => FridayInstantiateWorkflowBuilderTemplateResponse;
 }
 
 export function createFridayWorkflowBuilderTemplateRoutes(
@@ -65,7 +69,7 @@ export function createFridayWorkflowBuilderTemplateRoutes(
       auth: { public: false, anyOfScopes: ["workflow.write"] },
       async handler(ctx) {
         const { templateId } = ctx.params as { templateId: string };
-        const body = ctx.body as { workflowId: UUID; title: string; ownerUserId?: string };
+        const body = ctx.body as FridayInstantiateWorkflowBuilderTemplateRequest;
         return deps.instantiateTemplate(templateId, body);
       },
     },

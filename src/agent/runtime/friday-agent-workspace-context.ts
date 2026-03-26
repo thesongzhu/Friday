@@ -17,6 +17,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import type { Dirent } from "node:fs";
 import type { FridayConversationBlock } from "#sessions";
 import { FRIDAY_MEMORY_FILE_SYNC_EXPORT_DIR } from "../../memory/sync/friday-memory-file-sync.constants.js";
 
@@ -39,6 +40,22 @@ export interface FridayWorkspaceContextFile {
   selectionScore?: number;
   /** Human-readable explanation for why a block was selected. */
   selectionReason?: string;
+  /** Optional path- or extension-scoped rule metadata. */
+  ruleScope?: {
+    kind: "path" | "extension";
+    pattern: string;
+    matchedPaths: string[];
+  };
+}
+
+export interface FridayWorkspaceContextSummary {
+  availableFileCount: number;
+  selectedFileCount: number;
+  selectedPathRuleCount: number;
+  pathRuleCount: number;
+  promptChars: number;
+  selectedChars: number;
+  candidatePaths: string[];
 }
 
 export interface FridayWorkspaceContext {
@@ -46,11 +63,14 @@ export interface FridayWorkspaceContext {
   files: FridayWorkspaceContextFile[];
   /** Concatenated context string ready for system prompt injection. */
   promptFragment: string;
+  /** Deterministic summary for context-cost attribution and debugging. */
+  summary: FridayWorkspaceContextSummary;
 }
 
 export interface FridayWorkspaceContextSelectionInput {
   task?: string;
   selectedBlocks?: FridayConversationBlock[];
+  candidatePaths?: string[];
 }
 
 interface FridayStoredMemoryCandidate {
@@ -85,6 +105,8 @@ const MAX_MEMORY_EXPORT_ITEMS = 100;
 
 /** Maximum candidate blocks to inject when task-aware selection is active. */
 const MAX_SELECTED_CANDIDATE_BLOCKS = 3;
+const PATH_RULES_DIR = path.join(".friday", "rules", "path");
+const EXTENSION_RULES_DIR = path.join(".friday", "rules", "ext");
 
 const WORKSPACE_CONTEXT_STOPWORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "i",
@@ -140,8 +162,14 @@ function deriveSelectionReason(input: {
   taskOverlap: number;
   selectedBlockOverlap: number;
   recencyBonus: number;
+  pathRuleBonus: number;
 }): string {
   const reasons: string[] = [];
+  if (input.pathRuleBonus > 0 && input.file.ruleScope) {
+    reasons.push(
+      `${input.file.ruleScope.kind} rule matched ${input.file.ruleScope.matchedPaths.join(", ")}`,
+    );
+  }
   if (input.taskOverlap > 0) {
     reasons.push(`task overlap ${String(input.taskOverlap)}`);
   }
@@ -165,12 +193,15 @@ function scoreWorkspaceCandidate(input: {
   const contentTokens = tokenize(input.file.content ?? "");
   const taskOverlap = countOverlap(input.taskTokens, contentTokens);
   const selectedBlockOverlap = countOverlap(input.selectedBlockTokens, contentTokens);
+  const pathRuleBonus = input.file.ruleScope && input.file.ruleScope.matchedPaths.length > 0
+    ? 48 + (input.file.ruleScope.matchedPaths.length * 12)
+    : 0;
   const recencyBonus = input.file.name.startsWith("memory/")
     ? 6
     : input.file.name === "stored-memories"
       ? 4
       : 0;
-  const score = (taskOverlap * 20) + (selectedBlockOverlap * 14) + recencyBonus;
+  const score = (taskOverlap * 20) + (selectedBlockOverlap * 14) + recencyBonus + pathRuleBonus;
   return {
     score,
     reason: deriveSelectionReason({
@@ -178,6 +209,7 @@ function scoreWorkspaceCandidate(input: {
       taskOverlap,
       selectedBlockOverlap,
       recencyBonus,
+      pathRuleBonus,
     }),
   };
 }
@@ -194,7 +226,9 @@ function selectWorkspaceContextFiles(
 
   const taskTokens = tokenize(options?.task ?? "");
   const selectedBlockTokens = tokenize((options?.selectedBlocks ?? []).map((block) => block.summary).join(" "));
-  const hasSelectionContext = taskTokens.length > 0 || selectedBlockTokens.length > 0;
+  const hasSelectionContext = taskTokens.length > 0
+    || selectedBlockTokens.length > 0
+    || candidateFiles.some((file) => (file.ruleScope?.matchedPaths.length ?? 0) > 0);
 
   if (!hasSelectionContext) {
     return [
@@ -233,6 +267,150 @@ function selectWorkspaceContextFiles(
   return [...identityFiles, ...rankedCandidates];
 }
 
+function normalizeWorkspaceCandidatePath(value: string): string {
+  return value
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/g, "")
+    .replace(/^\/+/g, "")
+    .trim();
+}
+
+function extractTaskPathCandidates(task?: string): string[] {
+  if (!task) {
+    return [];
+  }
+  const candidates = new Set<string>();
+  const matches = task.matchAll(/(?:^|[\s("'`])((?:\.{0,2}\/)?[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+|[A-Za-z0-9_.-]+\.[A-Za-z0-9_-]{1,8})/g);
+  for (const match of matches) {
+    const raw = match[1]?.trim();
+    if (!raw) {
+      continue;
+    }
+    const normalized = normalizeWorkspaceCandidatePath(raw);
+    if (normalized.length > 0) {
+      candidates.add(normalized);
+    }
+  }
+  return [...candidates];
+}
+
+async function collectMarkdownFiles(rootDir: string): Promise<string[]> {
+  const discovered: string[] = [];
+  async function visit(currentDir: string): Promise<void> {
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const absolutePath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        await visit(absolutePath);
+        continue;
+      }
+      if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+        discovered.push(absolutePath);
+      }
+    }
+  }
+  await visit(rootDir);
+  return discovered.sort();
+}
+
+function derivePathRulePattern(relativePath: string): string {
+  const withoutExtension = relativePath.replace(/\.md$/i, "");
+  if (withoutExtension.endsWith("/index")) {
+    return withoutExtension.slice(0, -"/index".length);
+  }
+  return withoutExtension;
+}
+
+async function loadPathScopedRules(
+  workspaceDir: string,
+  candidatePaths: readonly string[],
+  seenRealPaths: Set<string>,
+): Promise<FridayWorkspaceContextFile[]> {
+  const files: FridayWorkspaceContextFile[] = [];
+  const normalizedCandidatePaths = candidatePaths
+    .map((value) => normalizeWorkspaceCandidatePath(value))
+    .filter((value) => value.length > 0);
+
+  const pathRuleRoot = path.join(workspaceDir, PATH_RULES_DIR);
+  for (const absoluteRulePath of await collectMarkdownFiles(pathRuleRoot)) {
+    const relativeRulePath = path.relative(pathRuleRoot, absoluteRulePath).replace(/\\/g, "/");
+    const pattern = derivePathRulePattern(relativeRulePath);
+    const matchedPaths = normalizedCandidatePaths.filter((candidate) =>
+      candidate === pattern || candidate.startsWith(`${pattern}/`) || pattern.startsWith(`${candidate}/`),
+    );
+    if (matchedPaths.length === 0) {
+      continue;
+    }
+    try {
+      const realPath = await fs.realpath(absoluteRulePath).catch(() => absoluteRulePath);
+      if (seenRealPaths.has(realPath)) {
+        continue;
+      }
+      seenRealPaths.add(realPath);
+      const content = await fs.readFile(absoluteRulePath, "utf-8");
+      const truncated = content.length > MAX_FILE_SIZE_CHARS
+        ? content.slice(0, MAX_FILE_SIZE_CHARS) + "\n...(truncated)"
+        : content;
+      files.push({
+        name: `rules/path/${relativeRulePath}`,
+        filePath: absoluteRulePath,
+        content: truncated,
+        missing: false,
+        kind: "candidate",
+        ruleScope: {
+          kind: "path",
+          pattern,
+          matchedPaths,
+        },
+      });
+    } catch {
+      // Skip unreadable rule files.
+    }
+  }
+
+  const extensionRuleRoot = path.join(workspaceDir, EXTENSION_RULES_DIR);
+  for (const absoluteRulePath of await collectMarkdownFiles(extensionRuleRoot)) {
+    const relativeRulePath = path.relative(extensionRuleRoot, absoluteRulePath).replace(/\\/g, "/");
+    const extension = `.${derivePathRulePattern(relativeRulePath).replace(/^\./, "")}`;
+    const matchedPaths = normalizedCandidatePaths.filter((candidate) => candidate.endsWith(extension));
+    if (matchedPaths.length === 0) {
+      continue;
+    }
+    try {
+      const realPath = await fs.realpath(absoluteRulePath).catch(() => absoluteRulePath);
+      if (seenRealPaths.has(realPath)) {
+        continue;
+      }
+      seenRealPaths.add(realPath);
+      const content = await fs.readFile(absoluteRulePath, "utf-8");
+      const truncated = content.length > MAX_FILE_SIZE_CHARS
+        ? content.slice(0, MAX_FILE_SIZE_CHARS) + "\n...(truncated)"
+        : content;
+      files.push({
+        name: `rules/ext/${relativeRulePath}`,
+        filePath: absoluteRulePath,
+        content: truncated,
+        missing: false,
+        kind: "candidate",
+        ruleScope: {
+          kind: "extension",
+          pattern: extension,
+          matchedPaths,
+        },
+      });
+    } catch {
+      // Skip unreadable rule files.
+    }
+  }
+
+  return files;
+}
+
 // ─── Loader ───
 
 /**
@@ -247,6 +425,11 @@ export async function loadFridayWorkspaceContext(
   const resolvedDir = path.resolve(workspaceDir);
   const files: FridayWorkspaceContextFile[] = [];
   const seenRealPaths = new Set<string>();
+  const candidatePaths = [
+    ...(options?.candidatePaths ?? []),
+    ...extractTaskPathCandidates(options?.task),
+  ].map((value) => normalizeWorkspaceCandidatePath(value))
+    .filter((value, index, array) => value.length > 0 && array.indexOf(value) === index);
 
   const loadNamedFile = async (
     name: string,
@@ -317,6 +500,9 @@ export async function loadFridayWorkspaceContext(
     });
   }
 
+  const pathRules = await loadPathScopedRules(resolvedDir, candidatePaths, seenRealPaths);
+  files.push(...pathRules);
+
   const selectedFiles = selectWorkspaceContextFiles(files, options);
   const selectedFileMap = new Map(
     selectedFiles.map((file) => [`${file.filePath}::${file.name}`, file]),
@@ -351,8 +537,23 @@ export async function loadFridayWorkspaceContext(
 
   // Build prompt fragment from selected files
   const promptFragment = buildWorkspacePromptFragment(selectedFiles);
+  const selectedChars = selectedFiles.reduce((sum, file) => sum + (file.content?.trim().length ?? 0), 0);
+  const pathRuleCount = annotatedFiles.filter((file) => Boolean(file.ruleScope)).length;
+  const selectedPathRuleCount = annotatedFiles.filter((file) => file.selected && Boolean(file.ruleScope)).length;
 
-  return { files: annotatedFiles, promptFragment };
+  return {
+    files: annotatedFiles,
+    promptFragment,
+    summary: {
+      availableFileCount: annotatedFiles.filter((file) => !file.missing && Boolean(file.content?.trim())).length,
+      selectedFileCount: annotatedFiles.filter((file) => file.selected).length,
+      selectedPathRuleCount,
+      pathRuleCount,
+      promptChars: promptFragment.length,
+      selectedChars,
+      candidatePaths,
+    },
+  };
 }
 
 /**

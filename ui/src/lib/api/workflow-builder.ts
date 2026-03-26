@@ -7,6 +7,9 @@ import type {
   FridayWorkflowBuilderValidationReport,
   FridayAcquireWorkflowLockResponse,
   FridayWorkflowEditLock,
+  FridayWorkflowTemplateEntity,
+  FridayStableWorkflowTemplate,
+  AgentTaskProfileId,
 } from "./types";
 
 // ─── Response wrappers ───
@@ -14,6 +17,19 @@ import type {
 interface ListDraftsResponse {
   items: FridayWorkflowDraftEntity[];
   nextCursor?: string;
+}
+
+interface ListTemplatesResponse {
+  items: FridayWorkflowTemplateEntity[];
+  stableItems: FridayStableWorkflowTemplate[];
+}
+
+interface GetTemplateResponse {
+  template: FridayWorkflowTemplateEntity;
+}
+
+interface InstantiateTemplateResponse {
+  draft: FridayWorkflowDraftEntity;
 }
 
 interface CreateDraftResponse {
@@ -57,6 +73,37 @@ interface ReleaseLockResponse {
 // ─── API ───
 
 export const workflowBuilderApi = {
+  async listTemplates(query?: { scope?: "global" | "user" }): Promise<ListTemplatesResponse> {
+    const params = new URLSearchParams();
+    if (query?.scope) params.set("scope", query.scope);
+    const qs = params.toString();
+    const path = qs
+      ? `/v1/workflow-builder/templates?${qs}`
+      : "/v1/workflow-builder/templates";
+    return apiClient.get<ListTemplatesResponse>(path);
+  },
+
+  async getTemplate(templateId: string): Promise<GetTemplateResponse> {
+    return apiClient.get<GetTemplateResponse>(
+      `/v1/workflow-builder/templates/${encodeURIComponent(templateId)}`,
+    );
+  },
+
+  async instantiateTemplate(
+    templateId: string,
+    input: {
+      workflowId: string;
+      title: string;
+      ownerUserId?: string;
+      taskProfileId?: AgentTaskProfileId;
+    },
+  ): Promise<InstantiateTemplateResponse> {
+    return apiClient.post<typeof input, InstantiateTemplateResponse>(
+      `/v1/workflow-builder/templates/${encodeURIComponent(templateId)}/instantiate`,
+      input,
+    );
+  },
+
   async listDrafts(
     workflowId: string,
     query?: { cursor?: string; limit?: number },

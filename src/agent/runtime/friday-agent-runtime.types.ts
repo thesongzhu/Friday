@@ -17,6 +17,10 @@ import type { FridayAgentArtifactWriter } from "../services/friday-agent-artifac
 import type { FridayAgentEventEmitter } from "./friday-agent-event-emitter.js";
 import type { FridayAgentLlmClient } from "./friday-agent-llm-client.types.js";
 import type { FridayAgentReviewGate } from "./friday-agent-review-gate.js";
+import type {
+  FridayAgentTaskProfileInput,
+  FridayResolvedAgentTaskProfile,
+} from "./friday-agent-task-profile.js";
 
 export interface FridayAgentExecutionContext {
   surface?: string;
@@ -46,6 +50,7 @@ export interface FridayAgentDelegationRequest {
   constraints?: FridayAgentRunConstraints;
   principalId?: string;
   conversationContext?: FridayAgentConversationContext;
+  taskProfile?: FridayAgentTaskProfileInput;
 }
 
 export interface FridayAgentDelegationResult {
@@ -72,6 +77,23 @@ export interface FridayAgentSystemPromptContext {
   localDate: string;
   task?: string;
   conversationContext?: FridayAgentConversationContext;
+}
+
+export interface FridayAgentContextCostComponent {
+  kind: "workspace_context" | "starter_skills" | "mcp" | "subagents";
+  estimatedChars: number;
+  count?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface FridayAgentContextCostSummary {
+  totalEstimatedChars: number;
+  components: FridayAgentContextCostComponent[];
+}
+
+export interface FridayAgentSystemPromptBuildResult {
+  prompt: string;
+  contextCostSummary?: FridayAgentContextCostSummary;
 }
 
 // ─── Runtime interface ───
@@ -107,6 +129,8 @@ export interface FridayAgentRuntime {
     disabledToolNames?: string[];
     /** Optional surface/runtime context for tool routing decisions. */
     executionContext?: FridayAgentExecutionContext;
+    /** Optional model-routing/temperature profile for the run. */
+    taskProfile?: FridayAgentTaskProfileInput;
     /** Resume an existing awaiting-plan run instead of creating a new record. */
     resumeExistingRun?: boolean;
     /** Skip re-entering the planning review gate because the plan was already approved. */
@@ -143,6 +167,10 @@ export interface FridayAgentRuntimeResult {
   images?: string[];
   /** Final answer after any alignment retry/correction. */
   finalResponse?: string;
+  /** Optional prompt-context cost attribution for the final run. */
+  contextCostSummary?: FridayAgentContextCostSummary;
+  /** Resolved task profile applied to the run. */
+  taskProfile?: FridayResolvedAgentTaskProfile;
 }
 
 export interface FridayAgentUsageTurn {
@@ -171,6 +199,7 @@ export interface FridayAgentResumeRunParams {
   historyMessages?: FridayAgentMessage[];
   conversationContext?: FridayAgentConversationContext;
   planReviewOverride?: FridayAgentPlanReviewPayload;
+  taskProfile?: FridayAgentTaskProfileInput;
 }
 
 // ─── Factory deps ───
@@ -192,7 +221,9 @@ export interface CreateFridayAgentRuntimeDeps {
    * current tool names.  Ensures the system prompt always lists exactly
    * the tools registered at run time — no stale tool lists.
    */
-  systemPromptBuilder?: (context: FridayAgentSystemPromptContext) => string | Promise<string>;
+  systemPromptBuilder?: (
+    context: FridayAgentSystemPromptContext,
+  ) => string | FridayAgentSystemPromptBuildResult | Promise<string | FridayAgentSystemPromptBuildResult>;
   tools: FridayAgentToolDefinition[];
   eventEmitter: FridayAgentEventEmitter;
   idGenerator: () => string;

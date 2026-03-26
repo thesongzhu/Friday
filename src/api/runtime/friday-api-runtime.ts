@@ -9,10 +9,12 @@ import {
 } from "#sessions";
 import type { FridayConversationBlock, FridaySessionMessageRecord } from "#sessions";
 import {
+  createFridayStableWorkflowDraftBundle,
   createFridayWorkflowBuilderRuntime,
   createFridayWorkflowProductService,
   createFridayWorkflowRuntime,
   createFridayWorkflowTriggerRepository,
+  listFridayStableWorkflowTemplates,
 } from "#workflows";
 import type { JsonObject } from "#workflows";
 
@@ -93,6 +95,7 @@ import type {
   FridayAgentExecutionContext,
   FridayAgentMessage,
   FridayAgentRunStatus,
+  FridayAgentTaskProfileInput,
 } from "#agent";
 import { buildFridayEvidenceBlocks } from "#agent";
 import { createFridayHealthRoutes } from "../http/routes/friday-health-routes.js";
@@ -666,6 +669,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       items: builderRuntime.templates.listTemplates(
         scope === "user" || scope === "global" ? scope : undefined,
       ),
+      stableItems: listFridayStableWorkflowTemplates(),
     }),
     getTemplate: (templateId) => {
       const template = builderRuntime.templates.getTemplate(templateId);
@@ -683,6 +687,28 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       }
       if (typeof body.title !== "string" || body.title.trim().length === 0) {
         throw new FridayDomainError("VALIDATION_ERROR", "title is required", { httpStatus: 400 });
+      }
+      if (typeof body.taskProfileId !== "undefined" && typeof body.taskProfileId !== "string") {
+        throw new FridayDomainError("VALIDATION_ERROR", "taskProfileId must be a string when provided", {
+          httpStatus: 400,
+        });
+      }
+      const stableBundle = createFridayStableWorkflowDraftBundle({
+        templateId,
+        workflowId: body.workflowId,
+        title: body.title,
+        taskProfileId: body.taskProfileId,
+      });
+      if (stableBundle) {
+        return {
+          draft: builderRuntime.drafts.createDraft({
+            workflowId: body.workflowId,
+            title: body.title,
+            spec: stableBundle.spec,
+            visual: stableBundle.visual,
+            ownerUserId: body.ownerUserId,
+          }),
+        };
       }
       return {
         draft: builderRuntime.templates.instantiateTemplate(
@@ -1592,6 +1618,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       principalId?: string;
       scopes?: string[];
       executionContext?: FridayAgentExecutionContext;
+      taskProfile?: FridayAgentTaskProfileInput;
       persistTaskMessage?: boolean;
       taskAlreadyInHistory?: boolean;
       idempotencyPrefix: "api-agent-run" | "api-session-run";
@@ -1956,6 +1983,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             executionContext: input.executionContext,
             historyMessages,
             conversationContext,
+            taskProfile: input.taskProfile,
           });
         }
         if (planningDecision.action === "reject") {
@@ -1984,6 +2012,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         scopes: input.scopes,
         executionContext: input.executionContext,
         historyMessages,
+        taskProfile: input.taskProfile,
       });
 
       if (input.sessionKey && conversationContext?.turnKind) {
@@ -2042,6 +2071,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       principalId?: string;
       scopes?: string[];
       executionContext?: FridayAgentExecutionContext;
+      taskProfile?: FridayAgentTaskProfileInput;
       persistTaskMessage?: boolean;
       taskAlreadyInHistory?: boolean;
     }) => {
@@ -2058,6 +2088,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         principalId: input.principalId,
         scopes: input.scopes,
         executionContext: input.executionContext,
+        taskProfile: input.taskProfile,
         persistTaskMessage: input.persistTaskMessage,
         taskAlreadyInHistory: input.taskAlreadyInHistory,
         idempotencyPrefix: "api-session-run",
@@ -2102,6 +2133,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       requireReview?: boolean;
       constraints?: { readOnly?: boolean };
       executionContext?: FridayAgentExecutionContext;
+      taskProfile?: FridayAgentTaskProfileInput;
       principalId?: string;
       scopes?: string[];
     }) => {
@@ -2127,6 +2159,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           principalId: input.principalId,
           scopes: input.scopes,
           executionContext: input.executionContext,
+          taskProfile: input.taskProfile,
           idempotencyPrefix: "api-agent-run",
         });
       } finally {

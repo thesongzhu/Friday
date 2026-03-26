@@ -11,6 +11,7 @@ import type {
 
 export type FridayObservabilityFocus =
   | "overview"
+  | "assistant"
   | "alerts"
   | "health"
   | "acceptance"
@@ -229,6 +230,8 @@ export function selectObservabilityPrimaryHealthComponent(
 
 export function formatObservabilityFocusLabel(focus: FridayObservabilityFocus) {
   switch (focus) {
+    case "assistant":
+      return "Assistant diagnostics";
     case "alerts":
       return "Alert detail";
     case "health":

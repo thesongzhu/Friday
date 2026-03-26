@@ -152,6 +152,35 @@ function makeMockGeneratorService(): FridaySkillGeneratorService {
       skillDir: "/tmp/test/skills/test-skill",
       savedFiles: ["skill.manifest.json", "index.mjs"],
       registryRefreshed: true,
+      promotionStage: "stabilized" as const,
+      promotedManifestTags: ["starter.cli", "skill.stabilized"],
+      evidence: {
+        sessionId: "sess-1",
+        validationSummary: {
+          ok: true,
+          repaired: false,
+          repairAttempts: 0,
+          issueCount: 0,
+        },
+        repairSummary: {
+          attempted: false,
+          attempts: 0,
+        },
+        executableTestSummary: {
+          ok: true,
+          executable: true,
+          issues: [],
+          durationMs: 12,
+        },
+        approvalReadiness: {
+          ready: true,
+          reason: "Draft is ready",
+        },
+        savedSkillIdentity: {
+          skillId: "test-skill",
+          skillDir: "/tmp/test/skills/test-skill",
+        },
+      },
     })),
     cancelSession: vi.fn(async () => undefined),
   };
@@ -372,6 +401,7 @@ describe("FridaySkillGeneratorRoutes", () => {
 
       expect(generatorService.approveAndSave).toHaveBeenCalledWith("sess-1");
       expect(result.skillId).toBe("test-skill");
+      expect(result.promotionStage).toBe("stabilized");
     });
   });
 

@@ -4,7 +4,9 @@ import type {
   FridayAgentRuntimeResult,
 } from "../runtime/friday-agent-runtime.types.js";
 import type { FridayAgentEventEmitter } from "../runtime/friday-agent-event-emitter.js";
+import type { FridayAgentTaskProfileInput } from "../runtime/friday-agent-task-profile.js";
 import type { FridayAgentRunConstraints } from "../model/friday-agent.types.js";
+import type { FridaySubagentProfileId } from "./friday-subagent-profile.js";
 
 // ─── Sub-agent run status ───
 
@@ -33,6 +35,7 @@ export interface FridaySubagentSpawnInput {
   task: string;
   label?: string;
   model?: string;
+  profile?: FridaySubagentProfileId;
   timeoutMs?: number;
 }
 
@@ -127,6 +130,7 @@ export interface FridaySubagentRegistrySpawnInput {
   label?: string;
   providerId?: string;
   model?: string;
+  profile?: FridaySubagentProfileId;
   timezone?: string;
   timeoutMs?: number;
   conversationContext?: FridayAgentConversationContext;
@@ -164,6 +168,7 @@ export interface CreateFridaySubagentRegistryDeps {
       conversationContext?: FridayAgentConversationContext;
       signal?: AbortSignal;
       constraints?: FridayAgentRunConstraints;
+      taskProfile?: FridayAgentTaskProfileInput;
     }) => Promise<FridayAgentRuntimeResult>;
   };
   eventEmitter: FridayAgentEventEmitter;

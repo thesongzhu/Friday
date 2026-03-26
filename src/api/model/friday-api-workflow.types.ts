@@ -1,5 +1,6 @@
 import type {
   FridayGeneratedWorkflowDraft,
+  FridayStableWorkflowTemplate,
   FridayWorkflowEntity,
   FridayWorkflowGenerationSession,
   FridayWorkflowGenerationTurn,
@@ -12,6 +13,7 @@ import type {
   FridayWorkflowRunEvidenceResponse,
   FridayWorkflowRunNodeEntity,
   FridayWorkflowSpecBundleV1,
+  FridayWorkflowTemplateEntity,
   FridayWorkflowVersionEntity,
   ISODateTime,
   JsonObject,
@@ -21,6 +23,7 @@ import type {
   WorkflowRunStatus,
 } from "#workflows";
 import type { FridayCompiledWorkflowGraphV2, FridayWorkflowBuilderValidationReport, FridayWorkflowDraftEntity, FridayWorkflowSpecV1, FridayWorkflowVisualGraphV1 } from "#workflows";
+import type { FridayAgentTaskProfileId } from "#agent";
 import type { FridayPage, FridayPaginationQuery } from "./friday-api-common.types.js";
 
 // Re-export needed types
@@ -41,6 +44,8 @@ export type {
   FridayCompiledWorkflowGraphV2,
   FridayWorkflowSpecV1,
   FridayWorkflowVisualGraphV1,
+  FridayWorkflowTemplateEntity,
+  FridayStableWorkflowTemplate,
   FridayWorkflowImportResult,
   FridayWorkflowSpecBundleV1,
 };
@@ -124,6 +129,26 @@ export interface FridayCreateDraftResponse {
 }
 
 export interface FridayListDraftsResponse extends FridayPage<FridayWorkflowDraftEntity> {}
+
+export interface FridayListWorkflowBuilderTemplatesResponse {
+  items: FridayWorkflowTemplateEntity[];
+  stableItems: FridayStableWorkflowTemplate[];
+}
+
+export interface FridayGetWorkflowBuilderTemplateResponse {
+  template: FridayWorkflowTemplateEntity;
+}
+
+export interface FridayInstantiateWorkflowBuilderTemplateRequest {
+  workflowId: UUID;
+  title: string;
+  ownerUserId?: UUID;
+  taskProfileId?: FridayAgentTaskProfileId;
+}
+
+export interface FridayInstantiateWorkflowBuilderTemplateResponse {
+  draft: FridayWorkflowDraftEntity;
+}
 
 export interface FridayGetDraftResponse {
   draft: FridayWorkflowDraftEntity;

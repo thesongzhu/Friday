@@ -3,6 +3,9 @@
 export interface BuildSubagentSystemPromptParams {
   task: string;
   label?: string;
+  profileLabel?: string;
+  profileDescription?: string;
+  profileInstructions?: string[];
   parentSessionKey: string;
   depth: number;
 }
@@ -19,6 +22,17 @@ export function buildFridaySubagentSystemPrompt(
 
   if (params.label) {
     sections.push(`## Label\n${params.label}`);
+  }
+
+  if (params.profileLabel) {
+    sections.push(
+      [
+        "## Profile",
+        `- Role: ${params.profileLabel}`,
+        ...(params.profileDescription ? [`- Description: ${params.profileDescription}`] : []),
+        ...((params.profileInstructions ?? []).map((line) => `- ${line}`)),
+      ].join("\n"),
+    );
   }
 
   sections.push(

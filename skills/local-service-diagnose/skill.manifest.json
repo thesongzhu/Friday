@@ -11,7 +11,10 @@
   },
   "tags": [
     "starter",
+    "starter.cli",
     "starter.devops",
+    "cli-backed",
+    "skill.stabilized",
     "service",
     "health",
     "diagnostics"

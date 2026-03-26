@@ -1,3 +1,6 @@
+import type { FridayResolvedAgentTaskProfile } from "../runtime/friday-agent-task-profile.js";
+import type { FridayAgentContextCostSummary } from "../runtime/friday-agent-runtime.types.js";
+
 // ─── Agent run status ───
 
 export type FridayAgentRunStatus =
@@ -157,6 +160,10 @@ export interface FridayAgentRunRecord {
   summary?: string;
   /** Artifact directory path on disk (IMPL-7). */
   artifactDir?: string;
+  /** Prompt-context attribution persisted for UI/observability drill-down. */
+  contextCostSummary?: FridayAgentContextCostSummary;
+  /** Resolved task profile actually applied to this run. */
+  taskProfile?: FridayResolvedAgentTaskProfile;
 }
 
 // ─── Plan review payload (IMPL-1) ───

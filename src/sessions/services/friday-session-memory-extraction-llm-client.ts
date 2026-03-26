@@ -1,5 +1,6 @@
 import { FridayDomainError } from "#errors";
 import type { FridayProviderApi, FridayProviderService, FridayResolvedProviderRoute } from "#providers";
+import { resolveFridayAgentTaskProfile } from "../../agent/runtime/friday-agent-task-profile.js";
 
 import { FRIDAY_SESSION_MEMORY_EXTRACTION_ERROR_CODES } from "../friday-session-memory-extraction.constants.js";
 import type {
@@ -64,6 +65,7 @@ function buildRequestBody(
   model: string,
   systemPrompt: string,
   userPrompt: string,
+  temperature: number,
 ): Record<string, unknown> {
   const messages = [
     { role: "system" as const, content: systemPrompt },
@@ -75,7 +77,7 @@ function buildRequestBody(
       return {
         model,
         messages,
-        temperature: 0,
+        temperature,
         response_format: { type: "json_object" },
       };
     case "openai-responses": {
@@ -86,7 +88,7 @@ function buildRequestBody(
       return {
         model,
         input,
-        temperature: 0,
+        temperature,
         text: { format: { type: "json_object" } },
       };
     }
@@ -96,14 +98,14 @@ function buildRequestBody(
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
         max_tokens: 4096,
-        temperature: 0,
+        temperature,
       };
     case "google-generative-ai":
       return {
         model,
         contents: [{ role: "user", parts: [{ text: userPrompt }] }],
         systemInstruction: { parts: [{ text: systemPrompt }] },
-        generationConfig: { temperature: 0, responseMimeType: "application/json" },
+        generationConfig: { temperature, responseMimeType: "application/json" },
       };
     case "ollama":
       return {
@@ -111,7 +113,7 @@ function buildRequestBody(
         messages,
         stream: false,
         format: "json",
-        options: { temperature: 0 },
+        options: { temperature },
       };
   }
 }
@@ -298,6 +300,7 @@ export function createFridaySessionMemoryExtractionLlmClient(
         return { items: [] };
       }
 
+      const taskProfile = resolveFridayAgentTaskProfile("deterministic");
       const userPrompt = buildUserPrompt(messages, maxItems);
       const validMessageIds = new Set(messages.map((m) => m.id));
 
@@ -312,7 +315,13 @@ export function createFridaySessionMemoryExtractionLlmClient(
 
           const url = buildUrl(api, provider.baseUrl, model);
           const headers = buildHeaders(api, credential, provider.config.headers);
-          const body = buildRequestBody(api, model, EXTRACTION_SYSTEM_PROMPT, userPrompt);
+          const body = buildRequestBody(
+            api,
+            model,
+            EXTRACTION_SYSTEM_PROMPT,
+            userPrompt,
+            taskProfile.temperature ?? 0,
+          );
 
           const response = await fetch(url, {
             method: "POST",

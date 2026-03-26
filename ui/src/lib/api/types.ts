@@ -74,6 +74,45 @@ export type AgentRunStatus =
   | "failed_tests"
   | "cancelled";
 
+export type AgentTaskProfileId =
+  | "default"
+  | "deterministic"
+  | "planning"
+  | "review"
+  | "creative";
+
+export type AgentTaskProfileEffort = "low" | "medium" | "high";
+
+export interface AgentTaskProfileInput {
+  id?: AgentTaskProfileId;
+  model?: string;
+  temperature?: number;
+  reasoningEffort?: AgentTaskProfileEffort;
+  reason?: string;
+}
+
+export interface ResolvedAgentTaskProfile {
+  id: AgentTaskProfileId;
+  label: string;
+  description: string;
+  model?: string;
+  temperature?: number;
+  reasoningEffort: AgentTaskProfileEffort;
+  reason?: string;
+}
+
+export interface AgentContextCostComponent {
+  kind: "workspace_context" | "starter_skills" | "mcp" | "subagents";
+  estimatedChars: number;
+  count?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentContextCostSummary {
+  totalEstimatedChars: number;
+  components: AgentContextCostComponent[];
+}
+
 export interface AgentRunRecord {
   id: string;
   task: string;
@@ -163,6 +202,8 @@ export interface AgentRunRecord {
     durationMs: number;
   }>;
   artifactDir?: string;
+  contextCostSummary?: AgentContextCostSummary;
+  taskProfile?: ResolvedAgentTaskProfile;
 }
 
 export interface AgentAutomation {
@@ -224,6 +265,10 @@ export interface AgentRuntimeResult {
   durationMs: number;
   usageInput: number;
   usageOutput: number;
+  images?: string[];
+  finalResponse?: string;
+  contextCostSummary?: AgentContextCostSummary;
+  taskProfile?: ResolvedAgentTaskProfile;
 }
 
 // ─── Skill UI schema types ───
@@ -399,6 +444,9 @@ export interface ApproveResponse {
   skillDir: string;
   savedFiles: string[];
   registryRefreshed: boolean;
+  promotionStage: "stabilized";
+  promotedManifestTags: string[];
+  evidence: SkillGenerationEvidence;
 }
 
 export interface SkillGeneratorTestSummary {
@@ -427,6 +475,7 @@ export interface SkillGenerationEvidence {
   };
   savedSkillIdentity?: {
     skillId: string;
+    skillDir?: string;
   };
 }
 
@@ -465,6 +514,8 @@ export interface SkillLifecycleSummary {
   managed: boolean;
   registryLoaded: boolean;
   currentManifest?: Record<string, unknown>;
+  originType: "generated" | "stabilized" | "cli-backed" | "mcp-backed";
+  maturity: "draft" | "verified" | "stable";
 }
 
 export interface SkillCatalogItem {
@@ -483,6 +534,8 @@ export interface SkillCatalogItem {
   installedVersion?: string;
   updateAvailable: boolean;
   sourceDetails?: SkillSourceRecord;
+  originType?: "generated" | "stabilized" | "cli-backed" | "mcp-backed";
+  maturity?: "draft" | "verified" | "stable";
 }
 
 export interface SkillVersionRecord {
@@ -1053,6 +1106,30 @@ export interface FridayWorkflowDraftEntity {
   autosave: FridayWorkflowDraftAutosaveState;
 }
 
+export interface FridayWorkflowTemplateEntity {
+  templateId: string;
+  kind: "builtin" | "skill" | "user";
+  scope: "global" | "user";
+  ownerUserId?: string;
+  name: string;
+  description?: string;
+  tags: string[];
+  sourceSkillId?: string;
+  spec: FridayWorkflowSpecV1;
+  visual: FridayWorkflowVisualGraphV1;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FridayStableWorkflowTemplate {
+  id: string;
+  label: string;
+  description: string;
+  preferredBinding: "stable-skill" | "built-in-tool";
+  defaultTaskProfile: AgentTaskProfileId;
+  tags: string[];
+}
+
 // ─── Validation types ───
 
 export type FridayWorkflowValidationSeverity = "error" | "warning" | "info";
@@ -1264,6 +1341,37 @@ export interface FridayWorkflowGeneratorApproveResponse {
   versionNumber: number;
   slug: string;
   published: boolean;
+}
+
+export interface AssistantDiagnosticsRunSummary {
+  runId: string;
+  task: string;
+  status: AgentRunStatus;
+  startedAt?: string;
+  completedAt?: string;
+  contextCostSummary?: AgentContextCostSummary;
+  taskProfile?: ResolvedAgentTaskProfile;
+}
+
+export interface McpServerState {
+  serverId: string;
+  transport: "stdio" | "http";
+  state: "configured" | "discoverable" | "loaded" | "deferred";
+  lazyDiscovery: boolean;
+  toolCount?: number;
+  resourceCount?: number;
+  promptCount?: number;
+  lastLoadedAt?: string;
+}
+
+export interface AssistantDiagnostics {
+  generatedAt: string;
+  taskProfilePresets: ResolvedAgentTaskProfile[];
+  recentRuns: AssistantDiagnosticsRunSummary[];
+  mcpServerStates: McpServerState[];
+  supportedPreprocessors: Array<
+    "test_output" | "log_excerpt" | "browser_snapshot" | "diff_excerpt"
+  >;
 }
 
 // ─── Errors ───

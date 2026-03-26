@@ -264,6 +264,8 @@ export {
   type FridaySkillLifecycleSummary,
   type FridaySkillLifecycleDetail,
   type FridaySkillCatalogViewItem,
+  type FridaySkillOriginType,
+  type FridaySkillMaturity,
   type FridaySkillVerificationEvidence,
   type FridaySkillInstallOutcome,
   type FridaySkillUpdateOutcome,

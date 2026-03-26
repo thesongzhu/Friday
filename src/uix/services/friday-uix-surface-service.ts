@@ -6,6 +6,7 @@ import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridayWorkflowGeneratorService, FridayWorkflowProductService } from "#workflows";
 import type {
   FridayActionTemplateSummary,
+  FridayUixAssistantDiagnostics,
   FridayBeginnerIntentResolution,
   FridayGuidedWizardState,
   FridayUixTemplateExecutionResponse,
@@ -59,6 +60,9 @@ export interface FridayUixSurfaceService {
   getPersona(input: {
     userId: string;
   }): FridayCommunicationPersona;
+  getDiagnostics(input: {
+    userId: string;
+  }): FridayUixAssistantDiagnostics;
   executeTemplate(input: {
     templateId: string;
     userId: string;
@@ -92,10 +96,40 @@ export interface CreateFridayUixSurfaceServiceDeps {
   observability?: FridayObservabilityApiService;
   preferenceRepo?: FridayUixUserPreferenceRepository;
   learningContextBuilder?: (input: { userId: string; nowIso: string }) => { preferences: Record<string, unknown> };
+  diagnosticsBuilder?: (input: { userId: string }) => FridayUixAssistantDiagnostics;
   nowIso?: () => string;
 }
 
 const TEMPLATE_DEFINITIONS: FridayActionTemplateSummary[] = [
+  {
+    id: "workflow-builder-launch",
+    label: "Open workflow builder",
+    description: "Jump straight into the workflow builder with stable templates and draft controls.",
+    category: "workflows",
+    parameters: [],
+  },
+  {
+    id: "integration-mode-review",
+    label: "Review integration mode",
+    description: "Compare CLI-backed skills, MCP-backed integrations, and stable skill paths before wiring them in.",
+    category: "skills",
+    parameters: [
+      {
+        key: "goal",
+        label: "Integration scope",
+        type: "text",
+        required: false,
+        placeholder: "Example: Review whether this GitHub integration should stay MCP-backed or move to a CLI skill.",
+      },
+    ],
+  },
+  {
+    id: "context-governance-review",
+    label: "Review context governance",
+    description: "Inspect context cost, path rules, MCP loading, and task-profile usage before growing the prompt surface.",
+    category: "system",
+    parameters: [],
+  },
   {
     id: "idea-clarifier",
     label: "Clarify an idea",
@@ -1255,6 +1289,16 @@ export function createFridayUixSurfaceService(
 
     getPersona(input) {
       return resolvePersona(input.userId);
+    },
+
+    getDiagnostics(input) {
+      return deps.diagnosticsBuilder?.(input) ?? {
+        generatedAt: nowIso(),
+        taskProfilePresets: [],
+        recentRuns: [],
+        mcpServerStates: [],
+        supportedPreprocessors: [],
+      };
     },
 
     async executeTemplate(input) {

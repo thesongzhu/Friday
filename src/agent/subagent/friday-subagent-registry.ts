@@ -17,6 +17,10 @@ import {
   FRIDAY_SUBAGENT_MAX_CONCURRENT,
   FRIDAY_SUBAGENT_MAX_DEPTH,
 } from "./friday-subagent-constants.js";
+import {
+  inferFridaySubagentProfile,
+  resolveFridaySubagentProfile,
+} from "./friday-subagent-profile.js";
 import { buildFridaySubagentSystemPrompt } from "./friday-subagent-system-prompt.js";
 import { createFridaySubagentRunRepository } from "../persistence/friday-subagent-run-repository.js";
 
@@ -123,10 +127,16 @@ export function createFridaySubagentRegistry(
     input: FridaySubagentRegistrySpawnInput,
     childSessionKey: string,
   ): Promise<FridaySubagentOutcome> {
+    const resolvedProfile = resolveFridaySubagentProfile(
+      input.profile ?? inferFridaySubagentProfile(input.task, input.label),
+    );
     // Build child system prompt
     const systemPrompt = buildFridaySubagentSystemPrompt({
       task: input.task,
       label: input.label,
+      profileLabel: resolvedProfile.label,
+      profileDescription: resolvedProfile.description,
+      profileInstructions: resolvedProfile.instructions,
       parentSessionKey: input.parentSessionKey,
       depth: input.depth + 1,
     });
@@ -134,7 +144,7 @@ export function createFridaySubagentRegistry(
     // Create child runtime
     const childRuntime = createChildRuntime({
       providerId: input.providerId,
-      model: input.model,
+      model: resolvedProfile.model ?? input.model,
       systemPrompt,
       depth: input.depth + 1,
       rootRunId: input.rootRunId,
@@ -158,12 +168,16 @@ export function createFridaySubagentRegistry(
         runId: childRunId,
         sessionKey: childSessionKey,
         providerId: input.providerId,
-        model: input.model,
+        model: resolvedProfile.model ?? input.model,
         timezone: input.timezone,
         timeoutMs,
         conversationContext: input.conversationContext,
         signal: input.signal,
-        constraints: input.constraints,
+        constraints: {
+          ...(input.constraints ?? {}),
+          ...(resolvedProfile.readOnly ? { readOnly: true } : {}),
+        },
+        taskProfile: { id: resolvedProfile.taskProfile },
       });
 
       // Build outcome
