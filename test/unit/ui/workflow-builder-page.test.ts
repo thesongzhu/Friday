@@ -219,8 +219,24 @@ function buildDraft() {
             integrationMode: "stable_skill",
           },
         },
+        {
+          id: "step-b",
+          type: "transform" as const,
+          ref: "reshape-result",
+          args: {
+            mapping: {
+              summary: "$steps.step-a.output.summary",
+            },
+          },
+        },
       ],
-      edges: [],
+      edges: [
+        {
+          from: "step-a",
+          to: "step-b",
+          when: "success" as const,
+        },
+      ],
       outputs: [],
       errorPolicy: { onFailure: "fail_fast" as const, notifyUser: true },
       tests: [],
@@ -235,9 +251,11 @@ function buildDraft() {
       nodes: [
         { nodeId: "__trigger__", x: 24, y: 120, width: 220, height: 120 },
         { nodeId: "step-a", x: 320, y: 120, width: 240, height: 120 },
+        { nodeId: "step-b", x: 640, y: 120, width: 240, height: 120 },
       ],
       edges: [
         { edgeKey: "__trigger__:step-a:any", sourceHandle: "any", targetHandle: "in" },
+        { edgeKey: "step-a:step-b:success", sourceHandle: "success", targetHandle: "in" },
       ],
     },
     createdAt: "2026-03-25T00:00:00.000Z",
@@ -297,6 +315,26 @@ describe("workflow builder page", () => {
     return button!;
   }
 
+  function dispatchKey(target: HTMLElement, key: string): void {
+    const event = new windowRef.Event("keydown", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "key", {
+      configurable: true,
+      value: key,
+    });
+    target.dispatchEvent(event);
+  }
+
+  function createDataTransfer(type: string) {
+    return {
+      types: ["application/friday-workflow-node-type"],
+      effectAllowed: "move",
+      dropEffect: "move",
+      setData: vi.fn(),
+      getData: vi.fn((mime: string) => (mime === "application/friday-workflow-node-type" ? type : type)),
+      setDragImage: vi.fn(),
+    };
+  }
+
   beforeEach(async () => {
     vi.clearAllMocks();
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -325,8 +363,13 @@ describe("workflow builder page", () => {
         schemaVersion: "2.0",
         workflowId: "workflow-1",
         graph: {
-          nodes: [{ id: "step-a", type: "skill_call", ref: "browser-qa-report" }],
-          edges: [],
+          nodes: [
+            { id: "step-a", type: "skill_call", ref: "browser-qa-report" },
+            { id: "step-b", type: "transform", ref: "reshape-result" },
+          ],
+          edges: [
+            { from: "step-a", to: "step-b", when: "success" },
+          ],
         },
       },
       validation: {
@@ -339,6 +382,13 @@ describe("workflow builder page", () => {
             severity: "error",
             message: "Action step needs a ref",
             stepId: "step-a",
+          },
+          {
+            code: "edge-condition",
+            stage: "compiled_graph",
+            severity: "warning",
+            message: "Success branch is too broad",
+            edgeRef: { from: "step-a", to: "step-b", when: "success" },
           },
         ],
       },
@@ -439,7 +489,7 @@ describe("workflow builder page", () => {
     defineGlobal("InputEvent", previousInputEvent as typeof globalThis.InputEvent);
   });
 
-  it("shows grouped node palette sections and filters them by the local search query", async () => {
+  it("supports palette collapse, search override, and keyboard insertion", async () => {
     await renderPage();
 
     const initialText = await waitFor(
@@ -456,23 +506,49 @@ describe("workflow builder page", () => {
     expect(initialText).toContain("Approval");
     expect(initialText).toContain("Transform");
 
+    await act(async () => {
+      getByTestId("workflow-builder-palette-toggle-execution").click();
+      await flushCycles();
+    });
+
+    const collapsedText = getByTestId("workflow-builder-node-library").textContent ?? "";
+    expect(collapsedText).toContain("Group collapsed");
+    expect(collapsedText).not.toContain("Call a stable skill or external operation as a concrete workflow step.");
+
     const searchInput = getByTestId<HTMLInputElement>("workflow-builder-node-search");
     await act(async () => {
-      searchInput.value = "logic";
-      searchInput.dispatchEvent(new windowRef.InputEvent("input", { bubbles: true, data: "logic", inputType: "insertText" }));
+      searchInput.value = "action";
+      searchInput.dispatchEvent(new windowRef.InputEvent("input", { bubbles: true, data: "action", inputType: "insertText" }));
       searchInput.dispatchEvent(new windowRef.Event("change", { bubbles: true }));
       await flushCycles();
     });
 
     const filteredText = getByTestId("workflow-builder-node-library").textContent ?? "";
-    expect(filteredText).toContain("Logic");
-    expect(filteredText).toContain("Condition");
-    expect(filteredText).toContain("Approval");
-    expect(filteredText).not.toContain("AI / Tool");
-    expect(filteredText).not.toContain("Transform");
+    expect(filteredText).toContain("Action");
+    expect(filteredText).not.toContain("Approval");
+
+    await act(async () => {
+      dispatchKey(searchInput, "ArrowDown");
+      dispatchKey(searchInput, "Enter");
+      await flushCycles();
+    });
+
+    expect(getByTestId("workflow-builder-palette-entry-action").getAttribute("data-keyboard-active")).toBe("true");
+    expect(container?.querySelectorAll("[data-node-id]").length).toBe(4);
+
+    await act(async () => {
+      searchInput.value = "";
+      searchInput.dispatchEvent(new windowRef.InputEvent("input", { bubbles: true, data: "", inputType: "deleteContentBackward" }));
+      searchInput.dispatchEvent(new windowRef.Event("change", { bubbles: true }));
+      await flushCycles();
+    });
+
+    const restoredText = getByTestId("workflow-builder-node-library").textContent ?? "";
+    expect(restoredText).toContain("Group collapsed");
+    expect(restoredText).not.toContain("Call a stable skill or external operation as a concrete workflow step.");
   });
 
-  it("projects compile diagnostics into the canvas summary and focuses the affected node", async () => {
+  it("navigates active issues across nodes and edges from the compile summary", async () => {
     await renderPage();
 
     await waitFor(
@@ -492,20 +568,77 @@ describe("workflow builder page", () => {
 
     const summary = await waitFor(
       () => container?.querySelector<HTMLElement>('[data-testid="workflow-builder-compile-summary"]')?.textContent ?? "",
-      (value) => value.includes("1 errors"),
+      (value) => value.includes("1 errors") && value.includes("1 warnings"),
     );
     expect(summary).toContain("1 errors");
+    expect(summary).toContain("1 warnings");
 
     const text = container?.textContent ?? "";
     expect(text).toContain("Compile report");
     expect(text).toContain("Node issues");
+    expect(text).toContain("Edge issues");
     expect(text).toContain("Action step needs a ref");
+    expect(text).toContain("Success branch is too broad");
+    expect(getByTestId("workflow-builder-issue-nav-status").textContent).toContain("Issue 1 of 2");
+    expect(getByTestId("workflow-builder-active-issue-message").textContent).toContain("Action step needs a ref");
+    expect(getByTestId("workflow-builder-node-step-a").getAttribute("data-active-issue")).toBe("true");
+    expect(getByTestId("workflow-builder-compile-item-graph_compile::missing-ref::step-a::0").getAttribute("data-active-issue")).toBe("true");
 
     await act(async () => {
-      getButtonByText("Jump to next issue").dispatchEvent(new windowRef.Event("click", { bubbles: true }));
+      getByTestId("workflow-builder-issue-next").click();
       await flushCycles();
     });
 
+    expect(getByTestId("workflow-builder-issue-nav-status").textContent).toContain("Issue 2 of 2");
+    expect(getByTestId("workflow-builder-active-issue-message").textContent).toContain("Success branch is too broad");
+    expect(getByTestId("workflow-builder-edge-label-step-a:step-b:success").getAttribute("data-active-issue")).toBe("true");
+    expect(getByTestId("workflow-builder-compile-item-compiled_graph::edge-condition::step-a:step-b:success::1").getAttribute("data-active-issue")).toBe("true");
     expect(mocks.setCenter).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      getByTestId("workflow-builder-issue-prev").click();
+      await flushCycles();
+    });
+
+    expect(getByTestId("workflow-builder-issue-nav-status").textContent).toContain("Issue 1 of 2");
+    expect(getByTestId("workflow-builder-node-step-a").getAttribute("data-active-issue")).toBe("true");
+    expect(mocks.setCenter).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows drag feedback, highlights drop targets, and commits dropped nodes", async () => {
+    await renderPage();
+
+    await waitFor(
+      () => container?.textContent ?? "",
+      (value) => value.includes("Canvas") && value.includes("lock"),
+    );
+
+    const canvas = getByTestId("workflow-builder-canvas");
+    const dataTransfer = createDataTransfer("condition");
+
+    await act(async () => {
+      const dragOverEvent = new windowRef.Event("dragover", { bubbles: true, cancelable: true });
+      Object.defineProperty(dragOverEvent, "dataTransfer", { configurable: true, value: dataTransfer });
+      Object.defineProperty(dragOverEvent, "clientX", { configurable: true, value: 460 });
+      Object.defineProperty(dragOverEvent, "clientY", { configurable: true, value: 180 });
+      canvas.dispatchEvent(dragOverEvent);
+      await flushCycles();
+    });
+
+    expect(getByTestId("workflow-builder-drop-feedback").textContent).toContain("Drop Condition");
+    expect(container?.querySelectorAll("[data-node-id]").length).toBe(4);
+    expect(getByTestId("workflow-builder-node-step-a").getAttribute("data-drop-target")).toBe("true");
+
+    await act(async () => {
+      const dropEvent = new windowRef.Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(dropEvent, "dataTransfer", { configurable: true, value: dataTransfer });
+      Object.defineProperty(dropEvent, "clientX", { configurable: true, value: 460 });
+      Object.defineProperty(dropEvent, "clientY", { configurable: true, value: 180 });
+      canvas.dispatchEvent(dropEvent);
+      await flushCycles();
+    });
+
+    expect(container?.querySelector('[data-testid="workflow-builder-drop-feedback"]')).toBeNull();
+    expect(container?.querySelectorAll("[data-node-id]").length).toBe(4);
   });
 });

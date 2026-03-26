@@ -1,6 +1,6 @@
 import "@xyflow/react/dist/style.css";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   Background,
   BaseEdge,
@@ -29,6 +29,8 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRightLeft,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Loader2,
   Lock,
@@ -64,12 +66,16 @@ import type {
 import { cn } from "@/lib/utils/cn";
 import { createDefaultRawGraph, createDefaultSpec, createDefaultVisual, getDefaultNodeConfig, getNextNodeName } from "@/lib/workflows/defaults";
 import {
+  buildValidationIssueNavigationItems,
   describeWorkflowEdgeLabel,
   BUILDER_NODE_PALETTE,
   buildBuilderPaletteGroups,
   edgeKeyFor,
+  findClosestDropTargetNodeId,
   snapFlowPositionToGrid,
   summarizeWorkflowValidationIssues,
+  type BuilderPaletteGroupId,
+  type BuilderValidationIssueNavigationItem,
   type BuilderValidationIssueSummary,
   type BuilderValidationTone,
 } from "@/lib/workflows/builder-canvas";
@@ -87,6 +93,9 @@ type FlowNodeData = FridayWorkflowNodeDefinition & {
     issueCount?: number;
     primaryIssueMessage?: string;
     remainingCount?: number;
+    activeIssue?: boolean;
+    visitedIssue?: boolean;
+    dropTarget?: boolean;
     preview?: boolean;
   };
 };
@@ -96,6 +105,8 @@ type FlowEdgeData = NonNullable<FridayWorkflowEditorEdge["data"]> & {
   issueCount?: number;
   primaryIssueMessage?: string;
   remainingCount?: number;
+  activeIssue?: boolean;
+  visitedIssue?: boolean;
 };
 
 type FlowNode = Node<FlowNodeData, "workflow_node">;
@@ -112,6 +123,13 @@ interface EditorSnapshot {
 interface DropPreviewState {
   type: Exclude<WorkflowNodeType, "trigger">;
   position: { x: number; y: number };
+}
+
+interface CanvasDropFeedbackState {
+  tone: "valid" | "invalid";
+  type: Exclude<WorkflowNodeType, "trigger">;
+  message: string;
+  targetNodeId: string | null;
 }
 
 interface WorkflowCanvasInteractionContextValue {
@@ -151,6 +169,10 @@ const EDGE_BRANCH_OPTIONS: Array<{ value: "" | FridayWorkflowSpecEdgeWhen; label
 const NODE_LIBRARY_DND_MIME = "application/friday-workflow-node-type";
 
 const CANVAS_GRID_SIZE = 28;
+
+function describePaletteEntry(type: Exclude<WorkflowNodeType, "trigger">) {
+  return BUILDER_NODE_PALETTE.find((entry) => entry.type === type) ?? null;
+}
 
 function parseFocus(value: string | null): FridayWorkflowBuilderFocus {
   if (value === "draft" || value === "publish") {
@@ -429,6 +451,9 @@ function WorkflowCanvasNode(props: NodeProps<FlowNode>) {
   const isCondition = node.type === "condition";
   const isTrigger = node.type === "trigger";
   const isPreview = node.__ui?.preview === true;
+  const isActiveIssue = node.__ui?.activeIssue === true;
+  const isVisitedIssue = node.__ui?.visitedIssue === true;
+  const isDropTarget = node.__ui?.dropTarget === true;
   const integrationMode = typeof node.rawArgs?.integrationMode === "string" ? node.rawArgs.integrationMode : null;
   const taskProfile = typeof node.rawArgs?.taskProfile === "string" ? node.rawArgs.taskProfile : null;
   const issueTone = node.__ui?.issueTone;
@@ -439,26 +464,39 @@ function WorkflowCanvasNode(props: NodeProps<FlowNode>) {
 
   return (
     <div
+      data-testid={`workflow-builder-node-${node.id}`}
+      data-active-issue={isActiveIssue ? "true" : "false"}
+      data-drop-target={isDropTarget ? "true" : "false"}
       className={`relative min-w-[220px] rounded-[24px] border px-4 py-3 shadow-[0_18px_45px_rgba(0,0,0,0.28)] ${
         isPreview
           ? "border-dashed border-emerald-300/42 bg-emerald-300/[0.08]"
+          : isActiveIssue
+          ? "border-sky-300/58 bg-slate-950/96 ring-2 ring-sky-300/30"
           : selected
-          ? "border-emerald-300/55 bg-slate-950/96 ring-1 ring-emerald-300/30"
-          : issueTone === "danger"
+            ? "border-emerald-300/55 bg-slate-950/96 ring-1 ring-emerald-300/30"
+            : isDropTarget
+              ? "border-emerald-300/55 bg-slate-950/96 ring-2 ring-emerald-300/30"
+              : issueTone === "danger"
             ? "border-rose-300/50 bg-slate-950/96 ring-1 ring-rose-300/20"
             : issueTone === "warning"
               ? "border-amber-300/45 bg-slate-950/94 ring-1 ring-amber-300/18"
-              : "border-white/[0.12] bg-slate-950/92"
+              : isVisitedIssue
+                ? "border-white/[0.16] bg-slate-950/94"
+                : "border-white/[0.12] bg-slate-950/92"
       }`}
       style={isPreview ? { opacity: 0.9 } : undefined}
     >
       {issueTone && !isPreview ? (
         <div
           className={cn(
-            "absolute inset-y-3 left-1.5 w-1 rounded-full",
+            "absolute inset-y-3 left-1.5 rounded-full",
+            isActiveIssue ? "w-1.5" : "w-1",
             issueTone === "danger" ? "bg-rose-300/85" : "bg-amber-300/82",
           )}
         />
+      ) : null}
+      {isVisitedIssue && !isActiveIssue && !isPreview ? (
+        <div className="absolute right-3 top-3 h-2.5 w-2.5 rounded-full bg-sky-200/80" />
       ) : null}
       {!isTrigger && !isPreview ? <Handle type="target" id="in" position={Position.Left} className="!h-3 !w-3 !border-none !bg-emerald-200" /> : null}
       <div className="space-y-2">
@@ -472,6 +510,7 @@ function WorkflowCanvasNode(props: NodeProps<FlowNode>) {
             {issueCount > 0 ? (
               canFocusIssue ? (
                 <button
+                  data-testid={`workflow-builder-node-issue-pill-${node.id}`}
                   type="button"
                   onClick={(event) => {
                     event.preventDefault();
@@ -489,6 +528,7 @@ function WorkflowCanvasNode(props: NodeProps<FlowNode>) {
                 </StatusPill>
               )
             ) : null}
+            {isDropTarget && !isPreview ? <StatusPill tone="success">drop target</StatusPill> : null}
           </div>
         </div>
         <p className="text-xs text-white/56">{node.stepRef ?? "No bound ref yet"}</p>
@@ -551,6 +591,8 @@ function WorkflowCanvasNode(props: NodeProps<FlowNode>) {
 function WorkflowCanvasEdge(props: EdgeProps<FlowEdge>) {
   const { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected, markerEnd } = props;
   const interaction = useContext(WorkflowCanvasInteractionContext);
+  const isActiveIssue = data?.activeIssue === true;
+  const isVisitedIssue = data?.visitedIssue === true;
   const [path, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -559,7 +601,9 @@ function WorkflowCanvasEdge(props: EdgeProps<FlowEdge>) {
     targetY,
     targetPosition,
   });
-  const edgeStroke = issueToneToEdgeStroke(data?.issueTone, selected);
+  const edgeStroke = isActiveIssue
+    ? "rgba(125, 211, 252, 0.96)"
+    : issueToneToEdgeStroke(data?.issueTone, selected);
   const label = describeWorkflowEdgeLabel(data, {
     includeFallback: selected || Boolean(data?.issueCount) || Boolean(data?.primaryIssueMessage),
   });
@@ -574,12 +618,15 @@ function WorkflowCanvasEdge(props: EdgeProps<FlowEdge>) {
         markerEnd={markerEnd}
         style={{
           stroke: edgeStroke,
-          strokeWidth: selected ? 2.6 : data?.issueTone ? 2.2 : 1.6,
+          strokeWidth: isActiveIssue ? 3 : selected ? 2.6 : data?.issueTone ? 2.2 : 1.6,
+          strokeDasharray: isActiveIssue ? "8 5" : undefined,
         }}
       />
       {label || primaryIssueMessage ? (
         <EdgeLabelRenderer>
           <button
+            data-testid={data?.edgeKey ? `workflow-builder-edge-label-${data.edgeKey}` : undefined}
+            data-active-issue={isActiveIssue ? "true" : "false"}
             type="button"
             disabled={!canFocusIssue}
             onClick={(event) => {
@@ -594,6 +641,8 @@ function WorkflowCanvasEdge(props: EdgeProps<FlowEdge>) {
             }}
             className={cn(
               "pointer-events-auto absolute min-w-[152px] rounded-[18px] border px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-white shadow-[0_14px_28px_rgba(0,0,0,0.32)]",
+              isActiveIssue && "ring-2 ring-sky-300/35",
+              isVisitedIssue && !isActiveIssue && "border-white/[0.18]",
               data?.issueTone === "danger" && "border-rose-300/45 bg-rose-400/12 text-rose-100",
               data?.issueTone === "warning" && "border-amber-300/40 bg-amber-400/12 text-amber-100",
               !data?.issueTone && "border-white/[0.14] bg-slate-950/92 text-white/74",
@@ -653,14 +702,18 @@ function WorkflowBuilderEditor() {
   const [readonlyReason, setReadonlyReason] = useState<string | null>(null);
   const [lockState, setLockState] = useState<FridayAcquireWorkflowLockResponse["lock"] | null>(null);
   const [paletteQuery, setPaletteQuery] = useState("");
+  const [collapsedPaletteGroups, setCollapsedPaletteGroups] = useState<BuilderPaletteGroupId[]>([]);
+  const [keyboardPaletteIndex, setKeyboardPaletteIndex] = useState(-1);
   const [compileReport, setCompileReport] = useState<{
     validation: FridayWorkflowBuilderValidationReport;
     nodes: number;
     edges: number;
   } | null>(null);
+  const [activeIssueKey, setActiveIssueKey] = useState<string | null>(null);
+  const [visitedIssueKeys, setVisitedIssueKeys] = useState<string[]>([]);
   const [draggingPaletteType, setDraggingPaletteType] = useState<Exclude<WorkflowNodeType, "trigger"> | null>(null);
-  const [isCanvasDropActive, setIsCanvasDropActive] = useState(false);
   const [dropPreview, setDropPreview] = useState<DropPreviewState | null>(null);
+  const [dropFeedback, setDropFeedback] = useState<CanvasDropFeedbackState | null>(null);
   const [publishedVersionNumber, setPublishedVersionNumber] = useState<number | null>(null);
   const [localDraftOverride, setLocalDraftOverride] = useState<FridayWorkflowDraftEntity | null>(null);
   const historyRef = useRef<EditorSnapshot[]>([]);
@@ -734,6 +787,16 @@ function WorkflowBuilderEditor() {
   });
 
   const issueSummaries = useMemo(() => summarizeWorkflowValidationIssues(compileReport?.validation), [compileReport]);
+  const issueNavigationItems = useMemo(
+    () => buildValidationIssueNavigationItems(compileReport?.validation),
+    [compileReport],
+  );
+  const activeIssueIndex = useMemo(
+    () => issueNavigationItems.findIndex((item) => item.key === activeIssueKey),
+    [activeIssueKey, issueNavigationItems],
+  );
+  const activeIssueItem = activeIssueIndex >= 0 ? issueNavigationItems[activeIssueIndex] ?? null : null;
+  const visitedIssueKeySet = useMemo(() => new Set(visitedIssueKeys), [visitedIssueKeys]);
 
   const selectedNodeIssueSummary = selectedNode
     ? issueSummaries.nodeIssues.get(selectedNode.id) ?? null
@@ -750,6 +813,20 @@ function WorkflowBuilderEditor() {
     : null;
 
   const paletteGroups = useMemo(() => buildBuilderPaletteGroups({ query: paletteQuery }), [paletteQuery]);
+  const collapsedPaletteGroupSet = useMemo(() => new Set(collapsedPaletteGroups), [collapsedPaletteGroups]);
+  const visiblePaletteGroups = useMemo(() => {
+    const revealMatches = paletteQuery.trim().length > 0;
+    return paletteGroups.map((group) => ({
+      ...group,
+      collapsed: !revealMatches && collapsedPaletteGroupSet.has(group.id),
+      visibleEntries: (!revealMatches && collapsedPaletteGroupSet.has(group.id)) ? [] : group.entries,
+    }));
+  }, [collapsedPaletteGroupSet, paletteGroups, paletteQuery]);
+  const keyboardPaletteEntries = useMemo(
+    () => visiblePaletteGroups.flatMap((group) => group.visibleEntries),
+    [visiblePaletteGroups],
+  );
+  const keyboardPaletteEntry = keyboardPaletteIndex >= 0 ? keyboardPaletteEntries[keyboardPaletteIndex] ?? null : null;
   const compileIssueCounts = useMemo(() => {
     const issues = compileReport?.validation.issues ?? [];
     return {
@@ -757,26 +834,65 @@ function WorkflowBuilderEditor() {
       warnings: issues.filter((issue) => issue.severity === "warning").length,
     };
   }, [compileReport]);
+  const activeNodeIssueTarget = activeIssueItem?.targetKind === "node" ? activeIssueItem.targetKey : null;
+  const activeEdgeIssueTarget = activeIssueItem?.targetKind === "edge" ? activeIssueItem.targetKey : null;
+  const visitedNodeIssueTargets = useMemo(() => (
+    new Set(
+      issueNavigationItems
+        .filter((item) => item.targetKind === "node" && visitedIssueKeySet.has(item.key))
+        .map((item) => item.targetKey),
+    )
+  ), [issueNavigationItems, visitedIssueKeySet]);
+  const visitedEdgeIssueTargets = useMemo(() => (
+    new Set(
+      issueNavigationItems
+        .filter((item) => item.targetKind === "edge" && visitedIssueKeySet.has(item.key))
+        .map((item) => item.targetKey),
+    )
+  ), [issueNavigationItems, visitedIssueKeySet]);
+  const dropTargetNodeId = dropFeedback?.tone === "valid" ? dropFeedback.targetNodeId : null;
+
+  useEffect(() => {
+    if (issueNavigationItems.length === 0) {
+      setActiveIssueKey(null);
+      setVisitedIssueKeys([]);
+      return;
+    }
+    setActiveIssueKey((current) => issueNavigationItems.some((item) => item.key === current) ? current : issueNavigationItems[0]!.key);
+    setVisitedIssueKeys((current) => current.filter((key) => issueNavigationItems.some((item) => item.key === key)));
+  }, [issueNavigationItems]);
+
+  useEffect(() => {
+    setKeyboardPaletteIndex((current) => {
+      if (keyboardPaletteEntries.length === 0) {
+        return -1;
+      }
+      if (current < 0) {
+        return current;
+      }
+      return Math.min(current, keyboardPaletteEntries.length - 1);
+    });
+  }, [keyboardPaletteEntries]);
 
   const canvasNodes = useMemo(() => {
       const nextNodes: FlowNode[] = nodes.map((node) => {
         const summary = issueSummaries.nodeIssues.get(node.id);
+        const nextUi = {
+          issueTone: summary?.tone,
+          issueCount: summary?.count,
+          primaryIssueMessage: summary?.primaryIssueMessage,
+          remainingCount: summary?.remainingCount,
+          activeIssue: activeNodeIssueTarget === node.id,
+          visitedIssue: visitedNodeIssueTargets.has(node.id),
+          dropTarget: dropTargetNodeId === node.id,
+        };
+        const hasUiState = Object.values(nextUi).some((value) => value !== undefined && value !== false && value !== 0);
         return {
           ...node,
-          data: summary
-            ? {
-                ...node.data,
-                __ui: {
-                  issueTone: summary.tone,
-                  issueCount: summary.count,
-                  primaryIssueMessage: summary.primaryIssueMessage,
-                  remainingCount: summary.remainingCount,
-                },
-              }
-            : {
-                ...node.data,
-                __ui: undefined,
-              },
+          data: {
+            ...node.data,
+            __ui: hasUiState ? nextUi : undefined,
+          },
         };
       });
 
@@ -812,7 +928,7 @@ function WorkflowBuilderEditor() {
       }
 
       return nextNodes;
-    }, [activeDraft, dropPreview, issueSummaries.nodeIssues, nodes, readonlyReason]);
+    }, [activeDraft, activeNodeIssueTarget, dropPreview, dropTargetNodeId, issueSummaries.nodeIssues, nodes, readonlyReason, visitedNodeIssueTargets]);
 
   const canvasEdges = useMemo(() => (
     edges.map((edge) => {
@@ -834,6 +950,8 @@ function WorkflowBuilderEditor() {
           issueCount: summary?.count,
           primaryIssueMessage: summary?.primaryIssueMessage,
           remainingCount: summary?.remainingCount,
+          activeIssue: activeEdgeIssueTarget === edgeKey,
+          visitedIssue: visitedEdgeIssueTargets.has(edgeKey),
         },
         markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
         style: {
@@ -842,7 +960,7 @@ function WorkflowBuilderEditor() {
         },
       } satisfies FlowEdge;
     })
-  ), [edges, issueSummaries.edgeIssues]);
+  ), [activeEdgeIssueTarget, edges, issueSummaries.edgeIssues, visitedEdgeIssueTargets]);
 
   const groupedRegularTemplates = useMemo(() => ({
     builtin: regularTemplates.filter((item) => item.kind === "builtin"),
@@ -1215,7 +1333,7 @@ function WorkflowBuilderEditor() {
     if (!activeDraft || readonlyReason) {
       setDraggingPaletteType(null);
       setDropPreview(null);
-      setIsCanvasDropActive(false);
+      setDropFeedback(null);
     }
   }, [activeDraft, readonlyReason]);
 
@@ -1447,6 +1565,59 @@ function WorkflowBuilderEditor() {
     });
   };
 
+  const togglePaletteGroup = (groupId: BuilderPaletteGroupId) => {
+    setCollapsedPaletteGroups((current) => (
+      current.includes(groupId)
+        ? current.filter((candidate) => candidate !== groupId)
+        : [...current, groupId]
+    ));
+  };
+
+  const handlePaletteSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (keyboardPaletteEntries.length === 0) {
+      if (event.key === "Escape" && paletteQuery.length > 0) {
+        setPaletteQuery("");
+        setKeyboardPaletteIndex(-1);
+      }
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setKeyboardPaletteIndex((current) => {
+        if (current < 0) return 0;
+        return (current + 1) % keyboardPaletteEntries.length;
+      });
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setKeyboardPaletteIndex((current) => {
+        if (current < 0) return keyboardPaletteEntries.length - 1;
+        return (current - 1 + keyboardPaletteEntries.length) % keyboardPaletteEntries.length;
+      });
+      return;
+    }
+
+    if (event.key === "Enter") {
+      const nextEntry = keyboardPaletteEntry ?? keyboardPaletteEntries[0];
+      if (!nextEntry) return;
+      event.preventDefault();
+      addNode(nextEntry.type);
+      setKeyboardPaletteIndex(keyboardPaletteEntries.findIndex((entry) => entry.type === nextEntry.type));
+      return;
+    }
+
+    if (event.key === "Escape") {
+      if (paletteQuery.length > 0) {
+        event.preventDefault();
+        setPaletteQuery("");
+      }
+      setKeyboardPaletteIndex(-1);
+    }
+  };
+
   const handlePaletteDragStart = (event: ReactDragEvent<HTMLButtonElement>, type: WorkflowNodeType) => {
     if (!activeDraft || readonlyReason) {
       event.preventDefault();
@@ -1456,8 +1627,9 @@ function WorkflowBuilderEditor() {
     event.dataTransfer.setData("text/plain", type);
     event.dataTransfer.effectAllowed = "move";
     setDraggingPaletteType(type as Exclude<WorkflowNodeType, "trigger">);
+    setKeyboardPaletteIndex(BUILDER_NODE_PALETTE.findIndex((entry) => entry.type === type));
     if (typeof document !== "undefined") {
-      const paletteEntry = BUILDER_NODE_PALETTE.find((entry) => entry.type === type);
+      const paletteEntry = describePaletteEntry(type as Exclude<WorkflowNodeType, "trigger">);
       const ghost = document.createElement("div");
       ghost.style.position = "absolute";
       ghost.style.top = "-9999px";
@@ -1487,7 +1659,7 @@ function WorkflowBuilderEditor() {
   const handlePaletteDragEnd = () => {
     setDraggingPaletteType(null);
     setDropPreview(null);
-    setIsCanvasDropActive(false);
+    setDropFeedback(null);
   };
 
   const handleCanvasDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
@@ -1498,10 +1670,18 @@ function WorkflowBuilderEditor() {
     const dragType = draggingPaletteType
       ?? (event.dataTransfer.getData(NODE_LIBRARY_DND_MIME) as Exclude<WorkflowNodeType, "trigger">);
     const canDrop = Boolean(activeDraft) && !readonlyReason && dragType.length > 0;
-    setIsCanvasDropActive(canDrop);
     event.dataTransfer.dropEffect = canDrop ? "move" : "none";
+    const paletteEntry = describePaletteEntry(dragType);
     if (!canDrop) {
       setDropPreview(null);
+      setDropFeedback({
+        tone: "invalid",
+        type: dragType,
+        message: !activeDraft
+          ? `Open a draft before dropping ${paletteEntry?.label ?? dragType}.`
+          : readonlyReason ?? `This draft is read-only. ${paletteEntry?.label ?? dragType} cannot be dropped.`,
+        targetNodeId: null,
+      });
       return;
     }
     const snappedPosition = snapFlowPositionToGrid(
@@ -1511,9 +1691,31 @@ function WorkflowBuilderEditor() {
       }),
       { gridSize: CANVAS_GRID_SIZE },
     );
+    const targetNodeId = findClosestDropTargetNodeId(
+      nodes
+        .filter((node) => node.data.type !== "trigger")
+        .map((node) => ({
+          id: node.id,
+          position: node.position,
+          width: node.width,
+          height: node.height,
+        })),
+      snappedPosition,
+    );
     setDropPreview({
       type: dragType,
       position: snappedPosition,
+    });
+    const targetNode = targetNodeId
+      ? nodes.find((node) => node.id === targetNodeId) ?? null
+      : null;
+    setDropFeedback({
+      tone: "valid",
+      type: dragType,
+      message: targetNode
+        ? `Drop ${paletteEntry?.label ?? dragType} near ${targetNode.data.name} · snap ${Math.round(snappedPosition.x)}, ${Math.round(snappedPosition.y)}`
+        : `Drop ${paletteEntry?.label ?? dragType} on canvas · snap ${Math.round(snappedPosition.x)}, ${Math.round(snappedPosition.y)}`,
+      targetNodeId,
     });
   };
 
@@ -1522,13 +1724,14 @@ function WorkflowBuilderEditor() {
       return;
     }
     event.preventDefault();
-    setIsCanvasDropActive(false);
     setDraggingPaletteType(null);
     if (!activeDraft) {
+      setDropFeedback(null);
       toast.error("Create or open a draft before dropping nodes onto the canvas.");
       return;
     }
     if (readonlyReason) {
+      setDropFeedback(null);
       toast.error(readonlyReason);
       return;
     }
@@ -1536,6 +1739,7 @@ function WorkflowBuilderEditor() {
       ?? (event.dataTransfer.getData(NODE_LIBRARY_DND_MIME) as Exclude<WorkflowNodeType, "trigger">);
     if (!droppedType) {
       setDropPreview(null);
+      setDropFeedback(null);
       return;
     }
     const nextPosition = dropPreview?.type === droppedType
@@ -1548,10 +1752,24 @@ function WorkflowBuilderEditor() {
           { gridSize: CANVAS_GRID_SIZE },
         );
     setDropPreview(null);
+    setDropFeedback(null);
     addNode(droppedType, nextPosition);
   };
 
+  const markIssueVisited = (issueKey: string | null) => {
+    if (!issueKey) return;
+    setVisitedIssueKeys((current) => current.includes(issueKey) ? current : [...current, issueKey]);
+  };
+
+  const syncActiveIssueToTarget = (targetKind: BuilderValidationIssueNavigationItem["targetKind"], targetKey: string) => {
+    const nextIssue = issueNavigationItems.find((item) => item.targetKind === targetKind && item.targetKey === targetKey) ?? null;
+    setActiveIssueKey(nextIssue?.key ?? null);
+  };
+
   const focusValidationIssue = (issue: FridayWorkflowBuilderValidationReport["issues"][number]) => {
+    const issueItem = issueNavigationItems.find((item) => item.issue === issue) ?? null;
+    setActiveIssueKey(issueItem?.key ?? null);
+    markIssueVisited(issueItem?.key ?? null);
     if (issue.stepId) {
       const node = nodes.find((candidate) => candidate.id === issue.stepId);
       if (node) {
@@ -1625,29 +1843,19 @@ function WorkflowBuilderEditor() {
       selectedEdgeIds: [],
       dirty: false,
     });
+    setActiveIssueKey(null);
   };
 
-  const jumpToNextIssue = () => {
-    if (issueSummaries.focusableIssues.length === 0) {
+  const navigateIssue = (direction: "next" | "previous") => {
+    if (issueNavigationItems.length === 0) {
       return;
     }
-    const currentSelection = selectedNodeIds[0]
-      ?? selectedEdge?.data?.edgeKey
-      ?? "";
-    const currentIndex = issueSummaries.focusableIssues.findIndex((issue) => (
-      issue.stepId ? issue.stepId === currentSelection
-        : issue.edgeRef
-          ? edgeKeyFor({
-              source: issue.edgeRef.from,
-              target: issue.edgeRef.to,
-              branch: issue.edgeRef.when,
-            }) === currentSelection
-          : false
-    ));
-    const nextIndex = currentIndex >= 0
-      ? (currentIndex + 1) % issueSummaries.focusableIssues.length
+    const nextIndex = activeIssueIndex >= 0
+      ? direction === "next"
+        ? (activeIssueIndex + 1) % issueNavigationItems.length
+        : (activeIssueIndex - 1 + issueNavigationItems.length) % issueNavigationItems.length
       : 0;
-    focusValidationIssue(issueSummaries.focusableIssues[nextIndex]!);
+    focusValidationIssue(issueNavigationItems[nextIndex]!.issue);
   };
 
   const removeSelection = () => {
@@ -1941,35 +2149,60 @@ function WorkflowBuilderEditor() {
                 value={paletteQuery}
                 onInput={(event) => setPaletteQuery(event.currentTarget.value)}
                 onChange={(event) => setPaletteQuery(event.target.value)}
+                onKeyDown={handlePaletteSearchKeyDown}
                 className="agent-input"
                 placeholder="Search by node or group"
               />
             </label>
-            {paletteGroups.length === 0 ? (
+            {visiblePaletteGroups.length === 0 ? (
               <p className="text-sm text-white/55">No node cards match this filter.</p>
-            ) : paletteGroups.map((group) => (
+            ) : visiblePaletteGroups.map((group) => (
               <div key={group.id} className="space-y-3">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/46">{group.label}</p>
+                  <button
+                    data-testid={`workflow-builder-palette-toggle-${group.id}`}
+                    type="button"
+                    onClick={() => togglePaletteGroup(group.id)}
+                    className="inline-flex items-center gap-2 text-left"
+                  >
+                    {group.collapsed ? <ChevronRight className="h-4 w-4 text-white/55" /> : <ChevronDown className="h-4 w-4 text-white/55" />}
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/46">{group.label}</p>
+                  </button>
                   <StatusPill>{group.entries.length}</StatusPill>
                 </div>
+                {group.visibleEntries.length === 0 ? (
+                  <p className="rounded-[18px] border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-xs text-white/45">
+                    Group collapsed. Search still reveals matching nodes without changing this state.
+                  </p>
+                ) : (
                 <div className="grid gap-3 sm:grid-cols-2">
-                  {group.entries.map((entry) => (
+                  {group.visibleEntries.map((entry) => (
                     <button
                       key={entry.type}
+                      data-testid={`workflow-builder-palette-entry-${entry.type}`}
+                      data-keyboard-active={keyboardPaletteEntry?.type === entry.type ? "true" : "false"}
                       type="button"
                       disabled={!activeDraft || Boolean(readonlyReason)}
                       draggable={Boolean(activeDraft) && !readonlyReason}
                       onDragStart={(event) => handlePaletteDragStart(event, entry.type)}
                       onDragEnd={handlePaletteDragEnd}
+                      onMouseEnter={() => {
+                        const nextIndex = keyboardPaletteEntries.findIndex((candidate) => candidate.type === entry.type);
+                        setKeyboardPaletteIndex(nextIndex);
+                      }}
                       onClick={() => addNode(entry.type)}
-                      className="agent-selection-card text-left disabled:cursor-not-allowed disabled:opacity-60"
+                      className={cn(
+                        "agent-selection-card text-left disabled:cursor-not-allowed disabled:opacity-60",
+                        keyboardPaletteEntry?.type === entry.type && "ring-2 ring-sky-300/28",
+                        draggingPaletteType === entry.type && "border-emerald-300/40 bg-emerald-300/[0.06]",
+                      )}
                     >
                       <p className="font-medium text-white">{entry.label}</p>
                       <p className="mt-1 text-xs text-white/55">{entry.description}</p>
                     </button>
                   ))}
                 </div>
+                )}
               </div>
             ))}
           </div>
@@ -2056,12 +2289,25 @@ function WorkflowBuilderEditor() {
                 <span className="text-xs uppercase tracking-[0.16em] text-white/46">
                   Compiled {formatTimestamp(compileReport.validation.generatedAt)}
                 </span>
+                {issueNavigationItems.length > 0 ? (
+                  <span data-testid="workflow-builder-issue-nav-status" className="text-xs uppercase tracking-[0.16em] text-sky-100/78">
+                    {activeIssueIndex >= 0 ? `Issue ${activeIssueIndex + 1} of ${issueNavigationItems.length}` : `${issueNavigationItems.length} issues`}
+                  </span>
+                ) : null}
+                {activeIssueItem ? (
+                  <span data-testid="workflow-builder-active-issue-message" className="max-w-[320px] truncate text-xs text-white/62">
+                    {activeIssueItem.issue.message}
+                  </span>
+                ) : null}
                 <div className="ml-auto flex flex-wrap gap-3">
-                  <ActionButton tone="secondary" disabled={issueSummaries.focusableIssues.length === 0} onClick={jumpToNextIssue}>
-                    Jump to next issue
+                  <ActionButton data-testid="workflow-builder-issue-prev" tone="secondary" disabled={issueNavigationItems.length === 0} onClick={() => navigateIssue("previous")}>
+                    Previous issue
                   </ActionButton>
-                  <ActionButton tone="secondary" disabled={selectedNodeIds.length === 0 && selectedEdgeIds.length === 0} onClick={clearSelection}>
-                    Clear selection
+                  <ActionButton data-testid="workflow-builder-issue-next" tone="secondary" disabled={issueNavigationItems.length === 0} onClick={() => navigateIssue("next")}>
+                    Next issue
+                  </ActionButton>
+                  <ActionButton data-testid="workflow-builder-issue-clear" tone="secondary" disabled={!activeIssueKey && selectedNodeIds.length === 0 && selectedEdgeIds.length === 0} onClick={clearSelection}>
+                    Clear focus
                   </ActionButton>
                 </div>
               </div>
@@ -2069,16 +2315,33 @@ function WorkflowBuilderEditor() {
             <div
               data-testid="workflow-builder-canvas"
               className={cn(
-                "h-[700px] overflow-hidden rounded-[28px] border bg-slate-950/88 transition",
-                isCanvasDropActive ? "border-emerald-300/45 ring-1 ring-emerald-300/25" : "border-white/[0.08]",
+                "relative h-[700px] overflow-hidden rounded-[28px] border bg-slate-950/88 transition",
+                dropFeedback?.tone === "valid"
+                  ? "border-emerald-300/45 ring-1 ring-emerald-300/25"
+                  : dropFeedback?.tone === "invalid"
+                    ? "border-rose-300/45 ring-1 ring-rose-300/25"
+                    : "border-white/[0.08]",
               )}
               onDragOver={handleCanvasDragOver}
               onDrop={handleCanvasDrop}
               onDragLeave={() => {
-                setIsCanvasDropActive(false);
                 setDropPreview(null);
+                setDropFeedback(null);
               }}
             >
+              {dropFeedback ? (
+                <div
+                  data-testid="workflow-builder-drop-feedback"
+                  className={cn(
+                    "pointer-events-none absolute left-4 top-4 z-20 rounded-[18px] border px-3 py-2 text-xs font-medium shadow-[0_18px_45px_rgba(0,0,0,0.24)]",
+                    dropFeedback.tone === "valid"
+                      ? "border-emerald-300/25 bg-emerald-300/[0.10] text-emerald-100"
+                      : "border-rose-300/25 bg-rose-300/[0.10] text-rose-100",
+                  )}
+                >
+                  {dropFeedback.message}
+                </div>
+              ) : null}
               <WorkflowCanvasInteractionContext.Provider value={canvasInteractionValue}>
                 <ReactFlow
                   nodes={canvasNodes}
@@ -2095,6 +2358,9 @@ function WorkflowBuilderEditor() {
                       selectedNodeIds: [],
                       dirty: false,
                     });
+                    if (edge.data?.edgeKey) {
+                      syncActiveIssueToTarget("edge", edge.data.edgeKey);
+                    }
                   }}
                   onNodeClick={(_, node) => {
                     updateGraph({
@@ -2102,6 +2368,7 @@ function WorkflowBuilderEditor() {
                       selectedEdgeIds: [],
                       dirty: false,
                     });
+                    syncActiveIssueToTarget("node", node.id);
                   }}
                   onSelectionChange={({ nodes: selectedNodes, edges: selectedCanvasEdges }) => {
                     setSelectedNodeIds(selectedNodes.map((node) => node.id));
@@ -2123,6 +2390,7 @@ function WorkflowBuilderEditor() {
                     nodeColor={(node) => {
                       const uiState = (node.data as FlowNodeData | undefined)?.__ui;
                       if (uiState?.preview) return "rgba(52,211,153,0.56)";
+                      if (uiState?.activeIssue) return "rgba(125,211,252,0.88)";
                       if (node.selected) return "rgba(110,231,183,0.85)";
                       if (uiState?.issueTone === "danger") return "rgba(251,113,133,0.8)";
                       if (uiState?.issueTone === "warning") return "rgba(251,191,36,0.78)";
@@ -2446,6 +2714,7 @@ function WorkflowBuilderEditor() {
           {compileReport ? (
             <CompileReportPanel
               report={compileReport}
+              activeIssueKey={activeIssueKey}
               onFocusIssue={focusValidationIssue}
             />
           ) : null}
@@ -2543,11 +2812,13 @@ function CompileReportPanel(props: {
     nodes: number;
     edges: number;
   };
+  activeIssueKey: string | null;
   onFocusIssue: (issue: FridayWorkflowBuilderValidationReport["issues"][number]) => void;
 }) {
   const nodeIssues = props.report.validation.issues.filter((issue) => Boolean(issue.stepId));
   const edgeIssues = props.report.validation.issues.filter((issue) => Boolean(issue.edgeRef));
   const globalIssues = props.report.validation.issues.filter((issue) => !issue.stepId && !issue.edgeRef);
+  const navigationItems = buildValidationIssueNavigationItems(props.report.validation);
 
   const renderIssueList = (
     issues: FridayWorkflowBuilderValidationReport["issues"],
@@ -2558,14 +2829,19 @@ function CompileReportPanel(props: {
     ) : issues.map((issue) => {
       const location = describeIssueLocation(issue);
       const focusable = Boolean(issue.stepId || issue.edgeRef);
+      const activeItem = navigationItems.find((item) => item.issue === issue) ?? null;
+      const isActive = activeItem?.key === props.activeIssueKey;
       return (
         <button
+          data-testid={activeItem ? `workflow-builder-compile-item-${activeItem.key}` : undefined}
+          data-active-issue={isActive ? "true" : "false"}
           key={`${issue.stage}:${issue.code}:${issue.message}:${location ?? "global"}`}
           type="button"
           disabled={!focusable}
           onClick={() => props.onFocusIssue(issue)}
           className={cn(
             "w-full rounded-[18px] border px-3 py-3 text-left transition",
+            isActive && "ring-2 ring-sky-300/30",
             issue.severity === "error"
               ? "border-rose-300/20 bg-rose-300/[0.06] hover:bg-rose-300/[0.1]"
               : "border-amber-300/18 bg-amber-300/[0.05] hover:bg-amber-300/[0.08]",
