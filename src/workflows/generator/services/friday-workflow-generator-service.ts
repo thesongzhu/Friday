@@ -7,8 +7,8 @@ import {
   type FridayHarnessDeliveryContractV1,
   type FridayHarnessPlanningSpecV1,
   type FridayHarnessQaVerdictV1,
-  type FridayTemplateHarnessSummary,
   type FridayTemplateHarnessStage,
+  type FridayTemplateHarnessSummary,
 } from "#harness";
 import { createFridayWorkflowCompiler } from "../../compiler/friday-workflow-compiler.js";
 import { createFridayWorkflowValidator } from "../../compiler/friday-workflow-validator.js";

@@ -3,9 +3,9 @@ import type { FridayRouteDefinition } from "../../model/friday-api-common.types.
 import type { FridayWorkflowGeneratorService } from "#workflows";
 import type { FridayObservabilityApiService } from "../../../observability/services/friday-observability-api-service.js";
 import type {
+  FridayWorkflowGenerationEvidence,
   FridayWorkflowGeneratorApproveResponse,
   FridayWorkflowGeneratorCancelResponse,
-  FridayWorkflowGenerationEvidence,
   FridayWorkflowGeneratorEvidenceResponse,
   FridayWorkflowGeneratorGenerateResponse,
   FridayWorkflowGeneratorGetSessionResponse,
