@@ -1181,10 +1181,12 @@ export interface FridayAcquireWorkflowLockResponse {
 // ─── Editor graph types ───
 
 export type FridayWorkflowNodeConfig =
+  | { triggerType: "manual" }
   | { triggerType: "cron"; cron: string; timezone: string }
   | { triggerType: "webhook"; method: "POST"; secretRef?: string; dedupeKeyPath?: string }
   | { triggerType: "event"; source: string; event: string; filterExpr?: string; pluginId?: string }
   | { actionType: "skill"; skillId: string; inputMapping?: Record<string, unknown> }
+  | { actionType: "tool"; toolId: string; args?: Record<string, unknown> }
   | { actionType: "ai_completion"; prompt: string; model?: string; temperature?: number }
   | { actionType: "http_request"; method: string; url: string; headers?: Record<string, string>; body?: unknown }
   | { conditionType: "if" | "switch"; expression: string; cases?: Array<{ label: string; expression: string }> }
@@ -1201,12 +1203,17 @@ export type FridayWorkflowNodeConfig =
       onReject?: "fail" | "reject_branch";
     };
 
-export interface FridayWorkflowNodeDefinition {
+export interface FridayWorkflowNodeDefinition extends Record<string, unknown> {
   id: string;
   type: WorkflowNodeType;
   name: string;
   config: FridayWorkflowNodeConfig;
   timeoutMs?: number;
+  stepType?: FridayWorkflowSpecStepType;
+  stepRef?: string;
+  rawArgs?: Record<string, unknown>;
+  stepCondition?: string;
+  retry?: { maxAttempts: number; backoffMs: number };
 }
 
 export interface FridayWorkflowEditorGraphV1 {
@@ -1215,6 +1222,8 @@ export interface FridayWorkflowEditorGraphV1 {
   nodes: FridayWorkflowEditorNode[];
   edges: FridayWorkflowEditorEdge[];
   viewport?: FridayWorkflowEditorViewport;
+  selectedNodeId?: string;
+  selectedEdgeId?: string;
 }
 
 export interface FridayWorkflowEditorNode {
@@ -1235,6 +1244,8 @@ export interface FridayWorkflowEditorEdge {
   data?: {
     condition?: string;
     branch?: string;
+    edgeKey?: string;
+    bendPoints?: Array<{ x: number; y: number }>;
   };
 }
 
