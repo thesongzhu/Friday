@@ -192,11 +192,44 @@ export interface CreateFridayApiRuntimeDeps {
   system?: FridaySystemRoutesDeps;
   /** Optional: beginner-friendly UIX route surface. */
   uix?: FridayUixRoutesDeps;
+  /** Optional: search capability metadata surfaced by /v1/health. */
+  searchHealth?: {
+    provider: string;
+    latestness: "provider_backed" | "unverified";
+    warning?: string;
+  } | (() => {
+    provider: string;
+    latestness: "provider_backed" | "unverified";
+    warning?: string;
+  });
   /** Optional: system health metadata surfaced by /v1/health. */
   systemHealth?: {
     enabled: boolean;
     remoteMode: "trusted_private_network" | "disabled" | "unavailable";
-  };
+    healthStatus?: "healthy" | "degraded" | "safe_mode" | "unavailable";
+    companionConnected?: boolean;
+    companionReadiness?: "ready" | "degraded" | "unavailable";
+    reasons?: string[];
+    warning?: string;
+  } | (() =>
+    | {
+      enabled: boolean;
+      remoteMode: "trusted_private_network" | "disabled" | "unavailable";
+      healthStatus?: "healthy" | "degraded" | "safe_mode" | "unavailable";
+      companionConnected?: boolean;
+      companionReadiness?: "ready" | "degraded" | "unavailable";
+      reasons?: string[];
+      warning?: string;
+    }
+    | Promise<{
+      enabled: boolean;
+      remoteMode: "trusted_private_network" | "disabled" | "unavailable";
+      healthStatus?: "healthy" | "degraded" | "safe_mode" | "unavailable";
+      companionConnected?: boolean;
+      companionReadiness?: "ready" | "degraded" | "unavailable";
+      reasons?: string[];
+      warning?: string;
+    }>);
   /** Optional: local program discovery route surface. */
   discovery?: FridayDiscoveryRoutesDeps;
   /** Optional: MCP server route surface (JSON-RPC tools/resources/prompts). */

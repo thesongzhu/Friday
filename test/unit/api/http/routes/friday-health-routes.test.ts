@@ -73,9 +73,14 @@ describe("createFridayHealthRoutes", () => {
           supportedKinds: [],
           enabledKinds: [],
         },
+        search: {
+          provider: "duckduckgo_html",
+          latestness: "unverified",
+        },
         system: {
           enabled: false,
           remoteMode: "unavailable",
+          companionReadiness: "unavailable",
         },
       },
     });
@@ -125,16 +130,31 @@ describe("createFridayHealthRoutes", () => {
           supportedKinds: ["discord", "slack"],
           enabledKinds: ["discord"],
         },
+        search: {
+          provider: "serper",
+          latestness: "provider_backed",
+        },
         system: {
           enabled: true,
           remoteMode: "trusted_private_network",
+          healthStatus: "degraded",
+          companionConnected: false,
+          companionReadiness: "degraded",
+          reasons: ["companion_disconnected"],
+          warning: "System companion unavailable; Friday is continuing in degraded mode for local device actions.",
         },
       }),
     });
     const route = findRoute(routes, "health.check");
     const result = await route.handler(makeCtx()) as {
-      capabilities: { plugins: { runtimeMode: string } };
+      capabilities: {
+        plugins: { runtimeMode: string };
+        search: { provider: string };
+        system: { companionReadiness?: string };
+      };
     };
     expect(result.capabilities.plugins.runtimeMode).toBe("full");
+    expect(result.capabilities.search.provider).toBe("serper");
+    expect(result.capabilities.system.companionReadiness).toBe("degraded");
   });
 });
