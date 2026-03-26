@@ -388,6 +388,7 @@ export type {
 export {
   inferFridaySubagentProfile,
   resolveFridaySubagentProfile,
+  taskLikelyNeedsWriteAccessForSubagent,
 } from "./subagent/friday-subagent-profile.js";
 
 export { createFridaySubagentRegistry } from "./subagent/friday-subagent-registry.js";

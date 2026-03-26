@@ -130,6 +130,7 @@ import {
   parseFridayMcpServersFromEnv,
   resolveFridayAgentTaskProfile,
   resolveFridayContextEnginePromptFragment,
+  taskLikelyNeedsWriteAccessForSubagent,
 } from "#agent";
 import type { loadFridayWorkspaceContext } from "#agent";
 import { buildMcpServerToolFilter } from "./friday-mcp-safe-catalog.js";
@@ -2193,12 +2194,23 @@ export async function createFridayHub(
       return buildFridayCommunicationPromptFragment(persona);
     },
     delegationHandler: async (input) => {
+      const inferredProfile = inferFridaySubagentProfile(input.task);
       const detached = subagentRegistry.spawnDetached({
         task: input.task,
         taskPrompt: input.taskPrompt,
         providerId: input.providerId,
         model: input.model,
-        profile: inferFridaySubagentProfile(input.task),
+        profile: taskLikelyNeedsWriteAccessForSubagent(input.task)
+          ? {
+              id: inferredProfile,
+              readOnly: false,
+              ...(typeof input.taskProfile === "string"
+                ? { taskProfile: input.taskProfile }
+                : input.taskProfile?.id
+                  ? { taskProfile: input.taskProfile.id }
+                  : {}),
+            }
+          : inferredProfile,
         timezone: input.timezone,
         timeoutMs: input.timeoutMs,
         conversationContext: input.conversationContext,
