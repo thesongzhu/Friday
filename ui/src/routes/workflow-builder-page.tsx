@@ -173,6 +173,70 @@ function edgeKeyFor(input: { source: string; target: string; branch?: string }):
   return `${input.source}:${input.target}:${input.branch ?? "any"}`;
 }
 
+function defaultStepTypeForNodeType(nodeType: WorkflowNodeType): FridayWorkflowNodeDefinition["stepType"] {
+  switch (nodeType) {
+    case "ai":
+      return "tool_call";
+    case "condition":
+      return "condition";
+    case "data":
+      return "transform";
+    case "approval":
+      return "human_approval";
+    case "trigger":
+      return undefined;
+    case "action":
+    default:
+      return "skill_call";
+  }
+}
+
+function defaultNodeTypeForStepType(stepType: FridayWorkflowNodeDefinition["stepType"]): WorkflowNodeType {
+  switch (stepType) {
+    case "tool_call":
+      return "ai";
+    case "condition":
+      return "condition";
+    case "transform":
+      return "data";
+    case "human_approval":
+      return "approval";
+    case "skill_call":
+    default:
+      return "action";
+  }
+}
+
+function buildReplacementNodeDefinition(input: {
+  node: FridayWorkflowNodeDefinition;
+  nextType: WorkflowNodeType;
+  nextStepType?: FridayWorkflowNodeDefinition["stepType"];
+}): FridayWorkflowNodeDefinition {
+  const config = getDefaultNodeConfig(input.nextType);
+  const preservedRawArgs = {
+    ...(input.node.rawArgs ?? {}),
+  };
+  const nextStepType = input.nextStepType ?? defaultStepTypeForNodeType(input.nextType);
+  const nextStepRef =
+    input.nextType === "trigger"
+      ? undefined
+      : "skillId" in config
+        ? config.skillId
+        : "toolId" in config
+          ? config.toolId
+          : undefined;
+
+  return {
+    ...input.node,
+    type: input.nextType,
+    stepType: nextStepType,
+    stepRef: nextStepRef,
+    config,
+    stepCondition: nextStepType === "condition" ? input.node.stepCondition : undefined,
+    rawArgs: preservedRawArgs,
+  };
+}
+
 function isTextInputTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
@@ -1079,6 +1143,26 @@ function WorkflowBuilderEditor() {
     });
   };
 
+  const handleSelectedNodeTypeChange = (nextType: WorkflowNodeType) => {
+    if (!selectedNode) return;
+    const nextDefinition = buildReplacementNodeDefinition({
+      node: selectedNode.data,
+      nextType,
+    });
+    updateSelectedNode(nextDefinition);
+  };
+
+  const handleSelectedStepTypeChange = (nextStepType: FridayWorkflowNodeDefinition["stepType"]) => {
+    if (!selectedNode || !nextStepType) return;
+    const nextType = defaultNodeTypeForStepType(nextStepType);
+    const nextDefinition = buildReplacementNodeDefinition({
+      node: selectedNode.data,
+      nextType,
+      nextStepType,
+    });
+    updateSelectedNode(nextDefinition);
+  };
+
   const updateSelectedEdgeBranch = (branch: "" | FridayWorkflowSpecEdgeWhen) => {
     if (!selectedEdge) return;
     const nextEdges = edges.map((edge) =>
@@ -1442,7 +1526,7 @@ function WorkflowBuilderEditor() {
                     <span className="font-medium text-white">Node category</span>
                     <select
                       value={selectedNode.data.type}
-                      onChange={(event) => updateSelectedNode({ type: event.target.value as WorkflowNodeType })}
+                      onChange={(event) => handleSelectedNodeTypeChange(event.target.value as WorkflowNodeType)}
                       className="agent-input"
                     >
                       <option value="action">Action</option>
@@ -1456,7 +1540,7 @@ function WorkflowBuilderEditor() {
                     <span className="font-medium text-white">Step type</span>
                     <select
                       value={selectedNode.data.stepType ?? (selectedNode.data.type === "ai" ? "tool_call" : "skill_call")}
-                      onChange={(event) => updateSelectedNode({ stepType: event.target.value as FridayWorkflowNodeDefinition["stepType"] })}
+                      onChange={(event) => handleSelectedStepTypeChange(event.target.value as FridayWorkflowNodeDefinition["stepType"])}
                       className="agent-input"
                     >
                       <option value="skill_call">skill_call</option>
