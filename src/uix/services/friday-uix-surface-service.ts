@@ -2019,7 +2019,22 @@ export function createFridayUixSurfaceService(
     },
 
     startWizard(input) {
-      if (input.wizardId !== "guided-assistant") {
+      const goalWizardDefs: Record<string, { title: string; goalPrompt: string }> = {
+        "guided-assistant": { title: "Guided Assistant", goalPrompt: "Tell Friday what you want to do in one sentence." },
+        "build-new": { title: "Build Something New", goalPrompt: "Describe what you want to build. Friday will plan and guide you." },
+        "fix-broken": { title: "Fix What's Broken", goalPrompt: "Describe the problem. Friday will diagnose and suggest fixes." },
+        "ship-fast": { title: "Ship & Release", goalPrompt: "What are you shipping? Friday will run QA, checks, and docs." },
+        "understand-system": { title: "Understand Your System", goalPrompt: "What do you want to understand? Friday will investigate." },
+        "automate-work": { title: "Automate Repetitive Work", goalPrompt: "What task do you want automated? Friday will build the workflow." },
+        "content-social": { title: "Content & Social Media", goalPrompt: "What content or social media operation? Friday will plan the flow." },
+        "ecommerce": { title: "E-commerce & Cross-border", goalPrompt: "What e-commerce goal? Friday will research products, platforms, and data." },
+        "team-management": { title: "Manage a Team", goalPrompt: "What team operation? Friday will set up task tracking and workflows." },
+        "ai-saas-build": { title: "Build an AI App / SaaS", goalPrompt: "Describe the AI product idea. Friday will plan architecture and implementation." },
+        "invest-trade": { title: "Investment & Trading", goalPrompt: "What investment goal? Friday will research and automate your analysis." },
+      };
+
+      const wizardDef = goalWizardDefs[input.wizardId];
+      if (!wizardDef) {
         throw new FridayDomainError("UIX_GUIDED_WORKFLOW_NOT_FOUND", "Wizard not found", {
           httpStatus: 404,
         });
@@ -2033,14 +2048,14 @@ export function createFridayUixSurfaceService(
         wizardId: input.wizardId,
         contextId: deps.idGenerator(),
         assistantSessionKey: input.assistantSessionKey,
-        title: "Guided Assistant",
+        title: wizardDef.title,
         status: "awaiting_input",
         currentStepId: "goal",
         steps: [
           {
             id: "goal",
             title: "Describe your goal",
-            prompt: "Tell Friday what you want to do in one sentence.",
+            prompt: wizardDef.goalPrompt,
             inputKey: "goal",
           },
           {
