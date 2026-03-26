@@ -125,13 +125,13 @@ import {
   createFridayAgentWorkflowGeneratorTool,
   createFridayMcpAdapter,
   createFridaySubagentRegistry,
+  createFridayWorkspaceContextEngine,
   inferFridaySubagentProfile,
-  loadFridayWorkspaceContext,
   parseFridayMcpServersFromEnv,
   resolveFridayAgentTaskProfile,
-  createFridayWorkspaceContextEngine,
   resolveFridayContextEnginePromptFragment,
 } from "#agent";
+import type { loadFridayWorkspaceContext } from "#agent";
 import { buildMcpServerToolFilter } from "./friday-mcp-safe-catalog.js";
 import { classifyFridayExecution } from "../sessions/services/friday-execution-classifier.js";
 import { dispatchDeterministic } from "../sessions/services/friday-deterministic-dispatch.js";

@@ -13,8 +13,8 @@ import type {
   FridayMcpReadResourceResult,
   FridayMcpResourceDescriptor,
   FridayMcpServerConfig,
-  FridayMcpServerState,
   FridayMcpServerPolicy,
+  FridayMcpServerState,
   FridayMcpToolDescriptor,
   FridayMcpTransport,
 } from "./friday-mcp-adapter.types.js";
