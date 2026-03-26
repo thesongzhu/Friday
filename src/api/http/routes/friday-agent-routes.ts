@@ -2,6 +2,7 @@ import type { FridayRouteDefinition } from "../../model/friday-api-common.types.
 import type {
   FridayAgentAutomationSchedule,
   FridayAgentAutomationService,
+  FridayAgentAutomationSessionTarget,
   FridayAgentEventEmitter,
   FridayAgentEventMap,
   FridayAgentEventName,
@@ -569,6 +570,10 @@ export function createFridayAgentRoutes(
           workflowIds: isStringArray(body.workflowIds) ? body.workflowIds : undefined,
           triggerId: typeof body.triggerId === "string" ? body.triggerId : undefined,
           schedule: schedule ?? undefined,
+          sessionTarget: parseAutomationSessionTarget(body.sessionTarget, {
+            allowNull: false,
+            path: "sessionTarget",
+          }) ?? undefined,
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
         });
 
@@ -671,6 +676,10 @@ export function createFridayAgentRoutes(
           workflowIds: isStringArray(body.workflowIds) ? body.workflowIds : undefined,
           triggerId: typeof body.triggerId === "string" ? body.triggerId : undefined,
           schedule,
+          sessionTarget: parseAutomationSessionTarget(body.sessionTarget, {
+            allowNull: true,
+            path: "sessionTarget",
+          }),
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
         });
 
@@ -722,6 +731,10 @@ export function createFridayAgentRoutes(
           providerId,
           model,
           timeoutMs,
+          sessionTarget: parseAutomationSessionTarget(body.sessionTarget, {
+            allowNull: false,
+            path: "sessionTarget",
+          }) ?? undefined,
         });
 
         return { result };
@@ -836,5 +849,73 @@ function parseAutomationSchedule(
     type: "cron",
     cron,
     timezone,
+  };
+}
+
+function parseAutomationSessionTarget(
+  value: unknown,
+  options: { allowNull: boolean; path: string },
+): FridayAgentAutomationSessionTarget | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) {
+    if (options.allowNull) return null;
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${options.path} cannot be null`,
+      { httpStatus: 400 },
+    );
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${options.path} must be an object`,
+      { httpStatus: 400 },
+    );
+  }
+
+  const raw = value as Record<string, unknown>;
+  const type = raw.type;
+  if (type !== "isolated" && type !== "named" && type !== "current") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${options.path}.type must be 'isolated', 'named', or 'current'`,
+      { httpStatus: 400 },
+    );
+  }
+
+  const sessionKey = raw.sessionKey;
+  if (type === "isolated") {
+    if (sessionKey !== undefined && sessionKey !== null) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        `${options.path}.sessionKey is not allowed for isolated targets`,
+        { httpStatus: 400 },
+      );
+    }
+    return { type: "isolated" };
+  }
+
+  if (sessionKey === undefined || sessionKey === null) {
+    if (type === "named") {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        `${options.path}.sessionKey is required for named targets`,
+        { httpStatus: 400 },
+      );
+    }
+    return { type };
+  }
+
+  if (typeof sessionKey !== "string" || sessionKey.trim() === "") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${options.path}.sessionKey must be a non-empty string when provided`,
+      { httpStatus: 400 },
+    );
+  }
+
+  return {
+    type,
+    sessionKey: sessionKey.trim(),
   };
 }

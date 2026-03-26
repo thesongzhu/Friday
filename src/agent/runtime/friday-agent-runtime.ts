@@ -43,6 +43,7 @@ import type {
   FridayAgentSystemPromptBuildResult,
 } from "./friday-agent-runtime.types.js";
 import { evaluateFridayAnswerAlignment } from "./friday-agent-answer-alignment.js";
+import { notifyFridayContextEngineAfterTurn } from "./friday-agent-context-engine.js";
 import { attachFridayAgentToolExecutionContext } from "./friday-agent-tool-execution-context.js";
 import { shouldDelegateFridayAgentTask } from "./friday-agent-delegation-policy.js";
 import { resolveFridayAgentTaskProfile } from "./friday-agent-task-profile.js";
@@ -50,6 +51,12 @@ import { isMutatingToolCall } from "./friday-agent-tool-mutation.js";
 import { getApprovalRequiredReasonForToolCall } from "./friday-agent-tool-risk.js";
 
 const RULES_EVALUATE_SCOPE = "rules:evaluate";
+const TERMINAL_CONTEXT_ENGINE_STATUSES: ReadonlySet<FridayAgentRunStatus> = new Set([
+  "completed",
+  "failed",
+  "failed_tests",
+  "cancelled",
+]);
 
 function hasCjkText(text: string): boolean {
   return /[\u4e00-\u9fff]/u.test(text);
@@ -133,6 +140,7 @@ export function createFridayAgentRuntime(
     learningContextBuilder,
     communicationPromptBuilder,
     delegationHandler,
+    contextEngine,
   } = deps;
 
   // Clone the tools array so registerTool does not mutate the caller's array.
@@ -310,6 +318,37 @@ export function createFridayAgentRuntime(
             error instanceof Error ? error.message : String(error),
           );
         }
+      };
+      const finalizeResult = async (
+        input: FridayAgentRuntimeResult & {
+          summary?: string;
+          artifactDir?: string;
+        },
+      ): Promise<FridayAgentRuntimeResult> => {
+        if (TERMINAL_CONTEXT_ENGINE_STATUSES.has(input.status)) {
+          await notifyFridayContextEngineAfterTurn(contextEngine, {
+            runId,
+            sessionKey,
+            task: params.task,
+            response: input.response,
+            status: input.status,
+            summary: input.summary ?? deriveSummary(input.response),
+            artifactDir: input.artifactDir,
+            conversationContext,
+          });
+        }
+
+        return {
+          runId: input.runId,
+          status: input.status,
+          response: input.response,
+          toolCallCount: input.toolCallCount,
+          durationMs: input.durationMs,
+          usageInput: input.usageInput,
+          usageOutput: input.usageOutput,
+          ...(input.images ? { images: input.images } : {}),
+          ...(input.finalResponse ? { finalResponse: input.finalResponse } : {}),
+        };
       };
 
       function deriveEta(elapsedMs: number): { eta?: number; etaConfidence: FridayAgentEtaConfidence } {
@@ -635,7 +674,7 @@ export function createFridayAgentRuntime(
               correlationId: runCorrelationId,
             });
 
-            return {
+            return await finalizeResult({
               runId,
               status: "failed",
               response: message,
@@ -644,7 +683,8 @@ export function createFridayAgentRuntime(
               usageInput: 0,
               usageOutput: 0,
               taskProfile: resolvedTaskProfile,
-            };
+              summary: deriveSummary(message),
+            });
           }
         }
 
@@ -740,7 +780,7 @@ export function createFridayAgentRuntime(
               correlationId: runCorrelationId,
             });
 
-            return {
+            return await finalizeResult({
               runId,
               status: "failed",
               response: `Plan rejected: ${decision.reason ?? "no reason"}`,
@@ -749,7 +789,8 @@ export function createFridayAgentRuntime(
               usageInput: 0,
               usageOutput: 0,
               taskProfile: resolvedTaskProfile,
-            };
+              summary: deriveSummary(`Plan rejected: ${decision.reason ?? "no reason"}`),
+            });
           }
         } else if (!planReview.decision) {
           // No review required — auto-approve silently
@@ -898,7 +939,7 @@ export function createFridayAgentRuntime(
 
               await mirrorAssistantResponse(terminalResponse, allToolCalls);
 
-              return {
+              return await finalizeResult({
                 runId,
                 status: "completed",
                 response: terminalResponse,
@@ -909,7 +950,9 @@ export function createFridayAgentRuntime(
                 contextCostSummary: latestContextCostSummary,
                 taskProfile: resolvedTaskProfile,
                 images: delegatedImages.length > 0 ? delegatedImages : undefined,
-              };
+                summary: summaryText || undefined,
+                artifactDir: persistedArtifacts.artifactDir,
+              });
             }
 
             if (terminalStatus === "cancelled") {
@@ -932,7 +975,7 @@ export function createFridayAgentRuntime(
 
             await mirrorAssistantResponse(terminalResponse, allToolCalls);
 
-            return {
+            return await finalizeResult({
               runId,
               status: terminalStatus,
               response: terminalResponse,
@@ -943,7 +986,9 @@ export function createFridayAgentRuntime(
               contextCostSummary: latestContextCostSummary,
               taskProfile: resolvedTaskProfile,
               images: delegatedImages.length > 0 ? delegatedImages : undefined,
-            };
+              summary: summaryText || undefined,
+              artifactDir: persistedArtifacts.artifactDir,
+            });
           }
         }
 
@@ -1525,7 +1570,7 @@ export function createFridayAgentRuntime(
 
           handleTrackedEvent("agent.run.cancelled", { runId });
 
-          return {
+          return await finalizeResult({
             runId,
             status: "cancelled",
             response: responseText,
@@ -1535,7 +1580,8 @@ export function createFridayAgentRuntime(
             usageOutput: totalOutputTokens,
             contextCostSummary: latestContextCostSummary,
             taskProfile: resolvedTaskProfile,
-          };
+            summary: deriveSummary(responseText),
+          });
         }
 
         // ─── Build actual execution metadata (IMPL-2) ───
@@ -1655,7 +1701,7 @@ export function createFridayAgentRuntime(
             });
             await mirrorAssistantResponse(responseText || "Validation criteria not met", allToolCalls);
 
-            return {
+            return await finalizeResult({
               runId,
               status: "failed",
               response: responseText || "Validation criteria not met",
@@ -1665,7 +1711,9 @@ export function createFridayAgentRuntime(
               usageOutput: totalOutputTokens,
               contextCostSummary: latestContextCostSummary,
               taskProfile: resolvedTaskProfile,
-            };
+              summary: summaryText || undefined,
+              artifactDir: persistedArtifacts.artifactDir,
+            });
           }
         }
 
@@ -1739,7 +1787,7 @@ export function createFridayAgentRuntime(
           });
           await mirrorAssistantResponse(failureResponse, allToolCalls);
 
-          return {
+          return await finalizeResult({
             runId,
             status: "failed",
             response: failureResponse,
@@ -1749,7 +1797,9 @@ export function createFridayAgentRuntime(
             usageOutput: totalOutputTokens,
             contextCostSummary: latestContextCostSummary,
             taskProfile: resolvedTaskProfile,
-          };
+            summary: summaryText || undefined,
+            artifactDir: persistedArtifacts.artifactDir,
+          });
         }
 
         // ─── Derive summary from response (IMPL-6) ───
@@ -1797,7 +1847,7 @@ export function createFridayAgentRuntime(
 
         await mirrorAssistantResponse(responseText, allToolCalls);
 
-        return {
+        return await finalizeResult({
           runId,
           status: "completed",
           response: responseText,
@@ -1808,7 +1858,9 @@ export function createFridayAgentRuntime(
           contextCostSummary: latestContextCostSummary,
           taskProfile: resolvedTaskProfile,
           images: extractedImages.length > 0 ? extractedImages : undefined,
-        };
+          summary: summaryText || undefined,
+          artifactDir: persistedArtifacts.artifactDir,
+        });
       } catch (error) {
         const durationMs = Date.now() - startedAt;
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1859,7 +1911,7 @@ export function createFridayAgentRuntime(
         });
         await mirrorAssistantResponse(responseText || errorMessage, allToolCalls);
 
-        return {
+        return await finalizeResult({
           runId,
           status: "failed",
           response: responseText || errorMessage,
@@ -1869,7 +1921,9 @@ export function createFridayAgentRuntime(
           usageOutput: totalOutputTokens,
           contextCostSummary: latestContextCostSummary,
           taskProfile: resolvedTaskProfile,
-        };
+          summary: summaryText || undefined,
+          artifactDir: persistedArtifacts.artifactDir,
+        });
       } finally {
         clearTimeout(abortTimer);
         params.signal?.removeEventListener("abort", onExternalAbort);

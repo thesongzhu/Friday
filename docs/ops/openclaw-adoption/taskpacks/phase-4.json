@@ -13,6 +13,7 @@
     "src/hub/friday-hub-bootstrap.ts",
     "src/api/http/routes/friday-observability-routes.ts",
     "docs/ops/openclaw-adoption/taskpacks/phase-4.json",
+    "test/unit/agent/tools",
     "test/unit/browser",
     "test/unit/api/fleet",
     "test/unit/observability/services",

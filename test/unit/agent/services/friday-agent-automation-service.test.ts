@@ -20,9 +20,15 @@ describe("FridayAgentAutomationService", () => {
   let learningEvents: FridayLearningEventAppendInput[];
   let mockStartRun: ReturnType<typeof vi.fn<(input: {
     task: string;
+    sessionKey?: string;
     providerId?: string;
     model?: string;
+    timezone?: string;
     timeoutMs?: number;
+    executionContext?: {
+      surface?: string;
+      interactive?: boolean;
+    };
   }) => Promise<FridayAgentRuntimeResult>>>;
   const NOW = "2026-02-19T10:00:00.000Z";
 
@@ -32,9 +38,15 @@ describe("FridayAgentAutomationService", () => {
     learningEvents = [];
     mockStartRun = vi.fn<(input: {
       task: string;
+      sessionKey?: string;
       providerId?: string;
       model?: string;
+      timezone?: string;
       timeoutMs?: number;
+      executionContext?: {
+        surface?: string;
+        interactive?: boolean;
+      };
     }) => Promise<FridayAgentRuntimeResult>>().mockResolvedValue({
       runId: "run-result-001",
       status: "completed",
@@ -55,6 +67,8 @@ describe("FridayAgentAutomationService", () => {
       learningEventWriter: (events) => {
         learningEvents.push(...events);
       },
+      resolveSourceSessionKey: (sourceRunId) =>
+        sourceRunId === "run-123" ? "session-from-source" : null,
     });
   });
 
@@ -108,6 +122,27 @@ describe("FridayAgentAutomationService", () => {
       });
       expect(automation.enabled).toBe(false);
       expect(automation.estimatedTimeSavedMinutes).toBeGreaterThan(0);
+    });
+
+    it("resolves current session targets from sourceRunId", () => {
+      db.withWriteTransaction((writer) => {
+        writer.prepare(
+          `INSERT INTO friday_agent_runs (id, task, status, session_key, attempt, max_attempts, created_at)
+           VALUES ('run-123', 'seed task', 'completed', 'session-from-source', 0, 3, ?)`,
+        ).run(NOW);
+      });
+
+      const automation = service.save({
+        name: "From Current Session",
+        sourceRunId: "run-123",
+        taskTemplate: "Continue from the original thread",
+        sessionTarget: { type: "current" },
+      });
+
+      expect(automation.sessionTarget).toEqual({
+        type: "current",
+        sessionKey: "session-from-source",
+      });
     });
   });
 
@@ -238,6 +273,20 @@ describe("FridayAgentAutomationService", () => {
       expect(updated.enabled).toBe(false);
     });
 
+    it("resets sessionTarget to isolated when update receives null", () => {
+      const created = service.save({
+        name: "Reset Session Target",
+        taskTemplate: "task",
+        sessionTarget: { type: "named", sessionKey: "persisted-session" },
+      });
+
+      const updated = service.update(created.id, {
+        sessionTarget: null,
+      });
+
+      expect(updated.sessionTarget).toEqual({ type: "isolated" });
+    });
+
     it("throws AGENT_AUTOMATION_NOT_FOUND for non-existent id", () => {
       expect(() => service.update("nonexistent", { name: "Nope" }))
         .toThrow(FridayDomainError);
@@ -293,9 +342,15 @@ describe("FridayAgentAutomationService", () => {
 
       expect(mockStartRun).toHaveBeenCalledWith({
         task: "Build a widget",
+        sessionKey: undefined,
         providerId: undefined,
         model: undefined,
+        timezone: undefined,
         timeoutMs: undefined,
+        executionContext: {
+          surface: "agent.automation",
+          interactive: false,
+        },
       });
       expect(result.runId).toBe("run-result-001");
       expect(result.status).toBe("completed");
@@ -310,7 +365,13 @@ describe("FridayAgentAutomationService", () => {
       await service.run(created.id, { taskOverride: "Custom task" });
 
       expect(mockStartRun).toHaveBeenCalledWith(
-        expect.objectContaining({ task: "Custom task" }),
+        expect.objectContaining({
+          task: "Custom task",
+          executionContext: {
+            surface: "agent.automation",
+            interactive: false,
+          },
+        }),
       );
     });
 
@@ -328,10 +389,47 @@ describe("FridayAgentAutomationService", () => {
 
       expect(mockStartRun).toHaveBeenCalledWith({
         task: "task",
+        sessionKey: undefined,
         providerId: "openai",
         model: "gpt-4",
+        timezone: undefined,
         timeoutMs: 60000,
+        executionContext: {
+          surface: "agent.automation",
+          interactive: false,
+        },
       });
+    });
+
+    it("reuses named session targets when present", async () => {
+      const created = service.save({
+        name: "Named Session",
+        taskTemplate: "task",
+        sessionTarget: { type: "named", sessionKey: "named-session-1" },
+      });
+
+      await service.run(created.id);
+
+      expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+        task: "task",
+        sessionKey: "named-session-1",
+      }));
+    });
+
+    it("allows one-off sessionTarget overrides at run time", async () => {
+      const created = service.save({
+        name: "Override Session Target",
+        taskTemplate: "task",
+      });
+
+      await service.run(created.id, {
+        sessionTarget: { type: "named", sessionKey: "override-session" },
+      });
+
+      expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+        task: "task",
+        sessionKey: "override-session",
+      }));
     });
 
     it("updates last run info after execution", async () => {

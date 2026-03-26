@@ -84,4 +84,15 @@ describe("friday openclaw taskpack loader", () => {
     expect(taskpack.phaseId).toBe("phase0");
     expect(taskpack.executionMode).toBe("spec_only");
   });
+
+  it("loads every committed repository taskpack", () => {
+    const repoTaskpackRoot = path.resolve(process.cwd(), "docs", "ops", "openclaw-adoption", "taskpacks");
+    const taskpackFiles = fs.readdirSync(repoTaskpackRoot).filter((entry) => entry.endsWith(".json")).sort();
+
+    expect(taskpackFiles.length).toBeGreaterThan(0);
+    for (const taskpackFile of taskpackFiles) {
+      const taskpack = loadFridayOpenClawPhaseTaskpack(path.join(repoTaskpackRoot, taskpackFile));
+      expect(taskpack.phaseId).toMatch(/^phase\d+$/);
+    }
+  });
 });

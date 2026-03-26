@@ -129,6 +129,8 @@ import {
   loadFridayWorkspaceContext,
   parseFridayMcpServersFromEnv,
   resolveFridayAgentTaskProfile,
+  createFridayWorkspaceContextEngine,
+  resolveFridayContextEnginePromptFragment,
 } from "#agent";
 import { buildMcpServerToolFilter } from "./friday-mcp-safe-catalog.js";
 import { classifyFridayExecution } from "../sessions/services/friday-execution-classifier.js";
@@ -1997,6 +1999,10 @@ export async function createFridayHub(
     // Non-fatal: provider routing diagnostics should not block startup.
   }
 
+  const agentContextEngine = createFridayWorkspaceContextEngine({
+    workspaceDir: workspaceRoot,
+  });
+
   // Dynamic system prompt builder — invoked at each executeRun() with the
   // current set of registered tool names, so the prompt is always accurate.
   // Loads workspace context files (AGENTS.md, SOUL.md, USER.md, MEMORY.md)
@@ -2016,14 +2022,14 @@ export async function createFridayHub(
       | Awaited<ReturnType<typeof loadFridayWorkspaceContext>>["summary"]
       | undefined;
     try {
-      const ctx = await loadFridayWorkspaceContext(workspaceRoot, {
+      const ctx = await resolveFridayContextEnginePromptFragment(agentContextEngine, {
         task: input.task,
-        selectedBlocks: input.conversationContext?.selectedBlocks,
+        conversationContext: input.conversationContext,
       });
       if (ctx.promptFragment) {
         workspaceContext = ctx.promptFragment;
       }
-      workspaceContextSummary = ctx.summary;
+      workspaceContextSummary = ctx.workspaceContext?.summary;
     } catch {
       // Non-fatal: workspace context loading failure should not block agent runs.
     }
@@ -2168,6 +2174,7 @@ export async function createFridayHub(
     workdir: workspaceRoot,
     artifactWriter: agentArtifactWriter,
     evaluateRules,
+    contextEngine: agentContextEngine,
     learningContextBuilder: (input) => {
       if (!_learningContextRef) return { preferences: {} };
       return _learningContextRef.buildContext(input);

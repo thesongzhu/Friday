@@ -2175,6 +2175,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       nowIso: deps.nowIso,
       learningEventWriter: deps.learningEventWriter,
       learningUserId: deps.learningUserId,
+      resolveSourceSessionKey: (sourceRunId) =>
+        deps.db.withReadConnection((db) => agentRepo.getById(db, sourceRunId)?.sessionKey ?? null),
     });
 
     for (const route of createFridayAgentRoutes({

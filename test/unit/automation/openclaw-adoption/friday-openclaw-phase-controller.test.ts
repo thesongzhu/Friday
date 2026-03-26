@@ -5,10 +5,12 @@ import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createFridayOpenClawPhaseController,
+  type FridayMergedPullRequestRecord,
   type FridayMainlineHealthVerdict,
   type FridayPhaseAutomationPlatform,
   type FridayPhaseCommand,
   type FridayPhaseCommandResult,
+  type FridayPullRequestDetail,
   type FridayRepoInspection,
 } from "../../../../src/automation/openclaw-adoption/index.js";
 
@@ -20,6 +22,8 @@ interface FakePlatformOptions {
   prChecksQueue?: Array<Array<{ name: string; status: "passed" | "failed" | "pending" | "missing"; url?: string }>>;
   mainlineQueue?: FridayMainlineHealthVerdict[];
   mergeShouldFail?: boolean;
+  mergedPullRequests?: FridayMergedPullRequestRecord[];
+  pullRequestDetails?: Record<number, FridayPullRequestDetail>;
 }
 
 const tempDirs: string[] = [];
@@ -275,6 +279,16 @@ function createFakePlatform(options: FakePlatformOptions = {}): FridayPhaseAutom
     waitForPullRequestMerge(repoRoot, branchName) {
       return { number: 42, url: `https://example.com/pr/${branchName}`, state: "MERGED", merged: true };
     },
+    listMergedPullRequests() {
+      return [...(options.mergedPullRequests ?? [])];
+    },
+    readPullRequestDetail(_repoRoot, prNumber) {
+      const detail = options.pullRequestDetails?.[prNumber];
+      if (!detail) {
+        throw new Error(`missing PR detail for ${String(prNumber)}`);
+      }
+      return detail;
+    },
     waitForMainChecks() {
       const verdict = options.mainlineQueue?.[mainlineIndex];
       mainlineIndex += 1;
@@ -468,5 +482,127 @@ describe("createFridayOpenClawPhaseController", () => {
 
     const reportPath = path.join(repoDir, ".friday", "automation", "openclaw-adoption", "final-closeout", "latest.json");
     expect(fs.existsSync(reportPath)).toBe(true);
+  });
+
+  it("reconciles merged phases from pull request history during closeout", () => {
+    const repoDir = createTempGitRepo();
+    const manifestPath = writeManifest(repoDir);
+    const controller = createFridayOpenClawPhaseController({
+      cwd: repoDir,
+      manifestPath,
+      platform: createFakePlatform({
+        mergedPullRequests: [
+          {
+            number: 100,
+            title: "[phase0] Automation Bootstrap",
+            url: "https://example.com/pr/100",
+            state: "MERGED",
+            merged: true,
+            headRefName: "codex/openclaw-adoption-phase-0-automation-bootstrap",
+            baseRefName: "main",
+            mergedAt: "2026-03-24T01:00:00.000Z",
+            mergeCommitSha: "phase0merge1234",
+          },
+          {
+            number: 101,
+            title: "Phase 1 shipped",
+            url: "https://example.com/pr/101",
+            state: "MERGED",
+            merged: true,
+            headRefName: "codex/openclaw-adoption-phase-1-alt-branch-name",
+            baseRefName: "main",
+            mergedAt: "2026-03-24T02:00:00.000Z",
+            mergeCommitSha: "phase1merge1234",
+          },
+        ],
+        pullRequestDetails: {
+          100: {
+            number: 100,
+            title: "[phase0] Automation Bootstrap",
+            url: "https://example.com/pr/100",
+            state: "MERGED",
+            merged: true,
+            headRefName: "codex/openclaw-adoption-phase-0-automation-bootstrap",
+            baseRefName: "main",
+            mergedAt: "2026-03-24T01:00:00.000Z",
+            mergeCommitSha: "phase0merge1234",
+            changedPaths: [
+              "src/automation/openclaw-adoption/friday-openclaw-phase-controller.ts",
+            ],
+          },
+          101: {
+            number: 101,
+            title: "Phase 1 shipped",
+            url: "https://example.com/pr/101",
+            state: "MERGED",
+            merged: true,
+            headRefName: "codex/openclaw-adoption-phase-1-alt-branch-name",
+            baseRefName: "main",
+            mergedAt: "2026-03-24T02:00:00.000Z",
+            mergeCommitSha: "phase1merge1234",
+            changedPaths: [
+              "src/skills/runtime/friday-skill-runtime.ts",
+            ],
+          },
+        },
+      }),
+      nowIso: () => "2026-03-24T03:00:00.000Z",
+      runIdFactory: () => "run-7",
+    });
+
+    const result = controller.closeout({ dryRun: true });
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("done");
+    expect(result.notes).toContain("Reconciled phase0 from merged PR #100.");
+    expect(result.notes).toContain("Reconciled phase1 from merged PR #101.");
+
+    const state = controller.loadState();
+    expect(state.phases.phase0).toBeUndefined();
+  });
+
+  it("blocks closeout when reconciled merged PR history escapes the taskpack boundary", () => {
+    const repoDir = createTempGitRepo();
+    const manifestPath = writeManifest(repoDir);
+    const controller = createFridayOpenClawPhaseController({
+      cwd: repoDir,
+      manifestPath,
+      platform: createFakePlatform({
+        mergedPullRequests: [
+          {
+            number: 100,
+            title: "[phase0] Automation Bootstrap",
+            url: "https://example.com/pr/100",
+            state: "MERGED",
+            merged: true,
+            headRefName: "codex/openclaw-adoption-phase-0-automation-bootstrap",
+            baseRefName: "main",
+            mergedAt: "2026-03-24T01:00:00.000Z",
+            mergeCommitSha: "phase0merge1234",
+          },
+        ],
+        pullRequestDetails: {
+          100: {
+            number: 100,
+            title: "[phase0] Automation Bootstrap",
+            url: "https://example.com/pr/100",
+            state: "MERGED",
+            merged: true,
+            headRefName: "codex/openclaw-adoption-phase-0-automation-bootstrap",
+            baseRefName: "main",
+            mergedAt: "2026-03-24T01:00:00.000Z",
+            mergeCommitSha: "phase0merge1234",
+            changedPaths: [
+              "src/api/http/routes/friday-plugin-routes.ts",
+            ],
+          },
+        },
+      }),
+      nowIso: () => "2026-03-24T03:00:00.000Z",
+      runIdFactory: () => "run-8",
+    });
+
+    const result = controller.closeout({ dryRun: true });
+    expect(result.ok).toBe(false);
+    expect(result.blockers).toContain("phase0 merged PR violates the committed taskpack boundary.");
   });
 });

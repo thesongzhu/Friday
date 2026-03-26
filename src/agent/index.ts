@@ -65,6 +65,10 @@ export type {
   FridayAgentRuntime,
   FridayAgentRuntimeResult,
   FridayAgentConversationContext,
+  FridayContextEngineResolveInput,
+  FridayContextEngineResolveResult,
+  FridayContextEngineAfterTurnInput,
+  FridayContextEngine,
   FridayAgentDelegationRequest,
   FridayAgentDelegationResult,
   FridayAgentContextCostComponent,
@@ -75,6 +79,11 @@ export type {
   CreateFridayAgentRuntimeDeps,
 } from "./runtime/friday-agent-runtime.types.js";
 export { createFridayAgentRuntime } from "./runtime/friday-agent-runtime.js";
+export {
+  createFridayWorkspaceContextEngine,
+  notifyFridayContextEngineAfterTurn,
+  resolveFridayContextEnginePromptFragment,
+} from "./runtime/friday-agent-context-engine.js";
 export { resolveFridayPublicRunUrl } from "./runtime/friday-public-run-url.js";
 export { shouldDelegateFridayAgentTask } from "./runtime/friday-agent-delegation-policy.js";
 export type {
@@ -90,6 +99,7 @@ export type { BuildFridayAgentSystemPromptParams } from "./runtime/friday-agent-
 export { buildFridayAgentSystemPrompt } from "./runtime/friday-agent-system-prompt-builder.js";
 export type { FridayWorkspaceContext, FridayWorkspaceContextFile } from "./runtime/friday-agent-workspace-context.js";
 export { loadFridayWorkspaceContext } from "./runtime/friday-agent-workspace-context.js";
+export type { FridayAgentAutomationSessionTarget } from "./services/friday-agent-automation-service.types.js";
 
 // ─── LLM client ───
 

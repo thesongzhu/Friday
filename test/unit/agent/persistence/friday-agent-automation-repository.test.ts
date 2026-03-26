@@ -94,6 +94,7 @@ describe("FridayAgentAutomationRepository", () => {
         cron: "0 9 * * *",
         timezone: "America/New_York",
       });
+      expect(inserted.sessionTarget).toEqual({ type: "isolated" });
     });
 
     it("inserts with no optional fields", () => {
@@ -109,8 +110,23 @@ describe("FridayAgentAutomationRepository", () => {
       expect(inserted.workflowIds).toBeUndefined();
       expect(inserted.triggerId).toBeUndefined();
       expect(inserted.schedule).toBeUndefined();
+      expect(inserted.sessionTarget).toEqual({ type: "isolated" });
       expect(inserted.lastRunId).toBeUndefined();
       expect(inserted.lastRunAt).toBeUndefined();
+    });
+
+    it("persists named session targets", () => {
+      const repo = createRepo();
+      const record = makeRecord({
+        sessionTarget: { type: "named", sessionKey: "named-session-1" },
+      });
+
+      const inserted = db.withWriteTransaction((writer) => repo.insert(writer, record));
+
+      expect(inserted.sessionTarget).toEqual({
+        type: "named",
+        sessionKey: "named-session-1",
+      });
     });
   });
 
@@ -341,6 +357,23 @@ describe("FridayAgentAutomationRepository", () => {
 
       expect(updated?.id).toBe(record.id);
       expect(updated?.name).toBe("Test Automation");
+    });
+
+    it("updates sessionTarget fields", () => {
+      const repo = createRepo();
+      const record = makeRecord();
+      db.withWriteTransaction((writer) => repo.insert(writer, record));
+
+      const updated = db.withWriteTransaction((writer) =>
+        repo.update(writer, record.id, {
+          sessionTarget: { type: "current", sessionKey: "session-current-1" },
+        }),
+      );
+
+      expect(updated?.sessionTarget).toEqual({
+        type: "current",
+        sessionKey: "session-current-1",
+      });
     });
   });
 
