@@ -94,6 +94,12 @@ export function createFridaySessionService(
           || candidate.lastTurnKind === "continue_active_task"
           ? candidate.lastTurnKind
           : undefined,
+      lastHarnessStage:
+        typeof candidate.lastHarnessStage === "string" ? candidate.lastHarnessStage : undefined,
+      lastHandoffArtifactId:
+        typeof candidate.lastHandoffArtifactId === "string" ? candidate.lastHandoffArtifactId : undefined,
+      lastHarnessSummary:
+        typeof candidate.lastHarnessSummary === "string" ? candidate.lastHarnessSummary : undefined,
       updatedAt: candidate.updatedAt,
     };
   }

@@ -51,6 +51,18 @@ function readValues(body: unknown): Record<string, unknown> {
   return values as Record<string, unknown>;
 }
 
+function readAssistantSessionKey(body: unknown): string | undefined {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return undefined;
+  }
+  const value = (body as Record<string, unknown>).assistantSessionKey;
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export function createFridayUixRoutes(
   deps: FridayUixRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -159,6 +171,7 @@ export function createFridayUixRoutes(
           templateId,
           userId,
           parameters,
+          assistantSessionKey: readAssistantSessionKey(ctx.body),
         });
       },
     },
@@ -170,7 +183,11 @@ export function createFridayUixRoutes(
       async handler(ctx): Promise<FridayUixWizardResponse> {
         const userId = requireUserId(ctx.principal);
         const { wizardId } = ctx.params as { wizardId: string };
-        return deps.service.startWizard({ wizardId, userId });
+        return deps.service.startWizard({
+          wizardId,
+          userId,
+          assistantSessionKey: readAssistantSessionKey(ctx.body),
+        });
       },
     },
     {
@@ -183,7 +200,13 @@ export function createFridayUixRoutes(
         const { wizardId } = ctx.params as { wizardId: string };
         const contextId = readText(ctx.body, "contextId");
         const values = readValues(ctx.body);
-        return deps.service.continueWizard({ wizardId, contextId, userId, values });
+        return deps.service.continueWizard({
+          wizardId,
+          contextId,
+          userId,
+          values,
+          assistantSessionKey: readAssistantSessionKey(ctx.body),
+        });
       },
     },
     {

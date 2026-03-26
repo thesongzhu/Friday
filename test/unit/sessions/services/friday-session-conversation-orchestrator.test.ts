@@ -516,6 +516,49 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(focus.assistantAnchorSummary).toBe("Use a starter and let the dough ferment overnight.");
   });
 
+  it("preserves persisted harness focus when normal turns finalize", () => {
+    const focus = finalizeFridayConversationFocus({
+      task: "继续",
+      responseText: "I can continue from the saved handoff.",
+      runId: "run-2",
+      turnKind: "continue_active_task",
+      focusState: {
+        ...baseFocusState,
+        lastHarnessStage: "handoff_ready",
+        lastHandoffArtifactId: "handoff-1",
+        lastHarnessSummary: "Workflow draft is blocked on browser QA evidence.",
+      },
+      currentUserSequence: 9,
+      nowIso: "2026-03-15T11:00:00.000Z",
+    });
+
+    expect(focus.lastHarnessStage).toBe("handoff_ready");
+    expect(focus.lastHandoffArtifactId).toBe("handoff-1");
+    expect(focus.lastHarnessSummary).toBe("Workflow draft is blocked on browser QA evidence.");
+  });
+
+  it("clears harness focus when finalize receives an explicit null harness patch", () => {
+    const focus = finalizeFridayConversationFocus({
+      task: "继续",
+      responseText: "The handoff has been cleared.",
+      runId: "run-2",
+      turnKind: "continue_active_task",
+      focusState: {
+        ...baseFocusState,
+        lastHarnessStage: "handoff_ready",
+        lastHandoffArtifactId: "handoff-1",
+        lastHarnessSummary: "Workflow draft is blocked on browser QA evidence.",
+      },
+      currentUserSequence: 9,
+      harnessFocus: null,
+      nowIso: "2026-03-15T11:00:00.000Z",
+    });
+
+    expect(focus.lastHarnessStage).toBeUndefined();
+    expect(focus.lastHandoffArtifactId).toBeUndefined();
+    expect(focus.lastHarnessSummary).toBeUndefined();
+  });
+
   it("preserves another active run when a status-check turn finishes", () => {
     const focus = finalizeFridayConversationFocus({
       task: "刚才那个任务现在怎么样？",
@@ -568,5 +611,31 @@ describe("friday-session-conversation-orchestrator", () => {
     });
 
     expect(focus.pendingPlanRunId).toBeUndefined();
+  });
+
+  it("prefers persisted harness handoff over topic history for continue-style follow-ups", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "继续那个 workflow",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "Discuss Paris and north-central France.",
+        currentTopicStartSequence: 1,
+        lastHarnessStage: "handoff_ready",
+        lastHandoffArtifactId: "handoff-1",
+        lastHarnessSummary: "Workflow draft is blocked on browser QA evidence.",
+      },
+      currentUserSequence: 5,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "What is the capital of France?" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "Paris is the capital of France." }),
+        makeMessage({ sequence: 3, role: "user", contentText: "Explain it briefly." }),
+        makeMessage({ sequence: 4, role: "assistant", contentText: "Paris is in north-central France." }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("continue_active_task");
+    expect(prepared.selectedBlocks[0]?.source).toBe("harness_block");
+    expect(prepared.selectedBlocks[0]?.summary).toContain("handoff artifact handoff-1");
+    expect(prepared.taskPrompt).toContain("[harness_block]");
   });
 });

@@ -2,9 +2,11 @@ import type { FridaySqliteLayer } from "#state";
 import type { FridayProviderService } from "#providers";
 import type { FridaySkillRegistry } from "#skills";
 import type { FridayHubConfigManagerService, FridayHubMemoryStateService } from "#hub";
+import type { FridayHarnessQaVerdictV1, FridayTemplateHarnessSummary } from "#harness";
 
 import type {
   FridayGeneratedSkillDraft,
+  FridaySkillGenerationExplicitTestSummary,
   FridaySkillGenerationSession,
   FridaySkillGenerationTurn,
   FridaySkillGenerationTurnRequest,
@@ -35,6 +37,15 @@ export interface FridaySkillGeneratorService {
     requestedModel?: string,
   ): Promise<FridayGeneratedSkillDraft>;
 
+  recordExplicitTestResult(
+    sessionId: string,
+    test: FridaySkillGenerationExplicitTestSummary,
+  ): Promise<void>;
+
+  getQaVerdict(sessionId: string): Promise<FridayHarnessQaVerdictV1 | null>;
+
+  getHarnessSummary(sessionId: string): Promise<FridayTemplateHarnessSummary | null>;
+
   approveAndSave(sessionId: string): Promise<{
     sessionId: string;
     skillId: string;
@@ -48,6 +59,8 @@ export interface FridaySkillGeneratorService {
       packageValidated: boolean;
       registryRefreshed: boolean;
     };
+    harness?: FridayTemplateHarnessSummary | null;
+    qaVerdict?: FridayHarnessQaVerdictV1 | null;
   }>;
 
   cancelSession(sessionId: string): Promise<void>;
