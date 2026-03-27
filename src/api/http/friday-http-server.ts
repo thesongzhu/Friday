@@ -7,7 +7,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import { URL } from "node:url";
@@ -373,6 +373,28 @@ async function tryServeUiAsset(
   return false;
 }
 
+function describeUiMountIssue(uiStaticDir: string | undefined, pathname: string): string | null {
+  if (pathname !== "/") {
+    return null;
+  }
+
+  if (!uiStaticDir) {
+    return "This Friday instance is serving API routes only. Build the UI and mount dist/ui to open the web app at /.";
+  }
+
+  const normalizedUiDir = resolve(uiStaticDir);
+  if (!existsSync(normalizedUiDir)) {
+    return `UI static assets are unavailable. Directory not found: ${normalizedUiDir}. Run npm run build and point FRIDAY_UI_DIST_DIR at dist/ui.`;
+  }
+
+  const indexPath = join(normalizedUiDir, "index.html");
+  if (!existsSync(indexPath)) {
+    return `UI static assets are incomplete. Missing ${indexPath}. Run npm run build to regenerate dist/ui, then restart Friday.`;
+  }
+
+  return null;
+}
+
 // ─── Factory ───
 
 /**
@@ -471,10 +493,15 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       const route: FridayRouteEntry | undefined = routes.findRoute(method, pathname);
 
       if (!route) {
+        const uiMountIssue = (rawMethod === "GET" || rawMethod === "HEAD")
+          ? describeUiMountIssue(uiStaticDir, pathname)
+          : null;
         const isObservabilityPath = pathname.startsWith("/v1/observability");
-        const notFoundMessage = isObservabilityPath && !hasObservabilityRoutes
-          ? "Observability API is not enabled on this Friday instance."
-          : `No route matches ${method} ${pathname}`;
+        const notFoundMessage = uiMountIssue ?? (
+          isObservabilityPath && !hasObservabilityRoutes
+            ? "Observability API is not enabled on this Friday instance."
+            : `No route matches ${method} ${pathname}`
+        );
         sendJsonWithHeaders(res, 404, {
           ok: false,
           error: buildFridayApiError(FRIDAY_API_ERROR_CODES.NOT_FOUND, notFoundMessage),

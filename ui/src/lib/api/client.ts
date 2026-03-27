@@ -5,6 +5,37 @@ import { ApiError, AuthExpiredError, type ApiEnvelope, type RefreshResponse } fr
 
 let refreshPromise: Promise<void> | null = null;
 
+function buildInvalidResponseError(path: string, res: Response, body: string): ApiError {
+  const contentType = res.headers.get("content-type") ?? "unknown content-type";
+  const trimmed = body.trim();
+  const looksLikeHtml = contentType.includes("text/html") || trimmed.startsWith("<!doctype html") || trimmed.startsWith("<html");
+  const details = looksLikeHtml
+    ? `Expected Friday API JSON from ${path}, but received HTML instead. This usually means the current UI origin is not proxying /v1 to the Friday API.`
+    : `Expected Friday API JSON from ${path}, but received ${contentType}.`;
+
+  return new ApiError("INVALID_RESPONSE", "Friday API returned an unexpected response.", res.status, false, undefined, details);
+}
+
+async function readEnvelope<T>(path: string, res: Response): Promise<ApiEnvelope<T>> {
+  const body = await res.text();
+  if (body.trim().length === 0) {
+    throw new ApiError(
+      "INVALID_RESPONSE",
+      "Friday API returned an empty response.",
+      res.status,
+      false,
+      undefined,
+      `Expected Friday API JSON from ${path}, but the response body was empty.`,
+    );
+  }
+
+  try {
+    return JSON.parse(body) as ApiEnvelope<T>;
+  } catch {
+    throw buildInvalidResponseError(path, res, body);
+  }
+}
+
 async function doRefresh(): Promise<void> {
   const refreshToken = authStorage.getRefreshToken();
   if (!refreshToken) {
@@ -23,7 +54,7 @@ async function doRefresh(): Promise<void> {
     throw new AuthExpiredError();
   }
 
-  const envelope = (await res.json()) as ApiEnvelope<RefreshResponse>;
+  const envelope = await readEnvelope<RefreshResponse>("/v1/auth/refresh", res);
   if (!envelope.ok) {
     authStorage.clear();
     throw new AuthExpiredError();
@@ -55,7 +86,19 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, retry = true): 
     headers.set("Content-Type", "application/json");
   }
 
-  const res = await fetch(path, { ...init, headers });
+  let res: Response;
+  try {
+    res = await fetch(path, { ...init, headers });
+  } catch (error) {
+    throw new ApiError(
+      "NETWORK_ERROR",
+      "Could not reach the Friday API.",
+      0,
+      false,
+      undefined,
+      `The current origin could not reach ${path}. Verify that the active UI origin forwards /v1 requests to the Friday API.`,
+    );
+  }
 
   // Handle 401 with retry
   if (res.status === 401 && token && retry) {
@@ -67,7 +110,7 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, retry = true): 
     return apiFetch<T>(path, init, false);
   }
 
-  const envelope = (await res.json()) as ApiEnvelope<T>;
+  const envelope = await readEnvelope<T>(path, res);
 
   if (!envelope.ok) {
     throw new ApiError(

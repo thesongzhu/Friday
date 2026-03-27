@@ -247,4 +247,39 @@ describe("FridayHttpServer — Static UI Serving", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-cache");
   });
+
+  it("explains when the configured UI static directory is missing", async () => {
+    server = createFridayHttpServer({
+      routes: createRoutesWithPing(),
+      wsGateway: makeStubWsGateway(),
+      middleware: makeStubMiddleware(),
+      port,
+      host: "127.0.0.1",
+      uiStaticDir: path.join(tmpDir, "missing-ui"),
+    });
+    await server.listen();
+
+    const res = await fetch(`${baseUrl}/`);
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error.message).toContain("FRIDAY_UI_DIST_DIR");
+  });
+
+  it("explains when the server is running in API-only mode", async () => {
+    server = createFridayHttpServer({
+      routes: createRoutesWithPing(),
+      wsGateway: makeStubWsGateway(),
+      middleware: makeStubMiddleware(),
+      port,
+      host: "127.0.0.1",
+    });
+    await server.listen();
+
+    const res = await fetch(`${baseUrl}/`);
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error.message).toContain("serving API routes only");
+  });
 });

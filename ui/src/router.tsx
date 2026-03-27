@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useSetupStatusQuery } from "@/hooks/use-setup";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { resolveLegacyRedirect } from "@/lib/routes/legacy-routes";
+import { describeSetupStatusFailure } from "@/lib/setup/setup-status-diagnostics";
 
 const AgentPage = lazy(async () => import("@/routes/agent-page").then((module) => ({ default: module.AgentPage })));
 const AssistantPage = lazy(async () => import("@/routes/assistant-page").then((module) => ({ default: module.AssistantPage })));
@@ -23,7 +24,7 @@ const SkillGeneratorPage = lazy(async () => import("@/routes/skill-generator-pag
 const WorkflowBuilderPage = lazy(async () => import("@/routes/workflow-builder-page").then((module) => ({ default: module.WorkflowBuilderPage })));
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
 
-function FullscreenMessage(props: { title: string; detail: string }) {
+function FullscreenMessage(props: { title: string; detail: string; actions?: string[] }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[var(--bg-canvas)] px-6 text-white">
       <div className="max-w-xl text-center">
@@ -32,6 +33,17 @@ function FullscreenMessage(props: { title: string; detail: string }) {
           {props.title}
         </h1>
         <p className="mt-4 text-sm leading-7 text-white/60">{props.detail}</p>
+        {props.actions && props.actions.length > 0
+          ? (
+            <ul className="mt-6 space-y-3 text-left text-sm leading-6 text-white/70">
+              {props.actions.map((action) => (
+                <li key={action} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                  {action}
+                </li>
+              ))}
+            </ul>
+          )
+          : null}
       </div>
     </div>
   );
@@ -77,7 +89,7 @@ function RouteSuspense(props: { title: string; detail: string; children: ReactNo
 
 function SetupGate() {
   const location = useLocation();
-  const { data: setupStatus, isLoading, isError } = useSetupStatusQuery();
+  const { data: setupStatus, isLoading, isError, error } = useSetupStatusQuery();
   const { isFirstVisit, isLoading: profileLoading } = useUserProfile();
 
   if (isLoading || profileLoading) {
@@ -90,10 +102,15 @@ function SetupGate() {
   }
 
   if (isError) {
+    const diagnostics = describeSetupStatusFailure(
+      error,
+      typeof window !== "undefined" ? window.location.origin : "this origin",
+    );
     return (
       <FullscreenMessage
-        title="Setup status unavailable"
-        detail="The frontend could not reach the setup status route. Verify that the Friday API is running and authenticated."
+        title={diagnostics.title}
+        detail={diagnostics.detail}
+        actions={diagnostics.actions}
       />
     );
   }
