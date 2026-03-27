@@ -685,10 +685,25 @@ function formatSessionMessage(msg: {
 
 function tryParseJson(json: string | null | undefined): unknown {
   if (!json) return null;
+  if (!looksLikeJsonValue(json)) return json;
   try {
     return JSON.parse(json);
   } catch (err) {
     console.warn("[friday][memory-file-sync] try-parse-json:", err instanceof Error ? err.message : String(err));
     return json;
   }
+}
+
+function looksLikeJsonValue(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (trimmed === "true" || trimmed === "false" || trimmed === "null") return true;
+  const first = trimmed[0];
+  return (
+    first === "{" ||
+    first === "[" ||
+    first === '"' ||
+    first === "-" ||
+    (first >= "0" && first <= "9")
+  );
 }

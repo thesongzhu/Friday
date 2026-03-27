@@ -25,6 +25,38 @@ import { createFridayMemoryEmbeddingRepository } from "../persistence/friday-mem
 import { createFridayMemoryByokEmbeddingClient } from "./friday-memory-byok-embedding-client.js";
 import { mergeHybridResults } from "../search/friday-memory-hybrid.js";
 
+type FridayWarnSink = (message: string) => void;
+const warnedKeysBySink = new WeakMap<FridayWarnSink, Set<string>>();
+
+function warnOnce(warn: FridayWarnSink, key: string, message: string): void {
+  let warnedKeys = warnedKeysBySink.get(warn);
+  if (!warnedKeys) {
+    warnedKeys = new Set<string>();
+    warnedKeysBySink.set(warn, warnedKeys);
+  }
+  if (warnedKeys.has(key)) {
+    return;
+  }
+  warnedKeys.add(key);
+  warn(message);
+}
+
+function normalizeWarningKey(kind: "embedding" | "semantic", message: string): string {
+  return `${kind}:${message}`;
+}
+
+function warnMemoryFallback(kind: "embedding" | "semantic", message: string): void {
+  if (message.startsWith("No enabled providers available for routing")) {
+    return;
+  }
+  const label = kind === "embedding" ? "embedding failed" : "semantic search unavailable";
+  warnOnce(
+    console.warn as FridayWarnSink,
+    normalizeWarningKey(kind, message),
+    `[friday][memory-service] ${label}: ${message}`,
+  );
+}
+
 export function createFridayMemoryService(
   deps: CreateFridayMemoryServiceDeps,
 ): FridayMemoryService {
@@ -116,7 +148,7 @@ export function createFridayMemoryService(
         });
       } catch (err) {
         // Embedding failed — item was stored successfully, just no vector
-        console.warn("[friday][memory-service] embedding failed:", err instanceof Error ? err.message : String(err));
+        warnMemoryFallback("embedding", err instanceof Error ? err.message : String(err));
       }
 
       return item;
@@ -171,7 +203,7 @@ export function createFridayMemoryService(
         );
       } catch (err) {
         // Semantic search unavailable — fallback to FTS-only
-        console.warn("[friday][memory-service] semantic search unavailable:", err instanceof Error ? err.message : String(err));
+        warnMemoryFallback("semantic", err instanceof Error ? err.message : String(err));
       }
 
       // Enforce tagsAll on semantic-only hits before merge (Fix #1)

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ENV_FILE="${ROOT_DIR}/.env"
+
 failures=0
 warnings=0
 
@@ -29,6 +32,13 @@ require_cmd() {
 
 platform="$(uname -s 2>/dev/null || echo unknown)"
 echo "[desktop-check] platform=${platform}"
+
+if [[ -f "${ENV_FILE}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  set +a
+fi
 
 if [[ "${FRIDAY_DESKTOP_ENABLED:-false}" == "true" ]]; then
   print_ok "FRIDAY_DESKTOP_ENABLED=true"

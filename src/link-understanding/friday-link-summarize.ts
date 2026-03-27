@@ -51,7 +51,7 @@ export async function extractReadableContent(
   try {
     const { Readability, parseHTML } = await loadReadabilityDeps();
     const { document } = parseHTML(html);
-    if (url) {
+    if (url && canAssignBaseUri(document)) {
       try {
         (document as { baseURI?: string }).baseURI = url;
       } catch (err) {
@@ -69,6 +69,18 @@ export async function extractReadableContent(
     console.warn("[friday][link-summarize] HTML extraction failed:", err instanceof Error ? err.message : String(err));
     return null;
   }
+}
+
+function canAssignBaseUri(document: object): boolean {
+  let current: object | null = document;
+  while (current) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, "baseURI");
+    if (descriptor) {
+      return descriptor.writable === true || typeof descriptor.set === "function";
+    }
+    current = Object.getPrototypeOf(current);
+  }
+  return true;
 }
 
 // ─── Regex fallback ───
