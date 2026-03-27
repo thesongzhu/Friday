@@ -744,6 +744,41 @@ export async function createFridayHub(
   // ─── Workflow runtime ───
 
   const triggerRepo = createFridayWorkflowTriggerRepository({ db: stateRuntime!.sqlite });
+  const workflowRealtimeEventBuffer: Array<{ streamId: string; event: string; payload: Record<string, unknown> }> = [];
+  let workflowRealtimeEventPublisher:
+    | {
+      publish(streamId: string, event: string, payload: Record<string, unknown>): void;
+    }
+    | undefined;
+
+  const publishWorkflowRealtimeEvent = async (event: string, payload: unknown): Promise<void> => {
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+      return;
+    }
+
+    const record = payload as Record<string, unknown>;
+    const runId = typeof record.runId === "string" && record.runId.trim().length > 0
+      ? record.runId.trim()
+      : undefined;
+    const workflowId = typeof record.workflowId === "string" && record.workflowId.trim().length > 0
+      ? record.workflowId.trim()
+      : undefined;
+    const streamId = runId
+      ? `run:${runId}`
+      : workflowId
+        ? `workflow:${workflowId}`
+        : null;
+
+    if (!streamId || !event.startsWith("workflow.")) {
+      return;
+    }
+
+    if (workflowRealtimeEventPublisher) {
+      workflowRealtimeEventPublisher.publish(streamId, event, record);
+    } else {
+      workflowRealtimeEventBuffer.push({ streamId, event, payload: record });
+    }
+  };
 
   const workflowRuntime = createFridayWorkflowRuntime({
     db: stateRuntime!.sqlite,
@@ -755,6 +790,7 @@ export async function createFridayHub(
       return skill ?? null;
     },
     invokeSkill: invokeSkillForWorkflow,
+    publishEvent: publishWorkflowRealtimeEvent,
     triggerRepo,
   });
   const workflowBuilderRuntime = createFridayWorkflowBuilderRuntime({
@@ -3462,12 +3498,25 @@ export async function createFridayHub(
       );
     },
   };
+  workflowRealtimeEventPublisher = {
+    publish(streamId, event, payload) {
+      apiRuntime.eventBus.publish(
+        streamId,
+        event as never,
+        payload as never,
+      );
+    },
+  };
 
   // Flush any events that were buffered during bootstrap before the publisher was ready.
   for (const buffered of selfHealingEventBuffer) {
     selfHealingEventPublisher.publish(buffered.streamId, buffered.event, buffered.payload, buffered.correlationId);
   }
   selfHealingEventBuffer.length = 0;
+  for (const buffered of workflowRealtimeEventBuffer) {
+    workflowRealtimeEventPublisher.publish(buffered.streamId, buffered.event, buffered.payload);
+  }
+  workflowRealtimeEventBuffer.length = 0;
 
   // ─── Agent → Learning bridge ───
   const agentLearningBridge = createFridayAgentLearningBridge({

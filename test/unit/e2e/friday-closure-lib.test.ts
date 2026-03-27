@@ -83,4 +83,41 @@ describe("friday closure lib", () => {
       overall: "NO-GO",
     });
   });
+
+  it("treats hidden terminal run failures inside PASS entries as NO-GO", () => {
+    const readiness = resolveReadinessReport([
+      { id: "local.backstop.release-verify", status: FRIDAY_CLOSURE_STATUSES.PASS },
+      {
+        id: "local.sessions-agent-memory",
+        status: FRIDAY_CLOSURE_STATUSES.PASS,
+        details: {
+          runStatus: "failed",
+          closureFailures: ["agentRun.status=failed"],
+        },
+      },
+    ], "local");
+
+    expect(readiness).toEqual({
+      mode: "local",
+      repoReady: FRIDAY_READINESS_VERDICTS.GO,
+      productReadyLocal: FRIDAY_READINESS_VERDICTS.NO_GO,
+      cloudReady: FRIDAY_READINESS_VERDICTS.NOT_RUN,
+      overall: "NO-GO",
+    });
+  });
+
+  it("treats PASS entries with closureFailures as failed in closure verdict summaries", () => {
+    const verdict = resolveClosureVerdict([
+      {
+        id: "local.sessions-agent-memory",
+        status: FRIDAY_CLOSURE_STATUSES.PASS,
+        details: {
+          closureFailures: ["automationRun.status=failed"],
+        },
+      },
+    ]);
+
+    expect(verdict.summary).toEqual({ pass: 0, fail: 1, blocker: 0 });
+    expect(verdict.verdict).toBe("NO-GO");
+  });
 });

@@ -268,21 +268,23 @@ export function createFridayRulesRepository(): FridayRulesRepository {
     // ─── Evaluation Audit Log ───
 
     insertEvaluationLog(db, entry) {
-      db.prepare(`
-        INSERT INTO rule_evaluation_log (id, rule_id, policy_bundle_id, decision, resource, action, context_redacted_json, redaction_applied, redacted_fields_json, matched_rules_json, duration_ms, run_id, workflow_id, principal_id, created_at)
-        VALUES (@id, @rule_id, @policy_bundle_id, @decision, @resource, @action, @context_redacted_json, @redaction_applied, @redacted_fields_json, @matched_rules_json, @duration_ms, @run_id, @workflow_id, @principal_id, @created_at)
-      `).run(entry);
-
-      // Bridge for newer audit queries if v034+ schema is available.
       try {
         db.prepare(`
           INSERT INTO rule_eval_audit (id, rule_id, policy_bundle_id, decision, resource, action, context_redacted_json, redaction_applied, redacted_fields_json, matched_rules_json, duration_ms, run_id, workflow_id, principal_id, context_hash, created_at)
           VALUES (@id, @rule_id, @policy_bundle_id, @decision, @resource, @action, @context_redacted_json, @redaction_applied, @redacted_fields_json, @matched_rules_json, @duration_ms, @run_id, @workflow_id, @principal_id, NULL, @created_at)
         `).run(entry);
+        return;
       } catch (err) {
-        // table may not exist on legacy schemas
-        console.warn("[friday][rules-repository] audit log insert failed:", err instanceof Error ? err.message : String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        if (!message.includes("no such table: rule_eval_audit")) {
+          throw err;
+        }
       }
+
+      db.prepare(`
+        INSERT INTO rule_evaluation_log (id, rule_id, policy_bundle_id, decision, resource, action, context_redacted_json, redaction_applied, redacted_fields_json, matched_rules_json, duration_ms, run_id, workflow_id, principal_id, created_at)
+        VALUES (@id, @rule_id, @policy_bundle_id, @decision, @resource, @action, @context_redacted_json, @redaction_applied, @redacted_fields_json, @matched_rules_json, @duration_ms, @run_id, @workflow_id, @principal_id, @created_at)
+      `).run(entry);
     },
 
     listEvaluationLogs(db, opts = {}) {

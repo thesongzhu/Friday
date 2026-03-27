@@ -113,9 +113,23 @@ export function collectChannelBlockers(env = process.env) {
     .map((kind) => `Channel "${kind}" is not configured in FRIDAY_CHANNELS_JSON`);
 }
 
+function entryHasHiddenClosureFailure(entry) {
+  if (!entry || typeof entry !== "object") {
+    return false;
+  }
+
+  const closureFailures = entry.details?.closureFailures;
+  return Array.isArray(closureFailures)
+    && closureFailures.some((item) => typeof item === "string" && item.trim().length > 0);
+}
+
 export function summarizeLedger(entries) {
   return entries.reduce(
     (summary, entry) => {
+      if (entry.status === FRIDAY_CLOSURE_STATUSES.PASS && entryHasHiddenClosureFailure(entry)) {
+        summary.fail += 1;
+        return summary;
+      }
       if (entry.status === FRIDAY_CLOSURE_STATUSES.PASS) summary.pass += 1;
       if (entry.status === FRIDAY_CLOSURE_STATUSES.FAIL) summary.fail += 1;
       if (entry.status === FRIDAY_CLOSURE_STATUSES.BLOCKER) summary.blocker += 1;

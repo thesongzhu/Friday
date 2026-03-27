@@ -1,15 +1,15 @@
 {
   "status": "passed",
-  "gitHead": "52c9669",
-  "generatedAt": "2026-03-25T23:14:04.863Z",
+  "gitHead": "bdc4b5f",
+  "generatedAt": "2026-03-27T16:54:16.324Z",
   "title": "Non-Platform Final Closeout",
   "notes": [
     "All non-platform closeout gates passed."
   ],
   "metrics": {
     "stepCount": "9",
-    "startedAt": "2026-03-25T23:09:16.372Z",
-    "completedAt": "2026-03-25T23:14:04.863Z"
+    "startedAt": "2026-03-27T16:50:31.805Z",
+    "completedAt": "2026-03-27T16:54:16.324Z"
   },
   "steps": [
     {
@@ -18,8 +18,8 @@
       "status": "passed",
       "exitCode": 0,
       "signal": null,
-      "startedAt": "2026-03-25T23:09:16.374Z",
-      "finishedAt": "2026-03-25T23:13:33.319Z"
+      "startedAt": "2026-03-27T16:50:31.806Z",
+      "finishedAt": "2026-03-27T16:53:47.650Z"
     },
     {
       "label": "Phase 1 closeout",
@@ -27,8 +27,8 @@
       "status": "passed",
       "exitCode": 0,
       "signal": null,
-      "startedAt": "2026-03-25T23:13:33.319Z",
-      "finishedAt": "2026-03-25T23:13:43.270Z"
+      "startedAt": "2026-03-27T16:53:47.650Z",
+      "finishedAt": "2026-03-27T16:53:56.133Z"
     },
     {
       "label": "Phase 2 closeout",
@@ -36,8 +36,8 @@
       "status": "passed",
       "exitCode": 0,
       "signal": null,
-      "startedAt": "2026-03-25T23:13:43.270Z",
-      "finishedAt": "2026-03-25T23:13:49.171Z"
+      "startedAt": "2026-03-27T16:53:56.133Z",
+      "finishedAt": "2026-03-27T16:54:01.550Z"
     },
     {
       "label": "Phase 3 closeout",
@@ -45,8 +45,8 @@
       "status": "passed",
       "exitCode": 0,
       "signal": null,
-      "startedAt": "2026-03-25T23:13:49.171Z",
-      "finishedAt": "2026-03-25T23:13:53.960Z"
+      "startedAt": "2026-03-27T16:54:01.550Z",
+      "finishedAt": "2026-03-27T16:54:05.737Z"
     },
     {
       "label": "Phase 4 closeout",
@@ -54,8 +54,8 @@
       "status": "passed",
       "exitCode": 0,
       "signal": null,
-      "startedAt": "2026-03-25T23:13:53.960Z",
-      "finishedAt": "2026-03-25T23:13:56.366Z"
+      "startedAt": "2026-03-27T16:54:05.737Z",
+      "finishedAt": "2026-03-27T16:54:08.049Z"
     },
     {
       "label": "Phase 5 closeout",
@@ -63,8 +63,8 @@
       "status": "passed",
       "exitCode": 0,
       "signal": null,
-      "startedAt": "2026-03-25T23:13:56.366Z",
-      "finishedAt": "2026-03-25T23:13:59.611Z"
+      "startedAt": "2026-03-27T16:54:08.049Z",
+      "finishedAt": "2026-03-27T16:54:10.923Z"
     },
     {
       "label": "Marketplace closeout",
@@ -72,8 +72,8 @@
       "status": "passed",
       "exitCode": 0,
       "signal": null,
-      "startedAt": "2026-03-25T23:13:59.611Z",
-      "finishedAt": "2026-03-25T23:14:04.670Z"
+      "startedAt": "2026-03-27T16:54:10.923Z",
+      "finishedAt": "2026-03-27T16:54:16.109Z"
     },
     {
       "label": "UI bundle health",
@@ -81,8 +81,8 @@
       "status": "passed",
       "exitCode": 0,
       "signal": null,
-      "startedAt": "2026-03-25T23:14:04.670Z",
-      "finishedAt": "2026-03-25T23:14:04.766Z"
+      "startedAt": "2026-03-27T16:54:16.109Z",
+      "finishedAt": "2026-03-27T16:54:16.206Z"
     },
     {
       "label": "Final truth audit",
@@ -90,8 +90,8 @@
       "status": "passed",
       "exitCode": 0,
       "signal": null,
-      "startedAt": "2026-03-25T23:14:04.766Z",
-      "finishedAt": "2026-03-25T23:14:04.863Z"
+      "startedAt": "2026-03-27T16:54:16.206Z",
+      "finishedAt": "2026-03-27T16:54:16.324Z"
     }
   ]
 }

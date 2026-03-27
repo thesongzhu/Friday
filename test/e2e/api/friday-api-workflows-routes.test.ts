@@ -724,6 +724,7 @@ describe("API — Workflow routes", () => {
     };
     expect(runJson.ok).toBe(true);
     const runId = runJson.data.run.id;
+    await waitForRunTerminal(env.baseUrl, token, runId);
 
     // Get timeline
     const timelineRes = await fetch(
@@ -737,6 +738,7 @@ describe("API — Workflow routes", () => {
     };
     expect(timelineJson.ok).toBe(true);
     expect(Array.isArray(timelineJson.data.items)).toBe(true);
+    expect(timelineJson.data.items.length).toBeGreaterThan(0);
   });
 
   // ── workflow_run_evidence_export_download ───────────────────────────────
