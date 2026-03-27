@@ -1,5 +1,6 @@
 import type { FridayResolvedAgentTaskProfile } from "../runtime/friday-agent-task-profile.js";
 import type { FridayAgentContextCostSummary } from "../runtime/friday-agent-runtime.types.js";
+import type { FridayToolCallSummary } from "../services/friday-tool-call-summary.js";
 
 // ─── Agent run status ───
 
@@ -364,6 +365,8 @@ export interface FridayAgentToolEndPayload {
   errorCode?: string;
   routeId?: string;
   correlationId?: string;
+  /** Lightweight tool call classification for execution trace data collection. */
+  toolCallSummary?: FridayToolCallSummary;
 }
 
 export interface FridayAgentRunCompletedPayload {

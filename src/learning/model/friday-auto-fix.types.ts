@@ -7,6 +7,7 @@ import type {
   JsonValue,
   UUID,
 } from "./friday-learning.types.js";
+import type { FridayUtilityResult } from "../services/friday-expected-utility-calculator.js";
 
 export type FridayAutoFixRiskTier = 0 | 1 | 2;
 export type FridayAutoFixActionStatus = "planned" | "applied" | "rolled_back" | "rejected";
@@ -135,6 +136,8 @@ export interface FridayRiskAssessment {
   reasons: string[];
   requiresApproval: boolean;
   autoApplyAllowed: boolean;
+  /** Expected utility analysis (when available). Informational — does not change existing decisions. */
+  utilityResult?: FridayUtilityResult;
 }
 
 export interface FridayAutoFixExecutionResult {
