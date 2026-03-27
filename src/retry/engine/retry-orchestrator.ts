@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Retry Orchestrator — End-to-end retry execution pipeline.
  *
@@ -251,7 +253,7 @@ export class RetryOrchestrator {
     const maxExecutionAttempts = config.maxExecutionAttempts ?? 100;
 
     if (maxExecutionAttempts < 1) {
-      throw new Error("maxExecutionAttempts must be >= 1");
+      throw new FridayDomainError("VALIDATION_ERROR", "maxExecutionAttempts must be >= 1", { httpStatus: 400 });
     }
 
     let currentAttemptNumber = 0;

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
+import { FridayDomainError } from "#errors";
 
 // ─── Constants ───
 
@@ -164,7 +165,8 @@ function matchesOrigin(url: string, allowedOrigins: string[]): boolean {
   let parsed: URL;
   try {
     parsed = new URL(url);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][browser-manager] parse-origin-url:", err instanceof Error ? err.message : String(err));
     return false;
   }
 
@@ -196,7 +198,8 @@ function validateUrl(url: string, allowedOrigins: string[]): string | undefined 
   let parsed: URL;
   try {
     parsed = new URL(url);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][browser-manager] validate-url:", err instanceof Error ? err.message : String(err));
     return `Invalid URL: ${url}`;
   }
 
@@ -217,7 +220,7 @@ export function sanitizeArtifactPathSegment(input: string): string {
   const raw = input.trim();
   const segments = raw.split(/[\\/]+/).filter(Boolean);
   if (segments.length === 0 || segments.some((s) => s === "." || s === "..")) {
-    throw new Error(`Invalid artifact path segment "${input}"`);
+    throw new FridayDomainError("VALIDATION_ERROR", `Invalid artifact path segment "${input}"`, { httpStatus: 400 });
   }
 
   const sanitized = segments
@@ -226,7 +229,7 @@ export function sanitizeArtifactPathSegment(input: string): string {
     .replace(/^[._-]+|[._-]+$/g, "");
 
   if (!sanitized) {
-    throw new Error(`Invalid artifact path segment "${input}"`);
+    throw new FridayDomainError("VALIDATION_ERROR", `Invalid artifact path segment "${input}"`, { httpStatus: 400 });
   }
   return sanitized;
 }
@@ -253,7 +256,8 @@ function resolvePlaywrightBrowsersCacheDir(platform: NodeJS.Platform): string | 
   let userHome = "";
   try {
     userHome = os.userInfo().homedir;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][browser-manager] resolve-homedir:", err instanceof Error ? err.message : String(err));
     userHome = os.homedir();
   }
   if (!userHome) {
@@ -312,7 +316,8 @@ function findChromeExecutable(customPath?: string): string | undefined {
     try {
       fs.accessSync(executable, fs.constants.X_OK);
       return executable;
-    } catch {
+    } catch (err) {
+      console.warn("[friday][browser-manager] access-chrome-app:", err instanceof Error ? err.message : String(err));
       return undefined;
     }
   }
@@ -320,7 +325,8 @@ function findChromeExecutable(customPath?: string): string | undefined {
     try {
       fs.accessSync(customPath, fs.constants.X_OK);
       return customPath;
-    } catch {
+    } catch (err) {
+      console.warn("[friday][browser-manager] access-custom-chrome:", err instanceof Error ? err.message : String(err));
       return undefined;
     }
   }
@@ -329,7 +335,8 @@ function findChromeExecutable(customPath?: string): string | undefined {
       try {
         fs.accessSync(p, fs.constants.X_OK);
         return p;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][browser-manager] access-chrome-path:", err instanceof Error ? err.message : String(err));
         continue;
       }
     }
@@ -360,7 +367,8 @@ async function probeCdpEndpoint(port: number): Promise<string | undefined> {
     if (!res.ok) return undefined;
     const data = (await res.json()) as { webSocketDebuggerUrl?: string };
     return data.webSocketDebuggerUrl ?? undefined;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][browser-manager] discover-cdp-endpoint:", err instanceof Error ? err.message : String(err));
     return undefined;
   }
 }
@@ -411,10 +419,7 @@ async function resolveHostChromeEndpoint(
   // 2. Find and launch user's Chrome with CDP
   const exe = findChromeExecutable(chromePath);
   if (!exe) {
-    throw new Error(
-      "[friday] Host Chrome executable not found. " +
-      "Install Google Chrome or set FRIDAY_BROWSER_CHROME_PATH.",
-    );
+    throw new FridayDomainError("NOT_FOUND", "[friday] Host Chrome executable not found. Install Google Chrome or set FRIDAY_BROWSER_CHROME_PATH.", { httpStatus: 404 });
   }
 
   console.log(`[friday] Launching Chrome with CDP on port ${String(port)}: ${exe}`);
@@ -430,10 +435,7 @@ async function resolveHostChromeEndpoint(
     }
   }
 
-  throw new Error(
-    `[friday] Chrome CDP did not become available on port ${String(port)} after 15 seconds. ` +
-    "Ensure Chrome is not blocked from starting or try setting FRIDAY_BROWSER_WS_ENDPOINT manually.",
-  );
+  throw new FridayDomainError("NOT_INITIALIZED", `[friday] Chrome CDP did not become available on port ${String(port)} after 15 seconds. Ensure Chrome is not blocked from starting or try setting FRIDAY_BROWSER_WS_ENDPOINT manually.`, { httpStatus: 503 });
 }
 
 // ─── Factory ───
@@ -509,7 +511,7 @@ export function createFridayBrowserManager(
   function reservePageSlot(): () => void {
     const projectedTotal = totalOpenPages() + reservedPageSlots;
     if (projectedTotal >= maxTotalPages) {
-      throw new Error(`Maximum total pages (${String(maxTotalPages)}) reached.`);
+      throw new FridayDomainError("VALIDATION_ERROR", `Maximum total pages (${String(maxTotalPages)}) reached.`, { httpStatus: 400 });
     }
 
     reservedPageSlots += 1;
@@ -604,9 +606,7 @@ export function createFridayBrowserManager(
     }
 
     if (sessions.size >= maxSessions) {
-      throw new Error(
-        `Maximum sessions (${String(maxSessions)}) reached. Close an existing session first.`,
-      );
+      throw new FridayDomainError("VALIDATION_ERROR", `Maximum sessions (${String(maxSessions)}) reached. Close an existing session first.`, { httpStatus: 400 });
     }
 
     signal?.throwIfAborted();
@@ -749,15 +749,13 @@ export function createFridayBrowserManager(
   ): Promise<{ tabId: string; page: Page }> {
     const session = sessions.get(sessionId);
     if (!session) {
-      throw new Error(`Session "${sessionId}" not found. Use "open" action first.`);
+      throw new FridayDomainError("NOT_FOUND", `Session "${sessionId}" not found. Use "open" action first.`, { httpStatus: 404 });
     }
 
     // Detect dead browser and evict so caller can re-open
     if (!isSessionAlive(session)) {
       await evictDeadSession(sessionId);
-      throw new Error(
-        `Session "${sessionId}" browser has disconnected. Use "open" action to start a new session.`,
-      );
+      throw new FridayDomainError("NOT_INITIALIZED", `Session "${sessionId}" browser has disconnected. Use "open" action to start a new session.`, { httpStatus: 503 });
     }
 
     const targetTabId = getOpts?.tabId ?? session.activeTabId;
@@ -780,13 +778,11 @@ export function createFridayBrowserManager(
     }
 
     if (!getOpts?.createIfMissing) {
-      throw new Error(`Tab "${targetTabId}" not found in session "${sessionId}".`);
+      throw new FridayDomainError("NOT_FOUND", `Tab "${targetTabId}" not found in session "${sessionId}".`, { httpStatus: 404 });
     }
 
     if (session.tabs.size >= maxTabsPerSession) {
-      throw new Error(
-        `Maximum tabs per session (${String(maxTabsPerSession)}) reached. Close a tab first.`,
-      );
+      throw new FridayDomainError("VALIDATION_ERROR", `Maximum tabs per session (${String(maxTabsPerSession)}) reached. Close a tab first.`, { httpStatus: 400 });
     }
 
     const releasePageSlot = reservePageSlot();

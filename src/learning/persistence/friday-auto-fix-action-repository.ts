@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayAutoFixActionEntity,
   FridayAutoFixActionRow,
@@ -74,16 +75,14 @@ export interface FridayAutoFixActionRepository {
 }
 
 function rowToEntity(row: FridayAutoFixActionRow): FridayAutoFixActionEntity {
-  const plan = JSON.parse(row.plan_json) as FridayAutoFixPlan;
+  const plan = safeJsonParse<FridayAutoFixPlan>(row.plan_json) ?? ({} as FridayAutoFixPlan);
   return {
     actionId: row.action_id,
     incidentId: row.incident_id,
     userId: row.user_id,
     riskTier: row.risk_tier,
     plan,
-    rollbackPlan: row.rollback_plan_json
-      ? (JSON.parse(row.rollback_plan_json) as FridayAutoFixPlan["rollbackPlan"])
-      : undefined,
+    rollbackPlan: safeJsonParse<FridayAutoFixPlan["rollbackPlan"]>(row.rollback_plan_json),
     status: row.status,
     outcome: row.outcome,
     appliedAt: row.applied_at ?? undefined,

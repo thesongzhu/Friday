@@ -50,7 +50,8 @@ export function createLarkWebhookRelayService(): LarkWebhookRelayService {
       let payload: Record<string, unknown>;
       try {
         payload = JSON.parse(rawBody) as Record<string, unknown>;
-      } catch {
+      } catch (err) {
+      console.warn("[friday][lark-webhook-relay] operation failed:", err instanceof Error ? err.message : String(err));
         return {
           accepted: false,
           statusCode: 400,

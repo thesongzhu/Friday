@@ -7,6 +7,7 @@
  * @module playbook/engine
  */
 
+import { FridayDomainError } from "#errors";
 import type {
   FridayPlaybookCandidate,
   FridayPlaybookPromotionEngine,
@@ -283,7 +284,7 @@ export function createPromoterJobRunner(deps: PromoterJobRunnerDeps): PromoterJo
 
     start(intervalMs: number) {
       if (intervalMs <= 0) {
-        throw new Error("intervalMs must be > 0");
+        throw new FridayDomainError("VALIDATION_ERROR", "intervalMs must be > 0", { httpStatus: 400 });
       }
 
       if (intervalHandle !== null) {

@@ -40,7 +40,8 @@ export function createFridayShellExecutor(): FridayShellExecutor {
             if (child.pid != null) {
               process.kill(-child.pid, "SIGKILL");
             }
-          } catch {
+          } catch (err) {
+            console.warn("[friday][shell-executor] operation failed:", err instanceof Error ? err.message : String(err));
             // Process may already be gone
             child.kill("SIGKILL");
           }

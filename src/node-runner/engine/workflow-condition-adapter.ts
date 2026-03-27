@@ -8,6 +8,8 @@
  * @module node-runner/engine
  */
 
+import { FridayDomainError } from "#errors";
+
 import type {
   FridayNodeAdapter,
   FridayNodeExecutionContext,
@@ -49,7 +51,7 @@ export class WorkflowConditionAdapter implements FridayNodeAdapter {
     const conditionExpr = config.condition as string | undefined;
 
     if (!conditionExpr) {
-      throw new Error("condition node missing 'condition' in config");
+      throw new FridayDomainError("VALIDATION_ERROR", "condition node missing 'condition' in config", { httpStatus: 400 });
     }
 
     return { ...config };
@@ -98,5 +100,5 @@ export class WorkflowConditionAdapter implements FridayNodeAdapter {
 function throwIfAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;
   if (signal.reason instanceof Error) throw signal.reason;
-  throw new Error("Condition node operation aborted");
+  throw new FridayDomainError("INTERNAL_ERROR", "Condition node operation aborted", { httpStatus: 500 });
 }

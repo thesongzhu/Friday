@@ -134,7 +134,8 @@ function parseStepIds(raw: string): string[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed.filter((step): step is string => typeof step === "string");
-  } catch {
+  } catch (err) {
+    console.warn("[friday][setup-routes] operation failed:", err instanceof Error ? err.message : String(err));
     return [];
   }
 }
@@ -395,7 +396,8 @@ export function createFridaySetupRoutes(
               entry !== null &&
               (entry as { enabled?: unknown }).enabled === true,
             ).length;
-          } catch {
+          } catch (err) {
+    console.warn("[friday][setup-routes] operation failed:", err instanceof Error ? err.message : String(err));
             return 0;
           }
         })();

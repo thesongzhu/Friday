@@ -30,6 +30,9 @@ export function createFridaySqliteLayer(
     pragmas,
   });
 
+  // P2-DATA: Track closed state for idempotent close()
+  let closed = false;
+
   return {
     dbPath,
     writer,
@@ -48,6 +51,8 @@ export function createFridaySqliteLayer(
     },
 
     close(): void {
+      if (closed) return;
+      closed = true;
       reads.close();
       writer.close();
     },

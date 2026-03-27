@@ -7,6 +7,7 @@
  * External API calls are stubbed behind TelegramPollingService / TelegramApiService.
  */
 
+import { FridayDomainError } from "#errors";
 import type {
   FridayChannelMessage,
   FridayChannelPlugin,
@@ -107,7 +108,7 @@ export function createFridayTelegramChannel(deps: TelegramChannelDeps = {}): Fri
 
   const outboundAdapter: FridayChannelOutboundAdapter = {
     async send(options: FridayChannelSendOptions): Promise<{ messageId: string }> {
-      if (!config) throw new Error("Telegram channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Telegram channel not initialized", { httpStatus: 503 });
 
       const result = await api.sendMessage(config.botToken, {
         chat_id: options.chatId,
@@ -138,12 +139,12 @@ export function createFridayTelegramChannel(deps: TelegramChannelDeps = {}): Fri
 
   const lifecycleAdapter: FridayChannelLifecycleAdapter = {
     async connect(eventHandler: (rawEvent: unknown) => void) {
-      if (!config) throw new Error("Telegram channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Telegram channel not initialized", { httpStatus: 503 });
       connectionStatus = "connecting";
 
       if (config.mode === "webhook") {
         if (!config.webhookUrl) {
-          throw new Error("Telegram webhook mode requires webhookUrl in config");
+          throw new FridayDomainError("VALIDATION_ERROR", "Telegram webhook mode requires webhookUrl in config", { httpStatus: 400 });
         }
         await webhookService.startWebhook(config.botToken, config.webhookUrl, (update) => {
           eventHandler(update);
@@ -208,7 +209,7 @@ export function createFridayTelegramChannel(deps: TelegramChannelDeps = {}): Fri
     },
 
     async start(handler) {
-      if (!config) throw new Error("Telegram channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Telegram channel not initialized", { httpStatus: 503 });
       connectionStatus = "connecting";
 
       const updateHandler = (update: TelegramUpdate) => {
@@ -218,7 +219,7 @@ export function createFridayTelegramChannel(deps: TelegramChannelDeps = {}): Fri
 
       if (config.mode === "webhook") {
         if (!config.webhookUrl) {
-          throw new Error("Telegram webhook mode requires webhookUrl in config");
+          throw new FridayDomainError("VALIDATION_ERROR", "Telegram webhook mode requires webhookUrl in config", { httpStatus: 400 });
         }
         await webhookService.startWebhook(config.botToken, config.webhookUrl, updateHandler);
       } else {

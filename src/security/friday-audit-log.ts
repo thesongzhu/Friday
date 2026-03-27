@@ -143,8 +143,9 @@ export function resolveFridayAuditLogPath(stateDir: string): string {
 async function bestEffortChmod(filePath: string, mode: number): Promise<void> {
   try {
     await fs.chmod(filePath, mode);
-  } catch {
+  } catch (err) {
     // Best-effort — some filesystems don't support chmod
+    console.warn("[friday][audit-log] chmod failed:", err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -194,8 +195,9 @@ export async function appendFridayAuditLog(
         await fs.writeFile(filePath, kept.join("\n") + "\n", { encoding: "utf8", mode: FILE_MODE });
         await bestEffortChmod(filePath, FILE_MODE);
       }
-    } catch {
+    } catch (err) {
       // Rotation failure is non-fatal — log continues to work
+      console.warn("[friday][audit-log] rotation failed:", err instanceof Error ? err.message : String(err));
     }
   });
 }

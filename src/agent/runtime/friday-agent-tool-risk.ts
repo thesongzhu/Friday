@@ -94,5 +94,21 @@ export function getApprovalRequiredReasonForToolCall(
     return getApprovalRequiredReasonForFileMutation(filePath, [oldText, newText]);
   }
 
+  // P1-SEC-002: browser:evaluate requires approval — arbitrary JS execution
+  if (toolName === "browser") {
+    const action = typeof args.action === "string" ? args.action : "";
+    if (action === "evaluate") {
+      return "Executing arbitrary JavaScript in the browser requires explicit approval.";
+    }
+  }
+
+  // P2-SEC-010: desktop:launch_app requires approval — OS application control
+  if (toolName === "desktop") {
+    const action = typeof args.action === "string" ? args.action : "";
+    if (action === "launch_app" || action === "close_app") {
+      return "Launching or closing desktop applications requires explicit approval.";
+    }
+  }
+
   return null;
 }

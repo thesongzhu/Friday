@@ -40,14 +40,16 @@ export function createFridayPluginDiscoveryService(
   const readdir = deps.readdir ?? ((p: string) => {
     try {
       return fs.readdirSync(p);
-    } catch {
+    } catch (err) {
+      console.warn("[friday][plugin-discovery-service] readdir failed:", err instanceof Error ? err.message : String(err));
       return [];
     }
   });
   const isDirectory = deps.isDirectory ?? ((p: string) => {
     try {
       return fs.statSync(p).isDirectory();
-    } catch {
+    } catch (err) {
+      console.warn("[friday][plugin-discovery-service] stat failed:", err instanceof Error ? err.message : String(err));
       return false;
     }
   });

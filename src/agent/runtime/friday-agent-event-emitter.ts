@@ -50,8 +50,9 @@ export function createFridayAgentEventEmitter(): FridayAgentEventEmitter {
       for (const listener of set) {
         try {
           listener(payload);
-        } catch {
+        } catch (err) {
           // Swallow listener errors to prevent breaking the agent loop
+          console.warn("[friday][agent-event-emitter] listener error:", err instanceof Error ? err.message : String(err));
         }
       }
     },

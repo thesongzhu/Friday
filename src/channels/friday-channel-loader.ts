@@ -6,6 +6,7 @@
  * based on configuration. Supports both legacy plugins and adapter-based plugins.
  */
 
+import { FridayDomainError } from "#errors";
 import type { FridayChannelPlugin } from "./friday-channel.types.js";
 
 // ─── Types ───
@@ -78,9 +79,11 @@ export function createFridayChannelLoader(
     create(kind) {
       const factory = factories.get(kind);
       if (!factory) {
-        throw new Error(
+        throw new FridayDomainError(
+          "NOT_FOUND",
           `No channel factory registered for kind "${kind}". ` +
             `Available: ${Array.from(factories.keys()).join(", ") || "(none)"}`,
+          { httpStatus: 404 },
         );
       }
       return factory();

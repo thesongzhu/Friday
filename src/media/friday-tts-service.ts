@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { FridayDomainError } from "#errors";
 
 // ─── Constants ───
 
@@ -92,17 +93,17 @@ export interface FridayTtsService {
 
 export function validateTtsText(text: string): void {
   if (!text || text.trim().length === 0) {
-    throw new Error("Text is required for TTS.");
+    throw new FridayDomainError("VALIDATION_ERROR", "Text is required for TTS.", { httpStatus: 400 });
   }
   if (text.length > MAX_TEXT_LENGTH) {
-    throw new Error(`Text exceeds maximum length of ${MAX_TEXT_LENGTH} characters.`);
+    throw new FridayDomainError("VALIDATION_ERROR", `Text exceeds maximum length of ${MAX_TEXT_LENGTH} characters.`, { httpStatus: 400 });
   }
 }
 
 export function validateTtsFormat(format: string | undefined): FridayTtsFormat {
   if (!format) return DEFAULT_FORMAT;
   if (!VALID_FORMATS.has(format)) {
-    throw new Error(`Invalid format "${format}". Valid: ${Array.from(VALID_FORMATS).join(", ")}.`);
+    throw new FridayDomainError("VALIDATION_ERROR", `Invalid format "${format}". Valid: ${Array.from(VALID_FORMATS).join(", ")}.`, { httpStatus: 400 });
   }
   return format as FridayTtsFormat;
 }
@@ -110,7 +111,7 @@ export function validateTtsFormat(format: string | undefined): FridayTtsFormat {
 export function validateTtsSpeed(speed: number | undefined): number {
   if (speed === undefined) return DEFAULT_SPEED;
   if (speed < MIN_SPEED || speed > MAX_SPEED) {
-    throw new Error(`Speed must be between ${MIN_SPEED} and ${MAX_SPEED}. Got: ${speed}`);
+    throw new FridayDomainError("VALIDATION_ERROR", `Speed must be between ${MIN_SPEED} and ${MAX_SPEED}. Got: ${speed}`, { httpStatus: 400 });
   }
   return speed;
 }

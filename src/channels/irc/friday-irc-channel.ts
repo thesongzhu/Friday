@@ -5,6 +5,7 @@
  * Sends via PRIVMSG commands.
  */
 
+import { FridayDomainError } from "#errors";
 import type {
   FridayChannelMessage,
   FridayChannelPlugin,
@@ -88,7 +89,7 @@ export function createFridayIrcChannel(deps: IrcChannelDeps = {}): FridayChannel
 
   const outboundAdapter: FridayChannelOutboundAdapter = {
     async send(options: FridayChannelSendOptions): Promise<{ messageId: string }> {
-      if (!config) throw new Error("IRC channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "IRC channel not initialized", { httpStatus: 503 });
 
       await connection.sendMessage(options.chatId, options.text);
 
@@ -119,7 +120,7 @@ export function createFridayIrcChannel(deps: IrcChannelDeps = {}): FridayChannel
 
   const lifecycleAdapter: FridayChannelLifecycleAdapter = {
     async connect(eventHandler: (rawEvent: unknown) => void) {
-      if (!config) throw new Error("IRC channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "IRC channel not initialized", { httpStatus: 503 });
       connectionStatus = "connecting";
 
       await connection.connect(
@@ -158,13 +159,18 @@ export function createFridayIrcChannel(deps: IrcChannelDeps = {}): FridayChannel
   const plugin: FridayChannelPlugin = {
     kind: "irc",
     adapters,
+    contract: {
+      coreAuthority: { messageRouting: true, sessionMirroring: true, audit: true, evidence: true },
+      pluginResponsibilities: { config: true, auth: true, pairing: false, outboundDelivery: true, threadResolution: false, providerRetries: false },
+      supports: { directMessages: false, groupMessages: true, threads: false, typing: false },
+    },
 
     async init(rawConfig) {
       config = configAdapter.validate(rawConfig);
     },
 
     async start(handler) {
-      if (!config) throw new Error("IRC channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "IRC channel not initialized", { httpStatus: 503 });
       connectionStatus = "connecting";
 
       await connection.connect(

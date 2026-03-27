@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import * as net from "node:net";
 import { isPrivateIp } from "../../agent/security/friday-agent-ssrf-guard.js";
 
@@ -88,8 +89,10 @@ export function parseFridayHttpTrustProxyMode(value: string | undefined): Friday
   if (normalized === "off" || normalized === "loopback" || normalized === "private_network") {
     return normalized;
   }
-  throw new Error(
+  throw new FridayDomainError(
+    "VALIDATION_ERROR",
     `Invalid FRIDAY_HTTP_TRUST_PROXY value: ${value}. Expected one of: off, loopback, private_network.`,
+    { httpStatus: 400 },
   );
 }
 

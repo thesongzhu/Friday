@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayDiagnosisRecordEntity,
   FridayDiagnosisRecordRow,
@@ -55,7 +56,7 @@ function rowToEntity(row: FridayDiagnosisRecordRow): FridayDiagnosisRecordEntity
     nodeId: row.node_id ?? undefined,
     errorFingerprint: row.error_fingerprint,
     confidence: row.confidence,
-    diagnosis: JSON.parse(row.diagnosis_json) as JsonObject,
+    diagnosis: safeJsonParse<JsonObject>(row.diagnosis_json) ?? {},
     resolvedAt: row.resolved_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

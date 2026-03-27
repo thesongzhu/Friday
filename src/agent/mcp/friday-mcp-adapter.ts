@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import { spawn } from "node:child_process";
 
 import { FRIDAY_VERSION } from "../../lib/version.js";
@@ -207,8 +208,8 @@ export function parseFridayMcpServersFromEnv(
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
-    warn("[friday] WARNING: FRIDAY_MCP_SERVERS is not valid JSON; MCP adapter disabled.");
+  } catch (err) {
+    warn(`[friday] WARNING: FRIDAY_MCP_SERVERS is not valid JSON; MCP adapter disabled: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
 
@@ -1059,7 +1060,7 @@ function createHttpMcpSession(params: {
   return {
     async request(method, requestParams, options): Promise<unknown> {
       if (closed) {
-        throw new Error(`MCP session is closed for server '${params.server.id}'`);
+        throw new FridayDomainError("NOT_INITIALIZED", `MCP session is closed for server '${params.server.id}'`, { httpStatus: 503 });
       }
 
       const id = nextId;
@@ -1082,7 +1083,7 @@ function createHttpMcpSession(params: {
       const message = normalizeRecord(response);
       if (Object.prototype.hasOwnProperty.call(message, "error")) {
         const rpcError = normalizeRpcError(message.error);
-        throw new Error(`MCP error ${String(rpcError.code)}: ${rpcError.message}`);
+        throw new FridayDomainError("INTERNAL_ERROR", `MCP error ${String(rpcError.code)}: ${rpcError.message}`, { httpStatus: 500 });
       }
 
       return message.result;
@@ -1130,7 +1131,7 @@ async function sendHttpRpc(
   if (input.signal) {
     if (input.signal.aborted) {
       clearTimeout(timeout);
-      throw new Error("MCP HTTP request aborted");
+      throw new FridayDomainError("INTERNAL_ERROR", "MCP HTTP request aborted", { httpStatus: 500 });
     }
     const onAbort = () => timeoutController.abort(input.signal?.reason);
     input.signal.addEventListener("abort", onAbort, { once: true });
@@ -1150,7 +1151,7 @@ async function sendHttpRpc(
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      throw new Error(`MCP HTTP ${String(response.status)} ${response.statusText}${body ? `: ${body}` : ""}`);
+      throw new FridayDomainError("INTERNAL_ERROR", `MCP HTTP ${String(response.status)} ${response.statusText}${body ? `: ${body}` : ""}`, { httpStatus: 500 });
     }
 
     const rawText = await response.text();
@@ -1160,8 +1161,9 @@ async function sendHttpRpc(
 
     try {
       return JSON.parse(rawText);
-    } catch {
-      throw new Error("MCP HTTP response is not valid JSON");
+    } catch (err) {
+      console.warn("[friday][mcp-adapter] parse-http-response:", err instanceof Error ? err.message : String(err));
+      throw new FridayDomainError("INTERNAL_ERROR", "MCP HTTP response is not valid JSON", { httpStatus: 500 });
     }
   } catch (error) {
     throw toError(error);
@@ -1244,7 +1246,7 @@ function createStdioMcpSession(params: {
   return {
     async request(method, requestParams, options): Promise<unknown> {
       if (isClosed) {
-        throw new Error(`MCP session is closed for server '${params.server.id}'`);
+        throw new FridayDomainError("NOT_INITIALIZED", `MCP session is closed for server '${params.server.id}'`, { httpStatus: 503 });
       }
 
       const id = nextId;
@@ -1313,8 +1315,9 @@ function createStdioMcpSession(params: {
             params: requestParams,
           },
         );
-      } catch {
+      } catch (err) {
         // Best-effort notification only.
+        console.warn("[friday][mcp-adapter] send-notification:", err instanceof Error ? err.message : String(err));
       }
     },
 
@@ -1332,14 +1335,16 @@ function createStdioMcpSession(params: {
             params: {},
           },
         );
-      } catch {
+      } catch (err) {
         // ignore
+        console.warn("[friday][mcp-adapter] write-exit-frame:", err instanceof Error ? err.message : String(err));
       }
 
       try {
         child.stdin.end();
-      } catch {
+      } catch (err) {
         // ignore
+        console.warn("[friday][mcp-adapter] end-stdin:", err instanceof Error ? err.message : String(err));
       }
 
       await Promise.race([
@@ -1350,8 +1355,9 @@ function createStdioMcpSession(params: {
       if (!isClosed) {
         try {
           child.kill("SIGTERM");
-        } catch {
+        } catch (err) {
           // ignore
+          console.warn("[friday][mcp-adapter] kill-sigterm:", err instanceof Error ? err.message : String(err));
         }
         await Promise.race([
           exitPromise,
@@ -1362,8 +1368,9 @@ function createStdioMcpSession(params: {
       if (!isClosed) {
         try {
           child.kill("SIGKILL");
-        } catch {
+        } catch (err) {
           // ignore
+          console.warn("[friday][mcp-adapter] kill-sigkill:", err instanceof Error ? err.message : String(err));
         }
       }
     },
@@ -1430,7 +1437,7 @@ function* decodeFrames(
     const headerText = buffer.subarray(0, headerEnd).toString("utf8");
     const contentLength = readContentLength(headerText);
     if (contentLength < 0) {
-      throw new Error("MCP frame missing Content-Length header");
+      throw new FridayDomainError("VALIDATION_ERROR", "MCP frame missing Content-Length header", { httpStatus: 400 });
     }
 
     const messageStart = headerEnd + FRAME_SEPARATOR.length;

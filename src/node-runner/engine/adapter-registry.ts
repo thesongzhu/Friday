@@ -13,6 +13,8 @@
  * @module node-runner/engine
  */
 
+import { FridayDomainError } from "#errors";
+
 import type {
   FridayNodeAdapter,
   FridayNodeAdapterRegistry,
@@ -40,7 +42,7 @@ export class NodeAdapterRegistry implements FridayNodeAdapterRegistry {
 
   register(adapter: FridayNodeAdapter): void {
     if (!adapter.nodeType) {
-      throw new Error("Adapter must have a non-empty nodeType");
+      throw new FridayDomainError("VALIDATION_ERROR", "Adapter must have a non-empty nodeType", { httpStatus: 400 });
     }
     this.adapters.set(adapter.nodeType, adapter);
   }

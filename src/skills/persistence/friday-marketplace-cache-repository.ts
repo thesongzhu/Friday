@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayMarketplaceCacheEntity,
   FridayMarketplaceCacheRow,
@@ -83,7 +84,7 @@ function mapRow(row: FridayMarketplaceCacheRow): FridayMarketplaceCacheEntity {
     sourceId: row.source_id,
     skillId: row.skill_id,
     version: row.version,
-    manifestJson: JSON.parse(row.manifest_json) as JsonValue,
+    manifestJson: safeJsonParse<JsonValue>(row.manifest_json) as JsonValue,
     signatureValid: row.signature_valid === 1,
     indexedAt: row.indexed_at,
     trustScore: row.trust_score,

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayWorkflowRunNodeEntity,
   FridayWorkflowRunNodeRow,
@@ -104,16 +105,14 @@ function mapNodeRow(row: FridayWorkflowRunNodeRow): FridayWorkflowRunNodeEntity 
     leaseExpiresAt: row.lease_expires_at ?? undefined,
     startedAt: row.started_at ?? undefined,
     finishedAt: row.finished_at ?? undefined,
-    input: row.input_json ? (JSON.parse(row.input_json) as JsonValue) : undefined,
-    output: row.output_json ? (JSON.parse(row.output_json) as JsonValue) : undefined,
-    error: row.error_json
-      ? (JSON.parse(row.error_json) as {
+    input: safeJsonParse<JsonValue>(row.input_json),
+    output: safeJsonParse<JsonValue>(row.output_json),
+    error: safeJsonParse<{
           code: string;
           message: string;
           retryable: boolean;
           details?: JsonValue;
-        })
-      : undefined,
+        }>(row.error_json),
     idempotencyKey: row.idempotency_key,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

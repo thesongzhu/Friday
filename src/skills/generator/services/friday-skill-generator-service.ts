@@ -3,7 +3,7 @@ import { dirname, extname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { FridayDomainError } from "#errors";
-import { resolveSafeInstallDir, resolveSafePath } from "#utilities";
+import { resolveSafeInstallDir, resolveSafePath, safeJsonParse } from "#utilities";
 import {
   buildHarnessSchemaTest,
   createFridayTemplateHarnessService,
@@ -454,7 +454,7 @@ export function createFridaySkillGeneratorService(
         .prepare("SELECT value_json FROM memory_items WHERE namespace = ? AND key = ?")
         .get(DRAFT_NAMESPACE, sessionId) as { value_json: string } | undefined;
       if (!row) return undefined;
-      return JSON.parse(row.value_json) as FridayGeneratedSkillDraft;
+      return safeJsonParse<FridayGeneratedSkillDraft>(row.value_json);
     });
   }
 
@@ -491,7 +491,8 @@ export function createFridaySkillGeneratorService(
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         return parsed as Record<string, unknown>;
       }
-    } catch {
+    } catch (err) {
+      console.warn("[friday][skill-generator-service] operation failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
     return null;
@@ -681,7 +682,8 @@ export function createFridaySkillGeneratorService(
     } finally {
       try {
         rmSync(tempDir, { recursive: true, force: true });
-      } catch {
+      } catch (err) {
+      console.warn("[friday][skill-generator-service] operation failed:", err instanceof Error ? err.message : String(err));
         // Best-effort cleanup.
       }
     }
@@ -1549,10 +1551,11 @@ export function createFridaySkillGeneratorService(
           parsed === null ||
           Array.isArray(parsed)
         ) {
-          throw new Error("Spec must be a plain object");
+          throw new FridayDomainError("VALIDATION_ERROR", "Spec must be a plain object", { httpStatus: 400 });
         }
         spec = parsed as Record<string, unknown>;
-      } catch {
+      } catch (err) {
+      console.warn("[friday][skill-generator-service] operation failed:", err instanceof Error ? err.message : String(err));
         throw new FridayDomainError(
           "VALIDATION_ERROR",
           "No valid specification available. Continue the conversation to provide requirements.",
@@ -1791,7 +1794,8 @@ export function createFridaySkillGeneratorService(
         // ── Stage: Clean up temp dir ──
         try {
           rmSync(tempDir, { recursive: true, force: true });
-        } catch {
+        } catch (err) {
+      console.warn("[friday][skill-generator-service] operation failed:", err instanceof Error ? err.message : String(err));
           // Best-effort cleanup
         }
       }
@@ -1825,7 +1829,8 @@ export function createFridaySkillGeneratorService(
       try {
         await deps.registry.refresh();
         registryRefreshed = true;
-      } catch {
+      } catch (err) {
+      console.warn("[friday][skill-generator-service] operation failed:", err instanceof Error ? err.message : String(err));
         // Non-fatal — skill is saved but registry didn't refresh
       }
 

@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { FridayDomainError } from "#errors";
 
 import { createFridaySystemUnixSocketCompanionServer } from "./friday-system-unix-socket-companion-server.js";
 
@@ -19,7 +20,7 @@ async function main(): Promise<void> {
     : path.join(workspaceRoot, ".friday", "run", "system-companion.sock");
   const authToken = process.env.FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN;
   if (!authToken) {
-    throw new Error("FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN is required for the companion daemon");
+    throw new FridayDomainError("NOT_INITIALIZED", "FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN is required for the companion daemon", { httpStatus: 503 });
   }
 
   const server = createFridaySystemUnixSocketCompanionServer({

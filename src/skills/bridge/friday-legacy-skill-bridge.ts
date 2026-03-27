@@ -278,7 +278,8 @@ function readSkillBody(skillMdPath: string): string {
     const raw = readFileSync(skillMdPath, "utf-8");
     const result = parseFridaySkillFrontmatter(raw);
     return result.ok ? result.value.body : raw;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][legacy-skill-bridge] operation failed:", err instanceof Error ? err.message : String(err));
     return "";
   }
 }

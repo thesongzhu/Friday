@@ -6,6 +6,8 @@
  * making it easy to mock in tests and swap implementations.
  */
 
+import { FridayDomainError } from "#errors";
+
 // ─── Types ───
 
 export interface DiscordGatewayEvent {
@@ -200,8 +202,10 @@ export function createDiscordRestService(): DiscordRestService {
 
       if (!res.ok) {
         const body = await res.text().catch(() => "");
-        throw new Error(
+        throw new FridayDomainError(
+          "INTERNAL_ERROR",
           `Discord REST API error ${res.status}: ${res.statusText} — ${body}`,
+          { httpStatus: 500 },
         );
       }
 
@@ -219,8 +223,10 @@ export function createDiscordRestService(): DiscordRestService {
 
       if (!res.ok) {
         const body = await res.text().catch(() => "");
-        throw new Error(
+        throw new FridayDomainError(
+          "INTERNAL_ERROR",
           `Discord typing API error ${res.status}: ${res.statusText} — ${body}`,
+          { httpStatus: 500 },
         );
       }
     },
@@ -255,7 +261,8 @@ export function createDiscordGatewayService(): DiscordGatewayService {
     if (ws !== null) {
       try {
         ws.close(1000, "Client disconnect");
-      } catch {
+      } catch (err) {
+        console.warn("[friday][discord-service] operation failed:", err instanceof Error ? err.message : String(err));
         // Already closed — ignore.
       }
       ws = null;
@@ -336,8 +343,10 @@ export function createDiscordGatewayService(): DiscordGatewayService {
 
     if (!gatewayRes.ok) {
       const body = await gatewayRes.text().catch(() => "");
-      throw new Error(
+      throw new FridayDomainError(
+        "INTERNAL_ERROR",
         `Failed to fetch Discord gateway URL: ${gatewayRes.status} — ${body}`,
+        { httpStatus: 500 },
       );
     }
 
@@ -367,7 +376,8 @@ export function createDiscordGatewayService(): DiscordGatewayService {
         let parsed: DiscordGatewayEvent;
         try {
           parsed = JSON.parse(String(event.data)) as DiscordGatewayEvent;
-        } catch {
+        } catch (err) {
+        console.warn("[friday][discord-service] operation failed:", err instanceof Error ? err.message : String(err));
           return; // Ignore malformed frames.
         }
 

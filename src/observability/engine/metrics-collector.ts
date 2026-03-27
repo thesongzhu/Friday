@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Metrics Collector — Collects and aggregates runtime metrics.
  *
@@ -140,7 +142,7 @@ export class FridayMetricsCollector {
   /** Register a new counter metric. Throws if already registered. */
   registerCounter(name: string, module: FridayObservabilityModule): void {
     if (this.counters.has(name)) {
-      throw new Error(`Counter "${name}" is already registered`);
+      throw new FridayDomainError("VALIDATION_ERROR", `Counter "${name}" is already registered`, { httpStatus: 400 });
     }
     this.counters.set(name, { module, states: new Map() });
   }
@@ -148,7 +150,7 @@ export class FridayMetricsCollector {
   /** Register a new gauge metric. Throws if already registered. */
   registerGauge(name: string, module: FridayObservabilityModule): void {
     if (this.gauges.has(name)) {
-      throw new Error(`Gauge "${name}" is already registered`);
+      throw new FridayDomainError("VALIDATION_ERROR", `Gauge "${name}" is already registered`, { httpStatus: 400 });
     }
     this.gauges.set(name, { module, states: new Map() });
   }
@@ -160,7 +162,7 @@ export class FridayMetricsCollector {
     buckets: readonly number[] = DEFAULT_HISTOGRAM_BUCKETS,
   ): void {
     if (this.histograms.has(name)) {
-      throw new Error(`Histogram "${name}" is already registered`);
+      throw new FridayDomainError("VALIDATION_ERROR", `Histogram "${name}" is already registered`, { httpStatus: 400 });
     }
     const sorted = [...buckets].sort((a, b) => a - b);
     this.histogramBoundaries.set(name, sorted);
@@ -172,11 +174,11 @@ export class FridayMetricsCollector {
   /** Increment a counter by a positive delta (default 1). */
   incrementCounter(name: string, labels: MetricLabels = {}, delta: number = 1): void {
     if (delta < 0) {
-      throw new Error(`Counter delta must be non-negative, got ${delta}`);
+      throw new FridayDomainError("VALIDATION_ERROR", `Counter delta must be non-negative, got ${delta}`, { httpStatus: 400 });
     }
     const entry = this.counters.get(name);
     if (!entry) {
-      throw new Error(`Counter "${name}" is not registered`);
+      throw new FridayDomainError("NOT_FOUND", `Counter "${name}" is not registered`, { httpStatus: 404 });
     }
     const key = labelKey(labels);
     const state = entry.states.get(key);
@@ -193,7 +195,7 @@ export class FridayMetricsCollector {
   setGauge(name: string, value: number, labels: MetricLabels = {}): void {
     const entry = this.gauges.get(name);
     if (!entry) {
-      throw new Error(`Gauge "${name}" is not registered`);
+      throw new FridayDomainError("NOT_FOUND", `Gauge "${name}" is not registered`, { httpStatus: 404 });
     }
     const key = labelKey(labels);
     const state = entry.states.get(key);
@@ -208,7 +210,7 @@ export class FridayMetricsCollector {
   incrementGauge(name: string, delta: number = 1, labels: MetricLabels = {}): void {
     const entry = this.gauges.get(name);
     if (!entry) {
-      throw new Error(`Gauge "${name}" is not registered`);
+      throw new FridayDomainError("NOT_FOUND", `Gauge "${name}" is not registered`, { httpStatus: 404 });
     }
     const key = labelKey(labels);
     const state = entry.states.get(key);
@@ -225,7 +227,7 @@ export class FridayMetricsCollector {
   recordHistogram(name: string, value: number, labels: MetricLabels = {}): void {
     const entry = this.histograms.get(name);
     if (!entry) {
-      throw new Error(`Histogram "${name}" is not registered`);
+      throw new FridayDomainError("NOT_FOUND", `Histogram "${name}" is not registered`, { httpStatus: 404 });
     }
     const boundaries = this.histogramBoundaries.get(name)!;
     const key = labelKey(labels);

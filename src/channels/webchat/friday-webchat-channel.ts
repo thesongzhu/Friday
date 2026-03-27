@@ -5,6 +5,7 @@
  * to send and receive messages from Friday.
  */
 
+import { FridayDomainError } from "#errors";
 import type {
   FridayChannelMessage,
   FridayChannelPlugin,
@@ -116,7 +117,7 @@ export function createFridayWebchatChannel(deps: WebchatChannelDeps = {}): Frida
 
   const lifecycleAdapter: FridayChannelLifecycleAdapter = {
     async connect(eventHandler: (rawEvent: unknown) => void) {
-      if (!config) throw new Error("Webchat channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Webchat channel not initialized", { httpStatus: 503 });
       connectionStatus = "connecting";
 
       await wsService.start(config.wsPath, config.allowedOrigins, (msg) => {
@@ -173,7 +174,7 @@ export function createFridayWebchatChannel(deps: WebchatChannelDeps = {}): Frida
     },
 
     async start(handler) {
-      if (!config) throw new Error("Webchat channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Webchat channel not initialized", { httpStatus: 503 });
       connectionStatus = "connecting";
 
       await wsService.start(config.wsPath, config.allowedOrigins, (msg) => {

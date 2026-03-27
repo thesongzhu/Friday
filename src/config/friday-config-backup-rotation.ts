@@ -10,15 +10,17 @@ export async function rotateFridayConfigBackups(
   // Check if original config file exists
   try {
     await fs.access(configPath);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][config-backup-rotation] config file not accessible:", err instanceof Error ? err.message : String(err));
     return; // Nothing to back up
   }
 
   // Drop the oldest backup if it exists
   try {
     await fs.unlink(`${configPath}.bak.${maxBackups - 1}`);
-  } catch {
+  } catch (err) {
     // Doesn't exist, fine
+    console.warn("[friday][config-backup-rotation] oldest backup removal skipped:", err instanceof Error ? err.message : String(err));
   }
 
   // Rotate existing numbered backups downward: .bak.i -> .bak.(i+1)
@@ -27,16 +29,18 @@ export async function rotateFridayConfigBackups(
     const dest = `${configPath}.bak.${i + 1}`;
     try {
       await fs.rename(src, dest);
-    } catch {
+    } catch (err) {
       // Source doesn't exist, skip
+      console.warn("[friday][config-backup-rotation] backup rotation skipped:", err instanceof Error ? err.message : String(err));
     }
   }
 
   // Rotate .bak -> .bak.1
   try {
     await fs.rename(`${configPath}.bak`, `${configPath}.bak.1`);
-  } catch {
+  } catch (err) {
     // .bak doesn't exist, skip
+    console.warn("[friday][config-backup-rotation] bak rename skipped:", err instanceof Error ? err.message : String(err));
   }
 
   // Copy current config to .bak

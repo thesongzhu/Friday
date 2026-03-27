@@ -159,7 +159,8 @@ export function parseFridayChannelSecretRef(raw: string): string | null {
   try {
     const decoded = decodeURIComponent(encoded);
     return decoded.trim().length > 0 ? decoded : null;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][channel-security] operation failed:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

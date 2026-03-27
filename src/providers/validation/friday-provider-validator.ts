@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import type {
   FridayProviderApi,
   FridayProviderKind,
@@ -49,7 +50,7 @@ async function fetchWithTimeout(
 function assertBaseUrlSafe(baseUrl: string, opts?: { allowLoopback?: boolean }): void {
   const result = validateGatewayUrl(baseUrl, { allowLoopback: opts?.allowLoopback });
   if (!result.valid) {
-    throw new Error(`SSRF_BLOCKED: ${result.error ?? "URL blocked by security policy"}`);
+    throw new FridayDomainError("VALIDATION_ERROR", `SSRF_BLOCKED: ${result.error ?? "URL blocked by security policy"}`, { httpStatus: 400 });
   }
 }
 
@@ -125,8 +126,9 @@ async function validateAnthropic(
         if (errBody.error?.type === "invalid_api_key") {
           return makeFailedState("PROVIDER_AUTH_INVALID", errBody.error.message ?? "Invalid API key", 400);
         }
-      } catch {
+      } catch (err) {
         // ignore parse errors
+        console.warn("[friday][provider-validator] response body parse failed:", err instanceof Error ? err.message : String(err));
       }
     }
     return makeFailedState("PROVIDER_UNREACHABLE", `HTTP ${String(res.status)}`, res.status);
@@ -224,7 +226,8 @@ export function createFridayProviderValidator(): FridayProviderValidator {
       const isOllamaApi = params.api === "ollama";
       try {
         assertBaseUrlSafe(params.baseUrl, { allowLoopback: isOllamaApi });
-      } catch {
+      } catch (err) {
+        console.warn("[friday][provider-validator] base URL blocked:", err instanceof Error ? err.message : String(err));
         return makeFailedState("PROVIDER_UNREACHABLE", "Base URL blocked by security policy (private/loopback address)");
       }
 

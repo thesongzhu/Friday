@@ -2,6 +2,7 @@
  * LINE Messaging API service — stubbed interfaces.
  */
 
+import { FridayDomainError } from "#errors";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 // ─── Types ───
@@ -113,7 +114,8 @@ export function validateLineWebhookSignature(
       return false;
     }
     return timingSafeEqual(received, expected);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][line-service] operation failed:", err instanceof Error ? err.message : String(err));
     return false;
   }
 }
@@ -199,7 +201,8 @@ export function createLineWebhookListenerService(): LineWebhookListenerService {
           accepted: true,
           statusCode: 200,
         };
-      } catch {
+      } catch (err) {
+    console.warn("[friday][line-service] operation failed:", err instanceof Error ? err.message : String(err));
         return {
           accepted: false,
           statusCode: 400,
@@ -248,8 +251,10 @@ export function createLineApiService(): LineApiService {
 
     if (!response.ok) {
       const errorBody = await response.text().catch(() => "<unreadable>");
-      throw new Error(
+      throw new FridayDomainError(
+        "INTERNAL_ERROR",
         `LINE API error: ${response.status} ${response.statusText} — ${errorBody}`,
+        { httpStatus: 500 },
       );
     }
   }

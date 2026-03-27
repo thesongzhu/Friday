@@ -253,8 +253,9 @@ export function createFridaySessionService(
             updates.push("memory_namespace = ?");
             params.push(memoryNamespace);
           }
-        } catch {
+        } catch (err) {
           // Memory namespace resolution is best-effort for getOrCreate
+          console.warn("[friday][session-service] memory namespace resolution failed:", err instanceof Error ? err.message : String(err));
         }
 
         if (updates.length > 0) {
@@ -338,8 +339,9 @@ export function createFridaySessionService(
                 updates.push("memory_namespace = ?");
                 params.push(memoryNamespace);
               }
-            } catch {
+            } catch (err) {
               // Memory namespace resolution is best-effort
+              console.warn("[friday][session-service] memory namespace resolution failed:", err instanceof Error ? err.message : String(err));
             }
 
             if (updates.length > 0) {
@@ -611,8 +613,9 @@ export function createFridaySessionService(
             memoryNamespace = resolveFridaySessionMemoryNamespace(parent, (k) =>
               sessionRepo.getByKey(db, k),
             );
-          } catch {
+          } catch (err) {
             // Best-effort
+            console.warn("[friday][session-service] fork memory namespace failed:", err instanceof Error ? err.message : String(err));
           }
         }
 

@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Condition Evaluator — evaluates rule conditions against an evaluation context.
  *
@@ -36,11 +38,18 @@ const FORBIDDEN_FIELD_SEGMENTS: ReadonlySet<string> = new Set(["__proto__", "con
  */
 const REDOS_NESTED_QUANTIFIER_RE = /[+*}]\s*\)[\s)]*[+*?{]/;
 const REDOS_STAR_PLUS_ALTERNATION_RE = /\([^)]*\|[^)]*\)[+*]{1}/;
+// P2-SEC: Additional ReDoS heuristics for broader coverage
+const REDOS_LOOKAHEAD_QUANTIFIER_RE = /\(\?[=!][^)]*[+*]\)/; // Quantifier inside lookahead
+const REDOS_REPETITION_OVERLAP_RE = /\[[^\]]*\]\+[^?][^\[]*\[[^\]]*\]\+/; // Adjacent char-class quantifiers
+const REDOS_DEEP_NESTING_RE = /\({3,}/; // Deeply nested groups (3+ levels)
 
 function isUnsafeRegexPattern(pattern: string): boolean {
   if (pattern.length > MAX_REGEX_PATTERN_LENGTH) return true;
   if (REDOS_NESTED_QUANTIFIER_RE.test(pattern)) return true;
   if (REDOS_STAR_PLUS_ALTERNATION_RE.test(pattern)) return true;
+  if (REDOS_LOOKAHEAD_QUANTIFIER_RE.test(pattern)) return true;
+  if (REDOS_REPETITION_OVERLAP_RE.test(pattern)) return true;
+  if (REDOS_DEEP_NESTING_RE.test(pattern)) return true;
   return false;
 }
 
@@ -58,9 +67,7 @@ export function precompileRegexPattern(pattern: string): RegExp {
   }
 
   if (isUnsafeRegexPattern(pattern)) {
-    throw new Error(
-      `Regex pattern rejected: potentially unsafe (ReDoS risk or exceeds max length ${String(MAX_REGEX_PATTERN_LENGTH)})`,
-    );
+    throw new FridayDomainError("VALIDATION_ERROR", `Regex pattern rejected: potentially unsafe (ReDoS risk or exceeds max length ${String(MAX_REGEX_PATTERN_LENGTH)})`, { httpStatus: 400 });
   }
 
   const compiled = new RegExp(pattern);
@@ -179,9 +186,10 @@ function evaluateRegex(fieldValue: JsonValue | undefined, pattern: JsonValue | u
   if (typeof fieldValue !== "string" || typeof pattern !== "string") return false;
   try {
     return precompileRegexPattern(pattern).test(fieldValue);
-  } catch {
+  } catch (err) {
     // Invalid regex — treated as non-match at evaluation time.
     // Validation should catch this at rule creation/import time.
+    console.warn("[friday][condition-evaluator] regex evaluation failed:", err instanceof Error ? err.message : String(err));
     return false;
   }
 }

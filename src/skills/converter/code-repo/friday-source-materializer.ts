@@ -149,7 +149,8 @@ function materializeLocalSource(
   let rootStats;
   try {
     rootStats = statSync(rootPath);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][source-materializer] operation failed:", err instanceof Error ? err.message : String(err));
     throw new FridayDomainError(
       "CONVERTER_SOURCE_NOT_FOUND",
       `Code repository source not found: ${sourceUri}`,
@@ -178,7 +179,8 @@ function materializeLocalSource(
     let entries: Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }>;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+    console.warn("[friday][source-materializer] operation failed:", err instanceof Error ? err.message : String(err));
       return;
     }
 
@@ -209,7 +211,8 @@ function materializeLocalSource(
       try {
         const raw = readFileSync(absolute, "utf-8");
         content = raw.slice(0, maxFileBytes);
-      } catch {
+      } catch (err) {
+    console.warn("[friday][source-materializer] operation failed:", err instanceof Error ? err.message : String(err));
         continue;
       }
 
@@ -388,7 +391,8 @@ function validateExtractedPaths(baseDir: string): void {
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+    console.warn("[friday][source-materializer] operation failed:", err instanceof Error ? err.message : String(err));
       return;
     }
 
@@ -429,7 +433,8 @@ function calculateDirSize(dir: string, limit: number): number {
     let entries;
     try {
       entries = readdirSync(d, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+    console.warn("[friday][source-materializer] operation failed:", err instanceof Error ? err.message : String(err));
       return;
     }
     for (const entry of entries) {
@@ -440,7 +445,8 @@ function calculateDirSize(dir: string, limit: number): number {
       } else if (entry.isFile()) {
         try {
           total += statSync(fullPath).size;
-        } catch {
+        } catch (err) {
+    console.warn("[friday][source-materializer] operation failed:", err instanceof Error ? err.message : String(err));
           // skip
         }
       }
@@ -460,7 +466,8 @@ function createTempWorkspace(prefix: string): string {
 export function cleanupTempWorkspace(dir: string): void {
   try {
     rmSync(dir, { recursive: true, force: true });
-  } catch {
+  } catch (err) {
+    console.warn("[friday][source-materializer] operation failed:", err instanceof Error ? err.message : String(err));
     // Best effort cleanup
   }
 }

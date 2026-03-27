@@ -164,7 +164,8 @@ export function createWebchatWsService(): WebchatWsService {
         try {
           sendWsClose(socket, 1001);
           socket.destroy();
-        } catch {
+        } catch (err) {
+        console.warn("[friday][webchat-service] operation failed:", err instanceof Error ? err.message : String(err));
           // Best-effort cleanup.
         }
       }
@@ -238,7 +239,8 @@ export function createWebchatWsService(): WebchatWsService {
         try {
           sendWsClose(previous, 1001);
           previous.destroy();
-        } catch {
+        } catch (err) {
+        console.warn("[friday][webchat-service] operation failed:", err instanceof Error ? err.message : String(err));
           // Best-effort stale client replacement.
         }
       }
@@ -292,7 +294,8 @@ export function createWebchatWsService(): WebchatWsService {
             let parsed: unknown;
             try {
               parsed = JSON.parse(payloadData.toString("utf-8"));
-            } catch {
+            } catch (err) {
+        console.warn("[friday][webchat-service] operation failed:", err instanceof Error ? err.message : String(err));
               writeJsonToClient(socket, {
                 type: "error",
                 code: "INVALID_JSON",

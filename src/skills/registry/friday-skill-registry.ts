@@ -290,7 +290,8 @@ export class FridaySkillRegistryImpl implements FridaySkillRegistry {
         caller: "FridaySkillRegistry.emitReloadFailureAudit",
         details: { reason },
       });
-    } catch {
+    } catch (err) {
+    console.warn("[friday][skill-registry] operation failed:", err instanceof Error ? err.message : String(err));
       // Best-effort audit logging; don't fail the reload flow
     }
   }

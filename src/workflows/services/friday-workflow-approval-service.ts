@@ -212,12 +212,14 @@ export function createFridayWorkflowApprovalService(
           await deps.executionService.resumeRun(approval.runId, {
             approvalDecision: "rejected",
           });
-        } catch {
+        } catch (err) {
           // Resume failed (e.g. run already terminal) — try cancelling as fallback
+          console.warn("[friday][workflow-approval-service] resume failed:", err instanceof Error ? err.message : String(err));
           try {
             await deps.executionService.cancelRun(approval.runId, "Approval expired");
-          } catch {
+          } catch (err2) {
             // Run may already be in a terminal state — nothing to do
+            console.warn("[friday][workflow-approval-service] cancel fallback failed:", err2 instanceof Error ? err2.message : String(err2));
           }
         }
       }

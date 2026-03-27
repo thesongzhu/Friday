@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * C-001 Real Desktop Adapters — macOS, Windows, and Linux implementations
  * of the FridayDesktopAdapterRuntime interface.
@@ -112,7 +114,8 @@ async function detectOsVersion(
         return result.exitCode === 0 ? result.stdout : "unknown";
       }
     }
-  } catch {
+  } catch (err) {
+    console.warn("[friday][desktop-adapters] detect-os-version:", err instanceof Error ? err.message : String(err));
     return "unknown";
   }
 }
@@ -216,21 +219,21 @@ function escapePowerShellSingleQuoted(value: string): string {
 
 function ensureFiniteInteger(value: number, fieldName: string): number {
   if (!Number.isFinite(value)) {
-    throw new Error(`Invalid ${fieldName}: must be a finite number`);
+    throw new FridayDomainError("VALIDATION_ERROR", `Invalid ${fieldName}: must be a finite number`, { httpStatus: 400 });
   }
   return Math.trunc(value);
 }
 
 function ensureSafeAppIdentifier(value: string): string {
   if (!SAFE_APP_IDENTIFIER_RE.test(value)) {
-    throw new Error("Unsafe app identifier");
+    throw new FridayDomainError("VALIDATION_ERROR", "Unsafe app identifier", { httpStatus: 400 });
   }
   return value;
 }
 
 function ensureSafeXdotoolKeyCombo(value: string): string {
   if (!SAFE_XDOTOOL_KEY_RE.test(value)) {
-    throw new Error("Unsafe key combo");
+    throw new FridayDomainError("VALIDATION_ERROR", "Unsafe key combo", { httpStatus: 400 });
   }
   return value;
 }
@@ -450,7 +453,8 @@ export async function createDarwinAdapter(
           selector.appBundleId ?? "unknown",
           { x: 0, y: 0, width: 0, height: 0 },
         );
-      } catch {
+      } catch (err) {
+        console.warn("[friday][desktop-adapters] darwin-inspectElement:", err instanceof Error ? err.message : String(err));
         return null;
       }
     },
@@ -469,7 +473,8 @@ export async function createDarwinAdapter(
           appBundleId ?? "unknown",
           { x: 0, y: 0, width: 0, height: 0 },
         ));
-      } catch {
+      } catch (err) {
+        console.warn("[friday][desktop-adapters] darwin-searchElements:", err instanceof Error ? err.message : String(err));
         return [];
       }
     },
@@ -491,7 +496,7 @@ export async function createDarwinAdapter(
             try {
               const result = await exec("osascript -e 'tell application \"System Events\" to get name of first process' 2>&1");
               status = result.exitCode === 0 ? "granted" : "denied";
-            } catch { status = "denied"; }
+            } catch (err) { console.warn("[friday][desktop-adapters] darwin-check-accessibility:", err instanceof Error ? err.message : String(err)); status = "denied"; }
             instructions = "System Settings → Privacy & Security → Accessibility → Enable Friday";
             break;
           case "screen_recording":
@@ -695,7 +700,8 @@ export async function createWin32Adapter(
           selector.appBundleId ?? "unknown",
           { x: 0, y: 0, width: 0, height: 0 },
         );
-      } catch {
+      } catch (err) {
+        console.warn("[friday][desktop-adapters] win32-inspectElement:", err instanceof Error ? err.message : String(err));
         return null;
       }
     },
@@ -752,14 +758,14 @@ export async function createLinuxAdapter(
   try {
     const deResult = await exec("echo $XDG_CURRENT_DESKTOP 2>/dev/null || echo unknown");
     desktopEnv = deResult.stdout || "unknown";
-  } catch { /* keep unknown */ }
+  } catch (err) { /* keep unknown */ console.warn("[friday][desktop-adapters] detect-desktop-env:", err instanceof Error ? err.message : String(err)); }
 
   // Check for xdotool
   let hasXdotool = false;
   try {
     const xdResult = await exec("which xdotool 2>/dev/null");
     hasXdotool = xdResult.exitCode === 0;
-  } catch { /* not available */ }
+  } catch (err) { /* not available */ console.warn("[friday][desktop-adapters] detect-xdotool:", err instanceof Error ? err.message : String(err)); }
 
   const metadata: FridayDesktopAdapter = {
     id: "linux-atspi-v1",
@@ -800,7 +806,7 @@ export async function createLinuxAdapter(
           const mods = (action.modifiers ?? []).map((modifier) => {
             const mapped = modifier === "meta" || modifier === "command" ? "super" : modifier;
             if (!SAFE_XDOTOOL_KEY_RE.test(mapped)) {
-              throw new Error("Unsafe modifier");
+              throw new FridayDomainError("VALIDATION_ERROR", "Unsafe modifier", { httpStatus: 400 });
             }
             return mapped;
           });
@@ -962,7 +968,7 @@ export async function createLinuxAdapter(
             try {
               const result = await exec("dbus-send --session --dest=org.a11y.Bus --print-reply /org/a11y/bus org.freedesktop.DBus.Peer.Ping 2>/dev/null");
               status = result.exitCode === 0 ? "granted" : "not_determined";
-            } catch { status = "not_determined"; }
+            } catch (err) { console.warn("[friday][desktop-adapters] linux-check-accessibility:", err instanceof Error ? err.message : String(err)); status = "not_determined"; }
             instructions = "Enable AT-SPI2: gsettings set org.gnome.desktop.interface toolkit-accessibility true";
             break;
           }

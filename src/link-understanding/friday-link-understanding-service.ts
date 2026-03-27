@@ -105,8 +105,9 @@ export function createFridayLinkUnderstandingService(
             cached: false,
             processingMs: Date.now() - startTime,
           });
-        } catch {
+        } catch (err) {
           // Skip failed fetches silently
+          console.warn("[friday][link-understanding-service] fetch failed:", err instanceof Error ? err.message : String(err));
           continue;
         }
       }

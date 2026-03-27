@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import * as fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import * as path from "node:path";
@@ -34,7 +35,7 @@ function openWritableFileNoFollow(filePath: string, options?: { create?: boolean
       try {
         const st = fsSync.lstatSync(filePath);
         if (st.isSymbolicLink()) {
-          throw new Error(`Path is a symlink (rejected): ${filePath}`);
+          throw new FridayDomainError("VALIDATION_ERROR", `Path is a symlink (rejected): ${filePath}`, { httpStatus: 400 });
         }
       } catch (lstatErr) {
         if (isNodeError(lstatErr) && lstatErr.code === "ENOENT" && options?.create) {
@@ -82,7 +83,8 @@ function validateFilePath(filePath: string, workspaceRoot: string): string | nul
   let resolvedRoot: string;
   try {
     resolvedRoot = fsSync.realpathSync(workspaceRoot);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][file-tools] realpath-workspace-root:", err instanceof Error ? err.message : String(err));
     resolvedRoot = path.resolve(workspaceRoot);
   }
 
@@ -91,8 +93,9 @@ function validateFilePath(filePath: string, workspaceRoot: string): string | nul
   let resolved: string;
   try {
     resolved = fsSync.realpathSync(filePath);
-  } catch {
+  } catch (err) {
     // Path doesn't exist — walk up to the nearest existing ancestor and resolve from there
+    console.warn("[friday][file-tools] realpath-target:", err instanceof Error ? err.message : String(err));
     const absolute = path.resolve(filePath);
     let ancestor = path.dirname(absolute);
     let tail = path.basename(absolute);
@@ -103,7 +106,8 @@ function validateFilePath(filePath: string, workspaceRoot: string): string | nul
         const resolvedAncestor = fsSync.realpathSync(ancestor);
         resolved = path.join(resolvedAncestor, tail);
         break;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][file-tools] realpath-ancestor:", err instanceof Error ? err.message : String(err));
         tail = path.join(path.basename(ancestor), tail);
         const parent = path.dirname(ancestor);
         if (parent === ancestor) {
@@ -260,7 +264,8 @@ function createWriteTool(workspaceRoot: string): FridayAgentToolDefinition {
         let resolvedRoot: string;
         try {
           resolvedRoot = fsSync.realpathSync(workspaceRoot);
-        } catch {
+        } catch (err) {
+          console.warn("[friday][file-tools] realpath-write-root:", err instanceof Error ? err.message : String(err));
           resolvedRoot = path.resolve(workspaceRoot);
         }
         const resolvedDir = fsSync.realpathSync(dir);
@@ -278,7 +283,7 @@ function createWriteTool(workspaceRoot: string): FridayAgentToolDefinition {
           const fdStat = fsSync.fstatSync(fd);
           const fileStat = fsSync.statSync(safePath);
           if (fdStat.ino !== fileStat.ino || fdStat.dev !== fileStat.dev) {
-            throw new Error(`File identity mismatch (TOCTOU): ${safePath}`);
+            throw new FridayDomainError("CONFLICT", `File identity mismatch (TOCTOU): ${safePath}`, { httpStatus: 409 });
           }
           // Truncate only after identity checks to avoid destructive partial failures.
           fsSync.ftruncateSync(fd, 0);
@@ -287,8 +292,9 @@ function createWriteTool(workspaceRoot: string): FridayAgentToolDefinition {
           if (fd !== null) {
             try {
               fsSync.closeSync(fd);
-            } catch {
+            } catch (err) {
               // Best-effort close
+              console.warn("[friday][file-tools] close-write-fd:", err instanceof Error ? err.message : String(err));
             }
           }
         }
@@ -346,7 +352,8 @@ function createEditTool(workspaceRoot: string): FridayAgentToolDefinition {
         let resolvedRoot: string;
         try {
           resolvedRoot = fsSync.realpathSync(workspaceRoot);
-        } catch {
+        } catch (err) {
+          console.warn("[friday][file-tools] realpath-edit-root:", err instanceof Error ? err.message : String(err));
           resolvedRoot = path.resolve(workspaceRoot);
         }
         const resolvedFile = fsSync.realpathSync(filePath);
@@ -370,7 +377,7 @@ function createEditTool(workspaceRoot: string): FridayAgentToolDefinition {
           fd = openWritableFileNoFollow(resolvedFile, { create: false });
           const fdStat = fsSync.fstatSync(fd);
           if (fdStat.ino !== beforeStat.ino || fdStat.dev !== beforeStat.dev) {
-            throw new Error(`File identity mismatch (TOCTOU): ${resolvedFile}`);
+            throw new FridayDomainError("CONFLICT", `File identity mismatch (TOCTOU): ${resolvedFile}`, { httpStatus: 409 });
           }
           // Truncate only after identity checks to avoid destructive partial failures.
           fsSync.ftruncateSync(fd, 0);
@@ -379,8 +386,9 @@ function createEditTool(workspaceRoot: string): FridayAgentToolDefinition {
           if (fd !== null) {
             try {
               fsSync.closeSync(fd);
-            } catch {
+            } catch (err) {
               // Best-effort close
+              console.warn("[friday][file-tools] close-edit-fd:", err instanceof Error ? err.message : String(err));
             }
           }
         }

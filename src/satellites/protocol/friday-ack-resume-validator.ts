@@ -15,7 +15,8 @@ export function createFridayAckResumeValidator(
       let cursorPayload;
       try {
         cursorPayload = cursorSigner.verify(frame.cursor);
-      } catch {
+      } catch (err) {
+        console.warn("[friday][ack-resume-validator] cursor HMAC verification failed:", err instanceof Error ? err.message : String(err));
         return {
           ok: false,
           code: "AUTH_UNAUTHORIZED",

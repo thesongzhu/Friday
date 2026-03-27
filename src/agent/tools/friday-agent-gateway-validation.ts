@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import { URL } from "node:url";
 
 // ─── Constants ───
@@ -54,7 +55,8 @@ export function validateGatewayUrl(
   let url: URL;
   try {
     url = new URL(rawUrl);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][agent-gateway-validation] invalid URL:", err instanceof Error ? err.message : String(err));
     return { valid: false, error: `Invalid URL: '${rawUrl}'` };
   }
 
@@ -103,7 +105,7 @@ export function parseGatewayUrl(
 ): URL {
   const result = validateGatewayUrl(rawUrl, options);
   if (!result.valid || !result.url) {
-    throw new Error(result.error ?? `Invalid gateway URL: '${rawUrl}'`);
+    throw new FridayDomainError("VALIDATION_ERROR", result.error ?? `Invalid gateway URL: '${rawUrl}'`, { httpStatus: 400 });
   }
   return result.url;
 }

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type { ISODateTime, UUID } from "../../model/friday-workflow.types.js";
 import type { FridayWorkflowSpecV1 } from "../../model/friday-workflow-spec.types.js";
 
@@ -53,7 +54,7 @@ export function createFridayWorkflowBuilderSpecVersionRepository(): FridayWorkfl
           `SELECT value_json FROM memory_items WHERE namespace = ? AND key LIKE ?`,
         )
         .get(NAMESPACE, `%:${workflowVersionId}`) as { value_json: string } | undefined;
-      return row ? (JSON.parse(row.value_json) as FridayWorkflowSpecVersionRecord) : null;
+      return row ? safeJsonParse<FridayWorkflowSpecVersionRecord>(row.value_json) ?? null : null;
     },
 
     listByWorkflow(db, workflowId) {
@@ -62,7 +63,7 @@ export function createFridayWorkflowBuilderSpecVersionRepository(): FridayWorkfl
           `SELECT value_json FROM memory_items WHERE namespace = ? AND key LIKE ? ORDER BY created_at DESC`,
         )
         .all(NAMESPACE, `${workflowId}:%`) as Array<{ value_json: string }>;
-      return rows.map((r) => JSON.parse(r.value_json) as FridayWorkflowSpecVersionRecord);
+      return rows.map((r) => safeJsonParse<FridayWorkflowSpecVersionRecord>(r.value_json)).filter((r): r is FridayWorkflowSpecVersionRecord => r !== undefined);
     },
   };
 }

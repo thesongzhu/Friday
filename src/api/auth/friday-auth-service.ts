@@ -180,6 +180,16 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
   const warn = deps.warn ?? console.warn;
   const rateLimiter = deps.rateLimiter;
 
+  // P1-SEC-004: Warn if token secret is too short
+  if (deps.tokenSecret.length < 32) {
+    warn("[friday][SECURITY] Token secret is shorter than recommended minimum (32 chars) — session tokens may be vulnerable to brute-force");
+  }
+
+  // P1-SEC-005: Warn if rate limiter is not configured
+  if (!rateLimiter) {
+    warn("[friday][SECURITY] Auth rate limiter not configured — brute-force protection disabled");
+  }
+
   /**
    * Derive a principal key for lockout tracking.
    * Keys are scoped to the actual principal (email / user ID), NOT the IP,

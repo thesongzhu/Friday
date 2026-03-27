@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { FridaySqliteLayer } from "#state";
+import { FridayDomainError } from "#errors";
 
 import type {
   FridayPlaybook,
@@ -33,7 +34,8 @@ function parseJsonValue(raw: string | null | undefined): JsonValue {
   if (!raw) return {};
   try {
     return JSON.parse(raw) as JsonValue;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][playbook-sqlite-store] JSON parse failed:", err instanceof Error ? err.message : String(err));
     return {};
   }
 }
@@ -195,7 +197,7 @@ function hasPlaybookTables(db: Database.Database): boolean {
 export function createSqlitePlaybookStore(deps: SqlitePlaybookStoreDeps): PlaybookStore {
   deps.db.withReadConnection((db) => {
     if (!hasPlaybookTables(db)) {
-      throw new Error("PLAYBOOK_TABLES_NOT_AVAILABLE");
+      throw new FridayDomainError("NOT_INITIALIZED", "PLAYBOOK_TABLES_NOT_AVAILABLE", { httpStatus: 503 });
     }
   });
 

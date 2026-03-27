@@ -305,8 +305,9 @@ export function createFridayMemoryFileSyncService(
           try {
             const readPath = existingState.filePath === filePath ? filePath : existingState.filePath;
             existingContent = await fs.readFile(readPath, "utf8");
-          } catch {
+          } catch (err) {
             // File missing or unreadable — fall through to full rewrite
+            console.warn("[friday][memory-file-sync] read-session-file:", err instanceof Error ? err.message : String(err));
           }
 
           if (existingContent != null) {
@@ -401,9 +402,10 @@ export function createFridayMemoryFileSyncService(
     let fileContent: string;
     try {
       fileContent = await fs.readFile(filePath, "utf8");
-    } catch {
+    } catch (err) {
       // File was deleted externally — this is a valid case
       // We could delete the DB data too, but for safety we skip
+      console.warn("[friday][memory-file-sync] reindex-read-file:", err instanceof Error ? err.message : String(err));
       result.errors.push({
         entityType,
         entityKey,
@@ -621,8 +623,9 @@ async function atomicWrite(filePath: string, content: string): Promise<void> {
     // Best-effort fsync: ensures data is on disk before rename
     try {
       await fd.sync();
-    } catch {
+    } catch (err) {
       // fsync not critical on all platforms — proceed with rename
+      console.warn("[friday][memory-file-sync] fsync:", err instanceof Error ? err.message : String(err));
     }
 
     await fd.close();
@@ -631,10 +634,10 @@ async function atomicWrite(filePath: string, content: string): Promise<void> {
     await fs.rename(tmpPath, filePath);
   } catch (err) {
     if (fd) {
-      try { await fd.close(); } catch { /* ignore */ }
+      try { await fd.close(); } catch (err) { /* ignore */ console.warn("[friday][memory-file-sync] fd-close:", err instanceof Error ? err.message : String(err)); }
     }
     // Clean up temp file on failure
-    try { await fs.unlink(tmpPath); } catch { /* ignore */ }
+    try { await fs.unlink(tmpPath); } catch (err) { /* ignore */ console.warn("[friday][memory-file-sync] unlink-tmp:", err instanceof Error ? err.message : String(err)); }
     throw err;
   }
 }
@@ -643,8 +646,9 @@ async function atomicWrite(filePath: string, content: string): Promise<void> {
 async function safeUnlink(filePath: string): Promise<void> {
   try {
     await fs.unlink(filePath);
-  } catch {
+  } catch (err) {
     // File may not exist — that's fine
+    console.warn("[friday][memory-file-sync] safe-unlink:", err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -653,7 +657,8 @@ async function getFileMtimeMs(filePath: string): Promise<number | null> {
   try {
     const stat = await fs.stat(filePath);
     return stat.mtimeMs;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][memory-file-sync] get-file-mtime:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }
@@ -682,7 +687,8 @@ function tryParseJson(json: string | null | undefined): unknown {
   if (!json) return null;
   try {
     return JSON.parse(json);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][memory-file-sync] try-parse-json:", err instanceof Error ? err.message : String(err));
     return json;
   }
 }

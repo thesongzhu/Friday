@@ -13,6 +13,7 @@
  * @module node-runner/engine
  */
 
+import { FridayDomainError } from "#errors";
 import * as crypto from "node:crypto";
 
 import type {
@@ -236,7 +237,7 @@ export function createWorkflowNodeRunnerFacade(
 
           const gateResult = await deps.acceptanceGate.evaluate(acceptanceContext);
           if (!gateResult.passed) {
-            throw new Error(`ACCEPTANCE_FAILED: ${gateResult.errorMessage ?? "Acceptance gate rejected output"}`);
+            throw new FridayDomainError("VALIDATION_ERROR", `ACCEPTANCE_FAILED: ${gateResult.errorMessage ?? "Acceptance gate rejected output"}`, { httpStatus: 400 });
           }
         }
 
@@ -250,7 +251,7 @@ export function createWorkflowNodeRunnerFacade(
       // can handle retries and error recording as before
       const errorMsg = result.errorMessage ?? `Node execution failed with status: ${result.status}`;
       const errorCode = result.errorCode ?? "NODE_EXECUTION_FAILED";
-      throw new Error(`${errorCode}: ${errorMsg}`);
+      throw new FridayDomainError("INTERNAL_ERROR", `${errorCode}: ${errorMsg}`, { httpStatus: 500 });
     },
   };
 }

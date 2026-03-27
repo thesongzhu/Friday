@@ -70,7 +70,10 @@ export type FridayRateLimitPolicyId =
   | "marketplace.checkout"
   | "marketplace.write"
   | "playbook.promote"
-  | "playbook.select";
+  | "playbook.select"
+  | "agent.run"
+  | "session.write"
+  | "memory.write";
 
 // ─── Auth Principal ───
 

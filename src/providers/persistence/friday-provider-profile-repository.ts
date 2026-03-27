@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 
 import type {
   FridayProviderConfigJson,
@@ -19,9 +20,8 @@ export interface FridayProviderProfileRepository {
 // ─── Row ↔ Entity mapping ───
 
 function rowToProfile(row: FridayProviderProfileRow): FridayProviderProfile {
-  const config: FridayProviderConfigJson = row.config_json
-    ? (JSON.parse(row.config_json) as FridayProviderConfigJson)
-    : {
+  const config: FridayProviderConfigJson = safeJsonParse<FridayProviderConfigJson>(row.config_json)
+    ?? {
         api: "openai-completions",
         authMode: "api-key",
         keySource: { kind: "none" },

@@ -1,4 +1,5 @@
 import type { FridaySqliteLayer } from "#state";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayLearningEventAppendInput,
   FridayLearningEventKind,
@@ -116,7 +117,7 @@ export function createFridayLearningEventLedger(
           sessionId: row.session_id ?? undefined,
           runId: row.run_id ?? undefined,
           kind: row.kind,
-          payload: JSON.parse(row.payload_json) as Record<string, unknown>,
+          payload: safeJsonParse<Record<string, unknown>>(row.payload_json) ?? {},
         }));
       });
     },

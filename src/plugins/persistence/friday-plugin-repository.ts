@@ -5,6 +5,7 @@
 import type Database from "better-sqlite3";
 
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayPluginEntity,
   FridayPluginKind,
@@ -67,9 +68,9 @@ function rowToEntity(row: FridayPluginRow): FridayPluginEntity {
     enabled: row.enabled === 1,
     trustMode: row.trust_mode as FridayPluginTrustMode,
     installPath: row.install_path,
-    kinds: JSON.parse(row.kinds_json) as FridayPluginKind[],
-    manifest: JSON.parse(row.manifest_json) as FridayPluginManifest,
-    config: JSON.parse(row.config_json) as Record<string, unknown>,
+    kinds: safeJsonParse<FridayPluginKind[]>(row.kinds_json) ?? [],
+    manifest: safeJsonParse<FridayPluginManifest>(row.manifest_json) ?? ({} as FridayPluginManifest),
+    config: safeJsonParse<Record<string, unknown>>(row.config_json) ?? {},
     signatureAlgorithm: row.signature_algorithm,
     signatureKeyId: row.signature_key_id,
     signatureValue: row.signature_value,

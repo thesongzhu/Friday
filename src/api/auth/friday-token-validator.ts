@@ -72,7 +72,8 @@ export function createFridayTokenValidator(
       let claims: FridayAccessTokenClaims;
       try {
         claims = JSON.parse(payloadJson) as FridayAccessTokenClaims;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][token-validator] token payload parse failed:", err instanceof Error ? err.message : String(err));
         throw new FridayTokenValidationError("INVALID_FORMAT", "Token payload is invalid JSON");
       }
 

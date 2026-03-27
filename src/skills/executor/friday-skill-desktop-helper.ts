@@ -8,6 +8,7 @@
  * @module skills/executor/friday-skill-desktop-helper
  */
 
+import { FridayDomainError } from "#errors";
 import type { DesktopSessionManager } from "../../desktop/engine/session-manager.js";
 import type {
   FridayDesktopAction,
@@ -62,28 +63,28 @@ export function createFridaySkillDesktopHelper(
   return {
     async executeAction(action: FridayDesktopAction): Promise<FridayDesktopActionResult> {
       if (!desktopSessionManager.isConnected()) {
-        throw new Error("Desktop session is not connected");
+        throw new FridayDomainError("NOT_INITIALIZED", "Desktop session is not connected", { httpStatus: 503 });
       }
       return desktopSessionManager.executeAction(action);
     },
 
     async inspectElement(selector: FridayDesktopElementSelector): Promise<FridayDesktopElement | null> {
       if (!desktopSessionManager.isConnected()) {
-        throw new Error("Desktop session is not connected");
+        throw new FridayDomainError("NOT_INITIALIZED", "Desktop session is not connected", { httpStatus: 503 });
       }
       return desktopSessionManager.inspectElement(selector);
     },
 
     async searchElements(query: string, appBundleId?: string): Promise<readonly FridayDesktopElement[]> {
       if (!desktopSessionManager.isConnected()) {
-        throw new Error("Desktop session is not connected");
+        throw new FridayDomainError("NOT_INITIALIZED", "Desktop session is not connected", { httpStatus: 503 });
       }
       return desktopSessionManager.searchElements(query, appBundleId);
     },
 
     async checkPermissions(): Promise<readonly FridayDesktopPermission[]> {
       if (!desktopSessionManager.isConnected()) {
-        throw new Error("Desktop session is not connected");
+        throw new FridayDomainError("NOT_INITIALIZED", "Desktop session is not connected", { httpStatus: 503 });
       }
       return desktopSessionManager.checkPermissions();
     },

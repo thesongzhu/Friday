@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Feedback Loop — Track playbook success/failure rates and adjust
  * confidence scores using multi-dimensional scoring with exponential decay.
@@ -49,7 +51,7 @@ export function createScoreCalculator(deps: ScoreCalculatorDeps): FridayPlaybook
     async recalculate(playbookId: UUID): Promise<FridayPlaybookScore> {
       const playbook = store.getPlaybook(playbookId);
       if (!playbook) {
-        throw new Error(`Playbook not found: ${playbookId}`);
+        throw new FridayDomainError("NOT_FOUND", `Playbook not found: ${playbookId}`, { httpStatus: 404 });
       }
       return calculateAndPersistScore(playbook);
     },
@@ -165,7 +167,7 @@ export function createPromotionEngine(deps: PromotionEngineDeps): FridayPlaybook
     async evaluate(candidateId: UUID): Promise<FridayPromotionDecision> {
       const candidate = store.getCandidate(candidateId);
       if (!candidate) {
-        throw new Error(`Candidate not found: ${candidateId}`);
+        throw new FridayDomainError("NOT_FOUND", `Candidate not found: ${candidateId}`, { httpStatus: 404 });
       }
       return evaluateCandidate(candidate);
     },

@@ -144,7 +144,8 @@ export function createFridaySystemUnixSocketBridge(
         let response: FridayJsonRpcResponse;
         try {
           response = JSON.parse(line) as FridayJsonRpcResponse;
-        } catch {
+        } catch (err) {
+          console.warn("[friday][unix-socket-bridge] parse-rpc-response:", err instanceof Error ? err.message : String(err));
           finish(() => {
             socket.destroy();
             reject(new Error("Invalid JSON-RPC response from companion"));
@@ -216,7 +217,8 @@ export function createFridaySystemUnixSocketBridge(
         connected = true;
         lastHeartbeatAt = status.lastHeartbeatAt;
         return status;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][unix-socket-bridge] getStatus:", err instanceof Error ? err.message : String(err));
         connected = false;
         lastHeartbeatAt = options.nowIso();
         return buildFridaySystemCompanionStatus(options, {
@@ -234,7 +236,8 @@ export function createFridaySystemUnixSocketBridge(
         connected = true;
         lastHeartbeatAt = options.nowIso();
         return snapshot;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][unix-socket-bridge] captureSnapshot:", err instanceof Error ? err.message : String(err));
         connected = false;
         lastHeartbeatAt = options.nowIso();
         return {
@@ -254,7 +257,8 @@ export function createFridaySystemUnixSocketBridge(
         connected = true;
         lastHeartbeatAt = options.nowIso();
         return result;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][unix-socket-bridge] arrangeWindows:", err instanceof Error ? err.message : String(err));
         connected = false;
         lastHeartbeatAt = options.nowIso();
         return null;
@@ -267,7 +271,8 @@ export function createFridaySystemUnixSocketBridge(
         connected = true;
         lastHeartbeatAt = options.nowIso();
         return result as Awaited<ReturnType<FridaySystemCompanionBridge["launchApp"]>>;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][unix-socket-bridge] launchApp:", err instanceof Error ? err.message : String(err));
         connected = false;
         lastHeartbeatAt = options.nowIso();
         return null;
@@ -283,7 +288,8 @@ export function createFridaySystemUnixSocketBridge(
         connected = true;
         lastHeartbeatAt = options.nowIso();
         return result as Awaited<ReturnType<FridaySystemCompanionBridge["focusTarget"]>>;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][unix-socket-bridge] focusTarget:", err instanceof Error ? err.message : String(err));
         connected = false;
         lastHeartbeatAt = options.nowIso();
         return null;
@@ -296,7 +302,8 @@ export function createFridaySystemUnixSocketBridge(
         connected = true;
         lastHeartbeatAt = options.nowIso();
         return result as Awaited<ReturnType<FridaySystemCompanionBridge["openUrl"]>>;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][unix-socket-bridge] openUrl:", err instanceof Error ? err.message : String(err));
         connected = false;
         lastHeartbeatAt = options.nowIso();
         return null;
@@ -309,7 +316,8 @@ export function createFridaySystemUnixSocketBridge(
         connected = true;
         lastHeartbeatAt = options.nowIso();
         return result as Awaited<ReturnType<FridaySystemCompanionBridge["openProject"]>>;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][unix-socket-bridge] openProject:", err instanceof Error ? err.message : String(err));
         connected = false;
         lastHeartbeatAt = options.nowIso();
         return null;
@@ -322,7 +330,8 @@ export function createFridaySystemUnixSocketBridge(
         connected = true;
         lastHeartbeatAt = options.nowIso();
         return result as Awaited<ReturnType<FridaySystemCompanionBridge["listNotifications"]>>;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][unix-socket-bridge] listNotifications:", err instanceof Error ? err.message : String(err));
         connected = false;
         lastHeartbeatAt = options.nowIso();
         return [];
@@ -338,7 +347,8 @@ export function createFridaySystemUnixSocketBridge(
         connected = true;
         lastHeartbeatAt = options.nowIso();
         return result as Awaited<ReturnType<FridaySystemCompanionBridge["actOnNotification"]>>;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][unix-socket-bridge] actOnNotification:", err instanceof Error ? err.message : String(err));
         connected = false;
         lastHeartbeatAt = options.nowIso();
         return null;
@@ -351,7 +361,8 @@ export function createFridaySystemUnixSocketBridge(
         connected = true;
         lastHeartbeatAt = options.nowIso();
         return result as Awaited<ReturnType<FridaySystemCompanionBridge["setOverlayVisible"]>>;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][unix-socket-bridge] setOverlayVisible:", err instanceof Error ? err.message : String(err));
         connected = false;
         lastHeartbeatAt = options.nowIso();
         return {

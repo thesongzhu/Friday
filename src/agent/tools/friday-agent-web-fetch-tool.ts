@@ -46,8 +46,9 @@ export function rewriteUrl(raw: string): string {
       u.hostname = "old.reddit.com";
       return u.toString();
     }
-  } catch {
+  } catch (err) {
     // Malformed URL — let fetch() handle the error downstream
+    console.warn("[friday][agent-web-fetch-tool] URL rewrite failed:", err instanceof Error ? err.message : String(err));
   }
   return raw;
 }
@@ -65,6 +66,11 @@ export function createFridayAgentWebFetchTool(
   options?: CreateFridayAgentWebFetchToolOptions,
 ): FridayAgentToolDefinition {
   const ssrfGuard = options?.ssrfGuard;
+
+  // P1-SEC-001: Warn when SSRF guard is not configured
+  if (!ssrfGuard) {
+    console.warn("[friday][SECURITY] web_fetch tool created without SSRF guard — internal network requests will not be blocked");
+  }
 
   return {
     name: "web_fetch",

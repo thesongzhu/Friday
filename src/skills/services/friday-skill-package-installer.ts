@@ -142,7 +142,8 @@ export function createFridaySkillPackageInstaller(
             rmSync(backup, { recursive: true, force: true });
           }
           rmSync(src, { recursive: true, force: true });
-        } catch {
+        } catch (err) {
+        console.warn("[friday][skill-package-installer] operation failed:", err instanceof Error ? err.message : String(err));
           // Activation already succeeded; lingering temp paths are safe to clean later.
         }
       } catch (err) {

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type {
   FridaySkillInstallationEntity,
   FridaySkillInstallationRow,
@@ -63,7 +64,7 @@ function mapRow(row: FridaySkillInstallationRow): FridaySkillInstallationEntity 
     version: row.version,
     satelliteId: row.satellite_id ?? undefined,
     status: row.status as FridaySkillInstallationStatus,
-    permissionsGranted: JSON.parse(row.permissions_granted_json) as string[],
+    permissionsGranted: safeJsonParse<string[]>(row.permissions_granted_json) ?? [],
     lastError: row.last_error ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

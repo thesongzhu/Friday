@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Permission Guard — Multi-layer permission checking for desktop actions.
  *
@@ -226,7 +228,7 @@ function riskRequiresConfirmation(riskLevel: FridayDesktopRiskLevel): boolean {
 }
 
 function assertNever(value: never): never {
-  throw new Error(`Unhandled desktop action variant: ${JSON.stringify(value)}`);
+  throw new FridayDomainError("INTERNAL_ERROR", `Unhandled desktop action variant: ${JSON.stringify(value)}`, { httpStatus: 500 });
 }
 
 function resolveRequiredCapability(action: FridayDesktopAction): FridayDesktopCapability {

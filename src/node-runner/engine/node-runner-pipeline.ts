@@ -14,6 +14,8 @@
  * @module node-runner/engine
  */
 
+import { FridayDomainError } from "#errors";
+
 import type {
   FridayEvaluationContext,
   FridayEvaluationResult,
@@ -62,10 +64,10 @@ export class NodeRunnerPipeline implements FridayNodeRunnerPipeline {
 
   constructor(config: FridayNodeRunnerPipelineConfig) {
     if (!config.adapterRegistry) {
-      throw new Error("NodeRunnerPipeline requires an adapterRegistry");
+      throw new FridayDomainError("VALIDATION_ERROR", "NodeRunnerPipeline requires an adapterRegistry", { httpStatus: 400 });
     }
     if (!config.evaluateRules) {
-      throw new Error("NodeRunnerPipeline requires an evaluateRules function (fail-closed)");
+      throw new FridayDomainError("VALIDATION_ERROR", "NodeRunnerPipeline requires an evaluateRules function (fail-closed)", { httpStatus: 400 });
     }
     this.config = config;
   }

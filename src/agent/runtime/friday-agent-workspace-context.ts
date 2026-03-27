@@ -300,7 +300,8 @@ async function collectMarkdownFiles(rootDir: string): Promise<string[]> {
     let entries: Dirent[];
     try {
       entries = await fs.readdir(currentDir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      console.warn("[friday][workspace-context] readdir:", err instanceof Error ? err.message : String(err));
       return;
     }
     for (const entry of entries) {
@@ -368,8 +369,9 @@ async function loadPathScopedRules(
           matchedPaths,
         },
       });
-    } catch {
+    } catch (err) {
       // Skip unreadable rule files.
+      console.warn("[friday][workspace-context] load-path-rule:", err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -403,8 +405,9 @@ async function loadPathScopedRules(
           matchedPaths,
         },
       });
-    } catch {
+    } catch (err) {
       // Skip unreadable rule files.
+      console.warn("[friday][workspace-context] load-ext-rule:", err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -443,8 +446,9 @@ export async function loadFridayWorkspaceContext(
       let realPath = filePath;
       try {
         realPath = await fs.realpath(filePath);
-      } catch {
+      } catch (err) {
         // Use lexical path if realpath fails
+        console.warn("[friday][workspace-context] realpath:", err instanceof Error ? err.message : String(err));
       }
       if (seenRealPaths.has(realPath)) {
         return;
@@ -456,7 +460,8 @@ export async function loadFridayWorkspaceContext(
         : content;
 
       files.push({ name, filePath, content: truncated, missing: false, kind });
-    } catch {
+    } catch (err) {
+      console.warn("[friday][workspace-context] load-named-file:", err instanceof Error ? err.message : String(err));
       files.push({ name, filePath, missing: true, kind });
     }
   };
@@ -484,8 +489,9 @@ export async function loadFridayWorkspaceContext(
       missing: false,
       kind: "candidate",
     });
-  } catch {
+  } catch (err) {
     // Daily memory file is optional
+    console.warn("[friday][workspace-context] daily-memory:", err instanceof Error ? err.message : String(err));
   }
 
   // Load exported memory items from .friday/exports/memory/ (feedback loop)
@@ -568,7 +574,8 @@ async function loadMemoryExports(workspaceDir: string): Promise<FridayStoredMemo
   let entries: string[];
   try {
     entries = await fs.readdir(memoryDir);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][workspace-context] readdir-memory-exports:", err instanceof Error ? err.message : String(err));
     return []; // Directory doesn't exist yet — no memories exported
   }
 
@@ -613,8 +620,9 @@ async function loadMemoryExports(workspaceDir: string): Promise<FridayStoredMemo
         });
         itemCount++;
       }
-    } catch {
+    } catch (err) {
       // Skip malformed files
+      console.warn("[friday][workspace-context] parse-memory-export:", err instanceof Error ? err.message : String(err));
     }
   }
 
