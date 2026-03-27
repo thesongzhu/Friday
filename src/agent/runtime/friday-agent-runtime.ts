@@ -49,6 +49,7 @@ import { shouldDelegateFridayAgentTask } from "./friday-agent-delegation-policy.
 import { resolveFridayAgentTaskProfile } from "./friday-agent-task-profile.js";
 import { isMutatingToolCall } from "./friday-agent-tool-mutation.js";
 import { getApprovalRequiredReasonForToolCall } from "./friday-agent-tool-risk.js";
+import { summarizeToolCall } from "../services/friday-tool-call-summary.js";
 
 const RULES_EVALUATE_SCOPE = "rules:evaluate";
 const TERMINAL_CONTEXT_ENGINE_STATUSES: ReadonlySet<FridayAgentRunStatus> = new Set([
@@ -3876,6 +3877,7 @@ function buildToolEndEventPayload(params: {
   result: FridayAgentToolResult;
   routeId: string;
   correlationId: string;
+  toolCallSummary?: ReturnType<typeof summarizeToolCall>;
 }): Record<string, unknown> {
   const browserPayload = readBrowserPresentationPayload(params.result);
   return {
@@ -3890,6 +3892,7 @@ function buildToolEndEventPayload(params: {
       : {}),
     routeId: params.result.routeId ?? params.routeId,
     correlationId: params.result.correlationId ?? params.correlationId,
+    ...(params.toolCallSummary ? { toolCallSummary: params.toolCallSummary } : {}),
     ...(typeof browserPayload?.presentationMode === "string"
       ? { presentationMode: browserPayload.presentationMode }
       : {}),
@@ -4069,6 +4072,7 @@ async function executeToolCall(
       result,
       routeId,
       correlationId,
+      toolCallSummary: summarizeToolCall(toolUse.name, toolUse.input, result, 0, 0),
     }));
 
     return {
