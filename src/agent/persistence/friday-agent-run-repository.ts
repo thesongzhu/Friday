@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 
 import { FRIDAY_AGENT_ACTIVE_STATUSES, FRIDAY_AGENT_ERROR_CODES } from "../friday-agent.constants.js";
 import type {
@@ -13,6 +14,7 @@ import type {
   FridayAgentTestResult,
 } from "../model/friday-agent.types.js";
 import type { FridayAgentContextCostSummary } from "../runtime/friday-agent-runtime.types.js";
+
 import type { FridayResolvedAgentTaskProfile } from "../runtime/friday-agent-task-profile.js";
 
 // ─── Row shape from SQLite ───
@@ -57,12 +59,8 @@ function rowToRecord(row: FridayAgentRunRow): FridayAgentRunRecord {
     model: row.model ?? undefined,
     attempt: row.attempt,
     maxAttempts: row.max_attempts,
-    artifacts: row.artifacts
-      ? (JSON.parse(row.artifacts) as FridayAgentArtifact[])
-      : undefined,
-    testResults: row.test_results
-      ? (JSON.parse(row.test_results) as FridayAgentTestResult[])
-      : undefined,
+    artifacts: safeJsonParse<FridayAgentArtifact[]>(row.artifacts),
+    testResults: safeJsonParse<FridayAgentTestResult[]>(row.test_results),
     errorCode: row.error_code ?? undefined,
     errorMessage: row.error_message ?? undefined,
     createdAt: row.created_at,
@@ -72,24 +70,14 @@ function rowToRecord(row: FridayAgentRunRow): FridayAgentRunRecord {
     usageInput: row.usage_input ?? undefined,
     usageOutput: row.usage_output ?? undefined,
     costUsd: row.cost_usd ?? undefined,
-    planReview: row.plan_review_json
-      ? (JSON.parse(row.plan_review_json) as FridayAgentPlanReviewPayload)
-      : undefined,
-    actualExecution: row.actual_execution_json
-      ? (JSON.parse(row.actual_execution_json) as FridayAgentActualExecution)
-      : undefined,
-    constraints: row.constraints_json && row.constraints_json !== "{}"
-      ? (JSON.parse(row.constraints_json) as FridayAgentRunConstraints)
-      : undefined,
+    planReview: safeJsonParse<FridayAgentPlanReviewPayload>(row.plan_review_json),
+    actualExecution: safeJsonParse<FridayAgentActualExecution>(row.actual_execution_json),
+    constraints: safeJsonParse<FridayAgentRunConstraints>(row.constraints_json && row.constraints_json !== "{}" ? row.constraints_json : undefined),
     responseText: row.response_text ?? undefined,
     summary: row.summary ?? undefined,
     artifactDir: row.artifact_dir ?? undefined,
-    contextCostSummary: row.context_cost_summary_json
-      ? (JSON.parse(row.context_cost_summary_json) as FridayAgentContextCostSummary)
-      : undefined,
-    taskProfile: row.task_profile_json
-      ? (JSON.parse(row.task_profile_json) as FridayResolvedAgentTaskProfile)
-      : undefined,
+    contextCostSummary: safeJsonParse<FridayAgentContextCostSummary>(row.context_cost_summary_json),
+    taskProfile: safeJsonParse<FridayResolvedAgentTaskProfile>(row.task_profile_json),
   };
 }
 

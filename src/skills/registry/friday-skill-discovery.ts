@@ -112,7 +112,8 @@ export function discoverFridaySkillCandidates(
     let entries: string[];
     try {
       entries = readdirSync(root.dir).sort(); // lexical sort for determinism
-    } catch {
+    } catch (err) {
+      console.warn("[friday][skill-discovery] operation failed:", err instanceof Error ? err.message : String(err));
       continue;
     }
 
@@ -120,7 +121,8 @@ export function discoverFridaySkillCandidates(
       const candidateDir = join(root.dir, entry);
       try {
         if (!statSync(candidateDir).isDirectory()) continue;
-      } catch {
+      } catch (err) {
+      console.warn("[friday][skill-discovery] operation failed:", err instanceof Error ? err.message : String(err));
         continue;
       }
 

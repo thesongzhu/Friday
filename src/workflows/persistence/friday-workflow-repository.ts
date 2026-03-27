@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import type { FridaySqliteLayer } from "#state";
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayWorkflowCreateInput,
   FridayWorkflowEntity,
@@ -115,7 +116,7 @@ function mapWorkflowRow(row: FridayWorkflowRow): FridayWorkflowEntity {
     slug: row.slug,
     name: row.name,
     description: row.description ?? undefined,
-    tags: JSON.parse(row.tags_json) as string[],
+    tags: safeJsonParse<string[]>(row.tags_json) ?? [],
     ownerUserId: row.owner_user_id ?? undefined,
     latestVersionNumber: row.latest_version_number,
     publishedVersionNumber: row.published_version_number ?? undefined,
@@ -135,7 +136,7 @@ function mapVersionRow(row: FridayWorkflowVersionRow): FridayWorkflowVersionEnti
     workflowId: row.workflow_id,
     versionNumber: row.version_number,
     checksum: row.checksum,
-    graphJson: JSON.parse(row.graph_json) as JsonValue,
+    graphJson: safeJsonParse<JsonValue>(row.graph_json) as JsonValue,
     createdByUserId: row.created_by_user_id ?? undefined,
     isPublished: row.is_published === 1,
     changeNote: row.change_note ?? undefined,

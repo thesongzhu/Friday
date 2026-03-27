@@ -215,8 +215,9 @@ export function createPlaybookLearningLoop(
         if (sel.playbookId) {
           try {
             await scoreCalculator.recalculate(sel.playbookId);
-          } catch {
+          } catch (err) {
             // Score recalculation failure is non-fatal
+            console.warn("[friday][playbook-learning-loop] score recalculation failed:", err instanceof Error ? err.message : String(err));
           }
         }
       }

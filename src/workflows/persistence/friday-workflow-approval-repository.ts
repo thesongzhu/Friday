@@ -4,6 +4,7 @@ import type {
   FridayWorkflowApprovalStatus,
 } from "../model/friday-workflow-engine.types.js";
 import type { FridaySqliteLayer } from "#state";
+import { safeJsonParse } from "#utilities";
 
 // ─── Interface ───
 
@@ -55,10 +56,7 @@ function mapApprovalRow(
     approverUserId: row.approver_user_id ?? undefined,
     approverRole: row.approver_role ?? undefined,
     status: row.status as FridayWorkflowApprovalStatus,
-    requestPayload: JSON.parse(row.request_payload_json) as Record<
-      string,
-      unknown
-    >,
+    requestPayload: safeJsonParse<Record<string, unknown>>(row.request_payload_json) ?? {},
     timeoutAt: row.timeout_at ?? undefined,
     decidedAt: row.decided_at ?? undefined,
     decidedByUserId: row.decided_by_user_id ?? undefined,

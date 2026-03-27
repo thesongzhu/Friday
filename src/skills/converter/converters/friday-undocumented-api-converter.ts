@@ -132,7 +132,8 @@ export function createFridayUndocumentedApiConverter(): FridaySkillConverter {
 function safeDecodeBase64(input: string): string | null {
   try {
     return Buffer.from(input, "base64").toString("utf-8");
-  } catch {
+  } catch (err) {
+    console.warn("[friday][undocumented-api-converter] operation failed:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

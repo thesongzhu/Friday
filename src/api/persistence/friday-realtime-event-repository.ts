@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type { FridayRealtimeEventEnvelope, FridayRealtimeEventName } from "../model/friday-api-realtime.types.js";
 
 // ─── Row type ───
@@ -41,12 +42,10 @@ function rowToEnvelope(row: FridayRealtimeEventRow): FridayRealtimeEventEnvelope
     streamId: row.stream_id,
     seq: row.seq,
     event: row.event as FridayRealtimeEventName,
-    payload: JSON.parse(row.payload_json),
+    payload: safeJsonParse<FridayRealtimeEventEnvelope["payload"]>(row.payload_json)!,
     emittedAt: row.emitted_at,
     correlationId: row.correlation_id ?? undefined,
-    stateVersion: row.state_version_json
-      ? JSON.parse(row.state_version_json)
-      : undefined,
+    stateVersion: safeJsonParse<FridayRealtimeEventEnvelope["stateVersion"]>(row.state_version_json),
   };
 }
 

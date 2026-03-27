@@ -80,7 +80,8 @@ function normalizeTarget(target: string): { path: string; origin?: string } | nu
       const parsed = new URL(target);
       const path = parsed.pathname || "/";
       return { path: path.startsWith("/") ? path : `/${path}`, origin: parsed.origin };
-    } catch {
+    } catch (err) {
+    console.warn("[friday][api-example-parser] operation failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
   }

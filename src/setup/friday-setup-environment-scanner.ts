@@ -43,7 +43,8 @@ export function createFridayEnvironmentScanner(): FridayEnvironmentScanner {
       try {
         await execCommand("which", [command]);
         return true;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][setup-environment-scanner] command not found:", err instanceof Error ? err.message : String(err));
         return false;
       }
     },
@@ -52,7 +53,8 @@ export function createFridayEnvironmentScanner(): FridayEnvironmentScanner {
       try {
         const output = await execCommand(command, ["--version"]);
         return extractVersion(output);
-      } catch {
+      } catch (err) {
+        console.warn("[friday][setup-environment-scanner] version check failed:", err instanceof Error ? err.message : String(err));
         return null;
       }
     },
@@ -67,7 +69,8 @@ export function createFridayEnvironmentScanner(): FridayEnvironmentScanner {
         });
         clearTimeout(timer);
         return response.ok || response.status < 500;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][setup-environment-scanner] reachability check failed:", err instanceof Error ? err.message : String(err));
         return false;
       }
     },
@@ -76,7 +79,8 @@ export function createFridayEnvironmentScanner(): FridayEnvironmentScanner {
       try {
         await access(path, constants.F_OK);
         return true;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][setup-environment-scanner] file access check failed:", err instanceof Error ? err.message : String(err));
         return false;
       }
     },

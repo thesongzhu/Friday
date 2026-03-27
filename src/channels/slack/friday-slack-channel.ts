@@ -5,6 +5,7 @@
  * Sends via Slack Web API (chat.postMessage).
  */
 
+import { FridayDomainError } from "#errors";
 import type {
   FridayChannelMessage,
   FridayChannelPlugin,
@@ -105,7 +106,7 @@ export function createFridaySlackChannel(deps: SlackChannelDeps = {}): FridayCha
 
   const outboundAdapter: FridayChannelOutboundAdapter = {
     async send(options: FridayChannelSendOptions): Promise<{ messageId: string }> {
-      if (!config) throw new Error("Slack channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Slack channel not initialized", { httpStatus: 503 });
 
       const result = await webApi.sendMessage(config.botToken, {
         channel: options.chatId,
@@ -136,12 +137,12 @@ export function createFridaySlackChannel(deps: SlackChannelDeps = {}): FridayCha
 
   const lifecycleAdapter: FridayChannelLifecycleAdapter = {
     async connect(eventHandler: (rawEvent: unknown) => void) {
-      if (!config) throw new Error("Slack channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Slack channel not initialized", { httpStatus: 503 });
       connectionStatus = "connecting";
 
       if (config.mode === "http") {
         if (!config.signingSecret) {
-          throw new Error("Slack HTTP mode requires signingSecret in config");
+          throw new FridayDomainError("VALIDATION_ERROR", "Slack HTTP mode requires signingSecret in config", { httpStatus: 400 });
         }
         await httpEvents.start(config.signingSecret, (event) => {
           eventHandler(event);
@@ -206,7 +207,7 @@ export function createFridaySlackChannel(deps: SlackChannelDeps = {}): FridayCha
     },
 
     async start(handler) {
-      if (!config) throw new Error("Slack channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Slack channel not initialized", { httpStatus: 503 });
       connectionStatus = "connecting";
 
       const eventHandler = (event: SlackMessageEvent) => {
@@ -216,7 +217,7 @@ export function createFridaySlackChannel(deps: SlackChannelDeps = {}): FridayCha
 
       if (config.mode === "http") {
         if (!config.signingSecret) {
-          throw new Error("Slack HTTP mode requires signingSecret in config");
+          throw new FridayDomainError("VALIDATION_ERROR", "Slack HTTP mode requires signingSecret in config", { httpStatus: 400 });
         }
         await httpEvents.start(config.signingSecret, eventHandler);
       } else {

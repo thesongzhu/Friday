@@ -179,8 +179,9 @@ export function createFridayAgentCronTool(
       if (nextIso) {
         schedulerRepository.setNextRunAt(id, nextIso, now);
       }
-    } catch {
+    } catch (err) {
       // best-effort: isValidCronExpression already validated
+      console.warn("[friday][agent-cron-tool] next run computation failed:", err instanceof Error ? err.message : String(err));
     }
 
     // Register executable job definition so the scheduler can actually run it
@@ -263,8 +264,9 @@ export function createFridayAgentCronTool(
           if (nextIso) {
             schedulerRepository.setNextRunAt(id, nextIso, now);
           }
-        } catch {
+        } catch (err) {
           // best-effort
+          console.warn("[friday][agent-cron-tool] next run update failed:", err instanceof Error ? err.message : String(err));
         }
       }
     }

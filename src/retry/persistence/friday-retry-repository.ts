@@ -18,7 +18,8 @@ function parseJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
   try {
     return JSON.parse(value) as T;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][retry-repository] JSON parse failed:", err instanceof Error ? err.message : String(err));
     return fallback;
   }
 }

@@ -9,6 +9,7 @@
  * - Route through adapters when present, fallback to legacy methods
  */
 
+import { FridayDomainError } from "#errors";
 import type { FridayChannelStatus } from "./friday-channel-adapters.types.js";
 import type {
   FridayChannelCapabilityContract,
@@ -205,7 +206,7 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
   return {
     register(plugin, allowlist = {}) {
       if (entries.has(plugin.kind)) {
-        throw new Error(`Channel kind "${plugin.kind}" is already registered`);
+        throw new FridayDomainError("CONFLICT", `Channel kind "${plugin.kind}" is already registered`, { httpStatus: 409 });
       }
       entries.set(plugin.kind, { plugin, allowlist, running: false });
     },
@@ -273,11 +274,13 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
         }),
       );
 
-      throw new Error(
+      throw new FridayDomainError(
+        "INTERNAL_ERROR",
         `Failed to start ${String(failures.length)} channel(s): ` +
           failures
             .map((failure) => `${failure.kind}: ${failure.message}`)
             .join("; "),
+        { httpStatus: 500 },
       );
     },
 
@@ -339,11 +342,13 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
         (result): result is PromiseRejectedResult => result.status === "rejected",
       );
       if (failures.length > 0) {
-        throw new Error(
+        throw new FridayDomainError(
+          "INTERNAL_ERROR",
           `Failed to stop ${String(failures.length)} channel(s): ` +
             failures
               .map((f) => (f.reason instanceof Error ? f.reason.message : String(f.reason)))
               .join("; "),
+          { httpStatus: 500 },
         );
       }
     },
@@ -380,10 +385,10 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
     async send(kind, options) {
       const entry = entries.get(kind);
       if (!entry) {
-        throw new Error(`Channel kind "${kind}" is not registered`);
+        throw new FridayDomainError("NOT_FOUND", `Channel kind "${kind}" is not registered`, { httpStatus: 404 });
       }
       if (!entry.running) {
-        throw new Error(`Channel kind "${kind}" is not running`);
+        throw new FridayDomainError("NOT_INITIALIZED", `Channel kind "${kind}" is not running`, { httpStatus: 503 });
       }
 
       // Use outbound adapter if available, otherwise legacy send

@@ -47,8 +47,9 @@ function getHour(nowIso: string, timezone?: string): number {
     if (!Number.isNaN(parsed)) {
       return parsed % 24;
     }
-  } catch {
+  } catch (err) {
     // Invalid timezone fallback to local hour.
+    console.warn("[friday][heartbeat-active-hours] timezone conversion failed:", err instanceof Error ? err.message : String(err));
   }
   return date.getHours();
 }

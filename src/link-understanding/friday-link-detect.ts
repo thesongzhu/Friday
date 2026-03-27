@@ -83,7 +83,8 @@ export function normalizeUrl(url: string): string {
       normalized = normalized.replace(/\/$/, "");
     }
     return normalized;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][link-detect] URL normalization failed:", err instanceof Error ? err.message : String(err));
     return url.toLowerCase();
   }
 }

@@ -170,7 +170,8 @@ function sanitizeDraftFileContent(relativePath: string, content: string): string
     const leaf = basename(sourceRef.replace(/[\\/]+$/, ""));
     parsed.sourceRef = leaf.length > 0 ? `local:${leaf}` : "local:redacted";
     return JSON.stringify(parsed, null, 2);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][skill-import-installer] operation failed:", err instanceof Error ? err.message : String(err));
     return content;
   }
 }

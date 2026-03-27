@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Desktop Session Manager — Orchestrates the desktop control runtime lifecycle.
  *
@@ -234,7 +236,7 @@ export function createDesktopSessionManager(
 
   function ensureConnected(): void {
     if (state !== "connected") {
-      throw new Error("Desktop session is not connected");
+      throw new FridayDomainError("NOT_INITIALIZED", "Desktop session is not connected", { httpStatus: 503 });
     }
   }
 
@@ -392,7 +394,7 @@ export function createDesktopSessionManager(
         .filter((recording) => recording.state === "recording" || recording.state === "paused");
 
       if (activeRecordings.length > 0) {
-        throw new Error("A recording is already active; stop it before starting a new recording");
+        throw new FridayDomainError("VALIDATION_ERROR", "A recording is already active; stop it before starting a new recording", { httpStatus: 400 });
       }
 
       const recording = engine.start(options);

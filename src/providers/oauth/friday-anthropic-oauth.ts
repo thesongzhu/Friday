@@ -250,7 +250,7 @@ export function createFridayAnthropicOAuthProvider(
 
       const data: unknown = await response.json();
       if (!isAnthropicTokenResponse(data)) {
-        throw new Error("Anthropic token response has unexpected shape");
+        throw new FridayDomainError("INTERNAL_ERROR", "Anthropic token response has unexpected shape", { httpStatus: 500 });
       }
 
       // Clean up stored verifier
@@ -292,7 +292,7 @@ export function createFridayAnthropicOAuthProvider(
 
       const data: unknown = await response.json();
       if (!isAnthropicTokenResponse(data)) {
-        throw new Error("Anthropic token refresh response has unexpected shape");
+        throw new FridayDomainError("INTERNAL_ERROR", "Anthropic token refresh response has unexpected shape", { httpStatus: 500 });
       }
 
       const expiresAt = new Date(nowMs() + data.expires_in * 1000 - 5 * 60 * 1000).toISOString();

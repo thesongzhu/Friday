@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 
 // ─── Run event record ───
 
@@ -30,7 +31,7 @@ function rowToRecord(row: FridayAgentRunEventRow): FridayAgentRunEventRecord {
     runId: row.run_id,
     seq: row.seq,
     eventName: row.event_name,
-    payload: JSON.parse(row.payload_json) as Record<string, unknown>,
+    payload: safeJsonParse<Record<string, unknown>>(row.payload_json) ?? {},
     emittedAt: row.emitted_at,
     createdAt: row.created_at,
   };

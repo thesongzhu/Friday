@@ -1,4 +1,5 @@
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 import { createFridayProviderInferenceClient } from "#skills/generator";
 import type { FridayProviderInferenceClient } from "#skills/generator";
 import {
@@ -360,7 +361,7 @@ export function createFridayWorkflowGeneratorService(
         .prepare("SELECT value_json FROM memory_items WHERE namespace = ? AND key = ?")
         .get(DRAFT_NAMESPACE, sessionId) as { value_json: string } | undefined;
       if (!row) return undefined;
-      return JSON.parse(row.value_json) as FridayGeneratedWorkflowDraft;
+      return safeJsonParse<FridayGeneratedWorkflowDraft>(row.value_json);
     });
   }
 
@@ -388,7 +389,8 @@ export function createFridayWorkflowGeneratorService(
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         return parsed as FridayWorkflowGenerationRequirements;
       }
-    } catch {
+    } catch (err) {
+      console.warn("[friday][workflow-generator-service] requirements parse failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
     return null;
@@ -1308,7 +1310,8 @@ export function createFridayWorkflowGeneratorService(
       let requirements: FridayWorkflowGenerationRequirements;
       try {
         requirements = JSON.parse(session.requirementsSummary) as FridayWorkflowGenerationRequirements;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][workflow-generator-service] requirements JSON invalid:", err instanceof Error ? err.message : String(err));
         throw new FridayDomainError(
           "VALIDATION_ERROR",
           "No valid requirements available. Continue the conversation to provide requirements.",

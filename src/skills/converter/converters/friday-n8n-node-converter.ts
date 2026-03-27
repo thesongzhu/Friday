@@ -71,7 +71,8 @@ export function createFridayN8nNodeConverter(): FridaySkillConverter {
       let parsed: unknown;
       try {
         parsed = JSON.parse(content);
-      } catch {
+      } catch (err) {
+      console.warn("[friday][n8n-node-converter] operation failed:", err instanceof Error ? err.message : String(err));
         return null;
       }
 
@@ -113,7 +114,8 @@ export function createFridayN8nNodeConverter(): FridaySkillConverter {
       let parsed: unknown;
       try {
         parsed = JSON.parse(content);
-      } catch {
+      } catch (err) {
+      console.warn("[friday][n8n-node-converter] operation failed:", err instanceof Error ? err.message : String(err));
         throw new FridayDomainError("PARSE_ERROR", "N8nNodeConverter: source is not valid JSON", { httpStatus: 422 });
       }
 
@@ -201,7 +203,8 @@ function resolveSourceContent(source: FridaySkillConversionSource): string | nul
   if (source.contentBase64) {
     try {
       return Buffer.from(source.contentBase64, "base64").toString("utf-8");
-    } catch {
+    } catch (err) {
+      console.warn("[friday][n8n-node-converter] operation failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
   }
@@ -237,7 +240,8 @@ function tryReadAsFile(filePath: string): string | null {
     }
     const stat = readFileSync(filePath, "utf-8");
     return stat;
-  } catch {
+  } catch (err) {
+      console.warn("[friday][n8n-node-converter] operation failed:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }
@@ -558,7 +562,8 @@ ${propNames.map((n) => `    params[${JSON.stringify(n)}] = getNodeParameter(${JS
     let nodeModule;
     try {
       nodeModule = await import(${JSON.stringify(nodeName)});
-    } catch {
+    } catch (err) {
+      console.warn("[friday][n8n-node-converter] operation failed:", err instanceof Error ? err.message : String(err));
       // Node module not available — return gathered parameters
       return {
         result: {

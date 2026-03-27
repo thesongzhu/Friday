@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Trace Manager — Distributed tracing with spans, parent-child relationships,
  * and context propagation.
@@ -196,16 +198,16 @@ export class FridayTraceManager {
     const parentContext = options.parentContext;
     const traceId = parentContext?.traceId;
     if (!traceId || !parentContext) {
-      throw new Error("parentContext with traceId is required to start a child span");
+      throw new FridayDomainError("VALIDATION_ERROR", "parentContext with traceId is required to start a child span", { httpStatus: 400 });
     }
 
     const spanMap = this.activeSpans.get(traceId);
     if (!spanMap) {
-      throw new Error(`Trace "${traceId}" not found or already completed`);
+      throw new FridayDomainError("NOT_FOUND", `Trace "${traceId}" not found or already completed`, { httpStatus: 404 });
     }
 
     if (!spanMap.has(parentContext.spanId)) {
-      throw new Error(`Parent span "${parentContext.spanId}" not found in trace "${traceId}"`);
+      throw new FridayDomainError("NOT_FOUND", `Parent span "${parentContext.spanId}" not found in trace "${traceId}"`, { httpStatus: 404 });
     }
 
     const span: FridaySpan = {

@@ -60,10 +60,10 @@ const TRANSIENT_ERROR_PATTERNS = [
 function extractErrorText(err: unknown): string {
   if (err instanceof Error) {
     let text = err.message;
-    const code = (err as any).code;
-    const status = (err as any).status;
-    if (code !== undefined) text += ` code=${code}`;
-    if (status !== undefined) text += ` status=${status}`;
+    const code = "code" in err ? (err as { code: unknown }).code : undefined;
+    const status = "status" in err ? (err as { status: unknown }).status : undefined;
+    if (code !== undefined) text += ` code=${String(code)}`;
+    if (status !== undefined) text += ` status=${String(status)}`;
     return text;
   }
 
@@ -92,8 +92,12 @@ function classifyProviderError(err: unknown): {
   code?: string;
 } {
   const text = extractErrorText(err);
-  const status = typeof (err as any)?.status === "number" ? (err as any).status as number : undefined;
-  const code = typeof (err as any)?.code === "string" ? (err as any).code as string : undefined;
+  const status = err instanceof Error && "status" in err && typeof (err as { status: unknown }).status === "number"
+    ? (err as { status: number }).status
+    : undefined;
+  const code = err instanceof Error && "code" in err && typeof (err as { code: unknown }).code === "string"
+    ? (err as { code: string }).code
+    : undefined;
 
   if (isTransientError(text)) {
     return { reason: "transient", status, code };

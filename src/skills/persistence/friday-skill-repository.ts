@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type { SkillManifestV2 } from "../model/friday-skill-manifest-v2.types.js";
 import type { SkillLifecycleStatus } from "../model/friday-skill-lifecycle.types.js";
 import type { SkillOrigin, SkillSource } from "../model/friday-skill-source.types.js";
@@ -76,9 +77,7 @@ function mapRow(row: FridaySkillRow): FridaySkillEntity {
     latestVersion: row.latest_version ?? undefined,
     installedVersion: row.installed_version ?? undefined,
     status: row.status as SkillLifecycleStatus,
-    currentManifest: row.current_manifest_json
-      ? (JSON.parse(row.current_manifest_json) as SkillManifestV2)
-      : undefined,
+    currentManifest: safeJsonParse<SkillManifestV2>(row.current_manifest_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at ?? undefined,

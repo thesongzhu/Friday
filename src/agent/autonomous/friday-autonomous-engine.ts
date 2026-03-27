@@ -10,6 +10,8 @@
  * @module agent/autonomous
  */
 
+import { FridayDomainError } from "#errors";
+
 import type {
   CreateFridayAutonomousEngineDeps,
   FridayAutonomousActionResult,
@@ -118,7 +120,8 @@ export function createFridayAutonomousEngine(
       const result = await desktopSessionManager.executeAction({ type: "screenshot" });
       if (result.status === "failed") return null;
       return result.screenshotBase64 ?? null;
-    } catch {
+    } catch (err) {
+      console.warn("[friday][autonomous-engine] desktop screenshot failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
   }
@@ -128,7 +131,8 @@ export function createFridayAutonomousEngine(
     try {
       const result = await browserManager.screenshot(sessionId);
       return result.base64;
-    } catch {
+    } catch (err) {
+      console.warn("[friday][autonomous-engine] browser screenshot failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
   }
@@ -138,7 +142,8 @@ export function createFridayAutonomousEngine(
     try {
       const result = await browserManager.snapshot(sessionId);
       return result.content;
-    } catch {
+    } catch (err) {
+      console.warn("[friday][autonomous-engine] browser snapshot failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
   }
@@ -148,7 +153,8 @@ export function createFridayAutonomousEngine(
     try {
       const elements = await desktopSessionManager.searchElements(query);
       return JSON.stringify(elements, null, 2);
-    } catch {
+    } catch (err) {
+      console.warn("[friday][autonomous-engine] desktop element search failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
   }
@@ -466,7 +472,8 @@ export function createFridayAutonomousEngine(
         };
       }
       return { passed: false, actual: result.response };
-    } catch {
+    } catch (err) {
+      console.warn("[friday][autonomous-engine] verification failed:", err instanceof Error ? err.message : String(err));
       return { passed: false, actual: "Verification failed due to error" };
     }
   }
@@ -522,7 +529,8 @@ export function createFridayAutonomousEngine(
           item.verification,
         ),
       );
-    } catch {
+    } catch (err) {
+      console.warn("[friday][autonomous-engine] plan decomposition failed:", err instanceof Error ? err.message : String(err));
       return [createStep(goalId, 0, "Execute the goal directly", "composite")];
     }
   }
@@ -557,7 +565,7 @@ export function createFridayAutonomousEngine(
    */
   function updateGoal(goalId: UUID, updates: Partial<FridayAutonomousGoal>): FridayAutonomousGoal {
     const current = goals.get(goalId);
-    if (!current) throw new Error(`Goal ${goalId} not found`);
+    if (!current) throw new FridayDomainError("NOT_FOUND", `Goal ${goalId} not found`, { httpStatus: 404 });
     const updated = { ...current, ...updates } as FridayAutonomousGoal;
     goals.set(goalId, updated);
     return updated;
@@ -568,7 +576,7 @@ export function createFridayAutonomousEngine(
    */
   function updateStep(stepId: UUID, updates: Partial<FridayAutonomousStep>): FridayAutonomousStep {
     const current = steps.get(stepId);
-    if (!current) throw new Error(`Step ${stepId} not found`);
+    if (!current) throw new FridayDomainError("NOT_FOUND", `Step ${stepId} not found`, { httpStatus: 404 });
     const updated = { ...current, ...updates } as FridayAutonomousStep;
     steps.set(stepId, updated);
     return updated;

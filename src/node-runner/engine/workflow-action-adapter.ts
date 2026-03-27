@@ -8,6 +8,8 @@
  * @module node-runner/engine
  */
 
+import { FridayDomainError } from "#errors";
+
 import type {
   FridayNodeAdapter,
   FridayNodeExecutionContext,
@@ -65,12 +67,12 @@ export class WorkflowActionAdapter implements FridayNodeAdapter {
     const skillId = (config.skillId ?? config.ref) as string | undefined;
 
     if (!skillId) {
-      throw new Error("action node missing skillId or ref in config");
+      throw new FridayDomainError("VALIDATION_ERROR", "action node missing skillId or ref in config", { httpStatus: 400 });
     }
 
     const skill = this.resolveSkill(skillId);
     if (!skill) {
-      throw new Error(`skill '${skillId}' not found`);
+      throw new FridayDomainError("NOT_FOUND", `skill '${skillId}' not found`, { httpStatus: 404 });
     }
 
     return { ...config, _resolvedSkillId: skillId };
@@ -141,5 +143,5 @@ function resolveArgs(
 function throwIfAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;
   if (signal.reason instanceof Error) throw signal.reason;
-  throw new Error("Action node operation aborted");
+  throw new FridayDomainError("INTERNAL_ERROR", "Action node operation aborted", { httpStatus: 500 });
 }

@@ -53,7 +53,8 @@ export function createFridayProgramDiscoveryService(
 
       try {
         programs = await deps.scanner.scan(policy);
-      } catch {
+      } catch (err) {
+      console.warn("[friday][program-discovery-service] operation failed:", err instanceof Error ? err.message : String(err));
         scanErrors++;
         programs = [];
       }

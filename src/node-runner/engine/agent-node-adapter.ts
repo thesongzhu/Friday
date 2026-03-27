@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 import type {
   FridayNodeAdapter,
   FridayNodeExecutionContext,
@@ -77,5 +79,5 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal.reason instanceof Error) {
     throw signal.reason;
   }
-  throw new Error("Agent node operation aborted");
+  throw new FridayDomainError("INTERNAL_ERROR", "Agent node operation aborted", { httpStatus: 500 });
 }

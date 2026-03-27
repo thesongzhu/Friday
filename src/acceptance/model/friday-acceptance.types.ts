@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Acceptance Testing Layer — Domain Model and Data Contract.
  *
@@ -299,7 +301,7 @@ export function assertAcceptanceRunStateTransition(
   to: AcceptanceRunState,
 ): void {
   if (!canTransitionAcceptanceRunState(from, to)) {
-    throw new Error(`Invalid acceptance run state transition: ${from} -> ${to}`);
+    throw new FridayDomainError("VALIDATION_ERROR", `Invalid acceptance run state transition: ${from} -> ${to}`, { httpStatus: 400 });
   }
 }
 

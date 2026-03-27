@@ -9,6 +9,8 @@
  * @module node-runner/engine
  */
 
+import { FridayDomainError } from "#errors";
+
 import type {
   FridayNodeAdapter,
   FridayNodeExecutionContext,
@@ -61,7 +63,7 @@ export class WorkflowAiAdapter implements FridayNodeAdapter {
     const prompt = config.prompt as string | undefined;
 
     if (!prompt) {
-      throw new Error("ai node missing 'prompt' in config");
+      throw new FridayDomainError("VALIDATION_ERROR", "ai node missing 'prompt' in config", { httpStatus: 400 });
     }
 
     return { ...config };
@@ -105,8 +107,9 @@ export class WorkflowAiAdapter implements FridayNodeAdapter {
           refExpr,
           String(val ?? ""),
         );
-      } catch {
+      } catch (err) {
         // Leave unresolved refs as-is
+        console.warn("[friday][workflow-ai-adapter] ref interpolation failed:", err instanceof Error ? err.message : String(err));
       }
     }
 
@@ -134,5 +137,5 @@ export class WorkflowAiAdapter implements FridayNodeAdapter {
 function throwIfAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;
   if (signal.reason instanceof Error) throw signal.reason;
-  throw new Error("AI node operation aborted");
+  throw new FridayDomainError("INTERNAL_ERROR", "AI node operation aborted", { httpStatus: 500 });
 }

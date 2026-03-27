@@ -7,6 +7,7 @@ import type {
   FridayMemorySearchQuery,
 } from "../model/friday-memory.types.js";
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 import { FRIDAY_MEMORY_ERROR_CODES } from "../friday-memory.constants.js";
 
 // ─── Row shape ───
@@ -57,10 +58,10 @@ export interface FridayMemoryItemRepository {
 // ─── Helpers ───
 
 function rowToItem(row: MemoryItemRow): FridayMemoryItem {
-  const tagsJson: unknown = JSON.parse(row.tags_json);
+  const tagsJson: unknown = safeJsonParse<unknown>(row.tags_json);
   const tags: string[] = Array.isArray(tagsJson) ? (tagsJson as string[]) : [];
   const metadata: Record<string, unknown> =
-    row.metadata_json ? (JSON.parse(row.metadata_json) as Record<string, unknown>) : {};
+    safeJsonParse<Record<string, unknown>>(row.metadata_json) ?? {};
 
   return {
     id: row.id,

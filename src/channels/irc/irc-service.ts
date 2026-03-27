@@ -2,6 +2,7 @@
  * IRC service — stubbed interfaces for TCP socket connection.
  */
 
+import { FridayDomainError } from "#errors";
 import * as net from "node:net";
 import * as tls from "node:tls";
 
@@ -109,13 +110,14 @@ function parsePrefix(prefix: string): {
 export function createIrcConnectionService(): IrcConnectionService {
   let socket: net.Socket | tls.TLSSocket | null = null;
   let connected = false;
+  let stopped = false; // P2-CH: Track explicit stop
   let channels: string[] = [];
   let lineBuffer = "";
 
   /** Write a raw IRC command followed by CRLF. */
   function sendRaw(command: string): void {
     if (!socket || socket.destroyed) {
-      throw new Error("IRC socket is not connected");
+      throw new FridayDomainError("NOT_INITIALIZED", "IRC socket is not connected", { httpStatus: 503 });
     }
     socket.write(`${command}\r\n`);
   }
@@ -189,6 +191,10 @@ export function createIrcConnectionService(): IrcConnectionService {
           connected = false;
           channels = [];
           socket = null;
+          if (!stopped) {
+            // P2-CH: Log disconnection — the channel registry health monitor will auto-restart
+            console.warn("[friday] IRC socket closed unexpectedly");
+          }
         });
 
         function handleLine(line: string): void {
@@ -289,10 +295,12 @@ export function createIrcConnectionService(): IrcConnectionService {
     },
 
     async disconnect(): Promise<void> {
+      stopped = true;
       if (socket && !socket.destroyed) {
         try {
           sendRaw("QUIT :Goodbye");
-        } catch {
+        } catch (err) {
+          console.warn("[friday][irc-service] operation failed:", err instanceof Error ? err.message : String(err));
           // Socket may already be broken
         }
         socket.destroy();
@@ -305,7 +313,7 @@ export function createIrcConnectionService(): IrcConnectionService {
 
     async sendMessage(target: string, message: string): Promise<void> {
       if (!connected || !socket || socket.destroyed) {
-        throw new Error("IRC: cannot send message — not connected");
+        throw new FridayDomainError("NOT_INITIALIZED", "IRC: cannot send message — not connected", { httpStatus: 503 });
       }
       sendRaw(`PRIVMSG ${target} :${message}`);
     },

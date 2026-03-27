@@ -54,7 +54,8 @@ export function createFridayApiDocCrawler(
         let decoded: string;
         try {
           decoded = Buffer.from(source.contentBase64, "base64").toString("utf-8");
-        } catch {
+        } catch (err) {
+    console.warn("[friday][api-doc-crawler] operation failed:", err instanceof Error ? err.message : String(err));
           throw new FridayDomainError(
             "VALIDATION_ERROR",
             "Invalid contentBase64 for undocumented API source",
@@ -168,7 +169,8 @@ async function crawlMultiPage(
     let rawHtml: string;
     try {
       rawHtml = await fetchTextWithLimit(fetchFn, ssrfGuard, url, timeoutMs, maxBytes);
-    } catch {
+    } catch (err) {
+    console.warn("[friday][api-doc-crawler] operation failed:", err instanceof Error ? err.message : String(err));
       // Skip pages that fail to fetch — don't abort the entire crawl
       continue;
     }
@@ -235,7 +237,8 @@ export function extractSameOriginLinks(
     let resolvedUrl: string;
     try {
       resolvedUrl = new URL(href, pageUrl).href;
-    } catch {
+    } catch (err) {
+    console.warn("[friday][api-doc-crawler] operation failed:", err instanceof Error ? err.message : String(err));
       continue;
     }
 
@@ -274,7 +277,8 @@ export function extractOrigin(url: string): string {
   try {
     const parsed = new URL(url);
     return `${parsed.protocol}//${parsed.host}`;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][api-doc-crawler] operation failed:", err instanceof Error ? err.message : String(err));
     return "";
   }
 }
@@ -282,7 +286,8 @@ export function extractOrigin(url: string): string {
 function extractPath(url: string): string {
   try {
     return new URL(url).pathname;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][api-doc-crawler] operation failed:", err instanceof Error ? err.message : String(err));
     return "";
   }
 }
@@ -298,7 +303,8 @@ function normalizeUrl(url: string): string {
     }
     parsed.pathname = path;
     return parsed.href;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][api-doc-crawler] operation failed:", err instanceof Error ? err.message : String(err));
     return url;
   }
 }

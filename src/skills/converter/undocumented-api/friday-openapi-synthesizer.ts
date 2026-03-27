@@ -65,7 +65,8 @@ function inferTitle(sourceRef: string): string {
       const host = new URL(sourceRef).hostname;
       return `${host} API`;
     }
-  } catch {
+  } catch (err) {
+    console.warn("[friday][openapi-synthesizer] operation failed:", err instanceof Error ? err.message : String(err));
     // ignore
   }
   const cleaned = sourceRef.split(/[\\/]/).pop() ?? sourceRef;
@@ -80,7 +81,8 @@ function inferServerUrl(endpoints: FridayParsedApiEndpoint[], sourceRef: string)
     try {
       const parsed = new URL(sourceRef);
       return parsed.origin;
-    } catch {
+    } catch (err) {
+    console.warn("[friday][openapi-synthesizer] operation failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
   }

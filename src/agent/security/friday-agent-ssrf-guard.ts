@@ -498,7 +498,8 @@ export function createFridayAgentSsrfGuard(policy?: FridaySsrfPolicy): FridayAge
       let parsed: URL;
       try {
         parsed = new URL(url);
-      } catch {
+      } catch (err) {
+        console.warn("[friday][agent-ssrf-guard] invalid URL:", err instanceof Error ? err.message : String(err));
         throw new FridaySsrfBlockedError(`SSRF guard: invalid URL — ${url}`);
       }
 
@@ -541,6 +542,9 @@ export function createFridayAgentSsrfGuard(policy?: FridaySsrfPolicy): FridayAge
     },
 
     async validateWithDns(url: string): Promise<void> {
+      // P2-SEC: TOCTOU note — DNS is resolved here for validation, but the HTTP client
+      // may re-resolve during the actual request. For DNS-rebinding-safe requests, use
+      // `resolvePinnedHostname()` + `createPinnedLookup()` which bind validated IPs.
       // Run synchronous checks first
       this.validate(url);
 

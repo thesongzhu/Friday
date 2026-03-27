@@ -159,7 +159,8 @@ function readOrigin(ctx: { headers: Record<string, string | undefined> }): strin
   }
   try {
     return new URL(referer).origin;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][system-routes] operation failed:", err instanceof Error ? err.message : String(err));
     return undefined;
   }
 }

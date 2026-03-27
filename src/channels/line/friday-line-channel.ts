@@ -5,6 +5,7 @@
  * Supports both push messages and reply messages.
  */
 
+import { FridayDomainError } from "#errors";
 import type {
   FridayChannelMessage,
   FridayChannelPlugin,
@@ -116,7 +117,7 @@ export function createFridayLineChannel(deps: LineChannelDeps = {}): FridayChann
 
   const outboundAdapter: FridayChannelOutboundAdapter = {
     async send(options: FridayChannelSendOptions): Promise<{ messageId: string }> {
-      if (!config) throw new Error("LINE channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "LINE channel not initialized", { httpStatus: 503 });
 
       await api.pushMessage(config.channelAccessToken, {
         to: options.chatId,
@@ -146,7 +147,7 @@ export function createFridayLineChannel(deps: LineChannelDeps = {}): FridayChann
 
   const lifecycleAdapter: FridayChannelLifecycleAdapter = {
     async connect(eventHandler: (rawEvent: unknown) => void) {
-      if (!config) throw new Error("LINE channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "LINE channel not initialized", { httpStatus: 503 });
       connectionStatus = "connecting";
 
       await webhookListener.start(config.webhookPath, config.channelSecret, (payload) => {
@@ -174,13 +175,18 @@ export function createFridayLineChannel(deps: LineChannelDeps = {}): FridayChann
   const plugin: FridayChannelPlugin = {
     kind: "line",
     adapters,
+    contract: {
+      coreAuthority: { messageRouting: true, sessionMirroring: true, audit: true, evidence: true },
+      pluginResponsibilities: { config: true, auth: true, pairing: false, outboundDelivery: true, threadResolution: false, providerRetries: false },
+      supports: { directMessages: true, groupMessages: true, threads: false, typing: false },
+    },
 
     async init(rawConfig) {
       config = configAdapter.validate(rawConfig);
     },
 
     async start(handler) {
-      if (!config) throw new Error("LINE channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "LINE channel not initialized", { httpStatus: 503 });
       connectionStatus = "connecting";
 
       await webhookListener.start(config.webhookPath, config.channelSecret, (payload) => {

@@ -6,6 +6,7 @@
  * - bridge: Third-party bridge (e.g. whatsapp-web.js bridge)
  */
 
+import { FridayDomainError } from "#errors";
 import type {
   FridayChannelMessage,
   FridayChannelPlugin,
@@ -124,11 +125,11 @@ export function createFridayWhatsappChannel(deps: WhatsappChannelDeps = {}): Fri
 
   const outboundAdapter: FridayChannelOutboundAdapter = {
     async send(options: FridayChannelSendOptions): Promise<{ messageId: string }> {
-      if (!config) throw new Error("WhatsApp channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "WhatsApp channel not initialized", { httpStatus: 503 });
 
       if (config.provider === "cloud-api") {
         if (!config.accessToken || !config.phoneNumberId) {
-          throw new Error("WhatsApp Cloud API requires accessToken and phoneNumberId");
+          throw new FridayDomainError("VALIDATION_ERROR", "WhatsApp Cloud API requires accessToken and phoneNumberId", { httpStatus: 400 });
         }
 
         const result = await api.sendMessage(config.accessToken, config.phoneNumberId, {
@@ -165,7 +166,7 @@ export function createFridayWhatsappChannel(deps: WhatsappChannelDeps = {}): Fri
 
   const lifecycleAdapter: FridayChannelLifecycleAdapter = {
     async connect(eventHandler: (rawEvent: unknown) => void) {
-      if (!config) throw new Error("WhatsApp channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "WhatsApp channel not initialized", { httpStatus: 503 });
       connectionStatus = "connecting";
 
       webhook.setAppSecret?.(config.appSecret);
@@ -220,10 +221,14 @@ export function createFridayWhatsappChannel(deps: WhatsappChannelDeps = {}): Fri
 
     async init(rawConfig) {
       config = configAdapter.validate(rawConfig);
+      // P2-SEC: Warn if appSecret is missing — webhook signatures cannot be verified
+      if (!config.appSecret) {
+        console.warn("[friday][SECURITY] WhatsApp appSecret not configured — webhook signature validation will be skipped");
+      }
     },
 
     async start(handler) {
-      if (!config) throw new Error("WhatsApp channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "WhatsApp channel not initialized", { httpStatus: 503 });
       connectionStatus = "connecting";
 
       webhook.setAppSecret?.(config.appSecret);

@@ -1,7 +1,9 @@
+import { FridayDomainError } from "#errors";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
 import type { FridaySqliteLayer } from "#state";
+import { safeJsonParse } from "#utilities";
 import {
   AcceptanceTestSuiteRunner,
   type FridayAcceptanceArtifactType,
@@ -149,7 +151,8 @@ function parseJsonObject(value: string | null | undefined): Record<string, unkno
   try {
     const parsed = JSON.parse(value);
     return asRecord(parsed);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][workflow-runtime] parse-json-object:", err instanceof Error ? err.message : String(err));
     return {};
   }
 }
@@ -157,7 +160,8 @@ function parseJsonObject(value: string | null | undefined): Record<string, unkno
 function stringifyForKey(value: unknown): string {
   try {
     return JSON.stringify(value) ?? "";
-  } catch {
+  } catch (err) {
+    console.warn("[friday][workflow-runtime] stringify-for-key:", err instanceof Error ? err.message : String(err));
     return "";
   }
 }
@@ -209,14 +213,10 @@ function mapBundleRow(row: FridayPolicyBundleRow): FridayPolicyBundle {
     priority: row.priority,
     enabled: row.enabled === 1,
     tags: (() => {
-      try {
-        const parsed = JSON.parse(row.tags_json);
-        return Array.isArray(parsed)
-          ? parsed.filter((item): item is string => typeof item === "string")
-          : [];
-      } catch {
-        return [];
-      }
+      const parsed = safeJsonParse(row.tags_json);
+      return Array.isArray(parsed)
+        ? parsed.filter((item): item is string => typeof item === "string")
+        : [];
     })(),
     source: row.source === "import" || row.source === "system" ? row.source : "user",
     etag: row.etag,
@@ -227,14 +227,10 @@ function mapBundleRow(row: FridayPolicyBundleRow): FridayPolicyBundle {
 
 function mapRuleRow(row: FridayRuleRow): FridayRule {
   const conditions = (() => {
-    try {
-      const parsed = JSON.parse(row.conditions_json);
-      return typeof parsed === "object" && parsed !== null
-        ? parsed as FridayRule["conditions"]
-        : {};
-    } catch {
-      return {};
-    }
+    const parsed = safeJsonParse(row.conditions_json);
+    return typeof parsed === "object" && parsed !== null
+      ? parsed as FridayRule["conditions"]
+      : {};
   })();
 
   return {
@@ -500,8 +496,9 @@ export function createFridayWorkflowRuntime(
             created_at: entry.evaluatedAt,
           });
         });
-      } catch {
+      } catch (err) {
         // Keep rule enforcement fail-open for audit persistence write failures.
+        console.warn("[friday][workflow-runtime] rule-audit-persist:", err instanceof Error ? err.message : String(err));
       }
     },
   });
@@ -521,8 +518,9 @@ export function createFridayWorkflowRuntime(
         rulesEngine.loadDomainBundle(bundle, rules);
       }
     });
-  } catch {
+  } catch (err) {
     // Legacy instances may not have the Rules tables yet.
+    console.warn("[friday][workflow-runtime] load-rules:", err instanceof Error ? err.message : String(err));
   }
 
   const evaluateRules = async (
@@ -839,7 +837,7 @@ export function createFridayWorkflowRuntime(
           }
 
           if (gateResult.blocksCompletion && pipelineEnforceMode) {
-            throw new Error("NODE_ACCEPTANCE_FAILED");
+            throw new FridayDomainError("VALIDATION_ERROR", "NODE_ACCEPTANCE_FAILED", { httpStatus: 400 });
           }
         }
 
@@ -1575,7 +1573,8 @@ export function createFridayWorkflowRuntime(
       const filePath = path.join(runDir, `${exportId}.json`);
       fs.writeFileSync(filePath, content, "utf8");
       return { uri: toFileUri(filePath), filePersisted: true };
-    } catch {
+    } catch (err) {
+      console.warn("[friday][workflow-runtime] persist-evidence-export:", err instanceof Error ? err.message : String(err));
       return { uri: defaultUri, filePersisted: false };
     }
   };
@@ -1586,7 +1585,8 @@ export function createFridayWorkflowRuntime(
   ): FridayWorkflowRunEvidenceResponse => {
     try {
       return JSON.parse(primaryPayloadJson) as FridayWorkflowRunEvidenceResponse;
-    } catch {
+    } catch (err) {
+      console.warn("[friday][workflow-runtime] parse-evidence-payload:", err instanceof Error ? err.message : String(err));
       return JSON.parse(fallbackPayloadJson) as FridayWorkflowRunEvidenceResponse;
     }
   };
@@ -1605,7 +1605,8 @@ export function createFridayWorkflowRuntime(
       }
       const payloadJson = fs.readFileSync(filePath, "utf8");
       return { payloadJson, filePersisted: true, filePath };
-    } catch {
+    } catch (err) {
+      console.warn("[friday][workflow-runtime] read-evidence-export:", err instanceof Error ? err.message : String(err));
       return { payloadJson: fallbackPayloadJson, filePersisted: false, filePath };
     }
   };

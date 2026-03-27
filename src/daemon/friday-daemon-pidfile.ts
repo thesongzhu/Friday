@@ -56,7 +56,8 @@ export function readPidRecord(
       };
     }
     return { ok: true, value: record };
-  } catch {
+  } catch (err) {
+    console.warn("[friday][daemon-pidfile] PID file parse failed:", err instanceof Error ? err.message : String(err));
     return {
       ok: false,
       error: {
@@ -101,8 +102,9 @@ export function removePidFile(
 ): void {
   try {
     deps.removeFile(pidFilePath);
-  } catch {
+  } catch (err) {
     // Ignore — file may already be removed
+    console.warn("[friday][daemon-pidfile] pid file removal failed:", err instanceof Error ? err.message : String(err));
   }
 }
 

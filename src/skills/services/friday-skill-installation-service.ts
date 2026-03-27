@@ -108,7 +108,8 @@ export function createFridaySkillInstallationService(
             const sigUrl = `${source.baseUrl.replace(/\/$/, "")}/skills/${resolved.skillId}/versions/${resolved.version}/signature.json`;
             signatureDoc = await deps.httpClient.fetchSignature(sigUrl);
             publisherKey = await deps.httpClient.fetchPublisherKey(source.baseUrl, signatureDoc.keyId);
-          } catch {
+          } catch (err) {
+          console.warn("[friday][skill-installation-service] operation failed:", err instanceof Error ? err.message : String(err));
             // Signature artifacts optional for non-strict policies
           }
         }

@@ -15,7 +15,8 @@ function parseJsonArray(value: string | null): string[] {
     return Array.isArray(parsed)
       ? parsed.filter((entry): entry is string => typeof entry === "string")
       : [];
-  } catch {
+  } catch (err) {
+    console.warn("[friday][agent-loop-repository] JSON array parse failed:", err instanceof Error ? err.message : String(err));
     return [];
   }
 }
@@ -26,7 +27,8 @@ function parseJsonValue<T>(value: string | null, fallback: T): T {
   }
   try {
     return JSON.parse(value) as T;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][agent-loop-repository] JSON parse failed:", err instanceof Error ? err.message : String(err));
     return fallback;
   }
 }

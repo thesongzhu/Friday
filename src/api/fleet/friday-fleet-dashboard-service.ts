@@ -40,7 +40,8 @@ type FridayFleetSatelliteRecoveryInput = Pick<
 function parseJsonOr<T>(raw: string, fallback: T): T {
   try {
     return JSON.parse(raw) as T;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][fleet-dashboard-service] operation failed:", err instanceof Error ? err.message : String(err));
     return fallback;
   }
 }

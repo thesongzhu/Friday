@@ -378,8 +378,9 @@ describe("FridayAuthService", () => {
       warn: (msg) => warnings.push(msg),
     });
     devService.login({ local: true }, "127.0.0.1");
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain("Passwordless");
+    // P1-SEC-004/005: Now also logs token secret + rate limiter warnings at construction
+    const passwordlessWarning = warnings.find((w) => w.includes("Passwordless"));
+    expect(passwordlessWarning).toBeDefined();
   });
 
   it("allows no-signin local bypass with { local: true } even when passphrase exists", () => {

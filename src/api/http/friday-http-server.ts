@@ -99,7 +99,8 @@ function extractParams(pattern: string, actual: string): Record<string, string> 
     if (segment.startsWith(":")) {
       try {
         params[segment.slice(1)] = decodeURIComponent(actualParts[i]!);
-      } catch {
+      } catch (err) {
+        console.warn("[friday][http-server] operation failed:", err instanceof Error ? err.message : String(err));
         throw new MalformedUriError(actualParts[i]!);
       }
     }
@@ -309,7 +310,8 @@ async function tryServeUiAsset(
         serveStaticFile(res, safePath, fileStat.size, headOnly, secHeaders);
         return true;
       }
-    } catch {
+    } catch (err) {
+        console.warn("[friday][http-server] operation failed:", err instanceof Error ? err.message : String(err));
       // File doesn't exist — fall through
     }
   }
@@ -355,7 +357,8 @@ async function tryServeUiAsset(
       serveStaticFile(res, indexPath, indexStat.size, headOnly, secHeaders);
       return true;
     }
-  } catch {
+  } catch (err) {
+        console.warn("[friday][http-server] operation failed:", err instanceof Error ? err.message : String(err));
     // index.html doesn't exist
   }
 
@@ -494,7 +497,8 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         if (raw.length > 0) {
           try {
             body = JSON.parse(raw);
-          } catch {
+          } catch (err) {
+        console.warn("[friday][http-server] operation failed:", err instanceof Error ? err.message : String(err));
             sendJsonWithHeaders(res, 400, {
               ok: false,
               error: buildFridayApiError(FRIDAY_API_ERROR_CODES.INVALID_JSON, "Request body is not valid JSON"),
@@ -829,7 +833,8 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
             const clientFrame = JSON.parse(payloadData.toString("utf-8")) as FridayRealtimeClientFrame;
             const responses = deps.wsGateway.handleClientFrame(conn, clientFrame);
             sendFrames(responses);
-          } catch {
+          } catch (err) {
+        console.warn("[friday][http-server] operation failed:", err instanceof Error ? err.message : String(err));
             // Malformed JSON — send error frame
             const errFrame: FridayRealtimeServerFrame = {
               type: "error",

@@ -252,7 +252,8 @@ export function createFridayWorkflowValidator(): FridayWorkflowValidator {
         if (edge.condition) {
           try {
             exprEval.parse(edge.condition);
-          } catch {
+          } catch (err) {
+            console.warn("[friday][workflow-validator] invalid condition expression:", err instanceof Error ? err.message : String(err));
             errors.push({
               code: "WORKFLOW_EXPRESSION_INVALID",
               message: `Edge '${edge.id}' has invalid condition expression: '${edge.condition}'`,

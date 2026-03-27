@@ -167,7 +167,8 @@ function tryParseRecording(
   if (source.contentBase64) {
     try {
       raw = Buffer.from(source.contentBase64, "base64").toString("utf-8");
-    } catch {
+    } catch (err) {
+    console.warn("[friday][recording-converter] operation failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
   }
@@ -187,7 +188,8 @@ function tryParseRecording(
       return obj as RecordingPayload;
     }
     return null;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][recording-converter] operation failed:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }
@@ -426,11 +428,11 @@ export default async function execute(input, ctx) {
 
   const desktop = ctx.desktop;
   if (!desktop) {
-    throw new Error("Desktop helper is not available — this skill requires desktop control.");
+    throw new FridayDomainError("NOT_INITIALIZED", "Desktop helper is not available — this skill requires desktop control.", { httpStatus: 503 });
   }
 
   if (!desktop.isConnected()) {
-    throw new Error("Desktop session is not connected.");
+    throw new FridayDomainError("NOT_INITIALIZED", "Desktop session is not connected.", { httpStatus: 503 });
   }
 
   const stepResults = [];

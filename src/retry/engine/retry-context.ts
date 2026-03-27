@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Retry Context Tracker — Tracks retry history, attempt counts, and timing
  * for active retry sequences.
@@ -245,9 +247,7 @@ export function createRetryContextTracker(config: RetryContextTrackerConfig) {
 
     for (const next of path) {
       if (!ALLOWED_TRANSITIONS[current].includes(next)) {
-        throw new Error(
-          `Invalid retry context transition (${current} -> ${next}) during ${mutation}`,
-        );
+        throw new FridayDomainError("VALIDATION_ERROR", `Invalid retry context transition (${current} -> ${next}) during ${mutation}`, { httpStatus: 400 });
       }
 
       current = next;
@@ -265,9 +265,7 @@ export function createRetryContextTracker(config: RetryContextTrackerConfig) {
   function assertMutable(ctx: RetryContextState, mutation: string): void {
     const lifecycle = toLifecycleState(ctx);
     if (TERMINAL_STATES.has(lifecycle)) {
-      throw new Error(
-        `Cannot mutate terminal retry context (${lifecycle}) during ${mutation}`,
-      );
+      throw new FridayDomainError("VALIDATION_ERROR", `Cannot mutate terminal retry context (${lifecycle}) during ${mutation}`, { httpStatus: 400 });
     }
   }
 

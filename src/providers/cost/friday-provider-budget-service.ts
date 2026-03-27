@@ -1,4 +1,5 @@
 import type { FridaySqliteLayer } from "#state";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayBudgetState,
   FridayLlmBudgetConfig,
@@ -35,7 +36,7 @@ export function createFridayProviderBudgetService(deps: {
         .get(BUDGET_SETTINGS_KEY) as { value_json: string } | undefined,
     );
     if (!row) return null;
-    return JSON.parse(row.value_json) as FridayLlmBudgetConfig;
+    return safeJsonParse<FridayLlmBudgetConfig>(row.value_json) ?? null;
   }
 
   function saveConfig(config: FridayLlmBudgetConfig): void {

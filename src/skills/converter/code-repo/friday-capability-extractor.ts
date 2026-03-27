@@ -147,7 +147,8 @@ function extractNpmScriptCapabilities(
   let parsed: unknown;
   try {
     parsed = JSON.parse(packageJsonContent);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][capability-extractor] operation failed:", err instanceof Error ? err.message : String(err));
     return;
   }
   if (!parsed || typeof parsed !== "object") return;

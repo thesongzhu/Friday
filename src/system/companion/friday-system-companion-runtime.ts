@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { FridayDomainError } from "#errors";
 
 import type { FridayDesktopPlatform } from "../../desktop/model/friday-desktop.types.js";
 import type {
@@ -253,7 +254,7 @@ async function readDarwinDesktopBounds(): Promise<FridaySystemBounds> {
     .map((value) => Number.parseInt(value.trim(), 10))
     .filter((value) => Number.isFinite(value));
   if (values.length !== 4) {
-    throw new Error("Unable to read desktop bounds");
+    throw new FridayDomainError("INTERNAL_ERROR", "Unable to read desktop bounds", { httpStatus: 500 });
   }
   return {
     x: values[0]!,

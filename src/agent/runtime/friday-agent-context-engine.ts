@@ -50,7 +50,8 @@ export async function notifyFridayContextEngineAfterTurn(
 ): Promise<void> {
   try {
     await Promise.resolve(engine?.afterTurn?.(input));
-  } catch {
+  } catch (err) {
     // Preview hook failures must never fail an agent run.
+    console.warn("[friday][agent-context-engine] afterTurn hook failed:", err instanceof Error ? err.message : String(err));
   }
 }

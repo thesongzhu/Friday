@@ -461,9 +461,11 @@ export function createFridayWorkflowExecutionService(
     });
 
     if (effectiveRetryDecision.shouldRetry) {
+      // P2-WF: Cap delay to avoid blocking the execution batch for too long
       if (effectiveRetryDecision.delayMs > 0) {
+        const cappedDelay = Math.min(effectiveRetryDecision.delayMs, 30_000);
         await new Promise((resolve) =>
-          setTimeout(resolve, effectiveRetryDecision.delayMs),
+          setTimeout(resolve, cappedDelay),
         );
       }
       return "retrying";
@@ -643,7 +645,8 @@ export function createFridayWorkflowExecutionService(
 
             // Check for approval nodes — these block until explicit decision
             if (node.type === "approval") {
-              const leaseExpiresAt = new Date(Date.now() + LEASE_TTL_MS).toISOString();
+              // P2-WF: Use injected clock instead of Date.now() for testable lease TTL
+              const leaseExpiresAt = new Date(new Date(deps.nowIso()).getTime() + LEASE_TTL_MS).toISOString();
               const leaseAcquired = deps.db.withWriteTransaction((db) =>
                 deps.nodeRepo.acquireLease(
                   db,
@@ -797,6 +800,8 @@ export function createFridayWorkflowExecutionService(
             }
 
             const timeoutMs = node.timeoutMs ?? 300_000;
+            // P2-WF-003: Store timeout handle for cleanup on success
+            let nodeTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
             const result = await Promise.race([
               deps.nodeExecutor.executeNode({
                 runId,
@@ -811,13 +816,14 @@ export function createFridayWorkflowExecutionService(
                 ),
                 signal: runSignal,
               }),
-              new Promise<never>((_, reject) =>
-                setTimeout(
+              new Promise<never>((_, reject) => {
+                nodeTimeoutHandle = setTimeout(
                   () => reject(new Error("NODE_TIMEOUT")),
                   timeoutMs,
-                ),
-              ),
+                );
+              }),
             ]);
+            if (nodeTimeoutHandle !== undefined) clearTimeout(nodeTimeoutHandle);
 
             deps.db.withWriteTransaction((db) => {
               deps.nodeRepo.updateNodeAttempt(db, attempt.id, {
@@ -1339,11 +1345,31 @@ export function createFridayWorkflowExecutionService(
         deps.runRepo.updateRunStatus(db, runId, "running", deps.nowIso());
       });
 
-      scheduleRunExecution(plan).catch((error) => {
+      scheduleRunExecution(plan).catch(async (error) => {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(
           `[friday][E-WF-RUN-ASYNC-002] Resume execution failed for run ${runId}: ${errorMessage}`,
         );
+        // P1-RT-001: Mark run as failed on unhandled resume errors
+        deps.db.withWriteTransaction((db) => {
+          deps.runRepo.finalizeRun(db, runId, "failed", deps.nowIso(), {
+            code: "WORKFLOW_EXECUTION_ERROR",
+            message: `Resume execution error: ${errorMessage}`,
+          });
+        });
+        const counts = deps.db.withReadConnection((db) =>
+          deps.nodeRepo.countByStatus(db, runId),
+        );
+        await notifyRunCompleted({
+          runId,
+          workflowId: runEntity.workflowId,
+          workflowVersionId: runEntity.workflowVersionId,
+          status: "failed",
+          plan,
+          failedNodes: counts.failed,
+          completedNodes: counts.completed,
+          cancelledNodes: counts.cancelled,
+        });
       });
 
       return deps.db.withReadConnection((db) =>
@@ -1466,11 +1492,31 @@ export function createFridayWorkflowExecutionService(
         deps.runRepo.updateRunStatus(db, runId, "running", deps.nowIso());
       });
 
-      scheduleRunExecution(plan).catch((error) => {
+      scheduleRunExecution(plan).catch(async (error) => {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(
           `[friday][E-WF-RUN-ASYNC-003] Retry execution failed for run ${runId}: ${errorMessage}`,
         );
+        // P1-RT-002: Mark run as failed on unhandled retry errors
+        deps.db.withWriteTransaction((db) => {
+          deps.runRepo.finalizeRun(db, runId, "failed", deps.nowIso(), {
+            code: "WORKFLOW_EXECUTION_ERROR",
+            message: `Retry execution error: ${errorMessage}`,
+          });
+        });
+        const counts = deps.db.withReadConnection((db) =>
+          deps.nodeRepo.countByStatus(db, runId),
+        );
+        await notifyRunCompleted({
+          runId,
+          workflowId: runEntity.workflowId,
+          workflowVersionId: runEntity.workflowVersionId,
+          status: "failed",
+          plan,
+          failedNodes: counts.failed,
+          completedNodes: counts.completed,
+          cancelledNodes: counts.cancelled,
+        });
       });
 
       return deps.db.withReadConnection((db) =>
@@ -1528,11 +1574,31 @@ export function createFridayWorkflowExecutionService(
         );
         activePlans.set(run.id, plan);
 
-        scheduleRunExecution(plan).catch((error) => {
+        scheduleRunExecution(plan).catch(async (error) => {
           const errorMessage = error instanceof Error ? error.message : String(error);
           console.error(
             `[friday][E-WF-RUN-ASYNC-004] Recovery execution failed for run ${run.id}: ${errorMessage}`,
           );
+          // P1-RT-003: Mark run as failed on unhandled recovery errors
+          deps.db.withWriteTransaction((db) => {
+            deps.runRepo.finalizeRun(db, run.id, "failed", deps.nowIso(), {
+              code: "WORKFLOW_EXECUTION_ERROR",
+              message: `Recovery execution error: ${errorMessage}`,
+            });
+          });
+          const counts = deps.db.withReadConnection((db) =>
+            deps.nodeRepo.countByStatus(db, run.id),
+          );
+          await notifyRunCompleted({
+            runId: run.id,
+            workflowId: run.workflowId,
+            workflowVersionId: run.workflowVersionId,
+            status: "failed",
+            plan,
+            failedNodes: counts.failed,
+            completedNodes: counts.completed,
+            cancelledNodes: counts.cancelled,
+          });
         });
         recovered++;
       }

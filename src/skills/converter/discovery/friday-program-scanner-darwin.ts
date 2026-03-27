@@ -71,7 +71,8 @@ export function createDarwinProgramScanner(): FridayProgramScanner {
               discoveredAt: now,
             });
           }
-        } catch {
+        } catch (err) {
+        console.warn("[friday][program-scanner-darwin] operation failed:", err instanceof Error ? err.message : String(err));
           // Directory read failed — skip silently
         }
       }
@@ -102,7 +103,8 @@ export function createDarwinProgramScanner(): FridayProgramScanner {
               discoveredAt: now,
             });
           }
-        } catch {
+        } catch (err) {
+        console.warn("[friday][program-scanner-darwin] operation failed:", err instanceof Error ? err.message : String(err));
           // Skip
         }
       }
@@ -139,7 +141,8 @@ function readAppBundleInfo(appPath: string): AppBundleInfo | null {
       bundleId: extractPlistValue(output, "CFBundleIdentifier"),
       publisher: extractPlistValue(output, "NSHumanReadableCopyright"),
     };
-  } catch {
+  } catch (err) {
+        console.warn("[friday][program-scanner-darwin] operation failed:", err instanceof Error ? err.message : String(err));
     // Fall back to basename
     return { name: basename(appPath, ".app") };
   }

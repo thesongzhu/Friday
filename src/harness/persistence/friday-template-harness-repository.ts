@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 
 import type { FridaySqliteLayer } from "#state";
+import { safeJsonParse } from "#utilities";
 
 import type {
   FridayHarnessDeliveryContractV1,
@@ -166,7 +167,7 @@ function tagsForArtifact(
 
 function parseArtifact<T>(row: MemoryItemRow | undefined): T | null {
   if (!row) return null;
-  return JSON.parse(row.value_json) as T;
+  return safeJsonParse<T>(row.value_json) ?? null;
 }
 
 export function createFridayTemplateHarnessRepository(

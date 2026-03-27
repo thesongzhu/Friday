@@ -207,7 +207,8 @@ function parseJsonFromText(rawText: string): unknown {
   const trimmed = rawText.trim();
   try {
     return JSON.parse(trimmed);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][session-memory-extraction-llm-client] JSON parse failed:", err instanceof Error ? err.message : String(err));
     const fenceMatch = /```(?:json)?\s*\n?([\s\S]*?)\n?```/.exec(trimmed);
     if (fenceMatch?.[1]) {
       return JSON.parse(fenceMatch[1].trim());

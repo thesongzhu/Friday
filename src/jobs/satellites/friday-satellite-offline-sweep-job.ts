@@ -76,7 +76,8 @@ export function createFridaySatelliteOfflineSweepJob(
     if (!running) return;
     try {
       await job.runOnce();
-    } catch {
+    } catch (err) {
+    console.warn("[friday][satellite-offline-sweep-job] operation failed:", err instanceof Error ? err.message : String(err));
       // continue on failure
     }
     if (running) {

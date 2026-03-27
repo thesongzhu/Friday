@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 
 import type {
   FridaySessionMemoryExtractionJobRecord,
@@ -35,9 +36,7 @@ function rowToRecord(row: FridayExtractionJobRow): FridaySessionMemoryExtraction
     sessionKey: row.session_key,
     trigger: row.trigger as FridaySessionMemoryExtractionTrigger,
     status: row.status as FridaySessionMemoryExtractionJobStatus,
-    requestedMessageIds: row.requested_message_ids_json
-      ? (JSON.parse(row.requested_message_ids_json) as string[])
-      : undefined,
+    requestedMessageIds: safeJsonParse<string[]>(row.requested_message_ids_json),
     batchSize: row.batch_size,
     maxBatches: row.max_batches,
     attempts: row.attempts,

@@ -5,6 +5,7 @@
  * External calls are stubbed behind SignalSseService / SignalRpcService.
  */
 
+import { FridayDomainError } from "#errors";
 import type {
   FridayChannelMessage,
   FridayChannelPlugin,
@@ -101,7 +102,7 @@ export function createFridaySignalChannel(deps: SignalChannelDeps = {}): FridayC
 
   const outboundAdapter: FridayChannelOutboundAdapter = {
     async send(options: FridayChannelSendOptions): Promise<{ messageId: string }> {
-      if (!config) throw new Error("Signal channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Signal channel not initialized", { httpStatus: 503 });
 
       const result = await rpc.sendMessage(config.baseUrl, config.account, {
         recipients: [options.chatId],
@@ -132,7 +133,7 @@ export function createFridaySignalChannel(deps: SignalChannelDeps = {}): FridayC
 
   const lifecycleAdapter: FridayChannelLifecycleAdapter = {
     async connect(eventHandler: (rawEvent: unknown) => void) {
-      if (!config) throw new Error("Signal channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Signal channel not initialized", { httpStatus: 503 });
       connectionStatus = "connecting";
 
       await sse.connect(config.baseUrl, config.account, (msg) => {
@@ -160,13 +161,18 @@ export function createFridaySignalChannel(deps: SignalChannelDeps = {}): FridayC
   const plugin: FridayChannelPlugin = {
     kind: "signal",
     adapters,
+    contract: {
+      coreAuthority: { messageRouting: true, sessionMirroring: true, audit: true, evidence: true },
+      pluginResponsibilities: { config: true, auth: true, pairing: false, outboundDelivery: true, threadResolution: false, providerRetries: false },
+      supports: { directMessages: true, groupMessages: true, threads: false, typing: false },
+    },
 
     async init(rawConfig) {
       config = configAdapter.validate(rawConfig);
     },
 
     async start(handler) {
-      if (!config) throw new Error("Signal channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Signal channel not initialized", { httpStatus: 503 });
       connectionStatus = "connecting";
 
       await sse.connect(config.baseUrl, config.account, (msg) => {

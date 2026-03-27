@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 
 import { FRIDAY_AGENT_ERROR_CODES } from "../friday-agent.constants.js";
 import type {
@@ -57,15 +58,9 @@ function rowToRecord(row: FridayAgentAutomationRow): FridayAgentAutomationRecord
     description: row.description ?? undefined,
     sourceRunId: row.source_run_id ?? undefined,
     taskTemplate: row.task_template,
-    variables: row.variables
-      ? (JSON.parse(row.variables) as Record<string, string>)
-      : undefined,
-    skillIds: row.skill_ids
-      ? (JSON.parse(row.skill_ids) as string[])
-      : undefined,
-    workflowIds: row.workflow_ids
-      ? (JSON.parse(row.workflow_ids) as string[])
-      : undefined,
+    variables: safeJsonParse<Record<string, string>>(row.variables),
+    skillIds: safeJsonParse<string[]>(row.skill_ids),
+    workflowIds: safeJsonParse<string[]>(row.workflow_ids),
     triggerId: row.trigger_id ?? undefined,
     schedule: row.schedule_cron_expr
       ? {

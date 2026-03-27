@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayWorkflowRunEntity,
   FridayWorkflowRunRow,
@@ -60,25 +61,19 @@ function mapRunRow(row: FridayWorkflowRunRow): FridayWorkflowRunEntity {
     workflowVersionId: row.workflow_version_id,
     status: row.status as WorkflowRunStatus,
     triggerType: row.trigger_type,
-    triggerPayload: row.trigger_payload_json
-      ? (JSON.parse(row.trigger_payload_json) as JsonObject)
-      : undefined,
+    triggerPayload: safeJsonParse<JsonObject>(row.trigger_payload_json),
     startedByUserId: row.started_by_user_id ?? undefined,
     startedBySatelliteId: row.started_by_satellite_id ?? undefined,
     startedAt: row.started_at,
     finishedAt: row.finished_at ?? undefined,
     correlationId: row.correlation_id ?? undefined,
-    context: row.context_json
-      ? (JSON.parse(row.context_json) as JsonObject)
-      : undefined,
+    context: safeJsonParse<JsonObject>(row.context_json),
     failure:
       row.failure_code
         ? {
             code: row.failure_code,
             message: row.failure_message ?? "",
-            details: row.failure_details_json
-              ? (JSON.parse(row.failure_details_json) as JsonValue)
-              : undefined,
+            details: safeJsonParse<JsonValue>(row.failure_details_json),
           }
         : undefined,
     createdAt: row.created_at,
@@ -128,9 +123,10 @@ export function createFridayWorkflowRunRepository(): FridayWorkflowRunRepository
     },
 
     updateRunStatus(db, id, status, nowIso, failure) {
-      db.prepare(
+      // P2-WF: Enforce state transition by including current status check in WHERE clause
+      const result = db.prepare(
         `UPDATE workflow_runs SET status = ?, failure_code = ?, failure_message = ?,
-         failure_details_json = ?, updated_at = ? WHERE id = ?`,
+         failure_details_json = ?, updated_at = ? WHERE id = ? AND status != ?`,
       ).run(
         status,
         failure?.code ?? null,
@@ -138,7 +134,11 @@ export function createFridayWorkflowRunRepository(): FridayWorkflowRunRepository
         failure?.details !== undefined ? JSON.stringify(failure.details) : null,
         nowIso,
         id,
+        status, // Prevent no-op updates (same status)
       );
+      if (result.changes === 0) {
+        // Either the run doesn't exist or it's already in the target status — acceptable no-op
+      }
     },
 
     finalizeRun(db, id, status, nowIso, failure) {
@@ -179,7 +179,7 @@ export function createFridayWorkflowRunRepository(): FridayWorkflowRunRepository
       return (
         db
           .prepare(
-            "SELECT * FROM workflow_runs WHERE status IN ('queued', 'running', 'pausing', 'compensating')",
+            "SELECT * FROM workflow_runs WHERE status IN ('queued', 'running', 'paused', 'pausing', 'compensating')",
           )
           .all() as FridayWorkflowRunRow[]
       ).map(mapRunRow);
@@ -190,9 +190,7 @@ export function createFridayWorkflowRunRepository(): FridayWorkflowRunRepository
         .prepare("SELECT context_json FROM workflow_runs WHERE id = ?")
         .get(id) as { context_json: string | null } | undefined;
 
-      const existing = row?.context_json
-        ? (JSON.parse(row.context_json) as Record<string, unknown>)
-        : {};
+      const existing = safeJsonParse<Record<string, unknown>>(row?.context_json) ?? {};
       const merged = { ...existing, ...context };
 
       db.prepare(

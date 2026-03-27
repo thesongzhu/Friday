@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 
 import type {
   FridayUserPreference,
@@ -41,7 +42,7 @@ function mapRow(row: FridayUserPreferenceRow): FridayUserPreference {
     principalId: row.principal_id,
     category: row.category as FridayUserPreferenceCategory,
     key: row.key,
-    value: JSON.parse(row.value_json) as JsonValue,
+    value: safeJsonParse<JsonValue>(row.value_json) as JsonValue,
     source: row.source as "explicit" | "implicit",
     confidence: row.confidence,
     createdAt: row.created_at,

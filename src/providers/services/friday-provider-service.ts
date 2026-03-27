@@ -20,6 +20,7 @@ import type {
   FridayProviderService,
 } from "./friday-provider-service.types.js";
 
+import { safeJsonParse } from "#utilities";
 import { createFridayProviderProfileRepository } from "../persistence/friday-provider-profile-repository.js";
 import { createFridaySecretRepository } from "../persistence/friday-secret-repository.js";
 import { createFridayProviderUsageRepository } from "../persistence/friday-provider-usage-repository.js";
@@ -295,7 +296,7 @@ export function createFridayProviderService(
         .get(ROUTING_SETTINGS_KEY) as { value_json: string } | undefined,
     );
     if (!row) return null;
-    return JSON.parse(row.value_json) as FridayModelRoutingConfig;
+    return safeJsonParse<FridayModelRoutingConfig>(row.value_json) ?? null;
   }
 
   function saveRoutingConfig(config: FridayModelRoutingConfig): void {
@@ -1070,8 +1071,9 @@ export function createFridayProviderService(
           authMode: "oauth",
         });
         profile.config.validation = validationState;
-      } catch {
+      } catch (err) {
         // Don't block the flow — just warn via validation state
+        console.warn("[friday][provider-service] post-login validation failed:", err instanceof Error ? err.message : String(err));
         profile.config.validation = {
           status: "failed",
           checkedAt: deps.nowIso(),

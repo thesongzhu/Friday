@@ -19,6 +19,7 @@ import type {
   FridaySystemRemoteSession,
   FridaySystemRemoteSessionRecord,
 } from "../model/friday-system.types.js";
+import { safeJsonParse } from "#utilities";
 
 export interface FridaySystemApprovalRuleFilters {
   action?: string;
@@ -201,9 +202,7 @@ function remotePasskeyRowToEntity(row: FridaySystemRemotePasskeyRecord): FridayS
     credentialId: row.credential_id,
     publicKey: row.public_key_b64u,
     counter: row.counter,
-    transports: row.transports_json
-      ? JSON.parse(row.transports_json) as string[]
-      : undefined,
+    transports: safeJsonParse<string[]>(row.transports_json),
     deviceType: row.device_type ?? undefined,
     backedUp: row.backed_up === 1,
     registeredAt: row.registered_at,
@@ -261,7 +260,7 @@ function eventRowToEntity(row: FridaySystemEventRecord): FridaySystemEvent {
     seq: row.seq,
     event: row.event_name,
     emittedAt: row.emitted_at,
-    payload: JSON.parse(row.payload_json) as Record<string, unknown>,
+    payload: safeJsonParse<Record<string, unknown>>(row.payload_json) ?? {},
   };
 }
 

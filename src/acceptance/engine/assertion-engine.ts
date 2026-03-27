@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Assertion Engine — evaluate acceptance assertions against artifact content.
  *
@@ -658,16 +660,16 @@ function executeSandboxedCustomAssertion(
   }) as Partial<FridayAcceptanceVerdict> | undefined;
 
   if (!result || typeof result !== "object") {
-    throw new Error("Sandboxed custom check must return a verdict object");
+    throw new FridayDomainError("VALIDATION_ERROR", "Sandboxed custom check must return a verdict object", { httpStatus: 400 });
   }
 
   const verdict = result.verdict;
   const severity = result.severity;
   if (verdict !== "pass" && verdict !== "fail" && verdict !== "warn") {
-    throw new Error("Sandboxed custom check returned an invalid verdict");
+    throw new FridayDomainError("VALIDATION_ERROR", "Sandboxed custom check returned an invalid verdict", { httpStatus: 400 });
   }
   if (severity !== "critical" && severity !== "major" && severity !== "minor" && severity !== "info") {
-    throw new Error("Sandboxed custom check returned an invalid severity");
+    throw new FridayDomainError("VALIDATION_ERROR", "Sandboxed custom check returned an invalid severity", { httpStatus: 400 });
   }
 
   const evidence = Array.isArray(result.evidence)
