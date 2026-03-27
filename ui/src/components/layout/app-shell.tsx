@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ChartNoAxesCombined, Command, MonitorCog, Package, ShieldCheck, Wand2, Waypoints } from "lucide-react";
+import { Activity, ChartNoAxesCombined, Command, Home, MonitorCog, Package, ShieldCheck, ShoppingBag, Wand2, Waypoints } from "lucide-react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/use-auth";
 import { healthApi } from "@/lib/api/health";
@@ -36,6 +36,7 @@ export function AppShell() {
 
   const pageTitle = resolvePageTitle(location.pathname);
   const systemHealth = systemSession?.health;
+  const isSimplifiedView = location.pathname === "/home" || location.pathname.startsWith("/flow/");
 
   return (
     <div className="min-h-screen bg-[var(--bg-canvas)] text-white">
@@ -82,7 +83,9 @@ export function AppShell() {
               >
                 <div className="flex items-start gap-3">
                   <div className="mt-0.5 rounded-2xl border border-white/10 bg-white/[0.07] p-2">
+                    {item.path === "/home" ? <Home className="h-4 w-4" /> : null}
                     {item.path === "/assistant" ? <Wand2 className="h-4 w-4" /> : null}
+                    {item.path === "/marketplace" ? <ShoppingBag className="h-4 w-4" /> : null}
                     {item.path === "/workflows" ? <Activity className="h-4 w-4" /> : null}
                     {item.path === "/skills" ? <Package className="h-4 w-4" /> : null}
                     {item.path === "/fleet" ? <Waypoints className="h-4 w-4" /> : null}
@@ -124,26 +127,28 @@ export function AppShell() {
         </aside>
 
         <main className="relative flex min-h-[calc(100vh-2rem)] flex-1 flex-col gap-4">
-          <header className="agent-header">
-            <div>
-              <p className="agent-eyebrow">Friday Control Plane</p>
-              <h1 className="font-[var(--font-display)] text-3xl font-semibold tracking-tight text-white">
-                {pageTitle}
-              </h1>
-            </div>
+          {!isSimplifiedView && (
+            <header className="agent-header">
+              <div>
+                <p className="agent-eyebrow">Friday Control Plane</p>
+                <h1 className="font-[var(--font-display)] text-3xl font-semibold tracking-tight text-white">
+                  {pageTitle}
+                </h1>
+              </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusPill tone={toneForHealth(health?.status)}>
-                API {health?.status ?? "loading"}
-              </StatusPill>
-              <StatusPill tone={toneForHealth(systemHealth?.status)}>
-                System {systemHealth?.status ?? "unavailable"}
-              </StatusPill>
-              <StatusPill tone={systemSession?.companion.connected ? "success" : "warning"}>
-                Companion {systemSession?.companion.connected ? "connected" : "degraded"}
-              </StatusPill>
-            </div>
-          </header>
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusPill tone={toneForHealth(health?.status)}>
+                  API {health?.status ?? "loading"}
+                </StatusPill>
+                <StatusPill tone={toneForHealth(systemHealth?.status)}>
+                  System {systemHealth?.status ?? "unavailable"}
+                </StatusPill>
+                <StatusPill tone={systemSession?.companion.connected ? "success" : "warning"}>
+                  Companion {systemSession?.companion.connected ? "connected" : "degraded"}
+                </StatusPill>
+              </div>
+            </header>
+          )}
 
           {systemHealth && systemHealth.status !== "healthy" ? (
             <div className="rounded-3xl border border-amber-300/[0.24] bg-amber-300/10 px-4 py-3 text-sm text-amber-100">

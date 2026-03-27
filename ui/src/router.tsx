@@ -1,17 +1,21 @@
-import { Suspense, lazy, type ReactNode } from "react";
+import { Suspense, lazy, useEffect, useState, type ReactNode } from "react";
 import { Navigate, Outlet, createBrowserRouter, useLocation } from "react-router-dom";
 import { AppShell } from "@/components/layout/app-shell";
 import { useAuth } from "@/hooks/use-auth";
 import { useSetupStatusQuery } from "@/hooks/use-setup";
+import { useUserProfile } from "@/hooks/use-user-profile";
 import { resolveLegacyRedirect } from "@/lib/routes/legacy-routes";
 
 const AgentPage = lazy(async () => import("@/routes/agent-page").then((module) => ({ default: module.AgentPage })));
 const AssistantPage = lazy(async () => import("@/routes/assistant-page").then((module) => ({ default: module.AssistantPage })));
 const AutomationsPage = lazy(async () => import("@/routes/automations-page").then((module) => ({ default: module.AutomationsPage })));
 const FleetPage = lazy(async () => import("@/routes/fleet-page").then((module) => ({ default: module.FleetPage })));
+const GuidedFlowPage = lazy(async () => import("@/routes/guided-flow-page").then((module) => ({ default: module.GuidedFlowPage })));
+const HomePage = lazy(async () => import("@/routes/home-page").then((module) => ({ default: module.HomePage })));
 const LoginPage = lazy(async () => import("@/routes/login-page").then((module) => ({ default: module.LoginPage })));
 const MarketplacePage = lazy(async () => import("@/routes/marketplace-page").then((module) => ({ default: module.MarketplacePage })));
 const ObservabilityPage = lazy(async () => import("@/routes/observability-page").then((module) => ({ default: module.ObservabilityPage })));
+const OnboardingPage = lazy(async () => import("@/routes/onboarding-page").then((module) => ({ default: module.OnboardingPage })));
 const SettingsPage = lazy(async () => import("@/routes/settings-page").then((module) => ({ default: module.SettingsPage })));
 const SetupPage = lazy(async () => import("@/routes/setup-page").then((module) => ({ default: module.SetupPage })));
 const SkillsPage = lazy(async () => import("@/routes/skills-page").then((module) => ({ default: module.SkillsPage })));
@@ -34,13 +38,24 @@ function FullscreenMessage(props: { title: string; detail: string }) {
 }
 
 function RequireAuth({ children }: { children: ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, login: doLogin } = useAuth();
+  const [retrying, setRetrying] = useState(false);
 
-  if (isLoading) {
+  // If not authenticated and not loading, retry local auto-login once before showing login page.
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated && !retrying) {
+      setRetrying(true);
+      doLogin({ local: true }).catch(() => {
+        // Auto-login failed — will fall through to login page.
+      });
+    }
+  }, [isLoading, isAuthenticated, retrying, doLogin]);
+
+  if (isLoading || (!isAuthenticated && retrying)) {
     return (
       <FullscreenMessage
-        title="Restoring session"
-        detail="Friday is checking the current operator session before loading the control shell."
+        title="Starting Friday"
+        detail="Friday is preparing your local session."
       />
     );
   }
@@ -63,8 +78,9 @@ function RouteSuspense(props: { title: string; detail: string; children: ReactNo
 function SetupGate() {
   const location = useLocation();
   const { data: setupStatus, isLoading, isError } = useSetupStatusQuery();
+  const { isFirstVisit, isLoading: profileLoading } = useUserProfile();
 
-  if (isLoading) {
+  if (isLoading || profileLoading) {
     return (
       <FullscreenMessage
         title="Inspecting local setup"
@@ -84,6 +100,10 @@ function SetupGate() {
 
   if (setupStatus?.needsSetup && location.pathname !== "/setup") {
     return <Navigate to="/setup" replace />;
+  }
+
+  if (!setupStatus?.needsSetup && isFirstVisit && location.pathname !== "/onboarding") {
+    return <Navigate to="/onboarding" replace />;
   }
 
   return <Outlet />;
@@ -121,8 +141,32 @@ export const router = createBrowserRouter([
         ),
       },
       {
+        path: "onboarding",
+        element: (
+          <RouteSuspense title="Welcome" detail="Friday is preparing your onboarding experience.">
+            <OnboardingPage />
+          </RouteSuspense>
+        ),
+      },
+      {
         element: <AppShell />,
         children: [
+          {
+            path: "home",
+            element: (
+              <RouteSuspense title="Loading home" detail="Friday is preparing your goal-first home screen.">
+                <HomePage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "flow/:wizardId",
+            element: (
+              <RouteSuspense title="Loading guided flow" detail="Friday is preparing your guided experience.">
+                <GuidedFlowPage />
+              </RouteSuspense>
+            ),
+          },
           {
             path: "assistant",
             element: (
@@ -133,7 +177,7 @@ export const router = createBrowserRouter([
           },
           {
             index: true,
-            element: <Navigate to="/assistant" replace />,
+            element: <Navigate to="/home" replace />,
           },
           {
             path: "command-center",
@@ -226,5 +270,5 @@ export const router = createBrowserRouter([
       },
     ],
   },
-  { path: "*", element: <Navigate to="/assistant" replace /> },
+  { path: "*", element: <Navigate to="/home" replace /> },
 ]);

@@ -6,9 +6,14 @@ export interface AgentOsNavItem {
 
 export const AGENT_OS_NAV_ITEMS: AgentOsNavItem[] = [
   {
+    label: "Home",
+    path: "/home",
+    description: "Goal-first starting point with guided flows",
+  },
+  {
     label: "Assistant",
     path: "/assistant",
-    description: "Primary control center for goals, plans, actions, and issue recovery",
+    description: "Full dashboard for goals, plans, actions, and issue recovery",
   },
   {
     label: "Marketplace",
@@ -53,7 +58,13 @@ export const AGENT_OS_NAV_ITEMS: AgentOsNavItem[] = [
 ];
 
 export function resolvePageTitle(pathname: string): string {
-  if (pathname === "/" || pathname.startsWith("/assistant")) {
+  if (pathname === "/" || pathname === "/home") {
+    return "Home";
+  }
+  if (pathname.startsWith("/flow/")) {
+    return "Guided Flow";
+  }
+  if (pathname.startsWith("/assistant")) {
     return "Assistant";
   }
   if (pathname.startsWith("/marketplace")) {

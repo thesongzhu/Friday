@@ -453,7 +453,8 @@ export type FridayUserPreferenceCategory =
   | "formatting"
   | "disclosure"
   | "provider"
-  | "communication";
+  | "communication"
+  | "uix";
 
 /**
  * A single user preference entry.
