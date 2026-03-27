@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type { UUID } from "../../model/friday-workflow.types.js";
 import type { FridayWorkflowEditLock } from "../model/friday-workflow-builder-collaboration.types.js";
 
@@ -24,7 +25,7 @@ export function createFridayWorkflowBuilderLockRepository(): FridayWorkflowBuild
       const row = db
         .prepare(`SELECT value_json FROM hub_settings WHERE key = ?`)
         .get(lockKey(workflowId)) as { value_json: string } | undefined;
-      return row ? (JSON.parse(row.value_json) as FridayWorkflowEditLock) : null;
+      return row ? safeJsonParse<FridayWorkflowEditLock>(row.value_json) ?? null : null;
     },
 
     setLock(db, lock) {

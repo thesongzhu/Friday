@@ -613,8 +613,9 @@ export function createFridayWorkflowProductService(
         if (acquiredLockToken) {
           try {
             deps.builderRuntime.collaboration.releaseLock(input.workflowId, acquiredLockToken);
-          } catch {
+          } catch (err) {
             // Best-effort release for one-click deploy helper locks.
+            console.warn("[friday][workflow-product-service] lock release failed:", err instanceof Error ? err.message : String(err));
           }
         }
       }

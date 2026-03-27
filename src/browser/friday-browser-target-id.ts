@@ -6,6 +6,7 @@
  * Supports profile-based disambiguation for multi-profile environments.
  */
 
+import { FridayDomainError } from "#errors";
 import type { BrowserSession, FridayBrowserManager } from "./friday-browser-manager.js";
 
 // ─── Types ───
@@ -92,27 +93,23 @@ export function resolveBrowserTarget(
       sessionId = profileSessions[0]!.sessionId;
     }
     if (!sessionId) {
-      throw new Error(
-        `No session found for profile "${options.profile}". Launch a browser session first.`,
-      );
+      throw new FridayDomainError("NOT_FOUND", `No session found for profile "${options.profile}". Launch a browser session first.`, { httpStatus: 404 });
     }
   }
 
   if (!sessionId) {
-    throw new Error("No session specified. Provide sessionId, targetId, or profile.");
+    throw new FridayDomainError("VALIDATION_ERROR", "No session specified. Provide sessionId, targetId, or profile.", { httpStatus: 400 });
   }
 
   const session = manager.getSession(sessionId);
   if (!session) {
-    throw new Error(`Session "${sessionId}" not found. Use "open" action first.`);
+    throw new FridayDomainError("NOT_FOUND", `Session "${sessionId}" not found. Use "open" action first.`, { httpStatus: 404 });
   }
 
   // Resolve tab
   const resolvedTabId = tabId ?? session.activeTabId;
   if (!session.tabs.has(resolvedTabId)) {
-    throw new Error(
-      `Tab "${resolvedTabId}" not found in session "${sessionId}".`,
-    );
+    throw new FridayDomainError("NOT_FOUND", `Tab "${resolvedTabId}" not found in session "${sessionId}".`, { httpStatus: 404 });
   }
 
   return { sessionId, tabId: resolvedTabId, session };

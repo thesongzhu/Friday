@@ -81,8 +81,9 @@ export function createFridayMemoryFileSyncWatcher(
         if (state.lastExportedHash === fileHash) {
           return;
         }
-      } catch {
+      } catch (err) {
         // File may have been deleted — that's a valid external change
+        console.warn("[friday][memory-file-sync-watcher] file read failed:", err instanceof Error ? err.message : String(err));
       }
     }
 

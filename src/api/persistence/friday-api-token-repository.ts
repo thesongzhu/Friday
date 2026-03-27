@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type { FridayApiTokenRow } from "#satellites";
 
 // ─── Repository ───
@@ -95,7 +96,7 @@ export function createFridayApiTokenRepository(): FridayApiTokenRepository {
         .all(now) as Array<{ scopes_json: string }>;
 
       return rows.filter((row) => {
-        const scopes = JSON.parse(row.scopes_json) as string[];
+        const scopes = safeJsonParse<string[]>(row.scopes_json) ?? [];
         return scopes.includes("hub.admin") || scopes.includes("security.write");
       }).length;
     },

@@ -114,8 +114,9 @@ export function createFridayMemoryService(
             updatedAt: embeddingNow,
           });
         });
-      } catch {
+      } catch (err) {
         // Embedding failed — item was stored successfully, just no vector
+        console.warn("[friday][memory-service] embedding failed:", err instanceof Error ? err.message : String(err));
       }
 
       return item;
@@ -168,8 +169,9 @@ export function createFridayMemoryService(
             minScore: options?.minScore,
           }),
         );
-      } catch {
+      } catch (err) {
         // Semantic search unavailable — fallback to FTS-only
+        console.warn("[friday][memory-service] semantic search unavailable:", err instanceof Error ? err.message : String(err));
       }
 
       // Enforce tagsAll on semantic-only hits before merge (Fix #1)

@@ -9,6 +9,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { safeJsonParse } from "#utilities";
 import type { FridayAgentMessage } from "#agent";
 import type {
   FridayChannelInstanceConfig,
@@ -95,7 +96,8 @@ export function parseFridayChannelIdentityMap(raw: string | undefined): Record<s
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][hub-helpers] parse-identity-map:", err instanceof Error ? err.message : String(err));
     return {};
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -224,7 +226,8 @@ export function resolveBrowserHostConfigFromEnv(
           .map((item) => item.trim())
           .filter((item) => item.length > 0);
       }
-    } catch {
+    } catch (err) {
+      console.warn("[friday][hub-helpers] parse-browser-launch-args:", err instanceof Error ? err.message : String(err));
       launchArgs = rawLaunchArgs
         .split(/\s+/)
         .map((item) => item.trim())
@@ -329,14 +332,10 @@ export function normalizeScopeList(scopes: readonly string[] | undefined): strin
 
 export function mapPolicyBundleRow(row: FridayPolicyBundleRow): FridayPolicyBundle {
   const tags = (() => {
-    try {
-      const parsed = JSON.parse(row.tags_json);
-      return Array.isArray(parsed)
-        ? parsed.filter((item): item is string => typeof item === "string")
-        : [];
-    } catch {
-      return [];
-    }
+    const parsed = safeJsonParse(row.tags_json);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
   })();
 
   return {
@@ -356,14 +355,10 @@ export function mapPolicyBundleRow(row: FridayPolicyBundleRow): FridayPolicyBund
 
 export function mapRuleRow(row: FridayRuleRow): FridayRule {
   const conditions = (() => {
-    try {
-      const parsed = JSON.parse(row.conditions_json);
-      return typeof parsed === "object" && parsed !== null
-        ? parsed as FridayRule["conditions"]
-        : {};
-    } catch {
-      return {};
-    }
+    const parsed = safeJsonParse(row.conditions_json);
+    return typeof parsed === "object" && parsed !== null
+      ? parsed as FridayRule["conditions"]
+      : {};
   })();
 
   return {
@@ -411,12 +406,7 @@ export function loadChannelsConfigFromSetupState(
     return undefined;
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(row.channels_json);
-  } catch {
-    return undefined;
-  }
+  const parsed: unknown = safeJsonParse(row.channels_json);
   if (!Array.isArray(parsed)) {
     return undefined;
   }
@@ -575,8 +565,9 @@ export function resolveTokenSecret(
     if (content.length > 0) {
       return { secret: content, source: "file" };
     }
-  } catch {
+  } catch (err) {
     // File missing/unreadable — fall through to generate
+    console.warn("[friday][hub-helpers] read-token-secret:", err instanceof Error ? err.message : String(err));
   }
 
   // 4. Generate random and persist
@@ -587,9 +578,10 @@ export function resolveTokenSecret(
     fs.writeFileSync(FRIDAY_TOKEN_SECRET_FILE, generated + "\n", {
       mode: 0o600,
     });
-  } catch {
+  } catch (err) {
     console.warn(
       "[friday] WARNING: Could not persist token secret to " + FRIDAY_TOKEN_SECRET_FILE,
+      err instanceof Error ? err.message : String(err),
     );
   }
 
@@ -755,7 +747,7 @@ export interface FridayHub {
 }
 
 export interface FridayHubStatus {
-  state: "starting" | "running" | "stopped";
+  state: "starting" | "running" | "stopping" | "stopped";
   skillCount: number;
   upSince: string | null;
 }

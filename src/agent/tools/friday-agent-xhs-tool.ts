@@ -160,6 +160,13 @@ export function createFridayAgentXhsTool(
     const images = readArrayParam(args, "images");
     const tags = readArrayParam(args, "tags");
 
+    // P2-SEC-011: Validate image paths do not contain directory traversal
+    for (const imagePath of images) {
+      if (/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(imagePath)) {
+        return errorResult(`Image path "${imagePath}" contains directory traversal.`);
+      }
+    }
+
     if (images.length === 0) {
       return errorResult("At least one image is required for an XHS post.");
     }

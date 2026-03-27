@@ -110,7 +110,8 @@ function decodePayloadCiphertext(raw: string): unknown {
   try {
     const decoded = Buffer.from(raw, "base64").toString("utf8");
     return JSON.parse(decoded) as unknown;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][satellite-runtime-routes] operation failed:", err instanceof Error ? err.message : String(err));
     return { raw };
   }
 }

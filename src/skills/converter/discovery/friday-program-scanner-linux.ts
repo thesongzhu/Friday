@@ -76,7 +76,8 @@ export function createLinuxProgramScanner(): FridayProgramScanner {
               discoveredAt: now,
             });
           }
-        } catch {
+        } catch (err) {
+        console.warn("[friday][program-scanner-linux] operation failed:", err instanceof Error ? err.message : String(err));
           // Directory read failed — skip
         }
       }
@@ -107,7 +108,8 @@ export function createLinuxProgramScanner(): FridayProgramScanner {
               discoveredAt: now,
             });
           }
-        } catch {
+        } catch (err) {
+        console.warn("[friday][program-scanner-linux] operation failed:", err instanceof Error ? err.message : String(err));
           // Skip
         }
       }
@@ -187,7 +189,8 @@ function parseDesktopFile(path: string): DesktopFileInfo | null {
     }
 
     return info;
-  } catch {
+  } catch (err) {
+        console.warn("[friday][program-scanner-linux] operation failed:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

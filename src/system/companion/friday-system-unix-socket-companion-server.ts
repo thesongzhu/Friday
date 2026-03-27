@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as net from "node:net";
 import * as path from "node:path";
+import { FridayDomainError } from "#errors";
 
 import {
   createFridaySystemCompanionRuntimeController,
@@ -116,7 +117,7 @@ export function createFridaySystemUnixSocketCompanionServer(
       case "companion.setOverlayVisible":
         return controller.setOverlayVisible(Boolean(params?.visible));
       default:
-        throw new Error(`Unknown companion method: ${method}`);
+        throw new FridayDomainError("VALIDATION_ERROR", `Unknown companion method: ${method}`, { httpStatus: 400 });
     }
   }
 
@@ -124,7 +125,8 @@ export function createFridaySystemUnixSocketCompanionServer(
     let request: FridayJsonRpcRequest;
     try {
       request = JSON.parse(raw) as FridayJsonRpcRequest;
-    } catch {
+    } catch (err) {
+      console.warn("[friday][unix-socket-companion-server] JSON-RPC parse error:", err instanceof Error ? err.message : String(err));
       return buildErrorResponse(null, -32700, "Parse error");
     }
 

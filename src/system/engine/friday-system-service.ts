@@ -705,7 +705,7 @@ export async function createFridaySystemService(
         : { bin: "xdg-open", args: [target] };
     const result = await execCommand(command.bin, command.args);
     if (result.exitCode !== 0) {
-      throw new Error(result.stderr || `Failed to open target: ${target}`);
+      throw new FridayDomainError("INTERNAL_ERROR", result.stderr || `Failed to open target: ${target}`, { httpStatus: 500 });
     }
   }
 
@@ -1100,7 +1100,8 @@ export async function createFridaySystemService(
     try {
       const hostname = new URL(resolvedOrigin).hostname.trim();
       return hostname.length > 0 ? hostname : remoteAuthRpId;
-    } catch {
+    } catch (err) {
+      console.warn("[friday][system-service] origin hostname parse failed:", err instanceof Error ? err.message : String(err));
       return remoteAuthRpId;
     }
   }

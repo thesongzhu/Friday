@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayMarketplaceSourceCreateInput,
   FridayMarketplaceSourceEntity,
@@ -54,7 +55,7 @@ function mapRow(row: FridayMarketplaceSourceRow): FridayMarketplaceSourceEntity 
     baseUrl: row.base_url,
     enabled: row.enabled === 1,
     trustPolicy: row.trust_policy as FridayMarketplaceTrustPolicy,
-    pinnedKeyIds: JSON.parse(row.pinned_key_ids_json) as string[],
+    pinnedKeyIds: safeJsonParse<string[]>(row.pinned_key_ids_json) ?? [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

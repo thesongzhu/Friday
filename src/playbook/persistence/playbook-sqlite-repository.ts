@@ -9,6 +9,7 @@
  */
 
 import type { Database } from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type { PlaybookStore } from "../engine/playbook-store.js";
 import type {
   FridayPlaybook,
@@ -47,7 +48,7 @@ function mapPlaybookRow(row: FridayPlaybookRow): FridayPlaybook {
     name: row.name,
     description: row.description ?? undefined,
     workflowType: row.workflow_type,
-    tags: JSON.parse(row.tags_json) as string[],
+    tags: safeJsonParse<string[]>(row.tags_json) ?? [],
     status: row.status as FridayPlaybookStatus,
     activeVersionNumber: row.active_version_number,
     sourceCandidateId: row.source_candidate_id as UUID,
@@ -68,15 +69,15 @@ function mapCandidateRow(row: FridayPlaybookCandidateRow): FridayPlaybookCandida
     id: row.id as UUID,
     fingerprint: row.fingerprint,
     workflowType: row.workflow_type,
-    tags: JSON.parse(row.tags_json) as string[],
-    pattern: JSON.parse(row.pattern_json) as JsonObject,
+    tags: safeJsonParse<string[]>(row.tags_json) ?? [],
+    pattern: safeJsonParse<JsonObject>(row.pattern_json) ?? {},
     status: row.status as FridayPlaybookCandidateStatus,
     evidenceCount: row.evidence_count,
     successCount: row.success_count,
     failureCount: row.failure_count,
     totalDurationMs: row.total_duration_ms,
-    totalCost: JSON.parse(row.total_cost_json) as FridayPlaybookCostDimensions,
-    sourceRunIds: JSON.parse(row.source_run_ids_json) as UUID[],
+    totalCost: safeJsonParse<FridayPlaybookCostDimensions>(row.total_cost_json) ?? { tokenCost: 0, apiCallCost: 0, latencyMs: 0 },
+    sourceRunIds: safeJsonParse<UUID[]>(row.source_run_ids_json) ?? [],
     promotedPlaybookId: (row.promoted_playbook_id ?? undefined) as UUID | undefined,
     firstObservedAt: row.first_observed_at as ISODateTime,
     lastObservedAt: row.last_observed_at as ISODateTime,
@@ -91,7 +92,7 @@ function mapVersionRow(row: FridayPlaybookVersionRow): FridayPlaybookVersion {
     playbookId: row.playbook_id as UUID,
     versionNumber: row.version_number,
     fingerprint: row.fingerprint,
-    pattern: JSON.parse(row.pattern_json) as JsonObject,
+    pattern: safeJsonParse<JsonObject>(row.pattern_json) ?? {},
     candidateId: row.candidate_id as UUID,
     changeNote: row.change_note ?? undefined,
     createdAt: row.created_at as ISODateTime,
@@ -123,7 +124,7 @@ function mapSelectionRow(row: FridayPlaybookSelectionRow): FridayPlaybookMatch {
     matchScore: row.match_score ?? null,
     similarity: row.similarity ?? null,
     reason: row.reason as FridayPlaybookMatchReason,
-    context: JSON.parse(row.context_json) as FridayPlaybookSelector,
+    context: safeJsonParse<FridayPlaybookSelector>(row.context_json) ?? ({} as FridayPlaybookSelector),
     selectedAt: row.selected_at as ISODateTime,
   };
 }
@@ -134,11 +135,9 @@ function mapDecisionRow(row: FridayPromotionDecisionRow): FridayPromotionDecisio
     candidateId: row.candidate_id as UUID,
     decision: row.decision as FridayPromotionDecisionOutcome,
     reason: row.reason,
-    ruleResults: JSON.parse(row.rule_results_json) as FridayPromotionRuleResult[],
-    rulesResult: row.rules_result_json
-      ? (JSON.parse(row.rules_result_json) as FridayEvaluationResult)
-      : undefined,
-    scoreSnapshot: JSON.parse(row.score_snapshot_json) as FridayPlaybookScore,
+    ruleResults: safeJsonParse<FridayPromotionRuleResult[]>(row.rule_results_json) ?? [],
+    rulesResult: safeJsonParse<FridayEvaluationResult>(row.rules_result_json),
+    scoreSnapshot: safeJsonParse<FridayPlaybookScore>(row.score_snapshot_json) ?? ({} as FridayPlaybookScore),
     decidedAt: row.decided_at as ISODateTime,
   };
 }

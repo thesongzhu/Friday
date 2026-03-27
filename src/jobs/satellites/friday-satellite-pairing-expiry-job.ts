@@ -70,7 +70,8 @@ export function createFridaySatellitePairingExpiryJob(
     if (!running) return;
     try {
       await job.runOnce();
-    } catch {
+    } catch (err) {
+    console.warn("[friday][satellite-pairing-expiry-job] operation failed:", err instanceof Error ? err.message : String(err));
       // continue
     }
     if (running) {

@@ -152,7 +152,7 @@ function validateAction(action: FridayDesktopAction): string | null {
   if (!action || typeof action !== "object") {
     return "Action must be a non-null object";
   }
-  if (!FRIDAY_DESKTOP_ACTION_TYPES.includes((action as { type?: string }).type as any)) {
+  if (!(FRIDAY_DESKTOP_ACTION_TYPES as readonly string[]).includes((action as { type?: string }).type ?? "")) {
     return `Unknown action type: '${(action as { type?: string }).type}'`;
   }
 
@@ -193,7 +193,7 @@ function validateAction(action: FridayDesktopAction): string | null {
       }
       return null;
     case "clipboard":
-      if (!FRIDAY_DESKTOP_CLIPBOARD_OPERATIONS.includes(action.operation as any)) {
+      if (!(FRIDAY_DESKTOP_CLIPBOARD_OPERATIONS as readonly string[]).includes(action.operation)) {
         return "Clipboard action requires valid 'operation' field";
       }
       if (action.operation === "write" && !isNonEmptyString(action.content)) {
@@ -201,7 +201,7 @@ function validateAction(action: FridayDesktopAction): string | null {
       }
       return null;
     case "file_operation":
-      if (!FRIDAY_DESKTOP_FILE_OPERATIONS.includes(action.operation as any)) {
+      if (!(FRIDAY_DESKTOP_FILE_OPERATIONS as readonly string[]).includes(action.operation)) {
         return "FileOperation action requires valid 'operation' field";
       }
       if (!isNonEmptyString(action.path)) {
@@ -325,7 +325,8 @@ async function evaluateSandboxBoundary(
         const normalizedRoot = path.resolve(rootPath);
         try {
           return await resolveRealSandboxPath(normalizedRoot);
-        } catch {
+        } catch (err) {
+          console.warn("[friday][action-executor] sandbox path resolution failed:", err instanceof Error ? err.message : String(err));
           return normalizedRoot;
         }
       }),

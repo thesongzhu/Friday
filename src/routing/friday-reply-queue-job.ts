@@ -69,7 +69,8 @@ export function createFridayReplyQueueJob(
     if (!running) return;
     try {
       await job.runOnce();
-    } catch {
+    } catch (err) {
+    console.warn("[friday][reply-queue-job] operation failed:", err instanceof Error ? err.message : String(err));
       // continue
     }
     if (running) {

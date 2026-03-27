@@ -200,7 +200,8 @@ export function createFridaySkillExecutor(
                   } else {
                     output = { result: parsed };
                   }
-                } catch {
+                } catch (err) {
+                  console.warn("[friday][skill-executor] operation failed:", err instanceof Error ? err.message : String(err));
                   output = { raw: shellResult.stdout };
                 }
 

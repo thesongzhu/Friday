@@ -1,6 +1,11 @@
 /**
  * Audit Trail — Immutable audit log with tamper-evident hash chain.
  *
+ * NOTE: This module provides in-memory audit entry construction and hash-chain
+ * integrity. Entries are NOT persisted to disk by this module — durability is
+ * the responsibility of the consuming service (e.g. hub audit log writer).
+ * This is a deliberate design choice to keep the audit trail composable.
+ *
  * Records all significant operations as append-only audit entries.
  * Each entry includes a SHA-256 integrity hash computed over the previous
  * entry's hash concatenated with the canonical serialization of the current

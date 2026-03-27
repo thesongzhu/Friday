@@ -1,5 +1,6 @@
 import type { FridaySqliteLayer } from "#state";
 import type { SkillRunStatus } from "#skills";
+import { safeJsonParse } from "#utilities";
 import type { FridaySkillRunListInput, FridaySkillRunSnapshot } from "./friday-skill-run-store.types.js";
 
 export interface FridaySkillRunStore {
@@ -49,7 +50,7 @@ export function createFridaySkillRunStore(
           .prepare("SELECT value_json FROM memory_items WHERE namespace = ? AND key = ?")
           .get(NAMESPACE, runId) as { value_json: string } | undefined;
         if (!row) return null;
-        return JSON.parse(row.value_json) as FridaySkillRunSnapshot<TState>;
+        return safeJsonParse<FridaySkillRunSnapshot<TState>>(row.value_json) ?? null;
       });
     },
 
@@ -80,7 +81,7 @@ export function createFridaySkillRunStore(
         }
 
         const rows = db.prepare(sql).all(...params) as Array<{ value_json: string }>;
-        return rows.map((row) => JSON.parse(row.value_json) as FridaySkillRunSnapshot);
+        return rows.map((row) => safeJsonParse<FridaySkillRunSnapshot>(row.value_json)).filter((s): s is FridaySkillRunSnapshot => s !== undefined);
       });
     },
 

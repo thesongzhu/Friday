@@ -12,6 +12,8 @@
 
 import type {
   FridayBillingEvent,
+  FridayListing,
+  FridayListingVersion,
   FridayPayoutBatch,
   FridayPayoutEntry,
   FridayPurchase,
@@ -245,8 +247,8 @@ export function createFridayBillingReconciliationJob(
 
     const completeResult = completePurchase(
       purchase,
-      listing as any,
-      version as any,
+      listing as FridayListing,
+      version as FridayListingVersion,
       { externalPaymentId: externalId },
       engineDeps,
     );
@@ -398,7 +400,8 @@ export function createFridayBillingReconciliationJob(
     try {
       await job.runOnce();
       consecutiveFailures = 0;
-    } catch {
+    } catch (err) {
+      console.warn("[friday][billing-reconciliation-job] run cycle failed:", err instanceof Error ? err.message : String(err));
       consecutiveFailures++;
     }
 

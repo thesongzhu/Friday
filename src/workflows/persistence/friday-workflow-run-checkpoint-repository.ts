@@ -4,6 +4,7 @@ import type {
   FridayWorkflowRunStatus,
 } from "../model/friday-workflow-engine.types.js";
 import type { FridaySqliteLayer } from "#state";
+import { safeJsonParse } from "#utilities";
 
 // ─── Interface ───
 
@@ -28,13 +29,11 @@ function mapCheckpointRow(
     runId: row.run_id,
     checkpointSeq: row.checkpoint_seq,
     runStatus: row.run_status as FridayWorkflowRunStatus,
-    activeNodeIds: JSON.parse(row.active_node_ids_json) as string[],
-    completedNodeIds: JSON.parse(row.completed_node_ids_json) as string[],
-    failedNodeIds: JSON.parse(row.failed_node_ids_json) as string[],
-    waitingApprovalNodeIds: JSON.parse(
-      row.waiting_approval_node_ids_json,
-    ) as string[],
-    context: JSON.parse(row.context_json) as Record<string, unknown>,
+    activeNodeIds: safeJsonParse<string[]>(row.active_node_ids_json) ?? [],
+    completedNodeIds: safeJsonParse<string[]>(row.completed_node_ids_json) ?? [],
+    failedNodeIds: safeJsonParse<string[]>(row.failed_node_ids_json) ?? [],
+    waitingApprovalNodeIds: safeJsonParse<string[]>(row.waiting_approval_node_ids_json) ?? [],
+    context: safeJsonParse<Record<string, unknown>>(row.context_json) ?? {},
     lastNodeId: row.last_node_id ?? undefined,
     updatedAt: row.updated_at,
   };

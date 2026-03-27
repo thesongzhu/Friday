@@ -1,4 +1,5 @@
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 
 import {
   FRIDAY_SESSION_MEMORY_EXTRACTION_DEFAULT_BATCH_SIZE,
@@ -87,16 +88,16 @@ export function createFridaySessionMemoryExtractionService(
       sessionKey: (row["session_key"] as string | null) ?? "",
       sequence: row["sequence"] as number,
       role: row["role"] as FridaySessionMessageRecord["role"],
-      content: JSON.parse(row["content_json"] as string) as unknown,
+      content: safeJsonParse(row["content_json"] as string) as unknown,
       contentText: (row["content_text"] as string | null) ?? "",
       toolCalls: row["tool_calls_json"]
-        ? (JSON.parse(row["tool_calls_json"] as string) as unknown[])
+        ? (safeJsonParse(row["tool_calls_json"] as string) as unknown[])
         : undefined,
       tokenCount: row["token_count"] as number,
       idempotencyKey: (row["idempotency_key"] as string | null) ?? undefined,
       parentMessageId: (row["parent_message_id"] as string | null) ?? undefined,
       metadata: row["metadata_json"]
-        ? (JSON.parse(row["metadata_json"] as string) as Record<string, unknown>)
+        ? (safeJsonParse(row["metadata_json"] as string) as Record<string, unknown>)
         : {},
       memoryExtractStatus: row["memory_extract_status"] as FridaySessionMessageRecord["memoryExtractStatus"],
       memoryExtractedAt: (row["memory_extracted_at"] as string | null) ?? undefined,
@@ -554,8 +555,9 @@ export function createFridaySessionMemoryExtractionService(
               }),
             );
             result.sessionsQueued.push(key);
-          } catch {
+          } catch (err) {
             // Ignore unique constraint violations (already has an open job)
+            console.warn("[friday][session-memory-extraction-service] job queue insert failed:", err instanceof Error ? err.message : String(err));
           }
         }
       }

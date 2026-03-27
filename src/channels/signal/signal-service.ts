@@ -2,6 +2,8 @@
  * Signal service — stubbed interfaces for signal-cli daemon SSE and JSON-RPC.
  */
 
+import { FridayDomainError } from "#errors";
+
 // ─── Types ───
 
 export interface SignalInboundMessage {
@@ -107,6 +109,7 @@ export function createSignalRpcServiceStub(): SignalRpcService {
  */
 export function createSignalSseService(): SignalSseService {
   let connected = false;
+  let stopped = false; // P2-CH: Track explicit stop to prevent reconnection logging after stop
   let abortController: AbortController | null = null;
 
   return {
@@ -116,7 +119,7 @@ export function createSignalSseService(): SignalSseService {
       onMessage: (msg: SignalInboundMessage) => void,
     ): Promise<void> {
       if (connected) {
-        throw new Error("Signal SSE service is already connected");
+        throw new FridayDomainError("CONFLICT", "Signal SSE service is already connected", { httpStatus: 409 });
       }
 
       abortController = new AbortController();
@@ -130,13 +133,15 @@ export function createSignalSseService(): SignalSseService {
 
       if (!response.ok) {
         const errorBody = await response.text().catch(() => "<unreadable>");
-        throw new Error(
+        throw new FridayDomainError(
+          "INTERNAL_ERROR",
           `Signal SSE connection failed: ${response.status} ${response.statusText} — ${errorBody}`,
+          { httpStatus: 500 },
         );
       }
 
       if (!response.body) {
-        throw new Error("Signal SSE response has no readable body");
+        throw new FridayDomainError("INTERNAL_ERROR", "Signal SSE response has no readable body", { httpStatus: 500 });
       }
 
       connected = true;
@@ -168,7 +173,8 @@ export function createSignalSseService(): SignalSseService {
               try {
                 const parsed = JSON.parse(jsonStr) as SignalInboundMessage;
                 onMessage(parsed);
-              } catch {
+              } catch (err) {
+                console.warn("[friday][signal-service] operation failed:", err instanceof Error ? err.message : String(err));
                 // Skip malformed JSON lines
               }
             }
@@ -184,12 +190,18 @@ export function createSignalSseService(): SignalSseService {
       };
 
       // Fire-and-forget; errors after initial connect surface in onMessage consumer
+      stopped = false;
       processStream().catch(() => {
         connected = false;
+        if (!stopped) {
+          // P2-CH: Log disconnection — the channel registry health monitor will auto-restart
+          console.warn("[friday] Signal SSE stream ended unexpectedly");
+        }
       });
     },
 
     async disconnect(): Promise<void> {
+      stopped = true;
       connected = false;
       if (abortController) {
         abortController.abort();
@@ -236,8 +248,10 @@ export function createSignalRpcService(): SignalRpcService {
 
       if (!response.ok) {
         const errorBody = await response.text().catch(() => "<unreadable>");
-        throw new Error(
+        throw new FridayDomainError(
+          "INTERNAL_ERROR",
           `Signal send failed: ${response.status} ${response.statusText} — ${errorBody}`,
+          { httpStatus: 500 },
         );
       }
 

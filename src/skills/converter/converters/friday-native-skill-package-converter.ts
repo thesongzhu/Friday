@@ -66,7 +66,8 @@ export function createNativeSkillPackageConverter(): FridaySkillConverter {
           confidence: 0.6,
           reasons: ["Found skill.manifest.json but schemaVersion is not 2.0"],
         };
-      } catch {
+      } catch (err) {
+      console.warn("[friday][native-skill-package-converter] operation failed:", err instanceof Error ? err.message : String(err));
         return null;
       }
     },
@@ -91,7 +92,8 @@ export function createNativeSkillPackageConverter(): FridaySkillConverter {
       let rawObj: unknown;
       try {
         rawObj = JSON.parse(rawText);
-      } catch {
+      } catch (err) {
+      console.warn("[friday][native-skill-package-converter] operation failed:", err instanceof Error ? err.message : String(err));
         throw new FridayDomainError("PARSE_ERROR", `Invalid JSON in skill.manifest.json at: ${manifestPath}`, { httpStatus: 422 });
       }
 
@@ -112,7 +114,8 @@ export function createNativeSkillPackageConverter(): FridaySkillConverter {
       if (existsSync(uiSchemaPath)) {
         try {
           uiSchema = JSON.parse(readFileSync(uiSchemaPath, "utf-8")) as FridaySkillUiSchemaV1;
-        } catch {
+        } catch (err) {
+      console.warn("[friday][native-skill-package-converter] operation failed:", err instanceof Error ? err.message : String(err));
           throw new FridayDomainError("PARSE_ERROR", `Invalid JSON in skill.ui.json at: ${uiSchemaPath}`, { httpStatus: 422 });
         }
       } else {

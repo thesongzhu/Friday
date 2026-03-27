@@ -91,7 +91,8 @@ export function createFridayLocalDaemonService(
       readFile: (filePath: string) => {
         try {
           return readFileSync(filePath, "utf-8");
-        } catch {
+        } catch (err) {
+          console.warn("[friday][daemon-runtime] pid file read failed:", err instanceof Error ? err.message : String(err));
           return null;
         }
       },
@@ -101,8 +102,9 @@ export function createFridayLocalDaemonService(
       removeFile: (filePath: string) => {
         try {
           unlinkSync(filePath);
-        } catch {
+        } catch (err) {
           // Ignore if the file is already gone.
+          console.warn("[friday][daemon-runtime] pid file remove failed:", err instanceof Error ? err.message : String(err));
         }
       },
       mkdirp: (dirPath: string) => {
@@ -112,7 +114,8 @@ export function createFridayLocalDaemonService(
         try {
           process.kill(pid, 0);
           return true;
-        } catch {
+        } catch (err) {
+          console.warn("[friday][daemon-runtime] process alive check failed:", err instanceof Error ? err.message : String(err));
           return false;
         }
       },
@@ -161,7 +164,8 @@ export function createFridayLocalDaemonService(
         try {
           process.kill(pid, signal);
           return true;
-        } catch {
+        } catch (err) {
+          console.warn("[friday][daemon-runtime] signal send failed:", err instanceof Error ? err.message : String(err));
           return false;
         }
       },
@@ -170,7 +174,8 @@ export function createFridayLocalDaemonService(
         while (Date.now() - start < timeoutMs) {
           try {
             process.kill(pid, 0);
-          } catch {
+          } catch (err) {
+            console.warn("[friday][daemon-runtime] process exit detected:", err instanceof Error ? err.message : String(err));
             return true;
           }
           await new Promise((resolvePromise) => setTimeout(resolvePromise, 200));

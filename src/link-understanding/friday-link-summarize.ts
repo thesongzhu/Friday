@@ -54,8 +54,9 @@ export async function extractReadableContent(
     if (url) {
       try {
         (document as { baseURI?: string }).baseURI = url;
-      } catch {
+      } catch (err) {
         // Best-effort base URI for relative links.
+        console.warn("[friday][link-summarize] base URI assignment failed:", err instanceof Error ? err.message : String(err));
       }
     }
     const reader = new Readability(document, { charThreshold: 0 });
@@ -64,7 +65,8 @@ export async function extractReadableContent(
 
     const text = parsed.textContent.replace(/\s+/g, " ").trim();
     return text ? { text, title: parsed.title || undefined } : null;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][link-summarize] HTML extraction failed:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

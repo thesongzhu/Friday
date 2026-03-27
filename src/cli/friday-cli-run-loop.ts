@@ -78,14 +78,16 @@ export function runFridayCliLoop(deps: FridayCliRunLoopDeps): Promise<void> {
 
       try {
         await httpServer.close();
-      } catch {
+      } catch (err) {
         // Best-effort close
+        console.warn("[friday][cli-run-loop] http server close failed:", err instanceof Error ? err.message : String(err));
       }
 
       try {
         await hub.stop();
-      } catch {
+      } catch (err) {
         // Best-effort stop
+        console.warn("[friday][cli-run-loop] hub stop failed:", err instanceof Error ? err.message : String(err));
       }
 
       resolve();

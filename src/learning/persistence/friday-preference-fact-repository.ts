@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayPreferenceFactEntity,
   FridayPreferenceFactRow,
@@ -56,11 +57,11 @@ function rowToEntity(row: FridayPreferenceFactRow): FridayPreferenceFactEntity {
     factId: row.fact_id,
     userId: row.user_id,
     key: row.key,
-    value: JSON.parse(row.value_json) as JsonValue,
+    value: safeJsonParse<JsonValue>(row.value_json) as JsonValue,
     confidence: row.confidence,
     evidenceCount: row.evidence_count,
     lastConfirmedAt: row.last_confirmed_at,
-    sourceEventIds: JSON.parse(row.source_event_ids_json) as string[],
+    sourceEventIds: safeJsonParse<string[]>(row.source_event_ids_json) ?? [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

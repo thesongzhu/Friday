@@ -160,7 +160,8 @@ export function createFridaySatelliteSyncService(
                 });
                 continue;
               }
-            } catch {
+            } catch (err) {
+              console.warn("[friday][satellite-sync-service] invalid ack cursor:", err instanceof Error ? err.message : String(err));
               conflicts.push({
                 streamId: ack.streamId,
                 seq: ack.seq,

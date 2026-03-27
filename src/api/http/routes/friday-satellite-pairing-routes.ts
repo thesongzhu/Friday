@@ -152,7 +152,7 @@ export function createFridaySatellitePairingRoutes(
       operationId: "satellites.pairing.list",
       method: "GET",
       path: "/v1/satellites/pairing",
-      auth: { public: false, anyOfScopes: ["satellite.read" as any] },
+      auth: { public: false, anyOfScopes: ["satellite.read"] },
       async handler() {
         return deps.listPendingPairings();
       },
@@ -163,7 +163,7 @@ export function createFridaySatellitePairingRoutes(
       operationId: "satellites.pairing.get",
       method: "GET",
       path: "/v1/satellites/:satelliteId/pairing",
-      auth: { public: false, anyOfScopes: ["satellite.read" as any] },
+      auth: { public: false, anyOfScopes: ["satellite.read"] },
       async handler(ctx: Ctx) {
         const params = ctx.params as Record<string, string>;
         const request = await deps.getPairingRequest(params.satelliteId);
@@ -179,7 +179,7 @@ export function createFridaySatellitePairingRoutes(
       operationId: "satellites.pairing.approve",
       method: "POST",
       path: "/v1/satellites/:satelliteId/pairing/approve",
-      auth: { public: false, anyOfScopes: ["satellite.write" as any] },
+      auth: { public: false, anyOfScopes: ["satellite.write"] },
       async handler(ctx: Ctx) {
         const params = ctx.params as Record<string, string>;
         const body = ctx.body as Record<string, unknown>;
@@ -205,7 +205,7 @@ export function createFridaySatellitePairingRoutes(
       operationId: "satellites.pairing.reject",
       method: "POST",
       path: "/v1/satellites/:satelliteId/pairing/reject",
-      auth: { public: false, anyOfScopes: ["satellite.write" as any] },
+      auth: { public: false, anyOfScopes: ["satellite.write"] },
       async handler(ctx: Ctx) {
         const params = ctx.params as Record<string, string>;
         const body = ctx.body as Record<string, unknown>;
@@ -263,7 +263,7 @@ export function createFridaySatellitePairingRoutes(
       operationId: "satellites.revoke",
       method: "POST",
       path: "/v1/satellites/:satelliteId/revoke",
-      auth: { public: false, anyOfScopes: ["security.write" as any] },
+      auth: { public: false, anyOfScopes: ["security.write"] },
       async handler(ctx: Ctx) {
         const params = ctx.params as Record<string, string>;
         const body = ctx.body as Record<string, unknown>;

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayLearnedLessonEntity,
   FridayLearnedLessonRow,
@@ -39,9 +40,7 @@ function rowToEntity(row: FridayLearnedLessonRow): FridayLearnedLessonEntity {
     title: row.title,
     cause: row.cause,
     fix: row.fix,
-    mitigation: row.mitigation_json
-      ? (JSON.parse(row.mitigation_json) as JsonObject)
-      : undefined,
+    mitigation: safeJsonParse<JsonObject>(row.mitigation_json),
     occurrences: row.occurrences,
     lastSeenAt: row.last_seen_at,
     sourceIncidentId: row.source_incident_id ?? undefined,

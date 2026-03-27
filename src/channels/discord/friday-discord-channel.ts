@@ -11,6 +11,7 @@
  * External API calls are stubbed behind DiscordGatewayService / DiscordRestService.
  */
 
+import { FridayDomainError } from "#errors";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
@@ -50,7 +51,8 @@ function isHttpUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
     return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
+  } catch (err) {
+    console.warn("[friday][discord-channel] operation failed:", err instanceof Error ? err.message : String(err));
     return false;
   }
 }
@@ -193,7 +195,7 @@ export function createFridayDiscordChannel(deps: DiscordChannelDeps = {}): Frida
 
   const outboundAdapter: FridayChannelOutboundAdapter = {
     async send(options: FridayChannelSendOptions): Promise<{ messageId: string }> {
-      if (!config) throw new Error("Discord channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Discord channel not initialized", { httpStatus: 503 });
 
       const embeds: Array<{ image?: { url: string } }> = [];
       const files: Array<{ filename: string; data: Uint8Array; contentType?: string }> = [];
@@ -219,7 +221,8 @@ export function createFridayDiscordChannel(deps: DiscordChannelDeps = {}): Frida
               contentType: guessImageMimeType(image),
             });
           }
-        } catch {
+        } catch (err) {
+    console.warn("[friday][discord-channel] operation failed:", err instanceof Error ? err.message : String(err));
           skipped.push(image);
         }
       }
@@ -247,7 +250,7 @@ export function createFridayDiscordChannel(deps: DiscordChannelDeps = {}): Frida
       return { messageId: result.id };
     },
     async typing(chatId: string): Promise<void> {
-      if (!config) throw new Error("Discord channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Discord channel not initialized", { httpStatus: 503 });
       await rest.sendTyping(config.token, chatId);
     },
   };
@@ -271,7 +274,7 @@ export function createFridayDiscordChannel(deps: DiscordChannelDeps = {}): Frida
 
   const lifecycleAdapter: FridayChannelLifecycleAdapter = {
     async connect(eventHandler: (rawEvent: unknown) => void) {
-      if (!config) throw new Error("Discord channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Discord channel not initialized", { httpStatus: 503 });
 
       // Re-entry guard: if already connected, skip — the gateway handles its own reconnect internally.
       if (connectionStatus === "connected" && gateway.isConnected()) return;
@@ -344,7 +347,7 @@ export function createFridayDiscordChannel(deps: DiscordChannelDeps = {}): Frida
     },
 
     async start(handler) {
-      if (!config) throw new Error("Discord channel not initialized");
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Discord channel not initialized", { httpStatus: 503 });
 
       // Delegate to lifecycle adapter to avoid dual gateway.connect() paths.
       await lifecycleAdapter.connect((event) => {

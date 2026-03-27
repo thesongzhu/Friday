@@ -70,7 +70,8 @@ export function createWin32ProgramScanner(): FridayProgramScanner {
               discoveredAt: now,
             });
           }
-        } catch {
+        } catch (err) {
+        console.warn("[friday][program-scanner-win32] operation failed:", err instanceof Error ? err.message : String(err));
           // Registry query failed — skip
         }
       }
@@ -99,7 +100,8 @@ export function createWin32ProgramScanner(): FridayProgramScanner {
               discoveredAt: now,
             });
           }
-        } catch {
+        } catch (err) {
+        console.warn("[friday][program-scanner-win32] operation failed:", err instanceof Error ? err.message : String(err));
           // Directory read failed — skip
         }
       }
@@ -126,7 +128,8 @@ function queryRegistryUninstallKeys(regPath: string): RegistryEntry[] {
       { encoding: "utf-8", timeout: 10000 },
     );
     return parseRegistryOutput(output);
-  } catch {
+  } catch (err) {
+        console.warn("[friday][program-scanner-win32] operation failed:", err instanceof Error ? err.message : String(err));
     return [];
   }
 }

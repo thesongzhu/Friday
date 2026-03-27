@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 
 /**
  * Manages protocol epoch and per-stream ack checkpoints
@@ -27,7 +28,7 @@ export function createFridayStreamCheckpointRepository(): FridayStreamCheckpoint
         .prepare("SELECT value_json FROM hub_settings WHERE key = ?")
         .get(EPOCH_KEY) as { value_json: string } | undefined;
       if (!row) return 0;
-      return JSON.parse(row.value_json) as number;
+      return safeJsonParse<number>(row.value_json) ?? 0;
     },
 
     bumpEpoch(db, nowIso) {
@@ -50,7 +51,7 @@ export function createFridayStreamCheckpointRepository(): FridayStreamCheckpoint
         .prepare("SELECT value_json FROM hub_settings WHERE key = ?")
         .get(key) as { value_json: string } | undefined;
       if (!row) return 0;
-      return JSON.parse(row.value_json) as number;
+      return safeJsonParse<number>(row.value_json) ?? 0;
     },
 
     setLastAckedSeq(db, input) {

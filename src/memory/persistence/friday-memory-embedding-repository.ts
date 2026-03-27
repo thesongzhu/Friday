@@ -5,6 +5,7 @@ import type {
   FridayMemorySemanticHit,
 } from "../model/friday-memory.types.js";
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 import { FRIDAY_MEMORY_ERROR_CODES } from "../friday-memory.constants.js";
 
 // ─── Row shape ───
@@ -76,7 +77,7 @@ function rowToEmbedding(row: EmbeddingRow): FridayMemoryEmbedding {
     providerId: row.provider_id,
     model: row.model,
     dimensions: row.dimensions,
-    vector: JSON.parse(row.vector_json) as number[],
+    vector: safeJsonParse<number[]>(row.vector_json) ?? [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -206,10 +207,8 @@ export function createFridayMemoryEmbeddingRepository(): FridayMemoryEmbeddingRe
       const minScore = input.minScore ?? 0;
 
       for (const row of candidateRows) {
-        let vector: number[];
-        try {
-          vector = JSON.parse(row.vector_json) as number[];
-        } catch {
+        const vector = safeJsonParse<number[]>(row.vector_json);
+        if (!vector) {
           // Skip rows with unparseable vector JSON
           continue;
         }

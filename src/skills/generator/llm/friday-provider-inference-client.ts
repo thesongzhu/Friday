@@ -277,7 +277,8 @@ function parseJsonFromText<T>(rawText: string): T {
   const trimmed = rawText.trim();
   try {
     return JSON.parse(trimmed) as T;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][provider-inference-client] operation failed:", err instanceof Error ? err.message : String(err));
     // Try to extract JSON from code fences
     const fenceMatch = /```(?:json)?\s*\n?([\s\S]*?)\n?```/.exec(trimmed);
     if (fenceMatch?.[1]) {

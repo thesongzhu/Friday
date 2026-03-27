@@ -125,7 +125,8 @@ function loadStateFromDisk(paths: FridayOpenClawPhaseControllerPaths, nowIso: st
       if (parsed.schemaVersion === "1.0" && parsed.programId === "openclaw-adoption") {
         return parsed;
       }
-    } catch {
+    } catch (err) {
+      console.warn("[friday][openclaw-phase-controller] operation failed:", err instanceof Error ? err.message : String(err));
       continue;
     }
   }
@@ -755,18 +756,21 @@ function defaultPlatform(): FridayPhaseAutomationPlatform {
         try {
           ensureOk("git", ["fetch", "origin", mainBranch], repoRoot);
           remoteMainHead = ensureOk("git", ["rev-parse", `origin/${mainBranch}`], repoRoot);
-        } catch {
+        } catch (err) {
+      console.warn("[friday][openclaw-phase-controller] operation failed:", err instanceof Error ? err.message : String(err));
           remoteMainHead = undefined;
         }
         workingTreeClean = ensureOk("git", ["status", "--porcelain"], repoRoot).length === 0;
-      } catch {
+      } catch (err) {
+      console.warn("[friday][openclaw-phase-controller] operation failed:", err instanceof Error ? err.message : String(err));
         gitAvailable = false;
       }
 
       try {
         ensureOk("gh", ["--version"], repoRoot);
         ghAuthenticated = runProcess("gh", ["auth", "status"], repoRoot).status === 0;
-      } catch {
+      } catch (err) {
+      console.warn("[friday][openclaw-phase-controller] operation failed:", err instanceof Error ? err.message : String(err));
         ghAvailable = false;
       }
 

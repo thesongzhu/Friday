@@ -2,6 +2,7 @@
  * SQLite-backed OAuth credential storage with envelope encryption.
  */
 
+import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
 
 import type {
@@ -44,8 +45,9 @@ export interface CreateFridayOAuthCredentialStoreDeps {
 function parseEnvelope(raw: string, field: string): FridayEncryptedEnvelope {
   try {
     return JSON.parse(raw) as FridayEncryptedEnvelope;
-  } catch {
-    throw new Error(`OAuth credential row has invalid JSON in ${field}`);
+  } catch (err) {
+    console.warn("[friday][oauth-credential-store] invalid JSON in credential:", err instanceof Error ? err.message : String(err));
+    throw new FridayDomainError("INTERNAL_ERROR", `OAuth credential row has invalid JSON in ${field}`, { httpStatus: 500 });
   }
 }
 
@@ -134,7 +136,7 @@ export function createFridayOAuthCredentialStore(
       // Re-read to get the actual persisted row (may use existing id on conflict)
       const stored = this.getByProviderProfileId(input.providerProfileId);
       if (!stored) {
-        throw new Error("Failed to read back OAuth credential after upsert");
+        throw new FridayDomainError("INTERNAL_ERROR", "Failed to read back OAuth credential after upsert", { httpStatus: 500 });
       }
       return stored;
     },

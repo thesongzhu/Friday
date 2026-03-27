@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type { SkillManifestV2 } from "../model/friday-skill-manifest-v2.types.js";
 import type {
   FridayMarketplaceSignatureAlgorithm,
@@ -86,7 +87,7 @@ function mapRow(row: FridaySkillVersionRow): FridaySkillVersionEntity {
     checksum: row.checksum,
     packageUrl: row.package_url ?? undefined,
     signature,
-    manifest: JSON.parse(row.manifest_json) as SkillManifestV2,
+    manifest: safeJsonParse<SkillManifestV2>(row.manifest_json) ?? ({} as SkillManifestV2),
     releasedAt: row.released_at,
     yankedAt: row.yanked_at ?? undefined,
     createdAt: row.created_at,

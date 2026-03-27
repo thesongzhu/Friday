@@ -108,7 +108,8 @@ function verifyChallengeSignature(
     verifier.update(challengeNonce);
     verifier.end();
     return verifier.verify(publicKeyPem, signedChallenge, "base64");
-  } catch {
+  } catch (err) {
+    console.warn("[friday][satellite-pairing-service] challenge verification failed:", err instanceof Error ? err.message : String(err));
     return false;
   }
 }

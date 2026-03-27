@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -368,7 +369,7 @@ export function createFridayAgentBrowserTool(
       return profile; // Use as session ID for new sessions
     }
 
-    throw new Error("No session specified. Provide sessionId, targetId, or profile.");
+    throw new FridayDomainError("VALIDATION_ERROR", "No session specified. Provide sessionId, targetId, or profile.", { httpStatus: 400 });
   }
 
   function resolveSessionIdForOpenOrStart(args: Record<string, unknown>): string {
@@ -419,7 +420,8 @@ export function createFridayAgentBrowserTool(
     if (url) {
       try {
         return new URL(url).hostname.replace(/^www\./, "");
-      } catch {
+      } catch (err) {
+        console.warn("[friday][agent-browser-tool] URL parse failed:", err instanceof Error ? err.message : String(err));
         if (url.trim().length > 0) {
           return url.trim();
         }
@@ -865,7 +867,16 @@ export function createFridayAgentBrowserTool(
       }
       case "evaluate": {
         const text = readStringParam(args, "text", { required: true });
-        const evalResult = await page.evaluate(text);
+        // P1-SEC-002: Timeout wrapper to prevent script hangs
+        const evalTimeout = 10_000;
+        let evalTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+        const evalResult = await Promise.race([
+          page.evaluate(text),
+          new Promise<never>((_, reject) => {
+            evalTimeoutHandle = setTimeout(() => reject(new Error("evaluate timed out after 10s")), evalTimeout);
+          }),
+        ]);
+        if (evalTimeoutHandle !== undefined) clearTimeout(evalTimeoutHandle);
         return browserJsonResult(
           {
             sessionId,
@@ -1174,9 +1185,20 @@ export function createFridayAgentBrowserTool(
    * path.relative + path.isAbsolute (not string prefix) to prevent traversal.
    */
   function isPathContainedIn(filePath: string, allowedDir: string): boolean {
-    const resolved = path.resolve(filePath);
-    const base = path.resolve(allowedDir);
-    const rel = path.relative(base, resolved);
+    // P2-SEC-009: Use realpathSync to resolve symlinks before containment check.
+    // Both paths must use the same resolution method to ensure consistent comparison.
+    let fileResolved: string;
+    let baseResolved: string;
+    try {
+      fileResolved = fs.realpathSync(filePath);
+      baseResolved = fs.realpathSync(allowedDir);
+    } catch (err) {
+      // Fall back to path.resolve for both if either path does not exist
+      console.warn("[friday][agent-browser-tool] realpath fallback:", err instanceof Error ? err.message : String(err));
+      fileResolved = path.resolve(filePath);
+      baseResolved = path.resolve(allowedDir);
+    }
+    const rel = path.relative(baseResolved, fileResolved);
     // Must not be empty, must not start with "..", and must not be absolute
     return !!rel && !rel.startsWith("..") && !path.isAbsolute(rel);
   }

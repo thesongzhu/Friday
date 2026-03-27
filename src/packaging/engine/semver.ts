@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Semver — Lightweight semantic versioning parser and range matcher.
  *
@@ -86,7 +88,7 @@ export function compareSemver(a: SemverParsed, b: SemverParsed): number {
 export function compareSemverStr(a: string, b: string): number {
   const pa = parseSemver(a);
   const pb = parseSemver(b);
-  if (!pa || !pb) throw new Error(`Invalid semver: ${!pa ? a : b}`);
+  if (!pa || !pb) throw new FridayDomainError("VALIDATION_ERROR", `Invalid semver: ${!pa ? a : b}`, { httpStatus: 400 });
   return compareSemver(pa, pb);
 }
 

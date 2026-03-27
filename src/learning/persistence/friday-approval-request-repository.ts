@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayApprovalRequestEntity,
   FridayApprovalRequestRow,
@@ -59,7 +60,7 @@ function rowToEntity(row: FridayApprovalRequestRow): FridayApprovalRequestEntity
     userId: row.user_id,
     description: row.description,
     riskTier: row.risk_tier,
-    plan: JSON.parse(row.plan_json) as FridayAutoFixPlan,
+    plan: safeJsonParse<FridayAutoFixPlan>(row.plan_json) ?? ({} as FridayAutoFixPlan),
     requestedAt: row.requested_at,
     expiresAt: row.expires_at,
     status: row.status,

@@ -167,7 +167,8 @@ export function createXhsPageInteractions(deps: CreateXhsPageInteractionsDeps): 
     let safeSessionId: string;
     try {
       safeSessionId = sanitizeArtifactPathSegment(sessionId);
-    } catch {
+    } catch (err) {
+      console.warn("[friday][xhs-pages] invalid sessionId for artifact path:", err instanceof Error ? err.message : String(err));
       return { status: "error", message: "Invalid sessionId for artifact path." };
     }
     const qrPath = path.join(artifactDir, `xhs-qr-${safeSessionId}-${Date.now()}.png`);
@@ -268,7 +269,8 @@ export function createXhsPageInteractions(deps: CreateXhsPageInteractionsDeps): 
         await fileInput.setInputFiles(images);
         await xhsSleep(2000, 4000);
       }
-    } catch {
+    } catch (err) {
+      console.warn("[friday][xhs-pages] image upload input not found:", err instanceof Error ? err.message : String(err));
       return { status: "error", message: "Failed to find image upload input" };
     }
 
@@ -282,7 +284,8 @@ export function createXhsPageInteractions(deps: CreateXhsPageInteractionsDeps): 
         await titleInput.fill(title);
         await xhsSleep();
       }
-    } catch {
+    } catch (err) {
+      console.warn("[friday][xhs-pages] title input not found:", err instanceof Error ? err.message : String(err));
       return { status: "error", message: "Failed to find title input" };
     }
 
@@ -296,7 +299,8 @@ export function createXhsPageInteractions(deps: CreateXhsPageInteractionsDeps): 
         await contentInput.fill(content);
         await xhsSleep();
       }
-    } catch {
+    } catch (err) {
+      console.warn("[friday][xhs-pages] content input not found:", err instanceof Error ? err.message : String(err));
       return { status: "error", message: "Failed to find content input" };
     }
 
@@ -307,8 +311,9 @@ export function createXhsPageInteractions(deps: CreateXhsPageInteractionsDeps): 
         await xhsSleep(500, 1000);
         await page.keyboard.press("Enter");
         await xhsSleep(300, 600);
-      } catch {
+      } catch (err) {
         // Tag input may not be available, continue
+        console.warn("[friday][xhs-pages] tag input failed:", err instanceof Error ? err.message : String(err));
       }
     }
 
@@ -317,7 +322,8 @@ export function createXhsPageInteractions(deps: CreateXhsPageInteractionsDeps): 
       const publishBtn = page.getByRole("button", { name: /^(发布|Publish)$/ }).first();
       await publishBtn.click({ timeout: 5000 });
       await xhsSleep(3000, 5000);
-    } catch {
+    } catch (err) {
+      console.warn("[friday][xhs-pages] publish button not found:", err instanceof Error ? err.message : String(err));
       return { status: "error", message: "Failed to find publish button" };
     }
 

@@ -245,7 +245,8 @@ function resolveSourceContent(source: FridaySkillConversionSource): string | nul
   if (source.contentBase64) {
     try {
       return Buffer.from(source.contentBase64, "base64").toString("utf-8");
-    } catch {
+    } catch (err) {
+    console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
   }
@@ -258,7 +259,8 @@ function resolveSourceContent(source: FridaySkillConversionSource): string | nul
   if (existsSync(source.uri)) {
     try {
       return readFileSync(source.uri, "utf-8");
-    } catch {
+    } catch (err) {
+    console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
       // Not a file, try directory
     }
 
@@ -272,7 +274,8 @@ function resolveSourceContent(source: FridaySkillConversionSource): string | nul
       if (existsSync(filePath)) {
         try {
           return readFileSync(filePath, "utf-8");
-        } catch {
+        } catch (err) {
+    console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
           continue;
         }
       }
@@ -288,7 +291,8 @@ function parseJsonOrYaml(content: string): unknown | null {
   // Try JSON first
   try {
     return JSON.parse(content);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
     // Not JSON, try YAML
   }
 
@@ -297,7 +301,8 @@ function parseJsonOrYaml(content: string): unknown | null {
     if (result && typeof result === "object") {
       return result;
     }
-  } catch {
+  } catch (err) {
+    console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
     // Not YAML either
   }
 
@@ -367,7 +372,8 @@ function extractServerHosts(spec: OpenApiSpec): string[] {
       if (url.hostname && !hosts.includes(url.hostname)) {
         hosts.push(url.hostname);
       }
-    } catch {
+    } catch (err) {
+    console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
       // Not a valid URL, skip
     }
   }

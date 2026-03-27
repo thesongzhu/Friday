@@ -2347,7 +2347,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
     "method": "POST",
     "operationId": "memory.store",
     "path": "/v1/memory/store",
-    "rateLimitPolicyId": null,
+    "rateLimitPolicyId": "memory.write",
     "roles": [],
     "scopes": [
       "hub.admin",
@@ -2455,7 +2455,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
     "method": "POST",
     "operationId": "sessions.create",
     "path": "/v1/sessions",
-    "rateLimitPolicyId": null,
+    "rateLimitPolicyId": "session.write",
     "roles": [],
     "scopes": [
       "session.write",
@@ -2793,7 +2793,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
     "method": "POST",
     "operationId": "agent.runs.start",
     "path": "/v1/agent/runs",
-    "rateLimitPolicyId": null,
+    "rateLimitPolicyId": "agent.run",
     "roles": [],
     "scopes": [
       "agent.run",

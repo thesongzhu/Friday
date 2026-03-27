@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import type { FridayProviderApi, FridayProviderKind, FridayProviderProfile } from "../model/friday-provider.types.js";
 import type { FridayProviderService } from "./friday-provider-service.types.js";
 
@@ -77,8 +78,9 @@ export async function resolveExistingOAuthProvider(
   const kind = readOAuthProviderKind(input.kind);
   const existing = await selectReusableOAuthProvider(providerService, input, kind);
   if (!existing) {
-    throw new Error(
+    throw new FridayDomainError("VALIDATION_ERROR",
       `No ${kind} OAuth provider is configured yet. Run oauth_init first or specify providerId.`,
+      { httpStatus: 400 },
     );
   }
 
@@ -109,8 +111,9 @@ async function selectReusableOAuthProvider(
       return { provider: namedMatches[0]!, resolution: "reused-by-name" };
     }
     if (namedMatches.length > 1) {
-      throw new Error(
+      throw new FridayDomainError("VALIDATION_ERROR",
         `Multiple ${kind} OAuth providers match name "${input.name}". Specify providerId.`,
+        { httpStatus: 400 },
       );
     }
   }
@@ -123,8 +126,9 @@ async function selectReusableOAuthProvider(
       return { provider: modelMatches[0]!, resolution: "reused-by-default-model" };
     }
     if (modelMatches.length > 1) {
-      throw new Error(
+      throw new FridayDomainError("VALIDATION_ERROR",
         `Multiple ${kind} OAuth providers use default model "${input.defaultModel}". Specify providerId.`,
+        { httpStatus: 400 },
       );
     }
   }
@@ -142,8 +146,9 @@ async function selectReusableOAuthProvider(
     return { provider: enabledCandidates[0]!, resolution: "reused-enabled" };
   }
 
-  throw new Error(
+  throw new FridayDomainError("VALIDATION_ERROR",
     `Multiple ${kind} OAuth providers are available. Specify providerId. Candidates: ${candidates.map(formatProviderCandidate).join("; ")}`,
+    { httpStatus: 400 },
   );
 }
 
@@ -154,7 +159,7 @@ async function requireProviderById(
 ): Promise<FridayProviderProfile> {
   const provider = await providerService.getProvider(providerId);
   if (!provider) {
-    throw new Error(`Provider "${providerId}" not found for ${actionLabel}.`);
+    throw new FridayDomainError("NOT_FOUND", `Provider "${providerId}" not found for ${actionLabel}.`, { httpStatus: 404 });
   }
   return provider;
 }
@@ -164,13 +169,15 @@ function assertOAuthReadyProvider(
   actionLabel: string,
 ): void {
   if (provider.config.authMode !== "oauth") {
-    throw new Error(
+    throw new FridayDomainError("VALIDATION_ERROR",
       `Provider "${provider.id}" uses ${provider.config.authMode} auth, not oauth, so ${actionLabel} cannot use it.`,
+      { httpStatus: 400 },
     );
   }
   if (provider.kind !== DEFAULT_OAUTH_PROVIDER_KIND) {
-    throw new Error(
+    throw new FridayDomainError("UNSUPPORTED_OPERATION",
       `OAuth automation currently supports ${DEFAULT_OAUTH_PROVIDER_KIND} providers only. Provider "${provider.id}" is kind "${provider.kind}".`,
+      { httpStatus: 400 },
     );
   }
 }
@@ -178,8 +185,9 @@ function assertOAuthReadyProvider(
 function readOAuthProviderKind(kind: FridayProviderKind | undefined): FridayProviderKind {
   const resolved = kind ?? DEFAULT_OAUTH_PROVIDER_KIND;
   if (resolved !== DEFAULT_OAUTH_PROVIDER_KIND) {
-    throw new Error(
+    throw new FridayDomainError("UNSUPPORTED_OPERATION",
       `OAuth automation currently supports ${DEFAULT_OAUTH_PROVIDER_KIND} providers only.`,
+      { httpStatus: 400 },
     );
   }
   return resolved;
@@ -190,7 +198,8 @@ async function safeGetRoutingConfig(
 ): Promise<{ defaultProviderId: string } | null> {
   try {
     return await providerService.getRoutingConfig();
-  } catch {
+  } catch (err) {
+    console.warn("[friday][provider-oauth-selection] routing config fetch failed:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

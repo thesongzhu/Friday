@@ -1,4 +1,5 @@
 import type { FridaySqliteLayer } from "#state";
+import { FridayDomainError } from "#errors";
 import type {
   FridayApprovalRequestEntity,
   FridayApprovalRequestStatus,
@@ -434,7 +435,7 @@ export function createFridaySelfHealingApiService(
         deps.approvalRepo.getByActionId(db, input.actionId),
       );
       if (!approval) {
-        throw new Error(`Approval request not found for action ${input.actionId}`);
+        throw new FridayDomainError("NOT_FOUND", `Approval request not found for action ${input.actionId}`, { httpStatus: 404 });
       }
       await deps.approvalService.approve({
         requestId: approval.requestId,
@@ -444,7 +445,7 @@ export function createFridaySelfHealingApiService(
       });
       const details = this.getAction({ actionId: input.actionId });
       if (!details) {
-        throw new Error(`Action ${input.actionId} not found after approval`);
+        throw new FridayDomainError("NOT_FOUND", `Action ${input.actionId} not found after approval`, { httpStatus: 404 });
       }
       emitActionEvent("autofix.action.approved", details, approval.requestId);
       await deps.observability?.recordAutoFixActionEvent({
@@ -465,7 +466,7 @@ export function createFridaySelfHealingApiService(
         deps.approvalRepo.getByActionId(db, input.actionId),
       );
       if (!approval) {
-        throw new Error(`Approval request not found for action ${input.actionId}`);
+        throw new FridayDomainError("NOT_FOUND", `Approval request not found for action ${input.actionId}`, { httpStatus: 404 });
       }
       await deps.approvalService.reject({
         requestId: approval.requestId,
@@ -475,7 +476,7 @@ export function createFridaySelfHealingApiService(
       });
       const details = this.getAction({ actionId: input.actionId });
       if (!details) {
-        throw new Error(`Action ${input.actionId} not found after rejection`);
+        throw new FridayDomainError("NOT_FOUND", `Action ${input.actionId} not found after rejection`, { httpStatus: 404 });
       }
       emitActionEvent("autofix.action.rejected", details, approval.requestId);
       await deps.observability?.recordAutoFixActionEvent({
@@ -496,7 +497,7 @@ export function createFridaySelfHealingApiService(
         deps.actionRepo.getById(db, input.actionId),
       );
       if (!action) {
-        throw new Error(`Action ${input.actionId} not found`);
+        throw new FridayDomainError("NOT_FOUND", `Action ${input.actionId} not found`, { httpStatus: 404 });
       }
 
       let result: FridayAutoFixExecutionResult;

@@ -374,8 +374,9 @@ export class FridayRuleEngine {
       if (hook.phase === phase && hook.source === source) {
         try {
           await hook.handler(context, result);
-        } catch {
+        } catch (err) {
           // Hook failures are isolated from enforcement decisions.
+          console.warn("[friday][rule-engine] hook execution failed:", err instanceof Error ? err.message : String(err));
           hadFailure = true;
         }
       }
@@ -432,8 +433,9 @@ export class FridayRuleEngine {
     try {
       this.auditLogSink(entrySnapshot);
       return true;
-    } catch {
+    } catch (err) {
       // Telemetry failures must not affect enforcement results.
+      console.warn("[friday][rule-engine] audit log sink failed:", err instanceof Error ? err.message : String(err));
       return false;
     }
   }
@@ -468,16 +470,18 @@ export class FridayRuleEngine {
     if (this.onTransition) {
       try {
         this.onTransition(transition);
-      } catch {
+      } catch (err) {
         // Transition observer failures must not affect enforcement results.
+        console.warn("[friday][rule-engine] transition observer failed:", err instanceof Error ? err.message : String(err));
       }
     }
 
     if (localObserver) {
       try {
         localObserver(transition);
-      } catch {
+      } catch (err) {
         // Transition observer failures must not affect enforcement results.
+        console.warn("[friday][rule-engine] local transition observer failed:", err instanceof Error ? err.message : String(err));
       }
     }
   }

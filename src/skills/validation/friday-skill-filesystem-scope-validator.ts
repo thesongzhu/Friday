@@ -30,13 +30,15 @@ function getAllowedScopeRoots(
   // Add canonicalized workspace and skill dirs
   try {
     roots.push(fs.realpathSync(workspaceDir));
-  } catch {
+  } catch (err) {
+    console.warn("[friday][skill-filesystem-scope-validator] operation failed:", err instanceof Error ? err.message : String(err));
     roots.push(path.resolve(workspaceDir));
   }
 
   try {
     roots.push(fs.realpathSync(skillDir));
-  } catch {
+  } catch (err) {
+    console.warn("[friday][skill-filesystem-scope-validator] operation failed:", err instanceof Error ? err.message : String(err));
     roots.push(path.resolve(skillDir));
   }
 
@@ -44,7 +46,8 @@ function getAllowedScopeRoots(
   for (const prefix of absoluteAllowPrefixes) {
     try {
       roots.push(fs.realpathSync(prefix));
-    } catch {
+    } catch (err) {
+    console.warn("[friday][skill-filesystem-scope-validator] operation failed:", err instanceof Error ? err.message : String(err));
       roots.push(path.resolve(prefix));
     }
   }

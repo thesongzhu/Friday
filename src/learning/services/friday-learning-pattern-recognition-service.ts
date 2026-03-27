@@ -1,4 +1,5 @@
 import type { FridaySqliteLayer } from "#state";
+import { safeJsonParse } from "#utilities";
 import type { FridayErrorIncidentRepository } from "../persistence/friday-error-incident-repository.js";
 import type { FridayPreferenceFactRepository } from "../persistence/friday-preference-fact-repository.js";
 import type {
@@ -122,7 +123,7 @@ export function createFridayLearningPatternRecognitionService(
 
         const correctionKeyCounts = new Map<string, number>();
         for (const row of correctionRows) {
-          const payload = JSON.parse(row.payload_json) as Record<
+          const payload = safeJsonParse(row.payload_json) as Record<
             string,
             unknown
           >;
@@ -171,7 +172,7 @@ export function createFridayLearningPatternRecognitionService(
 
           const correctedNormalizedKeys = new Set<string>();
           for (const row of recentCorrections) {
-            const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+            const payload = safeJsonParse(row.payload_json) as Record<string, unknown>;
             const field = readCorrectionPayload(payload).correctedField;
             if (field) {
               correctedNormalizedKeys.add(normalizeFieldToKey(field));
@@ -223,7 +224,7 @@ export function createFridayLearningPatternRecognitionService(
 
         const fieldValues = new Map<string, Set<string>>();
         for (const row of driftRows) {
-          const payload = JSON.parse(row.payload_json) as Record<
+          const payload = safeJsonParse(row.payload_json) as Record<
             string,
             unknown
           >;

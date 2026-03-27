@@ -54,7 +54,8 @@ export function createFridaySessionLifecycleJob(
           if (result.queued) {
             extractionsQueued++;
           }
-        } catch {
+        } catch (err) {
+        console.warn("[friday][session-lifecycle-job] operation failed:", err instanceof Error ? err.message : String(err));
           // Best-effort; extraction failures don't break lifecycle
         }
       }

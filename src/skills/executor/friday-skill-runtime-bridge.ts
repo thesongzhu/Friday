@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { browserArtifactDir, sanitizeArtifactPathSegment } from "#browser";
@@ -86,7 +87,7 @@ export function createFridaySkillReadonlyRuntimeContext(
       async inspectPage(input) {
         const requestedUrl = typeof input.url === "string" ? input.url.trim() : "";
         if (requestedUrl.length === 0) {
-          throw new Error("Browser inspection requires a non-empty url.");
+          throw new FridayDomainError("VALIDATION_ERROR", "Browser inspection requires a non-empty url.", { httpStatus: 400 });
         }
 
         const requestedSessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
@@ -193,7 +194,8 @@ export function createFridaySkillReadonlyRuntimeContext(
               path: screenshotPath,
               fullPage: true,
             });
-          } catch {
+          } catch (err) {
+          console.warn("[friday][skill-runtime-bridge] operation failed:", err instanceof Error ? err.message : String(err));
             screenshotPath = null;
           }
 

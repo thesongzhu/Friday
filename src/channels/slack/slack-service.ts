@@ -6,6 +6,8 @@
  * No external dependencies required.
  */
 
+import { FridayDomainError } from "#errors";
+
 // ─── Types ───
 
 export interface SlackMessageEvent {
@@ -163,8 +165,10 @@ export function createSlackWebApiService(): SlackWebApiService {
       });
 
       if (!res.ok) {
-        throw new Error(
+        throw new FridayDomainError(
+          "INTERNAL_ERROR",
           `Slack chat.postMessage HTTP error: ${res.status} ${res.statusText}`,
+          { httpStatus: 500 },
         );
       }
 
@@ -177,7 +181,7 @@ export function createSlackWebApiService(): SlackWebApiService {
       };
 
       if (!data.ok) {
-        throw new Error(`Slack chat.postMessage API error: ${data.error ?? "unknown"}`);
+        throw new FridayDomainError("INTERNAL_ERROR", `Slack chat.postMessage API error: ${data.error ?? "unknown"}`, { httpStatus: 500 });
       }
 
       return {
@@ -198,8 +202,10 @@ export function createSlackWebApiService(): SlackWebApiService {
       });
 
       if (!res.ok) {
-        throw new Error(
+        throw new FridayDomainError(
+          "INTERNAL_ERROR",
           `Slack users.info HTTP error: ${res.status} ${res.statusText}`,
+          { httpStatus: 500 },
         );
       }
 
@@ -212,7 +218,7 @@ export function createSlackWebApiService(): SlackWebApiService {
       if (!data.ok) {
         // user_not_found is a normal condition, return null
         if (data.error === "user_not_found") return null;
-        throw new Error(`Slack users.info API error: ${data.error ?? "unknown"}`);
+        throw new FridayDomainError("INTERNAL_ERROR", `Slack users.info API error: ${data.error ?? "unknown"}`, { httpStatus: 500 });
       }
 
       if (!data.user) return null;
@@ -237,11 +243,19 @@ const SOCKET_HEARTBEAT_INTERVAL_MS = 30_000;
  * pings, and `events_api` envelope acknowledgement. Message events are
  * forwarded to the caller-provided callback.
  */
+// P2-CH: Reconnection constants
+const SLACK_RECONNECT_INITIAL_MS = 1_000;
+const SLACK_RECONNECT_MAX_MS = 60_000;
+
 export function createSlackSocketService(): SlackSocketService {
   let ws: WebSocket | null = null;
   let connected = false;
+  let stopped = false;
   let abortController: AbortController | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectDelay = SLACK_RECONNECT_INITIAL_MS;
+  let lastConnectArgs: { appToken: string; botToken: string; onEvent: (event: SlackMessageEvent) => void } | null = null;
 
   function cleanup() {
     connected = false;
@@ -254,7 +268,8 @@ export function createSlackSocketService(): SlackSocketService {
     if (ws) {
       try {
         ws.close();
-      } catch {
+      } catch (err) {
+        console.warn("[friday][slack-service] operation failed:", err instanceof Error ? err.message : String(err));
         // already closed — ignore
       }
       ws = null;
@@ -269,6 +284,8 @@ export function createSlackSocketService(): SlackSocketService {
   return {
     async connect(appToken, _botToken, onEvent) {
       if (connected) return;
+      stopped = false;
+      lastConnectArgs = { appToken, botToken: _botToken, onEvent };
 
       abortController = new AbortController();
 
@@ -283,8 +300,10 @@ export function createSlackSocketService(): SlackSocketService {
       });
 
       if (!openRes.ok) {
-        throw new Error(
+        throw new FridayDomainError(
+          "INTERNAL_ERROR",
           `Slack apps.connections.open HTTP error: ${openRes.status} ${openRes.statusText}`,
+          { httpStatus: 500 },
         );
       }
 
@@ -295,8 +314,10 @@ export function createSlackSocketService(): SlackSocketService {
       };
 
       if (!openData.ok || !openData.url) {
-        throw new Error(
+        throw new FridayDomainError(
+          "INTERNAL_ERROR",
           `Slack apps.connections.open API error: ${openData.error ?? "missing url"}`,
+          { httpStatus: 500 },
         );
       }
 
@@ -327,13 +348,15 @@ export function createSlackSocketService(): SlackSocketService {
 
           try {
             envelope = JSON.parse(String(event.data));
-          } catch {
+          } catch (err) {
+        console.warn("[friday][slack-service] operation failed:", err instanceof Error ? err.message : String(err));
             return; // ignore malformed frames
           }
 
           // Handle hello — marks connection as ready
           if (envelope.type === "hello") {
             connected = true;
+            reconnectDelay = SLACK_RECONNECT_INITIAL_MS; // Reset backoff on successful connect
 
             // Start heartbeat pings
             heartbeatTimer = setInterval(() => {
@@ -358,7 +381,8 @@ export function createSlackSocketService(): SlackSocketService {
             if (innerEvent && innerEvent.type === "message") {
               try {
                 onEvent(innerEvent);
-              } catch {
+              } catch (err) {
+        console.warn("[friday][slack-service] operation failed:", err instanceof Error ? err.message : String(err));
                 // Callback error must not break the socket loop
               }
             }
@@ -377,6 +401,9 @@ export function createSlackSocketService(): SlackSocketService {
           cleanup();
           if (!wasConnected) {
             reject(new Error("Socket Mode WebSocket closed before hello"));
+          } else if (!stopped) {
+            // P2-CH: Log disconnection — the channel registry health monitor will auto-restart
+            console.warn("[friday] Slack Socket Mode disconnected unexpectedly");
           }
         });
 
@@ -395,6 +422,8 @@ export function createSlackSocketService(): SlackSocketService {
     },
 
     async disconnect() {
+      stopped = true;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
       cleanup();
     },
 

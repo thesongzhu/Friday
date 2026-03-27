@@ -8,6 +8,8 @@
  * @module node-runner/engine
  */
 
+import { FridayDomainError } from "#errors";
+
 import type {
   FridayNodeAdapter,
   FridayNodeExecutionContext,
@@ -112,5 +114,5 @@ function resolveArgs(
 function throwIfAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;
   if (signal.reason instanceof Error) throw signal.reason;
-  throw new Error("Data node operation aborted");
+  throw new FridayDomainError("INTERNAL_ERROR", "Data node operation aborted", { httpStatus: 500 });
 }

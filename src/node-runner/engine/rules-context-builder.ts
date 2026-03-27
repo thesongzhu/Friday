@@ -7,6 +7,8 @@
  * @module node-runner/engine
  */
 
+import { FridayDomainError } from "#errors";
+
 import type {
   FridayEvaluationContext,
   FridayRuleResource,
@@ -36,7 +38,7 @@ export function mapNodeTypeToResource(nodeType: string): FridayRuleResource {
   if (Object.prototype.hasOwnProperty.call(NODE_TYPE_RESOURCE_MAP, nodeType)) {
     return NODE_TYPE_RESOURCE_MAP[nodeType as WorkflowNodeType];
   }
-  throw new Error(`No rules resource mapping defined for node type "${nodeType}"`);
+  throw new FridayDomainError("VALIDATION_ERROR", `No rules resource mapping defined for node type "${nodeType}"`, { httpStatus: 400 });
 }
 
 // ─── Pre-Rules Context ───

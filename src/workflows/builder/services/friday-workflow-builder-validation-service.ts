@@ -290,7 +290,8 @@ function validateEdgeConditions(
           outputs: [],
           tests: [],
         });
-      } catch {
+      } catch (err) {
+        console.warn("[friday][workflow-builder-validation] condition expression invalid:", err instanceof Error ? err.message : String(err));
         issues.push({
           code: "EXPRESSION_INVALID",
           stage: "expressions",

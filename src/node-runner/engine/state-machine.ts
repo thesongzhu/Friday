@@ -7,6 +7,8 @@
  * @module node-runner/engine
  */
 
+import { FridayDomainError } from "#errors";
+
 import type {
   FridayNodeExecutionStatus,
   FridayNodeRunnerStateTransition,
@@ -76,9 +78,11 @@ export function transition(
   to: FridayNodeExecutionStatus,
 ): FridayNodeExecutionStatus {
   if (!isValidTransition(from, to)) {
-    throw new Error(
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
       `Invalid state transition: "${from}" → "${to}". ` +
         `Valid targets from "${from}": [${getValidTargets(from).join(", ")}]`,
+      { httpStatus: 400 },
     );
   }
   return to;

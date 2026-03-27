@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import type { UUID } from "../../model/friday-workflow.types.js";
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayWorkflowDraftEntity,
   FridayWorkflowDraftStatus,
@@ -50,7 +51,7 @@ export function createFridayWorkflowBuilderDraftRepository(): FridayWorkflowBuil
           `SELECT value_json FROM memory_items WHERE namespace = ? AND key LIKE ?`,
         )
         .get(NAMESPACE, `%:${draftId}`) as { value_json: string } | undefined;
-      return row ? (JSON.parse(row.value_json) as FridayWorkflowDraftEntity) : null;
+      return row ? safeJsonParse<FridayWorkflowDraftEntity>(row.value_json) ?? null : null;
     },
 
     listByWorkflow(db, workflowId) {
@@ -59,7 +60,7 @@ export function createFridayWorkflowBuilderDraftRepository(): FridayWorkflowBuil
           `SELECT value_json FROM memory_items WHERE namespace = ? AND key LIKE ? ORDER BY updated_at DESC`,
         )
         .all(NAMESPACE, `${workflowId}:%`) as Array<{ value_json: string }>;
-      return rows.map((r) => JSON.parse(r.value_json) as FridayWorkflowDraftEntity);
+      return rows.map((r) => safeJsonParse<FridayWorkflowDraftEntity>(r.value_json)).filter((r): r is FridayWorkflowDraftEntity => r !== undefined);
     },
 
     listByStatus(db, status) {
@@ -69,7 +70,7 @@ export function createFridayWorkflowBuilderDraftRepository(): FridayWorkflowBuil
         )
         .all(NAMESPACE) as Array<{ value_json: string }>;
       return rows
-        .map((r) => JSON.parse(r.value_json) as FridayWorkflowDraftEntity)
+        .map((r) => safeJsonParse<FridayWorkflowDraftEntity>(r.value_json)).filter((d): d is FridayWorkflowDraftEntity => d !== undefined)
         .filter((d) => d.status === status);
     },
 

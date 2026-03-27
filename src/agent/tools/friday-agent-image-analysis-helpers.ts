@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -46,7 +47,7 @@ export interface ImageValidationResult {
 export function validateDetail(detail: string | undefined): ImageDetail {
   if (!detail) return "auto";
   if (!VALID_DETAILS.has(detail)) {
-    throw new Error(`Invalid detail "${detail}". Valid: low, high, auto.`);
+    throw new FridayDomainError("VALIDATION_ERROR", `Invalid detail "${detail}". Valid: low, high, auto.`, { httpStatus: 400 });
   }
   return detail as ImageDetail;
 }
@@ -81,11 +82,11 @@ export function normalizeImageInput(input: string, options?: NormalizeImageOptio
   // Data URI
   if (trimmed.startsWith("data:")) {
     if (Buffer.byteLength(trimmed, "utf8") > MAX_DATA_URI_BYTES) {
-      throw new Error(`Data URI exceeds maximum size of ${MAX_DATA_URI_BYTES} bytes.`);
+      throw new FridayDomainError("VALIDATION_ERROR", `Data URI exceeds maximum size of ${MAX_DATA_URI_BYTES} bytes.`, { httpStatus: 400 });
     }
     const match = /^data:([^;]+);base64,(.+)$/.exec(trimmed);
     if (!match) {
-      throw new Error("Invalid data URI format. Expected data:<mime>;base64,<data>");
+      throw new FridayDomainError("VALIDATION_ERROR", "Invalid data URI format. Expected data:<mime>;base64,<data>", { httpStatus: 400 });
     }
     return { type: "base64", mimeType: match[1], data: match[2] };
   }
@@ -105,21 +106,25 @@ export function normalizeImageInput(input: string, options?: NormalizeImageOptio
   const withinTemp = isPathWithinDirectory(resolved, tempDir);
 
   if (!withinWorkspace && !withinTemp) {
-    throw new Error(
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
       `Image path "${trimmed}" is outside the allowed directories (workspace or temp). ` +
       `Resolved: ${resolved}`,
+      { httpStatus: 400 },
     );
   }
 
   if (!fs.existsSync(resolved)) {
-    throw new Error(`Image file not found: ${resolved}`);
+    throw new FridayDomainError("NOT_FOUND", `Image file not found: ${resolved}`, { httpStatus: 404 });
   }
 
   const ext = path.extname(resolved).toLowerCase();
   const mime = IMAGE_MIME_MAP[ext];
   if (!mime) {
-    throw new Error(
+    throw new FridayDomainError(
+      "UNSUPPORTED_OPERATION",
       `Unsupported image format "${ext}". Supported: ${Object.keys(IMAGE_MIME_MAP).join(", ")}`,
+      { httpStatus: 400 },
     );
   }
 

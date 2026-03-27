@@ -15,6 +15,7 @@
  *   - https://open.larksuite.com/document/server-docs/overview
  */
 
+import { FridayDomainError } from "#errors";
 import type {
   FridayChannelMessage,
   FridayChannelPlugin,
@@ -88,7 +89,7 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
     });
 
     if (!response.ok) {
-      throw new Error(`Lark token refresh failed: ${response.status} ${response.statusText}`);
+      throw new FridayDomainError("INTERNAL_ERROR", `Lark token refresh failed: ${response.status} ${response.statusText}`, { httpStatus: 500 });
     }
 
     const data = (await response.json()) as {
@@ -99,7 +100,7 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
     };
 
     if (data.code !== 0) {
-      throw new Error(`Lark token refresh error: ${data.code} ${data.msg}`);
+      throw new FridayDomainError("INTERNAL_ERROR", `Lark token refresh error: ${data.code} ${data.msg}`, { httpStatus: 500 });
     }
 
     token = {
@@ -143,7 +144,8 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
       try {
         const parsed = JSON.parse(content) as { text?: string };
         text = parsed.text ?? content;
-      } catch {
+      } catch (err) {
+      console.warn("[friday][lark-channel] operation failed:", err instanceof Error ? err.message : String(err));
         text = content;
       }
     }
@@ -182,7 +184,7 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
     });
 
     if (!response.ok) {
-      throw new Error(`Lark WS endpoint fetch failed: ${response.status}`);
+      throw new FridayDomainError("INTERNAL_ERROR", `Lark WS endpoint fetch failed: ${response.status}`, { httpStatus: 500 });
     }
 
     const data = (await response.json()) as {
@@ -192,7 +194,7 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
 
     const wsUrl = data.data?.URL ?? data.data?.url;
     if (!wsUrl) {
-      throw new Error("Lark WS endpoint returned no URL");
+      throw new FridayDomainError("INTERNAL_ERROR", "Lark WS endpoint returned no URL", { httpStatus: 500 });
     }
 
     return wsUrl;
@@ -230,7 +232,8 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
       let data: Record<string, unknown>;
       try {
         data = JSON.parse(String(event.data)) as Record<string, unknown>;
-      } catch {
+      } catch (err) {
+      console.warn("[friday][lark-channel] operation failed:", err instanceof Error ? err.message : String(err));
         return;
       }
 
@@ -328,20 +331,24 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
   const plugin: FridayChannelPlugin = {
     kind: "lark",
     adapters,
+    contract: {
+      coreAuthority: { messageRouting: true, sessionMirroring: true, audit: true, evidence: true },
+      pluginResponsibilities: { config: true, auth: true, pairing: false, outboundDelivery: true, threadResolution: false, providerRetries: false },
+      supports: { directMessages: true, groupMessages: true, threads: false, typing: false },
+    },
 
     async init(rawConfig) {
+      // P1-CH-001: Use Zod schema for runtime config validation
+      const { FridayLarkChannelConfigSchema } = await import("./lark-config.schema.js");
+      const parsed = FridayLarkChannelConfigSchema.parse({ kind: rawConfig.useFeishu ? "feishu" : "lark", ...rawConfig });
       config = {
-        appId: rawConfig.appId as string,
-        appSecret: rawConfig.appSecret as string,
-        useFeishu: (rawConfig.useFeishu as boolean) ?? false,
-        allowedUsers: rawConfig.allowedUsers as string[] | undefined,
-        allowedChats: rawConfig.allowedChats as string[] | undefined,
-        receiveMode: (rawConfig.receiveMode as "websocket" | "webhook") ?? "websocket",
+        appId: parsed.appId,
+        appSecret: parsed.appSecret,
+        useFeishu: parsed.useFeishu,
+        allowedUsers: parsed.allowedUsers,
+        allowedChats: parsed.allowedChats,
+        receiveMode: parsed.receiveMode,
       };
-
-      if (!config.appId || !config.appSecret) {
-        throw new Error("Lark channel requires appId and appSecret");
-      }
 
       // Override kind for Feishu
       if (config.useFeishu) {
@@ -361,7 +368,7 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
           connectWebSocket(wsUrl);
         } else {
           if (!webhookRelay) {
-            throw new Error("Lark webhook mode requires webhookRelay dependency");
+            throw new FridayDomainError("VALIDATION_ERROR", "Lark webhook mode requires webhookRelay dependency", { httpStatus: 400 });
           }
           await webhookRelay.start((event) => {
             const msg = parseMessageEvent(event);
@@ -384,7 +391,8 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
         if (ws) {
           try {
             ws.close();
-          } catch {
+          } catch (err) {
+      console.warn("[friday][lark-channel] operation failed:", err instanceof Error ? err.message : String(err));
             // ignore
           }
           ws = null;
@@ -447,7 +455,7 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Lark send failed: ${response.status} ${errorText}`);
+        throw new FridayDomainError("INTERNAL_ERROR", `Lark send failed: ${response.status} ${errorText}`, { httpStatus: 500 });
       }
 
       const result = (await response.json()) as {
@@ -456,7 +464,7 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
       };
 
       if (result.code !== 0) {
-        throw new Error(`Lark send error: code ${result.code}`);
+        throw new FridayDomainError("INTERNAL_ERROR", `Lark send error: code ${result.code}`, { httpStatus: 500 });
       }
 
       return { messageId: result.data?.message_id ?? "" };
