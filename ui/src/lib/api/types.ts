@@ -1453,14 +1453,23 @@ export class ApiError extends Error {
   readonly statusCode: number;
   readonly retryable: boolean;
   readonly retryAfterMs?: number;
+  readonly details?: string;
 
-  constructor(code: string, message: string, statusCode: number, retryable = false, retryAfterMs?: number) {
+  constructor(
+    code: string,
+    message: string,
+    statusCode: number,
+    retryable = false,
+    retryAfterMs?: number,
+    details?: string,
+  ) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.statusCode = statusCode;
     this.retryable = retryable;
     this.retryAfterMs = retryAfterMs;
+    this.details = details;
   }
 }
 
