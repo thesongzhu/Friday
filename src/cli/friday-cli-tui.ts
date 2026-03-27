@@ -6,6 +6,7 @@
  * @module cli/friday-cli-tui
  */
 
+import { FridayDomainError } from "#errors";
 import { createFridayTuiApiClient } from "../tui/friday-tui-api-client.js";
 import { createFridayTuiRenderer } from "../tui/friday-tui-renderer.js";
 import { createFridayTuiController } from "../tui/friday-tui-controller.js";
@@ -37,7 +38,7 @@ export async function runFridayCliTui(options: FridayCliTuiOptions = {}): Promis
         body: init?.body,
         headers: init?.headers,
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      if (!res.ok) throw new FridayDomainError("INTERNAL_ERROR", `HTTP ${res.status}: ${res.statusText}`, { httpStatus: 500 });
       return res.json() as Promise<T>;
     },
     baseUrl: config.apiBaseUrl,

@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import type { UUID } from "../../model/friday-workflow.types.js";
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayWorkflowTemplateEntity,
   FridayWorkflowTemplateScope,
@@ -50,7 +51,7 @@ export function createFridayWorkflowBuilderTemplateRepository(): FridayWorkflowB
           `SELECT value_json FROM memory_items WHERE namespace = ? AND key LIKE ?`,
         )
         .get(NAMESPACE, `%:${templateId}`) as { value_json: string } | undefined;
-      return row ? (JSON.parse(row.value_json) as FridayWorkflowTemplateEntity) : null;
+      return row ? safeJsonParse<FridayWorkflowTemplateEntity>(row.value_json) ?? null : null;
     },
 
     list(db, scope, ownerUserId) {
@@ -69,7 +70,7 @@ export function createFridayWorkflowBuilderTemplateRepository(): FridayWorkflowB
       }
 
       const rows = db.prepare(query).all(...params) as Array<{ value_json: string }>;
-      return rows.map((r) => JSON.parse(r.value_json) as FridayWorkflowTemplateEntity);
+      return rows.map((r) => safeJsonParse<FridayWorkflowTemplateEntity>(r.value_json)).filter((r): r is FridayWorkflowTemplateEntity => r !== undefined);
     },
 
     update(db, template) {

@@ -109,6 +109,7 @@ export function createFridayAgentRoutes(
       method: "POST",
       path: "/v1/agent/runs",
       auth: { public: false, anyOfScopes: [...AGENT_RUN_SCOPES] },
+      rateLimitPolicyId: "agent.run",
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.task !== "string" || body.task.trim() === "") {
@@ -766,7 +767,8 @@ function parseOptionalIanaTimezone(value: unknown, path: string): string | undef
   const timezone = value.trim();
   try {
     Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(new Date());
-  } catch {
+  } catch (err) {
+    console.warn("[friday][agent-routes] operation failed:", err instanceof Error ? err.message : String(err));
     throw new FridayDomainError(
       "VALIDATION_ERROR",
       `${path} is not a valid IANA timezone`,
@@ -836,7 +838,8 @@ function parseAutomationSchedule(
     timezone = raw.timezone.trim();
     try {
       Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(new Date());
-    } catch {
+    } catch (err) {
+    console.warn("[friday][agent-routes] operation failed:", err instanceof Error ? err.message : String(err));
       throw new FridayDomainError(
         "VALIDATION_ERROR",
         `${options.path}.timezone is not a valid IANA timezone`,

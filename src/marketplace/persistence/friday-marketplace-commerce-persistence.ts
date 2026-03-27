@@ -1899,7 +1899,8 @@ function parsePermissionManifestJson(
       requiresExplicitApproval:
         parsed.requiresExplicitApproval === true,
     };
-  } catch {
+  } catch (err) {
+    console.warn("[friday][marketplace-commerce-persistence] permission manifest parse failed:", err instanceof Error ? err.message : String(err));
     return {
       permissions: [],
       requiresExplicitApproval: false,
@@ -2144,7 +2145,8 @@ function parseJsonObject(value: string): JsonObject {
 function parseJson<T>(value: string, fallback: T): T {
   try {
     return JSON.parse(value) as T;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][marketplace-commerce-persistence] JSON parse failed:", err instanceof Error ? err.message : String(err));
     return fallback;
   }
 }

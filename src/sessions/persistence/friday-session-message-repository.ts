@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 
 import { FRIDAY_SESSION_ERROR_CODES } from "../friday-session.constants.js";
 import type {
@@ -40,13 +41,13 @@ function rowToRecord(row: FridaySessionMessageRow): FridaySessionMessageRecord {
     sessionKey: row.session_key ?? "",
     sequence: row.sequence,
     role: row.role as FridaySessionRole,
-    content: JSON.parse(row.content_json) as unknown,
+    content: safeJsonParse<unknown>(row.content_json),
     contentText: row.content_text ?? "",
-    toolCalls: row.tool_calls_json ? JSON.parse(row.tool_calls_json) as unknown[] : undefined,
+    toolCalls: safeJsonParse<unknown[]>(row.tool_calls_json),
     tokenCount: row.token_count,
     idempotencyKey: row.idempotency_key ?? undefined,
     parentMessageId: row.parent_message_id ?? undefined,
-    metadata: row.metadata_json ? JSON.parse(row.metadata_json) as Record<string, unknown> : {},
+    metadata: safeJsonParse<Record<string, unknown>>(row.metadata_json) ?? {},
     memoryExtractStatus: row.memory_extract_status as FridaySessionMessageRecord["memoryExtractStatus"],
     memoryExtractedAt: row.memory_extracted_at ?? undefined,
     occurredAt: row.occurred_at ?? row.created_at,

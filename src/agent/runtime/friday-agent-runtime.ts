@@ -164,7 +164,8 @@ export function createFridayAgentRuntime(
             runEventRepository.list(reader, runId),
           );
           current = existingEvents.at(-1)?.seq ?? 0;
-        } catch {
+        } catch (err) {
+          console.warn("[friday][agent-runtime] seq-counter-recover:", err instanceof Error ? err.message : String(err));
           current = 0;
         }
       } else {
@@ -197,8 +198,9 @@ export function createFridayAgentRuntime(
             createdAt: now,
           }),
         );
-      } catch {
+      } catch (err) {
         // Non-fatal: event persistence failure should not kill the run
+        console.warn("[friday][agent-runtime] event-persist:", err instanceof Error ? err.message : String(err));
       }
     }
     eventEmitter.emit(eventName as keyof typeof eventEmitter extends never ? never : Parameters<typeof eventEmitter.emit>[0], payload as never);
@@ -489,8 +491,9 @@ export function createFridayAgentRuntime(
           if (learningCtx.preferences && typeof learningCtx.preferences === "object") {
             learnedPreferences = learningCtx.preferences;
           }
-        } catch {
+        } catch (err) {
           // Non-fatal: preference enrichment failure should not kill the run.
+          console.warn("[friday][agent-runtime] preference-enrichment:", err instanceof Error ? err.message : String(err));
         }
       }
       const runTimeContext = buildRunTimeContext(
@@ -647,9 +650,10 @@ export function createFridayAgentRuntime(
             sessionId: sessionKey,
             scopes,
           }, runAbortController.signal);
-          if (runPolicy && !runPolicy.allowed) {
+          // P1-SEC-006: Treat null (rules evaluation error) as deny — fail-closed
+          if (runPolicy === null || (runPolicy && !runPolicy.allowed)) {
             const durationMs = Date.now() - startedAt;
-            const message = runPolicy.message ?? "Agent run denied by policy";
+            const message = runPolicy?.message ?? "Agent run denied by policy";
             db.withWriteTransaction((writer) =>
               repo.update(writer, {
                 id: runId,
@@ -1042,8 +1046,9 @@ export function createFridayAgentRuntime(
             if (fragment && fragment.trim().length > 0) {
               effectiveSystemPrompt += `\n\n${fragment.trim()}`;
             }
-          } catch {
+          } catch (err) {
             // Non-fatal: persona enrichment failure should not kill the run
+            console.warn("[friday][agent-runtime] persona-enrichment:", err instanceof Error ? err.message : String(err));
           }
         }
 
@@ -1106,8 +1111,9 @@ export function createFridayAgentRuntime(
                 outputTokens,
                 costUsd: turnMeta.costUsd,
               });
-            } catch {
+            } catch (err) {
               // Non-fatal: usage persistence should not break run execution.
+              console.warn("[friday][agent-runtime] usage-persist:", err instanceof Error ? err.message : String(err));
             }
           }
 
@@ -1337,8 +1343,9 @@ export function createFridayAgentRuntime(
                 sessionId: sessionKey,
                 scopes,
               }, runAbortController.signal);
-              if (policyResult && !policyResult.allowed) {
-                const message = policyResult.message
+              // P1-SEC-006: Treat null (rules evaluation error) as deny — fail-closed
+              if (policyResult === null || (policyResult && !policyResult.allowed)) {
+                const message = policyResult?.message
                   ?? `Tool '${toolUse.name}' blocked by policy`;
                 const blockedResult = {
                   content: message,
@@ -1488,6 +1495,11 @@ export function createFridayAgentRuntime(
             });
 
             allToolCalls.push(toolCallRecord);
+
+            // P2-RUNTIME-006: Early exit if tool call limit reached mid-batch
+            if (allToolCalls.length >= FRIDAY_AGENT_MAX_TOOL_CALLS) {
+              break;
+            }
 
             toolResultBlocks.push({
               type: "tool_result",
@@ -2000,7 +2012,9 @@ async function safeEvaluateRules(
       },
       signal,
     );
-  } catch {
+  } catch (err) {
+    // P1-SEC-006: Log the error — callers treat null as deny (fail-closed)
+    console.warn("[friday][SECURITY] Rules evaluation failed:", err);
     return null;
   }
 }
@@ -2057,7 +2071,7 @@ function extractImagePathsFromToolCalls(
             images.push(parsed.path);
           }
         }
-      } catch { /* not JSON or no path */ }
+      } catch (err) { /* not JSON or no path */ console.warn("[friday][agent-runtime] extract-image-paths:", err instanceof Error ? err.message : String(err)); }
     }
   }
   return images;
@@ -2378,7 +2392,8 @@ function detectSourceArtifactCompletionGap(params: {
   let sourceText = "";
   try {
     sourceText = readFileSync(sourcePath, "utf8");
-  } catch {
+  } catch (err) {
+    console.warn("[friday][agent-runtime] read-source-file:", err instanceof Error ? err.message : String(err));
     return null;
   }
 
@@ -2416,8 +2431,9 @@ function listSuccessfulWrittenTextArtifacts(
       const content = readFileSync(filePath, "utf8");
       seen.add(filePath);
       artifacts.push({ path: filePath, content });
-    } catch {
+    } catch (err) {
       // Best-effort read: skip binary/unavailable artifacts.
+      console.warn("[friday][agent-runtime] read-artifact:", err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -3074,7 +3090,8 @@ function normalizeIanaTimezone(value: string | undefined): string | undefined {
   try {
     Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(new Date());
     return timezone;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][agent-runtime] validate-timezone:", err instanceof Error ? err.message : String(err));
     return undefined;
   }
 }
@@ -3567,7 +3584,8 @@ function recoverToolCallsFromAssistantText(
     let parsed: unknown;
     try {
       parsed = JSON.parse(candidate);
-    } catch {
+    } catch (err) {
+      console.warn("[friday][agent-runtime] parse-tool-call-json:", err instanceof Error ? err.message : String(err));
       continue;
     }
 
@@ -3619,7 +3637,8 @@ function normalizeToolCallArgs(value: unknown): Record<string, unknown> | null {
         return parsed as Record<string, unknown>;
       }
       return { _raw: value };
-    } catch {
+    } catch (err) {
+      console.warn("[friday][agent-runtime] parse-tool-input:", err instanceof Error ? err.message : String(err));
       return { _raw: value };
     }
   }
@@ -3709,7 +3728,8 @@ function loadDelegatedToolCalls(
       return [];
     }
     return parsed as FridayAgentToolCallRecord[];
-  } catch {
+  } catch (err) {
+    console.warn("[friday][agent-runtime] load-delegated-tool-calls:", err instanceof Error ? err.message : String(err));
     return [];
   }
 }
@@ -3733,7 +3753,8 @@ function loadDelegatedToolEvents(input: {
         eventName: event.eventName,
         payload: event.payload,
       }));
-  } catch {
+  } catch (err) {
+    console.warn("[friday][agent-runtime] load-delegated-tool-events:", err instanceof Error ? err.message : String(err));
     return [];
   }
 }
@@ -3754,7 +3775,8 @@ function countDelegatedToolCalls(input: {
     );
     const toolEndCount = events.filter((event) => event.eventName === "agent.run.tool_end").length;
     return toolEndCount > 0 ? toolEndCount : input.fallback;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][agent-runtime] count-delegated-tool-calls:", err instanceof Error ? err.message : String(err));
     return input.fallback;
   }
 }
@@ -4680,7 +4702,8 @@ function parseJsonObject(content: string): Record<string, unknown> | null {
     const parsed = JSON.parse(content);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     return parsed as Record<string, unknown>;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][agent-runtime] parse-json-object:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

@@ -156,6 +156,7 @@ export function createFridayMemoryRoutes(
       method: "POST",
       path: "/v1/memory/store",
       auth: { public: false, anyOfScopes: ["hub.admin"] },
+      rateLimitPolicyId: "memory.write",
       async handler(ctx): Promise<FridayMemoryStoreResponse> {
         // DX-003: Default namespace to "default" if not provided
         if (ctx.body != null && typeof ctx.body === "object") {

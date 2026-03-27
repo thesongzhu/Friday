@@ -673,7 +673,8 @@ async function* parseOpenAISSEStream(
           for (const [, tc] of toolCalls) {
             let input: Record<string, unknown> = {};
             if (tc.args) {
-              try { input = JSON.parse(tc.args) as Record<string, unknown>; } catch {
+              try { input = JSON.parse(tc.args) as Record<string, unknown>; } catch (err) {
+                console.warn("[friday][agent-llm-client] tool call args parse failed:", err instanceof Error ? err.message : String(err));
                 input = { _parseError: true, _rawJson: tc.args };
               }
             }
@@ -693,7 +694,7 @@ async function* parseOpenAISSEStream(
       }
 
       let event: Record<string, unknown>;
-      try { event = JSON.parse(data) as Record<string, unknown>; } catch { continue; }
+      try { event = JSON.parse(data) as Record<string, unknown>; } catch (err) { console.warn("[friday][agent-llm-client] SSE event parse failed:", err instanceof Error ? err.message : String(err)); continue; }
 
       // Handle usage
       const usage = event.usage as Record<string, unknown> | undefined;
@@ -740,7 +741,8 @@ async function* parseOpenAISSEStream(
         for (const [, tc] of toolCalls) {
           let input: Record<string, unknown> = {};
           if (tc.args) {
-            try { input = JSON.parse(tc.args) as Record<string, unknown>; } catch {
+            try { input = JSON.parse(tc.args) as Record<string, unknown>; } catch (err) {
+              console.warn("[friday][agent-llm-client] tool call args parse failed:", err instanceof Error ? err.message : String(err));
               input = { _parseError: true, _rawJson: tc.args };
             }
           }
@@ -798,7 +800,8 @@ async function* parseAnthropicSSEStream(
       let event: Record<string, unknown>;
       try {
         event = JSON.parse(data) as Record<string, unknown>;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][agent-llm-client] Anthropic SSE parse failed:", err instanceof Error ? err.message : String(err));
         continue;
       }
 
@@ -842,8 +845,9 @@ async function* parseAnthropicSSEStream(
           if (toolInputJson) {
             try {
               input = JSON.parse(toolInputJson) as Record<string, unknown>;
-            } catch {
+            } catch (err) {
               // Malformed JSON from LLM — flag so runtime can produce a helpful error
+              console.warn("[friday][agent-llm-client] tool input JSON malformed:", err instanceof Error ? err.message : String(err));
               input = { _parseError: true, _rawJson: toolInputJson };
             }
           }

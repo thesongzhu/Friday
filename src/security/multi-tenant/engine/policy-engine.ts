@@ -559,7 +559,8 @@ export class PolicyEngine {
         if (typeof fieldValue === "string" && typeof condValue === "string") {
           try {
             return new RegExp(condValue).test(fieldValue);
-          } catch {
+          } catch (err) {
+            console.warn("[friday][policy-engine] regex match failed:", err instanceof Error ? err.message : String(err));
             return false;
           }
         }

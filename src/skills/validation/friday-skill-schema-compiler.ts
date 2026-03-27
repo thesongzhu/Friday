@@ -70,7 +70,8 @@ export function compileFridaySkillSchemas(
     let schemaObj: unknown;
     try {
       schemaObj = JSON.parse(schemaText);
-    } catch {
+    } catch (err) {
+    console.warn("[friday][skill-schema-compiler] operation failed:", err instanceof Error ? err.message : String(err));
       issues.push({
         stage: "schema-compile",
         severity: "error",

@@ -4,6 +4,8 @@
  * Real implementations use Node's built-in fetch (Node 22+).
  */
 
+import { FridayDomainError } from "#errors";
+
 // ─── Types ───
 
 export interface TelegramUser {
@@ -176,8 +178,10 @@ export function createTelegramPollingService(
 
         if (!res.ok) {
           const text = await res.text().catch(() => "");
-          throw new Error(
+          throw new FridayDomainError(
+            "INTERNAL_ERROR",
             `Telegram getUpdates failed: HTTP ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`,
+            { httpStatus: 500 },
           );
         }
 
@@ -188,8 +192,10 @@ export function createTelegramPollingService(
         };
 
         if (!json.ok) {
-          throw new Error(
+          throw new FridayDomainError(
+            "INTERNAL_ERROR",
             `Telegram getUpdates returned ok=false: ${json.description ?? "unknown error"}`,
+            { httpStatus: 500 },
           );
         }
 
@@ -271,8 +277,10 @@ export function createTelegramWebhookService(): TelegramWebhookService {
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        throw new Error(
+        throw new FridayDomainError(
+          "INTERNAL_ERROR",
           `Telegram setWebhook failed: HTTP ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`,
+          { httpStatus: 500 },
         );
       }
 
@@ -282,8 +290,10 @@ export function createTelegramWebhookService(): TelegramWebhookService {
       };
 
       if (!json.ok) {
-        throw new Error(
+        throw new FridayDomainError(
+          "INTERNAL_ERROR",
           `Telegram setWebhook returned ok=false: ${json.description ?? "unknown error"}`,
+          { httpStatus: 500 },
         );
       }
 
@@ -311,8 +321,10 @@ export function createTelegramWebhookService(): TelegramWebhookService {
 
         if (!res.ok) {
           const text = await res.text().catch(() => "");
-          throw new Error(
+          throw new FridayDomainError(
+            "INTERNAL_ERROR",
             `Telegram deleteWebhook failed: HTTP ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`,
+            { httpStatus: 500 },
           );
         }
       } finally {
@@ -344,8 +356,10 @@ export function createTelegramApiService(): TelegramApiService {
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        throw new Error(
+        throw new FridayDomainError(
+          "INTERNAL_ERROR",
           `Telegram sendMessage failed: HTTP ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`,
+          { httpStatus: 500 },
         );
       }
 
@@ -354,8 +368,10 @@ export function createTelegramApiService(): TelegramApiService {
       };
 
       if (!json.ok) {
-        throw new Error(
+        throw new FridayDomainError(
+          "INTERNAL_ERROR",
           `Telegram sendMessage returned ok=false: ${json.description ?? "unknown error"}`,
+          { httpStatus: 500 },
         );
       }
 

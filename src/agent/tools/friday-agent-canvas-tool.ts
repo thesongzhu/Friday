@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
 import {
   errorResult,
@@ -131,7 +132,7 @@ export function createFridayAgentCanvasTool(
     const canvasId = readStringParam(args, "canvasId");
     if (canvasId) return canvasId;
     if (required) {
-      throw new Error("canvasId is required for this action.");
+      throw new FridayDomainError("VALIDATION_ERROR", "canvasId is required for this action.", { httpStatus: 400 });
     }
     return `canvas-${Date.now()}`;
   }

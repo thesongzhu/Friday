@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Setup Recipe Executor — Executes setup recipes using the autonomous engine.
  *
@@ -270,7 +272,7 @@ export function createFridaySetupRecipeExecutor(
     updates: Partial<FridaySetupExecution>,
   ): FridaySetupExecution {
     const current = executions.get(executionId);
-    if (!current) throw new Error(`Execution ${executionId} not found`);
+    if (!current) throw new FridayDomainError("NOT_FOUND", `Execution ${executionId} not found`, { httpStatus: 404 });
     const updated = { ...current, ...updates } as FridaySetupExecution;
     executions.set(executionId, updated);
     return updated;
@@ -282,7 +284,7 @@ export function createFridaySetupRecipeExecutor(
     async execute(params: FridaySetupExecuteParams): Promise<FridaySetupExecution> {
       const recipe = registry.get(params.recipeId);
       if (!recipe) {
-        throw new Error(`Recipe "${params.recipeId}" not found`);
+        throw new FridayDomainError("NOT_FOUND", `Recipe "${params.recipeId}" not found`, { httpStatus: 404 });
       }
 
       const executionId = idGenerator();
@@ -383,7 +385,7 @@ export function createFridaySetupRecipeExecutor(
 
     async checkPrerequisites(recipeId: string): Promise<readonly FridaySetupPrerequisiteResult[]> {
       const recipe = registry.get(recipeId);
-      if (!recipe) throw new Error(`Recipe "${recipeId}" not found`);
+      if (!recipe) throw new FridayDomainError("NOT_FOUND", `Recipe "${recipeId}" not found`, { httpStatus: 404 });
       return checkPrerequisitesInternal(recipe);
     },
 

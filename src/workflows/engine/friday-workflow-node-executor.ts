@@ -183,12 +183,14 @@ export function createFridayWorkflowNodeExecutor(
                 refExpr,
                 expressionContext,
               );
-              interpolatedPrompt = interpolatedPrompt.replace(
+              // P2-WF-002: Use replaceAll to substitute all occurrences, not just the first
+              interpolatedPrompt = interpolatedPrompt.replaceAll(
                 refExpr,
                 String(val ?? ""),
               );
-            } catch {
+            } catch (err) {
               // Leave unresolved refs as-is
+              console.warn("[friday][workflow-node-executor] ref interpolation failed:", err instanceof Error ? err.message : String(err));
             }
           }
 

@@ -52,7 +52,8 @@ export function createClawdbotSkillMdConverter(): FridaySkillConverter {
       let content: string;
       try {
         content = readFileSync(skillMdPath, "utf-8");
-      } catch {
+      } catch (err) {
+      console.warn("[friday][clawdbot-skill-md-converter] operation failed:", err instanceof Error ? err.message : String(err));
         return null;
       }
 

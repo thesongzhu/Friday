@@ -2,6 +2,7 @@
  * WhatsApp Cloud API / Bridge service — stubbed interfaces.
  */
 
+import { FridayDomainError } from "#errors";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 // ─── Webhook Signature Validation ───
@@ -44,7 +45,8 @@ export function validateWhatsappWebhookSignature(
     }
 
     return timingSafeEqual(receivedBuf, expectedBuf);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][whatsapp-service] operation failed:", err instanceof Error ? err.message : String(err));
     // Defensive: any unexpected error → treat as invalid
     return false;
   }
@@ -272,7 +274,8 @@ export function createWhatsappWebhookService(): WhatsappWebhookService {
           accepted: true,
           statusCode: 200,
         };
-      } catch {
+      } catch (err) {
+    console.warn("[friday][whatsapp-service] operation failed:", err instanceof Error ? err.message : String(err));
         return {
           accepted: false,
           statusCode: 400,
@@ -318,8 +321,10 @@ export function createWhatsappApiService(): WhatsappApiService {
 
       if (!response.ok) {
         const errorBody = await response.text().catch(() => "<unreadable>");
-        throw new Error(
+        throw new FridayDomainError(
+          "INTERNAL_ERROR",
           `WhatsApp Cloud API error: ${response.status} ${response.statusText} — ${errorBody}`,
+          { httpStatus: 500 },
         );
       }
 

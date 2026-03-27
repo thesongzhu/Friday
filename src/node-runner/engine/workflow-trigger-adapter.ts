@@ -8,6 +8,8 @@
  * @module node-runner/engine
  */
 
+import { FridayDomainError } from "#errors";
+
 import type {
   FridayNodeAdapter,
   FridayNodeExecutionContext,
@@ -67,5 +69,5 @@ export class WorkflowTriggerAdapter implements FridayNodeAdapter {
 function throwIfAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;
   if (signal.reason instanceof Error) throw signal.reason;
-  throw new Error("Trigger node operation aborted");
+  throw new FridayDomainError("INTERNAL_ERROR", "Trigger node operation aborted", { httpStatus: 500 });
 }

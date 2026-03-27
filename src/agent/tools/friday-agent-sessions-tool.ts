@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import type {
   FridayAgentMessage,
   FridayAgentToolDefinition,
@@ -31,6 +32,10 @@ type SessionsAction = "list" | "history" | "send" | "spawn";
 
 const VALID_ACTIONS = new Set<SessionsAction>(["list", "history", "send", "spawn"]);
 
+// P2-SEC: Track recursive sessions:send depth to prevent unbounded execution
+const MAX_SESSION_SEND_DEPTH = 3;
+const activeSessionSendDepth = new Map<string, number>();
+
 /** Default message limit for history action. */
 const DEFAULT_HISTORY_LIMIT = 50;
 
@@ -48,7 +53,7 @@ export function createFridayAgentSessionsTool(
   function getRuntime(): FridayAgentRuntime {
     const rt = deps.agentRuntimeGetter?.() ?? deps.agentRuntime;
     if (!rt) {
-      throw new Error("Agent runtime is not available yet. It may still be initializing.");
+      throw new FridayDomainError("NOT_INITIALIZED", "Agent runtime is not available yet. It may still be initializing.", { httpStatus: 503 });
     }
     return rt;
   }
@@ -240,15 +245,29 @@ export function createFridayAgentSessionsTool(
       })
       .catch(() => [] as FridayAgentMessage[]);
 
+    // P2-SEC: Guard against recursive unbounded execution via sessions:send
+    const currentDepth = activeSessionSendDepth.get(sessionId) ?? 0;
+    if (currentDepth >= MAX_SESSION_SEND_DEPTH) {
+      return errorResult(`Maximum sessions:send recursion depth (${MAX_SESSION_SEND_DEPTH}) exceeded. Cannot trigger further nested agent runs.`);
+    }
+
     // Trigger agent execution on this session
+    activeSessionSendDepth.set(sessionId, currentDepth + 1);
     const runtime = getRuntime();
-    const result = await runtime.executeRun({
-      task: message,
-      sessionKey: sessionId,
-      signal,
-      historyMessages,
-      timezone: getFridayAgentToolExecutionContext(signal)?.timezone,
-    });
+    let result;
+    try {
+      result = await runtime.executeRun({
+        task: message,
+        sessionKey: sessionId,
+        signal,
+        historyMessages,
+        timezone: getFridayAgentToolExecutionContext(signal)?.timezone,
+      });
+    } finally {
+      const depth = activeSessionSendDepth.get(sessionId) ?? 1;
+      if (depth <= 1) activeSessionSendDepth.delete(sessionId);
+      else activeSessionSendDepth.set(sessionId, depth - 1);
+    }
 
     return jsonResult({
       sessionKey: sessionId,

@@ -1,5 +1,6 @@
 import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
+import { safeJsonParse } from "#utilities";
 import {
   AcceptanceRunState,
   AcceptanceTestSuiteRunner,
@@ -200,12 +201,8 @@ function mapBundleRow(row: FridayPolicyBundleRow): FridayPolicyBundle {
     priority: row.priority,
     enabled: row.enabled === 1,
     tags: (() => {
-      try {
-        const parsed = JSON.parse(row.tags_json);
-        return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
-      } catch {
-        return [];
-      }
+      const parsed = safeJsonParse(row.tags_json);
+      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
     })(),
     source: row.source === "import" || row.source === "system" ? row.source : "user",
     etag: row.etag,
@@ -216,12 +213,8 @@ function mapBundleRow(row: FridayPolicyBundleRow): FridayPolicyBundle {
 
 function mapRuleRow(row: FridayRuleRow): FridayRule {
   const conditions = (() => {
-    try {
-      const parsed = JSON.parse(row.conditions_json);
-      return typeof parsed === "object" && parsed !== null ? parsed as FridayRule["conditions"] : {};
-    } catch {
-      return {};
-    }
+    const parsed = safeJsonParse(row.conditions_json);
+    return typeof parsed === "object" && parsed !== null ? parsed as FridayRule["conditions"] : {};
   })();
 
   return {
@@ -598,8 +591,9 @@ export function createFridayDeterministicPipelineRuntime(
             created_at: entry.evaluatedAt,
           });
         });
-      } catch {
+      } catch (err) {
         // Keep rule enforcement fail-open for audit persistence write failures.
+        console.warn("[friday][pipeline-runtime] rule-audit-persist:", err instanceof Error ? err.message : String(err));
       }
     },
   });
@@ -619,8 +613,9 @@ export function createFridayDeterministicPipelineRuntime(
         rulesEngine.loadDomainBundle(bundle, rules);
       }
     });
-  } catch {
+  } catch (err) {
     // Rules tables may not exist on very old installations; runtime can still boot.
+    console.warn("[friday][pipeline-runtime] load-rules:", err instanceof Error ? err.message : String(err));
   }
 
   const evaluateRules = async (
@@ -756,7 +751,8 @@ export function createFridayDeterministicPipelineRuntime(
             acceptanceRepository.insertVersion(db, versionRow);
           }
         });
-      } catch {
+      } catch (err) {
+        console.warn("[friday][pipeline-runtime] acceptance-baseline-persist:", err instanceof Error ? err.message : String(err));
         acceptancePersistenceAvailable = false;
       }
     }
@@ -774,7 +770,8 @@ export function createFridayDeterministicPipelineRuntime(
         syncAcceptanceRegistry(test);
       }
     });
-  } catch {
+  } catch (err) {
+    console.warn("[friday][pipeline-runtime] load-acceptance-tests:", err instanceof Error ? err.message : String(err));
     acceptancePersistenceAvailable = false;
   }
 
@@ -843,7 +840,8 @@ export function createFridayDeterministicPipelineRuntime(
         });
       }
     });
-  } catch {
+  } catch (err) {
+    console.warn("[friday][pipeline-runtime] load-retry-policy:", err instanceof Error ? err.message : String(err));
     retryPersistenceAvailable = false;
   }
 
@@ -1228,7 +1226,8 @@ export function createFridayDeterministicPipelineRuntime(
             deps.db.withWriteTransaction((db) => {
               acceptanceRepository.insertRun(db, toAcceptanceRunRow(result, artifact, asString(payload.idempotencyKey) ?? undefined));
             });
-          } catch {
+          } catch (err) {
+            console.warn("[friday][pipeline-runtime] acceptance-run-persist:", err instanceof Error ? err.message : String(err));
             acceptancePersistenceAvailable = false;
           }
         }
@@ -1259,7 +1258,8 @@ export function createFridayDeterministicPipelineRuntime(
                 offset: asNumber(query.offset, 0),
               }),
             );
-          } catch {
+          } catch (err) {
+            console.warn("[friday][pipeline-runtime] acceptance-list-runs:", err instanceof Error ? err.message : String(err));
             acceptancePersistenceAvailable = false;
           }
         }

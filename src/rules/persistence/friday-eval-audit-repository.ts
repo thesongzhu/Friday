@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayRuleEvaluationLogRow,
   ISODateTime,
@@ -80,10 +81,10 @@ function rowToRecord(row: FridayRuleEvaluationLogRow): EvalAuditRecord {
     decision: row.decision,
     resource: row.resource,
     action: row.action,
-    contextRedacted: JSON.parse(row.context_redacted_json) as JsonObject,
+    contextRedacted: safeJsonParse<JsonObject>(row.context_redacted_json) ?? {},
     redactionApplied: row.redaction_applied === 1,
-    redactedFields: JSON.parse(row.redacted_fields_json) as string[],
-    matchedRules: JSON.parse(row.matched_rules_json) as JsonObject[],
+    redactedFields: safeJsonParse<string[]>(row.redacted_fields_json) ?? [],
+    matchedRules: safeJsonParse<JsonObject[]>(row.matched_rules_json) ?? [],
     durationMs: row.duration_ms,
     runId: row.run_id ?? undefined,
     workflowId: row.workflow_id ?? undefined,

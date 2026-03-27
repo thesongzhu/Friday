@@ -59,7 +59,8 @@ export function createFridayMarketplaceSyncJob(
     try {
       await job.runOnce();
       consecutiveFailures = 0;
-    } catch {
+    } catch (err) {
+    console.warn("[friday][marketplace-sync-job] operation failed:", err instanceof Error ? err.message : String(err));
       consecutiveFailures++;
     }
 

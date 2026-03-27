@@ -467,6 +467,10 @@ export function createFridayAgentDesktopTool(
       }
       case "file_operation": {
         const filePath = readStringParam(args, "path", { required: true });
+        // P1-SEC-003: Reject paths with directory traversal segments
+        if (/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(filePath)) {
+          return null;
+        }
         const operation = readStringParam(args, "operation") ?? "read";
         switch (operation) {
           case "write":

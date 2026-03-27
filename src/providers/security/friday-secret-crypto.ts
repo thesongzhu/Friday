@@ -73,7 +73,10 @@ export function decryptSecret(
 
 // ─── Master key resolution ───
 
+// P2-SEC: Master key cache with TTL for rotation support (re-reads from env/file after 1 hour)
 let cachedMasterKey: Buffer | null = null;
+let cachedMasterKeyExpiresAt = 0;
+const MASTER_KEY_CACHE_TTL_MS = 3_600_000; // 1 hour
 
 const MASTER_KEY_DIR = path.join(os.homedir(), ".friday");
 const MASTER_KEY_FILE = path.join(MASTER_KEY_DIR, "master.key");
@@ -88,9 +91,11 @@ const MASTER_KEY_FILE = path.join(MASTER_KEY_DIR, "master.key");
  * - On subsequent runs, reads from that file so secrets survive restarts.
  */
 export function getMasterKey(): Buffer {
-  if (cachedMasterKey) {
+  // P2-SEC: Honor TTL — invalidate cache after expiry to support key rotation
+  if (cachedMasterKey && Date.now() < cachedMasterKeyExpiresAt) {
     return cachedMasterKey;
   }
+  cachedMasterKey = null;
 
   // 1. Prefer explicit env var
   const envKey = process.env.FRIDAY_MASTER_KEY;
@@ -104,20 +109,29 @@ export function getMasterKey(): Buffer {
       );
     }
     cachedMasterKey = buf;
+    cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
     return cachedMasterKey;
   }
 
   // 2. Try to read persisted key file
   try {
     const hex = fs.readFileSync(MASTER_KEY_FILE, "utf8").trim();
+    // P2-SEC: Verify master key file permissions are not too open
+    try {
+      const stat = fs.statSync(MASTER_KEY_FILE);
+      if ((stat.mode & 0o077) !== 0) {
+        console.warn(`[friday][SECURITY] Master key file permissions too open — expected 0600, got 0o${(stat.mode & 0o777).toString(8)}`);
+      }
+    } catch (err) { console.warn("[friday][secret-crypto] stat check failed:", err instanceof Error ? err.message : String(err)); }
     const buf = Buffer.from(hex, "hex");
     if (buf.length === KEY_BYTES) {
       cachedMasterKey = buf;
       return cachedMasterKey;
     }
     // Invalid length — fall through to regenerate
-  } catch {
+  } catch (err) {
     // File unreadable — fall through to regenerate
+    console.warn("[friday][secret-crypto] master key file unreadable:", err instanceof Error ? err.message : String(err));
   }
 
   // 3. Generate, persist, and warn
@@ -128,10 +142,11 @@ export function getMasterKey(): Buffer {
     fs.writeFileSync(MASTER_KEY_FILE, newKey.toString("hex") + "\n", {
       mode: 0o600,
     });
-  } catch {
+  } catch (err) {
     // Best-effort: if we can't write, the key lives only in memory this run
     console.warn(
       "[friday] WARNING: Could not persist master key to " + MASTER_KEY_FILE,
+      err instanceof Error ? err.message : String(err),
     );
   }
 
@@ -143,6 +158,7 @@ export function getMasterKey(): Buffer {
   );
 
   cachedMasterKey = newKey;
+  cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
   return cachedMasterKey;
 }
 

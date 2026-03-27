@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Fixture Manager — load, cache, and manage test fixtures and mock data.
  *
@@ -86,7 +88,7 @@ export class AcceptanceFixtureManager {
     }
 
     if (!overwrite && nsMap.has(fixture.id)) {
-      throw new Error(`Fixture "${fixture.id}" already exists in namespace "${ns}". Use overwrite: true to replace.`);
+      throw new FridayDomainError("VALIDATION_ERROR", `Fixture "${fixture.id}" already exists in namespace "${ns}". Use overwrite: true to replace.`, { httpStatus: 400 });
     }
 
     nsMap.set(fixture.id, fixture);

@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 
 import { FRIDAY_SESSION_ERROR_CODES } from "../friday-session.constants.js";
 import type {
@@ -57,7 +58,7 @@ function rowToRecord(row: FridaySessionRow): FridaySessionRecord {
     rootSessionKey: row.root_session_key ?? undefined,
     forkedFromMessageId: row.forked_from_message_id ?? undefined,
     sendPolicy: row.send_policy as FridaySessionSendPolicy | undefined ?? undefined,
-    metadata: row.metadata_json ? JSON.parse(row.metadata_json) as Record<string, unknown> : {},
+    metadata: safeJsonParse<Record<string, unknown>>(row.metadata_json) ?? {},
     contextInputTokens: row.context_input_tokens,
     contextOutputTokens: row.context_output_tokens,
     contextTotalTokens: row.context_total_tokens,

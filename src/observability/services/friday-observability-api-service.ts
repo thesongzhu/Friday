@@ -619,7 +619,8 @@ function metricValueFromSnapshots(snapshots: ReturnType<FridayMetricsCollector["
 function parseStoredJson<T>(value: string, fallback: T): T {
   try {
     return JSON.parse(value) as T;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][observability-api-service] JSON parse failed:", err instanceof Error ? err.message : String(err));
     return fallback;
   }
 }
@@ -803,7 +804,8 @@ export function createFridayObservabilityApiService(
           ).all() as FridayAlertChannelRow[]
         ).map(parseAlertDestinationRow),
       );
-    } catch {
+    } catch (err) {
+      console.warn("[friday][observability-api-service] alert destinations list failed:", err instanceof Error ? err.message : String(err));
       return [];
     }
   }
@@ -819,7 +821,8 @@ export function createFridayObservabilityApiService(
           .get(destinationId) as FridayAlertChannelRow | undefined;
         return row ? parseAlertDestinationRow(row) : null;
       });
-    } catch {
+    } catch (err) {
+      console.warn("[friday][observability-api-service] alert destination get failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
   }
@@ -910,7 +913,8 @@ export function createFridayObservabilityApiService(
           ).all() as FridaySloDefinitionRow[]
         ).map(parseSloDefinitionRow),
       );
-    } catch {
+    } catch (err) {
+      console.warn("[friday][observability-api-service] SLO definitions list failed:", err instanceof Error ? err.message : String(err));
       return [];
     }
   }
@@ -926,7 +930,8 @@ export function createFridayObservabilityApiService(
           .get(sloId) as FridaySloDefinitionRow | undefined;
         return row ? parseSloDefinitionRow(row) : null;
       });
-    } catch {
+    } catch (err) {
+      console.warn("[friday][observability-api-service] SLO record get failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
   }
@@ -1446,7 +1451,7 @@ export function createFridayObservabilityApiService(
       if (destination.config.type === "slack") {
         const webhookUrl = readStoredSecret(destination.config.webhookRefKey);
         if (!webhookUrl) {
-          throw new Error(`Missing Slack webhook secret for ${destination.id}`);
+          throw new FridayDomainError("NOT_FOUND", `Missing Slack webhook secret for ${destination.id}`, { httpStatus: 404 });
         }
         const response = await fetch(webhookUrl, {
           method: "POST",
@@ -1457,12 +1462,12 @@ export function createFridayObservabilityApiService(
           }),
         });
         if (!response.ok) {
-          throw new Error(`Slack webhook responded with ${response.status}`);
+          throw new FridayDomainError("INTERNAL_ERROR", `Slack webhook responded with ${response.status}`, { httpStatus: 500 });
         }
       } else {
         const password = readStoredSecret(destination.config.passwordRefKey);
         if (!password && destination.config.username) {
-          throw new Error(`Missing SMTP password secret for ${destination.id}`);
+          throw new FridayDomainError("NOT_FOUND", `Missing SMTP password secret for ${destination.id}`, { httpStatus: 404 });
         }
         await sendSmtpMail({
           host: destination.config.smtpHost,

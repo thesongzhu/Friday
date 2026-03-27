@@ -21,7 +21,7 @@ export const FridayWhatsappChannelConfigSchema = z.object({
   allowedUsers: z.array(z.string()).optional(),
   /** If set, only accept messages from these chat IDs. */
   allowedChats: z.array(z.string()).optional(),
-  /** Meta App Secret for webhook HMAC-SHA256 signature validation. */
+  /** Meta App Secret for webhook HMAC-SHA256 signature validation. Recommended for secure webhook verification. */
   appSecret: z.string().optional(),
 });
 

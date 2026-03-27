@@ -49,6 +49,8 @@ export interface FridayAgentPlanningGateService {
   rejectPlan(input: {
     runId: string;
   }): FridayAgentRuntimeResult;
+  /** P2-RUNTIME: Clean up internal state for a completed/failed run. */
+  cleanupRun(runId: string): void;
 }
 
 export interface CreateFridayAgentPlanningGateServiceDeps {
@@ -753,6 +755,11 @@ export function createFridayAgentPlanningGateService(
         usageOutput: 0,
         finalResponse: response,
       };
+    },
+
+    // P2-RUNTIME-005: Clean up seqCounters entry to prevent memory leak
+    cleanupRun(runId: string): void {
+      seqCounters.delete(runId);
     },
   };
 }

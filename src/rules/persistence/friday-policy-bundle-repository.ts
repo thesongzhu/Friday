@@ -1,6 +1,7 @@
 import * as crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayPolicyBundle,
   FridayPolicyBundleRow,
@@ -79,7 +80,7 @@ function bundleRowToEntity(row: FridayPolicyBundleRow): FridayPolicyBundle {
     version: row.version,
     priority: row.priority,
     enabled: row.enabled === 1,
-    tags: JSON.parse(row.tags_json) as string[],
+    tags: safeJsonParse<string[]>(row.tags_json) ?? [],
     source: row.source as FridayPolicyBundle["source"],
     etag: row.etag,
     createdAt: row.created_at,
@@ -104,7 +105,7 @@ function versionRowToRecord(row: BundleVersionRow): BundleVersionRecord {
     id: row.id,
     bundleId: row.bundle_id,
     version: row.version,
-    snapshot: JSON.parse(row.snapshot_json) as JsonObject,
+    snapshot: safeJsonParse<JsonObject>(row.snapshot_json) ?? {},
     changedBy: row.changed_by ?? undefined,
     changeNote: row.change_note ?? undefined,
     createdAt: row.created_at,

@@ -12,6 +12,7 @@
  *   - https://bot.q.qq.com/wiki/develop/api-v2/
  */
 
+import { FridayDomainError } from "#errors";
 import type {
   FridayChannelMessage,
   FridayChannelPlugin,
@@ -79,7 +80,7 @@ export function createFridayQqChannel(): FridayChannelPlugin {
     });
 
     if (!response.ok) {
-      throw new Error(`QQ token refresh failed: ${response.status} ${response.statusText}`);
+      throw new FridayDomainError("INTERNAL_ERROR", `QQ token refresh failed: ${response.status} ${response.statusText}`, { httpStatus: 500 });
     }
 
     const data = (await response.json()) as {
@@ -110,7 +111,7 @@ export function createFridayQqChannel(): FridayChannelPlugin {
     });
 
     if (!response.ok) {
-      throw new Error(`QQ gateway fetch failed: ${response.status}`);
+      throw new FridayDomainError("INTERNAL_ERROR", `QQ gateway fetch failed: ${response.status}`, { httpStatus: 500 });
     }
 
     const data = (await response.json()) as { url: string };
@@ -187,15 +188,22 @@ export function createFridayQqChannel(): FridayChannelPlugin {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectEpoch = 0;
 
-  function scheduleReconnect(gatewayUrl: string, delayMs = 5000): void {
+  // P2-CH: Exponential backoff for reconnection
+  const QQ_RECONNECT_INITIAL_MS = 1_000;
+  const QQ_RECONNECT_MAX_MS = 60_000;
+  let qqReconnectDelay = QQ_RECONNECT_INITIAL_MS;
+
+  function scheduleReconnect(gatewayUrl: string, delayMs?: number): void {
     if (stopped || reconnectTimer) return;
     const epoch = reconnectEpoch;
+    const effectiveDelay = delayMs ?? qqReconnectDelay;
 
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       if (stopped || epoch !== reconnectEpoch) return;
+      qqReconnectDelay = Math.min(qqReconnectDelay * 2, QQ_RECONNECT_MAX_MS);
       reconnect(gatewayUrl);
-    }, delayMs);
+    }, effectiveDelay);
   }
 
   function connectWebSocket(gatewayUrl: string): void {
@@ -208,7 +216,8 @@ export function createFridayQqChannel(): FridayChannelPlugin {
       let data: Record<string, unknown>;
       try {
         data = JSON.parse(String(event.data)) as Record<string, unknown>;
-      } catch {
+      } catch (err) {
+      console.warn("[friday][qq-channel] operation failed:", err instanceof Error ? err.message : String(err));
         return;
       }
 
@@ -222,6 +231,7 @@ export function createFridayQqChannel(): FridayChannelPlugin {
             (data.d as Record<string, unknown>)?.heartbeat_interval as number | undefined;
 
           sendIdentify();
+          qqReconnectDelay = QQ_RECONNECT_INITIAL_MS; // Reset backoff on successful connect
 
           if (heartbeatTimer) clearInterval(heartbeatTimer);
           heartbeatTimer = setInterval(
@@ -283,7 +293,8 @@ export function createFridayQqChannel(): FridayChannelPlugin {
     if (socket) {
       try {
         socket.close();
-      } catch {
+      } catch (err) {
+      console.warn("[friday][qq-channel] operation failed:", err instanceof Error ? err.message : String(err));
         // ignore
       }
     }
@@ -343,19 +354,23 @@ export function createFridayQqChannel(): FridayChannelPlugin {
   const plugin: FridayChannelPlugin = {
     kind: "qq",
     adapters,
+    contract: {
+      coreAuthority: { messageRouting: true, sessionMirroring: true, audit: true, evidence: true },
+      pluginResponsibilities: { config: true, auth: true, pairing: false, outboundDelivery: true, threadResolution: false, providerRetries: false },
+      supports: { directMessages: true, groupMessages: true, threads: false, typing: false },
+    },
 
     async init(rawConfig) {
+      // P1-CH-001: Use Zod schema for runtime config validation
+      const { FridayQqChannelConfigSchema } = await import("./qq-config.schema.js");
+      const parsed = FridayQqChannelConfigSchema.parse({ kind: "qq", ...rawConfig });
       config = {
-        appId: rawConfig.appId as string,
-        appSecret: rawConfig.appSecret as string,
-        sandbox: (rawConfig.sandbox as boolean) ?? false,
-        allowedUsers: rawConfig.allowedUsers as string[] | undefined,
-        allowedGroups: rawConfig.allowedGroups as string[] | undefined,
+        appId: parsed.appId,
+        appSecret: parsed.appSecret,
+        sandbox: parsed.sandbox,
+        allowedUsers: parsed.allowedUsers,
+        allowedGroups: parsed.allowedGroups,
       };
-
-      if (!config.appId || !config.appSecret) {
-        throw new Error("QQ channel requires appId and appSecret");
-      }
     },
 
     async start(handler) {
@@ -380,7 +395,8 @@ export function createFridayQqChannel(): FridayChannelPlugin {
         if (ws) {
           try {
             ws.close();
-          } catch {
+          } catch (err) {
+      console.warn("[friday][qq-channel] operation failed:", err instanceof Error ? err.message : String(err));
             // ignore
           }
           ws = null;
@@ -440,7 +456,7 @@ export function createFridayQqChannel(): FridayChannelPlugin {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`QQ send failed: ${response.status} ${errorText}`);
+        throw new FridayDomainError("INTERNAL_ERROR", `QQ send failed: ${response.status} ${errorText}`, { httpStatus: 500 });
       }
 
       const result = (await response.json()) as { id?: string };

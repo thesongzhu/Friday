@@ -417,7 +417,7 @@ export function resolveFridayHubConfig(
 export async function createFridayHub(
   config: FridayHubConfig,
 ): Promise<FridayHub> {
-  let hubState: "starting" | "running" | "stopped" = "stopped";
+  let hubState: "starting" | "running" | "stopping" | "stopped" = "stopped";
   let upSince: string | null = null;
   let stateRuntime: FridayStateRuntime | null = null;
 
@@ -426,6 +426,10 @@ export async function createFridayHub(
     ? { env: { ...process.env, FRIDAY_STATE_DIR: config.stateDir } as NodeJS.ProcessEnv }
     : undefined;
   stateRuntime = initializeFridayState(stateOpts);
+
+  // P0-001: Wrap remaining bootstrap in try/catch to ensure SQLite cleanup on partial failure
+  try {
+
   const daemonService = createFridayLocalDaemonService({
     moduleUrl: import.meta.url,
     stateDir: stateRuntime.stateDir,
@@ -446,7 +450,8 @@ export async function createFridayHub(
            VALUES (?, ?, ?, ?, NULL, 1, NULL, ?, ?, NULL)`,
         ).run("admin-001", "admin@friday.dev", "Admin", "admin", nowIso, nowIso);
       });
-      console.log("[friday] Created default admin user (admin@friday.dev)");
+      // P2: Always warn when creating passwordless admin (password_hash = NULL)
+      console.warn("[friday][SECURITY] Created default admin user (admin@friday.dev) with NO password — set a passphrase via the setup wizard for production use");
     }
   }
 
@@ -476,7 +481,10 @@ export async function createFridayHub(
     }
   }
 
-  // 2. Create stub services for standalone operation
+  // 2. Create stub services for standalone operation.
+  // P2: configManager and memoryState are intentionally stubbed for v0.4.x standalone mode.
+  // Full implementations with persistence are planned for the multi-node milestone.
+  // Config mutations via API are silently no-ops; use env vars and friday.config.yaml instead.
   const configManager = createStubConfigManager(config, stateRuntime);
   const auditLogPath = resolveFridayAuditLogPath(config.stateDir ?? ".");
   const memoryState = createStubMemoryState(auditLogPath);
@@ -577,7 +585,8 @@ export async function createFridayHub(
             created_at: entry.evaluatedAt,
           });
         });
-      } catch {
+      } catch (err) {
+      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err));
         // Keep runtime fail-open if audit persistence fails.
       }
     },
@@ -2055,7 +2064,8 @@ export async function createFridayHub(
     const providerKind = defaultRoute.provider.kind; // e.g. "anthropic"
     const modelName = defaultRoute.model;            // e.g. "claude-opus-4-5-20251101"
     agentModelIdentity = `${modelName} (provider: ${providerKind})`;
-  } catch {
+  } catch (err) {
+      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err));
     // No provider configured yet — use generic identity.
   }
   try {
@@ -2067,7 +2077,8 @@ export async function createFridayHub(
     if (routingWarning) {
       console.warn(`[friday][W-PROVIDER-ROUTING-001] ${routingWarning}`);
     }
-  } catch {
+  } catch (err) {
+      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err));
     // Non-fatal: provider routing diagnostics should not block startup.
   }
 
@@ -2102,7 +2113,8 @@ export async function createFridayHub(
         workspaceContext = ctx.promptFragment;
       }
       workspaceContextSummary = ctx.workspaceContext?.summary;
-    } catch {
+    } catch (err) {
+      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err));
       // Non-fatal: workspace context loading failure should not block agent runs.
     }
     const starterSkills = registry.list()
@@ -2338,6 +2350,23 @@ export async function createFridayHub(
     nowIso,
   });
 
+  // P2: Wire planning gate cleanup to agent run completion events
+  agentEventEmitter.on("agent.run.completed", (payload) => {
+    if (payload && typeof payload === "object" && "runId" in payload) {
+      agentPlanningGate.cleanupRun((payload as { runId: string }).runId);
+    }
+  });
+  agentEventEmitter.on("agent.run.failed", (payload) => {
+    if (payload && typeof payload === "object" && "runId" in payload) {
+      agentPlanningGate.cleanupRun((payload as { runId: string }).runId);
+    }
+  });
+  agentEventEmitter.on("agent.run.cancelled", (payload) => {
+    if (payload && typeof payload === "object" && "runId" in payload) {
+      agentPlanningGate.cleanupRun((payload as { runId: string }).runId);
+    }
+  });
+
   const resolveAgentMirrorIdempotencyKey = (input: {
     runId: string;
     kind: "planning" | "assistant" | "planning-reject" | "deterministic";
@@ -2544,7 +2573,8 @@ export async function createFridayHub(
       }
       const envelope = JSON.parse(entity.encryptedValue) as FridayEncryptedEnvelope;
       return decryptSecret(envelope, getMasterKey());
-    } catch {
+    } catch (err) {
+      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
   };
@@ -2829,9 +2859,7 @@ export async function createFridayHub(
           const candidates = deriveMarketplaceSkillIdCandidates(input.packageName);
           const resolved = candidates.find((skillId) => registry.get(skillId));
           if (!resolved) {
-            throw new Error(
-              `Marketplace skill asset "${input.packageName}@${input.packageVersion}" not found in local registry`,
-            );
+            throw new FridayDomainError("NOT_FOUND", `Marketplace skill asset "${input.packageName}@${input.packageVersion}" not found in local registry`, { httpStatus: 404 });
           }
           return;
         }
@@ -2839,23 +2867,19 @@ export async function createFridayHub(
           const byId = workflowRuntime.crud.getWorkflow(input.packageName);
           const bySlug = workflowRuntime.crud.getWorkflowBySlug(input.packageName);
           if (!byId && !bySlug) {
-            throw new Error(
-              `Marketplace workflow asset "${input.packageName}@${input.packageVersion}" not found in local runtime`,
-            );
+            throw new FridayDomainError("NOT_FOUND", `Marketplace workflow asset "${input.packageName}@${input.packageVersion}" not found in local runtime`, { httpStatus: 404 });
           }
           return;
         }
         case "agent": {
           if (!agentRuntime) {
-            throw new Error(
-              `Marketplace agent asset "${input.packageName}@${input.packageVersion}" requires an active agent runtime`,
-            );
+            throw new FridayDomainError("NOT_INITIALIZED", `Marketplace agent asset "${input.packageName}@${input.packageVersion}" requires an active agent runtime`, { httpStatus: 503 });
           }
           return;
         }
         default: {
           const exhaustive: never = input.assetType;
-          throw new Error(`Unsupported marketplace asset type: ${String(exhaustive)}`);
+          throw new FridayDomainError("VALIDATION_ERROR", `Unsupported marketplace asset type: ${String(exhaustive)}`, { httpStatus: 400 });
         }
       }
     }
@@ -3693,7 +3717,7 @@ export async function createFridayHub(
         : async () => {
             const errMsg = marketplaceInitError?.message ?? "unknown init error";
             console.error(`[friday] marketplace-sync skipped: MARKETPLACE_RUNTIME_INIT_FAILED — ${errMsg}`);
-            throw new Error(`MARKETPLACE_RUNTIME_INIT_FAILED: ${errMsg}`);
+            throw new FridayDomainError("NOT_INITIALIZED", `MARKETPLACE_RUNTIME_INIT_FAILED: ${errMsg}`, { httpStatus: 503 });
           };
 
       schedulerJobs.push({
@@ -3852,7 +3876,7 @@ export async function createFridayHub(
           );
           if (nextRunAtMs == null) {
             schedulerRepoRef.disableJob(jobId, now);
-            throw new Error(`Invalid cron schedule for automation ${automation.id}`);
+            throw new FridayDomainError("VALIDATION_ERROR", `Invalid cron schedule for automation ${automation.id}`, { httpStatus: 400 });
           }
 
           schedulerRepoRef.upsert({
@@ -3885,9 +3909,7 @@ export async function createFridayHub(
                 const suffix = result.response.trim().length > 0
                   ? `: ${result.response}`
                   : "";
-                throw new Error(
-                  `[E-SCHED-AUTOMATION-RUN-FAILED] Automation ${automation.id} finished with status ${result.status}${suffix}`,
-                );
+                throw new FridayDomainError("INTERNAL_ERROR", `[E-SCHED-AUTOMATION-RUN-FAILED] Automation ${automation.id} finished with status ${result.status}${suffix}`, { httpStatus: 500 });
               }
             },
           });
@@ -4000,7 +4022,7 @@ export async function createFridayHub(
 
         if (!response.ok) {
           const body = await response.text().catch(() => "");
-          throw new Error(`Vision API error ${String(response.status)}: ${body}`);
+          throw new FridayDomainError("INTERNAL_ERROR", `Vision API error ${String(response.status)}: ${body}`, { httpStatus: 500 });
         }
 
         const json = await response.json() as {
@@ -4078,18 +4100,18 @@ export async function createFridayHub(
             switch (action) {
               case "click":
                 if (typeof args.selector !== "string") {
-                  throw new Error("Browser action \"click\" requires a string selector.");
+                  throw new FridayDomainError("VALIDATION_ERROR", "Browser action \"click\" requires a string selector.", { httpStatus: 400 });
                 }
                 await page.click(args.selector);
                 return { ok: true };
               case "fill":
                 if (typeof args.selector !== "string" || typeof args.value !== "string") {
-                  throw new Error("Browser action \"fill\" requires selector and value strings.");
+                  throw new FridayDomainError("VALIDATION_ERROR", "Browser action \"fill\" requires selector and value strings.", { httpStatus: 400 });
                 }
                 await page.fill(args.selector, args.value);
                 return { ok: true };
               default:
-                throw new Error(`Unsupported browser action "${action}" in autonomous wrapper.`);
+                throw new FridayDomainError("VALIDATION_ERROR", `Unsupported browser action "${action}" in autonomous wrapper.`, { httpStatus: 400 });
             }
           },
           navigate: async (sessionId: string, url: string) => {
@@ -4912,8 +4934,17 @@ export async function createFridayHub(
 
     async stop(): Promise<void> {
       // Shutdown in reverse order: API → workflows → skills → state
-      hubState = "stopped";
+      // P2-DATA: Use transitional "stopping" state — set "stopped" after cleanup completes
+      hubState = "stopping";
       upSince = null;
+
+      // P1-SHUT-001/002/003: Stop services started during bootstrap
+      try { observabilityService?.scheduler?.stop(); } catch (err) {
+      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err)); /* best-effort */ }
+      try { agentLearningBridge?.stop(); } catch (err) {
+      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err)); /* best-effort */ }
+      try { if (mcpAdapter && "close" in mcpAdapter) await (mcpAdapter as unknown as { close(): Promise<void> }).close(); } catch (err) {
+      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err)); /* best-effort */ }
 
       // 1. Stop job scheduler (F11: await in-flight)
       if (jobScheduler) {
@@ -4944,6 +4975,7 @@ export async function createFridayHub(
       await registry.close();
       // 7. State
       stateRuntime?.close();
+      hubState = "stopped";
     },
 
     status(): FridayHubStatus {
@@ -4968,4 +5000,10 @@ export async function createFridayHub(
   };
 
   return hub;
+
+  } catch (bootstrapError) {
+    // P0-001: Clean up SQLite connections on partial bootstrap failure
+    stateRuntime?.close();
+    throw bootstrapError;
+  }
 }

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayWorkflowArtifactEntity,
   FridayWorkflowArtifactRow,
@@ -40,9 +41,7 @@ function mapArtifactRow(
     artifactType: row.artifact_type as FridayWorkflowArtifactEntity["artifactType"],
     uri: row.uri,
     checksum: row.checksum ?? undefined,
-    metadata: row.metadata_json
-      ? (JSON.parse(row.metadata_json) as JsonObject)
-      : undefined,
+    metadata: safeJsonParse<JsonObject>(row.metadata_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

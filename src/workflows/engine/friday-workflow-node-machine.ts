@@ -42,6 +42,10 @@ const VALID_TRANSITIONS: ReadonlyMap<
   ["cancelled", new Set<NodeAttemptStatus>([])],
 ]);
 
+// P2: "failed" is included as terminal for DAG scheduling purposes (predecessor is "done").
+// However, `failed` can transition to `retrying` when a retry policy triggers — this is
+// handled by the retry manager BEFORE the DAG scheduler re-evaluates, so the semantics
+// are consistent: "terminal" means "current attempt is done", not "can never change".
 const TERMINAL_STATUSES: ReadonlySet<NodeAttemptStatus> = new Set([
   "completed",
   "failed",

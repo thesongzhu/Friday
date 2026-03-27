@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 
 import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
+import { safeJsonParse } from "#utilities";
 
 import type {
   FridaySkillGenerationSession,
@@ -159,7 +160,7 @@ export function createFridaySkillGenerationSessionRepository(
           sessionKey(sessionId),
         );
         if (!row) return null;
-        return JSON.parse(row.value_json) as FridaySkillGenerationSession;
+        return safeJsonParse<FridaySkillGenerationSession>(row.value_json) ?? null;
       });
     },
 
@@ -209,7 +210,7 @@ export function createFridaySkillGenerationSessionRepository(
           turnKeyPrefix(sessionId),
         );
         return rows.map(
-          (row) => JSON.parse(row.value_json) as FridaySkillGenerationTurn,
+          (row) => safeJsonParse<FridaySkillGenerationTurn>(row.value_json)!,
         );
       });
     },

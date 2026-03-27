@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
 import {
   errorResult,
@@ -229,7 +230,7 @@ async function searchSerper(
   });
 
   if (!response.ok) {
-    throw new Error(`Serper API error: HTTP ${String(response.status)}`);
+    throw new FridayDomainError("INTERNAL_ERROR", `Serper API error: HTTP ${String(response.status)}`, { httpStatus: 500 });
   }
 
   const data = await response.json() as {
@@ -276,7 +277,7 @@ async function searchTavily(
   });
 
   if (!response.ok) {
-    throw new Error(`Tavily API error: HTTP ${String(response.status)}`);
+    throw new FridayDomainError("INTERNAL_ERROR", `Tavily API error: HTTP ${String(response.status)}`, { httpStatus: 500 });
   }
 
   const data = await response.json() as {
@@ -314,7 +315,7 @@ async function searchDuckDuckGo(
   });
 
   if (!response.ok) {
-    throw new Error(`DuckDuckGo error: HTTP ${String(response.status)}`);
+    throw new FridayDomainError("INTERNAL_ERROR", `DuckDuckGo error: HTTP ${String(response.status)}`, { httpStatus: 500 });
   }
 
   const html = await response.text();

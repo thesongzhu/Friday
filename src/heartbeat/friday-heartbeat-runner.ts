@@ -149,7 +149,8 @@ function resolvePrompt(config: FridayHeartbeatConfig): string {
   try {
     const filePrompt = readFileSync(config.promptPath, "utf-8").trim();
     return filePrompt.length > 0 ? filePrompt : defaultPrompt;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][heartbeat-runner] prompt file read failed:", err instanceof Error ? err.message : String(err));
     return defaultPrompt;
   }
 }

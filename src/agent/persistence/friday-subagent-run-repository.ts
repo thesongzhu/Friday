@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 
 import { FRIDAY_SUBAGENT_ERROR_CODES } from "../subagent/friday-subagent-constants.js";
 import type {
@@ -46,9 +47,7 @@ function rowToRecord(row: FridaySubagentRunRow): FridaySubagentRunRecord {
     model: row.model ?? undefined,
     depth: row.depth,
     status: row.status as FridaySubagentRunStatus,
-    outcome: row.outcome
-      ? (JSON.parse(row.outcome) as FridaySubagentOutcome)
-      : undefined,
+    outcome: safeJsonParse<FridaySubagentOutcome>(row.outcome),
     createdAt: row.created_at,
     startedAt: row.started_at ?? undefined,
     completedAt: row.completed_at ?? undefined,

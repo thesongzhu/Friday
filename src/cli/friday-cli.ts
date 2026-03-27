@@ -40,7 +40,7 @@ import {
 } from "#providers";
 import { parseFridayHttpTrustProxyMode } from "#api";
 import { resolveFridayDbPath } from "#state";
-import { resolveSafePath } from "#utilities";
+import { resolveSafePath, safeJsonParse } from "#utilities";
 import Database from "better-sqlite3";
 import {
   createFridayLocalDaemonService,
@@ -906,24 +906,20 @@ function readSetupStateChannels(db: Database.Database): FridayPersistedSetupChan
   if (!row?.channels_json) {
     return [];
   }
-  try {
-    const parsed = JSON.parse(row.channels_json) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed
-      .filter((item): item is { kind?: unknown; enabled?: unknown; config?: unknown } =>
-        isObject(item),
-      )
-      .map((item) => ({
-        kind: String(item.kind ?? "").trim() as FridaySupportedChannelKind,
-        enabled: item.enabled !== false,
-        config: isObject(item.config) ? item.config : {},
-      }))
-      .filter((item) => item.kind.length > 0);
-  } catch {
+  const parsed = safeJsonParse(row.channels_json) as unknown;
+  if (!Array.isArray(parsed)) {
     return [];
   }
+  return parsed
+    .filter((item): item is { kind?: unknown; enabled?: unknown; config?: unknown } =>
+      isObject(item),
+    )
+    .map((item) => ({
+      kind: String(item.kind ?? "").trim() as FridaySupportedChannelKind,
+      enabled: item.enabled !== false,
+      config: isObject(item.config) ? item.config : {},
+    }))
+    .filter((item) => item.kind.length > 0);
 }
 
 function buildPersistedChannelsFromLegacyMap(rawMap: JsonObject): FridayPersistedSetupChannel[] {
@@ -1196,7 +1192,8 @@ export function loadProcessEnvFromDotEnvFile(options?: {
   let text = "";
   try {
     text = readFileSync(envPath, "utf8");
-  } catch {
+  } catch (err) {
+    console.warn("[friday][cli] .env file read failed:", err instanceof Error ? err.message : String(err));
     return;
   }
 
@@ -1270,7 +1267,8 @@ export function readSetupNetworkBinding(dbPath: string): FridayStartupNetworkBin
     if (!host || !port) return undefined;
 
     return { host, port };
-  } catch {
+  } catch (err) {
+    console.warn("[friday][cli] daemon address lookup failed:", err instanceof Error ? err.message : String(err));
     return undefined;
   } finally {
     db?.close();
@@ -2067,7 +2065,8 @@ export function isCliEntrypointPath(argvPath: string | undefined, moduleUrl: str
 
   try {
     return realpathSync(argvPath) === realpathSync(modulePath);
-  } catch {
+  } catch (err) {
+    console.warn("[friday][cli] entrypoint path resolution failed:", err instanceof Error ? err.message : String(err));
     return argvPath === modulePath;
   }
 }

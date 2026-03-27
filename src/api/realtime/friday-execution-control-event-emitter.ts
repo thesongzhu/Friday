@@ -176,7 +176,8 @@ export function createExecutionControlEventEmitter(
             envelope.emittedAt,
           );
           deps.auditSink(record);
-        } catch {
+        } catch (err) {
+          console.warn("[friday][execution-control-event-emitter] operation failed:", err instanceof Error ? err.message : String(err));
           // Audit sink failure is non-fatal
         }
       }

@@ -138,7 +138,9 @@ async function fireCronRegistration(
     }
 
     return true;
-  } catch {
+  } catch (err) {
+    // P2-WF-004: Log trigger fire failures instead of silent swallow
+    console.warn("[friday] Cron trigger fire failed:", err instanceof Error ? err.message : String(err));
     return false;
   }
 }
@@ -263,8 +265,9 @@ export function createFridayWorkflowTriggerService(
                 triggerPayload: ctx.payload,
               });
               runIds.push(run.id);
-            } catch {
-              // Log and continue
+            } catch (err) {
+              // P2-WF-004: Log event trigger failures
+              console.warn("[friday] Event trigger startRun failed:", err instanceof Error ? err.message : String(err));
             }
           }
         }
@@ -352,8 +355,9 @@ export function createFridayWorkflowTriggerService(
               if (next) {
                 nextFireAt = next.toISOString();
               }
-            } catch {
-              // Invalid cron expression — log and leave nextFireAt undefined (disables auto-fire)
+            } catch (err) {
+              // P2-WF-004: Log invalid cron expression
+              console.warn("[friday] Invalid cron expression during trigger sync:", err instanceof Error ? err.message : String(err));
             }
           }
 
@@ -453,7 +457,9 @@ export function createFridayWorkflowTriggerService(
         deps.triggerRepo.markFired(reg.id, deps.nowIso());
 
         return { accepted: true, runId: run.id };
-      } catch {
+      } catch (err) {
+        // P2-WF-004: Log webhook trigger failures
+        console.warn("[friday] Webhook trigger handling failed:", err instanceof Error ? err.message : String(err));
         return { accepted: false };
       }
     },
@@ -483,8 +489,9 @@ export function createFridayWorkflowTriggerService(
 
           deps.triggerRepo.markFired(reg.id, deps.nowIso());
           started++;
-        } catch {
-          // Log and continue
+        } catch (err) {
+          // P2-WF-004: Log event handler failures
+          console.warn("[friday] Event handler startRun failed:", err instanceof Error ? err.message : String(err));
         }
       }
 

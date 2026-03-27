@@ -11,7 +11,8 @@ export function resolveFridayPublicRunUrl(
     const url = new URL("/command-center", normalizedBase.endsWith("/") ? normalizedBase : `${normalizedBase}/`);
     url.searchParams.set("runId", runId);
     return url.toString();
-  } catch {
+  } catch (err) {
+    console.warn("[friday][public-run-url] URL construction failed:", err instanceof Error ? err.message : String(err));
     return undefined;
   }
 }

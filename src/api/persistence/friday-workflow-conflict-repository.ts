@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayWorkflowConflictEntity,
   FridayWorkflowConflictKind,
@@ -38,7 +39,7 @@ function rowToEntity(row: FridayWorkflowConflictRow): FridayWorkflowConflictEnti
     resolvedAt: row.resolved_at ?? undefined,
     resolvedByUserId: row.resolved_by_user_id ?? undefined,
     summary: row.summary,
-    patches: JSON.parse(row.patches_json) as FridayWorkflowConflictEntity["patches"],
+    patches: safeJsonParse<FridayWorkflowConflictEntity["patches"]>(row.patches_json) ?? [],
   };
 }
 

@@ -92,7 +92,8 @@ export function createFridayCodeRepoConverter(): FridaySkillConverter {
             `Detected capabilities: ${capabilities.length}`,
           ],
         };
-      } catch {
+      } catch (err) {
+      console.warn("[friday][code-repo-converter] operation failed:", err instanceof Error ? err.message : String(err));
         return null;
       }
     },

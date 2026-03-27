@@ -92,7 +92,8 @@ export function createFridayRealtimeEventBus(
       for (const listener of listeners) {
         try {
           listener(envelope);
-        } catch {
+        } catch (err) {
+          console.warn("[friday][realtime-event-bus] operation failed:", err instanceof Error ? err.message : String(err));
           // Swallow listener errors to avoid breaking event flow
         }
       }

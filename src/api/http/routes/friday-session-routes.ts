@@ -199,7 +199,8 @@ function validateRunBody(body: unknown): asserts body is FridaySessionRunRequest
     } else {
       try {
         Intl.DateTimeFormat("en-US", { timeZone: b.timezone.trim() }).format(new Date());
-      } catch {
+      } catch (err) {
+        console.warn("[friday][session-routes] operation failed:", err instanceof Error ? err.message : String(err));
         errors.push("timezone is not a valid IANA timezone");
       }
     }
@@ -355,7 +356,8 @@ function decodeSessionKeyParam(raw: string): string {
   let decoded: string;
   try {
     decoded = decodeURIComponent(raw);
-  } catch {
+  } catch (err) {
+        console.warn("[friday][session-routes] operation failed:", err instanceof Error ? err.message : String(err));
     throw new FridayDomainError(
       FRIDAY_SESSION_ERROR_CODES.INVALID_KEY,
       `Invalid URL-encoded session key: '${raw}'`,
@@ -499,6 +501,7 @@ export function createFridaySessionRoutes(
       method: "POST",
       path: "/v1/sessions",
       auth: { public: false, anyOfScopes: ["session.write"] },
+      rateLimitPolicyId: "session.write",
       async handler(ctx): Promise<FridaySessionCreateResponse> {
         validateCreateSessionBody(ctx.body);
         const body = ctx.body;

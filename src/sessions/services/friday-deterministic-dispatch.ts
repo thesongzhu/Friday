@@ -103,7 +103,8 @@ async function handleCapabilities(
     lines.push(`  Desktop companion: ${snap.desktop.connected ? "connected" : "disconnected"}`);
 
     return { handled: true, response: lines.join("\n") };
-  } catch {
+  } catch (err) {
+    console.warn("[friday][deterministic-dispatch] status dispatch failed:", err instanceof Error ? err.message : String(err));
     return { handled: false };
   }
 }
@@ -151,7 +152,8 @@ async function handleTaskStatus(
     }
 
     return { handled: true, response: lines.join("\n") };
-  } catch {
+  } catch (err) {
+    console.warn("[friday][deterministic-dispatch] task status failed:", err instanceof Error ? err.message : String(err));
     return { handled: false };
   }
 }

@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Test Suite Runner — execute acceptance test suites against agent/skill outputs.
  *
@@ -76,7 +78,7 @@ export class InMemoryTestRegistry implements FridayAcceptanceTestRegistry {
 
   register(test: FridayAcceptanceTest): void {
     if (this.byId.has(test.id)) {
-      throw new Error(`Acceptance test with ID "${test.id}" is already registered`);
+      throw new FridayDomainError("VALIDATION_ERROR", `Acceptance test with ID "${test.id}" is already registered`, { httpStatus: 400 });
     }
 
     this.byId.set(test.id, test);
@@ -661,8 +663,9 @@ export class AcceptanceTestSuiteRunner {
     if (this.onRollback) {
       try {
         this.onRollback(event);
-      } catch {
+      } catch (err) {
         // Rollback emission should not break deterministic run completion.
+        console.warn("[friday][test-suite-runner] rollback emission failed:", err instanceof Error ? err.message : String(err));
       }
     }
 

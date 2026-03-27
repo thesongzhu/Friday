@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { safeJsonParse } from "#utilities";
 import type { UUID } from "../../model/friday-workflow.types.js";
 import type { FridayWorkflowTestRunResult } from "../model/friday-workflow-builder-test.types.js";
 
@@ -43,7 +44,7 @@ export function createFridayWorkflowBuilderTestRunRepository(): FridayWorkflowBu
           `SELECT value_json FROM memory_items WHERE namespace = ? AND id = ?`,
         )
         .get(NAMESPACE, runId) as { value_json: string } | undefined;
-      return row ? (JSON.parse(row.value_json) as FridayWorkflowTestRunResult) : null;
+      return row ? safeJsonParse<FridayWorkflowTestRunResult>(row.value_json) ?? null : null;
     },
 
     listByDraft(db, draftId, limit) {
@@ -52,7 +53,7 @@ export function createFridayWorkflowBuilderTestRunRepository(): FridayWorkflowBu
           `SELECT value_json FROM memory_items WHERE namespace = ? AND key LIKE ? ORDER BY created_at DESC LIMIT ?`,
         )
         .all(NAMESPACE, `${draftId}:%`, limit ?? 50) as Array<{ value_json: string }>;
-      return rows.map((r) => JSON.parse(r.value_json) as FridayWorkflowTestRunResult);
+      return rows.map((r) => safeJsonParse<FridayWorkflowTestRunResult>(r.value_json)).filter((r): r is FridayWorkflowTestRunResult => r !== undefined);
     },
   };
 }

@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Job Schedule Utilities
  *
@@ -21,7 +23,7 @@ export function resolveJobSchedule(def: {
 }): FridayJobSchedule {
   if (def.schedule) return def.schedule;
   if (def.intervalMs != null) return { kind: "every", everyMs: def.intervalMs };
-  throw new Error("Job definition must specify either schedule or intervalMs");
+  throw new FridayDomainError("VALIDATION_ERROR", "Job definition must specify either schedule or intervalMs", { httpStatus: 400 });
 }
 
 /**
@@ -87,7 +89,8 @@ export function computeNextRunAtMs(
         const interval = CronExpressionParser.parse(schedule.cronExpr, options);
         const next = interval.next();
         return next.getTime();
-      } catch {
+      } catch (err) {
+    console.warn("[friday][job-schedule-utils] operation failed:", err instanceof Error ? err.message : String(err));
         return null;
       }
     }
@@ -105,7 +108,8 @@ export function isValidCronExpression(expr: string): boolean {
   try {
     CronExpressionParser.parse(expr);
     return true;
-  } catch {
+  } catch (err) {
+    console.warn("[friday][job-schedule-utils] operation failed:", err instanceof Error ? err.message : String(err));
     return false;
   }
 }

@@ -85,7 +85,8 @@ export async function fetchWithFridayAgentSsrfGuard(
     let nextUrl: string;
     try {
       nextUrl = new URL(location, currentUrl).href;
-    } catch {
+    } catch (err) {
+      console.warn("[friday][agent-fetch-guard] invalid redirect URL:", err instanceof Error ? err.message : String(err));
       throw new FridaySsrfBlockedError(`SSRF guard: invalid redirect URL — ${location}`);
     }
 

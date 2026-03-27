@@ -100,7 +100,8 @@ export function createFridayAgentExecTool(
       let resolvedWorkdir: string;
       try {
         resolvedWorkdir = realpathSyncFn(workdir) as string;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][agent-exec-tool] workdir resolve failed:", err instanceof Error ? err.message : String(err));
         return errorResult(
           `Working directory "${workdir}" does not exist or is not accessible.`,
         );
@@ -108,7 +109,8 @@ export function createFridayAgentExecTool(
       let resolvedRoot: string;
       try {
         resolvedRoot = realpathSyncFn(workspaceRoot) as string;
-      } catch {
+      } catch (err) {
+        console.warn("[friday][agent-exec-tool] workspace root resolve failed:", err instanceof Error ? err.message : String(err));
         resolvedRoot = path.resolve(workspaceRoot);
       }
       if (!resolvedWorkdir.startsWith(resolvedRoot + path.sep) && resolvedWorkdir !== resolvedRoot) {

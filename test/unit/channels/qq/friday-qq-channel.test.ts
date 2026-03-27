@@ -108,7 +108,8 @@ describe("FridayQqChannel", () => {
 
   describe("init", () => {
     it("validates appId and appSecret are required", async () => {
-      await expect(plugin.init({})).rejects.toThrow("QQ channel requires appId and appSecret");
+      // P1-CH-001: Now uses Zod validation — throws ZodError for missing required fields
+      await expect(plugin.init({})).rejects.toThrow();
     });
 
     it("initializes with valid config", async () => {

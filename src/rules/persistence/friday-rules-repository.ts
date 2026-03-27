@@ -7,6 +7,7 @@
 import * as crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 import type {
   FridayPolicyBundleRow,
   FridayRule,
@@ -97,16 +98,8 @@ function generateEtag(): string {
 }
 
 function rowToRule(row: FridayRuleRow): FridayRule {
-  const conditions = (() => {
-    try {
-      const parsed = JSON.parse(row.conditions_json);
-      return typeof parsed === "object" && parsed !== null
-        ? parsed as FridayRule["conditions"]
-        : {};
-    } catch {
-      return {};
-    }
-  })();
+  const parsed = safeJsonParse<FridayRule["conditions"]>(row.conditions_json);
+  const conditions = typeof parsed === "object" && parsed !== null ? parsed : {};
 
   return {
     id: row.id,
@@ -129,16 +122,10 @@ function rowToRule(row: FridayRuleRow): FridayRule {
 }
 
 function rowToRuleVersion(row: FridayRuleVersionRow): FridayRuleVersion {
-  const snapshot = (() => {
-    try {
-      const parsed = JSON.parse(row.snapshot_json);
-      return typeof parsed === "object" && parsed !== null
-        ? parsed as FridayRuleVersion["snapshot"]
-        : {};
-    } catch {
-      return {} as FridayRuleVersion["snapshot"];
-    }
-  })();
+  const snapshotParsed = safeJsonParse<FridayRuleVersion["snapshot"]>(row.snapshot_json);
+  const snapshot = typeof snapshotParsed === "object" && snapshotParsed !== null
+    ? snapshotParsed
+    : {} as FridayRuleVersion["snapshot"];
 
   return {
     id: row.id,
@@ -292,8 +279,9 @@ export function createFridayRulesRepository(): FridayRulesRepository {
           INSERT INTO rule_eval_audit (id, rule_id, policy_bundle_id, decision, resource, action, context_redacted_json, redaction_applied, redacted_fields_json, matched_rules_json, duration_ms, run_id, workflow_id, principal_id, context_hash, created_at)
           VALUES (@id, @rule_id, @policy_bundle_id, @decision, @resource, @action, @context_redacted_json, @redaction_applied, @redacted_fields_json, @matched_rules_json, @duration_ms, @run_id, @workflow_id, @principal_id, NULL, @created_at)
         `).run(entry);
-      } catch {
+      } catch (err) {
         // table may not exist on legacy schemas
+        console.warn("[friday][rules-repository] audit log insert failed:", err instanceof Error ? err.message : String(err));
       }
     },
 

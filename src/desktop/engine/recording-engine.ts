@@ -1,3 +1,5 @@
+import { FridayDomainError } from "#errors";
+
 /**
  * Recording Engine — Record and replay desktop interaction sequences.
  *
@@ -203,15 +205,11 @@ export function createRecordingEngine(config: RecordingEngineConfig): RecordingE
   ): FridayDesktopRecording {
     const recording = recordings.get(recordingId);
     if (!recording) {
-      throw new Error(
-        `${FRIDAY_DESKTOP_ERROR_CODES.RECORDING_NOT_FOUND}: Recording '${recordingId}' not found`,
-      );
+      throw new FridayDomainError("NOT_FOUND", `${FRIDAY_DESKTOP_ERROR_CODES.RECORDING_NOT_FOUND}: Recording '${recordingId}' not found`, { httpStatus: 404 });
     }
 
     if (!isValidTransition(recording.state, targetState)) {
-      throw new Error(
-        `${FRIDAY_DESKTOP_ERROR_CODES.RECORDING_INVALID_STATE}: Cannot transition from '${recording.state}' to '${targetState}'`,
-      );
+      throw new FridayDomainError("VALIDATION_ERROR", `${FRIDAY_DESKTOP_ERROR_CODES.RECORDING_INVALID_STATE}: Cannot transition from '${recording.state}' to '${targetState}'`, { httpStatus: 400 });
     }
 
     const now = config.nowIso();
@@ -272,14 +270,10 @@ export function createRecordingEngine(config: RecordingEngineConfig): RecordingE
     ): FridayDesktopRecordingStep {
       const recording = recordings.get(recordingId);
       if (!recording) {
-        throw new Error(
-          `${FRIDAY_DESKTOP_ERROR_CODES.RECORDING_NOT_FOUND}: Recording '${recordingId}' not found`,
-        );
+        throw new FridayDomainError("NOT_FOUND", `${FRIDAY_DESKTOP_ERROR_CODES.RECORDING_NOT_FOUND}: Recording '${recordingId}' not found`, { httpStatus: 404 });
       }
       if (recording.state !== "recording") {
-        throw new Error(
-          `${FRIDAY_DESKTOP_ERROR_CODES.RECORDING_INVALID_STATE}: Recording is '${recording.state}', expected 'recording'`,
-        );
+        throw new FridayDomainError("VALIDATION_ERROR", `${FRIDAY_DESKTOP_ERROR_CODES.RECORDING_INVALID_STATE}: Recording is '${recording.state}', expected 'recording'`, { httpStatus: 400 });
       }
 
       const recordingSteps = steps.get(recordingId)!;
@@ -339,14 +333,10 @@ export function createRecordingEngine(config: RecordingEngineConfig): RecordingE
     ): Promise<ReplayResult> {
       const recording = recordings.get(recordingId);
       if (!recording) {
-        throw new Error(
-          `${FRIDAY_DESKTOP_ERROR_CODES.RECORDING_NOT_FOUND}: Recording '${recordingId}' not found`,
-        );
+        throw new FridayDomainError("NOT_FOUND", `${FRIDAY_DESKTOP_ERROR_CODES.RECORDING_NOT_FOUND}: Recording '${recordingId}' not found`, { httpStatus: 404 });
       }
       if (recording.state !== "stopped") {
-        throw new Error(
-          `${FRIDAY_DESKTOP_ERROR_CODES.RECORDING_INVALID_STATE}: Recording must be stopped for replay, current state: '${recording.state}'`,
-        );
+        throw new FridayDomainError("VALIDATION_ERROR", `${FRIDAY_DESKTOP_ERROR_CODES.RECORDING_INVALID_STATE}: Recording must be stopped for replay, current state: '${recording.state}'`, { httpStatus: 400 });
       }
 
       const recordingSteps = steps.get(recordingId) ?? [];
@@ -404,9 +394,7 @@ export function createRecordingEngine(config: RecordingEngineConfig): RecordingE
     ): FridayDesktopRecording {
       const recording = recordings.get(recordingId);
       if (!recording) {
-        throw new Error(
-          `${FRIDAY_DESKTOP_ERROR_CODES.RECORDING_NOT_FOUND}: Recording '${recordingId}' not found`,
-        );
+        throw new FridayDomainError("NOT_FOUND", `${FRIDAY_DESKTOP_ERROR_CODES.RECORDING_NOT_FOUND}: Recording '${recordingId}' not found`, { httpStatus: 404 });
       }
 
       const updated: FridayDesktopRecording = {
