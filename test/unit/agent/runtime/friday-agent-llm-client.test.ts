@@ -237,9 +237,10 @@ describe("FridayAgentLlmClient", () => {
     expect(headers["anthropic-beta"]).toContain("claude-code-20250219");
 
     const body = JSON.parse(options.body as string) as Record<string, unknown>;
-    expect(body.system).toBe(
-      "You are Claude Code, Anthropic's official CLI for Claude.\n\nSystem prompt here",
-    );
+    expect(body.system).toEqual([
+      { type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude." },
+      { type: "text", text: "System prompt here" },
+    ]);
   });
 
   // ─── Anthropic model extraction ───
