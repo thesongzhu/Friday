@@ -44,18 +44,32 @@ export interface FridayActionTemplateSummary {
   }>;
 }
 
+export interface FridayGuidedWizardStepChoice {
+  value: string;
+  label: string;
+  description: string;
+  outcome: string;
+  risk?: "low" | "medium" | "high";
+  recommended?: boolean;
+  reason?: string;
+}
+
+export interface FridayGuidedWizardStep {
+  id: string;
+  title: string;
+  prompt: string;
+  inputKey: string;
+  kind?: "input" | "choice" | "investigation" | "confirmation";
+  choices?: FridayGuidedWizardStepChoice[];
+}
+
 export interface FridayGuidedWizardState {
   wizardId: string;
   contextId: string;
   title: string;
-  status: "awaiting_input" | "ready" | "completed";
+  status: "awaiting_input" | "investigating" | "ready" | "completed" | "failed";
   currentStepId: string;
-  steps: Array<{
-    id: string;
-    title: string;
-    prompt: string;
-    inputKey: string;
-  }>;
+  steps: FridayGuidedWizardStep[];
   collectedValues: Record<string, unknown>;
   nextActionLabel?: string;
   objective?: string;
@@ -63,6 +77,24 @@ export interface FridayGuidedWizardState {
   unknowns?: string[];
   successTest?: string;
   fallbackPath?: string;
+}
+
+export type FridayUserProfileType = "beginner" | "developer" | "creator" | "business";
+
+export interface FridayUserProfileResponse {
+  profileType: FridayUserProfileType | null;
+  onboardedAt: string | null;
+}
+
+export interface FridayInvestigateRequest {
+  goalCategoryId: string;
+  context?: Record<string, unknown>;
+  assistantSessionKey?: string;
+}
+
+export interface FridayInvestigateResponse {
+  runId: string;
+  wizardId: string;
 }
 
 export interface FridayUixTemplatesResponse {

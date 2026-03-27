@@ -5,6 +5,7 @@
  * an HTTP server and handling graceful shutdown via SIGINT/SIGTERM.
  */
 
+import { exec } from "node:child_process";
 import { resolve } from "node:path";
 import type { FridayHub } from "#hub";
 import { createFridayHttpServer } from "../api/http/friday-http-server.js";
@@ -51,7 +52,20 @@ export function runFridayCliLoop(deps: FridayCliRunLoopDeps): Promise<void> {
     httpServer
       .listen()
       .then(() => {
-        console.log(`🚀 Friday API server listening on http://${listenHost}:${port}`);
+        const url = `http://${listenHost === "0.0.0.0" ? "localhost" : listenHost}:${String(port)}`;
+        console.log(`🚀 Friday API server listening on ${url}`);
+
+        // Auto-open browser for local mode (not when binding to all interfaces for remote access).
+        if (listenHost === "127.0.0.1" || listenHost === "localhost") {
+          const openCmd = process.platform === "darwin"
+            ? `open "${url}"`
+            : process.platform === "win32"
+              ? `start "" "${url}"`
+              : `xdg-open "${url}"`;
+          exec(openCmd, () => {
+            // Best-effort — ignore errors (e.g., headless server, no display).
+          });
+        }
       })
       .catch((err: unknown) => {
         console.error("❌ Failed to start HTTP server:", err);

@@ -3,11 +3,14 @@ import type { FridayUixSurfaceService } from "../../../uix/services/friday-uix-s
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
   FridayBeginnerIntentResolution,
+  FridayInvestigateResponse,
   FridayUixDiagnosticsResponse,
   FridayUixIssuesResponse,
   FridayUixTemplateExecutionResponse,
   FridayUixTemplatesResponse,
   FridayUixWizardResponse,
+  FridayUserProfileResponse,
+  FridayUserProfileType,
 } from "../../model/friday-api-uix-surface.types.js";
 import type {
   FridayDeleteUserPreferenceResponse,
@@ -225,6 +228,78 @@ export function createFridayUixRoutes(
             : undefined;
         return {
           items: deps.service.listIssues({ userId, limit: Number.isFinite(limit) ? limit : undefined }),
+        };
+      },
+    },
+    {
+      operationId: "uix.user.profile.get",
+      method: "GET",
+      path: "/v1/uix/user-profile",
+      auth: { public: false, anyOfScopes: ["agent.run"] },
+      async handler(ctx): Promise<FridayUserProfileResponse> {
+        const userId = requireUserId(ctx.principal);
+        const prefs = deps.service.listPreferences({ userId, category: "uix" });
+        const profilePref = prefs.items.find((p) => p.key === "user.profile_type");
+        const onboardedPref = prefs.items.find((p) => p.key === "user.onboarded_at");
+        return {
+          profileType: (profilePref?.value as FridayUserProfileType | undefined) ?? null,
+          onboardedAt: (onboardedPref?.value as string | undefined) ?? null,
+        };
+      },
+    },
+    {
+      operationId: "uix.user.profile.update",
+      method: "PUT",
+      path: "/v1/uix/user-profile",
+      auth: { public: false, anyOfScopes: ["agent.run"] },
+      async handler(ctx): Promise<FridayUserProfileResponse> {
+        const userId = requireUserId(ctx.principal);
+        const body = (ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body))
+          ? ctx.body as Record<string, unknown>
+          : {};
+        const profileType = typeof body.profileType === "string" ? body.profileType : undefined;
+        const onboardedAt = typeof body.onboardedAt === "string" ? body.onboardedAt : undefined;
+        const preferences: Array<{ category: string; key: string; value: unknown }> = [];
+        if (profileType) {
+          preferences.push({ category: "uix", key: "user.profile_type", value: profileType });
+        }
+        if (onboardedAt) {
+          preferences.push({ category: "uix", key: "user.onboarded_at", value: onboardedAt });
+        }
+        if (preferences.length > 0) {
+          deps.service.updatePreferences({
+            userId,
+            request: { preferences } as never,
+          });
+        }
+        return {
+          profileType: (profileType as FridayUserProfileType | undefined) ?? null,
+          onboardedAt: onboardedAt ?? null,
+        };
+      },
+    },
+    {
+      operationId: "uix.investigate",
+      method: "POST",
+      path: "/v1/uix/investigate",
+      auth: { public: false, anyOfScopes: ["agent.run"] },
+      async handler(ctx): Promise<FridayInvestigateResponse> {
+        const userId = requireUserId(ctx.principal);
+        const body = (ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body))
+          ? ctx.body as Record<string, unknown>
+          : {};
+        const goalCategoryId = typeof body.goalCategoryId === "string" ? body.goalCategoryId.trim() : "";
+        if (!goalCategoryId) {
+          throw new FridayDomainError("VALIDATION_ERROR", "goalCategoryId is required", { httpStatus: 400 });
+        }
+        const wizardResponse = deps.service.startWizard({
+          wizardId: goalCategoryId,
+          userId,
+          assistantSessionKey: readAssistantSessionKey(ctx.body),
+        });
+        return {
+          runId: wizardResponse.wizard.contextId,
+          wizardId: goalCategoryId,
         };
       },
     },
