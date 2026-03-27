@@ -104,7 +104,7 @@ jobs:
       - name: Verify Dockerfile build
         run: docker build -f Dockerfile -t friday:ci-verify .
 
-  docker-e2e-verify:
+  docker-runtime-verify:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: docker-build-verify
@@ -114,20 +114,62 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Docker runtime closure smoke
-        run: bash scripts/ci/docker-e2e-smoke.sh
+      - name: Docker runtime smoke
+        run: npm run test:docker:e2e:runtime
 
-      - name: Upload docker e2e artifacts
+      - name: Upload docker runtime artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: docker-e2e-${{ github.run_id }}
+          name: docker-runtime-${{ github.run_id }}
           path: artifacts/docker-e2e/
           if-no-files-found: warn
 
-  cloud-e2e-openai:
+  docker-bootstrap-verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 25
+    needs: docker-build-verify
+    if: ${{ vars.FRIDAY_DOCKER_E2E_ENABLED == 'true' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker bootstrap smoke
+        run: npm run test:docker:e2e:bootstrap
+
+      - name: Upload docker bootstrap artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-bootstrap-${{ github.run_id }}
+          path: artifacts/docker-e2e/
+          if-no-files-found: warn
+
+  docker-plugins-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: docker-build-verify
+    if: ${{ vars.FRIDAY_DOCKER_E2E_ENABLED == 'true' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker plugins smoke
+        run: npm run test:docker:e2e:plugins
+
+      - name: Upload docker plugin artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-plugins-${{ github.run_id }}
+          path: artifacts/docker-e2e/
+          if-no-files-found: warn
+
+  cloud-contract-openai:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -142,37 +184,49 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Evaluate cloud baseline config
-        id: cloud_config
+      - name: Evaluate cloud contract (OpenAI baseline)
         env:
-          CLOUD_BASE_URL: ${{ vars.FRIDAY_CLOUD_E2E_BASE_URL }}
-          CLOUD_ACCESS_TOKEN: ${{ secrets.FRIDAY_E2E_CLOUD_ACCESS_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          FRIDAY_E2E_TARGET: "cloud"
+          FRIDAY_E2E_CLOUD_BASE_URL: ${{ vars.FRIDAY_CLOUD_E2E_BASE_URL }}
+          FRIDAY_E2E_CLOUD_AUTH_MODE: "access-token"
+          FRIDAY_E2E_CLOUD_ACCESS_TOKEN: ${{ secrets.FRIDAY_E2E_CLOUD_ACCESS_TOKEN }}
+          FRIDAY_E2E_CLOUD_NAMESPACE: "nightly-openai-${{ github.run_id }}"
+          FRIDAY_E2E_CLOUD_TIMEOUT_MS: "30000"
+          FRIDAY_E2E_LIVE_OPENAI: "1"
+          FRIDAY_E2E_LIVE_OLLAMA: "0"
         run: |
           set -euo pipefail
-          MISSING=0
-          if [ -z "${CLOUD_BASE_URL:-}" ]; then
-            echo "::warning::Missing repository variable FRIDAY_CLOUD_E2E_BASE_URL"
-            MISSING=1
-          fi
-          if [ -z "${CLOUD_ACCESS_TOKEN:-}" ]; then
-            echo "::warning::Missing secret FRIDAY_E2E_CLOUD_ACCESS_TOKEN"
-            MISSING=1
-          fi
-          if [ -z "${OPENAI_API_KEY:-}" ]; then
-            echo "::warning::Missing secret OPENAI_API_KEY"
-            MISSING=1
-          fi
+          mkdir -p artifacts/cloud-contract
+          FRIDAY_CLOUD_CONTRACT_REPORT_PATH=artifacts/cloud-contract/report.json \
+            node scripts/e2e/check-friday-cloud-contract.mjs
 
-          if [ "${MISSING}" -eq 1 ]; then
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Skipping cloud OpenAI E2E because baseline config is incomplete."
-          else
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Upload cloud contract artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-contract-openai-${{ github.run_id }}
+          path: artifacts/cloud-contract/
+          if-no-files-found: warn
+
+  cloud-live-e2e-openai:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: cloud-contract-openai
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Run cloud live e2e (OpenAI baseline)
-        if: ${{ steps.cloud_config.outputs.ready == 'true' }}
         env:
           CI: "true"
           FRIDAY_E2E_TARGET: "cloud"
@@ -195,6 +249,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cloud-live-e2e-openai-${{ github.run_id }}
+          name: cloud-live-openai-${{ github.run_id }}
           path: artifacts/
           if-no-files-found: warn
