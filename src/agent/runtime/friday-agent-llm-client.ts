@@ -84,17 +84,49 @@ async function* handleAnthropicStream(
   params: FridayAgentLlmStreamParams,
 ): AsyncIterable<FridayAgentLlmStreamEvent> {
   const isOAuth = authMode === "oauth";
+
+  // OAuth beta endpoints enforce stricter limits on request size.
+  // Truncate the system prompt and limit tools to stay within bounds.
+  const OAUTH_MAX_SYSTEM_CHARS = 8000;
+  const OAUTH_CORE_TOOLS = new Set([
+    "exec", "read", "write", "edit",
+    "web_fetch", "web_search",
+    "skill_run", "skills_list",
+    "memory_search", "memory_store",
+    "browser",
+  ]);
+
+  let systemPrompt: string;
+  if (isOAuth) {
+    const inner = params.systemPrompt.length > OAUTH_MAX_SYSTEM_CHARS
+      ? params.systemPrompt.slice(0, OAUTH_MAX_SYSTEM_CHARS)
+      : params.systemPrompt;
+    systemPrompt = `${FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX}\n\n${inner}`;
+  } else {
+    systemPrompt = params.systemPrompt;
+  }
+
+  let tools: AnthropicToolDefinition[];
+  if (isOAuth) {
+    const coreTools = params.tools.filter((t) => OAUTH_CORE_TOOLS.has(t.name));
+    const selectedTools = coreTools.length > 0 ? coreTools : params.tools.slice(0, 12);
+    tools = selectedTools.map((tool) => {
+      const converted = toAnthropicTool(tool);
+      return { ...converted, input_schema: sanitizeSchemaForOAuth(converted.input_schema) as Record<string, unknown> };
+    });
+  } else {
+    tools = params.tools.map(toAnthropicTool);
+  }
+
   const body: AnthropicMessageRequest = {
     model: params.model,
     max_tokens: 8192,
-    system: isOAuth
-      ? `${FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX}\n\n${params.systemPrompt}`
-      : params.systemPrompt,
+    system: systemPrompt,
     messages: params.messages.map((m) => ({
       role: m.role,
       content: m.content,
     })),
-    tools: params.tools.map(toAnthropicTool),
+    tools,
     stream: true,
     ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
   };
@@ -472,6 +504,78 @@ function normalizeSchemaNode(node: unknown): unknown {
 
   if (out.required !== undefined && !Array.isArray(out.required)) {
     delete out.required;
+  }
+
+  return out;
+}
+
+/**
+ * Sanitize JSON Schema for the Anthropic OAuth beta endpoint.
+ *
+ * The OAuth endpoint (`oauth-2025-04-20`) uses stricter schema validation
+ * than the standard Anthropic Messages API. It rejects requests containing
+ * certain JSON Schema keywords that are valid in draft-07 but not supported
+ * by the beta tool-call validator.
+ */
+const OAUTH_UNSUPPORTED_SCHEMA_KEYS = new Set([
+  "additionalProperties",
+  "$schema",
+  "$id",
+  "$ref",
+  "$defs",
+  "definitions",
+  "patternProperties",
+  "if",
+  "then",
+  "else",
+  "not",
+  "dependentSchemas",
+  "dependentRequired",
+]);
+
+function sanitizeSchemaForOAuth(node: unknown): unknown {
+  if (!node || typeof node !== "object" || Array.isArray(node)) {
+    return node;
+  }
+
+  const source = node as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(source)) {
+    if (OAUTH_UNSUPPORTED_SCHEMA_KEYS.has(key)) {
+      continue;
+    }
+
+    // Flatten anyOf/oneOf/allOf to first variant (best-effort)
+    if ((key === "anyOf" || key === "oneOf" || key === "allOf") && Array.isArray(value) && value.length > 0) {
+      const first = sanitizeSchemaForOAuth(value[0]);
+      if (first && typeof first === "object" && !Array.isArray(first)) {
+        for (const [fk, fv] of Object.entries(first as Record<string, unknown>)) {
+          if (!(fk in out)) {
+            out[fk] = fv;
+          }
+        }
+      }
+      continue;
+    }
+
+    // Recurse into properties
+    if (key === "properties" && typeof value === "object" && value && !Array.isArray(value)) {
+      const sanitized: Record<string, unknown> = {};
+      for (const [propName, propSchema] of Object.entries(value as Record<string, unknown>)) {
+        sanitized[propName] = sanitizeSchemaForOAuth(propSchema);
+      }
+      out[key] = sanitized;
+      continue;
+    }
+
+    // Recurse into items
+    if (key === "items") {
+      out[key] = sanitizeSchemaForOAuth(value);
+      continue;
+    }
+
+    out[key] = value;
   }
 
   return out;
