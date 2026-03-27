@@ -23,14 +23,52 @@ interface AnthropicToolDefinition {
   input_schema: Record<string, unknown>;
 }
 
+interface AnthropicSystemBlock {
+  type: "text";
+  text: string;
+}
+
 interface AnthropicMessageRequest {
   model: string;
   max_tokens: number;
-  system: string;
+  system: string | AnthropicSystemBlock[];
   messages: Array<{ role: string; content: unknown }>;
   tools: AnthropicToolDefinition[];
   stream: true;
   temperature?: number;
+}
+
+/**
+ * Map Friday tool names to Claude Code canonical names.
+ * The OAuth beta endpoint validates that tool names match Claude Code's tool surface.
+ * Source: pi-ai SDK claudeCodeTools list (anthropic.js lines 39-57).
+ */
+const FRIDAY_TO_CLAUDE_CODE_NAMES: ReadonlyMap<string, string> = new Map([
+  ["exec", "Bash"],
+  ["read", "Read"],
+  ["write", "Write"],
+  ["edit", "Edit"],
+  ["web_fetch", "WebFetch"],
+  ["web_search", "WebSearch"],
+  ["skill_run", "Skill"],
+  ["skills_list", "Glob"],
+  ["spawn_subagent", "Task"],
+  ["get_subagent", "TaskOutput"],
+  ["memory_search", "Grep"],
+  ["feedback", "AskUserQuestion"],
+  ["task_status", "TodoWrite"],
+]);
+
+const CLAUDE_CODE_TO_FRIDAY_NAMES: ReadonlyMap<string, string> = new Map(
+  [...FRIDAY_TO_CLAUDE_CODE_NAMES.entries()].map(([friday, cc]) => [cc, friday]),
+);
+
+function toOAuthToolName(fridayName: string): string {
+  return FRIDAY_TO_CLAUDE_CODE_NAMES.get(fridayName) ?? fridayName;
+}
+
+function fromOAuthToolName(ccName: string): string {
+  return CLAUDE_CODE_TO_FRIDAY_NAMES.get(ccName) ?? ccName;
 }
 
 interface OpenAiFunctionDefinition {
@@ -84,17 +122,64 @@ async function* handleAnthropicStream(
   params: FridayAgentLlmStreamParams,
 ): AsyncIterable<FridayAgentLlmStreamEvent> {
   const isOAuth = authMode === "oauth";
+
+  // OAuth beta endpoints enforce stricter limits on request size.
+  // Truncate the system prompt and limit tools to stay within bounds.
+  const OAUTH_MAX_SYSTEM_CHARS = 8000;
+  const OAUTH_CORE_TOOLS = new Set([
+    "exec", "read", "write", "edit",
+    "web_fetch", "web_search",
+    "skill_run", "skills_list",
+    "memory_search", "memory_store",
+    "browser",
+  ]);
+
+  let systemField: string | AnthropicSystemBlock[];
+  if (isOAuth) {
+    // OAuth beta requires system as an array of blocks (matching Claude Code format).
+    const inner = params.systemPrompt.length > OAUTH_MAX_SYSTEM_CHARS
+      ? params.systemPrompt.slice(0, OAUTH_MAX_SYSTEM_CHARS)
+      : params.systemPrompt;
+    systemField = [
+      { type: "text" as const, text: FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX },
+      { type: "text" as const, text: inner },
+    ];
+  } else {
+    systemField = params.systemPrompt;
+  }
+
+  let tools: AnthropicToolDefinition[];
+  if (isOAuth) {
+    // OAuth beta: limit to core tools, sanitize schemas, map names to Claude Code canonical names.
+    // Deduplicate by mapped name (multiple Friday tools may map to the same Claude Code name).
+    const coreTools = params.tools.filter((t) => OAUTH_CORE_TOOLS.has(t.name));
+    const selectedTools = coreTools.length > 0 ? coreTools : params.tools.slice(0, 12);
+    const seen = new Set<string>();
+    tools = [];
+    for (const tool of selectedTools) {
+      const converted = toAnthropicTool(tool);
+      const mappedName = toOAuthToolName(converted.name);
+      if (seen.has(mappedName)) continue;
+      seen.add(mappedName);
+      tools.push({
+        ...converted,
+        name: mappedName,
+        input_schema: sanitizeSchemaForOAuth(converted.input_schema) as Record<string, unknown>,
+      });
+    }
+  } else {
+    tools = params.tools.map(toAnthropicTool);
+  }
+
   const body: AnthropicMessageRequest = {
     model: params.model,
     max_tokens: 8192,
-    system: isOAuth
-      ? `${FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX}\n\n${params.systemPrompt}`
-      : params.systemPrompt,
+    system: systemField,
     messages: params.messages.map((m) => ({
       role: m.role,
       content: m.content,
     })),
-    tools: params.tools.map(toAnthropicTool),
+    tools,
     stream: true,
     ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
   };
@@ -134,7 +219,14 @@ async function* handleAnthropicStream(
     );
   }
 
-  yield* parseAnthropicSSEStream(response.body);
+  for await (const event of parseAnthropicSSEStream(response.body)) {
+    // When using OAuth, map Claude Code tool names back to Friday tool names.
+    if (isOAuth && event.type === "tool_use") {
+      yield { ...event, name: fromOAuthToolName(event.name) };
+    } else {
+      yield event;
+    }
+  }
 }
 
 // ─── Ollama handler (non-streaming, tool support via function calling) ───
@@ -472,6 +564,78 @@ function normalizeSchemaNode(node: unknown): unknown {
 
   if (out.required !== undefined && !Array.isArray(out.required)) {
     delete out.required;
+  }
+
+  return out;
+}
+
+/**
+ * Sanitize JSON Schema for the Anthropic OAuth beta endpoint.
+ *
+ * The OAuth endpoint (`oauth-2025-04-20`) uses stricter schema validation
+ * than the standard Anthropic Messages API. It rejects requests containing
+ * certain JSON Schema keywords that are valid in draft-07 but not supported
+ * by the beta tool-call validator.
+ */
+const OAUTH_UNSUPPORTED_SCHEMA_KEYS = new Set([
+  "additionalProperties",
+  "$schema",
+  "$id",
+  "$ref",
+  "$defs",
+  "definitions",
+  "patternProperties",
+  "if",
+  "then",
+  "else",
+  "not",
+  "dependentSchemas",
+  "dependentRequired",
+]);
+
+function sanitizeSchemaForOAuth(node: unknown): unknown {
+  if (!node || typeof node !== "object" || Array.isArray(node)) {
+    return node;
+  }
+
+  const source = node as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(source)) {
+    if (OAUTH_UNSUPPORTED_SCHEMA_KEYS.has(key)) {
+      continue;
+    }
+
+    // Flatten anyOf/oneOf/allOf to first variant (best-effort)
+    if ((key === "anyOf" || key === "oneOf" || key === "allOf") && Array.isArray(value) && value.length > 0) {
+      const first = sanitizeSchemaForOAuth(value[0]);
+      if (first && typeof first === "object" && !Array.isArray(first)) {
+        for (const [fk, fv] of Object.entries(first as Record<string, unknown>)) {
+          if (!(fk in out)) {
+            out[fk] = fv;
+          }
+        }
+      }
+      continue;
+    }
+
+    // Recurse into properties
+    if (key === "properties" && typeof value === "object" && value && !Array.isArray(value)) {
+      const sanitized: Record<string, unknown> = {};
+      for (const [propName, propSchema] of Object.entries(value as Record<string, unknown>)) {
+        sanitized[propName] = sanitizeSchemaForOAuth(propSchema);
+      }
+      out[key] = sanitized;
+      continue;
+    }
+
+    // Recurse into items
+    if (key === "items") {
+      out[key] = sanitizeSchemaForOAuth(value);
+      continue;
+    }
+
+    out[key] = value;
   }
 
   return out;
