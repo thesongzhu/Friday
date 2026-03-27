@@ -1,4 +1,4 @@
-import { Suspense, lazy, type ReactNode } from "react";
+import { Suspense, lazy, useEffect, useState, type ReactNode } from "react";
 import { Navigate, Outlet, createBrowserRouter, useLocation } from "react-router-dom";
 import { AppShell } from "@/components/layout/app-shell";
 import { useAuth } from "@/hooks/use-auth";
@@ -38,13 +38,24 @@ function FullscreenMessage(props: { title: string; detail: string }) {
 }
 
 function RequireAuth({ children }: { children: ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, login: doLogin } = useAuth();
+  const [retrying, setRetrying] = useState(false);
 
-  if (isLoading) {
+  // If not authenticated and not loading, retry local auto-login once before showing login page.
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated && !retrying) {
+      setRetrying(true);
+      doLogin({ local: true }).catch(() => {
+        // Auto-login failed — will fall through to login page.
+      });
+    }
+  }, [isLoading, isAuthenticated, retrying, doLogin]);
+
+  if (isLoading || (!isAuthenticated && retrying)) {
     return (
       <FullscreenMessage
-        title="Restoring session"
-        detail="Friday is checking the current operator session before loading the control shell."
+        title="Starting Friday"
+        detail="Friday is preparing your local session."
       />
     );
   }
