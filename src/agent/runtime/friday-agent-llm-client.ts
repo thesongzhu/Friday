@@ -23,14 +23,52 @@ interface AnthropicToolDefinition {
   input_schema: Record<string, unknown>;
 }
 
+interface AnthropicSystemBlock {
+  type: "text";
+  text: string;
+}
+
 interface AnthropicMessageRequest {
   model: string;
   max_tokens: number;
-  system: string;
+  system: string | AnthropicSystemBlock[];
   messages: Array<{ role: string; content: unknown }>;
   tools: AnthropicToolDefinition[];
   stream: true;
   temperature?: number;
+}
+
+/**
+ * Map Friday tool names to Claude Code canonical names.
+ * The OAuth beta endpoint validates that tool names match Claude Code's tool surface.
+ * Source: pi-ai SDK claudeCodeTools list (anthropic.js lines 39-57).
+ */
+const FRIDAY_TO_CLAUDE_CODE_NAMES: ReadonlyMap<string, string> = new Map([
+  ["exec", "Bash"],
+  ["read", "Read"],
+  ["write", "Write"],
+  ["edit", "Edit"],
+  ["web_fetch", "WebFetch"],
+  ["web_search", "WebSearch"],
+  ["skill_run", "Skill"],
+  ["skills_list", "Glob"],
+  ["spawn_subagent", "Task"],
+  ["get_subagent", "TaskOutput"],
+  ["memory_search", "Grep"],
+  ["feedback", "AskUserQuestion"],
+  ["task_status", "TodoWrite"],
+]);
+
+const CLAUDE_CODE_TO_FRIDAY_NAMES: ReadonlyMap<string, string> = new Map(
+  [...FRIDAY_TO_CLAUDE_CODE_NAMES.entries()].map(([friday, cc]) => [cc, friday]),
+);
+
+function toOAuthToolName(fridayName: string): string {
+  return FRIDAY_TO_CLAUDE_CODE_NAMES.get(fridayName) ?? fridayName;
+}
+
+function fromOAuthToolName(ccName: string): string {
+  return CLAUDE_CODE_TO_FRIDAY_NAMES.get(ccName) ?? ccName;
 }
 
 interface OpenAiFunctionDefinition {
@@ -96,24 +134,39 @@ async function* handleAnthropicStream(
     "browser",
   ]);
 
-  let systemPrompt: string;
+  let systemField: string | AnthropicSystemBlock[];
   if (isOAuth) {
+    // OAuth beta requires system as an array of blocks (matching Claude Code format).
     const inner = params.systemPrompt.length > OAUTH_MAX_SYSTEM_CHARS
       ? params.systemPrompt.slice(0, OAUTH_MAX_SYSTEM_CHARS)
       : params.systemPrompt;
-    systemPrompt = `${FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX}\n\n${inner}`;
+    systemField = [
+      { type: "text" as const, text: FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX },
+      { type: "text" as const, text: inner },
+    ];
   } else {
-    systemPrompt = params.systemPrompt;
+    systemField = params.systemPrompt;
   }
 
   let tools: AnthropicToolDefinition[];
   if (isOAuth) {
+    // OAuth beta: limit to core tools, sanitize schemas, map names to Claude Code canonical names.
+    // Deduplicate by mapped name (multiple Friday tools may map to the same Claude Code name).
     const coreTools = params.tools.filter((t) => OAUTH_CORE_TOOLS.has(t.name));
     const selectedTools = coreTools.length > 0 ? coreTools : params.tools.slice(0, 12);
-    tools = selectedTools.map((tool) => {
+    const seen = new Set<string>();
+    tools = [];
+    for (const tool of selectedTools) {
       const converted = toAnthropicTool(tool);
-      return { ...converted, input_schema: sanitizeSchemaForOAuth(converted.input_schema) as Record<string, unknown> };
-    });
+      const mappedName = toOAuthToolName(converted.name);
+      if (seen.has(mappedName)) continue;
+      seen.add(mappedName);
+      tools.push({
+        ...converted,
+        name: mappedName,
+        input_schema: sanitizeSchemaForOAuth(converted.input_schema) as Record<string, unknown>,
+      });
+    }
   } else {
     tools = params.tools.map(toAnthropicTool);
   }
@@ -121,7 +174,7 @@ async function* handleAnthropicStream(
   const body: AnthropicMessageRequest = {
     model: params.model,
     max_tokens: 8192,
-    system: systemPrompt,
+    system: systemField,
     messages: params.messages.map((m) => ({
       role: m.role,
       content: m.content,
@@ -166,7 +219,14 @@ async function* handleAnthropicStream(
     );
   }
 
-  yield* parseAnthropicSSEStream(response.body);
+  for await (const event of parseAnthropicSSEStream(response.body)) {
+    // When using OAuth, map Claude Code tool names back to Friday tool names.
+    if (isOAuth && event.type === "tool_use") {
+      yield { ...event, name: fromOAuthToolName(event.name) };
+    } else {
+      yield event;
+    }
+  }
 }
 
 // ─── Ollama handler (non-streaming, tool support via function calling) ───
