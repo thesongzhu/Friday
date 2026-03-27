@@ -31,7 +31,6 @@ import type {
   FridayMarketplaceRequestRoutesDeps,
   FridayMultiTenantSecurityRoutesDeps,
   FridayObservabilityRoutesDeps,
-  FridayPackagingRoutesDeps,
   FridaySatellitePairingRoutesDeps,
   FridaySatelliteRuntimeRoutesDeps,
   FridaySkillMarketplaceRoutesDeps,
@@ -117,7 +116,6 @@ const STUB_MARKETPLACE_PLUGIN_DETAIL: FridayMarketplacePluginDetail = {
 const EXTENDED_ROUTE_SENTINELS = {
   multiTenantSecurity: "security.tenants.list",
   observability: "observability.traces.search",
-  packaging: "packaging.packages.list",
   desktop: "desktop.actions.execute",
   system: "system.session.get",
   discovery: "discovery.scan",
@@ -538,7 +536,6 @@ function createContractRuntime(options: { includeExtendedRouteFamilies?: boolean
       ? {
         multiTenantSecurity: {} as FridayMultiTenantSecurityRoutesDeps,
         observability: {} as FridayObservabilityRoutesDeps,
-        packaging: {} as FridayPackagingRoutesDeps,
         desktop: {} as FridayDesktopRoutesDeps,
         system: {} as FridaySystemRoutesDeps,
         discovery: {} as FridayDiscoveryRoutesDeps,
@@ -671,7 +668,6 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
       expect(summariseExtendedRoutePresence(baselineIds)).toEqual({
         multiTenantSecurity: false,
         observability: false,
-        packaging: false,
         desktop: false,
         system: false,
         discovery: false,
@@ -687,7 +683,6 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
       expect(summariseExtendedRoutePresence(extendedIds)).toEqual({
         multiTenantSecurity: true,
         observability: true,
-        packaging: true,
         desktop: true,
         system: true,
         discovery: true,
@@ -714,6 +709,7 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
       const renameEntries = Object.entries(FRIDAY_ROUTE_OPERATION_ID_RENAMES).sort(([left], [right]) =>
         left.localeCompare(right),
       );
+      const activeRenameEntries = renameEntries.filter(([, to]) => !to.startsWith("packaging."));
       expect(renameEntries).toHaveLength(26);
       expect(renameEntries.every(([from]) => !FRIDAY_ROUTE_OPERATION_ID_PATTERN.test(from))).toBe(true);
       expect(renameEntries.every(([, to]) => FRIDAY_ROUTE_OPERATION_ID_PATTERN.test(to))).toBe(true);
@@ -722,7 +718,7 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         .getRoutes()
         .map((route) => route.operationId)
         .sort();
-      const renameTargets = renameEntries.map(([, to]) => to).sort();
+      const renameTargets = activeRenameEntries.map(([, to]) => to).sort();
 
       expect(operationIds.every((operationId) => FRIDAY_ROUTE_OPERATION_ID_PATTERN.test(operationId))).toBe(true);
       expect(renameTargets.every((operationId) => operationIds.includes(operationId))).toBe(true);

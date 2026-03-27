@@ -1,8 +1,8 @@
 # Non-Platform Final Closeout
 
 - Status: passed
-- Git SHA: 52c9669
-- Generated At: 2026-03-25T23:14:04.863Z
+- Git SHA: bdc4b5f
+- Generated At: 2026-03-27T16:54:16.324Z
 - Notes:
   - All non-platform closeout gates passed.
 
@@ -11,51 +11,51 @@
 - Release verify: passed
   - Command: `npm run release:verify`
   - Exit Code: 0
-  - Started At: 2026-03-25T23:09:16.374Z
-  - Finished At: 2026-03-25T23:13:33.319Z
+  - Started At: 2026-03-27T16:50:31.806Z
+  - Finished At: 2026-03-27T16:53:47.650Z
 - Phase 1 closeout: passed
   - Command: `npm run closeout:phase1`
   - Exit Code: 0
-  - Started At: 2026-03-25T23:13:33.319Z
-  - Finished At: 2026-03-25T23:13:43.270Z
+  - Started At: 2026-03-27T16:53:47.650Z
+  - Finished At: 2026-03-27T16:53:56.133Z
 - Phase 2 closeout: passed
   - Command: `npm run closeout:phase2`
   - Exit Code: 0
-  - Started At: 2026-03-25T23:13:43.270Z
-  - Finished At: 2026-03-25T23:13:49.171Z
+  - Started At: 2026-03-27T16:53:56.133Z
+  - Finished At: 2026-03-27T16:54:01.550Z
 - Phase 3 closeout: passed
   - Command: `npm run closeout:phase3`
   - Exit Code: 0
-  - Started At: 2026-03-25T23:13:49.171Z
-  - Finished At: 2026-03-25T23:13:53.960Z
+  - Started At: 2026-03-27T16:54:01.550Z
+  - Finished At: 2026-03-27T16:54:05.737Z
 - Phase 4 closeout: passed
   - Command: `npm run closeout:phase4`
   - Exit Code: 0
-  - Started At: 2026-03-25T23:13:53.960Z
-  - Finished At: 2026-03-25T23:13:56.366Z
+  - Started At: 2026-03-27T16:54:05.737Z
+  - Finished At: 2026-03-27T16:54:08.049Z
 - Phase 5 closeout: passed
   - Command: `npm run closeout:phase5`
   - Exit Code: 0
-  - Started At: 2026-03-25T23:13:56.366Z
-  - Finished At: 2026-03-25T23:13:59.611Z
+  - Started At: 2026-03-27T16:54:08.049Z
+  - Finished At: 2026-03-27T16:54:10.923Z
 - Marketplace closeout: passed
   - Command: `npm run closeout:marketplace`
   - Exit Code: 0
-  - Started At: 2026-03-25T23:13:59.611Z
-  - Finished At: 2026-03-25T23:14:04.670Z
+  - Started At: 2026-03-27T16:54:10.923Z
+  - Finished At: 2026-03-27T16:54:16.109Z
 - UI bundle health: passed
   - Command: `npm run check:ui-bundle-health`
   - Exit Code: 0
-  - Started At: 2026-03-25T23:14:04.670Z
-  - Finished At: 2026-03-25T23:14:04.766Z
+  - Started At: 2026-03-27T16:54:16.109Z
+  - Finished At: 2026-03-27T16:54:16.206Z
 - Final truth audit: passed
   - Command: `npm run check:closeout:truth:final`
   - Exit Code: 0
-  - Started At: 2026-03-25T23:14:04.766Z
-  - Finished At: 2026-03-25T23:14:04.863Z
+  - Started At: 2026-03-27T16:54:16.206Z
+  - Finished At: 2026-03-27T16:54:16.324Z
 
 ## Metrics
 
 - stepCount: 9
-- startedAt: 2026-03-25T23:09:16.372Z
-- completedAt: 2026-03-25T23:14:04.863Z
+- startedAt: 2026-03-27T16:50:31.805Z
+- completedAt: 2026-03-27T16:54:16.324Z

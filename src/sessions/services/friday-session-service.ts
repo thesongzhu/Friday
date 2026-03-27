@@ -119,6 +119,15 @@ export function createFridaySessionService(
     return parentKey;
   }
 
+  function shouldDeferSubagentMemoryNamespaceResolution(
+    parts: ReturnType<typeof parseFridaySessionKey>,
+    err: unknown,
+  ): boolean {
+    return parts.kind === "subagent"
+      && err instanceof FridayDomainError
+      && err.code === FRIDAY_SESSION_ERROR_CODES.MEMORY_NAMESPACE_UNRESOLVABLE;
+  }
+
   return {
     async createSession(input: FridaySessionCreateInput) {
       const normalizedKey = normalizeFridaySessionKey({
@@ -254,8 +263,11 @@ export function createFridaySessionService(
             params.push(memoryNamespace);
           }
         } catch (err) {
-          // Memory namespace resolution is best-effort for getOrCreate
-          console.warn("[friday][session-service] memory namespace resolution failed:", err instanceof Error ? err.message : String(err));
+          if (!shouldDeferSubagentMemoryNamespaceResolution(parts, err)) {
+            // Memory namespace resolution is best-effort for getOrCreate.
+            // Subagent sessions can be created before parent lineage yields a userId.
+            console.warn("[friday][session-service] memory namespace resolution failed:", err instanceof Error ? err.message : String(err));
+          }
         }
 
         if (updates.length > 0) {
@@ -340,8 +352,11 @@ export function createFridaySessionService(
                 params.push(memoryNamespace);
               }
             } catch (err) {
-              // Memory namespace resolution is best-effort
-              console.warn("[friday][session-service] memory namespace resolution failed:", err instanceof Error ? err.message : String(err));
+              if (!shouldDeferSubagentMemoryNamespaceResolution(parts, err)) {
+                // Memory namespace resolution is best-effort. For fresh subagent
+                // sessions, the namespace may only become resolvable after lineage settles.
+                console.warn("[friday][session-service] memory namespace resolution failed:", err instanceof Error ? err.message : String(err));
+              }
             }
 
             if (updates.length > 0) {
