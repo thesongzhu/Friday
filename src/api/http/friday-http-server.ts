@@ -89,6 +89,10 @@ class MalformedUriError extends Error {
   }
 }
 
+function isMissingFileError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT";
+}
+
 function extractParams(pattern: string, actual: string): Record<string, string> {
   const patternParts = pattern.split("/");
   const actualParts = actual.split("/");
@@ -311,7 +315,9 @@ async function tryServeUiAsset(
         return true;
       }
     } catch (err) {
+      if (!isMissingFileError(err)) {
         console.warn("[friday][http-server] operation failed:", err instanceof Error ? err.message : String(err));
+      }
       // File doesn't exist — fall through
     }
   }
@@ -358,7 +364,9 @@ async function tryServeUiAsset(
       return true;
     }
   } catch (err) {
+    if (!isMissingFileError(err)) {
         console.warn("[friday][http-server] operation failed:", err instanceof Error ? err.message : String(err));
+    }
     // index.html doesn't exist
   }
 

@@ -67,6 +67,8 @@ const MAX_FILE_SEARCH_RESULTS = 50;
 const DEFAULT_COMPANION_HEARTBEAT_STALE_MS = 30_000;
 const DEFAULT_REMOTE_AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_REMOTE_ASSERTION_TTL_MS = 2 * 60 * 1000;
+type FridayWarnSink = (message: string) => void;
+const warnedCompanionMessagesBySink = new WeakMap<FridayWarnSink, Set<string>>();
 
 const HIGH_RISK_INTENTS = new Set<FridaySystemIntentAction>([
   "close_app",
@@ -95,6 +97,32 @@ export interface FridaySystemExecResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+}
+
+function normalizeCompanionUnavailableWarningKey(message: string): string {
+  const connectCodeMatch = /^connect\s+(ENOENT|ECONNREFUSED|EACCES|EPERM)\b/.exec(message);
+  if (connectCodeMatch) {
+    return `connect ${connectCodeMatch[1]}`;
+  }
+  return message.replace(/\/[^ ]+\.sock\b/g, "<socket>");
+}
+
+function warnCompanionUnavailableOnce(
+  warn: FridayWarnSink,
+  message: string,
+  prefix: string,
+): void {
+  const key = `${prefix}:${normalizeCompanionUnavailableWarningKey(message)}`;
+  let warnedMessages = warnedCompanionMessagesBySink.get(warn);
+  if (!warnedMessages) {
+    warnedMessages = new Set<string>();
+    warnedCompanionMessagesBySink.set(warn, warnedMessages);
+  }
+  if (warnedMessages.has(key)) {
+    return;
+  }
+  warnedMessages.add(key);
+  warn(`[friday] ${prefix}: ${message}`);
 }
 
 export interface CreateFridaySystemServiceDeps {
@@ -504,7 +532,11 @@ export async function createFridaySystemService(
         await emitHealthIfChanged("companion_reconnected");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        warn(`[friday] system companion unavailable; continuing in degraded mode: ${message}`);
+        warnCompanionUnavailableOnce(
+          warn,
+          message,
+          "system companion unavailable; continuing in degraded mode",
+        );
       } finally {
         reconnectInFlight = null;
       }
@@ -603,7 +635,13 @@ export async function createFridaySystemService(
 
   async function buildSnapshot(): Promise<FridaySystemSnapshot> {
     const companion = await deps.companionBridge.getStatus();
-    const companionSnapshot = await deps.companionBridge.captureSnapshot();
+    const companionSnapshot = companion.connected
+      ? await deps.companionBridge.captureSnapshot()
+      : {
+        apps: [],
+        windows: [],
+        notifications: [],
+      };
     const permissions = await readPermissions(companion.permissions);
     await emitCompanionEventsIfChanged(companion, permissions);
     const approvals = deps.db.withReadConnection((db) => repository.listApprovalRules(db));
@@ -948,7 +986,11 @@ export async function createFridaySystemService(
     await deps.companionBridge.connect();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    warn(`[friday] system companion unavailable at startup; continuing in degraded mode: ${message}`);
+    warnCompanionUnavailableOnce(
+      warn,
+      message,
+      "system companion unavailable at startup; continuing in degraded mode",
+    );
     scheduleCompanionReconnect();
   }
 

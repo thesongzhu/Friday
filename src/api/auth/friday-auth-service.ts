@@ -158,6 +158,22 @@ function verifyPassword(input: string, hash: string): { valid: boolean; needsUpg
 // Dummy scrypt hash for constant-time verification against non-existent users.
 // Generated once at module load; the actual password doesn't matter.
 const DUMMY_SCRYPT_HASH = hashPasswordScrypt("__friday_dummy_password_for_timing__");
+const warnedMessagesBySink = new WeakMap<(message: string) => void, Set<string>>();
+
+function createWarnOnce(warn: (message: string) => void): (message: string) => void {
+  return (message: string) => {
+    let warnedMessages = warnedMessagesBySink.get(warn);
+    if (!warnedMessages) {
+      warnedMessages = new Set<string>();
+      warnedMessagesBySink.set(warn, warnedMessages);
+    }
+    if (warnedMessages.has(message)) {
+      return;
+    }
+    warnedMessages.add(message);
+    warn(message);
+  };
+}
 
 export class FridayAuthError extends FridayDomainError {
   override readonly name = "FridayAuthError";
@@ -178,16 +194,18 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
   const allowPasswordless = deps.allowPasswordlessLocalLogin ?? false;
   const allowLocalBypassLogin = deps.allowLocalBypassLogin ?? false;
   const warn = deps.warn ?? console.warn;
+  const warnOnce = createWarnOnce(warn);
+  const silenceExpectedTestWarnings = Boolean(process.env.VITEST) && warn === console.warn;
   const rateLimiter = deps.rateLimiter;
 
   // P1-SEC-004: Warn if token secret is too short
   if (deps.tokenSecret.length < 32) {
-    warn("[friday][SECURITY] Token secret is shorter than recommended minimum (32 chars) — session tokens may be vulnerable to brute-force");
+    warnOnce("[friday][SECURITY] Token secret is shorter than recommended minimum (32 chars) — session tokens may be vulnerable to brute-force");
   }
 
   // P1-SEC-005: Warn if rate limiter is not configured
   if (!rateLimiter) {
-    warn("[friday][SECURITY] Auth rate limiter not configured — brute-force protection disabled");
+    warnOnce("[friday][SECURITY] Auth rate limiter not configured — brute-force protection disabled");
   }
 
   /**
@@ -479,9 +497,13 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
           );
         }
         if (requestedLocalBypass) {
-          warn("[friday] WARNING: Local bypass login used (no-signin mode).");
+          if (!silenceExpectedTestWarnings) {
+            warnOnce("[friday] WARNING: Local bypass login used (no-signin mode).");
+          }
         } else {
-          warn("[friday] WARNING: Passwordless local login used. This is allowed only in dev mode.");
+          if (!silenceExpectedTestWarnings) {
+            warnOnce("[friday] WARNING: Passwordless local login used. This is allowed only in dev mode.");
+          }
         }
       }
 

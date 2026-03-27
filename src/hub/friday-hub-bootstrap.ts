@@ -296,6 +296,39 @@ export {
   resolveTokenSecret,
 } from "./bootstrap/hub-helpers.js";
 
+type FridayWarnSink = (message: string) => void;
+
+const warnedMessagesBySink = new WeakMap<FridayWarnSink, Set<string>>();
+
+function warnOnce(warn: FridayWarnSink, message: string): void {
+  let warnedMessages = warnedMessagesBySink.get(warn);
+  if (!warnedMessages) {
+    warnedMessages = new Set<string>();
+    warnedMessagesBySink.set(warn, warnedMessages);
+  }
+  if (warnedMessages.has(message)) {
+    return;
+  }
+  warnedMessages.add(message);
+  warn(message);
+}
+
+function warnHubBootstrapOnce(message: string): void {
+  warnOnce(console.warn as FridayWarnSink, message);
+}
+
+function warnHubBootstrapOperationFailureOnce(error: unknown): void {
+  warnHubBootstrapOnce(
+    `[friday][hub-bootstrap] operation failed: ${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+
+function isExpectedVitestProviderNoRouting(error: unknown): boolean {
+  return Boolean(process.env.VITEST)
+    && error instanceof FridayDomainError
+    && error.code === "PROVIDER_NO_ROUTING";
+}
+
 export type {
   FridayHub,
   FridayHubConfig,
@@ -451,7 +484,9 @@ export async function createFridayHub(
         ).run("admin-001", "admin@friday.dev", "Admin", "admin", nowIso, nowIso);
       });
       // P2: Always warn when creating passwordless admin (password_hash = NULL)
-      console.warn("[friday][SECURITY] Created default admin user (admin@friday.dev) with NO password — set a passphrase via the setup wizard for production use");
+      warnHubBootstrapOnce(
+        "[friday][SECURITY] Created default admin user (admin@friday.dev) with NO password — set a passphrase via the setup wizard for production use",
+      );
     }
   }
 
@@ -586,7 +621,7 @@ export async function createFridayHub(
           });
         });
       } catch (err) {
-      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err));
+      warnHubBootstrapOperationFailureOnce(err);
         // Keep runtime fail-open if audit persistence fails.
       }
     },
@@ -2101,7 +2136,9 @@ export async function createFridayHub(
     const modelName = defaultRoute.model;            // e.g. "claude-opus-4-5-20251101"
     agentModelIdentity = `${modelName} (provider: ${providerKind})`;
   } catch (err) {
-      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err));
+      if (!isExpectedVitestProviderNoRouting(err)) {
+      warnHubBootstrapOperationFailureOnce(err);
+      }
     // No provider configured yet — use generic identity.
   }
   try {
@@ -2111,10 +2148,12 @@ export async function createFridayHub(
     ]);
     const routingWarning = resolveFridayRoutingStabilityWarning({ routing, providers });
     if (routingWarning) {
-      console.warn(`[friday][W-PROVIDER-ROUTING-001] ${routingWarning}`);
+      warnHubBootstrapOnce(`[friday][W-PROVIDER-ROUTING-001] ${routingWarning}`);
     }
   } catch (err) {
-      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err));
+      if (!isExpectedVitestProviderNoRouting(err)) {
+        warnHubBootstrapOperationFailureOnce(err);
+      }
     // Non-fatal: provider routing diagnostics should not block startup.
   }
 
@@ -2150,7 +2189,7 @@ export async function createFridayHub(
       }
       workspaceContextSummary = ctx.workspaceContext?.summary;
     } catch (err) {
-      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err));
+      warnHubBootstrapOperationFailureOnce(err);
       // Non-fatal: workspace context loading failure should not block agent runs.
     }
     const starterSkills = registry.list()
@@ -2610,7 +2649,7 @@ export async function createFridayHub(
       const envelope = JSON.parse(entity.encryptedValue) as FridayEncryptedEnvelope;
       return decryptSecret(envelope, getMasterKey());
     } catch (err) {
-      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err));
+      warnHubBootstrapOperationFailureOnce(err);
       return null;
     }
   };
@@ -4989,11 +5028,11 @@ export async function createFridayHub(
 
       // P1-SHUT-001/002/003: Stop services started during bootstrap
       try { observabilityService?.scheduler?.stop(); } catch (err) {
-      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err)); /* best-effort */ }
+      warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
       try { agentLearningBridge?.stop(); } catch (err) {
-      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err)); /* best-effort */ }
+      warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
       try { if (mcpAdapter && "close" in mcpAdapter) await (mcpAdapter as unknown as { close(): Promise<void> }).close(); } catch (err) {
-      console.warn("[friday][hub-bootstrap] operation failed:", err instanceof Error ? err.message : String(err)); /* best-effort */ }
+      warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
 
       // 1. Stop job scheduler (F11: await in-flight)
       if (jobScheduler) {

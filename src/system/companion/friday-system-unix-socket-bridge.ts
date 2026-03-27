@@ -30,6 +30,29 @@ export interface CreateFridaySystemUnixSocketBridgeOptions
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
+type FridayWarnSink = (message: string) => void;
+const warnedKeysBySink = new WeakMap<FridayWarnSink, Set<string>>();
+
+function warnOnce(warn: FridayWarnSink, key: string, message: string): void {
+  let warnedKeys = warnedKeysBySink.get(warn);
+  if (!warnedKeys) {
+    warnedKeys = new Set<string>();
+    warnedKeysBySink.set(warn, warnedKeys);
+  }
+  if (warnedKeys.has(key)) {
+    return;
+  }
+  warnedKeys.add(key);
+  warn(message);
+}
+
+function normalizeCompanionTransportWarningKey(message: string): string {
+  const connectCodeMatch = /^connect\s+(ENOENT|ECONNREFUSED|EACCES|EPERM)\b/.exec(message);
+  if (connectCodeMatch) {
+    return `connect ${connectCodeMatch[1]}`;
+  }
+  return message.replace(/\/[^ ]+\.sock\b/g, "<socket>");
+}
 
 function normalizeCompanionStatus(
   status: FridaySystemCompanionStatus,
@@ -218,7 +241,12 @@ export function createFridaySystemUnixSocketBridge(
         lastHeartbeatAt = status.lastHeartbeatAt;
         return status;
       } catch (err) {
-        console.warn("[friday][unix-socket-bridge] getStatus:", err instanceof Error ? err.message : String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        warnOnce(
+          console.warn as FridayWarnSink,
+          `getStatus:${normalizeCompanionTransportWarningKey(message)}`,
+          `[friday][unix-socket-bridge] getStatus: ${message}`,
+        );
         connected = false;
         lastHeartbeatAt = options.nowIso();
         return buildFridaySystemCompanionStatus(options, {
@@ -237,7 +265,17 @@ export function createFridaySystemUnixSocketBridge(
         lastHeartbeatAt = options.nowIso();
         return snapshot;
       } catch (err) {
-        console.warn("[friday][unix-socket-bridge] captureSnapshot:", err instanceof Error ? err.message : String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        if (
+          !message.startsWith("Companion request timed out: companion.captureSnapshot")
+          && !message.startsWith("Companion closed connection before responding: companion.captureSnapshot")
+        ) {
+          warnOnce(
+            console.warn as FridayWarnSink,
+            `captureSnapshot:${message}`,
+            `[friday][unix-socket-bridge] captureSnapshot: ${message}`,
+          );
+        }
         connected = false;
         lastHeartbeatAt = options.nowIso();
         return {

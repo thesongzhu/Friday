@@ -709,16 +709,16 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
       const renameEntries = Object.entries(FRIDAY_ROUTE_OPERATION_ID_RENAMES).sort(([left], [right]) =>
         left.localeCompare(right),
       );
-      const activeRenameEntries = renameEntries.filter(([, to]) => !to.startsWith("packaging."));
-      expect(renameEntries).toHaveLength(26);
+      expect(renameEntries).toHaveLength(24);
       expect(renameEntries.every(([from]) => !FRIDAY_ROUTE_OPERATION_ID_PATTERN.test(from))).toBe(true);
       expect(renameEntries.every(([, to]) => FRIDAY_ROUTE_OPERATION_ID_PATTERN.test(to))).toBe(true);
+      expect(renameEntries.some(([, to]) => to.startsWith("packaging."))).toBe(false);
 
       const operationIds = fixture.runtime.routes
         .getRoutes()
         .map((route) => route.operationId)
         .sort();
-      const renameTargets = activeRenameEntries.map(([, to]) => to).sort();
+      const renameTargets = renameEntries.map(([, to]) => to).sort();
 
       expect(operationIds.every((operationId) => FRIDAY_ROUTE_OPERATION_ID_PATTERN.test(operationId))).toBe(true);
       expect(renameTargets.every((operationId) => operationIds.includes(operationId))).toBe(true);

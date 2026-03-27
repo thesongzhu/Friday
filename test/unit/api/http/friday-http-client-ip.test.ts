@@ -91,10 +91,11 @@ describe("Friday HTTP client IP resolution", () => {
     });
 
     expect(clientIp).toBe("203.0.113.20");
-    expect(() => service.login({ local: true }, clientIp)).toThrow(FridayAuthError);
     try {
       service.login({ local: true }, clientIp);
+      throw new Error("expected local login to throw");
     } catch (err) {
+      expect(err).toBeInstanceOf(FridayAuthError);
       expect((err as FridayAuthError).code).toBe("PASSWORDLESS_LOCALHOST_ONLY");
     }
   });

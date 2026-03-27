@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
 import { FridayAuthError } from "#api";
@@ -88,6 +88,29 @@ describe("createFridayHub", () => {
     expect(operationIds).toContain("agent.loop.policy.get");
   });
 
+  it("deduplicates expected startup warnings across repeated hub bootstraps", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      hub = await createIsolatedHub();
+      await hub.stop();
+      hub = null;
+      if (stateDir) {
+        await fs.rm(stateDir, { recursive: true, force: true });
+        stateDir = null;
+      }
+      bundledSkillsDir = null;
+      managedSkillsDir = null;
+
+      hub = await createIsolatedHub();
+
+      const warnings = warnSpy.mock.calls.map(([message]) => String(message));
+      expect(warnings.filter((message) => message.includes("Created default admin user"))).toHaveLength(1);
+      expect(warnings.filter((message) => message.includes("No model routing configured"))).toHaveLength(0);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("executor returns failed for unknown skill", async () => {
     hub = await createIsolatedHub();
     await hub.start();
@@ -107,10 +130,11 @@ describe("createFridayHub", () => {
 
   it("does not allow local bypass login from remote IP (allowLocalBypassLogin defaults to false)", async () => {
     hub = await createIsolatedHub();
-    expect(() => hub!.apiRuntime.auth.login({ local: true }, "203.0.113.20")).toThrow(FridayAuthError);
     try {
       hub!.apiRuntime.auth.login({ local: true }, "203.0.113.20");
+      throw new Error("expected local bypass login to throw");
     } catch (err) {
+      expect(err).toBeInstanceOf(FridayAuthError);
       expect((err as FridayAuthError).code).toBe("PASSWORDLESS_LOCALHOST_ONLY");
     }
   });
