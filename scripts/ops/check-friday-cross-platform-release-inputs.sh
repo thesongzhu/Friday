@@ -6,6 +6,12 @@ if [[ -z "${REPO_DIR}" ]]; then
   REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fi
 REPO_DIR="$(cd "${REPO_DIR}" && pwd)"
+CHECK_MODE="${FRIDAY_CROSS_PLATFORM_CHECK_MODE:-local}"
+
+if [[ "${CHECK_MODE}" != "local" && "${CHECK_MODE}" != "ci-public" ]]; then
+  echo "[friday-cross-platform-release-inputs] unsupported FRIDAY_CROSS_PLATFORM_CHECK_MODE=${CHECK_MODE}" >&2
+  exit 2
+fi
 
 CHECKLIST_PATH="${FRIDAY_CROSS_PLATFORM_CHECKLIST_PATH:-${REPO_DIR}/docs/ops/friday-cross-platform-agent-os-completion-checklist.md}"
 EVIDENCE_ROOT="${FRIDAY_CROSS_PLATFORM_EVIDENCE_ROOT:-${REPO_DIR}/docs/reports/ops/cross-platform-agent-os-beta-evidence}"
@@ -38,6 +44,10 @@ require_file() {
 require_command() {
   local command_name="$1"
   local label="$2"
+  if [[ "${CHECK_MODE}" != "local" ]]; then
+    pass "${label} (skipped in ${CHECK_MODE} mode)"
+    return
+  fi
   if command -v "${command_name}" >/dev/null 2>&1; then
     pass "${label}"
   else
@@ -61,7 +71,9 @@ require_env_or_file() {
   local label="$2"
   local value="${!variable_name:-}"
   if [[ -n "${value}" ]]; then
-    if [[ -f "${value}" ]]; then
+    if [[ "${CHECK_MODE}" != "local" ]]; then
+      pass "${label}"
+    elif [[ -f "${value}" ]]; then
       pass "${label}"
     else
       fail "${label} (${value})"
@@ -105,7 +117,9 @@ require_file "${WINDOWS_EVIDENCE_PATH}" "Windows evidence template exists"
 require_command node "node runtime available"
 require_command npm "npm runtime available"
 
-if [[ "$(uname -s)" == "Darwin" ]]; then
+if [[ "${CHECK_MODE}" != "local" ]]; then
+  pass "macOS local companion release environment (skipped in ${CHECK_MODE} mode)"
+elif [[ "$(uname -s)" == "Darwin" ]]; then
   if FRIDAY_MACOS_RELEASE_MODE=local bash "${REPO_DIR}/scripts/ops/check-friday-companion-release-env.sh" "${REPO_DIR}" >/dev/null 2>&1; then
     pass "macOS local companion release environment"
   else

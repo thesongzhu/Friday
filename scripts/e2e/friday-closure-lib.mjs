@@ -93,6 +93,41 @@ export function collectCloudBlockers(env = process.env) {
   return blockers;
 }
 
+export function resolveCloudContractReport(env = process.env) {
+  const blockers = collectCloudBlockers(env);
+  const baseUrl = env.FRIDAY_E2E_CLOUD_BASE_URL?.trim() ?? "";
+  const authMode = env.FRIDAY_E2E_CLOUD_AUTH_MODE?.trim() ?? "";
+  const target = (env.FRIDAY_E2E_TARGET ?? "local").trim().toLowerCase();
+
+  if (target !== "cloud") {
+    blockers.push(`FRIDAY_E2E_TARGET must be "cloud" for cloud contract checks (received "${target}")`);
+  }
+
+  if (baseUrl) {
+    try {
+      const parsed = new URL(baseUrl);
+      if (!/^https?:$/.test(parsed.protocol)) {
+        blockers.push(`FRIDAY_E2E_CLOUD_BASE_URL must use http or https (received "${parsed.protocol}")`);
+      }
+    } catch {
+      blockers.push("FRIDAY_E2E_CLOUD_BASE_URL must be a valid absolute URL");
+    }
+  }
+
+  return {
+    ready: blockers.length === 0,
+    target,
+    baseUrl: baseUrl || null,
+    authMode: authMode || null,
+    liveProvider: env.FRIDAY_E2E_LIVE_OPENAI === "1"
+      ? "openai"
+      : env.FRIDAY_E2E_LIVE_OLLAMA === "1"
+        ? "ollama"
+        : null,
+    blockers,
+  };
+}
+
 export function collectChannelBlockers(env = process.env) {
   const configuredKinds = parseEnabledChannelKinds(env.FRIDAY_CHANNELS_JSON);
   const requiredKinds = [
