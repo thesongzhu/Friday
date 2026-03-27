@@ -17,7 +17,6 @@ import type {
   FridayMarketplaceRequestRoutesDeps,
   FridayMultiTenantSecurityRoutesDeps,
   FridayObservabilityRoutesDeps,
-  FridayPackagingRoutesDeps,
   FridaySatellitePairingRoutesDeps,
   FridaySatelliteRuntimeRoutesDeps,
   FridaySystemRoutesDeps,
@@ -143,7 +142,6 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(operationIds.some((id) => id.startsWith("observability."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("config."))).toBe(false);
     expect(operationIds).not.toContain("audit.logs.list");
-    expect(operationIds.some((id) => id.startsWith("packaging."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("desktop."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("system."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("discovery."))).toBe(false);
@@ -162,7 +160,6 @@ describe("API Runtime — Extended Route Registration", () => {
       configManager: makeMockConfigManager(),
       multiTenantSecurity: {} as FridayMultiTenantSecurityRoutesDeps,
       observability: {} as FridayObservabilityRoutesDeps,
-      packaging: {} as FridayPackagingRoutesDeps,
       desktop: {} as FridayDesktopRoutesDeps,
       system: {} as FridaySystemRoutesDeps,
       discovery: {} as FridayDiscoveryRoutesDeps,
@@ -276,7 +273,6 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(operationIds).toContain("observability.traces.search");
     expect(operationIds).toContain("config.get");
     expect(operationIds).toContain("audit.logs.list");
-    expect(operationIds).toContain("packaging.packages.list");
     expect(operationIds).toContain("desktop.actions.execute");
     expect(operationIds).toContain("system.session.get");
     expect(operationIds).toContain("discovery.scan");
@@ -637,125 +633,6 @@ describe("API Runtime — Extended Route Registration", () => {
       code: "FORBIDDEN",
     });
     expect(tenantsGet).not.toHaveBeenCalled();
-  });
-
-  it("enforces tenant boundary on packaging routes that carry tenantId", async () => {
-    const installSpy = vi.fn(() => ({ install: { id: "install-1" } }));
-    const packaging = {
-      packages: {
-        publish: vi.fn(),
-        list: vi.fn(),
-        get: vi.fn(),
-        listVersions: vi.fn(),
-        verify: vi.fn(),
-        checkDependencies: vi.fn(),
-      },
-      installs: {
-        install: installSpy,
-        upgrade: vi.fn(),
-        rollback: vi.fn(),
-        uninstall: vi.fn(),
-        list: vi.fn(),
-        get: vi.fn(),
-      },
-      lifecycle: {
-        list: vi.fn(),
-      },
-      keys: {
-        list: vi.fn(),
-        add: vi.fn(),
-        revoke: vi.fn(),
-        rotate: vi.fn(),
-      },
-    } as unknown as FridayPackagingRoutesDeps;
-
-    const runtime = createFridayApiRuntime({
-      ...makeBaseDeps(),
-      packaging,
-    });
-    const route = runtime.routes
-      .getRoutes()
-      .find((entry) => entry.operationId === "packaging.installs.install");
-    expect(route).toBeDefined();
-
-    await expect(route!.handler({
-      params: { packageName: "pkg-x" },
-      query: {},
-      body: {
-        tenantId: "tenant-a",
-        idempotencyKey: "idemp-1",
-      },
-      headers: {},
-      principal: makePrincipal({
-        principalId: "tenant-b",
-        scopes: ["plugin.install"],
-      }),
-      requestId: "req-1",
-      receivedAt: NOW,
-    } as never)).rejects.toMatchObject({
-      code: "FORBIDDEN",
-    });
-
-    expect(installSpy).not.toHaveBeenCalled();
-  });
-
-  it("allows packaging routes when tenantId matches principal", async () => {
-    const installSpy = vi.fn(() => ({ install: { id: "install-1" } }));
-    const runtime = createFridayApiRuntime({
-      ...makeBaseDeps(),
-      packaging: {
-        packages: {
-          publish: vi.fn(),
-          list: vi.fn(),
-          get: vi.fn(),
-          listVersions: vi.fn(),
-          verify: vi.fn(),
-          checkDependencies: vi.fn(),
-        },
-        installs: {
-          install: installSpy,
-          upgrade: vi.fn(),
-          rollback: vi.fn(),
-          uninstall: vi.fn(),
-          list: vi.fn(),
-          get: vi.fn(),
-        },
-        lifecycle: {
-          list: vi.fn(),
-        },
-        keys: {
-          list: vi.fn(),
-          add: vi.fn(),
-          revoke: vi.fn(),
-          rotate: vi.fn(),
-        },
-      } as unknown as FridayPackagingRoutesDeps,
-    });
-
-    const route = runtime.routes
-      .getRoutes()
-      .find((entry) => entry.operationId === "packaging.installs.install");
-    expect(route).toBeDefined();
-
-    await expect(route!.handler({
-      params: { packageName: "pkg-x" },
-      query: {},
-      body: {
-        tenantId: "tenant-a",
-        idempotencyKey: "idemp-2",
-      },
-      headers: {},
-      principal: makePrincipal({
-        principalId: "tenant-a",
-        scopes: ["plugin.install"],
-      }),
-      requestId: "req-2",
-      receivedAt: NOW,
-    } as never)).resolves.toMatchObject({
-      install: { id: "install-1" },
-    });
-
-    expect(installSpy).toHaveBeenCalledTimes(1);
   });
 
   it("enforces tenant boundary on marketplace routes when buyerTenantId is requested", async () => {

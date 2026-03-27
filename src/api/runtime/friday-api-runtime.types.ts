@@ -43,7 +43,6 @@ import type { FridaySkillMarketplaceRoutesDeps } from "../http/routes/friday-ski
 import type { FridayMultiTenantSecurityRoutesDeps } from "../http/routes/friday-multi-tenant-security-routes.js";
 import type { FridayObservabilityRoutesDeps } from "../http/routes/friday-observability-routes.js";
 import type { FridayObservabilityApiService } from "../../observability/services/friday-observability-api-service.js";
-import type { FridayPackagingRoutesDeps } from "../http/routes/friday-packaging-routes.js";
 import type { FridaySatellitePairingRoutesDeps } from "../http/routes/friday-satellite-pairing-routes.js";
 import type { FridaySatelliteRuntimeRoutesDeps } from "../http/routes/friday-satellite-runtime-routes.js";
 import type { FridayDiagnosisRoutesDeps } from "../http/routes/friday-diagnosis-routes.js";
@@ -178,8 +177,6 @@ export interface CreateFridayApiRuntimeDeps {
   observabilityService?: FridayObservabilityApiService;
   /** Optional: runtime config manager for `/v1/config*` admin APIs. */
   configManager?: FridayHubConfigManagerService;
-  /** Optional: package lifecycle route surface. */
-  packaging?: FridayPackagingRoutesDeps;
   /** Optional: self-healing diagnosis route surface. */
   diagnosis?: FridayDiagnosisRoutesDeps;
   /** Optional: self-healing auto-fix route surface. */

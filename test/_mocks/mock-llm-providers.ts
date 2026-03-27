@@ -184,20 +184,46 @@ function buildOpenAICompletionsToolSSE(
 }
 
 // ─── OpenAI Responses SSE builder ───
-// NOTE: The agent LLM client routes openai-responses through the same
-// parseOpenAISSEStream parser which expects choices-based format.
-// However, the provider inference client uses non-streaming JSON.
-// We provide both: SSE for the agent path (choices-based) and
-// the buildOpenAIResponsesJson for the inference client path.
+// The agent runtime consumes the real Responses SSE protocol.
+// The provider inference client still uses non-streaming JSON.
+
+export function buildRealOpenAIResponsesTextSSE(text: string): string[] {
+  const responseId = `resp_${nextMsgId()}`;
+  const messageId = `msg_${nextMsgId()}`;
+  const outputTokens = text.split(" ").length;
+  return [
+    `event: response.created\ndata: {"type":"response.created","response":{"id":"${responseId}","status":"in_progress"}}\n\n`,
+    `event: response.output_item.added\ndata: {"type":"response.output_item.added","response_id":"${responseId}","output_index":0,"item":{"id":"${messageId}","type":"message","status":"in_progress","role":"assistant","content":[]}}\n\n`,
+    `event: response.content_part.added\ndata: {"type":"response.content_part.added","item_id":"${messageId}","output_index":0,"content_index":0,"part":{"type":"output_text","text":""}}\n\n`,
+    `event: response.output_text.delta\ndata: {"type":"response.output_text.delta","item_id":"${messageId}","output_index":0,"content_index":0,"delta":${JSON.stringify(text)}}\n\n`,
+    `event: response.output_item.done\ndata: {"type":"response.output_item.done","output_index":0,"item":{"id":"${messageId}","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":${JSON.stringify(text)}}]}}\n\n`,
+    `event: response.completed\ndata: {"type":"response.completed","response":{"id":"${responseId}","status":"completed","usage":{"input_tokens":10,"output_tokens":${outputTokens}}}}\n\n`,
+  ];
+}
+
+export function buildRealOpenAIResponsesToolSSE(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  toolCallId?: string,
+): string[] {
+  const responseId = `resp_${nextMsgId()}`;
+  const callId = toolCallId ?? nextCallId();
+  const argsJson = JSON.stringify(toolInput);
+  const midpoint = Math.max(1, Math.floor(argsJson.length / 2));
+  const firstDelta = argsJson.slice(0, midpoint);
+  const secondDelta = argsJson.slice(midpoint);
+  return [
+    `event: response.created\ndata: {"type":"response.created","response":{"id":"${responseId}","status":"in_progress"}}\n\n`,
+    `event: response.output_item.added\ndata: {"type":"response.output_item.added","response_id":"${responseId}","output_index":0,"item":{"id":"${callId}","type":"function_call","status":"in_progress","call_id":"${callId}","name":"${toolName}","arguments":""}}\n\n`,
+    `event: response.function_call_arguments.delta\ndata: {"type":"response.function_call_arguments.delta","item_id":"${callId}","output_index":0,"delta":${JSON.stringify(firstDelta)}}\n\n`,
+    `event: response.function_call_arguments.delta\ndata: {"type":"response.function_call_arguments.delta","item_id":"${callId}","output_index":0,"delta":${JSON.stringify(secondDelta)}}\n\n`,
+    `event: response.output_item.done\ndata: {"type":"response.output_item.done","output_index":0,"item":{"id":"${callId}","type":"function_call","status":"completed","call_id":"${callId}","name":"${toolName}","arguments":${JSON.stringify(argsJson)}}}\n\n`,
+    `event: response.completed\ndata: {"type":"response.completed","response":{"id":"${responseId}","status":"completed","usage":{"input_tokens":10,"output_tokens":10}}}\n\n`,
+  ];
+}
 
 function buildOpenAIResponsesTextSSE(text: string): string[] {
-  // Use choices-based format since the agent LLM client parser expects it
-  const id = `chatcmpl_${nextMsgId()}`;
-  return [
-    `data: {"id":"${id}","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":${JSON.stringify(text)}},"finish_reason":null}]}\n\n`,
-    `data: {"id":"${id}","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":${text.split(" ").length}}}\n\n`,
-    `data: [DONE]\n\n`,
-  ];
+  return buildRealOpenAIResponsesTextSSE(text);
 }
 
 function buildOpenAIResponsesToolSSE(
@@ -205,15 +231,7 @@ function buildOpenAIResponsesToolSSE(
   toolInput: Record<string, unknown>,
   toolCallId?: string,
 ): string[] {
-  const id = `chatcmpl_${nextMsgId()}`;
-  const callId = toolCallId ?? nextCallId();
-  const argsJson = JSON.stringify(toolInput);
-  return [
-    `data: {"id":"${id}","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"${callId}","type":"function","function":{"name":"${toolName}","arguments":""}}]},"finish_reason":null}]}\n\n`,
-    `data: {"id":"${id}","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":${JSON.stringify(argsJson)}}}]},"finish_reason":null}]}\n\n`,
-    `data: {"id":"${id}","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":10}}\n\n`,
-    `data: [DONE]\n\n`,
-  ];
+  return buildRealOpenAIResponsesToolSSE(toolName, toolInput, toolCallId);
 }
 
 // ─── Google Generative AI JSON builder ───

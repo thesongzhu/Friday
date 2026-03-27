@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { FridayDomainError } from "#errors";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
@@ -890,6 +890,27 @@ describe("FridaySessionService", () => {
 
       expect(sub2.parentSessionKey).toBe(sub1Key);
       expect(sub2.rootSessionKey).toBe("discord:default:root1");
+    });
+
+    it("does not warn while resolving memory namespace for a new subagent session", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      try {
+        await service.createSession({
+          channel: "discord",
+          chatId: "parent-memory",
+          chatKind: "group",
+        });
+
+        const subagentKey = "subagent:discord:default:parent-memory:task-memory";
+        const subSession = await service.getOrCreateSession(subagentKey);
+
+        expect(subSession.parentSessionKey).toBe("discord:default:parent-memory");
+        expect(subSession.rootSessionKey).toBe("discord:default:parent-memory");
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
   });
 
