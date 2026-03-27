@@ -103,11 +103,22 @@ export async function createFridayBrowserE2eEnv(input?: {
       };
     },
     async newPage() {
+      const onboardedProfile = {
+        profileType: "developer",
+        onboardedAt: new Date().toISOString(),
+      };
       const context = await browser.newContext({
         baseURL: hubEnv.baseUrl,
         timezoneId: "America/Los_Angeles",
       });
+
+      // Seed the user profile in localStorage so the onboarding gate is skipped
+      // even before the API call resolves in the browser.
+      await context.addInitScript({
+        content: `window.localStorage.setItem("friday.uix.user-profile", ${JSON.stringify(JSON.stringify(onboardedProfile))});`,
+      });
       const page = await context.newPage();
+
       return {
         context,
         page,
