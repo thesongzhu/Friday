@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createFridayChannelRegistry } from "#channels";
 import { createFridaySkillExecutor } from "#skills";
 import { createFridaySkillRunStore } from "#ledger";
@@ -310,6 +310,88 @@ describe("FridaySkillExecutor", () => {
     const result2 = await executor.execute(baseRequest).result;
 
     expect(result1.runId).not.toBe(result2.runId);
+  });
+
+  it("does not warn when a shell skill returns plain-text stdout", async () => {
+    const fs = await import("node:fs/promises");
+    const scriptDir = await fs.mkdtemp("/tmp/friday-skill-plain-");
+    await fs.writeFile(
+      `${scriptDir}/plain.sh`,
+      "#!/bin/sh\nprintf 'hello from shell\\n'\n",
+      { mode: 0o755 },
+    );
+
+    const skill = makeRegisteredSkill({
+      id: "echo-skill",
+      runtimeKind: "shell",
+      entrypoint: "plain.sh",
+      skillDir: scriptDir,
+    });
+
+    const skills = new Map<string, FridayRegisteredSkill>();
+    skills.set("echo-skill", skill);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const executor = createFridaySkillExecutor({
+      db,
+      registry: createMockRegistry(skills),
+      runStore,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2025-01-15T10:00:00.000Z",
+    });
+
+    const result = await executor.execute(baseRequest).result;
+
+    expect(result.status).toBe("completed");
+    expect(result.output).toEqual({ raw: "hello from shell\n" });
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      "[friday][skill-executor] operation failed:",
+      expect.any(String),
+    );
+
+    await fs.rm(scriptDir, { recursive: true, force: true });
+  });
+
+  it("warns when a shell skill returns malformed JSON-looking stdout and preserves raw output", async () => {
+    const fs = await import("node:fs/promises");
+    const scriptDir = await fs.mkdtemp("/tmp/friday-skill-badjson-");
+    await fs.writeFile(
+      `${scriptDir}/badjson.sh`,
+      "#!/bin/sh\nprintf '{\"broken\":'\n",
+      { mode: 0o755 },
+    );
+
+    const skill = makeRegisteredSkill({
+      id: "echo-skill",
+      runtimeKind: "shell",
+      entrypoint: "badjson.sh",
+      skillDir: scriptDir,
+    });
+
+    const skills = new Map<string, FridayRegisteredSkill>();
+    skills.set("echo-skill", skill);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const executor = createFridaySkillExecutor({
+      db,
+      registry: createMockRegistry(skills),
+      runStore,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2025-01-15T10:00:00.000Z",
+    });
+
+    const result = await executor.execute(baseRequest).result;
+
+    expect(result.status).toBe("completed");
+    expect(result.output).toEqual({ raw: "{\"broken\":" });
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[friday][skill-executor] operation failed:",
+      expect.any(String),
+    );
+
+    await fs.rm(scriptDir, { recursive: true, force: true });
   });
 
   it("injects readonly Friday runtime helpers into node skills without write interfaces", async () => {

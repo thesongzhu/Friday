@@ -383,6 +383,32 @@ describe("FridayAuthService", () => {
     expect(passwordlessWarning).toBeDefined();
   });
 
+  it("deduplicates construction warnings for the same warn sink", () => {
+    const warn = vi.fn();
+
+    createFridayAuthService({
+      db,
+      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
+      nowIso: () => NOW,
+      tokenSecret: TOKEN_SECRET,
+      accessTokenTtlSec: 900,
+      refreshTokenTtlSec: 604800,
+      warn,
+    });
+    createFridayAuthService({
+      db,
+      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
+      nowIso: () => NOW,
+      tokenSecret: TOKEN_SECRET,
+      accessTokenTtlSec: 900,
+      refreshTokenTtlSec: 604800,
+      warn,
+    });
+
+    expect(warn.mock.calls.filter(([message]) => String(message).includes("Token secret is shorter"))).toHaveLength(1);
+    expect(warn.mock.calls.filter(([message]) => String(message).includes("Auth rate limiter not configured"))).toHaveLength(1);
+  });
+
   it("allows no-signin local bypass with { local: true } even when passphrase exists", () => {
     const warnings: string[] = [];
     const bypassService = createFridayAuthService({
@@ -402,6 +428,41 @@ describe("FridayAuthService", () => {
     expect(warnings.some((w) => w.includes("Local bypass login"))).toBe(true);
   });
 
+  it("deduplicates repeated local bypass and passwordless warnings per service instance", () => {
+    const warnings: string[] = [];
+    db.writer.prepare("UPDATE users SET password_hash = NULL WHERE id = 'test-user'").run();
+
+    const passwordlessService = createFridayAuthService({
+      db,
+      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
+      nowIso: () => NOW,
+      tokenSecret: TOKEN_SECRET,
+      accessTokenTtlSec: 900,
+      refreshTokenTtlSec: 604800,
+      allowPasswordlessLocalLogin: true,
+      warn: (msg) => warnings.push(msg),
+    });
+    passwordlessService.login({ local: true }, "127.0.0.1");
+    passwordlessService.login({ local: true }, "127.0.0.1");
+
+    const bypassService = createFridayAuthService({
+      db,
+      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
+      nowIso: () => NOW,
+      tokenSecret: TOKEN_SECRET,
+      accessTokenTtlSec: 900,
+      refreshTokenTtlSec: 604800,
+      allowLocalBypassLogin: true,
+      warn: (msg) => warnings.push(msg),
+    });
+    db.writer.prepare("UPDATE users SET password_hash = ? WHERE id = 'test-user'").run(hashPasswordScrypt("any"));
+    bypassService.login({ local: true }, "127.0.0.1");
+    bypassService.login({ local: true }, "127.0.0.1");
+
+    expect(warnings.filter((message) => message.includes("Passwordless local login used"))).toHaveLength(1);
+    expect(warnings.filter((message) => message.includes("Local bypass login used"))).toHaveLength(1);
+  });
+
   it("rejects local bypass login from remote IP even with allowLocalBypassLogin", () => {
     const bypassService = createFridayAuthService({
       db,
@@ -413,10 +474,11 @@ describe("FridayAuthService", () => {
       allowLocalBypassLogin: true,
     });
 
-    expect(() => bypassService.login({ local: true }, "203.0.113.20")).toThrow(FridayAuthError);
     try {
       bypassService.login({ local: true }, "203.0.113.20");
+      throw new Error("expected local bypass login to throw");
     } catch (err) {
+      expect(err).toBeInstanceOf(FridayAuthError);
       expect((err as FridayAuthError).code).toBe("PASSWORDLESS_LOCALHOST_ONLY");
     }
   });

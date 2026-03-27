@@ -190,6 +190,9 @@ export function createFridaySkillExecutor(
                 // Try to parse stdout as JSON output
                 let output: Record<string, unknown> = {};
                 try {
+                  if (!looksLikeJsonValue(shellResult.stdout)) {
+                    output = { raw: shellResult.stdout };
+                  } else {
                   const parsed: unknown = JSON.parse(shellResult.stdout);
                   if (
                     parsed != null &&
@@ -199,6 +202,7 @@ export function createFridaySkillExecutor(
                     output = parsed as Record<string, unknown>;
                   } else {
                     output = { result: parsed };
+                  }
                   }
                 } catch (err) {
                   console.warn("[friday][skill-executor] operation failed:", err instanceof Error ? err.message : String(err));
@@ -473,4 +477,18 @@ export function createFridaySkillExecutor(
       }
     },
   };
+}
+
+function looksLikeJsonValue(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (trimmed === "true" || trimmed === "false" || trimmed === "null") return true;
+  const first = trimmed[0];
+  return (
+    first === "{" ||
+    first === "[" ||
+    first === '"' ||
+    first === "-" ||
+    (first >= "0" && first <= "9")
+  );
 }

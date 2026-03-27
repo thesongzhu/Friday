@@ -7,7 +7,7 @@
  * Readability also fails to extract meaningful content.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   summarizeContent,
   stripHtmlToText,
@@ -212,6 +212,17 @@ describe("summarizeContent — realistic HTML", () => {
       const result = await extractReadableContent(smallHtml);
       expect(result).not.toBeNull();
       expect(result!.text).toContain("Short but important content");
+    });
+
+    it("does not warn when baseURI assignment is unsupported but extraction still works", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const result = await extractReadableContent(NEWS_ARTICLE_HTML, "https://example.com/story");
+      expect(result).not.toBeNull();
+      expect(result!.text).toContain("AI-powered coding agents");
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        "[friday][link-summarize] base URI assignment failed:",
+        expect.any(String),
+      );
     });
   });
 

@@ -18,8 +18,10 @@ describe("FridayMemoryService", () => {
   function createMockProviderService(opts?: {
     embedFails?: boolean;
     embedVector?: number[];
+    embedFailureMessages?: string[];
   }): FridayProviderService {
     const vector = opts?.embedVector ?? [0.1, 0.2, 0.3];
+    let failureIndex = 0;
 
     return {
       listProviders: vi.fn(),
@@ -32,8 +34,12 @@ describe("FridayMemoryService", () => {
       setRoutingConfig: vi.fn(),
       resolveRoute: vi.fn(),
       runWithFallback: vi.fn().mockImplementation(async (params) => {
-        if (opts?.embedFails) {
-          throw new FridayDomainError("EMBEDDING_UNAVAILABLE", "Embedding failed");
+        if (opts?.embedFails || opts?.embedFailureMessages) {
+          const failureMessage = opts?.embedFailureMessages?.[
+            Math.min(failureIndex, (opts.embedFailureMessages?.length ?? 1) - 1)
+          ] ?? "Embedding failed";
+          failureIndex += 1;
+          throw new FridayDomainError("EMBEDDING_UNAVAILABLE", failureMessage);
         }
         // Simulate: the `run` function calls fetch which returns an embedding
         // We intercept before that by returning the result directly
@@ -153,6 +159,30 @@ describe("FridayMemoryService", () => {
     expect(found).not.toBeNull();
   });
 
+  it("does not warn when storage falls back because no embedding route is configured", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const svc = createFridayMemoryService({
+      db,
+      providerService: createMockProviderService({
+        embedFailureMessages: [
+          'No enabled providers available for routing: defaultProviderId "route-a" is enabled but was not selected',
+          'No enabled providers available for routing: defaultProviderId "route-b" is enabled but was not selected',
+        ],
+      }),
+      idGenerator: idGen,
+      nowIso: () => NOW,
+    });
+
+    await svc.store("ns", "first memory");
+    await svc.store("ns", "second memory");
+
+    expect(
+      warnSpy.mock.calls.filter(([message]) =>
+        String(message).includes("[friday][memory-service] embedding failed: No enabled providers available for routing"),
+      ),
+    ).toHaveLength(0);
+  });
+
   // ─── Get / List / Delete ───
 
   it("gets a stored item by ID", async () => {
@@ -224,6 +254,36 @@ describe("FridayMemoryService", () => {
     const results = await svc.search("fox");
     expect(results.length).toBeGreaterThanOrEqual(1);
     expect(results[0].matchedBy).toContain("fts");
+  });
+
+  it("does not warn when search falls back to FTS because no embedding route is configured", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const svc = createFridayMemoryService({
+      db,
+      providerService: createMockProviderService({
+        embedFailureMessages: [
+          'No enabled providers available for routing: defaultProviderId "store-a" is enabled but was not selected',
+          'No enabled providers available for routing: defaultProviderId "store-b" is enabled but was not selected',
+          'No enabled providers available for routing: defaultProviderId "query-a" is enabled but was not selected',
+          'No enabled providers available for routing: defaultProviderId "query-b" is enabled but was not selected',
+        ],
+      }),
+      idGenerator: idGen,
+      nowIso: () => NOW,
+    });
+
+    await svc.store("ns", "The quick brown fox");
+    await svc.store("ns", "Another fox mention");
+    const first = await svc.search("fox");
+    const second = await svc.search("fox");
+
+    expect(first.length).toBeGreaterThanOrEqual(1);
+    expect(second.length).toBeGreaterThanOrEqual(1);
+    expect(
+      warnSpy.mock.calls.filter(([message]) =>
+        String(message).includes("[friday][memory-service] semantic search unavailable: No enabled providers available for routing"),
+      ),
+    ).toHaveLength(0);
   });
 
   // ─── Prune ───

@@ -374,6 +374,91 @@ describe("createFridaySystemService", () => {
     );
   });
 
+  it("does not capture a snapshot when the companion is disconnected", async () => {
+    const captureSnapshot = vi.fn(async () => {
+      throw new Error("capture should be skipped when disconnected");
+    });
+    const fixture = await createServiceFixtureWithOptions({
+      companionReconnectIntervalMs: 0,
+      companionBridge: {
+        ...createCompanionBridge(),
+        async connect() {
+          throw new Error("connect ENOENT /tmp/system-companion.sock");
+        },
+        isConnected() {
+          return false;
+        },
+        async getStatus() {
+          return {
+            id: "companion-offline",
+            platform: "darwin" as const,
+            connected: false,
+            transport: {
+              mode: "unix_socket" as const,
+              protocol: "jsonrpc-2.0" as const,
+              authenticated: false,
+              socketPath: `${WORKSPACE_ROOT}/system-companion.sock`,
+            },
+            launchAtLoginEnabled: true,
+            panicHotkey: "cmd+shift+escape",
+            safeMode: false,
+            overlayVisible: false,
+            lastHeartbeatAt: "2026-03-06T12:00:00.000Z",
+            capabilities: createCompanionCapabilities(true),
+            permissions: [],
+          };
+        },
+        captureSnapshot,
+      },
+    });
+    allocatedDbs.push(fixture.db);
+
+    const state = await fixture.service.getState();
+
+    expect(captureSnapshot).not.toHaveBeenCalled();
+    expect(state.apps).toEqual([]);
+    expect(state.windows).toEqual([]);
+    expect(state.notifications).toEqual([]);
+    expect(state.health.status).toBe("unavailable");
+  });
+
+  it("deduplicates degraded companion startup warnings across service instances when only the socket path changes", async () => {
+    const warn = vi.fn();
+    const firstFixture = await createServiceFixtureWithOptions({
+      warn,
+      companionReconnectIntervalMs: 0,
+      companionBridge: {
+        ...createCompanionBridge(),
+        async connect() {
+          throw new Error("connect ENOENT /tmp/system-companion-a.sock");
+        },
+        isConnected() {
+          return false;
+        },
+      },
+    });
+    const secondFixture = await createServiceFixtureWithOptions({
+      warn,
+      companionReconnectIntervalMs: 0,
+      companionBridge: {
+        ...createCompanionBridge(),
+        async connect() {
+          throw new Error("connect ENOENT /tmp/system-companion-b.sock");
+        },
+        isConnected() {
+          return false;
+        },
+      },
+    });
+    allocatedDbs.push(firstFixture.db, secondFixture.db);
+
+    expect(
+      warn.mock.calls.filter(([message]) =>
+        String(message).includes("system companion unavailable at startup; continuing in degraded mode"),
+      ),
+    ).toHaveLength(1);
+  });
+
   it("propagates native companion safe mode into health and revokes the active lease", async () => {
     const companionState: CompanionTestState = {
       safeMode: false,

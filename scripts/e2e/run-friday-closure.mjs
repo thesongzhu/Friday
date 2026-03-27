@@ -9,6 +9,7 @@ import { createSign, generateKeyPairSync } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import {
+  buildClosureScratchEnv,
   FRIDAY_CLOSURE_STATUSES,
   collectCloudBlockers,
   createClosureRunId,
@@ -376,15 +377,6 @@ function formatConsoleSummary(readiness, ledgerPath) {
   }
 
   return `Repo Ready: ${readiness.repoReady}; Product Ready (Local): ${readiness.productReadyLocal}; Cloud Ready: ${readiness.cloudReady}; Overall: ${readiness.overall} (${ledgerPath})`;
-}
-
-function buildScratchFridayEnv(paths) {
-  return {
-    ...process.env,
-    FRIDAY_STATE_DIR: paths.state,
-    FRIDAY_CHANNELS_JSON: process.env.FRIDAY_CHANNELS_JSON ?? '{"enabled":true,"instances":[]}',
-    FRIDAY_BROWSER_HEADLESS: "true",
-  };
 }
 
 function makeScratchPlugin(pluginRoot) {
@@ -931,7 +923,7 @@ async function runLocalStage(ledger) {
   makeScratchWorkflowSkill(path.join(ledger.paths.skills, "closure-workflow-template"));
 
   const port = await findFreePort();
-  const fridayEnv = buildScratchFridayEnv(ledger.paths);
+  const fridayEnv = buildClosureScratchEnv(process.env, ledger.paths);
   const serverLogPath = path.join(ledger.paths.logs, "local-friday-server.log");
   const server = spawn(process.execPath, [
     DIST_CLI,

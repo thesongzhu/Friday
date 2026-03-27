@@ -36,8 +36,6 @@ export const FRIDAY_ROUTE_OPERATION_ID_RENAMES = {
   "observability.alertRules.get": "observability.alert.rules.get",
   "observability.alertRules.list": "observability.alert.rules.list",
   "observability.alertRules.update": "observability.alert.rules.update",
-  "packaging.packages.checkDependencies": "packaging.packages.dependencies.check",
-  "packaging.packages.listVersions": "packaging.packages.versions.list",
   "security.secrets.accessLog": "security.secrets.access.log",
   "workflows.importBundle": "workflows.bundles.import",
 } as const;

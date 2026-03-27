@@ -99,6 +99,90 @@ describe("FridayMemoryFileSyncService", () => {
     expect(first.sequence).toBe(1);
   });
 
+  it("does not warn when session content_json is plain text and content_text is null", async () => {
+    db.withWriteTransaction((conn) => {
+      conn.prepare(
+        `INSERT INTO sessions (id, session_key, channel, chat_kind, status, agent_id, metadata_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("sess-plain", "test:session:plain", "cli", "dm", "active", "agent-1", "{}", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z");
+      conn.prepare(
+        `INSERT INTO session_messages (id, session_id, session_key, role, content_json, content_text, sequence, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "msg-plain",
+        "sess-plain",
+        "test:session:plain",
+        "assistant",
+        "Agent said hello from plain text",
+        null,
+        1,
+        "2025-01-01T00:00:00Z",
+        "2025-01-01T00:00:00Z",
+      );
+    });
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const repo = createFridayMemoryFileSyncRepository({ db });
+    const service = createFridayMemoryFileSyncService({
+      repository: repo,
+      stateDir: tmpDir,
+    });
+
+    await service.syncNow({ force: true });
+
+    const filePath = sessionKeyExportPath(tmpDir, "test:session:plain");
+    const content = await fs.readFile(filePath, "utf8");
+    const first = JSON.parse(content.trim().split("\n")[0]!);
+    expect(first.content).toBe("Agent said hello from plain text");
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      "[friday][memory-file-sync] try-parse-json:",
+      expect.any(String),
+    );
+  });
+
+  it("warns only for malformed JSON-looking session content and preserves the raw payload", async () => {
+    db.withWriteTransaction((conn) => {
+      conn.prepare(
+        `INSERT INTO sessions (id, session_key, channel, chat_kind, status, agent_id, metadata_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("sess-badjson", "test:session:badjson", "cli", "dm", "active", "agent-1", "{}", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z");
+      conn.prepare(
+        `INSERT INTO session_messages (id, session_id, session_key, role, content_json, content_text, sequence, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "msg-badjson",
+        "sess-badjson",
+        "test:session:badjson",
+        "assistant",
+        "{\"broken\":",
+        null,
+        1,
+        "2025-01-01T00:00:00Z",
+        "2025-01-01T00:00:00Z",
+      );
+    });
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const repo = createFridayMemoryFileSyncRepository({ db });
+    const service = createFridayMemoryFileSyncService({
+      repository: repo,
+      stateDir: tmpDir,
+    });
+
+    await service.syncNow({ force: true });
+
+    const filePath = sessionKeyExportPath(tmpDir, "test:session:badjson");
+    const content = await fs.readFile(filePath, "utf8");
+    const first = JSON.parse(content.trim().split("\n")[0]!);
+    expect(first.content).toBe("{\"broken\":");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[friday][memory-file-sync] try-parse-json:",
+      expect.any(String),
+    );
+  });
+
   it("hash-based skip prevents redundant writes", async () => {
     insertMemoryItem("item-1", "skip-ns", "key1", '{"val":1}');
 
