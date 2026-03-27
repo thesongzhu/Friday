@@ -118,6 +118,13 @@ export type { FridayAutoFixPlanService } from "./services/friday-auto-fix-plan-s
 export { createFridayAutoFixRiskAssessmentService } from "./services/friday-auto-fix-risk-assessment-service.js";
 export type { FridayAutoFixRiskAssessmentService } from "./services/friday-auto-fix-risk-assessment-service.js";
 
+export { FridayHeuristicUtilityStrategy } from "./services/friday-expected-utility-calculator.js";
+export type {
+  FridayUtilityInput,
+  FridayUtilityResult,
+  FridayUtilityStrategy,
+} from "./services/friday-expected-utility-calculator.js";
+
 export { createFridayAutoFixExecutionService } from "./services/friday-auto-fix-execution-service.js";
 export type { FridayAutoFixExecutionService, StepExecutor, StepVerifier } from "./services/friday-auto-fix-execution-service.js";
 

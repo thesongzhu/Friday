@@ -7,18 +7,27 @@ import type {
   FridayAutoFixStepKind,
   FridayRiskAssessment,
 } from "../model/friday-auto-fix.types.js";
+import {
+  FridayHeuristicUtilityStrategy,
+  type FridayUtilityInput,
+  type FridayUtilityStrategy,
+} from "./friday-expected-utility-calculator.js";
 
 export interface FridayAutoFixRiskAssessmentService {
   assess(input: {
     incident: FridayErrorIncidentEntity;
     plan: FridayAutoFixPlan;
     nowIso: string;
+    /** Diagnosis confidence (0..1). When provided, enables expected utility calculation. */
+    confidence?: number;
   }): FridayRiskAssessment;
 }
 
 export interface CreateAutoFixRiskAssessmentServiceDeps {
   db: FridaySqliteLayer;
   actionRepo: FridayAutoFixActionRepository;
+  /** Pluggable utility strategy. Defaults to FridayHeuristicUtilityStrategy. */
+  utilityStrategy?: FridayUtilityStrategy;
 }
 
 /** Steps that are stateless / safe to auto-apply. */
@@ -43,6 +52,8 @@ const TIER_2_STEPS: Set<FridayAutoFixStepKind> = new Set([
 export function createFridayAutoFixRiskAssessmentService(
   deps: CreateAutoFixRiskAssessmentServiceDeps,
 ): FridayAutoFixRiskAssessmentService {
+  const strategy = deps.utilityStrategy ?? new FridayHeuristicUtilityStrategy();
+
   return {
     assess(input) {
       const { incident, plan, nowIso } = input;
@@ -111,11 +122,27 @@ export function createFridayAutoFixRiskAssessmentService(
         reasons.push("Stateless remediation — safe to auto-apply");
       }
 
+      // Compute expected utility when confidence is available
+      const confidence = input.confidence;
+      let utilityResult: FridayRiskAssessment["utilityResult"];
+      if (confidence !== undefined) {
+        const recurrence = plan.evidence.recurrenceCount;
+        const utilityInput: FridayUtilityInput = {
+          riskTier,
+          confidence,
+          predictedSuccessProb: confidence,
+          estimatedBenefitScore: Math.min(1, Math.log2(1 + recurrence) / 5),
+          estimatedCostScore: riskTier / 2,
+        };
+        utilityResult = strategy.compute(utilityInput);
+      }
+
       return {
         riskTier,
         reasons,
         requiresApproval,
         autoApplyAllowed,
+        utilityResult,
       };
     },
   };
