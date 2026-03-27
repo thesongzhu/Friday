@@ -79,6 +79,10 @@ interface FridayStoredMemoryCandidate {
   content: string;
 }
 
+function isMissingFsError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT";
+}
+
 // ─── Constants ───
 
 /** Identity files are always injected when present. */
@@ -301,7 +305,9 @@ async function collectMarkdownFiles(rootDir: string): Promise<string[]> {
     try {
       entries = await fs.readdir(currentDir, { withFileTypes: true });
     } catch (err) {
-      console.warn("[friday][workspace-context] readdir:", err instanceof Error ? err.message : String(err));
+      if (!isMissingFsError(err)) {
+        console.warn("[friday][workspace-context] readdir:", err instanceof Error ? err.message : String(err));
+      }
       return;
     }
     for (const entry of entries) {
@@ -371,7 +377,9 @@ async function loadPathScopedRules(
       });
     } catch (err) {
       // Skip unreadable rule files.
-      console.warn("[friday][workspace-context] load-path-rule:", err instanceof Error ? err.message : String(err));
+      if (!isMissingFsError(err)) {
+        console.warn("[friday][workspace-context] load-path-rule:", err instanceof Error ? err.message : String(err));
+      }
     }
   }
 
@@ -407,7 +415,9 @@ async function loadPathScopedRules(
       });
     } catch (err) {
       // Skip unreadable rule files.
-      console.warn("[friday][workspace-context] load-ext-rule:", err instanceof Error ? err.message : String(err));
+      if (!isMissingFsError(err)) {
+        console.warn("[friday][workspace-context] load-ext-rule:", err instanceof Error ? err.message : String(err));
+      }
     }
   }
 
@@ -461,7 +471,9 @@ export async function loadFridayWorkspaceContext(
 
       files.push({ name, filePath, content: truncated, missing: false, kind });
     } catch (err) {
-      console.warn("[friday][workspace-context] load-named-file:", err instanceof Error ? err.message : String(err));
+      if (!isMissingFsError(err)) {
+        console.warn("[friday][workspace-context] load-named-file:", err instanceof Error ? err.message : String(err));
+      }
       files.push({ name, filePath, missing: true, kind });
     }
   };
@@ -491,7 +503,9 @@ export async function loadFridayWorkspaceContext(
     });
   } catch (err) {
     // Daily memory file is optional
-    console.warn("[friday][workspace-context] daily-memory:", err instanceof Error ? err.message : String(err));
+    if (!isMissingFsError(err)) {
+      console.warn("[friday][workspace-context] daily-memory:", err instanceof Error ? err.message : String(err));
+    }
   }
 
   // Load exported memory items from .friday/exports/memory/ (feedback loop)
@@ -575,7 +589,9 @@ async function loadMemoryExports(workspaceDir: string): Promise<FridayStoredMemo
   try {
     entries = await fs.readdir(memoryDir);
   } catch (err) {
-    console.warn("[friday][workspace-context] readdir-memory-exports:", err instanceof Error ? err.message : String(err));
+    if (!isMissingFsError(err)) {
+      console.warn("[friday][workspace-context] readdir-memory-exports:", err instanceof Error ? err.message : String(err));
+    }
     return []; // Directory doesn't exist yet — no memories exported
   }
 

@@ -169,10 +169,6 @@ export type { FridayDeterministicPipelineRoutesDeps } from "./http/routes/friday
 export { createFridayObservabilityRoutes } from "./http/routes/friday-observability-routes.js";
 export type { FridayObservabilityRoutesDeps } from "./http/routes/friday-observability-routes.js";
 
-// Packaging routes (B-008)
-export { createFridayPackagingRoutes } from "./http/routes/friday-packaging-routes.js";
-export type { FridayPackagingRoutesDeps } from "./http/routes/friday-packaging-routes.js";
-
 // Desktop routes (C-003)
 export { createFridayDesktopRoutes } from "./http/routes/friday-desktop-routes.js";
 export type { FridayDesktopRoutesDeps } from "./http/routes/friday-desktop-routes.js";

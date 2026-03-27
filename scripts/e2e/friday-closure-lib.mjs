@@ -113,6 +113,16 @@ export function collectChannelBlockers(env = process.env) {
     .map((kind) => `Channel "${kind}" is not configured in FRIDAY_CHANNELS_JSON`);
 }
 
+export function buildClosureScratchEnv(baseEnv = process.env, paths) {
+  return {
+    ...baseEnv,
+    FRIDAY_STATE_DIR: paths.state,
+    FRIDAY_CHANNELS_JSON: baseEnv.FRIDAY_CHANNELS_JSON ?? '{"enabled":true,"instances":[]}',
+    FRIDAY_BROWSER_HEADLESS: "true",
+    FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN: baseEnv.FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN ?? "true",
+  };
+}
+
 function entryHasHiddenClosureFailure(entry) {
   if (!entry || typeof entry !== "object") {
     return false;

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as net from "node:net";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -104,22 +104,28 @@ describe("FridayHttpServer — Static UI Serving", () => {
 
   it("falls back to index.html for unknown non-API paths (SPA history)", async () => {
     fs.writeFileSync(path.join(tmpDir, "index.html"), "<html>SPA</html>");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    server = createFridayHttpServer({
-      routes: createRoutesWithPing(),
-      wsGateway: makeStubWsGateway(),
-      middleware: makeStubMiddleware(),
-      port,
-      host: "127.0.0.1",
-      uiStaticDir: tmpDir,
-    });
-    await server.listen();
+    try {
+      server = createFridayHttpServer({
+        routes: createRoutesWithPing(),
+        wsGateway: makeStubWsGateway(),
+        middleware: makeStubMiddleware(),
+        port,
+        host: "127.0.0.1",
+        uiStaticDir: tmpDir,
+      });
+      await server.listen();
 
-    const res = await fetch(`${baseUrl}/automations`);
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/html");
-    const body = await res.text();
-    expect(body).toBe("<html>SPA</html>");
+      const res = await fetch(`${baseUrl}/automations`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      const body = await res.text();
+      expect(body).toBe("<html>SPA</html>");
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("does not intercept /v1/* API routes", async () => {

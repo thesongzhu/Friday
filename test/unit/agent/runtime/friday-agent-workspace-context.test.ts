@@ -7,7 +7,7 @@
  * file sync export → workspace loader → system prompt.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -55,11 +55,17 @@ describe("loadFridayWorkspaceContext", () => {
     });
 
     it("returns empty prompt fragment when no workspace files exist", async () => {
-      const ctx = await loadFridayWorkspaceContext(tmpDir);
-      expect(ctx.promptFragment).toBe("");
-      // All files should be marked missing
-      const missing = ctx.files.filter((f) => f.missing);
-      expect(missing.length).toBeGreaterThanOrEqual(4);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const ctx = await loadFridayWorkspaceContext(tmpDir);
+        expect(ctx.promptFragment).toBe("");
+        // All files should be marked missing
+        const missing = ctx.files.filter((f) => f.missing);
+        expect(missing.length).toBeGreaterThanOrEqual(4);
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
 
     it("loads multiple files in injection order", async () => {
@@ -134,9 +140,15 @@ describe("loadFridayWorkspaceContext", () => {
     });
 
     it("does not fail when memory directory does not exist", async () => {
-      const ctx = await loadFridayWorkspaceContext(tmpDir);
-      // Should not throw
-      expect(ctx.promptFragment).toBeDefined();
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const ctx = await loadFridayWorkspaceContext(tmpDir);
+        // Should not throw
+        expect(ctx.promptFragment).toBeDefined();
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
   });
 
@@ -233,10 +245,16 @@ describe("loadFridayWorkspaceContext", () => {
     });
 
     it("returns empty when no exports directory exists", async () => {
-      // No .friday/exports/memory/ directory
-      const ctx = await loadFridayWorkspaceContext(tmpDir);
-      // Should not fail
-      expect(ctx.promptFragment).toBeDefined();
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        // No .friday/exports/memory/ directory
+        const ctx = await loadFridayWorkspaceContext(tmpDir);
+        // Should not fail
+        expect(ctx.promptFragment).toBeDefined();
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
 
     it("respects max 100 memory items limit", async () => {

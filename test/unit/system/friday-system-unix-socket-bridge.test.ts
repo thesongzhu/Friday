@@ -1,8 +1,9 @@
 import * as fs from "node:fs/promises";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createFridaySystemUnixSocketCompanionServer } from "../../../src/system/companion/friday-system-unix-socket-companion-server.js";
 import { createFridaySystemUnixSocketBridge } from "../../../src/system/companion/friday-system-unix-socket-bridge.js";
@@ -190,5 +191,141 @@ describe("Friday system unix socket companion transport", () => {
     expect(snapshot.apps).toEqual([]);
 
     await server.stop();
+  });
+
+  it("deduplicates repeated captureSnapshot warnings for the same transport error", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-system-socket-"));
+    cleanupPaths.push(tempDir);
+    const socketPath = path.join(tempDir, "companion.sock");
+    const nowIso = createNowIso();
+    const server = createFridaySystemUnixSocketCompanionServer({
+      id: "companion-socket",
+      platform: "darwin",
+      nowIso,
+      authToken: "expected-token",
+      socketPath,
+      launchAtLoginEnabled: true,
+      panicHotkey: "cmd+shift+escape",
+    });
+    await server.start();
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const bridge = createFridaySystemUnixSocketBridge({
+        id: "companion-socket",
+        platform: "darwin",
+        nowIso,
+        authToken: "wrong-token",
+        socketPath,
+        launchAtLoginEnabled: true,
+        panicHotkey: "cmd+shift+escape",
+      });
+
+      await bridge.captureSnapshot();
+      await bridge.captureSnapshot();
+
+      expect(
+        warnSpy.mock.calls.filter(([message]) =>
+          String(message).includes("[friday][unix-socket-bridge] captureSnapshot: Unauthorized"),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      warnSpy.mockRestore();
+      await server.stop();
+    }
+  });
+
+  it("silently falls back to an empty snapshot when captureSnapshot times out", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-system-socket-"));
+    cleanupPaths.push(tempDir);
+    const socketPath = path.join(tempDir, "companion.sock");
+    const nowIso = createNowIso();
+    const openSockets = new Set<net.Socket>();
+    const hangingServer = net.createServer((socket) => {
+      openSockets.add(socket);
+      socket.on("close", () => {
+        openSockets.delete(socket);
+      });
+      // Intentionally never respond so the bridge exercises its timeout fallback.
+    });
+    await new Promise<void>((resolve, reject) => {
+      hangingServer.once("error", reject);
+      hangingServer.listen(socketPath, () => resolve());
+    });
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const bridge = createFridaySystemUnixSocketBridge({
+        id: "companion-socket",
+        platform: "darwin",
+        nowIso,
+        authToken: "secret-token",
+        socketPath,
+        launchAtLoginEnabled: true,
+        panicHotkey: "cmd+shift+escape",
+        requestTimeoutMs: 10,
+      });
+
+      const snapshot = await bridge.captureSnapshot();
+
+      expect(snapshot).toEqual({
+        apps: [],
+        windows: [],
+        notifications: [],
+      });
+      expect(
+        warnSpy.mock.calls.filter(([message]) =>
+          String(message).includes("[friday][unix-socket-bridge] captureSnapshot:"),
+        ),
+      ).toHaveLength(0);
+    } finally {
+      warnSpy.mockRestore();
+      for (const socket of openSockets) {
+        socket.destroy();
+      }
+      await new Promise<void>((resolve, reject) => {
+        hangingServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("deduplicates repeated getStatus warnings for missing sockets with different temp paths", async () => {
+    const tempDirA = await fs.mkdtemp(path.join(os.tmpdir(), "friday-system-socket-"));
+    const tempDirB = await fs.mkdtemp(path.join(os.tmpdir(), "friday-system-socket-"));
+    cleanupPaths.push(tempDirA, tempDirB);
+    const nowIso = createNowIso();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const bridgeA = createFridaySystemUnixSocketBridge({
+        id: "companion-socket-a",
+        platform: "darwin",
+        nowIso,
+        authToken: "secret-token",
+        socketPath: path.join(tempDirA, "companion.sock"),
+        launchAtLoginEnabled: true,
+        panicHotkey: "cmd+shift+escape",
+      });
+      const bridgeB = createFridaySystemUnixSocketBridge({
+        id: "companion-socket-b",
+        platform: "darwin",
+        nowIso,
+        authToken: "secret-token",
+        socketPath: path.join(tempDirB, "companion.sock"),
+        launchAtLoginEnabled: true,
+        panicHotkey: "cmd+shift+escape",
+      });
+
+      await bridgeA.getStatus();
+      await bridgeB.getStatus();
+
+      expect(
+        warnSpy.mock.calls.filter(([message]) =>
+          String(message).includes("[friday][unix-socket-bridge] getStatus: connect ENOENT"),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
