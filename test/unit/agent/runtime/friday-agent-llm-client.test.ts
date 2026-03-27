@@ -1,11 +1,26 @@
 import { describe, it, expect, vi } from "vitest";
 import { createFridayAgentLlmClient } from "#agent";
 import type { FridayAgentLlmStreamEvent } from "#agent";
+import {
+  buildRealOpenAIResponsesTextSSE,
+  buildRealOpenAIResponsesToolSSE,
+} from "../../../_mocks/mock-llm-providers.js";
 
 describe("FridayAgentLlmClient", () => {
   function createSSEStream(events: string[]): ReadableStream<Uint8Array> {
     const encoder = new TextEncoder();
     const data = events.map((e) => `data: ${e}\n\n`).join("");
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(data));
+        controller.close();
+      },
+    });
+  }
+
+  function createRawSSEStream(lines: string[]): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder();
+    const data = lines.join("");
     return new ReadableStream({
       start(controller) {
         controller.enqueue(encoder.encode(data));
@@ -358,6 +373,86 @@ describe("FridayAgentLlmClient", () => {
     const values = props.values as Record<string, unknown>;
     expect(values.type).toBe("array");
     expect(values.items).toBeDefined();
+  });
+
+  it("parses real OpenAI Responses text SSE shape", async () => {
+    const fetchImpl = createMockFetch(200, createRawSSEStream(
+      buildRealOpenAIResponsesTextSSE("Hello from responses"),
+    ));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.openai.com",
+      apiKey: "test-key",
+      api: "openai-responses",
+      fetchImpl,
+    });
+
+    const events: FridayAgentLlmStreamEvent[] = [];
+    for await (const event of client.stream({
+      model: "gpt-4.1-mini",
+      systemPrompt: "Test",
+      messages: [{ role: "user", content: "Say hello" }],
+      tools: [],
+      signal: new AbortController().signal,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "text_delta", text: "Hello from responses" },
+      {
+        type: "message_end",
+        stopReason: "end_turn",
+        inputTokens: 10,
+        outputTokens: 3,
+      },
+    ]);
+  });
+
+  it("parses real OpenAI Responses function-call SSE shape", async () => {
+    const fetchImpl = createMockFetch(200, createRawSSEStream(
+      buildRealOpenAIResponsesToolSSE("browser", { command: "open /tmp/demo" }, "call_real_1"),
+    ));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.openai.com",
+      apiKey: "test-key",
+      api: "openai-responses",
+      fetchImpl,
+    });
+
+    const events: FridayAgentLlmStreamEvent[] = [];
+    for await (const event of client.stream({
+      model: "gpt-4.1-mini",
+      systemPrompt: "Test",
+      messages: [{ role: "user", content: "Open the demo" }],
+      tools: [{
+        name: "browser",
+        description: "Browser tool",
+        parameters: {
+          properties: {
+            command: { type: "string" },
+          },
+        },
+        async execute() { return { content: "" }; },
+      }],
+      signal: new AbortController().signal,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: "tool_use",
+        id: "call_real_1",
+        name: "browser",
+        input: { command: "open /tmp/demo" },
+      },
+      {
+        type: "message_end",
+        stopReason: "tool_use",
+        inputTokens: 10,
+        outputTokens: 10,
+      },
+    ]);
   });
 
   it("formats OpenAI Chat Completions tools with nested function field", async () => {

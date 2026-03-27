@@ -103,6 +103,67 @@ function spawnSyncOutput(cmd, args, cwd = REPO_ROOT) {
   return `${result.stdout || ""}${result.stderr || ""}`;
 }
 
+function getValueAtPath(source, pathSegments) {
+  let current = source;
+  for (const segment of pathSegments) {
+    if (!current || typeof current !== "object") {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
+}
+
+function getFirstNonEmptyString(source, paths) {
+  for (const pathSegments of paths) {
+    const value = getValueAtPath(source, pathSegments);
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function getFirstArray(source, paths) {
+  for (const pathSegments of paths) {
+    const value = getValueAtPath(source, pathSegments);
+    if (Array.isArray(value)) {
+      return value;
+    }
+  }
+  return [];
+}
+
+function inspectAgentClosureResult(envelope, { label, expectedText } = {}) {
+  const resultLabel = label ?? "agentRun";
+  const status = getFirstNonEmptyString(envelope, [
+    ["data", "status"],
+    ["data", "result", "status"],
+    ["data", "run", "status"],
+  ]);
+  const responseText = getFirstNonEmptyString(envelope, [
+    ["data", "response"],
+    ["data", "responseText"],
+    ["data", "result", "response"],
+    ["data", "result", "responseText"],
+    ["data", "run", "response"],
+    ["data", "run", "responseText"],
+  ]);
+
+  const closureFailures = [];
+  if (status !== "completed") {
+    closureFailures.push(`${resultLabel}.status=${status ?? "missing"}`);
+  }
+  if (!responseText) {
+    closureFailures.push(`${resultLabel}.response=missing`);
+  }
+  if (expectedText && (!responseText || !responseText.includes(expectedText))) {
+    closureFailures.push(`${resultLabel}.responseMissingExpected=${expectedText}`);
+  }
+
+  return { status, responseText, closureFailures };
+}
+
 function appendLedgerEntry(ledger, entry) {
   ledger.entries.push(entry);
   persistLedger(ledger);
@@ -755,6 +816,63 @@ async function waitForWorkflowRun(baseUrl, token, runId, timeoutMs = 120_000) {
   throw new Error(`Timed out waiting for workflow run ${runId}`);
 }
 
+async function createPublishedClosureWorkflow(baseUrl, token, templateId, titlePrefix) {
+  const createWorkflow = await apiFetch(baseUrl, token, "POST", "/v1/workflows", {
+    slug: `${sanitizeName(titlePrefix)}-${Date.now()}`,
+    name: titlePrefix,
+    graph: {
+      nodes: [{ id: "trigger1", type: "trigger", label: "Trigger", config: { triggerType: "manual" } }],
+      edges: [],
+    },
+  });
+  if (createWorkflow.status !== 200 || !createWorkflow.json.ok) {
+    throw new Error(`Realtime workflow create failed: ${JSON.stringify(createWorkflow.json)}`);
+  }
+
+  const workflowId = createWorkflow.json.data?.workflow?.id;
+  const instantiate = await apiFetch(
+    baseUrl,
+    token,
+    "POST",
+    `/v1/workflow-builder/templates/${templateId}/instantiate`,
+    { workflowId, title: `${titlePrefix} Draft` },
+  );
+  if (instantiate.status !== 200 || !instantiate.json.ok) {
+    throw new Error(`Realtime workflow instantiate failed: ${JSON.stringify(instantiate.json)}`);
+  }
+
+  const draftId = instantiate.json?.data?.draft?.draftId ?? instantiate.json?.draft?.draftId;
+  const compile = await apiFetch(
+    baseUrl,
+    token,
+    "POST",
+    `/v1/workflows/${workflowId}/drafts/${draftId}/compile`,
+  );
+  if (compile.status !== 200 || !compile.json.ok) {
+    throw new Error(`Realtime workflow compile failed: ${JSON.stringify(compile.json)}`);
+  }
+
+  const deploy = await apiFetch(
+    baseUrl,
+    token,
+    "POST",
+    `/v1/workflows/${workflowId}/drafts/${draftId}/deploy`,
+    { includeExport: false, runNow: false },
+  );
+  if (deploy.status !== 200 || !deploy.json.ok) {
+    throw new Error(`Realtime workflow deploy failed: ${JSON.stringify(deploy.json)}`);
+  }
+
+  return {
+    workflowId,
+    workflowVersionId: deploy.json?.data?.version?.id ?? deploy.json?.version?.id,
+    createWorkflow: createWorkflow.json,
+    instantiate: instantiate.json,
+    compile: compile.json,
+    deploy: deploy.json,
+  };
+}
+
 async function runLocalStage(ledger) {
   const stage = "local";
   const installEntry = !SKIP_INSTALL
@@ -1258,6 +1376,7 @@ async function runLocalStage(ledger) {
       if (run.status !== 200 || !run.json.ok) {
         throw new Error(`Agent run failed: ${JSON.stringify(run.json)}`);
       }
+      const agentRunResult = inspectAgentClosureResult(run.json, { label: "agentRun" });
       const store = await apiFetch(baseUrl, token, "POST", "/v1/memory/store", {
         namespace: "closure-agent",
         content: `Agent response: ${run.json.data.response ?? ""}`,
@@ -1310,9 +1429,30 @@ async function runLocalStage(ledger) {
       if (automationRun.status !== 200 || !automationRun.json.ok) {
         throw new Error(`Automation run failed: ${JSON.stringify(automationRun.json)}`);
       }
+      const automationResult = inspectAgentClosureResult(automationRun.json, {
+        label: "automationRun",
+        expectedText: "CLOSURE_AUTOMATION_OK",
+      });
+      const closureFailures = [
+        ...agentRunResult.closureFailures,
+        ...automationResult.closureFailures,
+      ];
+      if (!getFirstNonEmptyString(store.json, [["data", "item", "id"]])) {
+        closureFailures.push("memoryStore.item.id=missing");
+      }
+      if (getFirstArray(search.json, [["data", "items"]]).length === 0) {
+        closureFailures.push("memorySearch.items=0");
+      }
       return {
+        ...(closureFailures.length > 0 ? { status: FRIDAY_CLOSURE_STATUSES.FAIL } : {}),
         evidence: { responsePath },
-        details: { sessionKey, automationId },
+        details: {
+          sessionKey,
+          automationId,
+          runStatus: agentRunResult.status,
+          automationStatus: automationResult.status,
+          closureFailures,
+        },
       };
     });
 
@@ -1321,18 +1461,29 @@ async function runLocalStage(ledger) {
       stage: `${stage}.realtime`,
       description: "Subscribe, pull, and ack realtime events for a concrete run stream",
     }, async () => {
-      const run = await apiFetch(baseUrl, token, "POST", "/v1/agent/runs", {
-        task: 'Say exactly "REALTIME_OK".',
-        providerId: openAiProviderId,
-        model: "gpt-4o-mini",
-        timeoutMs: 90_000,
-      }, { timeoutMs: 180_000 });
-      if (run.status !== 200 || !run.json.ok || !run.json.data.runId) {
-        throw new Error(`Realtime setup run failed: ${JSON.stringify(run.json)}`);
+      const workflow = await createPublishedClosureWorkflow(
+        baseUrl,
+        token,
+        "builtin-blank",
+        "Closure Realtime Workflow",
+      );
+      const run = await apiFetch(baseUrl, token, "POST", "/v1/workflow-runs", {
+        workflowId: workflow.workflowId,
+        ...(workflow.workflowVersionId ? { workflowVersionId: workflow.workflowVersionId } : {}),
+        triggerType: "manual",
+        triggerPayload: {},
+      });
+      if (run.status !== 200 || !run.json.ok || !run.json.data?.run?.id) {
+        throw new Error(`Realtime setup workflow run failed: ${JSON.stringify(run.json)}`);
       }
-      const streamId = `run:${run.json.data.runId}`;
+      const workflowRun = await waitForWorkflowRun(baseUrl, token, run.json.data.run.id);
+      const streamId = `run:${workflowRun.id}`;
       const subscribe = await apiFetch(baseUrl, token, "POST", "/v1/realtime/subscriptions", {
-        subscriptions: [{ streamId, events: ["*"] }],
+        subscriptions: [{
+          subscriptionId: `closure-realtime-${workflowRun.id}`,
+          streamId,
+          topic: "workflow.run",
+        }],
       });
       const pull = await apiFetch(baseUrl, token, "POST", "/v1/realtime/pull", {
         streamId,
@@ -1347,7 +1498,9 @@ async function runLocalStage(ledger) {
         epoch,
       });
       const responsePath = writeResponseEvidence(ledger.paths, "local-realtime", {
+        workflow,
         run: run.json,
+        workflowRun,
         subscribe: subscribe.json,
         pull: pull.json,
         ack: ack.json,
@@ -1361,8 +1514,24 @@ async function runLocalStage(ledger) {
       if (ack.status !== 200 || !ack.json.ok) {
         throw new Error(`Realtime ack failed: ${JSON.stringify(ack.json)}`);
       }
+      const closureFailures = [];
+      if (workflowRun.status !== "completed") {
+        closureFailures.push(`workflowRun.status=${workflowRun.status ?? "missing"}`);
+      }
+      if (getFirstArray(subscribe.json, [["data", "subscriptions"]]).length === 0) {
+        closureFailures.push("realtimeSubscribe.subscriptions=0");
+      }
+      if (getFirstArray(pull.json, [["data", "items"]]).length === 0) {
+        closureFailures.push("realtimePull.items=0");
+      }
       return {
+        ...(closureFailures.length > 0 ? { status: FRIDAY_CLOSURE_STATUSES.FAIL } : {}),
         evidence: { responsePath },
+        details: {
+          workflowId: workflow.workflowId,
+          runStatus: workflowRun.status,
+          closureFailures,
+        },
       };
     });
 

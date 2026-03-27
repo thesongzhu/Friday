@@ -427,7 +427,11 @@ async function* handleOpenAIStream(
     );
   }
 
-  yield* parseOpenAISSEStream(response.body);
+  if (api === "openai-responses") {
+    yield* parseOpenAIResponsesSSEStream(response.body);
+  } else {
+    yield* parseOpenAISSEStream(response.body);
+  }
 }
 
 function shouldIncludeOpenAiStreamUsage(_baseUrl: string): boolean {
@@ -759,6 +763,166 @@ async function* parseOpenAISSEStream(
         messageEnded = true;
       }
     }
+  }
+}
+
+async function* parseOpenAIResponsesSSEStream(
+  body: ReadableStream<Uint8Array>,
+): AsyncIterable<FridayAgentLlmStreamEvent> {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const toolCalls = new Map<string, { id: string; name: string; args: string; emitted: boolean }>();
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let messageEnded = false;
+
+  for await (const chunk of body) {
+    buffer += decoder.decode(chunk, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+
+      if (data === "[DONE]") {
+        if (!messageEnded) {
+          const hasToolCalls = toolCalls.size > 0;
+          yield* emitOpenAIResponsesToolCalls(toolCalls);
+          yield {
+            type: "message_end",
+            stopReason: hasToolCalls ? "tool_use" : "end_turn",
+            inputTokens,
+            outputTokens,
+          };
+          messageEnded = true;
+        }
+        return;
+      }
+
+      let event: Record<string, unknown>;
+      try {
+        event = JSON.parse(data) as Record<string, unknown>;
+      } catch (err) {
+        console.warn("[friday][agent-llm-client] Responses SSE event parse failed:", err instanceof Error ? err.message : String(err));
+        continue;
+      }
+
+      const type = typeof event.type === "string" ? event.type : "";
+
+      if (type === "response.output_text.delta") {
+        const delta = typeof event.delta === "string" ? event.delta : "";
+        if (delta) {
+          yield { type: "text_delta", text: delta };
+        }
+        continue;
+      }
+
+      if (type === "response.output_item.added" || type === "response.output_item.done") {
+        const item = event.item as Record<string, unknown> | undefined;
+        if (item?.type === "function_call") {
+          const itemId = typeof item.call_id === "string"
+            ? item.call_id
+            : typeof item.id === "string"
+              ? item.id
+              : "";
+          if (itemId) {
+            const existing = toolCalls.get(itemId) ?? {
+              id: itemId,
+              name: "",
+              args: "",
+              emitted: false,
+            };
+            if (typeof item.name === "string" && item.name) {
+              existing.name = item.name;
+            }
+            if (typeof item.arguments === "string") {
+              existing.args = item.arguments;
+            }
+            toolCalls.set(itemId, existing);
+
+            if (type === "response.output_item.done" && !existing.emitted) {
+              const input = parseOpenAIToolCallArgs(existing.args);
+              yield {
+                type: "tool_use",
+                id: existing.id,
+                name: existing.name,
+                input,
+              };
+              existing.emitted = true;
+            }
+          }
+        }
+        continue;
+      }
+
+      if (type === "response.function_call_arguments.delta") {
+        const itemId = typeof event.item_id === "string" ? event.item_id : "";
+        const delta = typeof event.delta === "string" ? event.delta : "";
+        if (!itemId || !delta) continue;
+        const existing = toolCalls.get(itemId) ?? {
+          id: itemId,
+          name: "",
+          args: "",
+          emitted: false,
+        };
+        existing.args += delta;
+        toolCalls.set(itemId, existing);
+        continue;
+      }
+
+      if (type === "response.completed" && !messageEnded) {
+        const response = event.response as Record<string, unknown> | undefined;
+        const usage = response?.usage as Record<string, unknown> | undefined;
+        if (usage) {
+          if (typeof usage.input_tokens === "number") inputTokens = usage.input_tokens;
+          if (typeof usage.output_tokens === "number") outputTokens = usage.output_tokens;
+        }
+
+        const hasToolCalls = toolCalls.size > 0;
+        yield* emitOpenAIResponsesToolCalls(toolCalls);
+        yield {
+          type: "message_end",
+          stopReason: hasToolCalls ? "tool_use" : "end_turn",
+          inputTokens,
+          outputTokens,
+        };
+        messageEnded = true;
+      }
+    }
+  }
+}
+
+function parseOpenAIToolCallArgs(args: string): Record<string, unknown> {
+  if (!args) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(args) as Record<string, unknown>;
+  } catch (err) {
+    console.warn("[friday][agent-llm-client] tool call args parse failed:", err instanceof Error ? err.message : String(err));
+    return { _parseError: true, _rawJson: args };
+  }
+}
+
+async function* emitOpenAIResponsesToolCalls(
+  toolCalls: Map<string, { id: string; name: string; args: string; emitted: boolean }>,
+): AsyncGenerator<FridayAgentLlmStreamEvent, void, void> {
+
+  for (const [, toolCall] of toolCalls) {
+    if (toolCall.emitted) {
+      continue;
+    }
+
+    yield {
+      type: "tool_use",
+      id: toolCall.id,
+      name: toolCall.name,
+      input: parseOpenAIToolCallArgs(toolCall.args),
+    };
+    toolCall.emitted = true;
   }
 }
 

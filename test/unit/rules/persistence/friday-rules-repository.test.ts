@@ -5,16 +5,24 @@
  * and evaluation audit log — including restart persistence and optimistic
  * concurrency via etag.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import Database from "better-sqlite3";
 import { V031_RULES_PERSISTENCE_SQL } from "../../../../src/state/sqlite/migrations/v031-rules-persistence.js";
+import { V034_RULES_SCHEMA_BRIDGE_SQL } from "../../../../src/state/sqlite/migrations/v034-rules-schema-bridge.js";
+import { V059_RULES_AUDIT_CANONICALIZATION_SQL } from "../../../../src/state/sqlite/migrations/v059-rules-audit-canonicalization.js";
 import { createFridayRulesRepository } from "#rules";
 import type { FridayPolicyBundleRow, FridayRuleRow, FridayRuleVersionRow, FridayRuleEvaluationLogRow } from "#rules";
 
-function createTestDb(): Database.Database {
+function createTestDb(opts: { withBridge?: boolean; withCanonicalAudit?: boolean } = {}): Database.Database {
   const db = new Database(":memory:");
   db.pragma("journal_mode = WAL");
   db.exec(V031_RULES_PERSISTENCE_SQL);
+  if (opts.withBridge) {
+    db.exec(V034_RULES_SCHEMA_BRIDGE_SQL);
+  }
+  if (opts.withCanonicalAudit) {
+    db.exec(V059_RULES_AUDIT_CANONICALIZATION_SQL);
+  }
   return db;
 }
 
@@ -278,6 +286,85 @@ describe("A-002 FridayRulesRepository", () => {
       expect(repo.countEvaluationLogs(db, { ruleId: "r-1" })).toBe(5);
       expect(repo.countEvaluationLogs(db, { bundleId: "b-1" })).toBe(5);
       expect(repo.countEvaluationLogs(db)).toBe(5);
+    });
+
+    it("does not warn when v034 bridge mirrors legacy inserts into audit", () => {
+      const bridgeDb = createTestDb({ withBridge: true });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      try {
+        repo.insertEvaluationLog(bridgeDb, {
+          id: "bridge-eval-1",
+          rule_id: "r-1",
+          policy_bundle_id: "b-1",
+          decision: "deny",
+          resource: "network",
+          action: "external_call",
+          context_redacted_json: '{"target":"api.example.com"}',
+          redaction_applied: 0,
+          redacted_fields_json: "[]",
+          matched_rules_json: '[{"id":"r-1"}]',
+          duration_ms: 1.2,
+          run_id: "run-bridge-1",
+          workflow_id: "wf-bridge-1",
+          principal_id: "user-bridge-1",
+          created_at: "2026-03-27T09:00:00Z",
+        });
+
+        const legacyRow = bridgeDb.prepare(
+          "SELECT COUNT(*) AS count FROM rule_evaluation_log WHERE id = ?",
+        ).get("bridge-eval-1") as { count: number };
+        const auditRow = bridgeDb.prepare(
+          "SELECT COUNT(*) AS count FROM rule_eval_audit WHERE id = ?",
+        ).get("bridge-eval-1") as { count: number };
+
+        expect(legacyRow.count).toBe(1);
+        expect(auditRow.count).toBe(1);
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+        bridgeDb.close();
+      }
+    });
+
+    it("keeps audit as the write source after canonicalization migration", () => {
+      const canonicalDb = createTestDb({ withBridge: true, withCanonicalAudit: true });
+
+      try {
+        repo.insertEvaluationLog(canonicalDb, {
+          id: "canonical-eval-1",
+          rule_id: "r-1",
+          policy_bundle_id: "b-1",
+          decision: "warn",
+          resource: "filesystem",
+          action: "write",
+          context_redacted_json: '{"path":"/tmp/demo"}',
+          redaction_applied: 0,
+          redacted_fields_json: "[]",
+          matched_rules_json: '[{"id":"r-1"}]',
+          duration_ms: 2.5,
+          run_id: "run-canonical-1",
+          workflow_id: "wf-canonical-1",
+          principal_id: "user-canonical-1",
+          created_at: "2026-03-27T09:15:00Z",
+        });
+
+        const auditRow = canonicalDb.prepare(
+          "SELECT COUNT(*) AS count FROM rule_eval_audit WHERE id = ?",
+        ).get("canonical-eval-1") as { count: number };
+        const legacyRow = canonicalDb.prepare(
+          "SELECT COUNT(*) AS count FROM rule_evaluation_log WHERE id = ?",
+        ).get("canonical-eval-1") as { count: number };
+        const droppedTrigger = canonicalDb.prepare(
+          "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_rule_eval_log_to_audit'",
+        ).get() as { count: number };
+
+        expect(auditRow.count).toBe(1);
+        expect(legacyRow.count).toBe(1);
+        expect(droppedTrigger.count).toBe(0);
+      } finally {
+        canonicalDb.close();
+      }
     });
   });
 

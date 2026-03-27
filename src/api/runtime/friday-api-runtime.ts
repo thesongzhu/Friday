@@ -79,7 +79,6 @@ import { createFridayMarketplaceRequestRoutes } from "../http/routes/friday-mark
 import { createFridaySkillMarketplaceRoutes } from "../http/routes/friday-skill-marketplace-routes.js";
 import { createFridayMultiTenantSecurityRoutes } from "../http/routes/friday-multi-tenant-security-routes.js";
 import { createFridayObservabilityRoutes } from "../http/routes/friday-observability-routes.js";
-import { createFridayPackagingRoutes } from "../http/routes/friday-packaging-routes.js";
 import { createFridaySatellitePairingRoutes } from "../http/routes/friday-satellite-pairing-routes.js";
 import { createFridaySatelliteRuntimeRoutes } from "../http/routes/friday-satellite-runtime-routes.js";
 import { createFridayChannelWebhookRoutes } from "../http/routes/friday-channel-webhook-routes.js";
@@ -172,6 +171,27 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function resolveWorkflowRealtimeStreamId(
+  event: string,
+  payload: Record<string, unknown>,
+): string | null {
+  if (!event.startsWith("workflow.")) {
+    return null;
+  }
+
+  const runId = asString(payload.runId);
+  if (runId) {
+    return `run:${runId}`;
+  }
+
+  const workflowId = asString(payload.workflowId);
+  if (workflowId) {
+    return `workflow:${workflowId}`;
+  }
+
+  return null;
 }
 
 function isPrivilegedRunEvidencePrincipal(principal: FridayAuthPrincipal | null): boolean {
@@ -365,6 +385,23 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     currentEpoch: CURRENT_EPOCH,
   });
 
+  const publishWorkflowRealtimeEvent = async (
+    event: string,
+    payload: unknown,
+  ): Promise<void> => {
+    const normalizedPayload = asRecord(payload);
+    const streamId = resolveWorkflowRealtimeStreamId(event, normalizedPayload);
+    if (!streamId) {
+      return;
+    }
+
+    eventBus.publish(
+      streamId,
+      event as never,
+      normalizedPayload as never,
+    );
+  };
+
   // Fleet
   const fleet = createFridayFleetDashboardService({
     db: deps.db,
@@ -390,6 +427,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       computeChecksum: deps.computeChecksum,
       resolveSkill: deps.resolveSkill,
       invokeSkill: deps.invokeSkill,
+      publishEvent: publishWorkflowRealtimeEvent,
       triggerRepo,
     });
   })();
@@ -1277,25 +1315,6 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   if (deps.observability) {
     for (const route of createFridayObservabilityRoutes(deps.observability)) {
       routes.register(route);
-    }
-  }
-
-  // Register packaging routes (optional)
-  if (deps.packaging) {
-    for (const route of createFridayPackagingRoutes(deps.packaging)) {
-      const guardedRoute = route.operationId.startsWith("packaging.")
-        ? {
-          ...route,
-          async handler(ctx: Parameters<typeof route.handler>[0]) {
-            const tenantId = resolveTenantIdFromContext(ctx);
-            if (tenantId) {
-              assertTenantScopedAccess(ctx.principal, tenantId);
-            }
-            return route.handler(ctx);
-          },
-        }
-        : route;
-      routes.register(guardedRoute);
     }
   }
 
