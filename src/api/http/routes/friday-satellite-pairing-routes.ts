@@ -4,6 +4,7 @@
  * @module api/http/routes/friday-satellite-pairing-routes
  */
 
+import { FridayDomainError } from "#errors";
 import type { FridayHttpContext, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 
 type Ctx = FridayHttpContext<unknown, Record<string, string>, unknown>;
@@ -168,7 +169,7 @@ export function createFridaySatellitePairingRoutes(
         const params = ctx.params as Record<string, string>;
         const request = await deps.getPairingRequest(params.satelliteId);
         if (!request) {
-          return { error: { code: "NOT_FOUND", message: "No pairing request found" } };
+          throw new FridayDomainError("NOT_FOUND", "No pairing request found", { httpStatus: 404 });
         }
         return request;
       },
@@ -185,7 +186,7 @@ export function createFridaySatellitePairingRoutes(
         const body = ctx.body as Record<string, unknown>;
         const pairingReq = await deps.getPairingRequest(params.satelliteId);
         if (!pairingReq) {
-          return { error: { code: "NOT_FOUND", message: "No pending pairing request" } };
+          throw new FridayDomainError("NOT_FOUND", "No pending pairing request", { httpStatus: 404 });
         }
 
         const result = await deps.approvePairing({
@@ -211,7 +212,7 @@ export function createFridaySatellitePairingRoutes(
         const body = ctx.body as Record<string, unknown>;
         const pairingReq = await deps.getPairingRequest(params.satelliteId);
         if (!pairingReq) {
-          return { error: { code: "NOT_FOUND", message: "No pending pairing request" } };
+          throw new FridayDomainError("NOT_FOUND", "No pending pairing request", { httpStatus: 404 });
         }
 
         const result = await deps.rejectPairing({

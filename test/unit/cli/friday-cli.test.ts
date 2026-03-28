@@ -610,7 +610,7 @@ describe("prepareStartupChannelsConfig", () => {
         JSON.stringify({
           channels: {
             discord: {
-              token: "fake-discord-token",
+              token: "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAuR2FiY0RlLkFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFla",
               allowedUsers: ["jarvis"],
             },
           },
@@ -651,13 +651,14 @@ describe("prepareStartupChannelsConfig", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "friday-cli-channels-fallback-"));
     const legacyDir = path.join(tmpHome, ".friday");
     const legacyPath = path.join(legacyDir, "friday.json");
+    const testToken = "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAuR2FiY0RlLkFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFla";
     fs.mkdirSync(legacyDir, { recursive: true });
     fs.writeFileSync(
       legacyPath,
       JSON.stringify({
         channels: {
           discord: {
-            token: "fake-discord-token",
+            token: testToken,
           },
         },
       }, null, 2),
@@ -675,7 +676,7 @@ describe("prepareStartupChannelsConfig", () => {
       instances: [
         expect.objectContaining({
           kind: "discord",
-          token: "fake-discord-token",
+          token: testToken,
         }),
       ],
     });

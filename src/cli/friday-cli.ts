@@ -633,6 +633,11 @@ function normalizeLegacyChannelEntry(
         warnLegacyChannelSkip(kind, "missing token");
         return null;
       }
+      // P2-05: Basic format validation — accept secret refs ($ENV, secret://) and validate raw tokens.
+      if (!token.startsWith("secret://") && !token.startsWith("$") && (token.length < 50 || !/^[A-Za-z0-9._\-]+$/.test(token))) {
+        warnLegacyChannelSkip(kind, "token format appears invalid (expected 50+ chars or secret:// / $ENV reference)");
+        return null;
+      }
       const instance: JsonObject = { kind: "discord", enabled: true, token };
       const allowedUsers = asStringArray(raw.allowedUsers) ?? asStringArray(raw.allowFrom);
       const allowedChannels = asStringArray(raw.allowedChannels) ?? asStringArray(raw.allowedChats);

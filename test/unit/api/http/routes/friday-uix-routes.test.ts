@@ -176,7 +176,7 @@ function makeService(): FridayUixSurfaceService {
 describe("FridayUixRoutes", () => {
   it("creates assistant route definitions", () => {
     const routes = createFridayUixRoutes({ service: makeService() });
-    expect(routes).toHaveLength(14);
+    expect(routes).toHaveLength(15);
     expect(routes.map((route) => route.operationId)).toEqual([
       "uix.intents.resolve",
       "uix.templates.list",
@@ -192,6 +192,7 @@ describe("FridayUixRoutes", () => {
       "uix.user.profile.get",
       "uix.user.profile.update",
       "uix.investigate",
+      "uix.learnedfacts.list",
     ]);
   });
 

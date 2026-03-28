@@ -645,22 +645,11 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
   memoryState: FridayHubMemoryStateService;
   nowIso: () => string;
 }): FridayHubAutoFixExecutionSupport {
-  const unsupportedKinds: FridayAutoFixStepKind[] = [
-    "retry_node",
-    "switch_model_fallback",
-    "trim_payload",
-    "apply_config_patch",
-    "grant_permission",
-    "pause_workflow",
-  ];
-
+  // P2-07: Only override step kinds that need hub-level service access.
+  // All other kinds use DEFAULT_EXECUTORS from the execution service which
+  // correctly set directive markers and return true.
   const stepExecutors: Partial<Record<FridayAutoFixStepKind, StepExecutor>> = {};
   const stepVerifiers: Partial<Record<FridayAutoFixStepKind, StepVerifier>> = {};
-
-  for (const kind of unsupportedKinds) {
-    stepExecutors[kind] = async () => false;
-    stepVerifiers[kind] = async () => false;
-  }
 
   stepExecutors.disable_skill = async (step) => {
     if (!step.target) {
