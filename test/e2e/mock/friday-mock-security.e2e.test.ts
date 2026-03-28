@@ -12,6 +12,7 @@ import {
   type MockHubEnv,
 } from "./_helpers/mock-env.js";
 import { resetMockCounters } from "../../_mocks/mock-llm-providers.js";
+import type { FridayProviderApi } from "../../../src/providers/model/friday-provider.types.js";
 
 // ─── Helpers ───
 
@@ -53,7 +54,11 @@ describe("Friday Mock Security E2E", () => {
   let model: string;
 
   beforeAll(async () => {
-    env = await createMockHubEnv({ providerKinds: ["anthropic"] });
+    // Use strict SSRF policy (no allowPrivateNetwork) so private IP blocking tests work correctly
+    env = await createMockHubEnv({
+      providerKinds: ["anthropic"],
+      ssrfPolicy: { allowPrivateNetwork: false },
+    });
     const provider = env.providers["anthropic"]!;
     providerId = provider.providerId;
     model = provider.model;
@@ -337,33 +342,52 @@ describe("Friday Mock Security E2E", () => {
 
     it("readOnly allows web_search tool", async () => {
       const mock = env.mockFor("anthropic");
+      const router = env.fetchRouter;
 
-      // web_search is non-mutating, should work in readOnly mode
-      mock.enqueue({
-        type: "tool_use",
-        toolName: "web_search",
-        toolInput: { query: "readonly search test" },
-      });
-      mock.enqueue({
-        type: "text",
-        text: "Search worked in readOnly mode.",
-      });
+      // Mock DuckDuckGo HTML to avoid DNS resolution (unavailable in some test envs)
+      const ddgRoute = {
+        urlPrefix: "https://html.duckduckgo.com",
+        api: "anthropic-messages" as FridayProviderApi,
+        mockFetch: async () =>
+          new Response(
+            '<a class="result__a" href="https://example.com/result">Test Result</a>' +
+            '<a class="result__snippet">A search result snippet</a>',
+            { status: 200, headers: { "content-type": "text/html" } },
+          ),
+      };
+      router.routes.unshift(ddgRoute);
 
-      const res = await apiFetch<AgentRunResult>(
-        env.baseUrl, env.accessToken, "POST", "/v1/agent/runs",
-        {
-          task: "Search in readOnly",
-          providerId,
-          model,
-          timeoutMs: 15_000,
-          constraints: { readOnly: true },
-        },
-      );
+      try {
+        // web_search is non-mutating, should work in readOnly mode
+        mock.enqueue({
+          type: "tool_use",
+          toolName: "web_search",
+          toolInput: { query: "readonly search test" },
+        });
+        mock.enqueue({
+          type: "text",
+          text: "Search worked in readOnly mode.",
+        });
 
-      // web_search may succeed or fail (no mock DDG route), but the point is
-      // the tool was ALLOWED to execute (not blocked by readOnly)
-      expect(res.json.data.status).toBe("completed");
-      expect(res.json.data.toolCallCount).toBeGreaterThanOrEqual(1);
+        const res = await apiFetch<AgentRunResult>(
+          env.baseUrl, env.accessToken, "POST", "/v1/agent/runs",
+          {
+            task: "Search in readOnly",
+            providerId,
+            model,
+            timeoutMs: 15_000,
+            constraints: { readOnly: true },
+          },
+        );
+
+        // web_search succeeds via mock DDG route, and the point is
+        // the tool was ALLOWED to execute (not blocked by readOnly)
+        expect(res.json.data.status).toBe("completed");
+        expect(res.json.data.toolCallCount).toBeGreaterThanOrEqual(1);
+      } finally {
+        const idx = router.routes.indexOf(ddgRoute);
+        if (idx >= 0) router.routes.splice(idx, 1);
+      }
     });
   });
 });
