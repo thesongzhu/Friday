@@ -298,17 +298,11 @@ export {
 
 type FridayWarnSink = (message: string) => void;
 
-const warnedMessagesBySink = new WeakMap<FridayWarnSink, Set<string>>();
+// P2-06: Module-level Set avoids WeakMap edge cases with replaced warn sinks.
+const warnedMessages = new Set<string>();
 
 function warnOnce(warn: FridayWarnSink, message: string): void {
-  let warnedMessages = warnedMessagesBySink.get(warn);
-  if (!warnedMessages) {
-    warnedMessages = new Set<string>();
-    warnedMessagesBySink.set(warn, warnedMessages);
-  }
-  if (warnedMessages.has(message)) {
-    return;
-  }
+  if (warnedMessages.has(message)) return;
   warnedMessages.add(message);
   warn(message);
 }
@@ -779,6 +773,8 @@ export async function createFridayHub(
   // ─── Workflow runtime ───
 
   const triggerRepo = createFridayWorkflowTriggerRepository({ db: stateRuntime!.sqlite });
+  // P2-03: Bounded event buffers prevent OOM if publisher init is delayed.
+  const FRIDAY_EVENT_BUFFER_MAX = 10_000;
   const workflowRealtimeEventBuffer: Array<{ streamId: string; event: string; payload: Record<string, unknown> }> = [];
   let workflowRealtimeEventPublisher:
     | {
@@ -811,6 +807,10 @@ export async function createFridayHub(
     if (workflowRealtimeEventPublisher) {
       workflowRealtimeEventPublisher.publish(streamId, event, record);
     } else {
+      if (workflowRealtimeEventBuffer.length >= FRIDAY_EVENT_BUFFER_MAX) {
+        workflowRealtimeEventBuffer.shift();
+        warnHubBootstrapOnce("[friday] workflow realtime event buffer overflow — oldest event dropped");
+      }
       workflowRealtimeEventBuffer.push({ streamId, event, payload: record });
     }
   };
@@ -1736,7 +1736,7 @@ export async function createFridayHub(
           correlationId: entry.correlationId,
           ...(entry.details ?? {}),
         },
-      }).catch(() => {});
+      }).catch((err: unknown) => warnHubBootstrapOnce(`[friday] audit-append: ${err instanceof Error ? err.message : String(err)}`));
     };
 
     const appendMcpServerToolAudit = (entry: {
@@ -2310,8 +2310,24 @@ export async function createFridayHub(
     };
   };
 
-  // Lazy reference for learning context — assigned after selfLearningRuntime is created.
-  let _learningContextRef: { buildContext: (input: { userId: string; nowIso: string }) => { preferences: Record<string, unknown> } } | undefined;
+  // ─── Self-learning runtime (created early to avoid race with agentRuntime) ───
+  const hubAutoFixSupport = createFridayHubAutoFixExecutionSupport({
+    registry,
+    memoryState,
+    nowIso,
+  });
+
+  const selfLearningRuntime = createFridaySelfLearningRuntime({
+    db: stateRuntime.sqlite,
+    idGenerator,
+    nowIso,
+    stepExecutors: hubAutoFixSupport.stepExecutors,
+    stepVerifiers: hubAutoFixSupport.stepVerifiers,
+  });
+
+  // P1-01: Assign immediately so learningContextBuilder and communicationPromptBuilder
+  // always have access to learned preferences — no startup window gap.
+  const _learningContextRef = selfLearningRuntime.context;
   const uixUserPreferenceRepository = createFridayUixUserPreferenceRepository();
 
   const agentRuntime = createFridayAgentRuntime({
@@ -2874,7 +2890,7 @@ export async function createFridayHub(
         result: "success",
         caller: "marketplace.runtime",
         details: event.metadata ? { ...event.metadata } : undefined,
-      }).catch(() => {});
+      }).catch((err: unknown) => warnHubBootstrapOnce(`[friday] audit-append: ${err instanceof Error ? err.message : String(err)}`));
     }
     : undefined;
   const marketplaceEntitlementCheck = marketplaceCommercePersistence
@@ -2904,7 +2920,7 @@ export async function createFridayHub(
             listingId: input.listingId,
             principalId: input.principalId,
           },
-        }).catch(() => {});
+        }).catch((err: unknown) => warnHubBootstrapOnce(`[friday] audit-append: ${err instanceof Error ? err.message : String(err)}`));
         throw new FridayDomainError(
           result.error.code,
           result.error.message,
@@ -2963,21 +2979,8 @@ export async function createFridayHub(
     console.log("[friday] Marketplace commerce runtime: enabled");
   }
 
-  // ─── Self-learning runtime ───
+  // ─── Observability runtime ───
 
-  const hubAutoFixSupport = createFridayHubAutoFixExecutionSupport({
-    registry,
-    memoryState,
-    nowIso,
-  });
-
-  const selfLearningRuntime = createFridaySelfLearningRuntime({
-    db: stateRuntime.sqlite,
-    idGenerator,
-    nowIso,
-    stepExecutors: hubAutoFixSupport.stepExecutors,
-    stepVerifiers: hubAutoFixSupport.stepVerifiers,
-  });
   const observabilityService = createFridayObservabilityApiService({
     db: stateRuntime.sqlite,
     idGenerator,
@@ -3002,9 +3005,6 @@ export async function createFridayHub(
       };
     },
   });
-
-  // Wire the lazy learning context reference now that learning runtime is created.
-  _learningContextRef = selfLearningRuntime.context;
 
   // Buffer events published before the real event publisher is wired (late init).
   const selfHealingEventBuffer: Array<{ streamId: string; event: string; payload: Record<string, unknown>; correlationId?: string }> = [];
@@ -3053,6 +3053,10 @@ export async function createFridayHub(
         if (selfHealingEventPublisher) {
           selfHealingEventPublisher.publish(streamId, event, payload, correlationId);
         } else {
+          if (selfHealingEventBuffer.length >= FRIDAY_EVENT_BUFFER_MAX) {
+            selfHealingEventBuffer.shift();
+            warnHubBootstrapOnce("[friday] self-healing event buffer overflow — oldest event dropped");
+          }
           selfHealingEventBuffer.push({ streamId, event, payload, correlationId });
         }
       },
@@ -3077,6 +3081,10 @@ export async function createFridayHub(
         if (selfHealingEventPublisher) {
           selfHealingEventPublisher.publish(streamId, event, payload, correlationId);
         } else {
+          if (selfHealingEventBuffer.length >= FRIDAY_EVENT_BUFFER_MAX) {
+            selfHealingEventBuffer.shift();
+            warnHubBootstrapOnce("[friday] self-healing event buffer overflow — oldest event dropped");
+          }
           selfHealingEventBuffer.push({ streamId, event, payload, correlationId });
         }
       },
@@ -4459,7 +4467,7 @@ export async function createFridayHub(
               errorMessage,
               caller: input.routeId,
               details: payload,
-            }).catch(() => {});
+            }).catch((err: unknown) => warnHubBootstrapOnce(`[friday] audit-append: ${err instanceof Error ? err.message : String(err)}`));
           };
           if (text.length === 0) return;
 

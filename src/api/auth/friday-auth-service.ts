@@ -158,19 +158,18 @@ function verifyPassword(input: string, hash: string): { valid: boolean; needsUpg
 // Dummy scrypt hash for constant-time verification against non-existent users.
 // Generated once at module load; the actual password doesn't matter.
 const DUMMY_SCRYPT_HASH = hashPasswordScrypt("__friday_dummy_password_for_timing__");
-const warnedMessagesBySink = new WeakMap<(message: string) => void, Set<string>>();
+// P2-06: Per-sink Map deduplicates warnings for the same warn function across instances.
+const warnedBySink = new Map<(message: string) => void, Set<string>>();
 
 function createWarnOnce(warn: (message: string) => void): (message: string) => void {
   return (message: string) => {
-    let warnedMessages = warnedMessagesBySink.get(warn);
-    if (!warnedMessages) {
-      warnedMessages = new Set<string>();
-      warnedMessagesBySink.set(warn, warnedMessages);
+    let seen = warnedBySink.get(warn);
+    if (!seen) {
+      seen = new Set<string>();
+      warnedBySink.set(warn, seen);
     }
-    if (warnedMessages.has(message)) {
-      return;
-    }
-    warnedMessages.add(message);
+    if (seen.has(message)) return;
+    seen.add(message);
     warn(message);
   };
 }
@@ -198,8 +197,14 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
   const silenceExpectedTestWarnings = Boolean(process.env.VITEST) && warn === console.warn;
   const rateLimiter = deps.rateLimiter;
 
-  // P1-SEC-004: Warn if token secret is too short
+  // P1-SEC-004: Warn if token secret is too short; enforce in production
   if (deps.tokenSecret.length < 32) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "[friday] FRIDAY_TOKEN_SECRET must be at least 32 characters in production. " +
+        "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+      );
+    }
     warnOnce("[friday][SECURITY] Token secret is shorter than recommended minimum (32 chars) — session tokens may be vulnerable to brute-force");
   }
 

@@ -42,9 +42,13 @@ export interface FridayUtilityStrategy {
  */
 export class FridayHeuristicUtilityStrategy implements FridayUtilityStrategy {
   compute(input: FridayUtilityInput): FridayUtilityResult {
-    const eu =
-      input.estimatedBenefitScore * input.predictedSuccessProb -
-      input.estimatedCostScore * (1 - input.predictedSuccessProb);
+    // P3-03: Clamp probability/score inputs to valid [0, 1] range.
+    const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
+    const benefit = clamp01(input.estimatedBenefitScore);
+    const cost = clamp01(input.estimatedCostScore);
+    const pSuccess = clamp01(input.predictedSuccessProb);
+
+    const eu = benefit * pSuccess - cost * (1 - pSuccess);
     const riskPenalty = input.riskTier * 0.15;
     const adjusted = eu - riskPenalty;
 
@@ -62,9 +66,9 @@ export class FridayHeuristicUtilityStrategy implements FridayUtilityStrategy {
       recommendation,
       reasoning:
         `EU=${adjusted.toFixed(3)}` +
-        ` (benefit=${input.estimatedBenefitScore.toFixed(2)}` +
-        `, P(success)=${input.predictedSuccessProb.toFixed(2)}` +
-        `, cost=${input.estimatedCostScore.toFixed(2)}` +
+        ` (benefit=${benefit.toFixed(2)}` +
+        `, P(success)=${pSuccess.toFixed(2)}` +
+        `, cost=${cost.toFixed(2)}` +
         `, riskPenalty=${riskPenalty.toFixed(2)})`,
     };
   }

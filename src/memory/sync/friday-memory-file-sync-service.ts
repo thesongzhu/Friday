@@ -544,7 +544,7 @@ export function createFridayMemoryFileSyncService(
       }
       // Wait for in-flight sync to finish
       if (syncPromise) {
-        await syncPromise.catch(() => {});
+        await syncPromise.catch((err: unknown) => console.warn("[friday][memory-sync] stop:", err instanceof Error ? err.message : String(err)));
       }
     },
 

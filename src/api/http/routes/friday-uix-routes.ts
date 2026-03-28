@@ -1,4 +1,5 @@
 import { FridayDomainError } from "#errors";
+import { isMbti } from "../../../uix/services/friday-communication-persona.js";
 import type { FridayUixSurfaceService } from "../../../uix/services/friday-uix-surface-service.js";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
@@ -127,6 +128,17 @@ export function createFridayUixRoutes(
           ? (ctx.body as { preferences?: unknown }).preferences
           : undefined;
         const preferences = Array.isArray(body) ? body : [];
+        // P2-04: Validate MBTI type before storing to avoid silent fallback.
+        for (const pref of preferences) {
+          if (
+            pref && typeof pref === "object" &&
+            (pref as Record<string, unknown>).category === "communication" &&
+            (pref as Record<string, unknown>).key === "mbtiType" &&
+            !isMbti((pref as Record<string, unknown>).value)
+          ) {
+            throw new FridayDomainError("INVALID_MBTI_TYPE", "Invalid MBTI type. Valid values: INTJ, INTP, ENTJ, ENTP, INFJ, INFP, ENFJ, ENFP, ISTJ, ISFJ, ESTJ, ESFJ, ISTP, ISFP, ESTP, ESFP", { httpStatus: 400 });
+          }
+        }
         return deps.service.updatePreferences({
           userId,
           request: {

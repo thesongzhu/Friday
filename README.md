@@ -20,7 +20,26 @@ For everything beyond the main product overview, use the [Documentation Hub](doc
 
 ---
 
-## Latest Updates (2026-02-24)
+## Latest Updates (2026-03-27)
+
+- **Communication persona system**: MBTI-based communication persona with 16 personality templates, 9 configurable dimensions (tone, verbosity, structure, question style, directness, emoji style, jargon tolerance, assumption style, confirmation style), explicit/learned/template/default priority cascade, and real-time injection into the agent system prompt.
+- **Learning-adaptive communication**: Learned preference facts from the self-learning pipeline now feed directly into persona resolution, enabling Friday to adapt communication style based on observed user behavior with confidence-decaying Bayesian-inspired updates.
+- **User preference management**: Full CRUD API for user preferences at `/v1/uix/preferences`, persona preview at `/v1/uix/persona`, user profile onboarding at `/v1/uix/user-profile`, and assistant diagnostics at `/v1/uix/diagnostics`.
+- **Provider OAuth hardening**: Claude Code request format matching for OAuth inference (Anthropic PKCE).
+- **Audit remediation**: Comprehensive P0/P1/P2 fixes and code quality sweep.
+- **CI hardening**: detect-secrets baseline refresh for audit remediation.
+- **Expected utility calculator**: pluggable utility scoring for auto-fix decisions (`EU = benefit * P(success) - cost * P(failure) - riskPenalty`), enabling future ML model replacement. World model foundation.
+- **Tool call summary**: privacy-safe tool execution summaries (arg keys only, no values) for observability and world model training data collection.
+- **OpenAI Responses API**: full streaming support for the `openai-responses` API format alongside existing `openai-completions`.
+- **Warn-once architecture**: cross-module log deduplication (7+ modules) for cleaner runtime output without losing critical warnings.
+- **Workflow realtime events**: buffered event publishing enables live workflow progress tracking via SSE/WebSocket.
+- **Setup diagnostics**: user-friendly error messages and remediation hints for setup/auth failures in UI.
+- **Non-cloud runtime stabilization**: graceful degradation for companion, providers, memory, sessions, skills, and UI mount failures.
+- **Rules audit canonicalization**: migration v059 unifies rule evaluation logs into canonical audit table.
+- **Release preflight and Docker E2E**: layered Docker smoke tests, release preflight checks, and cloud contract verification.
+
+<details>
+<summary>Previous updates (2026-02-24)</summary>
 
 - **Agent chat workspace redesign**: larger conversation canvas, command buttons, task controls, and live run monitoring with trace/audit summary.
 - **Local no-signin startup hardening**: setup/auth bootstrap and local bypass login flow are now more reliable for self-hosted local mode.
@@ -35,6 +54,8 @@ For everything beyond the main product overview, use the [Documentation Hub](doc
 - **Workflow product closeout**: `/assistant` can now generate, deploy, export, and recover workflows, while `/workflows` provides graph, deploy status, runs, and evidence as the operator-facing control plane.
 - **Quality and resilience closeout**: acceptance tests now support sandboxed custom checks plus version history, retry now includes provider-level circuit breakers and replay evidence, and rules expose simulation plus explainable audit trails.
 - **Expert autonomy (opt-in)**: assistant, self-healing, workflows, skills, fleet, and observability now support an expert-mode policy for bounded context inference, safe probes, and stronger guided troubleshooting without removing final approval gates for destructive or production-sensitive actions.
+
+</details>
 
 ---
 
@@ -132,6 +153,66 @@ Detailed boundary docs:
 - **Providers (BYOK)** — Register, validate, and route to any LLM provider with usage tracking.
 - **Rules Engine** — Rule-based automation alongside workflows.
 - **Daemon & TUI** — Long-running daemon mode with terminal UI for interactive operation.
+- **Communication Persona** — MBTI-based adaptive communication with 16 personality templates, 9 dimensions, and learned preference integration. See [Communication Persona & Adaptive Learning](#communication-persona--adaptive-learning) below.
+
+---
+
+## Communication Persona & Adaptive Learning
+
+Friday adapts its communication style to each user through a layered persona system that combines MBTI templates, explicit preferences, and learned behavior signals.
+
+### MBTI Templates
+
+Set your MBTI type (16 supported types: INTJ, INTP, ENTJ, ENTP, INFJ, INFP, ENFJ, ENFP, ISTJ, ISFJ, ESTJ, ESFJ, ISTP, ISFP, ESTP, ESFP) to get a baseline communication profile. Each type maps to 9 independently configurable dimensions:
+
+| Dimension | Options | What it controls |
+|---|---|---|
+| **Tone** | warm, neutral, analytical, encouraging | Emotional coloring of responses |
+| **Verbosity** | concise, balanced, detailed | Response length and depth |
+| **Structure** | compact, balanced, structured | Formatting and organization |
+| **Question style** | minimal, guided, exploratory | How Friday asks for clarification |
+| **Directness** | soft, balanced, direct | How straightforwardly Friday communicates |
+| **Emoji style** | none, light | Use of emoji in responses |
+| **Jargon tolerance** | low, medium, high | Technical vocabulary level |
+| **Assumption style** | ask_first, balanced, infer_first | Whether Friday asks or infers from context |
+| **Confirmation style** | minimal, balanced, explicit | How much Friday confirms before acting |
+
+### Priority Cascade
+
+Settings are resolved per-dimension in this order:
+
+1. **Explicit preferences** — User-set via `/v1/uix/preferences` API (confidence 1.0)
+2. **Learned preferences** — Extracted from interaction patterns with confidence decay (30-day half-life)
+3. **MBTI template defaults** — If MBTI type is set, use the type's template for unset dimensions
+4. **System defaults** — neutral/balanced baseline
+
+### Self-Learning Loop
+
+Friday's learning pipeline continuously adapts:
+
+1. **Collect** — Events captured via the `feedback` agent tool (corrections, stated preferences, positive feedback)
+2. **Extract** — Signals extracted using pattern recognition (e.g., "prefer concise answers" → verbosity=concise)
+3. **Store** — Preference facts stored with confidence scores in SQLite
+4. **Decay** — Confidence decays over time (30-day half-life) to prevent stale facts from persisting
+5. **Enrich** — Active facts (above confidence threshold) assembled by the learning context builder
+6. **Apply** — Persona resolved per-run and injected into the agent's system prompt at execution time
+
+The confidence update model: `0.45 * existingDecayed + 0.55 * signalConfidence + evidenceBoost - conflictPenalty`
+
+- Evidence boost: logarithmic scaling with diminishing returns (`min(0.25, 0.04 * log2(1 + evidenceCount))`)
+- Conflict penalty: 0.30 when new signal contradicts existing fact
+- This prevents both over-confidence from repeated confirmations and stale preferences from lingering
+
+### Persona API
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/v1/uix/persona` | token | Get resolved communication persona for current user |
+| `GET` | `/v1/uix/preferences` | token | List user preferences (filterable by category) |
+| `PUT` | `/v1/uix/preferences` | token | Upsert user preferences |
+| `DELETE` | `/v1/uix/preferences/:preferenceId` | token | Delete a user preference |
+
+> Persona settings affect wording, guidance, and clarification style only. They never weaken approval gates, rollback rules, or destructive-action safeguards.
 
 ---
 
@@ -693,6 +774,14 @@ Automation schedule payload example:
 | `POST` | `/v1/uix/wizards/:wizardId/start` | token | Start a guided wizard |
 | `POST` | `/v1/uix/wizards/:wizardId/continue` | token | Continue a guided wizard |
 | `GET` | `/v1/uix/issues` | token | List assistant-visible issues and fix cards |
+| `GET` | `/v1/uix/preferences` | token | List user preferences (filterable by category) |
+| `PUT` | `/v1/uix/preferences` | token | Upsert user preferences |
+| `DELETE` | `/v1/uix/preferences/:preferenceId` | token | Delete a user preference |
+| `GET` | `/v1/uix/persona` | token | Get resolved communication persona for current user |
+| `GET` | `/v1/uix/diagnostics` | token | Get assistant diagnostics and task profile info |
+| `GET` | `/v1/uix/user-profile` | token | Get user profile and onboarding status |
+| `POST` | `/v1/uix/user-profile` | token | Update user profile and onboarding data |
+| `POST` | `/v1/uix/investigate` | token | Trigger investigation from assistant surface |
 
 ### Plugins
 
@@ -896,6 +985,18 @@ The agent runtime ships with 21+ built-in tools:
 | `nodes` | Workflow node observation and control |
 | `message` | Send messages through channels |
 | `xhs` | Xiaohongshu automation |
+| `feedback` | Record user corrections and preferences for the learning pipeline |
+| `web_search` | Web search with recency filtering |
+| `skill_generator` | Generate skills from natural-language descriptions |
+| `skill_import` | Import skills from external sources or marketplace |
+| `skills_list` | List available skills in the registry |
+| `workflow_generator` | Generate workflows from natural-language descriptions |
+| `provider` | Provider management (register, validate, OAuth, set default) |
+| `capabilities` | Query current Friday deployment capabilities |
+| `task_status` | Check status of running or delegated tasks |
+| `setup` | Setup coordinator tool for initial configuration |
+| `autonomous` | Autonomous engine control for bounded self-directed operation |
+| `system` | Agent OS system orchestration and companion integration |
 
 Tools are registered via the tool registry and can be enabled/disabled per agent configuration. All tools enforce workspace sandboxing and SSRF protection.
 
@@ -904,58 +1005,103 @@ Tools are registered via the tool registry and can be enabled/disabled per agent
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                         Friday Hub                            │
-│                                                              │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────────┐  │
-│  │ Agent    │  │ Skills   │  │ Workflow  │  │ Provider    │  │
-│  │ Runtime  │  │ Registry │  │ Engine    │  │ Service     │  │
-│  │ (21+     │  │          │  │          │  │ (BYOK)      │  │
-│  │  tools)  │  │          │  │          │  │             │  │
-│  └─────┬────┘  └─────┬────┘  └─────┬────┘  └──────┬──────┘  │
-│        │             │             │              │          │
-│  ┌─────┴─────────────┴─────────────┴──────────────┴───────┐  │
-│  │                   API Runtime                           │  │
-│  │  Routes · Auth · RBAC · Rate Limits · Realtime Events   │  │
-│  └─────────────────────┬───────────────────────────────────┘  │
-│                        │                                      │
-│  ┌─────────────────────┴───────────────────────────────────┐  │
-│  │            HTTP Server (CORS + HSTS + Logging)          │  │
-│  └─────────────────────────────────────────────────────────┘  │
-│                                                              │
-│  ┌─────────────────────────────────────────────────────────┐  │
-│  │                Channel Registry (10 platforms)           │  │
-│  │  Discord · Slack · Telegram · WhatsApp · Signal · LINE  │  │
-│  │  IRC · QQ · Lark/Feishu · Webchat                       │  │
-│  └─────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                           Friday Hub                             │
+│                                                                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────────────┐  │
+│  │ Agent    │  │ Skills   │  │ Workflow  │  │ Provider        │  │
+│  │ Runtime  │  │ Registry │  │ Engine    │  │ Service (BYOK)  │  │
+│  │ (37+     │  │ + Gen    │  │ + Gen    │  │ + Cost Router   │  │
+│  │  tools)  │  │          │  │          │  │                 │  │
+│  └─────┬────┘  └─────┬────┘  └─────┬────┘  └──────┬──────────┘  │
+│        │             │             │              │              │
+│  ┌─────┴─────────────┴─────────────┴──────────────┴───────────┐  │
+│  │              Learning + Persona Layer                       │  │
+│  │  Self-Learning Pipeline · MBTI Persona · Preference Facts  │  │
+│  │  Confidence Decay · Error Diagnosis · Auto-Fix · Lessons   │  │
+│  │  Expected Utility Calculator · Tool Call Summary            │  │
+│  └────────────────────────┬───────────────────────────────────┘  │
+│                           │                                      │
+│  ┌────────────────────────┴───────────────────────────────────┐  │
+│  │                    API Runtime                              │  │
+│  │  Routes · Auth · RBAC · Rate Limits · Realtime Events      │  │
+│  └────────────────────────┬───────────────────────────────────┘  │
+│                           │                                      │
+│  ┌────────────────────────┴───────────────────────────────────┐  │
+│  │  UIX / Assistant Layer                                      │  │
+│  │  /assistant · Wizards · Intent Resolution · Onboarding     │  │
+│  └────────────────────────┬───────────────────────────────────┘  │
+│                           │                                      │
+│  ┌────────────────────────┴───────────────────────────────────┐  │
+│  │             HTTP Server (CORS + HSTS + Logging)             │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │                 Channel Registry (10 platforms)              │  │
+│  │  Discord · Slack · Telegram · WhatsApp · Signal · LINE     │  │
+│  │  IRC · QQ · Lark/Feishu · Webchat                          │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  ┌──────────────────────┐  ┌─────────────────────────────────┐  │
+│  │ Memory + Sessions    │  │ Observability + Fleet            │  │
+│  │ FTS + Semantic Search│  │ Traces · Alerts · SLOs · Sats   │  │
+│  └──────────────────────┘  └─────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────┘
          │                     │                    │
-    REST API (:3141)     WebSocket (/ws/chat)    Channels
+    REST API (:3141)     WebSocket (/ws)         Channels
 ```
 
 ### Key modules
 
 | Module | Purpose |
 |---|---|
-| `src/hub/` | Composition root — wires everything together |
-| `src/api/` | HTTP routes, auth, RBAC, rate limiting, realtime events |
-| `src/agent/` | Agent runtime, 21+ built-in tools, sub-agent orchestration |
-| `src/channels/` | 11-platform channel registry with adapters, health monitor, allowlists |
-| `src/skills/` | Skill registry, manifest loading, validation, execution, 7 converters |
-| `src/workflows/` | DAG-based workflow engine with triggers and approvals |
-| `src/providers/` | BYOK provider management and routing |
-| `src/memory/` | Embedding-based memory with PII guarding |
-| `src/sessions/` | Multi-turn conversation state |
-| `src/rules/` | Rule-based automation engine |
-| `src/learning/` | Self-learning: error diagnosis, auto-fix, preferences |
-| `src/plugins/` | Plugin discovery, loading, and dependency resolution |
-| `src/marketplace/` | Plugin marketplace with billing and commerce |
+| `src/hub/` | Composition root (~5000 lines) — wires all services together |
+| `src/api/` | HTTP routes (45 route files), auth (JWT+RBAC+OAuth), rate limiting, realtime events (WS+SSE) |
+| `src/agent/` | Agent runtime, 37+ tool files, sub-agent orchestration, MCP bridge, autonomous engine, tool call summary (privacy-safe observability) |
+| `src/uix/` | Beginner UX: MBTI persona, user preferences, intent classification, guided wizards, onboarding engine, help system |
+| `src/learning/` | Self-learning pipeline: event collection, signal extraction, preference facts (confidence decay), pattern recognition, error diagnosis, auto-fix (plan/risk/execute/rollback/lessons), expected utility calculator (world model prep) |
+| `src/channels/` | 10-platform channel registry with adapters, health monitor, allowlists, auto-reconnect |
+| `src/skills/` | Skill registry, manifest loading, validation, execution, 7 converters, generator |
+| `src/workflows/` | DAG-based workflow engine with triggers, approvals, builder, compiler, generator |
+| `src/providers/` | BYOK provider management, OAuth, cost routing, secret encryption, budget enforcement |
+| `src/memory/` | Hybrid memory (FTS + semantic embedding), PII guarding, file sync, quota management |
+| `src/sessions/` | Multi-turn conversation state, conversation orchestration, memory extraction |
+| `src/rules/` | Rule engine with evaluation, simulation, and explainable audit trails |
+| `src/observability/` | Trace, audit, alerts, SLOs, health overview, time-series, alert destinations |
+| `src/plugins/` | Plugin discovery, loading, dependency resolution, signature verification |
+| `src/marketplace/` | Asset catalog (skill/workflow/agent), billing, creator support, request board |
 | `src/packaging/` | Package lifecycle: build, validate, install, version |
-| `src/security/` | Security center: token revocation, satellite revocation, dashboard |
-| `src/satellites/` | Distributed fleet: satellite management, trust scoring |
+| `src/security/` | Audit log, SSRF guard, multi-tenant isolation, token/satellite revocation |
+| `src/satellites/` | Distributed fleet: satellite management, trust scoring, pairing protocol |
+| `src/setup/` | Setup coordinator, environment scanner, prerequisite installer, recipe executor |
+| `src/automation/` | Cron-based automation scheduling, OpenClaw adoption bridge |
+| `src/browser/` | Playwright browser automation (headless + visible modes, CDP) |
+| `src/desktop/` | Desktop control engine (mouse, keyboard, screen capture), sandboxed |
+| `src/xhs/` | Xiaohongshu automation: login flow, session persistence, stealth |
+| `src/retry/` | Provider-level circuit breakers, replay evidence, cost summaries |
+| `src/acceptance/` | Sandboxed acceptance testing, custom checks, version history |
+| `src/playbook/` | Playbook engine for structured operational procedures |
+| `src/routing/` | Channel-agent binding, reply queue, reply routing service |
+| `src/system/` | Agent OS orchestration: companion app, passkey auth, engine |
+| `src/jobs/` | Background scheduler: learning, marketplace, retention, sessions, workflows |
+| `src/heartbeat/` | Heartbeat job runner, active-hours scheduling |
+| `src/ledger/` | Learning event ledger, skill run checkpoint store |
+| `src/config/` | Configuration I/O, backup rotation, schema validation |
+| `src/node-runner/` | Workflow node execution engine |
+| `src/nodes/` | Node service, satellite node placement |
+| `src/link-understanding/` | URL detection, fetch, summarize, cache |
+| `src/media-understanding/` | Media attachment processing, format detection |
+| `src/media/` | TTS service |
+| `src/cross-program/` | Cross-program context model for Agent OS |
+| `src/harness/` | Template harness for skill/workflow testing |
 | `src/daemon/` | Long-running daemon mode with PID management |
 | `src/tui/` | Terminal UI for interactive CLI operation |
-| `src/state/` | SQLite persistence layer with migrations |
+| `src/cli/` | CLI entry point, argument parser, command routing |
+| `src/state/` | SQLite persistence layer with 59+ migrations |
+| `src/errors/` | Domain error types, error code catalog |
+| `src/utilities/` | Backoff, retry, safe JSON, path safety |
+| `src/lib/` | Version constant |
+| `packages/friday-operator-client/` | Operator client library package |
 
 ---
 
@@ -1019,6 +1165,16 @@ export FRIDAY_MCP_SERVERS='[
 6. **Health checks** — `GET /v1/health` returns `200` when the hub is ready. Use it for load balancer probes.
 7. **Run enablement hardening** — `npm run ops:harden-local-enablement` to migrate local runtime to strict channel policy + token secret + MCP + desktop defaults.
 8. **Verify enablement gaps** — `npm run check:enablement-gaps` to fail fast on insecure/missing runtime toggles.
+
+---
+
+## Known Limitations
+
+- **Wizard/onboarding state is in-memory**: Guided wizard contexts and onboarding session progress are stored in in-memory Maps and are lost on service restart. Database persistence is planned.
+- **Persona requires principalId**: The MBTI communication persona is only applied when the agent run has a `principalId`. Anonymous or system-triggered runs receive the default neutral persona.
+- **Learning feedback is not user-visible**: While Friday learns user preferences and applies them to communication style, there is no UI surface that shows users what has been learned or lets them review/edit learned facts directly.
+- **Auto-fix step executor gaps**: Some auto-fix step kinds (`retry_node`, `switch_model_fallback`, `trim_payload`, `apply_config_patch`, `grant_permission`, `pause_workflow`) return `false` unconditionally because hub-level wiring for those specific step types is not yet implemented. Core step kinds (`disable_skill`, `clear_memory_entries`) are fully wired.
+- **Cross-platform releases**: Only macOS native companion exists. iOS, Android, and Windows are planned but not yet implemented. The Node.js hub runs on any platform with Node 22+.
 
 ---
 
