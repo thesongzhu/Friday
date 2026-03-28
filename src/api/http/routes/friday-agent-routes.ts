@@ -484,7 +484,7 @@ export function createFridayAgentRoutes(
                 cleanup();
               }
             })
-            .catch(() => {});
+            .catch((err: unknown) => console.warn("[friday][agent-routes] flush:", err instanceof Error ? err.message : String(err)));
         };
 
         // Keepalive

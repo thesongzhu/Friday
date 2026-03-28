@@ -105,7 +105,7 @@ const MBTI_TEMPLATES: readonly FridayCommunicationTemplate[] = [
 
 const MBTI_TEMPLATE_MAP = new Map(MBTI_TEMPLATES.map((template) => [template.mbti, template.defaults]));
 
-function isMbti(value: unknown): value is FridayCommunicationMbti {
+export function isMbti(value: unknown): value is FridayCommunicationMbti {
   return typeof value === "string" && MBTI_TEMPLATE_MAP.has(value as FridayCommunicationMbti);
 }
 
