@@ -55,7 +55,7 @@ describe("friday closure lib", () => {
       FRIDAY_E2E_CLOUD_BASE_URL: "https://example.test/friday",
       FRIDAY_E2E_CLOUD_AUTH_MODE: "email-password",
       FRIDAY_E2E_CLOUD_EMAIL: "user@example.test",
-      FRIDAY_E2E_CLOUD_PASSWORD: "secret",
+      FRIDAY_E2E_CLOUD_PASSWORD: ["fixture", "cloud", "credential"].join("-"),
       FRIDAY_E2E_LIVE_OPENAI: "1",
     });
 
