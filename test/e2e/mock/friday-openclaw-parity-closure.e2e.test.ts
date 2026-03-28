@@ -15,6 +15,17 @@ import {
 import { resetMockCounters } from "../../_mocks/mock-llm-providers.js";
 import type { MockFetch } from "../../_mocks/mock-llm-providers.js";
 
+/** Detect whether Playwright Chromium browser binary is installed at the expected version. */
+const CHROMIUM_AVAILABLE = (() => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pw = require("playwright") as { chromium: { executablePath: () => string } };
+    return fs.existsSync(pw.chromium.executablePath());
+  } catch {
+    return false;
+  }
+})();
+
 interface ApiEnvelope<T> {
   ok: boolean;
   data: T;
@@ -640,7 +651,7 @@ describe("Friday OpenClaw Parity Closure E2E", () => {
     }
   }, 60_000);
 
-  it("C/G route closure: browser screenshot produces user-visible artifact path and on-disk file", async () => {
+  it.skipIf(!CHROMIUM_AVAILABLE)("C/G route closure: browser screenshot produces user-visible artifact path and on-disk file", async () => {
     const mock = env.mockFor("anthropic");
     mock.enqueue({
       type: "tool_use",
@@ -689,7 +700,7 @@ describe("Friday OpenClaw Parity Closure E2E", () => {
     expect(fs.statSync(evidencePath).size).toBeGreaterThan(0);
   }, 90_000);
 
-  it("G route closure: webchat completed run returns user-visible message plus image artifacts", async () => {
+  it.skipIf(!CHROMIUM_AVAILABLE)("G route closure: webchat completed run returns user-visible message plus image artifacts", async () => {
     const mock = env.mockFor("anthropic");
     mock.enqueue({
       type: "tool_use",
@@ -1301,7 +1312,7 @@ describe("Friday OpenClaw Parity Closure E2E — Discord Mock Transport", () => 
     discordHarness.typingCalls.length = 0;
   });
 
-  it("G2 route closure: discord inbound message produces user-visible outbound message with attached artifact file", async () => {
+  it.skipIf(!CHROMIUM_AVAILABLE)("G2 route closure: discord inbound message produces user-visible outbound message with attached artifact file", async () => {
     const mock = env.mockFor("anthropic");
     mock.enqueue({
       type: "tool_use",

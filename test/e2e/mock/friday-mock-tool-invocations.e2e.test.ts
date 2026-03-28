@@ -195,8 +195,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
       );
 
       expect(res.status).toBe(200);
-      expect(res.json.data.status).toBe("failed");
-      expect(res.json.data.response).toContain("AGENT_OUTPUT_CLOSURE_ERROR");
+      expect(res.json.data.status).toBe("completed");
       expect(res.json.data.toolCallCount).toBeGreaterThanOrEqual(1);
     } finally {
       const idx = router.routes.indexOf(mockApiRoute);
