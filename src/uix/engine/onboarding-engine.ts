@@ -305,8 +305,15 @@ interface SessionMetricState {
 
 // ─── Factory ───
 
+/** P2-02: Optional persistence callbacks for surviving process restarts. */
+export interface OnboardingPersistence {
+  save: (session: OnboardingSession) => void;
+  loadActive: () => OnboardingSession[];
+}
+
 /** Create an onboarding engine instance. */
-export function createOnboardingEngine(): OnboardingEngine {
+export function createOnboardingEngine(options?: { persistence?: OnboardingPersistence }): OnboardingEngine {
+  const persistence = options?.persistence;
   const flows = new Map<string, OnboardingFlowDefinition>();
   const sessions = new Map<string, OnboardingSession>();
   /** Secondary index: `${flowId}:${principalId}` → session ID. */
@@ -316,6 +323,28 @@ export function createOnboardingEngine(): OnboardingEngine {
   /** Persisted telemetry/audit events. */
   const telemetryEvents: OnboardingTelemetryEvent[] = [];
   let sessionCounter = 0;
+
+  // P2-02: Restore active sessions from persistence layer on startup.
+  if (persistence) {
+    try {
+      const restored = persistence.loadActive();
+      for (const session of restored) {
+        sessions.set(session.id, session);
+        userFlowIndex.set(`${session.flowId}:${session.principalId}`, session.id);
+        sessionCounter = Math.max(sessionCounter, Number(session.id.replace(/\D/g, "")) || 0);
+      }
+    } catch (err) {
+      console.warn("[friday][onboarding] failed to restore sessions:", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function persistSession(session: OnboardingSession): void {
+    try {
+      persistence?.save(session);
+    } catch (err) {
+      console.warn("[friday][onboarding] persist failed:", err instanceof Error ? err.message : String(err));
+    }
+  }
 
   function userFlowKey(flowId: string, principalId: string): string {
     return `${flowId}:${principalId}`;
@@ -435,6 +464,7 @@ export function createOnboardingEngine(): OnboardingEngine {
       if (session.stepProgress.length > 0) {
         session.currentStepIndex = session.stepProgress.length - 1;
       }
+      persistSession(session);
 
       const metrics = findSessionMetricState(session.id);
       if (metrics && metrics.completedAt === undefined) {
@@ -551,6 +581,7 @@ export function createOnboardingEngine(): OnboardingEngine {
 
       sessions.set(sessionId, session);
       userFlowIndex.set(key, sessionId);
+      persistSession(session);
 
       emitTelemetry({
         type: "session_started",
@@ -614,6 +645,7 @@ export function createOnboardingEngine(): OnboardingEngine {
       activeStep.completedAt = transitionTime;
       activeStep.data = structuredClone(data);
       session.updatedAt = transitionTime;
+      persistSession(session);
 
       emitTelemetry({
         type: "step_completed",
@@ -665,6 +697,7 @@ export function createOnboardingEngine(): OnboardingEngine {
       activeStep.status = "skipped";
       activeStep.completedAt = transitionTime;
       session.updatedAt = transitionTime;
+      persistSession(session);
 
       emitTelemetry({
         type: "step_skipped",
@@ -727,6 +760,7 @@ export function createOnboardingEngine(): OnboardingEngine {
 
       session.currentStepIndex = previousCompletedIndex;
       session.updatedAt = transitionTime;
+      persistSession(session);
       activateStepTiming(session.id, previousCompletedStep.stepId, transitionTimeMs);
 
       emitTelemetry({
@@ -764,6 +798,7 @@ export function createOnboardingEngine(): OnboardingEngine {
       session.status = "dismissed";
       session.finishedAt = dismissTime;
       session.updatedAt = dismissTime;
+      persistSession(session);
 
       const metrics = findSessionMetricState(session.id);
       if (metrics) {

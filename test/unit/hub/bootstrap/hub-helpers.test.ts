@@ -78,18 +78,9 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
       nowIso: () => "2026-03-13T10:00:00.000Z",
     });
 
-    await expect(support.stepExecutors.pause_workflow?.({
-      stepId: "step-pause-001",
-      kind: "pause_workflow",
-      target: "wf-123",
-      payload: {},
-    })).resolves.toBe(false);
-    await expect(support.stepVerifiers.pause_workflow?.({
-      stepId: "step-pause-001",
-      kind: "pause_workflow",
-      target: "wf-123",
-      payload: {},
-      verify: { method: "error_absent", timeoutMs: 5000 },
-    })).resolves.toBe(false);
+    // P2-07: Hub no longer overrides unsupported kinds — DEFAULT_EXECUTORS handle them.
+    // pause_workflow is not in hub-level stepExecutors (falls through to defaults).
+    expect(support.stepExecutors.pause_workflow).toBeUndefined();
+    expect(support.stepVerifiers.pause_workflow).toBeUndefined();
   });
 });

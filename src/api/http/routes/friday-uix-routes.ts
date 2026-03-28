@@ -22,6 +22,8 @@ import type {
 
 export interface FridayUixRoutesDeps {
   service: FridayUixSurfaceService;
+  /** Optional: expose learned preference facts to users for transparency. */
+  listLearnedFacts?: (input: { userId: string }) => Array<{ key: string; value: unknown; confidence: number; evidenceCount: number; lastConfirmedAt: string }>;
 }
 
 function requireUserId(principal: { userId?: string } | null): string {
@@ -313,6 +315,22 @@ export function createFridayUixRoutes(
           runId: wizardResponse.wizard.contextId,
           wizardId: goalCategoryId,
         };
+      },
+    },
+
+    // ── Learned Facts (learning feedback visibility) ──
+    {
+      operationId: "uix.learnedfacts.list",
+      method: "GET",
+      path: "/v1/uix/learned-facts",
+      auth: { public: false, anyOfScopes: ["agent.run"] },
+      async handler(ctx) {
+        const userId = requireUserId(ctx.principal);
+        if (!deps.listLearnedFacts) {
+          return { items: [] };
+        }
+        const items = deps.listLearnedFacts({ userId });
+        return { items };
       },
     },
   ];
