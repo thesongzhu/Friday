@@ -7,6 +7,7 @@
  * @module api/http/routes
  */
 
+import { FridayDomainError } from "#errors";
 import type { FridayHttpContext, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
   FridayDiscoveryFilterOptions,
@@ -72,7 +73,7 @@ export function createFridayDiscoveryRoutes(
       handler: async (_ctx: Ctx) => {
         const catalog = deps.discovery.getCachedCatalog();
         if (!catalog) {
-          return { status: 404, body: { error: "No catalog available — run a scan first" } };
+          throw new FridayDomainError("CATALOG_NOT_AVAILABLE", "No catalog available — run a scan first", { httpStatus: 404 });
         }
         return { status: 200, body: { catalog } };
       },
@@ -87,7 +88,7 @@ export function createFridayDiscoveryRoutes(
       handler: async (ctx: Ctx) => {
         const catalog = deps.discovery.getCachedCatalog();
         if (!catalog) {
-          return { status: 404, body: { error: "No catalog available — run a scan first" } };
+          throw new FridayDomainError("CATALOG_NOT_AVAILABLE", "No catalog available — run a scan first", { httpStatus: 404 });
         }
 
         const query = ctx.query ?? {};

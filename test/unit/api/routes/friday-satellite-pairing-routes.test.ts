@@ -190,8 +190,7 @@ describe("createFridaySatellitePairingRoutes", () => {
       const routes = createFridaySatellitePairingRoutes(deps);
       const route = findRoute(routes, "satellites.pairing.get");
 
-      const result = await route.handler(makeCtx({ params: { satelliteId: "sat-999" } }) as any);
-      expect(result).toEqual({ error: expect.objectContaining({ code: "NOT_FOUND" }) });
+      await expect(route.handler(makeCtx({ params: { satelliteId: "sat-999" } }) as any)).rejects.toThrow("No pairing request found");
     });
   });
 
@@ -226,8 +225,7 @@ describe("createFridaySatellitePairingRoutes", () => {
       const routes = createFridaySatellitePairingRoutes(deps);
       const route = findRoute(routes, "satellites.pairing.approve");
 
-      const result = await route.handler(makeCtx({ params: { satelliteId: "sat-001" }, body: {} }) as any);
-      expect(result).toEqual({ error: expect.objectContaining({ code: "NOT_FOUND" }) });
+      await expect(route.handler(makeCtx({ params: { satelliteId: "sat-001" }, body: {} }) as any)).rejects.toThrow("No pending pairing request");
     });
 
     it("falls back to 'system' when no principal is present", async () => {
@@ -272,8 +270,7 @@ describe("createFridaySatellitePairingRoutes", () => {
       const routes = createFridaySatellitePairingRoutes(deps);
       const route = findRoute(routes, "satellites.pairing.reject");
 
-      const result = await route.handler(makeCtx({ params: { satelliteId: "sat-001" }, body: {} }) as any);
-      expect(result).toEqual({ error: expect.objectContaining({ code: "NOT_FOUND" }) });
+      await expect(route.handler(makeCtx({ params: { satelliteId: "sat-001" }, body: {} }) as any)).rejects.toThrow("No pending pairing request");
     });
   });
 

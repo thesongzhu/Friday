@@ -58,6 +58,7 @@ import { V056_INCENTIVE_ALIGNMENT_FOUNDATION_MIGRATION } from "./v056-incentive-
 import { V057_AGENT_AUTOMATION_SESSION_TARGETS_MIGRATION } from "./v057-agent-automation-session-targets.js";
 import { V058_AGENT_RUN_CONTEXT_PROFILE_MIGRATION } from "./v058-agent-run-context-profile.js";
 import { V059_RULES_AUDIT_CANONICALIZATION_MIGRATION } from "./v059-rules-audit-canonicalization.js";
+import { V060_UIX_ONBOARDING_SESSIONS_MIGRATION } from "./v060-uix-onboarding-sessions.js";
 
 /**
  * Ordered migration list, always ascending by version.
@@ -122,6 +123,7 @@ export const FRIDAY_SQLITE_MIGRATIONS: readonly FridaySqliteMigration[] = [
   V057_AGENT_AUTOMATION_SESSION_TARGETS_MIGRATION,
   V058_AGENT_RUN_CONTEXT_PROFILE_MIGRATION,
   V059_RULES_AUDIT_CANONICALIZATION_MIGRATION,
+  V060_UIX_ONBOARDING_SESSIONS_MIGRATION,
 ];
 
 export { V003_PROVIDER_USAGE_COST_ROUTING_MIGRATION };
