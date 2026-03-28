@@ -753,6 +753,8 @@ export interface FridayHubConfig {
   logRequests?: boolean;
   /** Raw channels configuration block (parsed via FridayChannelsConfigSchema). */
   channels?: Record<string, unknown>;
+  /** Optional SSRF guard policy (e.g. `{ allowPrivateNetwork: true }` for test environments). */
+  ssrfPolicy?: import("#agent").FridaySsrfPolicy;
 }
 
 // ─── Resolved Hub Config ───
