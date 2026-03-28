@@ -252,6 +252,7 @@ import {
 import type { FridaySystemRemoteMode, FridaySystemService } from "../system/index.js";
 import { buildFridayCommunicationPromptFragment, resolveFridayCommunicationPersona } from "../uix/services/friday-communication-persona.js";
 import { createFridayUixUserPreferenceRepository } from "../uix/persistence/friday-uix-user-preference-repository.js";
+import { createFridayOnboardingSessionRepository } from "../uix/persistence/friday-onboarding-session-repository.js";
 import { createFridayUixSurfaceService } from "../uix/services/friday-uix-surface-service.js";
 import { resolveFridayAuditLogPath } from "./services/friday-hub-audit-log-writer.js";
 import { createFridayGatewayService } from "./services/friday-gateway-service.js";
@@ -3308,7 +3309,12 @@ export async function createFridayHub(
     observability: observabilityService.routes,
     observabilityService,
     system: systemRouteDeps,
-    uix: { service: uixService },
+    uix: {
+      service: uixService,
+      listLearnedFacts: (input: { userId: string }) =>
+        selfLearningRuntime.facts.listActiveFacts({ userId: input.userId, minConfidence: 0, limit: 200 })
+          .map((f) => ({ key: f.key, value: f.value, confidence: f.confidence, evidenceCount: f.evidenceCount, lastConfirmedAt: f.lastConfirmedAt })),
+    },
     searchHealth: {
       provider: configuredSearchProvider && configuredSearchProvider.length > 0
         ? configuredSearchProvider
@@ -4247,7 +4253,13 @@ export async function createFridayHub(
       idGenerator,
       nowIso,
     });
-    const onboardingEngine = createOnboardingEngine();
+    const onboardingSessionRepo = createFridayOnboardingSessionRepository();
+    const onboardingEngine = createOnboardingEngine({
+      persistence: {
+        save: (session) => stateRuntime.sqlite.withWriteTransaction((db) => onboardingSessionRepo.save(db, session)),
+        loadActive: () => stateRuntime.sqlite.withReadConnection((db) => onboardingSessionRepo.listActive(db)),
+      },
+    });
     const setupCoordinator = createFridaySetupCoordinator({
       idGenerator,
       nowIso,

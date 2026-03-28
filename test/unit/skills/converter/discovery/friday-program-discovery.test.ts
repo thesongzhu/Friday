@@ -529,8 +529,7 @@ describe("FridayDiscoveryRoutes", () => {
       const routes = createFridayDiscoveryRoutes(deps);
       const route = routes.find((r) => r.operationId === "discovery.catalog.get")!;
 
-      const result = await route.handler(makeCtx());
-      expect(result).toEqual({ status: 404, body: { error: expect.any(String) } });
+      await expect(route.handler(makeCtx())).rejects.toThrow("No catalog available");
     });
 
     it("returns catalog when cached", async () => {
@@ -559,8 +558,7 @@ describe("FridayDiscoveryRoutes", () => {
       const routes = createFridayDiscoveryRoutes(deps);
       const route = routes.find((r) => r.operationId === "discovery.programs.list")!;
 
-      const result = await route.handler(makeCtx());
-      expect(result).toEqual({ status: 404, body: { error: expect.any(String) } });
+      await expect(route.handler(makeCtx())).rejects.toThrow("No catalog available");
     });
 
     it("returns programs with filtering", async () => {

@@ -35,7 +35,20 @@ export function createFridaySqliteReadPool(
     withReadConnection<T>(fn: (db: Database.Database) => T): T {
       const conn = connections[index % connections.length];
       index = (index + 1) % connections.length;
-      return fn(conn);
+      // P2-11: Error handling and slow-query diagnostics.
+      const start = performance.now();
+      try {
+        const result = fn(conn);
+        const elapsed = performance.now() - start;
+        if (elapsed > 5000) {
+          console.warn(`[friday][sqlite-read-pool] slow query: ${elapsed.toFixed(0)}ms`);
+        }
+        return result;
+      } catch (err) {
+        const elapsed = performance.now() - start;
+        console.warn(`[friday][sqlite-read-pool] query error after ${elapsed.toFixed(0)}ms:`, err instanceof Error ? err.message : String(err));
+        throw err;
+      }
     },
 
     close(): void {
