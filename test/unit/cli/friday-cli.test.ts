@@ -610,7 +610,7 @@ describe("prepareStartupChannelsConfig", () => {
         JSON.stringify({
           channels: {
             discord: {
-              token: "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAuR2FiY0RlLkFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFla",
+              token: "discord-test-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               allowedUsers: ["jarvis"],
             },
           },
@@ -632,7 +632,7 @@ describe("prepareStartupChannelsConfig", () => {
         .prepare("SELECT channels_json FROM friday_setup_state WHERE id = 'singleton'")
         .get() as { channels_json: string };
       expect(setupRow.channels_json).toContain("secret://channel/");
-      expect(setupRow.channels_json).not.toContain("fake-discord-token");
+      expect(setupRow.channels_json).not.toContain("discord-test-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 
       const secretCount = db
         .prepare("SELECT COUNT(*) AS count FROM secrets WHERE scope = 'channel'")
@@ -651,7 +651,7 @@ describe("prepareStartupChannelsConfig", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "friday-cli-channels-fallback-"));
     const legacyDir = path.join(tmpHome, ".friday");
     const legacyPath = path.join(legacyDir, "friday.json");
-    const testToken = "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAuR2FiY0RlLkFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFla";
+    const testToken = "discord-test-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     fs.mkdirSync(legacyDir, { recursive: true });
     fs.writeFileSync(
       legacyPath,
