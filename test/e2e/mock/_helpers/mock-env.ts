@@ -235,6 +235,8 @@ export async function createMockHubEnv(opts?: {
   uiStaticDir?: string;
   /** Optional hook invoked after hub creation and before hub.start(). */
   beforeStart?: (hub: FridayHub) => Promise<void> | void;
+  /** Optional SSRF guard policy override. Defaults to { allowPrivateNetwork: true } for mock E2E tests. */
+  ssrfPolicy?: { allowPrivateNetwork?: boolean; hostnameAllowlist?: string[] };
 }): Promise<MockHubEnv> {
   // Reset deterministic counters
   resetMockCounters();
@@ -255,7 +257,7 @@ export async function createMockHubEnv(opts?: {
     logRequests: false,
     channels: opts?.channels,
     // Allow private-network targets so mock E2E tests don't require DNS resolution
-    ssrfPolicy: { allowPrivateNetwork: true },
+    ssrfPolicy: opts?.ssrfPolicy ?? { allowPrivateNetwork: true },
   });
   await opts?.beforeStart?.(hub);
   await hub.start();

@@ -14,6 +14,9 @@
  * because the SSRF guard validates DNS before the fetch interceptor runs.
  */
 
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 
 import {
@@ -22,6 +25,17 @@ import {
 } from "./_helpers/mock-env.js";
 import { resetMockCounters } from "../../_mocks/mock-llm-providers.js";
 import type { FridayProviderApi } from "../../../src/providers/model/friday-provider.types.js";
+
+/** Detect whether Playwright Chromium browser binary is installed at the expected version. */
+const CHROMIUM_AVAILABLE = (() => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pw = require("playwright") as { chromium: { executablePath: () => string } };
+    return fs.existsSync(pw.chromium.executablePath());
+  } catch {
+    return false;
+  }
+})();
 
 // ─── Helpers ───
 
@@ -392,7 +406,7 @@ describe("Friday Web Routing E2E", () => {
   });
 
   describe("web_fetch → browser fallback chain", () => {
-    it("agent retries with browser after web_fetch JS-rendered error", async () => {
+    it.skipIf(!CHROMIUM_AVAILABLE)("agent retries with browser after web_fetch JS-rendered error", async () => {
       const mock = env.mockFor("anthropic");
       const router = env.fetchRouter;
 
