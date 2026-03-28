@@ -71,7 +71,14 @@ export function createFridayAuthRoutes(
             { httpStatus: 400 },
           );
         }
-        return deps.authService.login(body as unknown as FridayLoginRequest, ctx.ip, ctx.userAgent);
+        const request: FridayLoginRequest = {
+          email: typeof body.email === "string" ? body.email.trim() : undefined,
+          password: typeof body.password === "string" ? body.password : undefined,
+          localPassphrase: typeof body.localPassphrase === "string" ? body.localPassphrase : undefined,
+          local: typeof body.local === "boolean" ? body.local : undefined,
+          rememberMe: typeof body.rememberMe === "boolean" ? body.rememberMe : undefined,
+        };
+        return deps.authService.login(request, ctx.ip, ctx.userAgent);
       },
     },
     {
