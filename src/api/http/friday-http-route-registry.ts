@@ -106,6 +106,7 @@ function isRoutePatternMoreSpecific(candidatePattern: string, currentPattern: st
     return candidateStaticCount > currentStaticCount;
   }
 
+  // Fewer parameter segments = more specific (more segments are literal matches)
   return countParameterSegments(candidateParts) < countParameterSegments(currentParts);
 }
 

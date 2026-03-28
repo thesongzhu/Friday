@@ -10,7 +10,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { safeJsonParse } from "#utilities";
-import type { FridayAgentMessage } from "#agent";
+import type { FridayAgentMessage, FridaySsrfPolicy } from "#agent";
 import type {
   FridayChannelInstanceConfig,
   FridayChannelMessage,
@@ -753,6 +753,8 @@ export interface FridayHubConfig {
   logRequests?: boolean;
   /** Raw channels configuration block (parsed via FridayChannelsConfigSchema). */
   channels?: Record<string, unknown>;
+  /** Optional SSRF guard policy (e.g. `{ allowPrivateNetwork: true }` for test environments). */
+  ssrfPolicy?: FridaySsrfPolicy;
 }
 
 // ─── Resolved Hub Config ───

@@ -26,7 +26,7 @@ describe("Friday Homebrew cask publication", () => {
     await execFileAsync("git", ["init", "-b", "main"], { cwd: workRepo });
     await fs.writeFile(path.join(workRepo, "README.md"), "# friday tap\n", "utf8");
     await execFileAsync("git", ["add", "README.md"], { cwd: workRepo });
-    await execFileAsync("git", ["-c", "user.name=Codex", "-c", "user.email=codex@openai.com", "commit", "-m", "init"], { cwd: workRepo });
+    await execFileAsync("git", ["-c", "user.name=Codex", "-c", "user.email=codex@openai.com", "-c", "commit.gpgsign=false", "commit", "-m", "init"], { cwd: workRepo });
     await execFileAsync("git", ["clone", "--bare", workRepo, remoteRepo]);
     await execFileAsync("git", ["remote", "add", "origin", remoteRepo], { cwd: workRepo });
     await execFileAsync("git", ["push", "-u", "origin", "main"], { cwd: workRepo });
@@ -91,7 +91,7 @@ describe("Friday Homebrew cask publication", () => {
     await execFileAsync("git", ["init", "-b", "main"], { cwd: workRepo });
     await fs.writeFile(path.join(workRepo, "README.md"), "# friday tap\n", "utf8");
     await execFileAsync("git", ["add", "README.md"], { cwd: workRepo });
-    await execFileAsync("git", ["-c", "user.name=Codex", "-c", "user.email=codex@openai.com", "commit", "-m", "init"], { cwd: workRepo });
+    await execFileAsync("git", ["-c", "user.name=Codex", "-c", "user.email=codex@openai.com", "-c", "commit.gpgsign=false", "commit", "-m", "init"], { cwd: workRepo });
     await execFileAsync("git", ["clone", "--bare", workRepo, remoteRepo]);
     await execFileAsync("git", ["remote", "add", "origin", remoteRepo], { cwd: workRepo });
     await execFileAsync("git", ["push", "-u", "origin", "main"], { cwd: workRepo });

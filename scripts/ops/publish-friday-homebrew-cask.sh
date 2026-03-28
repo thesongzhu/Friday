@@ -113,7 +113,7 @@ if [[ -z "$(git status --short -- Casks/friday.rb)" ]]; then
   :
 else
   git add Casks/friday.rb
-  git -c user.name="Codex" -c user.email="codex@openai.com" \
+  git -c user.name="Codex" -c user.email="codex@openai.com" -c commit.gpgsign=false \
     commit -m "friday: update cask" >/dev/null
   PUSH_ERROR_LOG="${TEMP_DIR}/push.stderr"
   if ! run_git git push origin HEAD >/dev/null 2>"${PUSH_ERROR_LOG}"; then

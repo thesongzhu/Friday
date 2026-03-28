@@ -16,6 +16,7 @@ function initRepo(root: string): void {
   execFileSync("git", ["init"], { cwd: root });
   execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root });
   execFileSync("git", ["config", "user.name", "Friday Test"], { cwd: root });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: root });
 }
 
 afterEach(() => {

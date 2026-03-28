@@ -862,7 +862,7 @@ export async function createFridayHub(
   const agentRunRepo = createFridayAgentRunRepository();
 
   // IMPL-4: SSRF guard
-  const agentSsrfGuard = createFridayAgentSsrfGuard();
+  const agentSsrfGuard = createFridayAgentSsrfGuard(config.ssrfPolicy);
 
   // IMPL-7: Artifact writer
   const workspaceRoot = config.stateDir ?? ".";

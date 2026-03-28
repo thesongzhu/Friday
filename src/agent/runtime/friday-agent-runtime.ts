@@ -2625,6 +2625,12 @@ function hasSuccessfulToolEvidence(toolCalls: FridayAgentToolCallRecord[]): bool
     if (!call.result.isError) {
       return true;
     }
+    // web_fetch JS-rendered detection returns isError to signal the LLM to retry with
+    // browser, but the page WAS successfully fetched — count as evidence for closure
+    // gap purposes so the run is not incorrectly marked as failed.
+    if (call.toolName === "web_fetch" && call.result.content?.includes("JS-rendered")) {
+      return true;
+    }
   }
   return false;
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
 import * as fs from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import Database from "better-sqlite3";
@@ -16,8 +17,14 @@ describe("FridayMemoryFileSyncService", () => {
   let dbPath: string;
   let db: ReturnType<typeof createFridaySqliteLayer>;
 
+  /** A path that is guaranteed to fail on mkdir/write even as root (a regular file blocks subdir creation). */
+  let unwritablePath: string;
+
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-sync-test-"));
+    const blockingFile = path.join(tmpDir, "blocking-file");
+    writeFileSync(blockingFile, "x");
+    unwritablePath = path.join(blockingFile, "subdir");
     dbPath = path.join(tmpDir, "test.db");
     db = createFridaySqliteLayer({ dbPath, readPoolSize: 1, pragmas: { busyTimeoutMs: 5000, synchronous: "NORMAL" } });
   });
@@ -398,7 +405,7 @@ describe("FridayMemoryFileSyncService", () => {
     const service = createFridayMemoryFileSyncService({
       repository: repo,
       // Use an invalid path that will cause write failure
-      stateDir: "/nonexistent/readonly/path",
+      stateDir: unwritablePath,
     });
 
     const r = await service.syncNow();
@@ -417,7 +424,7 @@ describe("FridayMemoryFileSyncService", () => {
     // First: try with bad path
     const badService = createFridayMemoryFileSyncService({
       repository: repo,
-      stateDir: "/nonexistent/readonly/path",
+      stateDir: unwritablePath,
     });
     const r1 = await badService.syncNow();
     expect(r1.errors.length).toBeGreaterThanOrEqual(1);
@@ -577,7 +584,7 @@ describe("FridayMemoryFileSyncService", () => {
     // (atomicWrite will fail because it can't mkdir or create temp file)
     const badService = createFridayMemoryFileSyncService({
       repository: repo,
-      stateDir: "/nonexistent/readonly/path",
+      stateDir: unwritablePath,
     });
 
     // Non-forced sync should fail due to write error

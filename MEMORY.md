@@ -12,7 +12,7 @@
 - When product docs conflict with historical notes, prefer `docs/current-source-of-truth.md`.
 - The MBTI communication persona system is wired end-to-end: hub-bootstrap builds persona per-run, agent-runtime injects it into the system prompt. Code path: `hub-bootstrap.ts:2266` → `agent-runtime.ts:1043`.
 - The self-learning pipeline feeds preference facts (with 30-day half-life confidence decay) into persona resolution via `_learningContextRef.buildContext()`.
-- Wizard/onboarding state is in-memory only (`Map`) and does not survive service restarts. Database persistence is a known gap.
+- Wizard/onboarding state defaults to in-memory (`Map`) but supports optional persistence via the `OnboardingPersistence` interface. Setup assistant state (not onboarding engine) is strictly in-memory and does not survive restarts.
 - The learning confidence model uses Bayesian-inspired updates: `0.45 * existingDecayed + 0.55 * signalConfidence + evidenceBoost - conflictPenalty`.
 - Expected utility calculator (`src/learning/services/friday-expected-utility-calculator.ts`) provides pluggable EU scoring for auto-fix decisions: `EU = benefit * P(success) - cost * P(failure) - riskPenalty`. Strategy pattern enables future ML model replacement.
 - Tool call summary (`src/agent/services/friday-tool-call-summary.ts`) captures privacy-safe tool execution metadata (arg keys only, no values) for observability and world model training data.
