@@ -25,18 +25,12 @@ import { createFridayMemoryEmbeddingRepository } from "../persistence/friday-mem
 import { createFridayMemoryByokEmbeddingClient } from "./friday-memory-byok-embedding-client.js";
 import { mergeHybridResults } from "../search/friday-memory-hybrid.js";
 
+// P2-06: Module-level Set avoids WeakMap edge cases with replaced warn sinks.
 type FridayWarnSink = (message: string) => void;
-const warnedKeysBySink = new WeakMap<FridayWarnSink, Set<string>>();
+const warnedKeys = new Set<string>();
 
 function warnOnce(warn: FridayWarnSink, key: string, message: string): void {
-  let warnedKeys = warnedKeysBySink.get(warn);
-  if (!warnedKeys) {
-    warnedKeys = new Set<string>();
-    warnedKeysBySink.set(warn, warnedKeys);
-  }
-  if (warnedKeys.has(key)) {
-    return;
-  }
+  if (warnedKeys.has(key)) return;
   warnedKeys.add(key);
   warn(message);
 }

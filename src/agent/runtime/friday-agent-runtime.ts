@@ -2390,6 +2390,7 @@ function detectSourceArtifactCompletionGap(params: {
     return null;
   }
 
+  // P1-04: Sync read is acceptable — reading artifacts the agent just wrote locally.
   let sourceText = "";
   try {
     sourceText = readFileSync(sourcePath, "utf8");
@@ -2429,6 +2430,7 @@ function listSuccessfulWrittenTextArtifacts(
       continue;
     }
     try {
+      // P1-04: Sync read is acceptable — reading artifacts the agent just wrote locally.
       const content = readFileSync(filePath, "utf8");
       seen.add(filePath);
       artifacts.push({ path: filePath, content });
@@ -3724,6 +3726,7 @@ function loadDelegatedToolCalls(
   }
 
   try {
+    // P1-04: Sync read is acceptable — reading delegation artifacts from local filesystem.
     const parsed = JSON.parse(readFileSync(toolCallsPath, "utf-8")) as unknown;
     if (!Array.isArray(parsed)) {
       return [];
