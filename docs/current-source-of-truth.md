@@ -62,6 +62,15 @@ This document is the current architecture reference for steady-state Friday runt
 - Expert autonomy is an opt-in layer above the supervised defaults. It may infer bounded context, run safe probes, and continue through cross-surface reasoning, but destructive or production-sensitive actions still require final approval.
 - Skill generator sessions now support explicit draft self-test and evidence retrieval before approval/save.
 - Diagnosis and auto-fix lifecycle updates are part of the realtime event surface and must stay consumable by both Operator Console and `/assistant`.
+- The expected utility calculator (`src/learning/services/friday-expected-utility-calculator.ts`) is a steady-state component of the auto-fix decision pipeline. It computes `EU = benefit * P(success) - cost * P(failure) - riskPenalty` and returns `auto_apply`, `suggest`, or `defer` recommendations. The `FridayUtilityStrategy` interface is pluggable and may be replaced with trained ML models without changing callers.
+- Setup status diagnostics (`ui/src/lib/setup/setup-status-diagnostics.ts`) provide user-friendly error messages and remediation hints for setup/auth failures in the UI, covering AuthExpired, 401, 403, 404, INVALID_RESPONSE, and NETWORK_ERROR states.
+
+## Tool call observability
+
+- The tool call summary service (`src/agent/services/friday-tool-call-summary.ts`) captures privacy-safe metadata for each tool execution: tool name, argument keys (never values), result shape, error status, and tool category (read/write/query/mutate/navigate).
+- Tool summaries are injected into the agent runtime's `buildToolEndEventPayload()` and published through the realtime event surface.
+- Tool summaries are designed as world model training data: they capture execution patterns without leaking sensitive argument values or output content.
+- Workflow runtime events are now buffered in hub bootstrap before the API runtime publisher is ready, then flushed. `resolveWorkflowRealtimeStreamId()` routes events to the correct SSE stream by runId or workflowId.
 
 ## Skills lifecycle and marketplace sources
 
@@ -143,6 +152,20 @@ This document is the current architecture reference for steady-state Friday runt
 - Offline execution is intentionally limited to continuation and recovery of already-dispatched work; richer offline plan generation or offline trigger creation remains deferred.
 - Full multi-hub federation, cross-hub placement, mDNS/relay/Tailscale-native discovery, and richer mesh coordination remain deferred.
 - ML-heavy anomaly detection, natural-language rule authoring, and marketplace-style expansion for acceptance or rules remain deferred.
+
+## Communication persona and adaptive learning
+
+- The MBTI communication persona system is a steady-state product surface, not a deferred feature.
+- `/v1/uix/persona` is the canonical endpoint for reading the resolved persona for the current user.
+- `/v1/uix/preferences` is the canonical CRUD surface for user communication preferences (category: "communication").
+- The persona resolution priority cascade is: explicit preferences > learned preferences > MBTI template defaults > system defaults.
+- The persona prompt fragment is injected into the agent's effective system prompt at runtime (`agent-runtime.ts:1043`). Persona enrichment failure is non-fatal and must not kill the agent run.
+- The `communicationPromptBuilder` callback is constructed in `hub-bootstrap.ts:2266` and reads both explicit preferences (from `uix_user_preferences` table) and learned preferences (from the self-learning context builder).
+- Learned preference facts use a Bayesian-inspired confidence model with 30-day half-life exponential decay, conflict penalty (0.30), and evidence boost (logarithmic diminishing returns).
+- The self-learning context enrichment service is wired through hub bootstrap (`_learningContextRef`) and becomes available after self-learning runtime creation.
+- Persona settings affect wording, guidance, and clarification style only. They must not weaken approval gates, rollback rules, or destructive-action safeguards.
+- Wizard and onboarding session state is currently in-memory (`Map`). Database persistence for wizard contexts is a known gap.
+- Learning feedback is not yet user-visible. Users cannot inspect or edit learned preference facts through any current UI surface.
 
 ## Runtime admin and security surfaces
 

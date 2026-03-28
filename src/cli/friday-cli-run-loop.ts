@@ -68,7 +68,16 @@ export function runFridayCliLoop(deps: FridayCliRunLoopDeps): Promise<void> {
         }
       })
       .catch((err: unknown) => {
-        console.error("❌ Failed to start HTTP server:", err);
+        // P1-05: Detect EADDRINUSE and provide actionable guidance
+        if (err instanceof Error && (err as NodeJS.ErrnoException).code === "EADDRINUSE") {
+          console.error(
+            `❌ Port ${String(port)} is already in use.\n` +
+            `  Try: friday start --port ${String(port + 1)}\n` +
+            `  Or:  lsof -i :${String(port)}  (to find the process using it)`,
+          );
+        } else {
+          console.error("❌ Failed to start HTTP server:", err);
+        }
         exit(1);
       });
 

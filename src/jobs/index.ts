@@ -20,6 +20,9 @@ export type {
 export { createFridayApprovalExpiryJob } from "./learning/friday-approval-expiry-job.js";
 export type { FridayApprovalExpiryJob } from "./learning/friday-approval-expiry-job.js";
 
+export type { FridayPreferenceDecayJobResult, FridayPreferenceDecayJob } from "./learning/friday-preference-decay-job.js";
+export { createFridayPreferenceDecayJob } from "./learning/friday-preference-decay-job.js";
+
 export { createFridayMarketplaceSyncJob } from "./marketplace/friday-marketplace-sync-job.js";
 export type { FridayMarketplaceSyncJob } from "./marketplace/friday-marketplace-sync-job.js";
 

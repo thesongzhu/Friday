@@ -548,11 +548,11 @@ export function createFridayBrowserManager(
     sessions.delete(sessionId);
     if (session.connectedOverCdp) {
       await Promise.all(
-        Array.from(session.tabs.values()).map((page) => page.close().catch(() => {})),
+        Array.from(session.tabs.values()).map((page) => page.close().catch((err: unknown) => console.warn("[friday][browser] cleanup:", err instanceof Error ? err.message : String(err)))),
       );
       return;
     }
-    await session.browser.close().catch(() => {});
+    await session.browser.close().catch((err: unknown) => console.warn("[friday][browser] cleanup:", err instanceof Error ? err.message : String(err)));
   }
 
   async function launch(
@@ -733,10 +733,10 @@ export function createFridayBrowserManager(
       }
     } finally {
       if (!created) {
-        await page?.close().catch(() => {});
-        await browserContext?.close().catch(() => {});
+        await page?.close().catch((err: unknown) => console.warn("[friday][browser] cleanup:", err instanceof Error ? err.message : String(err)));
+        await browserContext?.close().catch((err: unknown) => console.warn("[friday][browser] cleanup:", err instanceof Error ? err.message : String(err)));
         if (!connectedOverCdp) {
-          await browser?.close().catch(() => {});
+          await browser?.close().catch((err: unknown) => console.warn("[friday][browser] cleanup:", err instanceof Error ? err.message : String(err)));
         }
       }
     }
@@ -826,10 +826,10 @@ export function createFridayBrowserManager(
       if (session) {
         if (session.connectedOverCdp) {
           await Promise.all(
-            Array.from(session.tabs.values()).map((page) => page.close().catch(() => {})),
+            Array.from(session.tabs.values()).map((page) => page.close().catch((err: unknown) => console.warn("[friday][browser] cleanup:", err instanceof Error ? err.message : String(err)))),
           );
         } else {
-          await session.browser.close().catch(() => {});
+          await session.browser.close().catch((err: unknown) => console.warn("[friday][browser] cleanup:", err instanceof Error ? err.message : String(err)));
         }
         sessions.delete(sessionId);
       }
@@ -840,10 +840,10 @@ export function createFridayBrowserManager(
     const closeTasks = Array.from(sessions.values()).map((session) => {
       if (session.connectedOverCdp) {
         return Promise.all(
-          Array.from(session.tabs.values()).map((page) => page.close().catch(() => {})),
+          Array.from(session.tabs.values()).map((page) => page.close().catch((err: unknown) => console.warn("[friday][browser] cleanup:", err instanceof Error ? err.message : String(err)))),
         ).then(() => undefined);
       }
-      return session.browser.close().catch(() => {});
+      return session.browser.close().catch((err: unknown) => console.warn("[friday][browser] cleanup:", err instanceof Error ? err.message : String(err)));
     });
     await Promise.all(closeTasks);
     sessions.clear();
