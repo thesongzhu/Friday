@@ -32,6 +32,7 @@ function createTempGitRepo(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-openclaw-phase-test-"));
   tempDirs.push(dir);
   execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: dir, stdio: "ignore" });
   fs.writeFileSync(path.join(dir, "README.md"), "# test\n", "utf-8");
   execFileSync("git", ["add", "README.md"], { cwd: dir, stdio: "ignore" });
   execFileSync("git", ["commit", "-m", "init"], {

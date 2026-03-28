@@ -46,6 +46,8 @@ export interface FridayHttpServerDeps {
   trustProxyMode?: FridayHttpTrustProxyMode;
   /** Optional Webchat WS service for /ws/chat style upgrades. */
   webchatWsService?: WebchatWsService;
+  /** Optional cleanup callback invoked during server close (e.g. rate limiter dispose). */
+  onClose?: () => void;
 }
 
 export interface FridayHttpServer {
@@ -844,6 +846,13 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
           offset = 10;
         }
 
+        // Guard against oversized frames to prevent memory exhaustion (RFC 6455 §7.4.1 code 1009)
+        const MAX_WS_FRAME_SIZE = 1_048_576; // 1 MB
+        if (payloadLen > MAX_WS_FRAME_SIZE) {
+          socket.destroy();
+          return;
+        }
+
         const maskSize = masked ? 4 : 0;
         const totalLen = offset + maskSize + payloadLen;
         if (buffer.length < totalLen) return; // wait for more data
@@ -950,6 +959,8 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         for (const socket of connections) {
           socket.destroy();
         }
+        // Run optional cleanup (e.g. clear rate-limiter pruning timer)
+        deps.onClose?.();
       });
     },
   };

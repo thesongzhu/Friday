@@ -296,6 +296,15 @@ export function createFridayRealtimeWsGateway(
         case "ping": {
           return [{ type: "pong", at: deps.nowIso() }];
         }
+
+        default: {
+          return [{
+            type: "error",
+            code: "INVALID_FRAME",
+            message: `Unknown frame type: ${String((frame as Record<string, unknown>).type)}`,
+            retryable: false,
+          }];
+        }
       }
     },
 
