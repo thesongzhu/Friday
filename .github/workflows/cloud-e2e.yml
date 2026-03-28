@@ -44,9 +44,59 @@ permissions:
   contents: read
 
 jobs:
+  cloud-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.environment_name }}
+    concurrency:
+      group: cloud-live-e2e-${{ inputs.environment_name }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Evaluate cloud contract
+        env:
+          CI: "true"
+          FRIDAY_E2E_TARGET: "cloud"
+          FRIDAY_E2E_CLOUD_BASE_URL: ${{ inputs.cloud_base_url }}
+          FRIDAY_E2E_CLOUD_AUTH_MODE: ${{ inputs.auth_mode }}
+          FRIDAY_E2E_CLOUD_NAMESPACE: ${{ inputs.namespace }}
+          FRIDAY_E2E_CLOUD_TIMEOUT_MS: ${{ inputs.timeout_ms }}
+
+          # Optional cloud auth vars (used depending on auth_mode)
+          FRIDAY_E2E_CLOUD_ACCESS_TOKEN: ${{ secrets.FRIDAY_E2E_CLOUD_ACCESS_TOKEN }}
+          FRIDAY_E2E_CLOUD_REFRESH_TOKEN: ${{ secrets.FRIDAY_E2E_CLOUD_REFRESH_TOKEN }}
+          FRIDAY_E2E_CLOUD_EMAIL: ${{ secrets.FRIDAY_E2E_CLOUD_EMAIL }}
+          FRIDAY_E2E_CLOUD_PASSWORD: ${{ secrets.FRIDAY_E2E_CLOUD_PASSWORD }}
+          FRIDAY_E2E_CLOUD_LOCAL_PASSPHRASE: ${{ secrets.FRIDAY_E2E_CLOUD_LOCAL_PASSPHRASE }}
+
+          FRIDAY_E2E_LIVE_OPENAI: ${{ inputs.provider == 'openai' && '1' || '0' }}
+          FRIDAY_E2E_LIVE_OLLAMA: ${{ inputs.provider == 'ollama' && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/cloud-contract
+          FRIDAY_CLOUD_CONTRACT_REPORT_PATH=artifacts/cloud-contract/report.json \
+            node scripts/e2e/check-friday-cloud-contract.mjs
+
+      - name: Upload cloud contract artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-contract-${{ github.run_id }}
+          path: artifacts/cloud-contract/
+          if-no-files-found: warn
+
   cloud-live-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: cloud-contract
     environment: ${{ inputs.environment_name }}
     concurrency:
       group: cloud-live-e2e-${{ inputs.environment_name }}
@@ -73,18 +123,13 @@ jobs:
           FRIDAY_E2E_CLOUD_AUTH_MODE: ${{ inputs.auth_mode }}
           FRIDAY_E2E_CLOUD_NAMESPACE: ${{ inputs.namespace }}
           FRIDAY_E2E_CLOUD_TIMEOUT_MS: ${{ inputs.timeout_ms }}
-
-          # Optional cloud auth vars (used depending on auth_mode)
           FRIDAY_E2E_CLOUD_ACCESS_TOKEN: ${{ secrets.FRIDAY_E2E_CLOUD_ACCESS_TOKEN }}
           FRIDAY_E2E_CLOUD_REFRESH_TOKEN: ${{ secrets.FRIDAY_E2E_CLOUD_REFRESH_TOKEN }}
           FRIDAY_E2E_CLOUD_EMAIL: ${{ secrets.FRIDAY_E2E_CLOUD_EMAIL }}
           FRIDAY_E2E_CLOUD_PASSWORD: ${{ secrets.FRIDAY_E2E_CLOUD_PASSWORD }}
           FRIDAY_E2E_CLOUD_LOCAL_PASSPHRASE: ${{ secrets.FRIDAY_E2E_CLOUD_LOCAL_PASSPHRASE }}
-
-          # Provider credentials / refs for provider setup paths
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           E2E_OPENAI_API_KEY_ENV: OPENAI_API_KEY # pragma: allowlist secret
-
           FRIDAY_E2E_LIVE_OPENAI: ${{ inputs.provider == 'openai' && '1' || '0' }}
           FRIDAY_E2E_LIVE_OLLAMA: ${{ inputs.provider == 'ollama' && '1' || '0' }}
         run: |
@@ -102,7 +147,7 @@ jobs:
           npx vitest run test/e2e/live/friday-cloud-journeys.e2e.test.ts \
             2>&1 | tee artifacts/cloud-e2e.log
 
-      - name: Upload cloud e2e artifacts
+      - name: Upload cloud live artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:

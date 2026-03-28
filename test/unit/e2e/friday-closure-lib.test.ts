@@ -9,6 +9,7 @@ import {
   createClosureRunId,
   parseEnabledChannelKinds,
   resolveClosureVerdict,
+  resolveCloudContractReport,
   resolveReadinessReport,
 } from "../../../scripts/e2e/friday-closure-lib.mjs";
 
@@ -33,6 +34,38 @@ describe("friday closure lib", () => {
     const blockers = collectCloudBlockers({});
     expect(blockers).toContain("FRIDAY_E2E_CLOUD_BASE_URL is not set");
     expect(blockers).toContain("FRIDAY_E2E_CLOUD_AUTH_MODE is not set");
+  });
+
+  it("reports cloud contract as not ready when target is not cloud or base URL is invalid", () => {
+    const report = resolveCloudContractReport({
+      FRIDAY_E2E_TARGET: "local",
+      FRIDAY_E2E_CLOUD_BASE_URL: "not-a-url",
+      FRIDAY_E2E_CLOUD_AUTH_MODE: "access-token",
+      FRIDAY_E2E_CLOUD_ACCESS_TOKEN: "token",
+    });
+
+    expect(report.ready).toBe(false);
+    expect(report.blockers).toContain('FRIDAY_E2E_TARGET must be "cloud" for cloud contract checks (received "local")');
+    expect(report.blockers).toContain("FRIDAY_E2E_CLOUD_BASE_URL must be a valid absolute URL");
+  });
+
+  it("reports cloud contract as ready when required cloud env is present", () => {
+    const report = resolveCloudContractReport({
+      FRIDAY_E2E_TARGET: "cloud",
+      FRIDAY_E2E_CLOUD_BASE_URL: "https://example.test/friday",
+      FRIDAY_E2E_CLOUD_AUTH_MODE: "email-password",
+      FRIDAY_E2E_CLOUD_EMAIL: "user@example.test",
+      FRIDAY_E2E_CLOUD_PASSWORD: ["fixture", "cloud", "credential"].join("-"),
+      FRIDAY_E2E_LIVE_OPENAI: "1",
+    });
+
+    expect(report).toMatchObject({
+      ready: true,
+      target: "cloud",
+      authMode: "email-password",
+      liveProvider: "openai",
+      blockers: [],
+    });
   });
 
   it("flags missing channel kinds from FRIDAY_CHANNELS_JSON", () => {

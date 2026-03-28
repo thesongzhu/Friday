@@ -16,9 +16,9 @@ permissions:
   id-token: write
 
 jobs:
-  verify:
+  public-preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     outputs:
       tag_name: ${{ steps.resolve_tag.outputs.tag_name }}
 
@@ -53,10 +53,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          registry-url: https://registry.npmjs.org
-
-      - name: Install dependencies
-        run: npm ci
 
       - name: Verify tag equals package version
         run: |
@@ -67,6 +63,68 @@ jobs:
             echo "::error::Tag version does not match package.json version"
             exit 1
           fi
+
+      - name: Public release preflight
+        env:
+          FRIDAY_RELEASE_TAG: ${{ env.TAG_NAME }}
+          FRIDAY_MACOS_CODESIGN_IDENTITY: ${{ vars.FRIDAY_MACOS_CODESIGN_IDENTITY }}
+          FRIDAY_MACOS_NOTARY_PROFILE: ${{ vars.FRIDAY_MACOS_NOTARY_PROFILE }}
+          FRIDAY_MACOS_SPARKLE_PRIVATE_KEY: ${{ secrets.FRIDAY_MACOS_SPARKLE_PRIVATE_KEY }}
+          FRIDAY_MACOS_SPARKLE_PUBLIC_KEY: ${{ vars.FRIDAY_MACOS_SPARKLE_PUBLIC_KEY }}
+          FRIDAY_MACOS_APPCAST_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ env.TAG_NAME }}
+          FRIDAY_HOMEBREW_TAP_REPO: ${{ vars.FRIDAY_HOMEBREW_TAP_REPO }}
+          FRIDAY_HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.FRIDAY_HOMEBREW_TAP_GITHUB_TOKEN }}
+          FRIDAY_IOS_APPLE_TEAM_ID: ${{ vars.FRIDAY_IOS_APPLE_TEAM_ID }}
+          FRIDAY_IOS_BUNDLE_ID: ${{ vars.FRIDAY_IOS_BUNDLE_ID }}
+          FRIDAY_IOS_APP_STORE_CONNECT_KEY_ID: ${{ vars.FRIDAY_IOS_APP_STORE_CONNECT_KEY_ID }}
+          FRIDAY_IOS_APP_STORE_CONNECT_ISSUER_ID: ${{ vars.FRIDAY_IOS_APP_STORE_CONNECT_ISSUER_ID }}
+          FRIDAY_IOS_APP_STORE_CONNECT_PRIVATE_KEY_PATH: ${{ secrets.FRIDAY_IOS_APP_STORE_CONNECT_PRIVATE_KEY_PATH }}
+          FRIDAY_ANDROID_APPLICATION_ID: ${{ vars.FRIDAY_ANDROID_APPLICATION_ID }}
+          FRIDAY_ANDROID_KEYSTORE_PATH: ${{ secrets.FRIDAY_ANDROID_KEYSTORE_PATH }}
+          FRIDAY_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.FRIDAY_ANDROID_KEYSTORE_PASSWORD }}
+          FRIDAY_ANDROID_KEY_ALIAS: ${{ vars.FRIDAY_ANDROID_KEY_ALIAS }}
+          FRIDAY_ANDROID_KEY_PASSWORD: ${{ secrets.FRIDAY_ANDROID_KEY_PASSWORD }}
+          FRIDAY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.FRIDAY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON }}
+          FRIDAY_WINDOWS_CODESIGN_PFX_PATH: ${{ secrets.FRIDAY_WINDOWS_CODESIGN_PFX_PATH }}
+          FRIDAY_WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.FRIDAY_WINDOWS_CODESIGN_PFX_PASSWORD }}
+          FRIDAY_CROSS_PLATFORM_MACOS_SMOKE_TARGET: ${{ vars.FRIDAY_CROSS_PLATFORM_MACOS_SMOKE_TARGET }}
+          FRIDAY_CROSS_PLATFORM_IOS_SMOKE_TARGET: ${{ vars.FRIDAY_CROSS_PLATFORM_IOS_SMOKE_TARGET }}
+          FRIDAY_CROSS_PLATFORM_ANDROID_SMOKE_TARGET: ${{ vars.FRIDAY_CROSS_PLATFORM_ANDROID_SMOKE_TARGET }}
+          FRIDAY_CROSS_PLATFORM_WINDOWS_SMOKE_TARGET: ${{ vars.FRIDAY_CROSS_PLATFORM_WINDOWS_SMOKE_TARGET }}
+          FRIDAY_RELEASE_PREFLIGHT_ARTIFACT_DIR: artifacts/release-preflight
+        run: npm run release:preflight
+
+      - name: Upload release preflight artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: friday-release-preflight-${{ github.run_id }}
+          path: artifacts/release-preflight/
+          if-no-files-found: warn
+
+  verify:
+    needs: public-preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      tag_name: ${{ needs.public-preflight.outputs.tag_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.public-preflight.outputs.tag_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
