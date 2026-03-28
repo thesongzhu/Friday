@@ -1328,6 +1328,10 @@ async function cmdStart(parsed: ParsedArgs): Promise<void> {
     channels: startupChannels.channels,
   };
   const resolved = resolveFridayHubConfig(config);
+  // Apply resolved SSRF policy so self-hosted deployments can reach local providers
+  if (resolved.ssrfPolicy && !config.ssrfPolicy) {
+    config.ssrfPolicy = resolved.ssrfPolicy;
+  }
   const hub = await createFridayHub(config);
 
   await hub.start();

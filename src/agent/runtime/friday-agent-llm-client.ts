@@ -87,8 +87,12 @@ export function createFridayAgentLlmClient(
   const authMode: FridayProviderAuthMode | undefined = deps.authMode;
   const fetchFn = deps.fetchImpl ?? fetch;
 
-  // SSRF guard: validate the provider baseUrl at construction time
-  const ssrfCheck = validateGatewayUrl(baseUrl);
+  // SSRF guard: validate the provider baseUrl at construction time.
+  // Self-hosted deployments may need loopback/private access (e.g. local Ollama).
+  const ssrfCheck = validateGatewayUrl(baseUrl, {
+    allowLoopback: deps.allowPrivateNetwork,
+    allowPrivate: deps.allowPrivateNetwork,
+  });
   if (!ssrfCheck.valid) {
     throw new FridayDomainError(
       FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,

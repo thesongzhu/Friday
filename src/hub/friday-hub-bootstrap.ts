@@ -423,6 +423,19 @@ export function resolveFridayHubConfig(
   const pluginRuntimeMode = pluginRuntimeModeRaw === "stub" ? "stub" : "full";
   const pipelineRuntimeConfig = resolveFridayPipelineRuntimeConfig(env);
 
+  // Self-hosted deployments typically use local providers (Ollama on localhost).
+  // Default allowPrivateNetwork to true unless explicitly disabled or in production mode.
+  let allowPrivateNetwork: boolean;
+  const envAllowPrivate = (env.FRIDAY_ALLOW_PRIVATE_NETWORK ?? "").trim().toLowerCase();
+  if (envAllowPrivate) {
+    allowPrivateNetwork = ["1", "true", "yes", "on"].includes(envAllowPrivate);
+  } else if (input.ssrfPolicy?.allowPrivateNetwork !== undefined) {
+    allowPrivateNetwork = input.ssrfPolicy.allowPrivateNetwork;
+  } else {
+    // Default: allow for self-hosted (non-production); disallow in production
+    allowPrivateNetwork = !isProduction;
+  }
+
   return {
     stateDir,
     skillDirs,
@@ -437,6 +450,7 @@ export function resolveFridayHubConfig(
     allowLocalBypassLogin,
     pipelineEnabled: pipelineRuntimeConfig.enabled,
     pipelineMode: pipelineRuntimeConfig.mode,
+    ssrfPolicy: { allowPrivateNetwork },
   };
 }
 
@@ -892,6 +906,7 @@ export async function createFridayHub(
             apiKey: credential ?? "",
             api: _route.provider.config.api,
             authMode: _route.provider.config.authMode,
+            allowPrivateNetwork: config.ssrfPolicy?.allowPrivateNetwork,
           });
 
           // Collect all stream events so the fallback can detect errors
@@ -3297,6 +3312,7 @@ export async function createFridayHub(
     serverHost: config.host ?? "127.0.0.1",
     serverPort: config.port ?? 3141,
     stateDir: config.stateDir ?? ".",
+    allowPrivateNetwork: config.ssrfPolicy?.allowPrivateNetwork,
     configManager,
     computeChecksum,
     workflowRuntime,

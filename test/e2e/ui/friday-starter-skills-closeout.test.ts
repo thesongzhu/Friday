@@ -9,6 +9,13 @@ import {
   type FridayBrowserPageHandle,
 } from "./_helpers/browser-env.js";
 
+const CHROMIUM_AVAILABLE = (() => {
+  try {
+    const pw = require("playwright") as { chromium: { executablePath: () => string } };
+    return fs.existsSync(pw.chromium.executablePath());
+  } catch { return false; }
+})();
+
 const CLOSEOUT_TIMEOUT_MS = 120_000;
 
 interface ApiEnvelope<T> {
@@ -38,7 +45,7 @@ async function executeTemplate<T>(
   );
 }
 
-describe("Friday starter skills closeout", () => {
+describe.skipIf(!CHROMIUM_AVAILABLE)("Friday starter skills closeout", () => {
   let env: FridayBrowserE2eEnv | null = null;
   let pageHandle: FridayBrowserPageHandle | null = null;
 
