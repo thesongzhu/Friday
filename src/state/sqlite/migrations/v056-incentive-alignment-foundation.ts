@@ -209,11 +209,19 @@ DROP TABLE learning_events;
 ALTER TABLE learning_events_new RENAME TO learning_events;
 `;
 
+/** Validate that an identifier is a safe SQLite table/column name (alphanumeric + underscore). */
+function assertSafeIdentifier(name: string, label: string): void {
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+    throw new Error(`Unsafe ${label} identifier: ${JSON.stringify(name)}`);
+  }
+}
+
 function hasTableColumn(
   db: Database.Database,
   tableName: string,
   columnName: string,
 ): boolean {
+  assertSafeIdentifier(tableName, "table");
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
   return columns.some((column) => column.name === columnName);
 }
@@ -222,6 +230,7 @@ function addColumnIfMissing(
   db: Database.Database,
   input: { tableName: string; columnName: string; columnSql: string },
 ): void {
+  assertSafeIdentifier(input.tableName, "table");
   if (hasTableColumn(db, input.tableName, input.columnName)) {
     return;
   }
