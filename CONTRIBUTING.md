@@ -13,6 +13,9 @@ git clone https://github.com/thesongzhu/Friday.git
 cd Friday
 npm ci
 npm run build
+
+# Optional: install Playwright browsers for browser E2E tests
+npx playwright install chromium
 ```
 
 ## Extending Friday (Skills / Plugins / Workflows)
