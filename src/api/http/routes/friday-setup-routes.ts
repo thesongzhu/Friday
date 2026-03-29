@@ -190,7 +190,7 @@ function assertSetupBaseUrlSafe(baseUrl: string, opts?: { allowPrivateNetwork?: 
     allowPrivate: opts?.allowPrivateNetwork,
   });
   if (!result.valid) {
-    throw new FridayDomainError("PROVIDER_UNREACHABLE", `Base URL blocked by security policy: ${result.error ?? "private/loopback address"}`, { httpStatus: 422 });
+    throw new FridayDomainError("PROVIDER_UNREACHABLE", `Base URL blocked by security policy: ${result.error ?? "private/loopback address"}`, { httpStatus: 422, details: { hint: "Friday blocks localhost/private IPs by default. For local providers like Ollama, use the setup wizard which enables private network access." } });
   }
 }
 
@@ -202,7 +202,7 @@ async function fetchOpenAiModels(baseUrl: string, apiKey: string, ssrf?: { allow
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   if (res.status === 401 || res.status === 403) {
-    throw new FridayDomainError("PROVIDER_AUTH_INVALID", "Invalid API key", { httpStatus: 401 });
+    throw new FridayDomainError("PROVIDER_AUTH_INVALID", "Invalid API key", { httpStatus: 401, details: { hint: "OpenAI keys start with 'sk-'. Check your key at https://platform.openai.com/api-keys" } });
   }
   if (res.status === 429) {
     throw new FridayDomainError("PROVIDER_RATE_LIMITED", "Upstream rate limit", { httpStatus: 429, retryable: true });
@@ -257,7 +257,7 @@ async function fetchAnthropicModels(baseUrl: string, apiKey: string, ssrf?: { al
     });
 
     if (res.status === 401 || res.status === 403) {
-      throw new FridayDomainError("PROVIDER_AUTH_INVALID", "Invalid API key", { httpStatus: 401 });
+      throw new FridayDomainError("PROVIDER_AUTH_INVALID", "Invalid API key", { httpStatus: 401, details: { hint: "Anthropic keys start with 'sk-ant-'. Check your key at https://console.anthropic.com/settings/keys" } });
     }
     if (res.status === 429) {
       throw new FridayDomainError("PROVIDER_RATE_LIMITED", "Upstream rate limit", { httpStatus: 429, retryable: true });
@@ -278,7 +278,7 @@ async function fetchGoogleModels(baseUrl: string, apiKey: string, ssrf?: { allow
   const url = `${baseUrl.replace(/\/+$/, "")}/v1beta/models`;
   const res = await fetchWithTimeout(url, { method: "GET", headers: { "x-goog-api-key": apiKey } });
   if (res.status === 401 || res.status === 403) {
-    throw new FridayDomainError("PROVIDER_AUTH_INVALID", "Invalid API key", { httpStatus: 401 });
+    throw new FridayDomainError("PROVIDER_AUTH_INVALID", "Invalid API key", { httpStatus: 401, details: { hint: "Google AI keys can be generated at https://aistudio.google.com/app/apikey" } });
   }
   if (res.status === 429) {
     throw new FridayDomainError("PROVIDER_RATE_LIMITED", "Upstream rate limit", { httpStatus: 429, retryable: true });
@@ -326,7 +326,7 @@ async function fetchCompatibleModels(baseUrl: string, apiKey?: string, ssrf?: { 
   }
   const res = await fetchWithTimeout(url, { method: "GET", headers });
   if (res.status === 401 || res.status === 403) {
-    throw new FridayDomainError("PROVIDER_AUTH_INVALID", "Invalid API key", { httpStatus: 401 });
+    throw new FridayDomainError("PROVIDER_AUTH_INVALID", "Invalid API key", { httpStatus: 401, details: { hint: "Verify the API key is correct and the provider supports the OpenAI-compatible /v1/models endpoint" } });
   }
   if (res.status === 429) {
     throw new FridayDomainError("PROVIDER_RATE_LIMITED", "Upstream rate limit", { httpStatus: 429, retryable: true });

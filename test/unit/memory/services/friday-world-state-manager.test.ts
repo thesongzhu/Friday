@@ -151,4 +151,58 @@ describe("FridayWorldStateManager", () => {
     expect(episodes[0].taskIntent).toBe("task 2");
     expect(episodes[2].taskIntent).toBe("task 0");
   });
+
+  it("updateFromEpisode persists a world state snapshot", async () => {
+    const mgr = createFridayWorldStateManager({ db, idGenerator: idGen, nowIso });
+    const episode = makeEpisode();
+
+    await mgr.updateFromEpisode("user-1", episode);
+
+    const count = db.withReadConnection((conn) =>
+      (conn.prepare("SELECT COUNT(*) as c FROM friday_world_state_snapshots WHERE user_id = ?").get("user-1") as { c: number }).c,
+    );
+    expect(count).toBeGreaterThanOrEqual(1);
+  });
+
+  it("updateFromEpisode prunes stale entities older than 90 days with low mention count", async () => {
+    const mgr = createFridayWorldStateManager({ db, idGenerator: idGen, nowIso });
+
+    // Seed an old entity with low mention count
+    db.withWriteTransaction((conn) => {
+      conn
+        .prepare(
+          `INSERT INTO friday_world_entities
+             (id, user_id, type, name, attributes_json, relations_json,
+              last_mentioned, mention_count, created_at, updated_at)
+           VALUES (?, 'user-1', 'concept', 'OldThing', '{}', '[]', '2025-01-01T00:00:00.000Z', 1, '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')`,
+        )
+        .run(idGen());
+    });
+
+    // Seed an old entity with HIGH mention count (should survive)
+    db.withWriteTransaction((conn) => {
+      conn
+        .prepare(
+          `INSERT INTO friday_world_entities
+             (id, user_id, type, name, attributes_json, relations_json,
+              last_mentioned, mention_count, created_at, updated_at)
+           VALUES (?, 'user-1', 'concept', 'ImportantThing', '{}', '[]', '2025-01-01T00:00:00.000Z', 5, '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')`,
+        )
+        .run(idGen());
+    });
+
+    await mgr.updateFromEpisode("user-1", makeEpisode());
+
+    const entities = db.withReadConnection((conn) =>
+      conn
+        .prepare("SELECT name FROM friday_world_entities WHERE user_id = ?")
+        .all("user-1") as Array<{ name: string }>,
+    );
+    const names = entities.map((e) => e.name);
+
+    // OldThing should be pruned (mention_count=1, >90 days old)
+    expect(names).not.toContain("OldThing");
+    // ImportantThing should survive (mention_count=5)
+    expect(names).toContain("ImportantThing");
+  });
 });

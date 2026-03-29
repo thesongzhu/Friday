@@ -142,6 +142,7 @@ export function createFridayAgentRuntime(
     communicationPromptBuilder,
     delegationHandler,
     contextEngine,
+    decisionEngine,
   } = deps;
 
   // Clone the tools array so registerTool does not mutate the caller's array.
