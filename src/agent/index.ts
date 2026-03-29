@@ -140,6 +140,30 @@ export { createFridayAgentEventEmitter } from "./runtime/friday-agent-event-emit
 export type { FridayAgentLearningBridge, CreateFridayAgentLearningBridgeDeps } from "./runtime/friday-agent-learning-bridge.js";
 export { createFridayAgentLearningBridge } from "./runtime/friday-agent-learning-bridge.js";
 
+// ─── Decision engine (world model readiness) ───
+
+export type { FridayDecisionEngine, FridayDecisionContext, FridayLocalDecision, FridayOutcomePrediction } from "./runtime/friday-agent-decision-engine.types.js";
+export { createDefaultFridayDecisionEngine } from "./runtime/friday-agent-decision-engine.js";
+
+// ─── World state manager (world model readiness) ───
+
+export type { FridayWorldStateManager, CreateFridayWorldStateManagerDeps } from "./runtime/friday-agent-world-state-manager.js";
+export { createFridayWorldStateManager } from "./runtime/friday-agent-world-state-manager.js";
+
+// ─── World model types (world model readiness) ───
+
+export type {
+  FridayEpisode,
+  FridayEpisodeStep,
+  FridayEpisodeOutcome,
+  FridayEpisodeStepCategory,
+  FridayWorldState,
+  FridayWorldEntity,
+  FridayWorldEntityType,
+  FridayLearnedPattern,
+  FridayLearnedPatternKind,
+} from "./model/friday-agent-world-state.types.js";
+
 // ─── Tool registry ───
 
 export type { CreateFridayAgentToolRegistryOptions } from "./tools/friday-agent-tool-registry.js";
