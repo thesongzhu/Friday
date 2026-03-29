@@ -777,4 +777,6 @@ export interface FridayResolvedHubConfig {
   pipelineEnabled: boolean;
   /** Deterministic pipeline enforcement mode. */
   pipelineMode: "shadow" | "warn" | "enforce";
+  /** Resolved SSRF policy for provider/agent network access. */
+  ssrfPolicy?: FridaySsrfPolicy;
 }

@@ -132,6 +132,8 @@ export interface CreateFridayApiRuntimeDeps {
   /** The port the HTTP server is listening on, used to detect if a restart is needed. */
   serverPort?: number;
   stateDir?: string;
+  /** Allow loopback/private network addresses for self-hosted deployments using local providers. */
+  allowPrivateNetwork?: boolean;
   pluginService?: FridayPluginService;
   pluginManifestLoader?: FridayPluginManifestLoader;
   computeChecksum: (content: string) => string;

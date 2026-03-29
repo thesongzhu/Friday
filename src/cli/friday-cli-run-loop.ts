@@ -81,9 +81,17 @@ export function runFridayCliLoop(deps: FridayCliRunLoopDeps): Promise<void> {
         exit(1);
       });
 
-    // Graceful shutdown handler
+    // Graceful shutdown handler with timeout guard
+    const SHUTDOWN_TIMEOUT_MS = 30_000;
     const shutdown = async () => {
       console.log("\n🛑 Shutting down Friday…");
+
+      const forceExitTimer = setTimeout(() => {
+        console.error("[friday][cli-run-loop] Graceful shutdown timed out after 30s, forcing exit");
+        exit(1);
+      }, SHUTDOWN_TIMEOUT_MS);
+      // Ensure timer doesn't keep the process alive if shutdown completes
+      forceExitTimer.unref();
 
       try {
         await httpServer.close();
@@ -99,6 +107,7 @@ export function runFridayCliLoop(deps: FridayCliRunLoopDeps): Promise<void> {
         console.warn("[friday][cli-run-loop] hub stop failed:", err instanceof Error ? err.message : String(err));
       }
 
+      clearTimeout(forceExitTimer);
       resolve();
       exit(0);
     };

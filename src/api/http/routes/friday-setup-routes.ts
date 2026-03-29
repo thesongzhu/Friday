@@ -184,15 +184,18 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
   }
 }
 
-function assertSetupBaseUrlSafe(baseUrl: string): void {
-  const result = validateGatewayUrl(baseUrl);
+function assertSetupBaseUrlSafe(baseUrl: string, opts?: { allowPrivateNetwork?: boolean }): void {
+  const result = validateGatewayUrl(baseUrl, {
+    allowLoopback: opts?.allowPrivateNetwork,
+    allowPrivate: opts?.allowPrivateNetwork,
+  });
   if (!result.valid) {
     throw new FridayDomainError("PROVIDER_UNREACHABLE", `Base URL blocked by security policy: ${result.error ?? "private/loopback address"}`, { httpStatus: 422 });
   }
 }
 
-async function fetchOpenAiModels(baseUrl: string, apiKey: string): Promise<{ models: string[]; defaultModel?: string }> {
-  assertSetupBaseUrlSafe(baseUrl);
+async function fetchOpenAiModels(baseUrl: string, apiKey: string, ssrf?: { allowPrivateNetwork?: boolean }): Promise<{ models: string[]; defaultModel?: string }> {
+  assertSetupBaseUrlSafe(baseUrl, ssrf);
   const url = `${baseUrl.replace(/\/+$/, "")}/v1/models`;
   const res = await fetchWithTimeout(url, {
     method: "GET",
@@ -232,8 +235,8 @@ async function fetchOpenAiModels(baseUrl: string, apiKey: string): Promise<{ mod
   return { models: chatModels.length > 0 ? chatModels : allModels, defaultModel };
 }
 
-async function fetchAnthropicModels(baseUrl: string, apiKey: string): Promise<{ models: string[]; defaultModel?: string; validated: boolean }> {
-  assertSetupBaseUrlSafe(baseUrl);
+async function fetchAnthropicModels(baseUrl: string, apiKey: string, ssrf?: { allowPrivateNetwork?: boolean }): Promise<{ models: string[]; defaultModel?: string; validated: boolean }> {
+  assertSetupBaseUrlSafe(baseUrl, ssrf);
   const models = ["claude-opus-4", "claude-sonnet-4", "claude-haiku-3.5"];
 
   // Validate key with minimal API call
@@ -270,8 +273,8 @@ async function fetchAnthropicModels(baseUrl: string, apiKey: string): Promise<{ 
   }
 }
 
-async function fetchGoogleModels(baseUrl: string, apiKey: string): Promise<{ models: string[]; defaultModel?: string }> {
-  assertSetupBaseUrlSafe(baseUrl);
+async function fetchGoogleModels(baseUrl: string, apiKey: string, ssrf?: { allowPrivateNetwork?: boolean }): Promise<{ models: string[]; defaultModel?: string }> {
+  assertSetupBaseUrlSafe(baseUrl, ssrf);
   const url = `${baseUrl.replace(/\/+$/, "")}/v1beta/models`;
   const res = await fetchWithTimeout(url, { method: "GET", headers: { "x-goog-api-key": apiKey } });
   if (res.status === 401 || res.status === 403) {
@@ -302,8 +305,8 @@ async function fetchGoogleModels(baseUrl: string, apiKey: string): Promise<{ mod
   return { models, defaultModel };
 }
 
-async function fetchOllamaModels(baseUrl: string): Promise<{ models: string[]; defaultModel?: string }> {
-  assertSetupBaseUrlSafe(baseUrl);
+async function fetchOllamaModels(baseUrl: string, ssrf?: { allowPrivateNetwork?: boolean }): Promise<{ models: string[]; defaultModel?: string }> {
+  assertSetupBaseUrlSafe(baseUrl, ssrf);
   const url = `${baseUrl.replace(/\/+$/, "")}/api/tags`;
   const res = await fetchWithTimeout(url, { method: "GET" });
   if (!res.ok) {
@@ -314,8 +317,8 @@ async function fetchOllamaModels(baseUrl: string): Promise<{ models: string[]; d
   return { models, defaultModel: models[0] };
 }
 
-async function fetchCompatibleModels(baseUrl: string, apiKey?: string): Promise<{ models: string[]; defaultModel?: string }> {
-  assertSetupBaseUrlSafe(baseUrl);
+async function fetchCompatibleModels(baseUrl: string, apiKey?: string, ssrf?: { allowPrivateNetwork?: boolean }): Promise<{ models: string[]; defaultModel?: string }> {
+  assertSetupBaseUrlSafe(baseUrl, ssrf);
   const url = `${baseUrl.replace(/\/+$/, "")}/v1/models`;
   const headers: Record<string, string> = {};
   if (apiKey) {
@@ -345,6 +348,8 @@ export interface FridaySetupRoutesDeps {
   nowIso: () => string;
   runningHost: string;
   runningPort: number;
+  /** Allow loopback/private network addresses for self-hosted deployments using local providers. */
+  allowPrivateNetwork?: boolean;
 }
 
 // ─── Factory ───
@@ -521,13 +526,15 @@ export function createFridaySetupRoutes(
 
         const startMs = Date.now();
 
+        const ssrf = { allowPrivateNetwork: deps.allowPrivateNetwork };
+
         try {
           switch (api) {
             case "openai-completions":
             case "openai-responses": {
               const result = kind === "openai"
-                ? await fetchOpenAiModels(baseUrl, apiKey!)
-                : await fetchCompatibleModels(baseUrl, apiKey);
+                ? await fetchOpenAiModels(baseUrl, apiKey!, ssrf)
+                : await fetchCompatibleModels(baseUrl, apiKey, ssrf);
               availableModels = result.models;
               defaultModel = result.defaultModel;
               validated = true;
@@ -540,7 +547,7 @@ export function createFridaySetupRoutes(
                 validated = false;
                 warnings.push("OAuth selected: complete login before provider validation.");
               } else {
-                const result = await fetchAnthropicModels(baseUrl, apiKey!);
+                const result = await fetchAnthropicModels(baseUrl, apiKey!, ssrf);
                 availableModels = result.models;
                 defaultModel = result.defaultModel;
                 validated = result.validated;
@@ -551,14 +558,14 @@ export function createFridaySetupRoutes(
               break;
             }
             case "google-generative-ai": {
-              const result = await fetchGoogleModels(baseUrl, apiKey!);
+              const result = await fetchGoogleModels(baseUrl, apiKey!, ssrf);
               availableModels = result.models;
               defaultModel = result.defaultModel;
               validated = true;
               break;
             }
             case "ollama": {
-              const result = await fetchOllamaModels(baseUrl);
+              const result = await fetchOllamaModels(baseUrl, ssrf);
               availableModels = result.models;
               defaultModel = result.defaultModel;
               validated = true;
@@ -568,7 +575,7 @@ export function createFridaySetupRoutes(
               break;
             }
             default: {
-              const result = await fetchCompatibleModels(baseUrl, apiKey);
+              const result = await fetchCompatibleModels(baseUrl, apiKey, ssrf);
               availableModels = result.models;
               defaultModel = result.defaultModel;
               validated = true;

@@ -475,11 +475,17 @@ export function createFridayProviderService(
         updatedAt: now,
       };
 
-      // Skip validation for OAuth providers — they haven't logged in yet
+      // Skip validation for OAuth providers — they haven't logged in yet.
+      // Also skip for local keyless providers (e.g. Ollama with authMode "none")
+      // since connectivity depends on the user's local setup.
       if (input.authMode === "oauth") {
         profile.config.validation = {
           status: "never",
           errorMessage: "OAuth login required",
+        };
+      } else if (input.authMode === "none" && input.validateOnSave === undefined) {
+        profile.config.validation = {
+          status: "never",
         };
       } else if (input.validateOnSave !== false) {
         // Validate BEFORE persistence (if requested, default: true)
@@ -805,7 +811,7 @@ export function createFridayProviderService(
       if (!routing || !routing.defaultProviderId) {
         throw new FridayDomainError(
           "PROVIDER_NO_ROUTING",
-          "No model routing configured. Add a provider and set routing.",
+          "No model routing configured. Register a provider via POST /v1/providers (e.g. Ollama on localhost:11434) and then set routing via PUT /v1/model-routing, or use the setup wizard at /setup.",
           { httpStatus: 400 },
         );
       }
@@ -858,7 +864,7 @@ export function createFridayProviderService(
       if (!routing || !routing.defaultProviderId) {
         throw new FridayDomainError(
           "PROVIDER_NO_ROUTING",
-          "No model routing configured",
+          "No model routing configured. Register a provider and set routing via PUT /v1/model-routing, or use the setup wizard at /setup.",
           { httpStatus: 400 },
         );
       }

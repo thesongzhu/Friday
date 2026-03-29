@@ -19,6 +19,16 @@
  *   friday --help                                           — usage info
  */
 
+// ─── Global error handlers (must be first) ───
+process.on("unhandledRejection", (reason) => {
+  console.error("[friday][FATAL] Unhandled promise rejection:", reason instanceof Error ? reason.stack ?? reason.message : String(reason));
+  process.exit(1);
+});
+process.on("uncaughtException", (error) => {
+  console.error("[friday][FATAL] Uncaught exception:", error.stack ?? error.message);
+  process.exit(1);
+});
+
 import { existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1328,6 +1338,10 @@ async function cmdStart(parsed: ParsedArgs): Promise<void> {
     channels: startupChannels.channels,
   };
   const resolved = resolveFridayHubConfig(config);
+  // Apply resolved SSRF policy so self-hosted deployments can reach local providers
+  if (resolved.ssrfPolicy && !config.ssrfPolicy) {
+    config.ssrfPolicy = resolved.ssrfPolicy;
+  }
   const hub = await createFridayHub(config);
 
   await hub.start();
