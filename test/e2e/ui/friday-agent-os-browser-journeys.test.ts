@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -5,6 +6,13 @@ import {
   type FridayBrowserE2eEnv,
   type FridayBrowserPageHandle,
 } from "./_helpers/browser-env.js";
+
+const CHROMIUM_AVAILABLE = (() => {
+  try {
+    const pw = require("playwright") as { chromium: { executablePath: () => string } };
+    return fs.existsSync(pw.chromium.executablePath());
+  } catch { return false; }
+})();
 
 const BROWSER_E2E_TIMEOUT_MS = 120_000;
 
@@ -88,7 +96,7 @@ async function runAutomationTwice(
   }
 }
 
-describe("Friday Agent OS browser incentive journeys", () => {
+describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys", () => {
   let env: FridayBrowserE2eEnv | null = null;
   let pageHandle: FridayBrowserPageHandle | null = null;
 

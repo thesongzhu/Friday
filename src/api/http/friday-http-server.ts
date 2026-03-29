@@ -783,6 +783,22 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
     const connId = crypto.randomUUID();
     const conn = deps.wsGateway.createConnection(connId);
 
+    // ─── Per-connection frame rate limiter ───
+    const WS_RATE_LIMIT_WINDOW_MS = 1_000;
+    const WS_RATE_LIMIT_MAX_FRAMES = 100;
+    let wsRateLimitWindowStart = Date.now();
+    let wsRateLimitFrameCount = 0;
+
+    function checkWsRateLimit(): boolean {
+      const now = Date.now();
+      if (now - wsRateLimitWindowStart > WS_RATE_LIMIT_WINDOW_MS) {
+        wsRateLimitWindowStart = now;
+        wsRateLimitFrameCount = 0;
+      }
+      wsRateLimitFrameCount++;
+      return wsRateLimitFrameCount <= WS_RATE_LIMIT_MAX_FRAMES;
+    }
+
     /** Send gateway server frames to the WS client. */
     function sendFrames(frames: FridayRealtimeServerFrame[]): void {
       for (const f of frames) {
@@ -872,6 +888,22 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
 
         // Handle by opcode
         if (opcode === 0x1) {
+          // Rate limit: drop connection if client sends too many frames
+          if (!checkWsRateLimit()) {
+            console.warn(`[friday][http-server] WebSocket rate limit exceeded for conn ${connId}`);
+            const errFrame: FridayRealtimeServerFrame = {
+              type: "error",
+              code: "RATE_LIMITED",
+              message: "Too many frames per second",
+              retryable: true,
+            };
+            socket.write(encodeWsTextFrame(JSON.stringify(errFrame)));
+            sendWsClose(socket, 1008); // Policy Violation
+            cleanup();
+            socket.destroy();
+            return;
+          }
+
           // Text frame → parse as client frame and forward to gateway
           try {
             const clientFrame = JSON.parse(payloadData.toString("utf-8")) as FridayRealtimeClientFrame;

@@ -1518,6 +1518,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       nowIso: deps.nowIso,
       runningHost: deps.serverHost ?? "127.0.0.1",
       runningPort: deps.serverPort ?? 3141,
+      allowPrivateNetwork: deps.allowPrivateNetwork,
     })) {
       routes.register(route);
     }

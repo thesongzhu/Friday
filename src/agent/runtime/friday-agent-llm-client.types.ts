@@ -66,4 +66,6 @@ export interface CreateFridayAgentLlmClientDeps {
   /** Auth mode is needed for Anthropic OAuth because it uses Bearer headers, not x-api-key. */
   authMode?: FridayProviderAuthMode;
   fetchImpl?: typeof fetch;
+  /** Allow loopback/private addresses (for self-hosted deployments using local providers like Ollama). */
+  allowPrivateNetwork?: boolean;
 }

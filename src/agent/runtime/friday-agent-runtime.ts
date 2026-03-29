@@ -1039,7 +1039,12 @@ export function createFridayAgentRuntime(
         const prefEntries = Object.entries(learnedPreferences);
         if (prefEntries.length > 0) {
           const prefLines = prefEntries.map(([k, v]) => `- ${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`);
-          effectiveSystemPrompt += "\n\nUser preferences (learned from past interactions):\n" + prefLines.join("\n");
+          effectiveSystemPrompt +=
+            "\n\n<user-preferences>\n" +
+            "The following preferences were learned from past interactions. " +
+            "Respect these when generating responses:\n" +
+            prefLines.join("\n") +
+            "\n</user-preferences>";
         }
         if (communicationPromptBuilder && principalId) {
           try {
@@ -1074,8 +1079,22 @@ export function createFridayAgentRuntime(
             description: `LLM turn ${String(iterations)}`,
           });
 
-          const { assistantText, toolUseBlocks, inputTokens, outputTokens, turnMeta } =
-            await streamLlmResponse({
+          // Per-turn LLM streaming timeout: abort if no response within 5 minutes.
+          // This prevents indefinite hangs when a provider establishes a connection
+          // but stops sending tokens (half-open connection).
+          const LLM_TURN_TIMEOUT_MS = 5 * 60 * 1000;
+          const turnTimeoutController = new AbortController();
+          const turnTimeout = setTimeout(
+            () => turnTimeoutController.abort(new Error("LLM streaming timeout exceeded (5m)")),
+            LLM_TURN_TIMEOUT_MS,
+          );
+          // Link parent abort signal so user cancellation still works
+          const onParentAbort = () => turnTimeoutController.abort(runAbortController.signal.reason);
+          runAbortController.signal.addEventListener("abort", onParentAbort, { once: true });
+
+          let streamResult: Awaited<ReturnType<typeof streamLlmResponse>>;
+          try {
+            streamResult = await streamLlmResponse({
               llmClient,
               providerId: requestedProviderId,
               model: requestedModel ?? "default",
@@ -1083,11 +1102,16 @@ export function createFridayAgentRuntime(
               messages,
               tools,
               temperature: resolvedTaskProfile.temperature,
-              signal: runAbortController.signal,
+              signal: turnTimeoutController.signal,
               eventEmitter,
               runId,
               emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
             });
+          } finally {
+            clearTimeout(turnTimeout);
+            runAbortController.signal.removeEventListener("abort", onParentAbort);
+          }
+          const { assistantText, toolUseBlocks, inputTokens, outputTokens, turnMeta } = streamResult;
 
           totalInputTokens += inputTokens;
           totalOutputTokens += outputTokens;

@@ -4494,9 +4494,10 @@ describe("FridayAgentRuntime", () => {
     await runtime.executeRun({ task: "Hello", principalId: "user-123" });
 
     expect(learningContextBuilder).toHaveBeenCalledWith({ userId: "user-123", nowIso: NOW });
-    expect(capturedSystemPrompt).toContain("User preferences (learned from past interactions):");
+    expect(capturedSystemPrompt).toContain("<user-preferences>");
     expect(capturedSystemPrompt).toContain("- language: Chinese");
     expect(capturedSystemPrompt).toContain("- tone: formal");
+    expect(capturedSystemPrompt).toContain("</user-preferences>");
   });
 
   it("uses learned timezone preference when no explicit timezone is provided", async () => {
