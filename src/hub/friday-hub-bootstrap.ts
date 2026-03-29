@@ -90,7 +90,7 @@ import {
   createFridayPluginSignatureVerifier,
 } from "#plugins";
 import type { FridayPluginService } from "#plugins";
-import { createFridayMemoryFileSyncRepository, createFridayMemoryFileSyncService, createFridayMemoryService } from "#memory";
+import { createFridayEpisodeExtractor, createFridayMemoryFileSyncRepository, createFridayMemoryFileSyncService, createFridayMemoryService } from "#memory";
 import {
   createFridaySessionMemoryExtractionService,
   finalizeFridayConversationFocus,
@@ -137,7 +137,7 @@ import {
 } from "#agent";
 import type { loadFridayWorkspaceContext } from "#agent";
 import { buildMcpServerToolFilter } from "./friday-mcp-safe-catalog.js";
-import { createFridayEpisodeExtractor } from "../memory/services/friday-episode-extractor.js";
+
 import { classifyFridayExecution } from "../sessions/services/friday-execution-classifier.js";
 import { dispatchDeterministic } from "../sessions/services/friday-deterministic-dispatch.js";
 import type { FridayDeterministicDispatchDeps } from "../sessions/services/friday-deterministic-dispatch.js";
@@ -5191,6 +5191,17 @@ export async function createFridayHub(
 
       hubState = "running";
       upSince = new Date().toISOString();
+
+      // ─── Startup diagnostics ───
+      {
+        const providerCount = (await providerService.listProviders()).length;
+        const channelCount = channelRegistry.list().length;
+        const skillCount = registry.list().length;
+        console.log("[friday] ✓ Friday is running");
+        console.log(`[friday]   Providers: ${String(providerCount)}${providerCount === 0 ? " — set ANTHROPIC_API_KEY or visit /setup to add one" : ""}`);
+        console.log(`[friday]   Channels:  ${String(channelCount)}${channelCount === 0 ? " — no messaging channels configured" : ""}`);
+        console.log(`[friday]   Skills:    ${String(skillCount)}`);
+      }
     },
 
     async stop(): Promise<void> {

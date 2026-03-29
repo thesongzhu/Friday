@@ -152,3 +152,11 @@ export type {
   FridayMemoryGuardServiceFactory,
   CreateFridayMemoryGuardServiceFactoryDeps,
 } from "./guard/index.js";
+
+// ─── Episode & Pattern Extractors ───
+
+export type { FridayEpisodeExtractor, CreateFridayEpisodeExtractorDeps } from "./services/friday-episode-extractor.js";
+export { createFridayEpisodeExtractor } from "./services/friday-episode-extractor.js";
+
+export type { FridayPatternExtractor, CreateFridayPatternExtractorDeps } from "./services/friday-pattern-extractor.js";
+export { createFridayPatternExtractor } from "./services/friday-pattern-extractor.js";

@@ -115,8 +115,21 @@ export function createFridayEpisodeExtractor(
         createdAt: nowIso(),
       };
 
-      // 8. Persist
-      db.withWriteTransaction((conn) => insertEpisode(conn, episode));
+      // 8. Persist and prune old episodes
+      db.withWriteTransaction((conn) => {
+        insertEpisode(conn, episode);
+
+        // Keep last 500 episodes per user
+        conn
+          .prepare(
+            `DELETE FROM friday_episodes
+             WHERE user_id = ? AND id NOT IN (
+               SELECT id FROM friday_episodes
+               WHERE user_id = ? ORDER BY created_at DESC LIMIT 500
+             )`,
+          )
+          .run(userId, userId);
+      });
 
       return episode;
     },

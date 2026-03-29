@@ -79,7 +79,7 @@ export function createFridayWorldStateManager(
 ): FridayWorldStateManager {
   const { db, idGenerator, nowIso } = deps;
 
-  return {
+  const manager: FridayWorldStateManager = {
     async loadState(userId) {
       // Try loading latest snapshot
       const row = db.withReadConnection((conn) =>
@@ -131,7 +131,21 @@ export function createFridayWorldStateManager(
             now,
           });
         }
+
+        // Prune stale entities: remove those not mentioned in last 90 days with low mention count
+        conn
+          .prepare(
+            `DELETE FROM friday_world_entities
+             WHERE user_id = ?
+               AND mention_count < 2
+               AND last_mentioned < datetime(?, '-90 days')`,
+          )
+          .run(userId, now);
       });
+
+      // Persist a snapshot after updating entities
+      const updatedState = await manager.loadState(userId);
+      await manager.saveSnapshot(updatedState);
     },
 
     async saveSnapshot(state) {
@@ -170,6 +184,8 @@ export function createFridayWorldStateManager(
       return rows.map(rowToEpisode);
     },
   };
+
+  return manager;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────
