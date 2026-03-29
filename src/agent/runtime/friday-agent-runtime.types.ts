@@ -16,6 +16,7 @@ import type { FridayAgentSelfTestService } from "../testing/friday-agent-self-te
 import type { FridayAgentRunEventRepository } from "../persistence/friday-agent-run-event-repository.js";
 import type { FridayAgentArtifactWriter } from "../services/friday-agent-artifact-writer.js";
 import type { FridayAgentEventEmitter } from "./friday-agent-event-emitter.js";
+import type { FridayDecisionEngine } from "./friday-agent-decision-engine.types.js";
 import type { FridayAgentLlmClient } from "./friday-agent-llm-client.types.js";
 import type { FridayAgentReviewGate } from "./friday-agent-review-gate.js";
 import type {
@@ -294,4 +295,6 @@ export interface CreateFridayAgentRuntimeDeps {
     Promise<FridayAgentDelegationResult | null>;
   /** Optional preview context engine hooks. Must remain additive to the default prompt path. */
   contextEngine?: FridayContextEngine;
+  /** Optional pluggable decision engine for world-model-ready action selection. */
+  decisionEngine?: FridayDecisionEngine;
 }
