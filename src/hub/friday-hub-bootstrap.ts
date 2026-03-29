@@ -38,9 +38,10 @@ import {
   createFridaySecretRepository,
   decryptSecret,
   getMasterKey,
+  getFridayProviderPreset,
   resolveFridayRoutingStabilityWarning,
 } from "#providers";
-import type { FridayEncryptedEnvelope, FridayProviderApi } from "#providers";
+import type { FridayEncryptedEnvelope, FridayProviderApi, FridayProviderKind, FridayProviderService } from "#providers";
 import { FridaySkillRegistryImpl, safeParseFridaySkillManifestV2 } from "#skills";
 import { createFridaySkillExecutor } from "#skills";
 import { createFridaySkillGeneratorService } from "#skills/generator";
@@ -361,6 +362,100 @@ function createDiscoveryScannerForPlatform(platform: NodeJS.Platform) {
     default:
       return undefined;
   }
+}
+
+// ─── Auto-detect providers from environment variables ───
+
+const ENV_PROVIDER_MAP: ReadonlyArray<{
+  envVar: string;
+  kind: FridayProviderKind;
+  defaultModel: string;
+}> = [
+  { envVar: "ANTHROPIC_API_KEY", kind: "anthropic", defaultModel: "claude-sonnet-4-20250514" },
+  { envVar: "OPENAI_API_KEY", kind: "openai", defaultModel: "gpt-4o" },
+  { envVar: "GOOGLE_API_KEY", kind: "google", defaultModel: "gemini-2.0-flash" },
+  { envVar: "OPENROUTER_API_KEY", kind: "openrouter", defaultModel: "anthropic/claude-sonnet-4" },
+  { envVar: "GROQ_API_KEY", kind: "groq", defaultModel: "llama-3.3-70b-versatile" },
+  { envVar: "MISTRAL_API_KEY", kind: "mistral", defaultModel: "mistral-large-latest" },
+  { envVar: "XAI_API_KEY", kind: "xai", defaultModel: "grok-3-mini" },
+];
+
+/** Routing priority: anthropic first, then openai, then detection order. */
+const ROUTING_PRIORITY: readonly FridayProviderKind[] = ["anthropic", "openai"];
+
+async function autoDetectProvidersFromEnv(
+  providerService: FridayProviderService,
+): Promise<Array<{ kind: FridayProviderKind; id: string }>> {
+  const detected: Array<{ kind: FridayProviderKind; id: string }> = [];
+
+  // Check which env vars are set
+  const available = ENV_PROVIDER_MAP.filter((entry) => {
+    const val = process.env[entry.envVar];
+    return typeof val === "string" && val.length > 0;
+  });
+  if (available.length === 0) return detected;
+
+  // Get existing providers to avoid duplicates
+  const existing = await providerService.listProviders();
+  const existingKinds = new Set(existing.map((p) => p.kind));
+
+  for (const entry of available) {
+    if (existingKinds.has(entry.kind)) continue;
+
+    const preset = getFridayProviderPreset(entry.kind);
+    try {
+      const profile = await providerService.createProvider({
+        kind: entry.kind,
+        name: `${entry.kind} (auto-detected)`,
+        baseUrl: preset.baseUrl,
+        api: preset.api,
+        authMode: preset.authMode,
+        apiKey: `$${entry.envVar}`,
+        supportedModels: [entry.defaultModel],
+        defaultModel: entry.defaultModel,
+        validateOnSave: false,
+      });
+      detected.push({ kind: entry.kind, id: profile.id });
+    } catch (err) {
+      console.warn(
+        `[friday] Auto-detect: failed to register ${entry.kind} from $${entry.envVar}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  // Set default routing if none configured and we registered at least one provider
+  if (detected.length > 0) {
+    const routing = await providerService.getRoutingConfig();
+    if (!routing.defaultProviderId) {
+      // Pick best provider by priority
+      let chosen = detected[0]!;
+      for (const priorityKind of ROUTING_PRIORITY) {
+        const match = detected.find((d) => d.kind === priorityKind);
+        if (match) {
+          chosen = match;
+          break;
+        }
+      }
+      const chosenEntry = ENV_PROVIDER_MAP.find((e) => e.kind === chosen.kind)!;
+      try {
+        await providerService.setRoutingConfig({
+          defaultProviderId: chosen.id,
+          defaultModel: chosenEntry.defaultModel,
+          fallbackProviderIds: detected
+            .filter((d) => d.id !== chosen.id)
+            .map((d) => d.id),
+        });
+      } catch (err) {
+        console.warn(
+          "[friday] Auto-detect: failed to set default routing:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+  }
+
+  return detected;
 }
 
 // ─── Resolved Hub Config ───
@@ -4419,6 +4514,16 @@ export async function createFridayHub(
         const failedCount = agentRuntime.resumeStaleRunsOnBoot();
         if (failedCount > 0) {
           console.log(`[friday] Marked ${String(failedCount)} stale agent run(s) as failed on boot`);
+        }
+      }
+
+      // 2d. Auto-detect LLM providers from environment variables
+      {
+        const autoDetected = await autoDetectProvidersFromEnv(providerService);
+        if (autoDetected.length > 0) {
+          console.log(
+            `[friday] Auto-detected ${String(autoDetected.length)} provider(s) from environment: ${autoDetected.map((p) => p.kind).join(", ")}`,
+          );
         }
       }
 
