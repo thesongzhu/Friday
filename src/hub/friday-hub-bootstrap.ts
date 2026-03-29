@@ -101,6 +101,7 @@ import type { FridayMemoryFileSyncService, FridayMemoryService } from "#memory";
 import {
   buildFridayAgentSystemPrompt,
   buildFridayEvidenceBlocks,
+  createDefaultFridayDecisionEngine,
   createFridayAgentAgentsListTool,
   createFridayAgentArtifactWriter,
   createFridayAgentCronTool,
@@ -127,6 +128,7 @@ import {
   createFridayMcpAdapter,
   createFridaySubagentRegistry,
   createFridayWorkspaceContextEngine,
+  createFridayWorldStateManager,
   inferFridaySubagentProfile,
   parseFridayMcpServersFromEnv,
   resolveFridayAgentTaskProfile,
@@ -135,6 +137,7 @@ import {
 } from "#agent";
 import type { loadFridayWorkspaceContext } from "#agent";
 import { buildMcpServerToolFilter } from "./friday-mcp-safe-catalog.js";
+import { createFridayEpisodeExtractor } from "../memory/services/friday-episode-extractor.js";
 import { classifyFridayExecution } from "../sessions/services/friday-execution-classifier.js";
 import { dispatchDeterministic } from "../sessions/services/friday-deterministic-dispatch.js";
 import type { FridayDeterministicDispatchDeps } from "../sessions/services/friday-deterministic-dispatch.js";
@@ -150,6 +153,7 @@ import type {
   FridayAgentRunStatus,
   FridayAgentRuntime,
   FridayAgentTaskStatusSnapshot,
+  FridayContextEngineAfterTurnInput,
 } from "#agent";
 import {
   createDiscordGatewayService,
@@ -2268,9 +2272,36 @@ export async function createFridayHub(
     // Non-fatal: provider routing diagnostics should not block startup.
   }
 
-  const agentContextEngine = createFridayWorkspaceContextEngine({
+  // ── World Model Readiness layer ──
+  const worldModelEpisodeExtractor = createFridayEpisodeExtractor({
+    db: stateRuntime!.sqlite,
+    idGenerator,
+    nowIso,
+  });
+  const worldModelStateManager = createFridayWorldStateManager({
+    db: stateRuntime!.sqlite,
+    idGenerator,
+    nowIso,
+  });
+  const worldModelDecisionEngine = createDefaultFridayDecisionEngine();
+
+  const workspaceContextEngine = createFridayWorkspaceContextEngine({
     workspaceDir: workspaceRoot,
   });
+
+  const agentContextEngine = {
+    ...workspaceContextEngine,
+    async afterTurn(input: FridayContextEngineAfterTurnInput) {
+      try {
+        const episode = await worldModelEpisodeExtractor.extractFromRun(input.runId, "default");
+        if (episode) {
+          await worldModelStateManager.updateFromEpisode("default", episode);
+        }
+      } catch (err) {
+        console.warn("[friday][world-model] afterTurn episode extraction failed:", err instanceof Error ? err.message : String(err));
+      }
+    },
+  };
 
   // Dynamic system prompt builder — invoked at each executeRun() with the
   // current set of registered tool names, so the prompt is always accurate.
@@ -2461,6 +2492,7 @@ export async function createFridayHub(
     artifactWriter: agentArtifactWriter,
     evaluateRules,
     contextEngine: agentContextEngine,
+    decisionEngine: worldModelDecisionEngine,
     learningContextBuilder: (input) => {
       if (!_learningContextRef) return { preferences: {} };
       return _learningContextRef.buildContext(input);
