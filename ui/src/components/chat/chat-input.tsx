@@ -13,6 +13,10 @@ const QUICK_ACTIONS = [
   { label: "Create workflow", text: "Help me create a new workflow" },
   { label: "Install a skill", text: "What skills can I install?" },
   { label: "Help", text: "What can you do?" },
+  { label: "Diagnose errors", text: "Check recent errors and suggest fixes" },
+  { label: "Schedule a task", text: "Help me schedule a recurring task" },
+  { label: "Monitor health", text: "Run a system health check" },
+  { label: "Automate something", text: "I want to automate a repetitive task" },
 ];
 
 export function ChatInput({ onSend, disabled = false, placeholder }: ChatInputProps) {

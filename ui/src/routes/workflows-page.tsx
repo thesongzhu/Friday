@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { GitBranch, Package, PlayCircle, RefreshCcw } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
+import { HelpTooltip } from "@/components/core/help-tooltip";
 import { workflowsApi } from "@/lib/api/workflows";
 import { buildObservabilityHref } from "@/lib/observability/view-models";
 import { systemApi } from "@/lib/api/system";
@@ -216,7 +217,7 @@ export function WorkflowsPage() {
       <div className="space-y-4">
         <ShellCard
           eyebrow={focusLabel(focus)}
-          title={selectedWorkflow ? attentionSummary?.title ?? selectedWorkflow.name : "Workflow control plane"}
+          title={selectedWorkflow ? attentionSummary?.title ?? selectedWorkflow.name : <><HelpTooltip term="workflow" /> control plane</>}
           aside={
             selectedWorkflow ? (
               <StatusPill tone={attentionSummary?.tone ?? "neutral"}>
@@ -289,7 +290,7 @@ export function WorkflowsPage() {
 
         <ShellCard
           eyebrow="Workflow library"
-          title="Choose which workflow Friday should operate next"
+          title={<>Choose which <HelpTooltip term="workflow" /> Friday should operate next</>}
           aside={
             <div className="flex items-center gap-2">
               <StatusPill tone={workflows.length > 0 ? "success" : "neutral"}>

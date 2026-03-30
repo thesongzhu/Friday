@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/utils/cn";
 
 export function ShellCard(props: {
-  title?: string;
+  title?: ReactNode;
   eyebrow?: string;
   aside?: ReactNode;
   children: ReactNode;

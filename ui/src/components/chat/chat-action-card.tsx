@@ -5,10 +5,12 @@ import { cn } from "@/lib/utils/cn";
 
 export type ChatActionType =
   | "open_workflow_builder"
+  | "open_workflows"
   | "open_skills"
   | "open_fleet"
   | "open_observability"
   | "open_settings"
+  | "open_page"
   | "approve"
   | "reject"
   | "install_skill"
@@ -18,6 +20,7 @@ export interface ChatAction {
   type: ChatActionType;
   label: string;
   description?: string;
+  href?: string;
   data?: Record<string, unknown>;
 }
 
@@ -28,6 +31,7 @@ interface ChatActionCardProps {
 
 const ROUTE_MAP: Partial<Record<ChatActionType, string>> = {
   open_workflow_builder: "/workflows/builder",
+  open_workflows: "/workflows",
   open_skills: "/skills",
   open_fleet: "/fleet",
   open_observability: "/observability",
@@ -42,7 +46,7 @@ export function ChatActionCard({ actions, onAction }: ChatActionCardProps) {
   return (
     <div className="flex flex-wrap gap-2 pl-11">
       {actions.map((action, i) => {
-        const route = ROUTE_MAP[action.type];
+        const route = ROUTE_MAP[action.type] ?? (action.type === "open_page" ? action.href : undefined);
         return (
           <button
             key={`${action.type}-${String(i)}`}

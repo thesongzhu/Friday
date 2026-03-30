@@ -20,6 +20,7 @@ export interface UseChatSessionResult {
   sendMessage: (text: string) => Promise<void>;
   isStreaming: boolean;
   clearHistory: () => void;
+  startNewConversation: () => void;
 }
 
 // ─── Persistent session key ───
@@ -164,6 +165,26 @@ export function useChatSession(): UseChatSessionResult {
     sessionKeyRef.current = getOrCreateSessionKey();
   }, []);
 
+  const startNewConversation = useCallback(() => {
+    // Generate a fresh session key so the agent starts a new context,
+    // but keep previous messages visible as a read-only log.
+    localStorage.removeItem(SESSION_KEY_STORAGE);
+    sessionKeyRef.current = getOrCreateSessionKey();
+    // Add a visual separator message
+    const separator: ChatMessage = {
+      id: `sep-${Date.now().toString(36)}`,
+      role: "assistant",
+      content: "--- New conversation started ---",
+      timestamp: new Date().toISOString(),
+      status: "done",
+    };
+    setMessages((prev) => {
+      const updated = [...prev, separator];
+      saveHistory(updated);
+      return updated;
+    });
+  }, []);
+
   return {
     messages,
     currentRunId,
@@ -171,5 +192,6 @@ export function useChatSession(): UseChatSessionResult {
     sendMessage,
     isStreaming,
     clearHistory,
+    startNewConversation,
   };
 }

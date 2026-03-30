@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { Trash2 } from "lucide-react";
+import { MessageSquarePlus, Trash2 } from "lucide-react";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { ChatMessageBubble } from "@/components/chat/chat-message";
 import { ChatInput } from "@/components/chat/chat-input";
@@ -13,6 +13,7 @@ export function ChatPage() {
     sendMessage,
     isStreaming,
     clearHistory,
+    startNewConversation,
   } = useChatSession();
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -50,14 +51,24 @@ export function ChatPage() {
           <p className="text-xs text-white/40">Ask anything or tell Friday what to do</p>
         </div>
         {messages.length > 0 && (
-          <button
-            type="button"
-            onClick={clearHistory}
-            className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/50 transition-colors hover:border-rose-400/30 hover:text-rose-300"
-          >
-            <Trash2 className="h-3 w-3" />
-            Clear
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={startNewConversation}
+              className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/50 transition-colors hover:border-emerald-400/30 hover:text-emerald-300"
+            >
+              <MessageSquarePlus className="h-3 w-3" />
+              New conversation
+            </button>
+            <button
+              type="button"
+              onClick={clearHistory}
+              className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/50 transition-colors hover:border-rose-400/30 hover:text-rose-300"
+            >
+              <Trash2 className="h-3 w-3" />
+              Clear all
+            </button>
+          </div>
         )}
       </div>
 

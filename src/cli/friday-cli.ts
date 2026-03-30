@@ -2075,20 +2075,12 @@ async function cmdSetup(): Promise<void> {
       break;
   }
 
-  // Step 2: Channels (optional)
-  console.log("");
-  const enableChannels = await ask("Enable message channels (Slack, Discord, etc.)? [y/N]: ");
-  const channelsEnabled = enableChannels.toLowerCase() === "y";
-
-  // Step 3: Write config
+  // Step 2: Write .env
   const stateDir = resolveStateDir({ env: process.env });
   if (!existsSync(stateDir)) {
     mkdirSync(stateDir, { recursive: true });
   }
 
-  const configPath = join(stateDir, "friday.json5");
-
-  // Write .env file with API key
   const envPath = join(stateDir, ".env");
   const envLines: string[] = [];
 
@@ -2102,21 +2094,10 @@ async function cmdSetup(): Promise<void> {
 
   if (envLines.length > 0) {
     writeFileSync(envPath, envLines.join("\n") + "\n", { mode: 0o600 });
-    console.log(`\nAPI key saved to ${envPath}`);
+    console.log(`\nConfiguration saved to ${envPath}`);
   }
 
-  // Write config file
-  const config: Record<string, unknown> = {
-    provider: providerId,
-  };
-  if (channelsEnabled) {
-    config.channels = {};
-  }
-
-  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", { mode: 0o644 });
-  console.log(`Config saved to ${configPath}`);
-
-  // Step 4: Offer to start
+  // Step 3: Offer to start
   console.log("");
   const startNow = await ask("Start Friday now? [Y/n]: ");
   rl.close();

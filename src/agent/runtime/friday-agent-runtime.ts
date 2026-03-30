@@ -1084,13 +1084,24 @@ export function createFridayAgentRuntime(
           });
 
           // ── Decision Engine short-circuit ──
-          // Default engine always returns false, so LLM path is always taken.
+          // Handles simple intents (greeting, status, help, cancel) locally.
           let localDecisionResponse: string | undefined;
           if (decisionEngine) {
+            // Load world state for context-aware decisions (non-fatal if unavailable)
+            let worldState: import("../model/friday-agent-world-state.types.js").FridayWorldState | undefined;
+            if (deps.worldStateManager) {
+              try {
+                worldState = await deps.worldStateManager.loadState(params.principalId ?? "default");
+              } catch {
+                // Non-fatal: world state loading failure should not block agent runs.
+              }
+            }
+
             const decisionCtx: FridayDecisionContext = {
               task: params.task,
               turnIndex: iterations - 1,
               history: [],
+              worldState,
               availableTools: [...toolMap.keys()],
               taskProfile: resolvedTaskProfile.id,
             };
@@ -1099,6 +1110,11 @@ export function createFridayAgentRuntime(
               if (localDecision.action === "respond" && localDecision.response) {
                 localDecisionResponse = localDecision.response;
               }
+            }
+
+            // Rank tools based on learned patterns (reorder only, never remove)
+            if (localDecisionResponse === undefined) {
+              tools.splice(0, tools.length, ...decisionEngine.rankTools(decisionCtx, tools));
             }
           }
 

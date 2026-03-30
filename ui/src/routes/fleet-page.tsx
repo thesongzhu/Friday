@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Cpu, HeartPulse, Link2, RadioTower, ShieldCheck, Workflow } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ShellCard, StatusPill } from "@/components/core/primitives";
+import { HelpTooltip } from "@/components/core/help-tooltip";
 import { fleetApi } from "@/lib/api/fleet";
 import { systemApi } from "@/lib/api/system";
 import {
@@ -177,7 +178,7 @@ export function FleetPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Fleet Control Plane" title="Distributed execution overview">
+        <ShellCard eyebrow="Fleet Control Plane" title={<><HelpTooltip term="fleet" /> — distributed execution overview</>}>
           {overview ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
@@ -217,7 +218,7 @@ export function FleetPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Satellites" title="Choose a node to inspect or recover">
+        <ShellCard eyebrow="Satellites" title={<>Choose a <HelpTooltip term="satellite" /> to inspect or recover</>}>
           <div className="space-y-3">
             {satellites.map((satellite) => (
               <button

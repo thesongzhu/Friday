@@ -131,11 +131,25 @@ export function createDefaultFridayDecisionEngine(): FridayDecisionEngine {
     },
 
     rankTools(
-      _context: FridayDecisionContext,
+      context: FridayDecisionContext,
       tools: FridayAgentToolDefinition[],
     ): FridayAgentToolDefinition[] {
-      // Future: use learned patterns to prioritize relevant tools
-      return tools;
+      // Boost tools seen in recent successful episodes (reorder, never remove)
+      const recentActions = context.worldState?.recentActions;
+      if (!recentActions || recentActions.length === 0) return tools;
+
+      // Count tool usage frequency in recent actions
+      const freq = new Map<string, number>();
+      for (const step of recentActions) {
+        freq.set(step.action, (freq.get(step.action) ?? 0) + 1);
+      }
+
+      // Stable sort: frequently-used tools first, rest unchanged
+      return [...tools].sort((a, b) => {
+        const fa = freq.get(a.name) ?? 0;
+        const fb = freq.get(b.name) ?? 0;
+        return fb - fa; // Higher frequency first
+      });
     },
   };
 }
