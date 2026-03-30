@@ -2301,7 +2301,7 @@ export async function createFridayHub(
         if (episode) {
           await worldModelStateManager.updateFromEpisode(userId, episode);
         }
-        // Pattern extraction pipeline — stub returns [] today, wired for future implementation
+        // Pattern extraction — analyze episodes for recurring tool sequences, failures, and temporal patterns
         await worldModelPatternExtractor.extractPatterns(userId);
       } catch (err) {
         console.warn("[friday][world-model] afterTurn episode extraction failed:", err instanceof Error ? err.message : String(err));
@@ -2360,6 +2360,25 @@ export async function createFridayHub(
       } catch (err) {
         warnHubBootstrapOperationFailureOnce(err);
         // Non-fatal: world state loading failure should not block agent runs.
+      }
+
+      // ── Learned patterns injection ──
+      // Load patterns discovered from past episodes so the agent can leverage them.
+      try {
+        const patterns = await worldModelPatternExtractor.extractPatterns(input.userId, 50);
+        if (patterns.length > 0) {
+          const patternLines = patterns.map(
+            (p) => `- [${p.kind}] ${p.description} (confidence: ${(p.confidence * 100).toFixed(0)}%)`,
+          );
+          const patternFragment =
+            "\n\n<learned-patterns>\n" +
+            patternLines.join("\n") +
+            "\n</learned-patterns>";
+          workspaceContext = (workspaceContext ?? "") + patternFragment;
+        }
+      } catch (err) {
+        warnHubBootstrapOperationFailureOnce(err);
+        // Non-fatal: pattern loading failure should not block agent runs.
       }
     }
     const starterSkills = registry.list()

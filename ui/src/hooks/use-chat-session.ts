@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { agentApi } from "@/lib/api/agent";
 import { useAgentRunEvents, type UseAgentRunEventsResult } from "./use-agent-run-events";
 
@@ -61,23 +61,35 @@ export function useChatSession(): UseChatSessionResult {
   const [messages, setMessages] = useState<ChatMessage[]>(loadHistory);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   const sessionKeyRef = useRef(getOrCreateSessionKey());
+  const outputTextRef = useRef("");
 
   const runEvents = useAgentRunEvents(currentRunId, {
     enabled: currentRunId !== null,
     onTerminal: (status) => {
-      // Finalize the assistant message with full output
+      // Finalize the assistant message with full output text
+      const finalText = outputTextRef.current;
       setMessages((prev) => {
         const updated = prev.map((m) =>
           m.runId === currentRunId && m.role === "assistant"
-            ? { ...m, status: (status === "completed" ? "done" : "error") as ChatMessage["status"] }
+            ? {
+                ...m,
+                content: finalText,
+                status: (status === "completed" ? "done" : "error") as ChatMessage["status"],
+              }
             : m,
         );
         saveHistory(updated);
         return updated;
       });
+      outputTextRef.current = "";
       setCurrentRunId(null);
     },
   });
+
+  // Keep ref in sync with latest streaming output
+  useEffect(() => {
+    outputTextRef.current = runEvents.outputText;
+  }, [runEvents.outputText]);
 
   const isStreaming = runEvents.connectionState === "streaming" || runEvents.connectionState === "connecting";
 

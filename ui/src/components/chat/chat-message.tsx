@@ -1,3 +1,4 @@
+import type React from "react";
 import { cn } from "@/lib/utils/cn";
 import type { ChatMessage } from "@/hooks/use-chat-session";
 
@@ -43,7 +44,7 @@ export function ChatMessageBubble({ message, streamingText }: ChatMessageBubbleP
         )}
         {displayText && (
           <div className="whitespace-pre-wrap break-words">
-            {renderMarkdownSimple(displayText)}
+            <MarkdownContent text={displayText} />
           </div>
         )}
       </div>
@@ -58,12 +59,91 @@ export function ChatMessageBubble({ message, streamingText }: ChatMessageBubbleP
 }
 
 /**
- * Minimal markdown rendering — bold, inline code, code blocks, links, lists.
- * Does not use a heavy markdown library; just basic formatting.
+ * Lightweight markdown renderer — handles bold, inline code, code blocks,
+ * headers, lists, and links without an external dependency.
  */
-function renderMarkdownSimple(text: string): string {
-  return text
-    .replace(/```[\s\S]*?```/g, (m) => m) // preserve code blocks as-is
-    .replace(/\*\*(.*?)\*\*/g, "$1"); // bold → just text in plain render
-  // More sophisticated rendering can be added later with a proper markdown component
+function MarkdownContent({ text }: { text: string }) {
+  const parts: React.ReactNode[] = [];
+  let key = 0;
+
+  // Split by code blocks first
+  const segments = text.split(/(```[\s\S]*?```)/g);
+
+  for (const segment of segments) {
+    if (segment.startsWith("```")) {
+      // Code block
+      const content = segment.replace(/^```\w*\n?/, "").replace(/\n?```$/, "");
+      parts.push(
+        <pre key={key++} className="my-2 overflow-x-auto rounded-lg bg-black/30 p-3 text-xs text-emerald-200">
+          <code>{content}</code>
+        </pre>,
+      );
+    } else {
+      // Process inline markdown
+      const lines = segment.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!;
+        if (i > 0) parts.push(<br key={key++} />);
+
+        // Headers
+        if (line.startsWith("### ")) {
+          parts.push(<strong key={key++} className="text-white">{line.slice(4)}</strong>);
+          continue;
+        }
+        if (line.startsWith("## ")) {
+          parts.push(<strong key={key++} className="text-base text-white">{line.slice(3)}</strong>);
+          continue;
+        }
+
+        // List items
+        if (/^[-*] /.test(line)) {
+          parts.push(
+            <span key={key++} className="ml-2">
+              {"  "}• {renderInline(line.slice(2), key)}
+            </span>,
+          );
+          key++;
+          continue;
+        }
+
+        // Regular text with inline formatting
+        parts.push(<span key={key++}>{renderInline(line, key)}</span>);
+        key++;
+      }
+    }
+  }
+
+  return <>{parts}</>;
+}
+
+function renderInline(text: string, baseKey: number): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  let k = baseKey * 1000;
+  // Match bold, inline code, and links
+  const regex = /(\*\*(.*?)\*\*)|(`([^`]+)`)|(\[([^\]]+)\]\(([^)]+)\))/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+    if (match[2] !== undefined) {
+      // Bold
+      nodes.push(<strong key={k++} className="font-semibold text-white">{match[2]}</strong>);
+    } else if (match[4] !== undefined) {
+      // Inline code
+      nodes.push(<code key={k++} className="rounded bg-black/30 px-1 py-0.5 text-emerald-200">{match[4]}</code>);
+    } else if (match[6] !== undefined && match[7] !== undefined) {
+      // Link
+      nodes.push(<span key={k++} className="text-emerald-400 underline">{match[6]}</span>);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes.length > 0 ? nodes : [text];
 }
