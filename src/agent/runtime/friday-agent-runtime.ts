@@ -44,6 +44,7 @@ import type {
 } from "./friday-agent-runtime.types.js";
 import { evaluateFridayAnswerAlignment } from "./friday-agent-answer-alignment.js";
 import { notifyFridayContextEngineAfterTurn } from "./friday-agent-context-engine.js";
+import type { FridayDecisionContext } from "./friday-agent-decision-engine.types.js";
 import { attachFridayAgentToolExecutionContext } from "./friday-agent-tool-execution-context.js";
 import { shouldDelegateFridayAgentTask } from "./friday-agent-delegation-policy.js";
 import { resolveFridayAgentTaskProfile } from "./friday-agent-task-profile.js";
@@ -332,6 +333,7 @@ export function createFridayAgentRuntime(
         if (TERMINAL_CONTEXT_ENGINE_STATUSES.has(input.status)) {
           await notifyFridayContextEngineAfterTurn(contextEngine, {
             runId,
+            userId: principalId,
             sessionKey,
             task: params.task,
             response: input.response,
@@ -1020,6 +1022,7 @@ export function createFridayAgentRuntime(
         // ─── Build system prompt dynamically from current tool set ───
         const promptBuildResult = systemPromptBuilder
           ? await Promise.resolve(systemPromptBuilder({
+            userId: principalId,
             toolNames: [...toolMap.keys()],
             nowIso: runTimeContext.nowIso,
             timezone: runTimeContext.timezone,
@@ -1080,37 +1083,67 @@ export function createFridayAgentRuntime(
             description: `LLM turn ${String(iterations)}`,
           });
 
-          // Per-turn LLM streaming timeout: abort if no response within 5 minutes.
-          // This prevents indefinite hangs when a provider establishes a connection
-          // but stops sending tokens (half-open connection).
-          const LLM_TURN_TIMEOUT_MS = 5 * 60 * 1000;
-          const turnTimeoutController = new AbortController();
-          const turnTimeout = setTimeout(
-            () => turnTimeoutController.abort(new Error("LLM streaming timeout exceeded (5m)")),
-            LLM_TURN_TIMEOUT_MS,
-          );
-          // Link parent abort signal so user cancellation still works
-          const onParentAbort = () => turnTimeoutController.abort(runAbortController.signal.reason);
-          runAbortController.signal.addEventListener("abort", onParentAbort, { once: true });
+          // ── Decision Engine short-circuit ──
+          // Default engine always returns false, so LLM path is always taken.
+          let localDecisionResponse: string | undefined;
+          if (decisionEngine) {
+            const decisionCtx: FridayDecisionContext = {
+              task: params.task,
+              turnIndex: iterations - 1,
+              history: [],
+              availableTools: [...toolMap.keys()],
+              taskProfile: resolvedTaskProfile.id,
+            };
+            if (decisionEngine.canDecideLocally(decisionCtx)) {
+              const localDecision = await decisionEngine.decideLocally(decisionCtx);
+              if (localDecision.action === "respond" && localDecision.response) {
+                localDecisionResponse = localDecision.response;
+              }
+            }
+          }
 
           let streamResult: Awaited<ReturnType<typeof streamLlmResponse>>;
-          try {
-            streamResult = await streamLlmResponse({
-              llmClient,
-              providerId: requestedProviderId,
-              model: requestedModel ?? "default",
-              systemPrompt: effectiveSystemPrompt,
-              messages,
-              tools,
-              temperature: resolvedTaskProfile.temperature,
-              signal: turnTimeoutController.signal,
-              eventEmitter,
-              runId,
-              emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
-            });
-          } finally {
-            clearTimeout(turnTimeout);
-            runAbortController.signal.removeEventListener("abort", onParentAbort);
+          if (localDecisionResponse !== undefined) {
+            // Synthetic result from decision engine — skip LLM call
+            streamResult = {
+              assistantText: localDecisionResponse,
+              toolUseBlocks: [],
+              inputTokens: 0,
+              outputTokens: 0,
+              turnMeta: undefined,
+            };
+          } else {
+            // Per-turn LLM streaming timeout: abort if no response within 5 minutes.
+            // This prevents indefinite hangs when a provider establishes a connection
+            // but stops sending tokens (half-open connection).
+            const LLM_TURN_TIMEOUT_MS = 5 * 60 * 1000;
+            const turnTimeoutController = new AbortController();
+            const turnTimeout = setTimeout(
+              () => turnTimeoutController.abort(new Error("LLM streaming timeout exceeded (5m)")),
+              LLM_TURN_TIMEOUT_MS,
+            );
+            // Link parent abort signal so user cancellation still works
+            const onParentAbort = () => turnTimeoutController.abort(runAbortController.signal.reason);
+            runAbortController.signal.addEventListener("abort", onParentAbort, { once: true });
+
+            try {
+              streamResult = await streamLlmResponse({
+                llmClient,
+                providerId: requestedProviderId,
+                model: requestedModel ?? "default",
+                systemPrompt: effectiveSystemPrompt,
+                messages,
+                tools,
+                temperature: resolvedTaskProfile.temperature,
+                signal: turnTimeoutController.signal,
+                eventEmitter,
+                runId,
+                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+              });
+            } finally {
+              clearTimeout(turnTimeout);
+              runAbortController.signal.removeEventListener("abort", onParentAbort);
+            }
           }
           const { assistantText, toolUseBlocks, inputTokens, outputTokens, turnMeta } = streamResult;
 

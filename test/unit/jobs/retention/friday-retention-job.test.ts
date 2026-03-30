@@ -42,6 +42,10 @@ describe("FridayRetentionJob", () => {
     pairingRequestsDays: number;
     outboxTerminalDays: number;
     skillRunTerminalDays: number;
+    auditLogsDays: number;
+    agentRunsDays: number;
+    llmUsageRecordsDays: number;
+    errorIncidentsDays: number;
   }>) {
     return createFridayRetentionJob({
       db,
@@ -57,6 +61,10 @@ describe("FridayRetentionJob", () => {
         pairingRequestsDays: 7,
         outboxTerminalDays: 14,
         skillRunTerminalDays: 30,
+        auditLogsDays: 90,
+        agentRunsDays: 90,
+        llmUsageRecordsDays: 180,
+        errorIncidentsDays: 90,
         ...policy,
       },
     });
@@ -246,6 +254,113 @@ describe("FridayRetentionJob", () => {
     expect(result.deletedOutboxTerminal).toBe(0);
     expect(result.deletedLearningEvents).toBe(0);
     expect(result.deletedSkillRuns).toBe(0);
+    expect(result.deletedAuditLogs).toBe(0);
+    expect(result.deletedAgentRuns).toBe(0);
+    expect(result.deletedLlmUsageRecords).toBe(0);
+    expect(result.deletedErrorIncidents).toBe(0);
+  });
+
+  it("deletes old audit logs", () => {
+    db.writer
+      .prepare(
+        `INSERT INTO audit_logs (id, ts, actor_type, actor_id, action, resource_type, resource_id)
+         VALUES ('al-old', '2024-01-01T00:00:00.000Z', 'user', 'u1', 'create', 'skill', 's1')`,
+      )
+      .run();
+    db.writer
+      .prepare(
+        `INSERT INTO audit_logs (id, ts, actor_type, actor_id, action, resource_type, resource_id)
+         VALUES ('al-new', '2025-06-14T00:00:00.000Z', 'user', 'u1', 'create', 'skill', 's2')`,
+      )
+      .run();
+
+    const job = createJob();
+    const result = job.run(NOW);
+
+    expect(result.deletedAuditLogs).toBe(1);
+  });
+
+  it("deletes old terminal agent runs and cascades events", () => {
+    // Old completed agent run
+    db.writer
+      .prepare(
+        `INSERT INTO friday_agent_runs (id, session_key, task, status, created_at)
+         VALUES ('run-old', 'cli:u1:chat', 'old task', 'completed', '2024-01-01T00:00:00.000Z')`,
+      )
+      .run();
+
+    // Recent agent run
+    db.writer
+      .prepare(
+        `INSERT INTO friday_agent_runs (id, session_key, task, status, created_at)
+         VALUES ('run-new', 'cli:u1:chat', 'new task', 'completed', '2025-06-14T00:00:00.000Z')`,
+      )
+      .run();
+
+    const job = createJob();
+    const result = job.run(NOW);
+
+    expect(result.deletedAgentRuns).toBe(1);
+    // Recent run preserved
+    const remaining = db.writer
+      .prepare("SELECT id FROM friday_agent_runs")
+      .all() as Array<{ id: string }>;
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe("run-new");
+  });
+
+  it("deletes old LLM usage records", () => {
+    db.writer
+      .prepare(
+        `INSERT INTO llm_usage_records (id, occurred_at, usage_day, usage_month, provider_id, provider_kind, provider_api, model,
+         route_strategy, task_complexity, input_tokens, output_tokens, total_tokens, cost_usd, created_at)
+         VALUES ('llm-old', '2024-01-01T00:00:00.000Z', '2024-01-01', '2024-01', 'p1', 'api', 'anthropic', 'm1',
+         'configured', 'simple', 100, 50, 150, 0.01, '2024-01-01T00:00:00.000Z')`,
+      )
+      .run();
+
+    db.writer
+      .prepare(
+        `INSERT INTO llm_usage_records (id, occurred_at, usage_day, usage_month, provider_id, provider_kind, provider_api, model,
+         route_strategy, task_complexity, input_tokens, output_tokens, total_tokens, cost_usd, created_at)
+         VALUES ('llm-new', '2025-06-14T00:00:00.000Z', '2025-06-14', '2025-06', 'p1', 'api', 'anthropic', 'm1',
+         'configured', 'simple', 100, 50, 150, 0.01, '2025-06-14T00:00:00.000Z')`,
+      )
+      .run();
+
+    const job = createJob();
+    const result = job.run(NOW);
+
+    expect(result.deletedLlmUsageRecords).toBe(1);
+  });
+
+  it("deletes old resolved error incidents but preserves unresolved ones", () => {
+    // Old resolved incident (uses 'test-user' from createTestDb)
+    db.writer
+      .prepare(
+        `INSERT INTO error_incidents (incident_id, user_id, ts, category, severity, signature, context_json, status, created_at, updated_at)
+         VALUES ('ei-old', 'test-user', '2024-01-01T00:00:00.000Z', 'tool', 'low', 'sig1', '{}', 'resolved', '2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000Z')`,
+      )
+      .run();
+
+    // Old unresolved incident (should be preserved)
+    db.writer
+      .prepare(
+        `INSERT INTO error_incidents (incident_id, user_id, ts, category, severity, signature, context_json, status, created_at, updated_at)
+         VALUES ('ei-open', 'test-user', '2024-01-01T00:00:00.000Z', 'tool', 'high', 'sig2', '{}', 'open', '2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000Z')`,
+      )
+      .run();
+
+    const job = createJob();
+    const result = job.run(NOW);
+
+    expect(result.deletedErrorIncidents).toBe(1);
+    // Unresolved incident preserved
+    const remaining = db.writer
+      .prepare("SELECT incident_id FROM error_incidents")
+      .all() as Array<{ incident_id: string }>;
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].incident_id).toBe("ei-open");
   });
 
   it("preserves non-expired rows", () => {

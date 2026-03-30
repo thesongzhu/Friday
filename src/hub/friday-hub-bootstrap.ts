@@ -90,7 +90,7 @@ import {
   createFridayPluginSignatureVerifier,
 } from "#plugins";
 import type { FridayPluginService } from "#plugins";
-import { createFridayEpisodeExtractor, createFridayMemoryFileSyncRepository, createFridayMemoryFileSyncService, createFridayMemoryService } from "#memory";
+import { createFridayEpisodeExtractor, createFridayMemoryFileSyncRepository, createFridayMemoryFileSyncService, createFridayMemoryService, createFridayPatternExtractor } from "#memory";
 import {
   createFridaySessionMemoryExtractionService,
   finalizeFridayConversationFocus,
@@ -2284,6 +2284,9 @@ export async function createFridayHub(
     nowIso,
   });
   const worldModelDecisionEngine = createDefaultFridayDecisionEngine();
+  const worldModelPatternExtractor = createFridayPatternExtractor({
+    db: stateRuntime!.sqlite,
+  });
 
   const workspaceContextEngine = createFridayWorkspaceContextEngine({
     workspaceDir: workspaceRoot,
@@ -2293,10 +2296,13 @@ export async function createFridayHub(
     ...workspaceContextEngine,
     async afterTurn(input: FridayContextEngineAfterTurnInput) {
       try {
-        const episode = await worldModelEpisodeExtractor.extractFromRun(input.runId, "default");
+        const userId = input.userId ?? "default";
+        const episode = await worldModelEpisodeExtractor.extractFromRun(input.runId, userId);
         if (episode) {
-          await worldModelStateManager.updateFromEpisode("default", episode);
+          await worldModelStateManager.updateFromEpisode(userId, episode);
         }
+        // Pattern extraction pipeline — stub returns [] today, wired for future implementation
+        await worldModelPatternExtractor.extractPatterns(userId);
       } catch (err) {
         console.warn("[friday][world-model] afterTurn episode extraction failed:", err instanceof Error ? err.message : String(err));
       }
@@ -2308,6 +2314,7 @@ export async function createFridayHub(
   // Loads workspace context files (AGENTS.md, SOUL.md, USER.md, MEMORY.md)
   // fresh on each run so edits take effect immediately.
   const agentSystemPromptBuilder = async (input: {
+    userId?: string;
     toolNames: string[];
     nowIso: string;
     timezone: string;
@@ -2333,6 +2340,27 @@ export async function createFridayHub(
     } catch (err) {
       warnHubBootstrapOperationFailureOnce(err);
       // Non-fatal: workspace context loading failure should not block agent runs.
+    }
+
+    // ── World model context injection (C4) ──
+    // Load recent interactions so the agent has access to learned knowledge.
+    if (input.userId) {
+      try {
+        const recentEpisodes = await worldModelStateManager.getRecentEpisodes(input.userId, 5);
+        if (recentEpisodes.length > 0) {
+          const lines = recentEpisodes.map(
+            (ep) => `- ${ep.taskIntent} → ${ep.outcome}`,
+          );
+          const worldFragment =
+            "\n\n<recent-interactions>\n" +
+            lines.join("\n") +
+            "\n</recent-interactions>";
+          workspaceContext = (workspaceContext ?? "") + worldFragment;
+        }
+      } catch (err) {
+        warnHubBootstrapOperationFailureOnce(err);
+        // Non-fatal: world state loading failure should not block agent runs.
+      }
     }
     const starterSkills = registry.list()
       .filter((skill) => (skill.manifest.tags ?? []).includes("starter"))

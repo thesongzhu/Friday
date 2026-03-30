@@ -225,6 +225,7 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
           },
           withReadConnection<T>(fn: (d: Database.Database) => T): T { return fn(seedDb); },
           checkpoint() {},
+          optimize() {},
           close() { seedDb.close(); },
         };
 
