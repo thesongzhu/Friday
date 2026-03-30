@@ -66,7 +66,20 @@ Trigger via **workflow_dispatch** and provide:
 
 The workflow uploads logs/artifacts for each run.
 
-## 4) Safety Model
+## 4) Nightly Heavy CI
+
+Scheduled nightly runs use `.github/workflows/nightly-heavy.yml` with the same OpenAI baseline contract:
+
+- `provider=openai`
+- `FRIDAY_E2E_CLOUD_AUTH_MODE=access-token`
+- `FRIDAY_E2E_CLOUD_NAMESPACE=nightly-openai-<run_id>`
+
+Nightly behavior is intentionally different from the manual workflow:
+
+- If `vars.FRIDAY_CLOUD_E2E_BASE_URL` or `secrets.FRIDAY_E2E_CLOUD_ACCESS_TOKEN` are missing, nightly writes `artifacts/cloud-contract/report.json`, uploads the artifact, and auto-skips the cloud live leg instead of failing the whole nightly run.
+- Manual `.github/workflows/cloud-e2e.yml` remains the explicit hard gate and still fails when required cloud inputs are missing.
+
+## 5) Safety Model
 
 - Cloud suite is prefix-scoped (`FRIDAY_E2E_CLOUD_NAMESPACE` + timestamp).
 - Cleanup is best-effort and prefix-scoped.

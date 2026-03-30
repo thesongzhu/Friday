@@ -170,6 +170,8 @@ jobs:
   cloud-contract-openai:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      ready: ${{ steps.contract.outputs.ready }}
 
     steps:
       - name: Checkout
@@ -185,6 +187,7 @@ jobs:
         run: npm ci
 
       - name: Evaluate cloud contract (OpenAI baseline)
+        id: contract
         env:
           FRIDAY_E2E_TARGET: "cloud"
           FRIDAY_E2E_CLOUD_BASE_URL: ${{ vars.FRIDAY_CLOUD_E2E_BASE_URL }}
@@ -197,8 +200,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/cloud-contract
+          set +e
           FRIDAY_CLOUD_CONTRACT_REPORT_PATH=artifacts/cloud-contract/report.json \
             node scripts/e2e/check-friday-cloud-contract.mjs
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "Nightly cloud contract is ready." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ "$status" -eq 78 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Nightly cloud contract skipped because required cloud inputs are missing." >> "$GITHUB_STEP_SUMMARY"
+            if [ -f artifacts/cloud-contract/report.json ]; then
+              node -e 'const fs = require("node:fs"); const report = JSON.parse(fs.readFileSync("artifacts/cloud-contract/report.json", "utf8")); const blockers = Array.isArray(report.blockers) ? report.blockers : []; if (blockers.length > 0) { console.log(""); console.log("Blockers:"); for (const blocker of blockers) console.log(`- ${blocker}`); }' >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+
+          exit "$status"
 
       - name: Upload cloud contract artifacts
         if: always()
@@ -212,6 +235,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: cloud-contract-openai
+    if: ${{ needs.cloud-contract-openai.outputs.ready == 'true' }}
 
     steps:
       - name: Checkout

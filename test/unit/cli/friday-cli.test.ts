@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, it, expect } from "vitest";
 import {
   finalizeCliCommand,
@@ -757,9 +758,15 @@ describe("prepareStartupChannelsConfig", () => {
 
 describe("isCliEntrypointPath", () => {
   it("matches the direct module path", () => {
-    const modulePath = path.join("/tmp", "friday-cli.js");
-    const moduleUrl = new URL(`file://${modulePath}`);
-    expect(isCliEntrypointPath(modulePath, moduleUrl.href)).toBe(true);
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-cli-direct-"));
+    try {
+      const modulePath = path.join(tmpDir, "friday-cli.js");
+      fs.writeFileSync(modulePath, "#!/usr/bin/env node\n", "utf8");
+      const moduleUrl = pathToFileURL(modulePath);
+      expect(isCliEntrypointPath(modulePath, moduleUrl.href)).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("matches an npm bin symlink that resolves to the CLI module", () => {
@@ -775,11 +782,23 @@ describe("isCliEntrypointPath", () => {
       fs.writeFileSync(realCliPath, "#!/usr/bin/env node\n", "utf8");
       fs.symlinkSync(realCliPath, symlinkPath);
 
-      const moduleUrl = new URL(`file://${realCliPath}`);
+      const moduleUrl = pathToFileURL(realCliPath);
       expect(isCliEntrypointPath(symlinkPath, moduleUrl.href)).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("returns false for non-file module URLs", () => {
+    expect(isCliEntrypointPath("/tmp/friday-cli.js", "https://example.test/friday-cli.js")).toBe(false);
+  });
+
+  it("returns false for malformed module URLs instead of throwing", () => {
+    let result = false;
+    expect(() => {
+      result = isCliEntrypointPath("/tmp/friday-cli.js", "not a valid url");
+    }).not.toThrow();
+    expect(result).toBe(false);
   });
 });
 
