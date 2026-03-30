@@ -1,4 +1,3 @@
-export type FridayMirrorMode = "best-effort" | "strict";
 export type FridaySqliteSynchronousMode = "NORMAL" | "FULL";
 
 export interface FridayConfig {
@@ -18,23 +17,6 @@ export interface FridayConfig {
   };
 }
 
-/**
- * @deprecated Phase 8 removed mirror config. This type is retained only
- * for migration-on-load stripping.
- */
-export interface FridayDeprecatedMirrorConfig {
-  enabled: boolean;
-  mode: FridayMirrorMode;
-  consistencyCheckOnStartup: boolean;
-}
-
-/** Keys that Phase 8 strips on config load. */
-export const FRIDAY_DEPRECATED_CONFIG_KEYS = [
-  "mirror",
-  "mirror.enabled",
-  "mirror.mode",
-  "mirror.consistencyCheckOnStartup",
-] as const;
 
 /**
  * Strips deprecated mirror-related keys from a raw config object.
