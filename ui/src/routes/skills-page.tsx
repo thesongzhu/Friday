@@ -354,7 +354,11 @@ export function SkillsPage() {
         >
           <div className="space-y-3">
             {sections.installed.length === 0 ? (
-              <p className="text-sm text-white/60">No managed skills yet. Friday can still use the bundled starter pack immediately.</p>
+              <div className="space-y-2 text-sm text-white/60">
+                <p>No managed skills yet. Friday can still use the bundled starter pack immediately.</p>
+                <p>Tell Friday what you want to automate and it will create or install the right skill.</p>
+                <Link to="/chat" className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-200 hover:bg-emerald-400/20">Ask Friday in Chat</Link>
+              </div>
             ) : (
               sections.installed.map((skill) => (
                 <button

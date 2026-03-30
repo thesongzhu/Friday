@@ -78,7 +78,7 @@ describe("Friday Mock System Prompt E2E", () => {
     mock.setDefault({ type: "text", text: "ok" });
 
     await apiFetch(env.baseUrl, env.accessToken, "POST", "/v1/agent/runs", {
-      task: "Hello",
+      task: "What tools do you have available?",
       providerId,
       model,
       timeoutMs: 10_000,

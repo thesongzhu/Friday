@@ -250,7 +250,11 @@ export function FleetPage() {
               </button>
             ))}
             {satellites.length === 0 ? (
-              <p className="text-sm text-white/60">No satellites have registered yet.</p>
+              <div className="space-y-2 text-sm text-white/60">
+                <p>No satellites have registered yet.</p>
+                <p>Friday can help you set up remote devices to extend your automation reach.</p>
+                <Link to="/chat" className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-200 hover:bg-emerald-400/20">Learn more in Chat</Link>
+              </div>
             ) : null}
           </div>
         </ShellCard>
