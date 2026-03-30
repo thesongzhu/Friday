@@ -548,7 +548,7 @@ export function createFridayMemoryFileSyncService(
       }
     },
 
-    async syncNow(input?: { force?: boolean; reason?: string }): Promise<FridayMemoryFileSyncResult> {
+    async syncNow(input?: { force?: boolean }): Promise<FridayMemoryFileSyncResult> {
       return singleFlightSync(input?.force ?? false);
     },
 
