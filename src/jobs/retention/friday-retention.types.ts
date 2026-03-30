@@ -4,6 +4,10 @@ export interface FridayRetentionPolicy {
   pairingRequestsDays: number;
   outboxTerminalDays: number;
   skillRunTerminalDays: number;
+  auditLogsDays: number;
+  agentRunsDays: number;
+  llmUsageRecordsDays: number;
+  errorIncidentsDays: number;
 }
 
 export const FRIDAY_DEFAULT_RETENTION_POLICY: FridayRetentionPolicy = {
@@ -12,6 +16,10 @@ export const FRIDAY_DEFAULT_RETENTION_POLICY: FridayRetentionPolicy = {
   pairingRequestsDays: 7,
   outboxTerminalDays: 14,
   skillRunTerminalDays: 30,
+  auditLogsDays: 90,
+  agentRunsDays: 90,
+  llmUsageRecordsDays: 180,
+  errorIncidentsDays: 90,
 };
 
 export interface FridayRetentionJobResult {
@@ -22,4 +30,8 @@ export interface FridayRetentionJobResult {
   deletedOutboxTerminal: number;
   deletedLearningEvents: number;
   deletedSkillRuns: number;
+  deletedAuditLogs: number;
+  deletedAgentRuns: number;
+  deletedLlmUsageRecords: number;
+  deletedErrorIncidents: number;
 }

@@ -1662,6 +1662,7 @@ async function seedOAuthCredentials(
         return fn(seedDb);
       },
       checkpoint() {},
+      optimize() {},
       close() {
         seedDb.close();
       },

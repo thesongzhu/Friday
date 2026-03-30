@@ -234,6 +234,7 @@ async function createLlmTestEnv(): Promise<LlmTestEnv> {
         return fn(seedDb);
       },
       checkpoint() {},
+      optimize() {},
       close() {
         seedDb.close();
       },

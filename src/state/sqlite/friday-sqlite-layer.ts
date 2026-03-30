@@ -50,6 +50,10 @@ export function createFridaySqliteLayer(
       writer.pragma(`wal_checkpoint(${mode})`);
     },
 
+    optimize(): void {
+      writer.pragma("optimize");
+    },
+
     close(): void {
       if (closed) return;
       closed = true;

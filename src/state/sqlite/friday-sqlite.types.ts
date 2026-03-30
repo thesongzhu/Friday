@@ -31,6 +31,8 @@ export interface FridaySqliteLayer {
   withReadConnection<T>(fn: (db: Database.Database) => T): T;
   /** Runs WAL checkpoint for backup/maintenance flows. */
   checkpoint(mode?: "PASSIVE" | "FULL" | "RESTART" | "TRUNCATE"): void;
+  /** Runs PRAGMA optimize to update query planner statistics. */
+  optimize(): void;
   /** Closes writer and all readers. */
   close(): void;
 }

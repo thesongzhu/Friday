@@ -44,6 +44,7 @@ function createTestDb(): FridaySqliteLayer {
       return fn(db);
     },
     checkpoint() {},
+    optimize() {},
     close() {
       db.close();
     },

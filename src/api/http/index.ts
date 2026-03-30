@@ -30,7 +30,5 @@ export {
   parseFridayHttpTrustProxyMode,
   resolveFridayClientIp,
   normalizeFridayClientIp,
-  isFridayLoopbackAddress,
-  isFridayPrivateNetworkAddress,
   type FridayHttpTrustProxyMode,
 } from "./friday-http-client-ip.js";

@@ -35,7 +35,7 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
       const nowIso = nowIsoOverride ?? deps.nowIso();
 
       // All cleanup runs in one write transaction for atomicity
-      return deps.db.withWriteTransaction((db) => {
+      const result = deps.db.withWriteTransaction((db) => {
         // 1. Mark stale pending pairing requests as expired
         const pairingCutoff = nowIso;
         const staleRequests = deps.pairingRequestRepo.listPendingExpiredBefore(db, pairingCutoff);
@@ -80,6 +80,34 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
           deletedSkillRuns += result.changes;
         }
 
+        // 8. Delete old audit logs
+        const auditCutoff = subtractDays(nowIso, policy.auditLogsDays);
+        const deletedAuditLogs = db
+          .prepare("DELETE FROM audit_logs WHERE ts < ?")
+          .run(auditCutoff).changes;
+
+        // 9. Delete old terminal agent runs (events cascade via ON DELETE CASCADE)
+        const agentRunCutoff = subtractDays(nowIso, policy.agentRunsDays);
+        const deletedAgentRuns = db
+          .prepare(
+            "DELETE FROM friday_agent_runs WHERE created_at < ? AND status IN ('completed', 'failed', 'cancelled')",
+          )
+          .run(agentRunCutoff).changes;
+
+        // 10. Delete old LLM usage records
+        const llmUsageCutoff = subtractDays(nowIso, policy.llmUsageRecordsDays);
+        const deletedLlmUsageRecords = db
+          .prepare("DELETE FROM llm_usage_records WHERE created_at < ?")
+          .run(llmUsageCutoff).changes;
+
+        // 11. Delete old resolved error incidents
+        const errorCutoff = subtractDays(nowIso, policy.errorIncidentsDays);
+        const deletedErrorIncidents = db
+          .prepare(
+            "DELETE FROM error_incidents WHERE status = 'resolved' AND updated_at < ?",
+          )
+          .run(errorCutoff).changes;
+
         return {
           markedPairingExpired,
           deletedPairingRequests,
@@ -88,8 +116,21 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
           deletedOutboxTerminal,
           deletedLearningEvents,
           deletedSkillRuns,
+          deletedAuditLogs,
+          deletedAgentRuns,
+          deletedLlmUsageRecords,
+          deletedErrorIncidents,
         };
       });
+
+      // Run PRAGMA optimize after cleanup to update query planner statistics
+      try {
+        deps.db.optimize();
+      } catch {
+        // Non-fatal: optimize failure should not cause retention job to fail
+      }
+
+      return result;
     },
   };
 }
