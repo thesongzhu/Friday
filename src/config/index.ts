@@ -1,14 +1,12 @@
 // Types
 export type {
-  FridayMirrorMode,
   FridaySqliteSynchronousMode,
   FridayConfig,
-  FridayDeprecatedMirrorConfig,
   LoadedFridayConfig,
   LoadFridayConfigOptions,
   WriteFridayConfigOptions,
 } from "./friday-config.types.js";
-export { FRIDAY_DEPRECATED_CONFIG_KEYS, migrateDeprecatedConfigKeys } from "./friday-config.types.js";
+export { migrateDeprecatedConfigKeys } from "./friday-config.types.js";
 
 // Schema
 export { FridayConfigSchema, parseFridayConfig, buildDefaultFridayConfig } from "./friday-config.schema.js";

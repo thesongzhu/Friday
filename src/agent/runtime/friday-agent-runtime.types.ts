@@ -51,6 +51,7 @@ export interface FridayContextEngineResolveResult {
 
 export interface FridayContextEngineAfterTurnInput {
   runId: string;
+  userId?: string;
   sessionKey: string;
   task: string;
   response: string;
@@ -107,6 +108,7 @@ export interface FridayAgentDelegationResult {
 }
 
 export interface FridayAgentSystemPromptContext {
+  userId?: string;
   toolNames: string[];
   nowIso: string;
   timezone: string;

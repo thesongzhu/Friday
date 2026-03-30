@@ -1087,7 +1087,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   }) => {
     const { approvalId } = ctx.params as { approvalId: string };
     const body = ctx.body as { comment?: string };
-    const userId = ctx.principal?.userId ?? "system";
+    const userId = ctx.principal?.userId;
+    if (!userId) {
+      throw new FridayDomainError("AUTH_REQUIRED", "Authenticated user required for approval", { httpStatus: 401 });
+    }
     return approvalService.approve({
       approvalId,
       decidedByUserId: userId,
@@ -1101,7 +1104,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   }) => {
     const { approvalId } = ctx.params as { approvalId: string };
     const body = ctx.body as { comment?: string };
-    const userId = ctx.principal?.userId ?? "system";
+    const userId = ctx.principal?.userId;
+    if (!userId) {
+      throw new FridayDomainError("AUTH_REQUIRED", "Authenticated user required for rejection", { httpStatus: 401 });
+    }
     return approvalService.reject({
       approvalId,
       decidedByUserId: userId,

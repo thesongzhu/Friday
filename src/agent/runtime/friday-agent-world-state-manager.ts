@@ -119,6 +119,7 @@ export function createFridayWorldStateManager(
       // This is intentionally simple — future versions will use LLM/world model
       const now = nowIso();
 
+      // Atomic: entity upsert + prune + snapshot in single transaction
       db.withWriteTransaction((conn) => {
         // Extract and upsert entities from the task intent
         const entityNames = extractSimpleEntities(episode.taskIntent);
@@ -141,11 +142,71 @@ export function createFridayWorldStateManager(
                AND last_mentioned < datetime(?, '-90 days')`,
           )
           .run(userId, now);
-      });
 
-      // Persist a snapshot after updating entities
-      const updatedState = await manager.loadState(userId);
-      await manager.saveSnapshot(updatedState);
+        // ── Inline load + snapshot (atomic) ──
+        // Load entities within the same transaction
+        const entityRows = conn
+          .prepare(
+            `SELECT * FROM friday_world_entities
+             WHERE user_id = ? ORDER BY mention_count DESC LIMIT 50`,
+          )
+          .all(userId) as WorldEntityRow[];
+
+        const entities: FridayWorldEntity[] = entityRows.map((row) => ({
+          id: row.id,
+          userId: row.user_id,
+          type: row.type as FridayWorldEntity["type"],
+          name: row.name,
+          attributes: safeJsonParse<Record<string, unknown>>(row.attributes_json) ?? {},
+          relations: safeJsonParse<FridayWorldEntity["relations"]>(row.relations_json) ?? [],
+          lastMentioned: row.last_mentioned,
+          mentionCount: row.mention_count,
+        }));
+
+        // Load recent steps within same transaction
+        const stepRows = conn
+          .prepare(
+            `SELECT steps_json FROM friday_episodes
+             WHERE user_id = ? ORDER BY created_at DESC LIMIT 5`,
+          )
+          .all(userId) as Array<{ steps_json: string }>;
+
+        const allSteps: FridayEpisodeStep[] = [];
+        for (const row of stepRows) {
+          const steps = safeJsonParse<FridayEpisodeStep[]>(row.steps_json) ?? [];
+          allSteps.push(...steps);
+          if (allSteps.length >= 20) break;
+        }
+
+        const state: FridayWorldState = {
+          userId,
+          entities,
+          recentActions: allSteps.slice(0, 20),
+          activeGoals: [],
+          preferences: {},
+          environmentFacts: {},
+          lastUpdated: now,
+        };
+
+        // Save snapshot in same transaction
+        conn
+          .prepare(
+            `INSERT INTO friday_world_state_snapshots (id, user_id, state_json, created_at)
+             VALUES (?, ?, ?, ?)`,
+          )
+          .run(idGenerator(), state.userId, JSON.stringify(state), now);
+
+        // Keep only the last 10 snapshots per user
+        conn
+          .prepare(
+            `DELETE FROM friday_world_state_snapshots
+             WHERE user_id = ? AND id NOT IN (
+               SELECT id FROM friday_world_state_snapshots
+               WHERE user_id = ? ORDER BY created_at DESC LIMIT 10
+             )`,
+          )
+          .run(state.userId, state.userId);
+      });
     },
 
     async saveSnapshot(state) {

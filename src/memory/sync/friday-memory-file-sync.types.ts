@@ -3,7 +3,7 @@ export type FridayMemorySyncEntityType = "memory_namespace" | "session_key";
 export interface FridayMemoryFileSyncService {
   start(): Promise<void>;
   stop(): Promise<void>;
-  syncNow(input?: { force?: boolean; reason?: string }): Promise<FridayMemoryFileSyncResult>;
+  syncNow(input?: { force?: boolean }): Promise<FridayMemoryFileSyncResult>;
   /** Reindex a single entity from its exported file (external edit). */
   reindexNow(entityType: FridayMemorySyncEntityType, entityKey: string): Promise<FridayMemoryFileSyncReindexResult>;
   /** Reindex all entities from their exported files. */
