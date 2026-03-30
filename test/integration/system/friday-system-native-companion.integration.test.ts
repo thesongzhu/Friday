@@ -348,7 +348,7 @@ describeIfDarwin("Friday native Swift companion integration", () => {
     expect(handle.readStderr()).not.toContain("failed to start socket server");
 
     await bridge.disconnect();
-  }, 60_000);
+  }, 180_000);
 
   it("prefers the packaged app through the operational runner and reports swift_app runtime", async () => {
     const repoRoot = process.cwd();

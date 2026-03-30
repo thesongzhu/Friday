@@ -30,7 +30,7 @@ process.on("uncaughtException", (error) => {
 });
 
 import { existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildFridayChannelSecretRef,
@@ -2075,18 +2075,56 @@ async function main(): Promise<void> {
   await finalizeCliCommand(parsed.command);
 }
 
+function normalizeCliEntrypointPath(candidatePath: string): string {
+  const normalized = normalize(candidatePath);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function resolveCliEntrypointModulePath(moduleUrl: string): string | null {
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(moduleUrl);
+  } catch (err) {
+    console.warn("[friday][cli] entrypoint module URL is invalid:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+
+  if (parsedUrl.protocol !== "file:") {
+    return null;
+  }
+
+  try {
+    return fileURLToPath(parsedUrl);
+  } catch (err) {
+    const pathname = parsedUrl.pathname ? decodeURIComponent(parsedUrl.pathname) : "";
+    if (!pathname) {
+      console.warn("[friday][cli] entrypoint module URL path resolution failed:", err instanceof Error ? err.message : String(err));
+      return null;
+    }
+
+    const fallbackPath = process.platform === "win32"
+      ? pathname.replace(/^\/([A-Za-z]:)(\/|$)/, "$1$2").replace(/\//g, "\\")
+      : pathname;
+    console.warn("[friday][cli] entrypoint module URL path resolution fell back:", err instanceof Error ? err.message : String(err));
+    return normalize(fallbackPath);
+  }
+}
+
 export function isCliEntrypointPath(argvPath: string | undefined, moduleUrl: string): boolean {
   if (typeof argvPath !== "string" || argvPath.trim().length === 0) {
     return false;
   }
 
-  const modulePath = fileURLToPath(moduleUrl);
+  const modulePath = resolveCliEntrypointModulePath(moduleUrl);
+  if (!modulePath) {
+    return false;
+  }
 
   try {
     return realpathSync(argvPath) === realpathSync(modulePath);
   } catch (err) {
     console.warn("[friday][cli] entrypoint path resolution failed:", err instanceof Error ? err.message : String(err));
-    return argvPath === modulePath;
+    return normalizeCliEntrypointPath(argvPath) === normalizeCliEntrypointPath(modulePath);
   }
 }
 
