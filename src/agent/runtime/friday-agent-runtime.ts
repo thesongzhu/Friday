@@ -5,16 +5,16 @@ import { FridayDomainError } from "#errors";
 import type { FridayEvaluationContext, FridayEvaluationResult } from "#rules";
 
 import {
+  FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
+  FRIDAY_AGENT_COMPACTION_THRESHOLD,
   FRIDAY_AGENT_ERROR_CODES,
   FRIDAY_AGENT_MAX_ATTEMPTS,
   FRIDAY_AGENT_MAX_LOOP_ITERATIONS,
   FRIDAY_AGENT_MAX_TOOL_CALLS,
   FRIDAY_AGENT_RUN_TIMEOUT_MS,
   FRIDAY_AGENT_SESSION_KEY_PREFIX,
-  FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS,
   FRIDAY_AGENT_TOOL_RESULT_CAPS,
-  FRIDAY_AGENT_COMPACTION_THRESHOLD,
-  FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
+  FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS,
   FRIDAY_AGENT_TOOL_TIMEOUT_MS,
 } from "../friday-agent.constants.js";
 import type {
@@ -35,6 +35,7 @@ import type {
   FridayAgentToolResultBlock,
   FridayAgentToolUseBlock,
 } from "../model/friday-agent.types.js";
+import type { FridayWorldState } from "../model/friday-agent-world-state.types.js";
 import { createFridayAgentRunRepository } from "../persistence/friday-agent-run-repository.js";
 import type { FridayAgentLlmStreamEvent } from "./friday-agent-llm-client.types.js";
 import type {
@@ -1111,7 +1112,7 @@ export function createFridayAgentRuntime(
           let localDecisionResponse: string | undefined;
           if (decisionEngine) {
             // Load world state for context-aware decisions (non-fatal if unavailable)
-            let worldState: import("../model/friday-agent-world-state.types.js").FridayWorldState | undefined;
+            let worldState: FridayWorldState | undefined;
             if (deps.worldStateManager) {
               try {
                 worldState = await deps.worldStateManager.loadState(params.principalId ?? "default");
