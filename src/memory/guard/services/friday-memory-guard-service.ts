@@ -19,6 +19,7 @@ import { FridayDomainError } from "#errors";
 
 import {
   FRIDAY_MEMORY_GUARD_AUTO_PRUNE_BATCH_SIZE,
+  FRIDAY_MEMORY_GUARD_CHANNEL_SEGMENT,
   FRIDAY_MEMORY_GUARD_ERROR_CODES,
   FRIDAY_MEMORY_GUARD_KEY_REGEX,
   FRIDAY_MEMORY_GUARD_MAX_CONTENT_BYTES,
@@ -64,6 +65,10 @@ function buildScopePrefix(context: FridayMemoryGuardContext): string {
     return "";
   }
   const parts = [FRIDAY_MEMORY_GUARD_TENANT_PREFIX, subject.hubId];
+  // Initiative H.3: channel-level namespace isolation
+  if (subject.channelKind) {
+    parts.push(FRIDAY_MEMORY_GUARD_CHANNEL_SEGMENT, subject.channelKind);
+  }
   if (subject.userId) {
     parts.push(FRIDAY_MEMORY_GUARD_USER_SEGMENT, subject.userId);
   }

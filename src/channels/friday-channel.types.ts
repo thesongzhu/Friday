@@ -32,11 +32,21 @@ export interface FridayChannelSupportProfile {
   typing: boolean;
 }
 
+/** Tool restriction policy for a channel instance (Initiative H.2). */
+export interface FridayChannelToolRestrictions {
+  /** If set, only these tools are allowed. Takes precedence over blocklist. */
+  allowlist?: string[];
+  /** If set, these tools are blocked. Ignored when allowlist is present. */
+  blocklist?: string[];
+}
+
 export interface FridayChannelCapabilityContract {
   coreAuthority: FridayChannelCoreAuthority;
   pluginResponsibilities: FridayChannelPluginResponsibilities;
   supports: FridayChannelSupportProfile;
   curatedSkillIds?: string[];
+  /** Per-channel tool restrictions (Initiative H.2). */
+  toolRestrictions?: FridayChannelToolRestrictions;
 }
 
 // ─── Inbound Message ───
@@ -127,4 +137,29 @@ export interface FridayChannelPlugin {
    * All adapters are optional — missing adapters fall back to legacy behavior.
    */
   adapters?: FridayChannelAdapters;
+}
+
+// ─── Tool Restriction Helpers (Initiative H.2) ───
+
+/**
+ * Apply channel tool restrictions to a list of tool names.
+ * Returns the filtered list of allowed tool names.
+ */
+export function applyChannelToolRestrictions(
+  toolNames: string[],
+  restrictions: FridayChannelToolRestrictions | undefined,
+): string[] {
+  if (!restrictions) return toolNames;
+
+  if (restrictions.allowlist && restrictions.allowlist.length > 0) {
+    const allowed = new Set(restrictions.allowlist);
+    return toolNames.filter((name) => allowed.has(name));
+  }
+
+  if (restrictions.blocklist && restrictions.blocklist.length > 0) {
+    const blocked = new Set(restrictions.blocklist);
+    return toolNames.filter((name) => !blocked.has(name));
+  }
+
+  return toolNames;
 }

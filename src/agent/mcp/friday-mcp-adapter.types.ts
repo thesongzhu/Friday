@@ -92,6 +92,61 @@ export interface FridayMcpGetPromptResult {
   raw: unknown;
 }
 
+// ─── Typed protocol schemas (Initiative C.2) ───
+
+/** Primitive types allowed in MCP tool arguments. */
+export type FridayMcpPrimitive = string | number | boolean | null;
+
+/** Typed tool argument value (recursive for nested objects). */
+export type FridayMcpArgValue =
+  | FridayMcpPrimitive
+  | FridayMcpPrimitive[]
+  | FridayMcpArgMap
+  | FridayMcpArgMap[];
+
+/** Typed tool argument map. */
+export type FridayMcpArgMap = { [key: string]: FridayMcpArgValue };
+
+/** MCP error codes as a typed union. */
+export type FridayMcpErrorCode =
+  | "SERVER_NOT_CONFIGURED"
+  | "CONFIG_INVALID"
+  | "TRANSPORT_UNSUPPORTED"
+  | "TRANSPORT_ERROR"
+  | "REQUEST_FAILED"
+  | "REQUEST_TIMEOUT"
+  | "POLICY_TOOL_FORBIDDEN"
+  | "POLICY_RATE_LIMITED"
+  | "DEDUP_CACHE_HIT";
+
+/** Structured MCP error with typed codes. */
+export interface FridayMcpError {
+  code: FridayMcpErrorCode;
+  message: string;
+  serverId?: string;
+  toolName?: string;
+  routeId?: string;
+  correlationId?: string;
+}
+
+/** Type guard: check if a value is a valid MCP argument map. */
+export function isMcpArgMap(value: unknown): value is FridayMcpArgMap {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return Object.values(value as Record<string, unknown>).every(isMcpArgValue);
+}
+
+/** Type guard: check if a value is a valid MCP argument value. */
+export function isMcpArgValue(value: unknown): value is FridayMcpArgValue {
+  if (value === null) return true;
+  const t = typeof value;
+  if (t === "string" || t === "number" || t === "boolean") return true;
+  if (Array.isArray(value)) return value.every(isMcpArgValue);
+  if (t === "object") return isMcpArgMap(value);
+  return false;
+}
+
+// ─── Adapter interface ───
+
 export interface FridayMcpAdapter {
   listServers(): readonly FridayMcpServerConfig[];
   listServerStates(): readonly FridayMcpServerState[];
