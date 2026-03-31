@@ -214,6 +214,12 @@ export function ObservabilityPage() {
     refetchInterval: 15_000,
   });
 
+  const expertLoopRunsQuery = useQuery({
+    queryKey: ["observability", "expert-loop-runs"],
+    queryFn: () => systemApi.listExpertAgentLoopRuns({ limit: 8 }),
+    refetchInterval: 15_000,
+  });
+
   const seriesQuery = useQuery({
     queryKey: ["observability", "time-series", "learning-failures"],
     queryFn: () => {
@@ -355,6 +361,17 @@ export function ObservabilityPage() {
     },
   });
 
+  const testAlertDispatchMutation = useMutation({
+    mutationFn: (input: { alertId: string; destinationId?: string }) =>
+      systemApi.testObservabilityAlertDispatch(input.alertId, input.destinationId),
+    onSuccess: () => {
+      toast.success("Test alert dispatched.");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not dispatch test alert.");
+    },
+  });
+
   const [showCreateDest, setShowCreateDest] = useState(false);
 
   const overview = overviewQuery.data;
@@ -363,6 +380,7 @@ export function ObservabilityPage() {
   const traces = tracesQuery.data?.items ?? [];
   const auditEntries = auditQuery.data?.items ?? [];
   const agentLoopRuns = agentLoopRunsQuery.data ?? [];
+  const expertLoopRuns = expertLoopRunsQuery.data ?? [];
   const series = seriesQuery.data;
   const slos = slosQuery.data ?? [];
   const destinations = destinationsQuery.data ?? [];
@@ -789,6 +807,14 @@ export function ObservabilityPage() {
                         Acknowledge
                       </button>
                     ) : null}
+                    <button
+                      className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={testAlertDispatchMutation.isPending}
+                      onClick={() => testAlertDispatchMutation.mutate({ alertId: alert.id })}
+                      type="button"
+                    >
+                      Test dispatch
+                    </button>
                   </div>
                 </div>
               ))}
@@ -873,7 +899,7 @@ export function ObservabilityPage() {
         </ShellCard>
 
         <ShellCard eyebrow="Agent loop and rules" title="Autonomous recovery and policy state">
-          {agentLoopRuns.length > 0 || rulesAuditLog.length > 0 ? (
+          {agentLoopRuns.length > 0 || expertLoopRuns.length > 0 || rulesAuditLog.length > 0 ? (
             <div className="space-y-3">
               {agentLoopRuns.slice(0, 3).map((record) => (
                 <LoopRunCard
@@ -885,6 +911,21 @@ export function ObservabilityPage() {
                   cancelPending={cancelLoopRunMutation.isPending}
                 />
               ))}
+              {expertLoopRuns.length > 0 && (
+                <div className="border-t border-white/8 pt-3">
+                  <p className="mb-2 text-xs uppercase tracking-[0.16em] text-white/40">Expert mode runs</p>
+                  {expertLoopRuns.slice(0, 3).map((record) => (
+                    <LoopRunCard
+                      key={record.run.loopRunId}
+                      record={record}
+                      onResume={(id) => resumeLoopRunMutation.mutate(id)}
+                      onCancel={(id) => cancelLoopRunMutation.mutate(id)}
+                      resumePending={resumeLoopRunMutation.isPending}
+                      cancelPending={cancelLoopRunMutation.isPending}
+                    />
+                  ))}
+                </div>
+              )}
               {rulesAuditLog.slice(0, 3).map((entry) => (
                 <div key={entry.id} className="agent-subcard p-4">
                   <div className="flex items-center justify-between gap-3">
