@@ -1,0 +1,247 @@
+{
+  "createStatus": 200,
+  "createJson": {
+    "ok": true,
+    "data": {
+      "workflow": {
+        "id": "9025641c-0312-428d-a0d9-1f5cbdb7de0e",
+        "slug": "manual-real-approval-only-mnefax39",
+        "name": "Manual Real Approval Only Workflow",
+        "tags": [],
+        "latestVersionNumber": 1,
+        "isArchived": false,
+        "revision": 1,
+        "etag": "ae6a3515-45b0-47",
+        "createdAt": "2026-03-31T09:37:13.992Z",
+        "updatedAt": "2026-03-31T09:37:13.992Z"
+      },
+      "version": {
+        "id": "f7a5caf6-ede3-471a-8ff1-d15fd94dc59f",
+        "workflowId": "9025641c-0312-428d-a0d9-1f5cbdb7de0e",
+        "versionNumber": 1,
+        "checksum": "e3cf17decde0598c29882c0a0c005e9f88837387d4a0e6c0949edd7bca33a949",
+        "graphJson": {
+          "schemaVersion": "2.0",
+          "workflowId": "manual-real-approval-only",
+          "workflowVersionId": "manual-real-approval-only-v1",
+          "sourceSpecSchemaVersion": "1.0",
+          "graph": {
+            "nodes": [
+              {
+                "id": "trigger-1",
+                "type": "trigger",
+                "label": "Manual Trigger",
+                "config": {
+                  "triggerType": "manual"
+                }
+              },
+              {
+                "id": "approval-1",
+                "type": "approval",
+                "label": "Approve Step",
+                "config": {
+                  "approverRole": "admin",
+                  "timeoutMs": 60000
+                }
+              }
+            ],
+            "edges": [
+              {
+                "id": "e1",
+                "sourceNodeId": "trigger-1",
+                "targetNodeId": "approval-1"
+              }
+            ]
+          },
+          "failurePolicy": {
+            "onFailure": "fail_fast",
+            "notifyUser": false
+          },
+          "tests": [],
+          "checksum": "3352ddcaf5ffad47"
+        },
+        "isPublished": false,
+        "createdAt": "2026-03-31T09:37:13.992Z",
+        "updatedAt": "2026-03-31T09:37:13.992Z"
+      }
+    },
+    "requestId": "0d5e464a-f9a3-4466-ad0c-6d9599081eae"
+  },
+  "workflowId": "9025641c-0312-428d-a0d9-1f5cbdb7de0e",
+  "publish": {
+    "ok": true,
+    "data": {
+      "publishedVersion": {
+        "id": "f7a5caf6-ede3-471a-8ff1-d15fd94dc59f",
+        "workflowId": "9025641c-0312-428d-a0d9-1f5cbdb7de0e",
+        "versionNumber": 1,
+        "checksum": "e3cf17decde0598c29882c0a0c005e9f88837387d4a0e6c0949edd7bca33a949",
+        "graphJson": {
+          "schemaVersion": "2.0",
+          "workflowId": "manual-real-approval-only",
+          "workflowVersionId": "manual-real-approval-only-v1",
+          "sourceSpecSchemaVersion": "1.0",
+          "graph": {
+            "nodes": [
+              {
+                "id": "trigger-1",
+                "type": "trigger",
+                "label": "Manual Trigger",
+                "config": {
+                  "triggerType": "manual"
+                }
+              },
+              {
+                "id": "approval-1",
+                "type": "approval",
+                "label": "Approve Step",
+                "config": {
+                  "approverRole": "admin",
+                  "timeoutMs": 60000
+                }
+              }
+            ],
+            "edges": [
+              {
+                "id": "e1",
+                "sourceNodeId": "trigger-1",
+                "targetNodeId": "approval-1"
+              }
+            ]
+          },
+          "failurePolicy": {
+            "onFailure": "fail_fast",
+            "notifyUser": false
+          },
+          "tests": [],
+          "checksum": "3352ddcaf5ffad47"
+        },
+        "isPublished": true,
+        "createdAt": "2026-03-31T09:37:13.992Z",
+        "updatedAt": "2026-03-31T09:37:13.994Z"
+      }
+    },
+    "requestId": "3cf786d0-f00e-4a85-85f9-e0655a68876c"
+  },
+  "runStatus": 200,
+  "runJson": {
+    "ok": true,
+    "data": {
+      "run": {
+        "id": "3c4bc224-cf82-41ae-8411-dd44694a758a",
+        "workflowId": "9025641c-0312-428d-a0d9-1f5cbdb7de0e",
+        "workflowVersionId": "f7a5caf6-ede3-471a-8ff1-d15fd94dc59f",
+        "status": "queued",
+        "triggerType": "manual",
+        "triggerPayload": {},
+        "startedByUserId": "admin-001",
+        "startedAt": "2026-03-31T09:37:13.997Z",
+        "context": {
+          "security": {
+            "ownerPrincipalId": "admin-001",
+            "ownerPrincipalType": "user",
+            "ownerUserId": "admin-001",
+            "tenantId": "admin-001",
+            "tokenId": "2660855d-91bf-4b73-9c12-c13c7bae458d"
+          },
+          "pipeline": {
+            "playbook": {
+              "decision": "no_match",
+              "playbookId": null,
+              "versionNumber": null,
+              "matchScore": null,
+              "evaluatedAt": "2026-03-31T09:37:13.997Z"
+            }
+          }
+        },
+        "createdAt": "2026-03-31T09:37:13.997Z",
+        "updatedAt": "2026-03-31T09:37:13.997Z"
+      }
+    },
+    "requestId": "8ce54085-ea3a-48ce-a765-a2886361cd96"
+  },
+  "approvalsJson": {
+    "ok": true,
+    "data": {
+      "items": [
+        {
+          "id": "da9e2fb4-d2d9-460b-a7b1-24431728c4df",
+          "workflowId": "9025641c-0312-428d-a0d9-1f5cbdb7de0e",
+          "workflowVersionId": "f7a5caf6-ede3-471a-8ff1-d15fd94dc59f",
+          "runId": "3c4bc224-cf82-41ae-8411-dd44694a758a",
+          "runNodeAttemptId": "7a9ba789-8f8b-4a94-a2c9-1e591dceb975",
+          "nodeId": "approval-1",
+          "approverRole": "admin",
+          "status": "pending",
+          "requestPayload": {},
+          "timeoutAt": "2026-03-31T09:38:14.000Z",
+          "createdAt": "2026-03-31T09:37:14.000Z",
+          "updatedAt": "2026-03-31T09:37:14.000Z"
+        }
+      ]
+    },
+    "requestId": "2d9b1417-5771-4ed8-a50a-531fa1697a24"
+  },
+  "approvalId": "da9e2fb4-d2d9-460b-a7b1-24431728c4df",
+  "approveJson": {
+    "ok": true,
+    "data": {
+      "approval": {
+        "id": "da9e2fb4-d2d9-460b-a7b1-24431728c4df",
+        "workflowId": "9025641c-0312-428d-a0d9-1f5cbdb7de0e",
+        "workflowVersionId": "f7a5caf6-ede3-471a-8ff1-d15fd94dc59f",
+        "runId": "3c4bc224-cf82-41ae-8411-dd44694a758a",
+        "runNodeAttemptId": "7a9ba789-8f8b-4a94-a2c9-1e591dceb975",
+        "nodeId": "approval-1",
+        "approverRole": "admin",
+        "status": "approved",
+        "requestPayload": {},
+        "timeoutAt": "2026-03-31T09:38:14.000Z",
+        "decidedAt": "2026-03-31T09:37:16.507Z",
+        "decidedByUserId": "admin-001",
+        "decisionComment": "approve",
+        "createdAt": "2026-03-31T09:37:14.000Z",
+        "updatedAt": "2026-03-31T09:37:16.507Z"
+      },
+      "resumed": true
+    },
+    "requestId": "aba03779-b595-4dd4-a59a-f57d304f9974"
+  },
+  "lastPoll": {
+    "ok": true,
+    "data": {
+      "run": {
+        "id": "3c4bc224-cf82-41ae-8411-dd44694a758a",
+        "workflowId": "9025641c-0312-428d-a0d9-1f5cbdb7de0e",
+        "workflowVersionId": "f7a5caf6-ede3-471a-8ff1-d15fd94dc59f",
+        "status": "completed",
+        "triggerType": "manual",
+        "triggerPayload": {},
+        "startedByUserId": "admin-001",
+        "startedAt": "2026-03-31T09:37:13.997Z",
+        "finishedAt": "2026-03-31T09:37:16.506Z",
+        "context": {
+          "security": {
+            "ownerPrincipalId": "admin-001",
+            "ownerPrincipalType": "user",
+            "ownerUserId": "admin-001",
+            "tenantId": "admin-001",
+            "tokenId": "2660855d-91bf-4b73-9c12-c13c7bae458d"
+          },
+          "pipeline": {
+            "playbook": {
+              "decision": "no_match",
+              "playbookId": null,
+              "versionNumber": null,
+              "matchScore": null,
+              "evaluatedAt": "2026-03-31T09:37:13.997Z"
+            }
+          }
+        },
+        "createdAt": "2026-03-31T09:37:13.997Z",
+        "updatedAt": "2026-03-31T09:37:16.506Z"
+      }
+    },
+    "requestId": "5b429d12-4886-4f94-9536-8d318aade258"
+  }
+}
