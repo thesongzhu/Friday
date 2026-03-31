@@ -1867,6 +1867,67 @@ export function createFridayObservabilityApiService(
       async get(sloId): Promise<FridayGetSloStatusResponse> {
         return getSloStatus(sloId);
       },
+      async create(input) {
+        const id = deps.idGenerator();
+        const now = deps.nowIso();
+        const sliMetric = input.sliMetric as unknown as FridaySliMetric;
+        const record: SloRuntimeRecord = {
+          id,
+          name: input.name,
+          description: input.description ?? "",
+          sliMetric,
+          target: input.target,
+          complianceWindowDays: input.complianceWindowDays ?? 30,
+          enabled: input.enabled ?? true,
+          tags: input.tags ?? [],
+          alertRuleIds: [],
+          etag: deps.idGenerator(),
+          createdAt: now,
+          updatedAt: now,
+        };
+        storeSloRecord(record);
+        return getSloStatus(id);
+      },
+      async update(sloId, input) {
+        const existing = getSloRecord(sloId);
+        if (!existing) {
+          throw new FridayDomainError("OBS_SLO_NOT_FOUND", "SLO not found", { httpStatus: 404 });
+        }
+        if (existing.etag !== input.etag) {
+          throw new FridayDomainError("OBS_SLO_ETAG_MISMATCH", "SLO was modified concurrently", { httpStatus: 409 });
+        }
+        const now = deps.nowIso();
+        const updated: SloRuntimeRecord = {
+          ...existing,
+          name: input.name ?? existing.name,
+          description: input.description ?? existing.description,
+          target: input.target ?? existing.target,
+          complianceWindowDays: input.complianceWindowDays ?? existing.complianceWindowDays,
+          enabled: input.enabled ?? existing.enabled,
+          tags: input.tags ?? existing.tags,
+          etag: deps.idGenerator(),
+          updatedAt: now,
+        };
+        storeSloRecord(updated);
+        return getSloStatus(sloId);
+      },
+      async delete(sloId, etag) {
+        const existing = getSloRecord(sloId);
+        if (!existing) {
+          throw new FridayDomainError("OBS_SLO_NOT_FOUND", "SLO not found", { httpStatus: 404 });
+        }
+        if (existing.etag !== etag) {
+          throw new FridayDomainError("OBS_SLO_ETAG_MISMATCH", "SLO was modified concurrently", { httpStatus: 409 });
+        }
+        if (deps.db) {
+          deps.db.withWriteTransaction((db) => {
+            db.prepare("DELETE FROM obs_slo_definitions WHERE id = ?").run(sloId);
+          });
+        } else {
+          inMemorySloDefinitions.delete(sloId);
+        }
+        return { deleted: true as const, sloId };
+      },
     },
     alerts: {
       list(query): FridayListAlertsResponse {

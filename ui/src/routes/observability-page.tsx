@@ -372,7 +372,36 @@ export function ObservabilityPage() {
     },
   });
 
+  const createSloMutation = useMutation({
+    mutationFn: (input: { name: string; target: number; description?: string; complianceWindowDays?: number }) =>
+      systemApi.createObservabilitySlo({
+        ...input,
+        sliMetric: { name: "custom.metric", displayName: input.name, description: input.description ?? "", type: "success_rate", unit: "percent", module: "system" },
+      }),
+    onSuccess: () => {
+      toast.success("SLO created.");
+      setShowCreateSlo(false);
+      void queryClient.invalidateQueries({ queryKey: ["observability", "slos"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not create SLO.");
+    },
+  });
+
+  const deleteSloMutation = useMutation({
+    mutationFn: (input: { sloId: string; etag: string }) =>
+      systemApi.deleteObservabilitySlo(input.sloId, input.etag),
+    onSuccess: () => {
+      toast.success("SLO deleted.");
+      void queryClient.invalidateQueries({ queryKey: ["observability", "slos"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not delete SLO.");
+    },
+  });
+
   const [showCreateDest, setShowCreateDest] = useState(false);
+  const [showCreateSlo, setShowCreateSlo] = useState(false);
 
   const overview = overviewQuery.data;
   const alerts = alertsQuery.data?.items ?? [];
@@ -1012,15 +1041,36 @@ export function ObservabilityPage() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <ShellCard eyebrow="SLO pack" title="Service level state">
+        <ShellCard
+          eyebrow="SLO pack"
+          title="Service level state"
+          aside={
+            <ActionButton tone="secondary" onClick={() => setShowCreateSlo(!showCreateSlo)}>
+              <Plus className="mr-1.5 h-3 w-3" />
+              Add SLO
+            </ActionButton>
+          }
+        >
+          {showCreateSlo && (
+            <CreateSloForm
+              onSubmit={(input) => createSloMutation.mutate(input)}
+              pending={createSloMutation.isPending}
+              onCancel={() => setShowCreateSlo(false)}
+            />
+          )}
           {slos.length > 0 ? (
             <div className="space-y-3">
               {slos.map((slo) => (
-                <SloCard key={slo.id} slo={slo} />
+                <SloCard
+                  key={slo.id}
+                  slo={slo}
+                  onDelete={(id, etag) => deleteSloMutation.mutate({ sloId: id, etag })}
+                  deletePending={deleteSloMutation.isPending}
+                />
               ))}
             </div>
           ) : (
-            <p className="text-sm text-white/60">No SLO definitions are configured yet.</p>
+            <p className="text-sm text-white/60">No SLO definitions are configured yet. Click &quot;Add SLO&quot; to create one.</p>
           )}
         </ShellCard>
 
@@ -1178,7 +1228,11 @@ function CreateDestinationForm(props: {
   );
 }
 
-function SloCard(props: { slo: Awaited<ReturnType<typeof systemApi.listObservabilitySlos>>[number] }) {
+function SloCard(props: {
+  slo: Awaited<ReturnType<typeof systemApi.listObservabilitySlos>>[number];
+  onDelete: (sloId: string, etag: string) => void;
+  deletePending: boolean;
+}) {
   const { slo } = props;
   const [expanded, setExpanded] = useState(false);
   const detailQuery = useQuery({
@@ -1194,9 +1248,21 @@ function SloCard(props: { slo: Awaited<ReturnType<typeof systemApi.listObservabi
           <p className="truncate font-medium text-white">{slo.name}</p>
           <p className="text-xs text-white/50">{slo.sliMetricName}</p>
         </div>
-        <StatusPill tone={slo.status === "healthy" ? "success" : slo.status === "warning" ? "warning" : "danger"}>
-          {slo.status}
-        </StatusPill>
+        <div className="flex items-center gap-2">
+          <StatusPill tone={slo.status === "healthy" ? "success" : slo.status === "warning" ? "warning" : "danger"}>
+            {slo.status}
+          </StatusPill>
+          {detailQuery.data?.slo.etag && (
+            <button
+              type="button"
+              className="rounded-lg p-1.5 text-white/30 transition hover:bg-white/10 hover:text-red-400"
+              disabled={props.deletePending}
+              onClick={() => props.onDelete(slo.id, detailQuery.data!.slo.etag)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
       <div className="mt-3 grid gap-2 text-xs text-white/55">
         <p>Target: {slo.target}%</p>
@@ -1236,6 +1302,59 @@ function SloCard(props: { slo: Awaited<ReturnType<typeof systemApi.listObservabi
       ) : expanded && detailQuery.isLoading ? (
         <p className="mt-3 text-xs text-white/40">Loading...</p>
       ) : null}
+    </div>
+  );
+}
+
+function CreateSloForm(props: {
+  onSubmit: (input: { name: string; target: number; description?: string; complianceWindowDays?: number }) => void;
+  pending: boolean;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [target, setTarget] = useState("99.5");
+  const [description, setDescription] = useState("");
+  const [windowDays, setWindowDays] = useState("30");
+
+  const canSubmit = name.trim().length > 0 && Number(target) > 0 && Number(target) <= 100;
+
+  return (
+    <div className="mb-3 rounded-2xl border border-white/10 bg-black/30 p-4 space-y-3">
+      <p className="text-xs uppercase tracking-[0.16em] text-white/40">Create SLO</p>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="mb-1 block text-xs text-white/50">Name</label>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. API Availability" className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/20 focus:outline-none" />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-white/50">Target (%)</label>
+          <input type="number" value={target} onChange={(e) => setTarget(e.target.value)} min={0} max={100} step={0.1} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white focus:border-white/20 focus:outline-none" />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="mb-1 block text-xs text-white/50">Description</label>
+          <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/20 focus:outline-none" />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-white/50">Compliance window (days)</label>
+          <input type="number" value={windowDays} onChange={(e) => setWindowDays(e.target.value)} min={1} max={365} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white focus:border-white/20 focus:outline-none" />
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <ActionButton
+          disabled={!canSubmit || props.pending}
+          onClick={() => props.onSubmit({
+            name: name.trim(),
+            target: Number(target),
+            description: description.trim() || undefined,
+            complianceWindowDays: Number(windowDays) || undefined,
+          })}
+        >
+          {props.pending ? "Creating..." : "Create"}
+        </ActionButton>
+        <ActionButton tone="secondary" onClick={props.onCancel}>Cancel</ActionButton>
+      </div>
     </div>
   );
 }

@@ -69,6 +69,9 @@ export interface FridayObservabilityRoutesDeps {
   slos: {
     list(query: FridayListSlosQuery): FridayListSlosResponse | Promise<FridayListSlosResponse>;
     get(sloId: UUID): FridayGetSloStatusResponse | Promise<FridayGetSloStatusResponse>;
+    create(input: { name: string; description?: string; sliMetric: Record<string, unknown>; target: number; complianceWindowDays?: number; enabled?: boolean; tags?: string[] }): Promise<FridayGetSloStatusResponse>;
+    update(sloId: UUID, input: { etag: string; name?: string; description?: string; target?: number; complianceWindowDays?: number; enabled?: boolean; tags?: string[] }): Promise<FridayGetSloStatusResponse>;
+    delete(sloId: UUID, etag: string): Promise<{ deleted: true; sloId: string }>;
   };
   alerts: {
     list(query: FridayListAlertsQuery): FridayListAlertsResponse | Promise<FridayListAlertsResponse>;
@@ -201,6 +204,50 @@ export function createFridayObservabilityRoutes(
       async handler(ctx) {
         const { sloId } = ctx.params as { sloId: UUID };
         return deps.slos.get(sloId);
+      },
+    },
+    {
+      operationId: "observability.slos.create",
+      method: "POST",
+      path: "/v1/observability/slos",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      async handler(ctx) {
+        const body = ctx.body as { name: string; sliMetric: Record<string, unknown>; target: number; description?: string; complianceWindowDays?: number; enabled?: boolean; tags?: string[] };
+        if (!body || typeof body.name !== "string" || body.name.trim() === "") {
+          throw new FridayDomainError("VALIDATION_ERROR", "name is required", { httpStatus: 400 });
+        }
+        if (typeof body.target !== "number" || body.target <= 0 || body.target > 100) {
+          throw new FridayDomainError("VALIDATION_ERROR", "target must be between 0 and 100", { httpStatus: 400 });
+        }
+        return deps.slos.create(body);
+      },
+    },
+    {
+      operationId: "observability.slos.update",
+      method: "PUT",
+      path: "/v1/observability/slos/:sloId",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      async handler(ctx) {
+        const { sloId } = ctx.params as { sloId: UUID };
+        const body = ctx.body as { etag: string; name?: string; description?: string; target?: number; complianceWindowDays?: number; enabled?: boolean; tags?: string[] };
+        if (!body || typeof body.etag !== "string") {
+          throw new FridayDomainError("VALIDATION_ERROR", "etag is required", { httpStatus: 400 });
+        }
+        return deps.slos.update(sloId, body);
+      },
+    },
+    {
+      operationId: "observability.slos.delete",
+      method: "DELETE",
+      path: "/v1/observability/slos/:sloId",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      async handler(ctx) {
+        const { sloId } = ctx.params as { sloId: UUID };
+        const etag = (ctx.query as Record<string, string>).etag ?? ((ctx.body as Record<string, string> | null)?.etag);
+        if (typeof etag !== "string" || etag.trim() === "") {
+          throw new FridayDomainError("VALIDATION_ERROR", "etag is required", { httpStatus: 400 });
+        }
+        return deps.slos.delete(sloId, etag);
       },
     },
 
