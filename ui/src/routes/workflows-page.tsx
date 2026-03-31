@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { GitBranch, Package, PlayCircle, RefreshCcw } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
+import { HelpTooltip } from "@/components/core/help-tooltip";
+import { workflowRunsApi } from "@/lib/api/workflow-runs";
 import { workflowsApi } from "@/lib/api/workflows";
 import { buildObservabilityHref } from "@/lib/observability/view-models";
 import { systemApi } from "@/lib/api/system";
@@ -131,6 +133,45 @@ export function WorkflowsPage() {
     },
   });
 
+  const cancelRunMutation = useMutation({
+    mutationFn: (runId: string) => workflowRunsApi.cancel(runId),
+    onSuccess: () => {
+      toast.success("Run cancelled");
+      if (selectedWorkflowId) {
+        void queryClient.invalidateQueries({ queryKey: systemKeys.workflowOverview(selectedWorkflowId) });
+      }
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to cancel run");
+    },
+  });
+
+  const retryRunMutation = useMutation({
+    mutationFn: (runId: string) => workflowRunsApi.retry(runId),
+    onSuccess: () => {
+      toast.success("Run retried");
+      if (selectedWorkflowId) {
+        void queryClient.invalidateQueries({ queryKey: systemKeys.workflowOverview(selectedWorkflowId) });
+      }
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to retry run");
+    },
+  });
+
+  const resumeRunMutation = useMutation({
+    mutationFn: (runId: string) => workflowRunsApi.resume(runId),
+    onSuccess: () => {
+      toast.success("Run resumed");
+      if (selectedWorkflowId) {
+        void queryClient.invalidateQueries({ queryKey: systemKeys.workflowOverview(selectedWorkflowId) });
+      }
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to resume run");
+    },
+  });
+
   const graphNodes = useMemo(() => {
     const spec = visualizationQuery.data?.spec;
     const visual = visualizationQuery.data?.visual;
@@ -216,7 +257,7 @@ export function WorkflowsPage() {
       <div className="space-y-4">
         <ShellCard
           eyebrow={focusLabel(focus)}
-          title={selectedWorkflow ? attentionSummary?.title ?? selectedWorkflow.name : "Workflow control plane"}
+          title={selectedWorkflow ? attentionSummary?.title ?? selectedWorkflow.name : <><HelpTooltip term="workflow" /> control plane</>}
           aside={
             selectedWorkflow ? (
               <StatusPill tone={attentionSummary?.tone ?? "neutral"}>
@@ -289,7 +330,7 @@ export function WorkflowsPage() {
 
         <ShellCard
           eyebrow="Workflow library"
-          title="Choose which workflow Friday should operate next"
+          title={<>Choose which <HelpTooltip term="workflow" /> Friday should operate next</>}
           aside={
             <div className="flex items-center gap-2">
               <StatusPill tone={workflows.length > 0 ? "success" : "neutral"}>
@@ -353,7 +394,11 @@ export function WorkflowsPage() {
               </div>
             ))}
             {workflows.length === 0 ? (
-              <p className="text-sm text-white/60">No workflows have been created yet.</p>
+              <div className="space-y-2 text-sm text-white/60">
+                <p>No workflows have been created yet.</p>
+                <p>Describe what you want to automate in plain language and Friday will build it for you.</p>
+                <Link to="/chat" className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-200 hover:bg-emerald-400/20">Describe in Chat</Link>
+              </div>
             ) : null}
           </div>
         </ShellCard>
@@ -445,6 +490,56 @@ export function WorkflowsPage() {
             </div>
           ) : (
             <p className="text-sm text-white/60">Friday has not run this workflow yet.</p>
+          )}
+        </ShellCard>
+
+        <ShellCard eyebrow="Run history" title="Recent workflow executions">
+          {overviewQuery.data?.recentRuns.length ? (
+            <div className="space-y-3">
+              {overviewQuery.data.recentRuns.map((run) => (
+                <div key={run.id} className="agent-subcard p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-white">{run.id.slice(0, 8)}</p>
+                      <p className="text-xs text-white/50">
+                        {formatTimestamp(run.startedAt)}
+                        {run.finishedAt ? ` — ${formatTimestamp(run.finishedAt)}` : ""}
+                      </p>
+                    </div>
+                    <StatusPill tone={toneForRunStatus(run.status)}>{run.status}</StatusPill>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(run.status === "running" || run.status === "queued") ? (
+                      <ActionButton
+                        tone="danger"
+                        onClick={() => cancelRunMutation.mutate(run.id)}
+                        disabled={cancelRunMutation.isPending}
+                      >
+                        Cancel
+                      </ActionButton>
+                    ) : null}
+                    {run.status === "failed" ? (
+                      <ActionButton
+                        onClick={() => retryRunMutation.mutate(run.id)}
+                        disabled={retryRunMutation.isPending}
+                      >
+                        Retry
+                      </ActionButton>
+                    ) : null}
+                    {run.status === "paused" ? (
+                      <ActionButton
+                        onClick={() => resumeRunMutation.mutate(run.id)}
+                        disabled={resumeRunMutation.isPending}
+                      >
+                        Resume
+                      </ActionButton>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-white/60">No runs recorded yet for this workflow.</p>
           )}
         </ShellCard>
 

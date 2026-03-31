@@ -12,6 +12,9 @@ import {
   FRIDAY_AGENT_RUN_TIMEOUT_MS,
   FRIDAY_AGENT_SESSION_KEY_PREFIX,
   FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS,
+  FRIDAY_AGENT_TOOL_RESULT_CAPS,
+  FRIDAY_AGENT_COMPACTION_THRESHOLD,
+  FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
   FRIDAY_AGENT_TOOL_TIMEOUT_MS,
 } from "../friday-agent.constants.js";
 import type {
@@ -111,8 +114,8 @@ function buildReplyAnchorFallbackResponse(params: {
 }
 
 function hasExplicitResearchIntent(task: string): boolean {
-  return /\b(search|research|look up|lookup|find sources|find source|latest|news|browse|google)\b/i.test(task)
-    || /(搜索|搜一下|查一下|查一查|上网查|最新|新闻|帮我找资料)/.test(task);
+  return /\b(search|research|look up|lookup|find sources|find source|latest|news|browse|google|compare|price|current|today|now|check online)\b/i.test(task)
+    || /(搜索|搜一下|查一下|查一查|上网查|最新|新闻|帮我找资料|对比|价格|多少钱|现在|当前|查查)/.test(task);
 }
 
 // ─── Factory ───
@@ -1062,6 +1065,14 @@ export function createFridayAgentRuntime(
           }
         }
 
+        // ── Disclose disabled tools so the LLM does not waste turns calling them ──
+        if (disabledToolNames.size > 0) {
+          effectiveSystemPrompt +=
+            "\n\nNote: The following tools are disabled for this run and will fail if called: " +
+            [...disabledToolNames].join(", ") +
+            ". Do not attempt to use them.";
+        }
+
         let iterations = 0;
         let evidenceEnforcementRetries = 0;
         let timelinessEnforcementRetries = 0;
@@ -1076,6 +1087,18 @@ export function createFridayAgentRuntime(
 
           iterations++;
 
+          // ── Context compaction: layered retention (Plan C) ──
+          // Replace old middle messages with a summary to prevent context overflow.
+          const preCompactionLen = messages.length;
+          const compacted = compactMessagesIfNeeded(
+            messages,
+            FRIDAY_AGENT_COMPACTION_THRESHOLD,
+            FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
+          );
+          if (compacted.length < preCompactionLen) {
+            messages.splice(0, messages.length, ...compacted);
+          }
+
           // Emit executing event per iteration (IMPL-3)
           handleTrackedEvent("agent.run.executing", {
             runId,
@@ -1084,13 +1107,24 @@ export function createFridayAgentRuntime(
           });
 
           // ── Decision Engine short-circuit ──
-          // Default engine always returns false, so LLM path is always taken.
+          // Handles simple intents (greeting, status, help, cancel) locally.
           let localDecisionResponse: string | undefined;
           if (decisionEngine) {
+            // Load world state for context-aware decisions (non-fatal if unavailable)
+            let worldState: import("../model/friday-agent-world-state.types.js").FridayWorldState | undefined;
+            if (deps.worldStateManager) {
+              try {
+                worldState = await deps.worldStateManager.loadState(params.principalId ?? "default");
+              } catch {
+                // Non-fatal: world state loading failure should not block agent runs.
+              }
+            }
+
             const decisionCtx: FridayDecisionContext = {
               task: params.task,
               turnIndex: iterations - 1,
               history: [],
+              worldState,
               availableTools: [...toolMap.keys()],
               taskProfile: resolvedTaskProfile.id,
             };
@@ -1099,6 +1133,11 @@ export function createFridayAgentRuntime(
               if (localDecision.action === "respond" && localDecision.response) {
                 localDecisionResponse = localDecision.response;
               }
+            }
+
+            // Rank tools based on learned patterns (reorder only, never remove)
+            if (localDecisionResponse === undefined) {
+              tools.splice(0, tools.length, ...decisionEngine.rankTools(decisionCtx, tools));
             }
           }
 
@@ -1405,7 +1444,9 @@ export function createFridayAgentRuntime(
               // P1-SEC-006: Treat null (rules evaluation error) as deny — fail-closed
               if (policyResult === null || (policyResult && !policyResult.allowed)) {
                 const message = policyResult?.message
-                  ?? `Tool '${toolUse.name}' blocked by policy`;
+                  ?? (policyResult === null
+                    ? `Tool '${toolUse.name}' blocked — policy evaluation temporarily unavailable`
+                    : `Tool '${toolUse.name}' blocked by policy`);
                 const blockedResult = {
                   content: message,
                   isError: true,
@@ -2063,19 +2104,24 @@ async function safeEvaluateRules(
   context: FridayEvaluationContext,
   signal?: AbortSignal,
 ): Promise<FridayEvaluationResult | null> {
-  try {
-    return await evaluateRules(
-      {
-        ...context,
-        scopes: withRulesEvaluateScope(context.scopes),
-      },
-      signal,
-    );
-  } catch (err) {
-    // P1-SEC-006: Log the error — callers treat null as deny (fail-closed)
-    console.warn("[friday][SECURITY] Rules evaluation failed:", err);
-    return null;
+  // P1-SEC-006: Retry once on transient failure before falling back to deny (fail-closed).
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await evaluateRules(
+        {
+          ...context,
+          scopes: withRulesEvaluateScope(context.scopes),
+        },
+        signal,
+      );
+    } catch (err) {
+      console.warn(`[friday][SECURITY] Rules evaluation attempt ${String(attempt + 1)} failed:`, err);
+      if (attempt === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
   }
+  return null;
 }
 
 function normalizeHistoryMessages(
@@ -4099,7 +4145,8 @@ async function executeToolCall(
     const durationMs = Date.now() - startedAt;
 
     // OC-007: Cap oversized tool result content to prevent context bloat
-    let result = capToolResultContent(rawResult, FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS);
+    const toolCap = FRIDAY_AGENT_TOOL_RESULT_CAPS[toolUse.name] ?? FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS;
+    let result = capToolResultContent(rawResult, toolCap);
     if (result.isError) {
       result = await maybeRecoverToolInputError({
         toolUse,
@@ -4110,10 +4157,10 @@ async function executeToolCall(
         principalId: params.principalId,
         executionContext: params.executionContext,
         emitRunEvent,
-        maxResultChars: FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS,
+        maxResultChars: toolCap,
         initialResult: result,
       });
-      result = capToolResultContent(result, FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS);
+      result = capToolResultContent(result, toolCap);
     }
     if (toolUse.name === "web_fetch" && result.isError) {
       result = await maybeFallbackWebFetchWithBrowser({
@@ -4125,10 +4172,10 @@ async function executeToolCall(
         principalId: params.principalId,
         executionContext: params.executionContext,
         emitRunEvent,
-        maxResultChars: FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS,
+        maxResultChars: toolCap,
         initialResult: result,
       });
-      result = capToolResultContent(result, FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS);
+      result = capToolResultContent(result, toolCap);
     }
 
     emitRunEvent("agent.run.tool_end", buildToolEndEventPayload({
@@ -4837,4 +4884,65 @@ function capToolResultContent(
     result.content.slice(0, maxChars) +
     `\n\n[truncated: output was ${String(result.content.length)} chars, showing first ${String(maxChars)}]`;
   return { ...result, content: truncated };
+}
+
+/**
+ * Plan-C context compaction: layered retention.
+ *
+ * Keeps the first 2 messages (system context + user task) and the last
+ * `keepRecent` messages intact. Middle messages are replaced by a single
+ * summary line so the LLM retains awareness of earlier work without
+ * paying full token cost.  Zero extra LLM calls — pure string operation.
+ */
+function compactMessagesIfNeeded(
+  messages: FridayAgentMessage[],
+  threshold: number,
+  keepRecent: number,
+): FridayAgentMessage[] {
+  if (messages.length <= threshold) return messages;
+
+  const keepFirst = 2; // system prompt context + original user task
+  if (messages.length <= keepFirst + keepRecent) return messages;
+
+  const head = messages.slice(0, keepFirst);
+  const middle = messages.slice(keepFirst, messages.length - keepRecent);
+  const tail = messages.slice(messages.length - keepRecent);
+
+  // Build a compact summary of the middle section
+  const toolNames = new Set<string>();
+  let userMsgCount = 0;
+  let assistantMsgCount = 0;
+  for (const msg of middle) {
+    if (msg.role === "user") {
+      userMsgCount++;
+      // Scan for tool_result blocks that mention tool names
+      if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (typeof block === "object" && block !== null && "type" in block && block.type === "tool_result") {
+            toolNames.add("tool_result");
+          }
+        }
+      }
+    } else if (msg.role === "assistant") {
+      assistantMsgCount++;
+      if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (typeof block === "object" && block !== null && "type" in block && block.type === "tool_use" && "name" in block) {
+            toolNames.add(block.name as string);
+          }
+        }
+      }
+    }
+  }
+
+  const toolList = toolNames.size > 0 ? ` Tools used: ${[...toolNames].join(", ")}.` : "";
+  const summaryText =
+    `[Context compacted: ${String(middle.length)} earlier messages (${String(userMsgCount)} user, ${String(assistantMsgCount)} assistant) were summarized to save context.${toolList}]`;
+
+  const summaryMessage: FridayAgentMessage = {
+    role: "user",
+    content: summaryText,
+  };
+
+  return [...head, summaryMessage, ...tail];
 }

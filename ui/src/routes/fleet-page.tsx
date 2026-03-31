@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Cpu, HeartPulse, Link2, RadioTower, ShieldCheck, Workflow } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ShellCard, StatusPill } from "@/components/core/primitives";
+import { HelpTooltip } from "@/components/core/help-tooltip";
 import { fleetApi } from "@/lib/api/fleet";
 import { systemApi } from "@/lib/api/system";
 import {
@@ -177,7 +178,7 @@ export function FleetPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Fleet Control Plane" title="Distributed execution overview">
+        <ShellCard eyebrow="Fleet Control Plane" title={<><HelpTooltip term="fleet" /> — distributed execution overview</>}>
           {overview ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
@@ -217,7 +218,7 @@ export function FleetPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Satellites" title="Choose a node to inspect or recover">
+        <ShellCard eyebrow="Satellites" title={<>Choose a <HelpTooltip term="satellite" /> to inspect or recover</>}>
           <div className="space-y-3">
             {satellites.map((satellite) => (
               <button
@@ -250,7 +251,11 @@ export function FleetPage() {
               </button>
             ))}
             {satellites.length === 0 ? (
-              <p className="text-sm text-white/60">No satellites have registered yet.</p>
+              <div className="space-y-2 text-sm text-white/60">
+                <p>No satellites have registered yet.</p>
+                <p>Friday can help you set up remote devices to extend your automation reach.</p>
+                <Link to="/chat" className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-200 hover:bg-emerald-400/20">Learn more in Chat</Link>
+              </div>
             ) : null}
           </div>
         </ShellCard>

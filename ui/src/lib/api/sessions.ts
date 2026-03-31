@@ -284,4 +284,26 @@ export const sessionsApi = {
     );
     return data.result;
   },
+
+  async getUsage(sessionKey: string): Promise<SessionUsageResponse> {
+    return apiClient.get<SessionUsageResponse>(`/v1/sessions/${encodeURIComponent(sessionKey)}/usage`);
+  },
 };
+
+// ─── Session usage types ───
+
+export interface SessionUsageResponse {
+  sessionKey: string;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCostUsd: number;
+  totalRuns: number;
+  byModel: Array<{
+    providerId: string;
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+    runs: number;
+  }>;
+}

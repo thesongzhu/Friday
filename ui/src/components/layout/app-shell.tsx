@@ -1,10 +1,11 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ChartNoAxesCombined, Command, Home, MonitorCog, Package, ShieldCheck, ShoppingBag, Wand2, Waypoints } from "lucide-react";
+import { Activity, ChartNoAxesCombined, ChevronDown, Command, Home, MessageCircle, MonitorCog, Package, ShieldCheck, ShoppingBag, Wand2, Waypoints } from "lucide-react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/use-auth";
 import { healthApi } from "@/lib/api/health";
 import { systemApi } from "@/lib/api/system";
-import { AGENT_OS_NAV_ITEMS, resolvePageTitle } from "@/lib/routes/agent-os-nav";
+import { AGENT_OS_NAV_PRIMARY, AGENT_OS_NAV_ADVANCED, resolvePageTitle } from "@/lib/routes/agent-os-nav";
 import { systemKeys } from "@/lib/system/query-keys";
 import { summarizeHealthReasons } from "@/lib/system/view-models";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
@@ -34,9 +35,11 @@ export function AppShell() {
     refetchInterval: 10_000,
   });
 
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   const pageTitle = resolvePageTitle(location.pathname);
   const systemHealth = systemSession?.health;
-  const isSimplifiedView = location.pathname === "/home" || location.pathname.startsWith("/flow/");
+  const isSimplifiedView = location.pathname === "/home" || location.pathname.startsWith("/flow/") || location.pathname === "/chat";
 
   return (
     <div className="min-h-screen bg-[var(--bg-canvas)] text-white">
@@ -67,7 +70,7 @@ export function AppShell() {
           </ShellCard>
 
           <nav className="flex flex-col gap-2">
-            {AGENT_OS_NAV_ITEMS.map((item) => (
+            {AGENT_OS_NAV_PRIMARY.map((item) => (
               <NavLink
                 key={item.path}
                 to={item.path}
@@ -83,16 +86,51 @@ export function AppShell() {
               >
                 <div className="flex items-start gap-3">
                   <div className="mt-0.5 rounded-2xl border border-white/10 bg-white/[0.07] p-2">
+                    {item.path === "/chat" ? <MessageCircle className="h-4 w-4" /> : null}
                     {item.path === "/home" ? <Home className="h-4 w-4" /> : null}
-                    {item.path === "/assistant" ? <Wand2 className="h-4 w-4" /> : null}
-                    {item.path === "/marketplace" ? <ShoppingBag className="h-4 w-4" /> : null}
-                    {item.path === "/workflows" ? <Activity className="h-4 w-4" /> : null}
                     {item.path === "/skills" ? <Package className="h-4 w-4" /> : null}
+                    {item.path === "/workflows" ? <Activity className="h-4 w-4" /> : null}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-white">{item.label}</p>
+                    <p className="mt-1 text-xs leading-5 text-white/50">{item.description}</p>
+                  </div>
+                </div>
+              </NavLink>
+            ))}
+
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-xs font-medium text-white/40 transition-colors hover:bg-white/[0.05] hover:text-white/60"
+            >
+              <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showAdvanced && "rotate-180")} />
+              {showAdvanced ? "Hide advanced" : "Show advanced"}
+            </button>
+
+            {showAdvanced && AGENT_OS_NAV_ADVANCED.map((item) => (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                end={item.path === "/"}
+                className={({ isActive }) =>
+                  cn(
+                    "rounded-3xl border px-4 py-4 transition-colors",
+                    isActive
+                      ? "border-emerald-300/40 bg-emerald-300/10"
+                      : "border-white/10 bg-white/[0.04] hover:border-white/[0.16] hover:bg-white/[0.07]",
+                  )
+                }
+              >
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 rounded-2xl border border-white/10 bg-white/[0.07] p-2">
+                    {item.path === "/assistant" ? <Wand2 className="h-4 w-4" /> : null}
                     {item.path === "/fleet" ? <Waypoints className="h-4 w-4" /> : null}
+                    {item.path === "/marketplace" ? <ShoppingBag className="h-4 w-4" /> : null}
                     {item.path === "/automations" ? <Activity className="h-4 w-4" /> : null}
                     {item.path === "/observability" ? <ChartNoAxesCombined className="h-4 w-4" /> : null}
-                    {item.path === "/settings" ? <ShieldCheck className="h-4 w-4" /> : null}
                     {item.path === "/command-center" ? <MonitorCog className="h-4 w-4" /> : null}
+                    {item.path === "/settings" ? <ShieldCheck className="h-4 w-4" /> : null}
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-white">{item.label}</p>

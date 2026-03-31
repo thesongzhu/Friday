@@ -69,7 +69,7 @@ import { runFridayCliAuthLoginAnthropic } from "./friday-cli-auth.js";
 // ─── Arg parser ───
 
 export interface ParsedArgs {
-  command: "start" | "list" | "run" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth" | "skills" | "daemon" | "phases";
+  command: "start" | "list" | "run" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth" | "skills" | "daemon" | "phases" | "setup";
   showHelp: boolean;
   skillDirs: string[];
   port: number | undefined;
@@ -159,7 +159,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     return result;
   }
 
-  const validCommands = ["start", "list", "run", "status", "import", "convert", "converters", "pack", "auth", "skills", "daemon", "phases"] as const;
+  const validCommands = ["start", "list", "run", "status", "import", "convert", "converters", "pack", "auth", "skills", "daemon", "phases", "setup"] as const;
   type ValidCommand = (typeof validCommands)[number];
 
   if ((validCommands as readonly string[]).includes(cmd)) {
@@ -427,6 +427,20 @@ Boot the hub, run a single skill, print result, then exit.
     return;
   }
 
+  if (command === "setup") {
+    console.log(`
+friday setup
+
+Interactive setup wizard — walks you through configuring:
+  1. LLM provider (Anthropic / OpenAI / Ollama)
+  2. API key (or skip for Ollama)
+  3. Message channels (optional)
+
+Writes config to ~/.friday/friday.json5 and optionally starts the hub.
+    `.trim());
+    return;
+  }
+
   if (command === "status") {
     console.log(`
 friday status
@@ -545,6 +559,9 @@ Usage:
 
   friday phases doctor|list|status|start-next|run-next|promote|resume|stabilize <phase-id>|closeout
       Inspect and drive the OpenClaw adoption phase controller.
+
+  friday setup
+      Interactive setup wizard — configure LLM provider, API keys, and channels.
 
   friday --help
       Show this help message.
@@ -2001,11 +2018,105 @@ function padEnd(s: string, len: number): string {
   return s.length >= len ? s.slice(0, len) : s + " ".repeat(len - s.length);
 }
 
+// ─── Setup Wizard ───
+
+async function cmdSetup(): Promise<void> {
+  const readline = await import("node:readline");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+  const ask = (question: string): Promise<string> =>
+    new Promise((resolve) => rl.question(question, (answer: string) => resolve(answer.trim())));
+
+  console.log("");
+  console.log("╔══════════════════════════════════════════════════╗");
+  console.log("║         Friday Setup Wizard                      ║");
+  console.log("╚══════════════════════════════════════════════════╝");
+  console.log("");
+
+  // Step 1: LLM Provider
+  console.log("Step 1: Choose your LLM provider");
+  console.log("  [1] Anthropic (Claude) — recommended");
+  console.log("  [2] OpenAI (GPT)");
+  console.log("  [3] Ollama (local, free, no API key needed)");
+  console.log("");
+  const providerChoice = await ask("Enter choice [1/2/3]: ");
+
+  let providerId: string;
+  let apiKey = "";
+  let baseUrl = "";
+
+  switch (providerChoice) {
+    case "2":
+      providerId = "openai";
+      console.log("");
+      apiKey = await ask("Enter your OpenAI API key: ");
+      if (!apiKey) {
+        console.error("API key is required for OpenAI.");
+        rl.close();
+        process.exitCode = 1;
+        return;
+      }
+      break;
+    case "3":
+      providerId = "ollama";
+      baseUrl = await ask("Ollama URL [http://localhost:11434]: ") || "http://localhost:11434";
+      console.log("No API key needed for Ollama.");
+      break;
+    default:
+      providerId = "anthropic";
+      console.log("");
+      apiKey = await ask("Enter your Anthropic API key: ");
+      if (!apiKey) {
+        console.error("API key is required for Anthropic.");
+        rl.close();
+        process.exitCode = 1;
+        return;
+      }
+      break;
+  }
+
+  // Step 2: Write .env
+  const stateDir = resolveStateDir({ env: process.env });
+  if (!existsSync(stateDir)) {
+    mkdirSync(stateDir, { recursive: true });
+  }
+
+  const envPath = join(stateDir, ".env");
+  const envLines: string[] = [];
+
+  if (apiKey) {
+    const envVarName = providerId === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
+    envLines.push(`${envVarName}=${apiKey}`);
+  }
+  if (baseUrl) {
+    envLines.push(`OLLAMA_BASE_URL=${baseUrl}`);
+  }
+
+  if (envLines.length > 0) {
+    writeFileSync(envPath, envLines.join("\n") + "\n", { mode: 0o600 });
+    console.log(`\nConfiguration saved to ${envPath}`);
+  }
+
+  // Step 3: Offer to start
+  console.log("");
+  const startNow = await ask("Start Friday now? [Y/n]: ");
+  rl.close();
+
+  if (startNow.toLowerCase() !== "n") {
+    console.log("\nStarting Friday...\n");
+    const parsed = parseArgs(["node", "friday", "start"]);
+    await cmdStart(parsed);
+  } else {
+    console.log("\nRun 'friday start' when ready.");
+    console.log(`Then open: http://localhost:${process.env.FRIDAY_PORT ?? "3141"}`);
+  }
+}
+
 export async function finalizeCliCommand(
   command: ParsedArgs["command"],
   exit: (code?: number) => unknown = process.exit,
 ): Promise<void> {
-  if (command === "start") {
+  if (command === "start" || command === "setup") {
     return;
   }
 
@@ -2065,6 +2176,9 @@ async function main(): Promise<void> {
       break;
     case "phases":
       cmdPhases(parsed);
+      break;
+    case "setup":
+      await cmdSetup();
       break;
     case "help":
     default:

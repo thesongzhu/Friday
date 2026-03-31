@@ -827,6 +827,28 @@ export function AssistantPage() {
     },
   });
 
+  const denyFixMutation = useMutation({
+    mutationFn: (actionId: string) => systemApi.denyAutoFixAction(actionId),
+    onSuccess: (result) => {
+      toast.success(`Denied: ${result.action.summary.title}`);
+      void invalidateAssistantShell(queryClient);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Deny failed");
+    },
+  });
+
+  const rollbackFixMutation = useMutation({
+    mutationFn: (actionId: string) => systemApi.rollbackAutoFixAction(actionId),
+    onSuccess: (result) => {
+      toast.success(`Rolled back: ${result.action.summary.title}`);
+      void invalidateAssistantShell(queryClient);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Rollback failed");
+    },
+  });
+
   const pauseLoopMutation = useMutation({
     mutationFn: (loopRunId: string) => systemApi.pauseAgentLoopRun(loopRunId),
     onSuccess: () => {
@@ -1255,8 +1277,12 @@ export function AssistantPage() {
               autoFixActions={autoFixActions}
               onApproveFix={(actionId) => approveFixMutation.mutate(actionId)}
               onExecuteFix={(actionId) => executeFixMutation.mutate(actionId)}
+              onDenyFix={(actionId) => denyFixMutation.mutate(actionId)}
+              onRollbackFix={(actionId) => rollbackFixMutation.mutate(actionId)}
               approvePending={approveFixMutation.isPending}
               executePending={executeFixMutation.isPending}
+              denyPending={denyFixMutation.isPending}
+              rollbackPending={rollbackFixMutation.isPending}
             />
 
             <OutcomeFeedSection
@@ -2620,8 +2646,12 @@ function IssueInboxSection(props: {
   autoFixActions: Awaited<ReturnType<typeof systemApi.listAutoFixActions>>["items"];
   onApproveFix: (actionId: string) => void;
   onExecuteFix: (actionId: string) => void;
+  onDenyFix: (actionId: string) => void;
+  onRollbackFix: (actionId: string) => void;
   approvePending: boolean;
   executePending: boolean;
+  denyPending: boolean;
+  rollbackPending: boolean;
 }) {
   return (
     <ShellCard eyebrow="Issue inbox" title="Problems, blockers, approvals, and repair suggestions">
@@ -2640,28 +2670,82 @@ function IssueInboxSection(props: {
             action={props.autoFixActions.find((item) => item.action.actionId === issue.actionId) ?? null}
             onApprove={props.onApproveFix}
             onExecute={props.onExecuteFix}
+            onDeny={props.onDenyFix}
+            onRollback={props.onRollbackFix}
             approvePending={props.approvePending}
             executePending={props.executePending}
+            denyPending={props.denyPending}
+            rollbackPending={props.rollbackPending}
           />
         ))}
         {props.incidents.slice(0, 4).map((record) => (
-          <article key={record.incident.incidentId} className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-white">{record.summary.rootCauseSummary}</p>
-                <p className="text-xs text-white/45">{formatRelative(record.incident.ts)}</p>
-              </div>
-              <StatusPill tone={mapTone(record.incident.severity)}>{record.incident.severity}</StatusPill>
-            </div>
-            <p className="text-sm text-white/65">{compactText(record.summary.rootCauseSummary)}</p>
-            <details className="mt-3 rounded-2xl border border-white/8 bg-white/[0.02] px-3 py-2 text-xs text-white/55">
-              <summary className="cursor-pointer list-none font-medium text-white/70">Advanced</summary>
-              <p className="mt-2">Risk class: {riskClassForFix(record.action?.action)}. Friday keeps approvals and rollback evidence attached to each proposed repair.</p>
-            </details>
-          </article>
+          <IncidentCard key={record.incident.incidentId} record={record} />
         ))}
       </div>
     </ShellCard>
+  );
+}
+
+function IncidentCard(props: {
+  record: Awaited<ReturnType<typeof systemApi.listDiagnosisIncidents>>["items"][number];
+}) {
+  const { record } = props;
+  const [expanded, setExpanded] = useState(false);
+  const diagnosisQuery = useQuery({
+    queryKey: ["diagnosis", "incident", record.incident.incidentId],
+    queryFn: () => systemApi.getIncidentDiagnosis(record.incident.incidentId),
+    enabled: expanded,
+  });
+
+  return (
+    <article className="rounded-2xl border border-white/10 bg-black/20 p-4">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-white">{record.summary.rootCauseSummary}</p>
+          <p className="text-xs text-white/45">{formatRelative(record.incident.ts)}</p>
+        </div>
+        <StatusPill tone={mapTone(record.incident.severity)}>{record.incident.severity}</StatusPill>
+      </div>
+      <p className="text-sm text-white/65">{compactText(record.summary.rootCauseSummary)}</p>
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="mt-3 flex items-center gap-1 text-xs font-medium text-white/50 transition hover:text-white/80"
+      >
+        <ChevronRight className={`h-3 w-3 transition ${expanded ? "rotate-90" : ""}`} />
+        {expanded ? "Hide diagnosis" : "Show diagnosis"}
+      </button>
+      {expanded && (
+        <div className="mt-3 rounded-2xl border border-white/8 bg-white/[0.02] px-3 py-2 text-xs text-white/55">
+          {diagnosisQuery.isLoading ? (
+            <p>Loading diagnosis...</p>
+          ) : diagnosisQuery.data?.diagnosis ? (
+            <div className="space-y-2">
+              {diagnosisQuery.data.summary.confidence !== undefined && (
+                <p>Confidence: {Math.round(diagnosisQuery.data.summary.confidence * 100)}%</p>
+              )}
+              {diagnosisQuery.data.summary.suggestedFixes.length > 0 && (
+                <div>
+                  <p className="font-medium text-white/70">Suggested fixes:</p>
+                  <ul className="ml-4 mt-1 list-disc space-y-0.5">
+                    {diagnosisQuery.data.summary.suggestedFixes.map((fix, i) => (
+                      <li key={i}>{fix}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {diagnosisQuery.data.summary.matchedLessonIds.length > 0 && (
+                <p>Matched lessons: {diagnosisQuery.data.summary.matchedLessonIds.length}</p>
+              )}
+              <p>Recurrence: {diagnosisQuery.data.summary.recurrenceCount} time(s)</p>
+              <p>Auto-fix eligible: {diagnosisQuery.data.summary.autoFixEligible ? "Yes" : "No"}</p>
+            </div>
+          ) : (
+            <p>No diagnosis available yet.</p>
+          )}
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -2857,8 +2941,12 @@ function IssueCard(props: {
   action: FridayFixPlanRecord | null;
   onApprove: (actionId: string) => void;
   onExecute: (actionId: string) => void;
+  onDeny: (actionId: string) => void;
+  onRollback: (actionId: string) => void;
   approvePending: boolean;
   executePending: boolean;
+  denyPending: boolean;
+  rollbackPending: boolean;
 }) {
   const action = props.action;
   const playbook = buildAssistantIssuePlaybook({
@@ -2909,14 +2997,26 @@ function IssueCard(props: {
           </div>
           <p className="text-xs text-white/55">{compactText(action.summary.summary)}</p>
           <div className="mt-3 flex flex-wrap gap-2">
-            {action.summary.requiresApproval ? (
+            {action.summary.requiresApproval && action.action.status !== "denied" ? (
               <ActionButton disabled={props.approvePending} onClick={() => props.onApprove(action.action.actionId)}>
                 Approve fix
               </ActionButton>
             ) : null}
-            <ActionButton tone="secondary" disabled={props.executePending} onClick={() => props.onExecute(action.action.actionId)}>
-              Execute
-            </ActionButton>
+            {action.action.status !== "denied" && action.action.status !== "executed" ? (
+              <ActionButton tone="secondary" disabled={props.executePending} onClick={() => props.onExecute(action.action.actionId)}>
+                Execute
+              </ActionButton>
+            ) : null}
+            {action.action.status !== "denied" && action.action.status !== "executed" ? (
+              <ActionButton tone="secondary" disabled={props.denyPending} onClick={() => props.onDeny(action.action.actionId)}>
+                Deny
+              </ActionButton>
+            ) : null}
+            {action.action.status === "executed" ? (
+              <ActionButton tone="secondary" disabled={props.rollbackPending} onClick={() => props.onRollback(action.action.actionId)}>
+                Rollback
+              </ActionButton>
+            ) : null}
             <Link
               className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
               to={buildObservabilityHref({ focus: "alerts", issueId: props.issue.id })}
