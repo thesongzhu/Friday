@@ -1641,7 +1641,11 @@ export function createFridayAgentRuntime(
           }
 
           const generatorClarificationSignal = extractGeneratorClarificationSignal(allToolCalls);
-          if (generatorClarificationSignal) {
+          // Layer-2 guard: if the original user task is clearly a Q&A / summarization
+          // request, do NOT surface generator clarification — the LLM should answer
+          // directly instead of routing through the workflow/skill generator.
+          const QA_BYPASS_L2 = /\b(summarize|summarise|explain|describe|what is|tell me about|list|show|how does|overview|translate|recap|compare|analyze|analyse)\b/i;
+          if (generatorClarificationSignal && !QA_BYPASS_L2.test(params.task)) {
             return await transitionToAwaitingClarification({
               ...generatorClarificationSignal,
               currentPlanReview: planReview,
