@@ -80,7 +80,7 @@ const HELP_PATTERN: IntentPattern = {
 
 const CANCEL_PATTERN: IntentPattern = {
   name: "cancel",
-  regex: /^\s*(stop|cancel|abort|取消|停止|算了|never\s*mind|nevermind)\s*[!.?]*\s*$/i,
+  regex: /^\s*(stop|cancel|abort|取消|停止|算了吧?|never\s*mind|nevermind)\s*[!.?]*\s*$/i,
   action: "respond",
   response: "Got it, I've stopped the current operation. Let me know if you need anything else!",
   confidence: 0.9,

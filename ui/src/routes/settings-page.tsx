@@ -7,11 +7,13 @@ import type {
   FridayCommunicationPersonaSettings,
 } from "@friday-operator-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Cpu, KeyRound, MessageCircleMore, Shield, Wifi } from "lucide-react";
+import { Brain, Cpu, DollarSign, KeyRound, MessageCircleMore, Shield, Wifi } from "lucide-react";
 import { toast } from "sonner";
 import { healthApi } from "@/lib/api/health";
+import { providerUsageApi } from "@/lib/api/provider-usage";
 import { providersApi } from "@/lib/api/providers";
 import { systemApi } from "@/lib/api/system";
+import { apiClient } from "@/lib/api/client";
 import { ShellCard, StatusPill, ActionButton } from "@/components/core/primitives";
 import { systemKeys } from "@/lib/system/query-keys";
 import { summarizeHealthReasons } from "@/lib/system/view-models";
@@ -89,6 +91,21 @@ export function SettingsPage() {
   const { data: persona } = useQuery({
     queryKey: systemKeys.communicationPersona(),
     queryFn: () => systemApi.getCommunicationPersona(),
+    retry: 0,
+  });
+
+  const { data: budgetStatus } = useQuery({
+    queryKey: ["settings", "budget"],
+    queryFn: () => providerUsageApi.getBudget(),
+    retry: 0,
+  });
+
+  const { data: learnedFacts = [] } = useQuery({
+    queryKey: ["settings", "learnedFacts"],
+    queryFn: async () => {
+      const data = await apiClient.get<{ items: Array<{ key: string; value: unknown; confidence: number; evidenceCount: number; lastConfirmedAt: string }> }>("/v1/uix/learned-facts");
+      return data.items;
+    },
     retry: 0,
   });
 
@@ -353,6 +370,74 @@ export function SettingsPage() {
             <p className="text-sm text-white/60">Waiting for a system snapshot.</p>
           )}
         </ShellCard>
+
+        <ShellCard eyebrow="Token Economy" title="LLM Budget">
+          {budgetStatus ? (
+            <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <DiagnosticTile
+                  icon={<DollarSign className="h-4 w-4" />}
+                  label="Status"
+                  value={budgetStatus.state}
+                />
+                <DiagnosticTile
+                  icon={<DollarSign className="h-4 w-4" />}
+                  label="Spent This Month"
+                  value={`$${budgetStatus.spentUsd.toFixed(2)}`}
+                />
+              </div>
+              <div className="space-y-2">
+                <DiagnosticRow label="Month" value={budgetStatus.month} />
+                <DiagnosticRow
+                  label="Monthly Limit"
+                  value={budgetStatus.config ? `$${budgetStatus.config.monthlyLimitUsd.toFixed(2)}` : "No limit set"}
+                />
+                <DiagnosticRow
+                  label="Remaining"
+                  value={budgetStatus.remainingUsd !== null ? `$${budgetStatus.remainingUsd.toFixed(2)}` : "Unlimited"}
+                />
+              </div>
+              {budgetStatus.state !== "ok" ? (
+                <div className={`rounded-2xl border p-3 text-sm ${budgetStatus.state === "over_limit" ? "border-red-500/20 bg-red-500/5 text-red-300" : "border-yellow-500/20 bg-yellow-500/5 text-yellow-300"}`}>
+                  {budgetStatus.state === "over_limit"
+                    ? "Budget exceeded — Friday will prefer local models (Ollama) until the next billing cycle."
+                    : "Approaching budget limit — Friday will prefer cheaper models when possible."}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm text-white/60">Budget data unavailable.</p>
+          )}
+        </ShellCard>
+
+        {learnedFacts.length > 0 ? (
+          <ShellCard eyebrow="Learning" title="What Friday Knows About You">
+            <div className="space-y-3">
+              <p className="text-sm text-white/60">
+                These are preferences and facts Friday has learned from your interactions.
+              </p>
+              {learnedFacts.map((fact) => (
+                <div key={fact.key} className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Brain className="h-3.5 w-3.5 text-white/40" />
+                        <p className="text-sm font-medium text-white">{fact.key}</p>
+                      </div>
+                      <p className="mt-1 text-sm text-white/70">{String(fact.value)}</p>
+                    </div>
+                    <StatusPill tone={fact.confidence >= 0.7 ? "success" : fact.confidence >= 0.4 ? "warning" : "neutral"}>
+                      {(fact.confidence * 100).toFixed(0)}%
+                    </StatusPill>
+                  </div>
+                  <p className="mt-2 text-xs text-white/30">
+                    {String(fact.evidenceCount)} evidence · last confirmed {formatTimestamp(fact.lastConfirmedAt)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </ShellCard>
+        ) : null}
       </div>
     </div>
   );

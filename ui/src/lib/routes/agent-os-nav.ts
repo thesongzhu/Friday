@@ -51,6 +51,11 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     description: "Scheduled work, quick runs, and queue control",
   },
   {
+    label: "Memory",
+    path: "/memory",
+    description: "View, search, and manage what Friday remembers about you",
+  },
+  {
     label: "Observability",
     path: "/observability",
     description: "Trace, audit, alerts, and health for operator debugging",
@@ -107,7 +112,10 @@ export function resolvePageTitle(pathname: string): string {
   if (pathname.startsWith("/settings")) {
     return "Settings";
   }
-  if (pathname.startsWith("/command-center") || pathname.startsWith("/sessions") || pathname.startsWith("/memory")) {
+  if (pathname.startsWith("/memory")) {
+    return "Memory";
+  }
+  if (pathname.startsWith("/command-center") || pathname.startsWith("/sessions")) {
     return "Operator Console";
   }
   if (pathname.startsWith("/login")) {

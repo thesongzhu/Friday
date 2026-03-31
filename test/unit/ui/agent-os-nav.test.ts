@@ -17,6 +17,7 @@ describe("agent os navigation", () => {
       "/fleet",
       "/marketplace",
       "/automations",
+      "/memory",
       "/observability",
       "/command-center",
       "/settings",
@@ -38,6 +39,7 @@ describe("agent os navigation", () => {
     expect(resolvePageTitle("/workflows/123")).toBe("Workflows");
     expect(resolvePageTitle("/fleet")).toBe("Fleet");
     expect(resolvePageTitle("/automations")).toBe("Task Queue");
+    expect(resolvePageTitle("/memory")).toBe("Memory");
     expect(resolvePageTitle("/observability")).toBe("Observability");
     expect(resolvePageTitle("/settings")).toBe("Settings");
     expect(resolvePageTitle("/command-center")).toBe("Operator Console");

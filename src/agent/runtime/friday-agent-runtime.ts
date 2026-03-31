@@ -114,8 +114,8 @@ function buildReplyAnchorFallbackResponse(params: {
 }
 
 function hasExplicitResearchIntent(task: string): boolean {
-  return /\b(search|research|look up|lookup|find sources|find source|latest|news|browse|google)\b/i.test(task)
-    || /(搜索|搜一下|查一下|查一查|上网查|最新|新闻|帮我找资料)/.test(task);
+  return /\b(search|research|look up|lookup|find sources|find source|latest|news|browse|google|compare|price|current|today|now|check online)\b/i.test(task)
+    || /(搜索|搜一下|查一下|查一查|上网查|最新|新闻|帮我找资料|对比|价格|多少钱|现在|当前|查查)/.test(task);
 }
 
 // ─── Factory ───

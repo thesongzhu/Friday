@@ -23,6 +23,7 @@ const SkillsPage = lazy(async () => import("@/routes/skills-page").then((module)
 const SkillGeneratorPage = lazy(async () => import("@/routes/skill-generator-page").then((module) => ({ default: module.SkillGeneratorPage })));
 const WorkflowBuilderPage = lazy(async () => import("@/routes/workflow-builder-page").then((module) => ({ default: module.WorkflowBuilderPage })));
 const ChatPage = lazy(async () => import("@/routes/chat-page").then((module) => ({ default: module.ChatPage })));
+const MemoryPage = lazy(async () => import("@/routes/memory-page").then((module) => ({ default: module.MemoryPage })));
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
 
 function FullscreenMessage(props: { title: string; detail: string; actions?: string[] }) {
@@ -290,8 +291,14 @@ export const router = createBrowserRouter([
           { path: "workflows/*", element: <LegacyRedirectPage /> },
           { path: "sessions", element: <LegacyRedirectPage /> },
           { path: "sessions/*", element: <LegacyRedirectPage /> },
-          { path: "memory", element: <LegacyRedirectPage /> },
-          { path: "memory/*", element: <LegacyRedirectPage /> },
+          {
+            path: "memory",
+            element: (
+              <RouteSuspense title="Loading memory" detail="Friday is preparing the memory store view.">
+                <MemoryPage />
+              </RouteSuspense>
+            ),
+          },
         ],
       },
     ],

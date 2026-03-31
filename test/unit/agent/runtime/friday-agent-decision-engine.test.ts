@@ -58,7 +58,7 @@ describe("createDefaultFridayDecisionEngine", () => {
 
   // ─── Cancel patterns ────────────────────────────────────────
 
-  it.each(["stop", "cancel", "取消", "算了", "nevermind"])
+  it.each(["stop", "cancel", "取消", "算了", "算了吧", "nevermind"])
   ("recognizes cancel: %s", (input) => {
     expect(engine.canDecideLocally(makeCtx(input))).toBe(true);
   });
