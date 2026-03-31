@@ -5,6 +5,7 @@ import { GitBranch, Package, PlayCircle, RefreshCcw } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { HelpTooltip } from "@/components/core/help-tooltip";
+import { workflowRunsApi } from "@/lib/api/workflow-runs";
 import { workflowsApi } from "@/lib/api/workflows";
 import { buildObservabilityHref } from "@/lib/observability/view-models";
 import { systemApi } from "@/lib/api/system";
@@ -129,6 +130,45 @@ export function WorkflowsPage() {
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Workflow deploy failed");
+    },
+  });
+
+  const cancelRunMutation = useMutation({
+    mutationFn: (runId: string) => workflowRunsApi.cancel(runId),
+    onSuccess: () => {
+      toast.success("Run cancelled");
+      if (selectedWorkflowId) {
+        void queryClient.invalidateQueries({ queryKey: systemKeys.workflowOverview(selectedWorkflowId) });
+      }
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to cancel run");
+    },
+  });
+
+  const retryRunMutation = useMutation({
+    mutationFn: (runId: string) => workflowRunsApi.retry(runId),
+    onSuccess: () => {
+      toast.success("Run retried");
+      if (selectedWorkflowId) {
+        void queryClient.invalidateQueries({ queryKey: systemKeys.workflowOverview(selectedWorkflowId) });
+      }
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to retry run");
+    },
+  });
+
+  const resumeRunMutation = useMutation({
+    mutationFn: (runId: string) => workflowRunsApi.resume(runId),
+    onSuccess: () => {
+      toast.success("Run resumed");
+      if (selectedWorkflowId) {
+        void queryClient.invalidateQueries({ queryKey: systemKeys.workflowOverview(selectedWorkflowId) });
+      }
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to resume run");
     },
   });
 
@@ -450,6 +490,56 @@ export function WorkflowsPage() {
             </div>
           ) : (
             <p className="text-sm text-white/60">Friday has not run this workflow yet.</p>
+          )}
+        </ShellCard>
+
+        <ShellCard eyebrow="Run history" title="Recent workflow executions">
+          {overviewQuery.data?.recentRuns.length ? (
+            <div className="space-y-3">
+              {overviewQuery.data.recentRuns.map((run) => (
+                <div key={run.id} className="agent-subcard p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-white">{run.id.slice(0, 8)}</p>
+                      <p className="text-xs text-white/50">
+                        {formatTimestamp(run.startedAt)}
+                        {run.finishedAt ? ` — ${formatTimestamp(run.finishedAt)}` : ""}
+                      </p>
+                    </div>
+                    <StatusPill tone={toneForRunStatus(run.status)}>{run.status}</StatusPill>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(run.status === "running" || run.status === "queued") ? (
+                      <ActionButton
+                        tone="danger"
+                        onClick={() => cancelRunMutation.mutate(run.id)}
+                        disabled={cancelRunMutation.isPending}
+                      >
+                        Cancel
+                      </ActionButton>
+                    ) : null}
+                    {run.status === "failed" ? (
+                      <ActionButton
+                        onClick={() => retryRunMutation.mutate(run.id)}
+                        disabled={retryRunMutation.isPending}
+                      >
+                        Retry
+                      </ActionButton>
+                    ) : null}
+                    {run.status === "paused" ? (
+                      <ActionButton
+                        onClick={() => resumeRunMutation.mutate(run.id)}
+                        disabled={resumeRunMutation.isPending}
+                      >
+                        Resume
+                      </ActionButton>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-white/60">No runs recorded yet for this workflow.</p>
           )}
         </ShellCard>
 

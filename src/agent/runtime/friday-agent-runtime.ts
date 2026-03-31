@@ -1065,6 +1065,14 @@ export function createFridayAgentRuntime(
           }
         }
 
+        // ── Disclose disabled tools so the LLM does not waste turns calling them ──
+        if (disabledToolNames.size > 0) {
+          effectiveSystemPrompt +=
+            "\n\nNote: The following tools are disabled for this run and will fail if called: " +
+            [...disabledToolNames].join(", ") +
+            ". Do not attempt to use them.";
+        }
+
         let iterations = 0;
         let evidenceEnforcementRetries = 0;
         let timelinessEnforcementRetries = 0;
@@ -1436,7 +1444,9 @@ export function createFridayAgentRuntime(
               // P1-SEC-006: Treat null (rules evaluation error) as deny — fail-closed
               if (policyResult === null || (policyResult && !policyResult.allowed)) {
                 const message = policyResult?.message
-                  ?? `Tool '${toolUse.name}' blocked by policy`;
+                  ?? (policyResult === null
+                    ? `Tool '${toolUse.name}' blocked — policy evaluation temporarily unavailable`
+                    : `Tool '${toolUse.name}' blocked by policy`);
                 const blockedResult = {
                   content: message,
                   isError: true,
@@ -2094,19 +2104,24 @@ async function safeEvaluateRules(
   context: FridayEvaluationContext,
   signal?: AbortSignal,
 ): Promise<FridayEvaluationResult | null> {
-  try {
-    return await evaluateRules(
-      {
-        ...context,
-        scopes: withRulesEvaluateScope(context.scopes),
-      },
-      signal,
-    );
-  } catch (err) {
-    // P1-SEC-006: Log the error — callers treat null as deny (fail-closed)
-    console.warn("[friday][SECURITY] Rules evaluation failed:", err);
-    return null;
+  // P1-SEC-006: Retry once on transient failure before falling back to deny (fail-closed).
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await evaluateRules(
+        {
+          ...context,
+          scopes: withRulesEvaluateScope(context.scopes),
+        },
+        signal,
+      );
+    } catch (err) {
+      console.warn(`[friday][SECURITY] Rules evaluation attempt ${String(attempt + 1)} failed:`, err);
+      if (attempt === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
   }
+  return null;
 }
 
 function normalizeHistoryMessages(

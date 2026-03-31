@@ -3,6 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, ChevronRight, Loader2, Sparkles } from "lucide-react";
 import { agentApi } from "@/lib/api/agent";
+import { apiClient } from "@/lib/api/client";
+import { providerUsageApi } from "@/lib/api/provider-usage";
 import { systemApi } from "@/lib/api/system";
 import { GoalCard } from "@/components/guided/goal-card";
 import { OneClickAction } from "@/components/guided/one-click-action";
@@ -74,6 +76,23 @@ export function HomePage() {
     refetchInterval: 15_000,
   });
 
+  const budgetQuery = useQuery({
+    queryKey: ["home", "budget"],
+    queryFn: () => providerUsageApi.getBudget(),
+    retry: 0,
+    refetchInterval: 60_000,
+  });
+
+  const learnedFactsQuery = useQuery({
+    queryKey: ["home", "learned-facts-count"],
+    queryFn: async () => {
+      const data = await apiClient.get<{ items: Array<{ key: string }> }>("/v1/uix/learned-facts");
+      return data.items.length;
+    },
+    retry: 0,
+    refetchInterval: 60_000,
+  });
+
   const recentRuns = recentRunsQuery.data ?? [];
   const activeRun = recentRuns.find(
     (run) =>
@@ -100,6 +119,27 @@ export function HomePage() {
           Pick a goal. Friday will investigate, present options, and guide you step by step.
         </p>
       </div>
+
+      {/* Status indicators */}
+      {(budgetQuery.data?.config || (learnedFactsQuery.data ?? 0) > 0) ? (
+        <div className="flex flex-wrap items-center gap-4 text-xs text-white/40">
+          {budgetQuery.data?.config ? (
+            <span className="flex items-center gap-1.5">
+              <span className={budgetQuery.data.state === "over_limit" ? "text-red-400" : budgetQuery.data.state === "near_limit" ? "text-yellow-400" : "text-emerald-400"}>
+                {budgetQuery.data.state === "ok" ? "\u2713" : budgetQuery.data.state === "near_limit" ? "\u26A0" : "\u2717"}
+              </span>
+              Budget: ${budgetQuery.data.spentUsd.toFixed(2)} / ${budgetQuery.data.config.monthlyLimitUsd.toFixed(2)}
+            </span>
+          ) : null}
+          {(learnedFactsQuery.data ?? 0) > 0 ? (
+            <span>
+              {(learnedFactsQuery.data ?? 0) >= 10
+                ? `Friday knows your preferences (${String(learnedFactsQuery.data)} facts)`
+                : `Friday is learning about you (${String(learnedFactsQuery.data)} facts recorded)`}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Active flow */}
       {activeRun && (
