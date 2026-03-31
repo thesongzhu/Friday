@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { systemApi } from "@/lib/api/system";
 import type { FridayGuidedWizardState, FridayUixWizardResponse } from "@/lib/api/system-types";
 
@@ -24,7 +24,6 @@ export interface UseGuidedFlowResult {
 
 export function useGuidedFlow(options: UseGuidedFlowOptions): UseGuidedFlowResult {
   const { wizardId, assistantSessionKey, enabled = true } = options;
-  const queryClient = useQueryClient();
   const [activeContextId, setActiveContextId] = useState<string | null>(null);
   const [wizardState, setWizardState] = useState<FridayGuidedWizardState | null>(null);
   const [wizardResponse, setWizardResponse] = useState<FridayUixWizardResponse | null>(null);
