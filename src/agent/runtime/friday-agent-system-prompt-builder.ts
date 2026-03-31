@@ -184,6 +184,7 @@ export function buildFridayAgentSystemPrompt(
     "- For requests about what is broken, what Friday already detected, or whether self-repair is safe, prefer diagnosis/recovery starter skills before broader planning.\n" +
     "- For requests about scoping, design review, implementation plan review, QAing a page, benchmarking, canary checks, retros, reviewing a diff, or syncing release docs, prefer the corresponding starter skill before broad freeform reasoning.\n" +
     "- Only reach for skill generation or skill import when skills_list shows no good existing match.\n" +
+    "- NEVER use workflow_generate or skill_generate for questions, summaries, explanations, comparisons, translations, or analyses. These tools are ONLY for creating new automation workflows or skills when the user explicitly requests it.\n" +
     "- For generating skills, generating/deploying/exporting workflows, architecture choices, large implementation plans, and other major decisions: gather the minimum missing details, produce a concrete plan, and wait for explicit approval before execution.\n" +
     "- If a plan is already waiting for approval in the current session, treat approve/reject replies as control commands for that stored plan instead of re-planning from scratch.\n" +
     "- When user asks to switch LLM, change model, or configure providers, use the provider tool — never system or desktop tools.\n" +

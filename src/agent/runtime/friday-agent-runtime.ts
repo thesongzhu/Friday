@@ -2987,11 +2987,35 @@ function responseStatesAutonomyBoundaryClearly(text: string): boolean {
 
 function taskLooksLikeExternalAction(task: string): boolean {
   if (/https?:\/\/\S+/i.test(task)) return true;
+  // "summarize" removed — it's a Q&A verb, not an external action.
+  // Handled separately by taskIsQaWithProvidedContext().
   const english =
-    /\b(open|visit|browse|search|lookup|check|watch|summari[sz]e|fetch|download|website|youtube|reddit|news|tweet|url|link)\b/i;
+    /\b(open|visit|browse|search|lookup|check|watch|fetch|download|website|youtube|reddit|news|tweet|url|link)\b/i;
   const chinese =
-    /(打开|访问|浏览|搜索|查找|查看|抓取|总结|概括|视频|网页|网站|链接|新闻|油管|YouTube)/;
+    /(打开|访问|浏览|搜索|查找|查看|抓取|视频|网页|网站|链接|新闻|油管|YouTube)/;
   return english.test(task) || chinese.test(task);
+}
+
+/**
+ * Detect Q&A tasks that contain web-action keywords but are asking about
+ * provided/internal content — NOT requesting an external lookup.
+ *
+ * Example: "Summarize this text about automation" → true (pure Q&A)
+ * Example: "Search the web and summarize results" → false (needs external tools)
+ * Example: "Summarize https://example.com" → false (needs fetch)
+ */
+const QA_CONTEXT_VERBS =
+  /\b(summarize|summarise|explain|describe|what is|tell me about|how does|overview|analyze|analyse|recap|compare|translate)\b/i;
+const QA_CONTEXT_VERBS_CN =
+  /(总结|概括|解释|描述|分析|对比|翻译|概述)/;
+const EXPLICIT_EXTERNAL_ACTION =
+  /\b(open|visit|browse|go to|navigate|download|fetch from|look up on|search (?:the )?(?:web|internet|online))\b/i;
+
+function taskIsQaWithProvidedContext(task: string): boolean {
+  if (!QA_CONTEXT_VERBS.test(task) && !QA_CONTEXT_VERBS_CN.test(task)) return false;
+  if (EXPLICIT_EXTERNAL_ACTION.test(task)) return false;
+  if (/https?:\/\/\S+/i.test(task)) return false;
+  return true;
 }
 
 function taskLooksLikeDesktopAction(task: string): boolean {
@@ -3162,6 +3186,9 @@ function toolCallViolatesDesktopInspectionIntent(params: {
 
 function classifyEvidenceTask(task: string): "web" | "desktop" | null {
   if (taskLooksLikeDesktopAction(task)) return "desktop";
+  // Q&A tasks may contain web-action keywords ("search", "check") but are
+  // asking about provided/internal content — skip evidence closure for these.
+  if (taskIsQaWithProvidedContext(task)) return null;
   if (taskLooksLikeExternalAction(task)) return "web";
   return null;
 }
