@@ -480,8 +480,12 @@ export function createFridayProviderInferenceClient(
             // Merge cache headers — append anthropic-beta flags instead of replacing
             const cacheHeaders = cacheResult.extraHeaders;
             if (cacheHeaders["anthropic-beta"] && headers["anthropic-beta"]) {
-              cacheHeaders["anthropic-beta"] =
-                `${headers["anthropic-beta"]},${cacheHeaders["anthropic-beta"]}`;
+              // Deduplicate beta flags to avoid Anthropic API rejecting unknown combinations
+              const existing = new Set(headers["anthropic-beta"].split(",").map((f: string) => f.trim()));
+              for (const flag of cacheHeaders["anthropic-beta"].split(",")) {
+                existing.add(flag.trim());
+              }
+              cacheHeaders["anthropic-beta"] = [...existing].join(",");
             }
             headers = { ...headers, ...cacheHeaders };
           }
@@ -495,6 +499,10 @@ export function createFridayProviderInferenceClient(
 
           if (!response.ok) {
             const errorText = await response.text();
+            console.error(
+              `[friday][generator-llm] Provider ${provider.name} (${api}, model=${model}) returned ${response.status}:`,
+              errorText.slice(0, 1000),
+            );
             throw new FridayDomainError(
               "PROVIDER_ERROR",
               `Provider ${provider.name} returned ${response.status}: ${errorText.slice(0, 500)}`,

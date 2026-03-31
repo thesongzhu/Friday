@@ -1166,6 +1166,10 @@ export function createFridayAgentRuntime(
             const onParentAbort = () => turnTimeoutController.abort(runAbortController.signal.reason);
             runAbortController.signal.addEventListener("abort", onParentAbort, { once: true });
 
+            // OC-009: Validate tool_use/tool_result pairing before sending to LLM.
+            // Anthropic API rejects messages where tool_use blocks lack corresponding tool_result blocks.
+            repairOrphanedToolUseBlocks(messages);
+
             try {
               streamResult = await streamLlmResponse({
                 llmClient,
@@ -2123,6 +2127,56 @@ async function safeEvaluateRules(
     }
   }
   return null;
+}
+
+/**
+ * OC-009: Ensure every tool_use block in the messages array has a matching tool_result.
+ * Anthropic API requires strict tool_use → tool_result pairing. If a prior loop iteration
+ * exited early (abort, generator clarification, etc.), orphaned tool_use blocks may remain.
+ * This mutates the messages array in-place by injecting synthetic error tool_results.
+ */
+function repairOrphanedToolUseBlocks(messages: FridayAgentMessage[]): void {
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i]!;
+    if (msg.role !== "assistant" || typeof msg.content === "string") continue;
+
+    const blocks = msg.content as Array<{ type: string; id?: string; name?: string }>;
+    const toolUseIds = blocks
+      .filter((b) => b.type === "tool_use" && b.id)
+      .map((b) => b.id!);
+
+    if (toolUseIds.length === 0) continue;
+
+    // Check the next message for matching tool_result blocks
+    const next = messages[i + 1];
+    if (!next || next.role !== "user" || typeof next.content === "string") {
+      // No tool_result message follows — inject one
+      const syntheticResults = toolUseIds.map((id) => ({
+        type: "tool_result" as const,
+        tool_use_id: id,
+        content: "Tool result unavailable — execution was interrupted.",
+        is_error: true,
+      }));
+      messages.splice(i + 1, 0, { role: "user", content: syntheticResults });
+      continue;
+    }
+
+    // Check for missing individual tool_results
+    const resultBlocks = (next.content as Array<{ type: string; tool_use_id?: string }>);
+    const resultIds = new Set(
+      resultBlocks.filter((b) => b.type === "tool_result" && b.tool_use_id).map((b) => b.tool_use_id!),
+    );
+    for (const id of toolUseIds) {
+      if (!resultIds.has(id)) {
+        resultBlocks.push({
+          type: "tool_result",
+          tool_use_id: id,
+          content: "Tool result unavailable — execution was interrupted.",
+          is_error: true,
+        } as typeof resultBlocks[number]);
+      }
+    }
+  }
 }
 
 function normalizeHistoryMessages(

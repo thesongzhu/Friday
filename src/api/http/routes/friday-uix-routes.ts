@@ -24,6 +24,11 @@ export interface FridayUixRoutesDeps {
   service: FridayUixSurfaceService;
   /** Optional: expose learned preference facts to users for transparency. */
   listLearnedFacts?: (input: { userId: string }) => Array<{ key: string; value: unknown; confidence: number; evidenceCount: number; lastConfirmedAt: string }>;
+  /** Optional: emit learning events when preferences are written via the API,
+   *  so the preference-extraction pipeline can produce learned facts. */
+  collectLearningEvents?: (events: Array<{ eventId: string; ts: string; userId: string; kind: "user_correction"; payload: Record<string, unknown> }>) => void;
+  /** Generate a unique ID for learning events. */
+  idGenerator?: () => string;
 }
 
 function requireUserId(principal: { userId?: string } | null): string {
@@ -141,12 +146,37 @@ export function createFridayUixRoutes(
             throw new FridayDomainError("INVALID_MBTI_TYPE", "Invalid MBTI type. Valid values: INTJ, INTP, ENTJ, ENTP, INFJ, INFP, ENFJ, ENFP, ISTJ, ISFJ, ESTJ, ESFJ, ISTP, ISFP, ESTP, ESFP", { httpStatus: 400 });
           }
         }
-        return deps.service.updatePreferences({
+        const result = await deps.service.updatePreferences({
           userId,
           request: {
             preferences: preferences as FridayUpdateUserPreferencesResponse["preferences"],
           },
         });
+
+        // Emit learning events so the preference-extraction pipeline can
+        // produce learned facts from API-driven preference writes.
+        if (deps.collectLearningEvents && preferences.length > 0) {
+          const now = new Date().toISOString();
+          const genId = deps.idGenerator ?? (() => `evt-pref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+          deps.collectLearningEvents(
+            preferences
+              .filter((p): p is Record<string, unknown> => p != null && typeof p === "object")
+              .map((p) => ({
+                eventId: genId(),
+                ts: now,
+                userId,
+                kind: "user_correction" as const,
+                payload: {
+                  correctedField: String(p.key ?? ""),
+                  newValue: p.value,
+                  category: p.category,
+                  source: "uix_preferences_api",
+                },
+              })),
+          );
+        }
+
+        return result;
       },
     },
     {

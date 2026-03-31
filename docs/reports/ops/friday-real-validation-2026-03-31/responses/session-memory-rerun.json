@@ -1,0 +1,359 @@
+{
+  "startedAt": "2026-03-31T09:40:02.452Z",
+  "createSession": {
+    "status": 200,
+    "text": "{\"ok\":true,\"data\":{\"session\":{\"id\":\"6a29a866-d79c-4182-9d28-89c4aa95584c\",\"key\":\"manual-real:default:manualreal20260331chatmnefej2t\",\"channel\":\"manual-real\",\"accountId\":\"default\",\"chatId\":\"manualreal20260331chatmnefej2t\",\"chatKind\":\"dm\",\"status\":\"active\",\"rootSessionKey\":\"manual-real:default:manualreal20260331chatmnefej2t\",\"metadata\":{},\"contextInputTokens\":0,\"contextOutputTokens\":0,\"contextTotalTokens\":0,\"messageCount\":0,\"createdAt\":\"2026-03-31T09:40:02.455Z\",\"updatedAt\":\"2026-03-31T09:40:02.455Z\",\"lastActivityAt\":\"2026-03-31T09:40:02.455Z\",\"statusChangedAt\":\"2026-03-31T09:40:02.455Z\"}},\"requestId\":\"dbd86dff-d0b9-47d2-89df-150e73bccf88\"}",
+    "json": {
+      "ok": true,
+      "data": {
+        "session": {
+          "id": "6a29a866-d79c-4182-9d28-89c4aa95584c",
+          "key": "manual-real:default:manualreal20260331chatmnefej2t",
+          "channel": "manual-real",
+          "accountId": "default",
+          "chatId": "manualreal20260331chatmnefej2t",
+          "chatKind": "dm",
+          "status": "active",
+          "rootSessionKey": "manual-real:default:manualreal20260331chatmnefej2t",
+          "metadata": {},
+          "contextInputTokens": 0,
+          "contextOutputTokens": 0,
+          "contextTotalTokens": 0,
+          "messageCount": 0,
+          "createdAt": "2026-03-31T09:40:02.455Z",
+          "updatedAt": "2026-03-31T09:40:02.455Z",
+          "lastActivityAt": "2026-03-31T09:40:02.455Z",
+          "statusChangedAt": "2026-03-31T09:40:02.455Z"
+        }
+      },
+      "requestId": "dbd86dff-d0b9-47d2-89df-150e73bccf88"
+    }
+  },
+  "sessionKey": "manual-real:default:manualreal20260331chatmnefej2t",
+  "createMessage": {
+    "status": 200,
+    "text": "{\"ok\":true,\"data\":{\"message\":{\"id\":\"414ec4a9-349e-4f65-ae9b-6fff1b5b44bd\",\"sessionId\":\"6a29a866-d79c-4182-9d28-89c4aa95584c\",\"sessionKey\":\"manual-real:default:manualreal20260331chatmnefej2t\",\"sequence\":1,\"role\":\"user\",\"content\":\"Remember that the preferred CLI is rg, not grep.\",\"contentText\":\"Remember that the preferred CLI is rg, not grep.\",\"tokenCount\":0,\"metadata\":{},\"memoryExtractStatus\":\"pending\",\"occurredAt\":\"2026-03-31T09:40:02.458Z\",\"createdAt\":\"2026-03-31T09:40:02.458Z\",\"updatedAt\":\"2026-03-31T09:40:02.458Z\"}},\"requestId\":\"0ffd8131-12e6-4db7-891a-c7638675d54f\"}",
+    "json": {
+      "ok": true,
+      "data": {
+        "message": {
+          "id": "414ec4a9-349e-4f65-ae9b-6fff1b5b44bd",
+          "sessionId": "6a29a866-d79c-4182-9d28-89c4aa95584c",
+          "sessionKey": "manual-real:default:manualreal20260331chatmnefej2t",
+          "sequence": 1,
+          "role": "user",
+          "content": "Remember that the preferred CLI is rg, not grep.",
+          "contentText": "Remember that the preferred CLI is rg, not grep.",
+          "tokenCount": 0,
+          "metadata": {},
+          "memoryExtractStatus": "pending",
+          "occurredAt": "2026-03-31T09:40:02.458Z",
+          "createdAt": "2026-03-31T09:40:02.458Z",
+          "updatedAt": "2026-03-31T09:40:02.458Z"
+        }
+      },
+      "requestId": "0ffd8131-12e6-4db7-891a-c7638675d54f"
+    }
+  },
+  "listMessages": {
+    "status": 200,
+    "text": "{\"ok\":true,\"data\":{\"items\":[{\"id\":\"414ec4a9-349e-4f65-ae9b-6fff1b5b44bd\",\"sessionId\":\"6a29a866-d79c-4182-9d28-89c4aa95584c\",\"sessionKey\":\"manual-real:default:manualreal20260331chatmnefej2t\",\"sequence\":1,\"role\":\"user\",\"content\":\"Remember that the preferred CLI is rg, not grep.\",\"contentText\":\"Remember that the preferred CLI is rg, not grep.\",\"tokenCount\":0,\"metadata\":{},\"memoryExtractStatus\":\"pending\",\"occurredAt\":\"2026-03-31T09:40:02.458Z\",\"createdAt\":\"2026-03-31T09:40:02.458Z\",\"updatedAt\":\"2026-03-31T09:40:02.458Z\"}]},\"requestId\":\"2cc8de69-177c-4cc0-9274-d2a811bcc312\"}",
+    "json": {
+      "ok": true,
+      "data": {
+        "items": [
+          {
+            "id": "414ec4a9-349e-4f65-ae9b-6fff1b5b44bd",
+            "sessionId": "6a29a866-d79c-4182-9d28-89c4aa95584c",
+            "sessionKey": "manual-real:default:manualreal20260331chatmnefej2t",
+            "sequence": 1,
+            "role": "user",
+            "content": "Remember that the preferred CLI is rg, not grep.",
+            "contentText": "Remember that the preferred CLI is rg, not grep.",
+            "tokenCount": 0,
+            "metadata": {},
+            "memoryExtractStatus": "pending",
+            "occurredAt": "2026-03-31T09:40:02.458Z",
+            "createdAt": "2026-03-31T09:40:02.458Z",
+            "updatedAt": "2026-03-31T09:40:02.458Z"
+          }
+        ]
+      },
+      "requestId": "2cc8de69-177c-4cc0-9274-d2a811bcc312"
+    }
+  },
+  "fork": {
+    "status": 200,
+    "text": "{\"ok\":true,\"data\":{\"result\":{\"forkSession\":{\"id\":\"9a9d5076-d400-4c39-9536-5719710020d5\",\"key\":\"subagent:manual-real:default:manualreal20260331chatmnefej2t:bb60dfb6\",\"channel\":\"manual-real\",\"accountId\":\"default\",\"chatId\":\"manualreal20260331chatmnefej2t\",\"chatKind\":\"dm\",\"status\":\"active\",\"memoryNamespace\":\"tenant.default.user.manualreal20260331chatmnefej2t.shared\",\"parentSessionKey\":\"manual-real:default:manualreal20260331chatmnefej2t\",\"rootSessionKey\":\"manual-real:default:manualreal20260331chatmnefej2t\",\"forkedFromMessageId\":\"414ec4a9-349e-4f65-ae9b-6fff1b5b44bd\",\"metadata\":{},\"contextInputTokens\":0,\"contextOutputTokens\":0,\"contextTotalTokens\":0,\"messageCount\":0,\"createdAt\":\"2026-03-31T09:40:02.462Z\",\"updatedAt\":\"2026-03-31T09:40:02.462Z\",\"lastActivityAt\":\"2026-03-31T09:40:02.462Z\",\"statusChangedAt\":\"2026-03-31T09:40:02.462Z\"},\"inheritedMessageCount\":1,\"forkedFromMessageId\":\"414ec4a9-349e-4f65-ae9b-6fff1b5b44bd\"}},\"requestId\":\"e54397ea-3311-473b-a00e-c6906210d7ef\"}",
+    "json": {
+      "ok": true,
+      "data": {
+        "result": {
+          "forkSession": {
+            "id": "9a9d5076-d400-4c39-9536-5719710020d5",
+            "key": "subagent:manual-real:default:manualreal20260331chatmnefej2t:bb60dfb6",
+            "channel": "manual-real",
+            "accountId": "default",
+            "chatId": "manualreal20260331chatmnefej2t",
+            "chatKind": "dm",
+            "status": "active",
+            "memoryNamespace": "tenant.default.user.manualreal20260331chatmnefej2t.shared",
+            "parentSessionKey": "manual-real:default:manualreal20260331chatmnefej2t",
+            "rootSessionKey": "manual-real:default:manualreal20260331chatmnefej2t",
+            "forkedFromMessageId": "414ec4a9-349e-4f65-ae9b-6fff1b5b44bd",
+            "metadata": {},
+            "contextInputTokens": 0,
+            "contextOutputTokens": 0,
+            "contextTotalTokens": 0,
+            "messageCount": 0,
+            "createdAt": "2026-03-31T09:40:02.462Z",
+            "updatedAt": "2026-03-31T09:40:02.462Z",
+            "lastActivityAt": "2026-03-31T09:40:02.462Z",
+            "statusChangedAt": "2026-03-31T09:40:02.462Z"
+          },
+          "inheritedMessageCount": 1,
+          "forkedFromMessageId": "414ec4a9-349e-4f65-ae9b-6fff1b5b44bd"
+        }
+      },
+      "requestId": "e54397ea-3311-473b-a00e-c6906210d7ef"
+    }
+  },
+  "forkSessionKey": "subagent:manual-real:default:manualreal20260331chatmnefej2t:bb60dfb6",
+  "listForksBeforeMerge": {
+    "status": 200,
+    "text": "{\"ok\":true,\"data\":{\"items\":[{\"id\":\"9a9d5076-d400-4c39-9536-5719710020d5\",\"key\":\"subagent:manual-real:default:manualreal20260331chatmnefej2t:bb60dfb6\",\"channel\":\"manual-real\",\"accountId\":\"default\",\"chatId\":\"manualreal20260331chatmnefej2t\",\"chatKind\":\"dm\",\"status\":\"active\",\"memoryNamespace\":\"tenant.default.user.manualreal20260331chatmnefej2t.shared\",\"parentSessionKey\":\"manual-real:default:manualreal20260331chatmnefej2t\",\"rootSessionKey\":\"manual-real:default:manualreal20260331chatmnefej2t\",\"forkedFromMessageId\":\"414ec4a9-349e-4f65-ae9b-6fff1b5b44bd\",\"metadata\":{},\"contextInputTokens\":0,\"contextOutputTokens\":0,\"contextTotalTokens\":0,\"messageCount\":0,\"createdAt\":\"2026-03-31T09:40:02.462Z\",\"updatedAt\":\"2026-03-31T09:40:02.462Z\",\"lastActivityAt\":\"2026-03-31T09:40:02.462Z\",\"statusChangedAt\":\"2026-03-31T09:40:02.462Z\"}]},\"requestId\":\"3e023910-e534-4455-9f97-97c06b866c59\"}",
+    "json": {
+      "ok": true,
+      "data": {
+        "items": [
+          {
+            "id": "9a9d5076-d400-4c39-9536-5719710020d5",
+            "key": "subagent:manual-real:default:manualreal20260331chatmnefej2t:bb60dfb6",
+            "channel": "manual-real",
+            "accountId": "default",
+            "chatId": "manualreal20260331chatmnefej2t",
+            "chatKind": "dm",
+            "status": "active",
+            "memoryNamespace": "tenant.default.user.manualreal20260331chatmnefej2t.shared",
+            "parentSessionKey": "manual-real:default:manualreal20260331chatmnefej2t",
+            "rootSessionKey": "manual-real:default:manualreal20260331chatmnefej2t",
+            "forkedFromMessageId": "414ec4a9-349e-4f65-ae9b-6fff1b5b44bd",
+            "metadata": {},
+            "contextInputTokens": 0,
+            "contextOutputTokens": 0,
+            "contextTotalTokens": 0,
+            "messageCount": 0,
+            "createdAt": "2026-03-31T09:40:02.462Z",
+            "updatedAt": "2026-03-31T09:40:02.462Z",
+            "lastActivityAt": "2026-03-31T09:40:02.462Z",
+            "statusChangedAt": "2026-03-31T09:40:02.462Z"
+          }
+        ]
+      },
+      "requestId": "3e023910-e534-4455-9f97-97c06b866c59"
+    }
+  },
+  "merge": {
+    "status": 200,
+    "text": "{\"ok\":true,\"data\":{\"result\":{\"parentMessage\":{\"id\":\"547ee0ca-8750-4795-b468-2b40149d0849\",\"sessionId\":\"6a29a866-d79c-4182-9d28-89c4aa95584c\",\"sessionKey\":\"manual-real:default:manualreal20260331chatmnefej2t\",\"sequence\":2,\"role\":\"assistant\",\"content\":\"Fork confirmed the CLI preference and no conflicts were introduced.\",\"contentText\":\"Fork confirmed the CLI preference and no conflicts were introduced.\",\"tokenCount\":0,\"idempotencyKey\":\"merge-1774950002466\",\"metadata\":{\"forkSessionKey\":\"subagent:manual-real:default:manualreal20260331chatmnefej2t:bb60dfb6\",\"mergeType\":\"fork_summary\"},\"memoryExtractStatus\":\"pending\",\"occurredAt\":\"2026-03-31T09:40:02.467Z\",\"createdAt\":\"2026-03-31T09:40:02.467Z\",\"updatedAt\":\"2026-03-31T09:40:02.467Z\"},\"forkSession\":{\"id\":\"9a9d5076-d400-4c39-9536-5719710020d5\",\"key\":\"subagent:manual-real:default:manualreal20260331chatmnefej2t:bb60dfb6\",\"channel\":\"manual-real\",\"accountId\":\"default\",\"chatId\":\"manualreal20260331chatmnefej2t\",\"chatKind\":\"dm\",\"status\":\"archived\",\"memoryNamespace\":\"tenant.default.user.manualreal20260331chatmnefej2t.shared\",\"parentSessionKey\":\"manual-real:default:manualreal20260331chatmnefej2t\",\"rootSessionKey\":\"manual-real:default:manualreal20260331chatmnefej2t\",\"forkedFromMessageId\":\"414ec4a9-349e-4f65-ae9b-6fff1b5b44bd\",\"metadata\":{},\"contextInputTokens\":0,\"contextOutputTokens\":0,\"contextTotalTokens\":0,\"messageCount\":0,\"createdAt\":\"2026-03-31T09:40:02.462Z\",\"updatedAt\":\"2026-03-31T09:40:02.469Z\",\"lastActivityAt\":\"2026-03-31T09:40:02.462Z\",\"statusChangedAt\":\"2026-03-31T09:40:02.469Z\",\"archivedAt\":\"2026-03-31T09:40:02.469Z\"}}},\"requestId\":\"a8613f02-3f5c-477d-b976-a5c033592172\"}",
+    "json": {
+      "ok": true,
+      "data": {
+        "result": {
+          "parentMessage": {
+            "id": "547ee0ca-8750-4795-b468-2b40149d0849",
+            "sessionId": "6a29a866-d79c-4182-9d28-89c4aa95584c",
+            "sessionKey": "manual-real:default:manualreal20260331chatmnefej2t",
+            "sequence": 2,
+            "role": "assistant",
+            "content": "Fork confirmed the CLI preference and no conflicts were introduced.",
+            "contentText": "Fork confirmed the CLI preference and no conflicts were introduced.",
+            "tokenCount": 0,
+            "idempotencyKey": "merge-1774950002466",
+            "metadata": {
+              "forkSessionKey": "subagent:manual-real:default:manualreal20260331chatmnefej2t:bb60dfb6",
+              "mergeType": "fork_summary"
+            },
+            "memoryExtractStatus": "pending",
+            "occurredAt": "2026-03-31T09:40:02.467Z",
+            "createdAt": "2026-03-31T09:40:02.467Z",
+            "updatedAt": "2026-03-31T09:40:02.467Z"
+          },
+          "forkSession": {
+            "id": "9a9d5076-d400-4c39-9536-5719710020d5",
+            "key": "subagent:manual-real:default:manualreal20260331chatmnefej2t:bb60dfb6",
+            "channel": "manual-real",
+            "accountId": "default",
+            "chatId": "manualreal20260331chatmnefej2t",
+            "chatKind": "dm",
+            "status": "archived",
+            "memoryNamespace": "tenant.default.user.manualreal20260331chatmnefej2t.shared",
+            "parentSessionKey": "manual-real:default:manualreal20260331chatmnefej2t",
+            "rootSessionKey": "manual-real:default:manualreal20260331chatmnefej2t",
+            "forkedFromMessageId": "414ec4a9-349e-4f65-ae9b-6fff1b5b44bd",
+            "metadata": {},
+            "contextInputTokens": 0,
+            "contextOutputTokens": 0,
+            "contextTotalTokens": 0,
+            "messageCount": 0,
+            "createdAt": "2026-03-31T09:40:02.462Z",
+            "updatedAt": "2026-03-31T09:40:02.469Z",
+            "lastActivityAt": "2026-03-31T09:40:02.462Z",
+            "statusChangedAt": "2026-03-31T09:40:02.469Z",
+            "archivedAt": "2026-03-31T09:40:02.469Z"
+          }
+        }
+      },
+      "requestId": "a8613f02-3f5c-477d-b976-a5c033592172"
+    }
+  },
+  "listForksAfterMerge": {
+    "status": 200,
+    "text": "{\"ok\":true,\"data\":{\"items\":[]},\"requestId\":\"e3d812ea-d44e-4035-8bce-5859cc3c8742\"}",
+    "json": {
+      "ok": true,
+      "data": {
+        "items": []
+      },
+      "requestId": "e3d812ea-d44e-4035-8bce-5859cc3c8742"
+    }
+  },
+  "memoryNamespace": "manual.real.validation.mnefej3c",
+  "memoryStore": {
+    "status": 200,
+    "text": "{\"ok\":true,\"data\":{\"item\":{\"id\":\"64078aa6-3659-4a48-9af4-f19b3998f969\",\"namespace\":\"tenant.default.user.admin-001.manual.real.validation.mnefej3c\",\"key\":\"k1774950002472\",\"content\":\"Preferred CLI search tool is rg.\",\"source\":\"manual-real-validation\",\"tags\":[\"manualreal\",\"cli\"],\"metadata\":{},\"createdAt\":\"2026-03-31T09:40:02.474Z\",\"updatedAt\":\"2026-03-31T09:40:02.474Z\"}},\"requestId\":\"78bcd6b8-e3da-4efe-ac72-9fd12a861f26\"}",
+    "json": {
+      "ok": true,
+      "data": {
+        "item": {
+          "id": "64078aa6-3659-4a48-9af4-f19b3998f969",
+          "namespace": "tenant.default.user.admin-001.manual.real.validation.mnefej3c",
+          "key": "k1774950002472",
+          "content": "Preferred CLI search tool is rg.",
+          "source": "manual-real-validation",
+          "tags": [
+            "manualreal",
+            "cli"
+          ],
+          "metadata": {},
+          "createdAt": "2026-03-31T09:40:02.474Z",
+          "updatedAt": "2026-03-31T09:40:02.474Z"
+        }
+      },
+      "requestId": "78bcd6b8-e3da-4efe-ac72-9fd12a861f26"
+    }
+  },
+  "memoryId": "64078aa6-3659-4a48-9af4-f19b3998f969",
+  "memoryGet": {
+    "status": 200,
+    "text": "{\"ok\":true,\"data\":{\"item\":{\"id\":\"64078aa6-3659-4a48-9af4-f19b3998f969\",\"namespace\":\"tenant.default.user.admin-001.manual.real.validation.mnefej3c\",\"key\":\"k1774950002472\",\"content\":\"Preferred CLI search tool is rg.\",\"source\":\"manual-real-validation\",\"tags\":[\"manualreal\",\"cli\"],\"metadata\":{},\"createdAt\":\"2026-03-31T09:40:02.474Z\",\"updatedAt\":\"2026-03-31T09:40:02.474Z\"}},\"requestId\":\"9c7aefeb-0529-4551-93a2-45a4ce960bcf\"}",
+    "json": {
+      "ok": true,
+      "data": {
+        "item": {
+          "id": "64078aa6-3659-4a48-9af4-f19b3998f969",
+          "namespace": "tenant.default.user.admin-001.manual.real.validation.mnefej3c",
+          "key": "k1774950002472",
+          "content": "Preferred CLI search tool is rg.",
+          "source": "manual-real-validation",
+          "tags": [
+            "manualreal",
+            "cli"
+          ],
+          "metadata": {},
+          "createdAt": "2026-03-31T09:40:02.474Z",
+          "updatedAt": "2026-03-31T09:40:02.474Z"
+        }
+      },
+      "requestId": "9c7aefeb-0529-4551-93a2-45a4ce960bcf"
+    }
+  },
+  "memorySearch": {
+    "status": 200,
+    "text": "{\"ok\":true,\"data\":{\"items\":[{\"item\":{\"id\":\"64078aa6-3659-4a48-9af4-f19b3998f969\",\"namespace\":\"tenant.default.user.admin-001.manual.real.validation.mnefej3c\",\"key\":\"k1774950002472\",\"content\":\"Preferred CLI search tool is rg.\",\"source\":\"manual-real-validation\",\"tags\":[\"manualreal\",\"cli\"],\"metadata\":{},\"createdAt\":\"2026-03-31T09:40:02.474Z\",\"updatedAt\":\"2026-03-31T09:40:02.474Z\"},\"score\":0.45,\"ftsScore\":1,\"semanticScore\":0,\"matchedBy\":[\"fts\"],\"snippet\":\"<b>Preferred</b> <b>CLI</b> search tool is <b>rg</b>.\"}]},\"requestId\":\"573debab-bb84-411b-a840-f394c81bfe98\"}",
+    "json": {
+      "ok": true,
+      "data": {
+        "items": [
+          {
+            "item": {
+              "id": "64078aa6-3659-4a48-9af4-f19b3998f969",
+              "namespace": "tenant.default.user.admin-001.manual.real.validation.mnefej3c",
+              "key": "k1774950002472",
+              "content": "Preferred CLI search tool is rg.",
+              "source": "manual-real-validation",
+              "tags": [
+                "manualreal",
+                "cli"
+              ],
+              "metadata": {},
+              "createdAt": "2026-03-31T09:40:02.474Z",
+              "updatedAt": "2026-03-31T09:40:02.474Z"
+            },
+            "score": 0.45,
+            "ftsScore": 1,
+            "semanticScore": 0,
+            "matchedBy": [
+              "fts"
+            ],
+            "snippet": "<b>Preferred</b> <b>CLI</b> search tool is <b>rg</b>."
+          }
+        ]
+      },
+      "requestId": "573debab-bb84-411b-a840-f394c81bfe98"
+    }
+  },
+  "memoryList": {
+    "status": 200,
+    "text": "{\"ok\":true,\"data\":{\"items\":[{\"id\":\"64078aa6-3659-4a48-9af4-f19b3998f969\",\"namespace\":\"tenant.default.user.admin-001.manual.real.validation.mnefej3c\",\"key\":\"k1774950002472\",\"content\":\"Preferred CLI search tool is rg.\",\"source\":\"manual-real-validation\",\"tags\":[\"manualreal\",\"cli\"],\"metadata\":{},\"createdAt\":\"2026-03-31T09:40:02.474Z\",\"updatedAt\":\"2026-03-31T09:40:02.474Z\"}]},\"requestId\":\"ad88e784-2fed-4d78-b88c-873f0ec2e75e\"}",
+    "json": {
+      "ok": true,
+      "data": {
+        "items": [
+          {
+            "id": "64078aa6-3659-4a48-9af4-f19b3998f969",
+            "namespace": "tenant.default.user.admin-001.manual.real.validation.mnefej3c",
+            "key": "k1774950002472",
+            "content": "Preferred CLI search tool is rg.",
+            "source": "manual-real-validation",
+            "tags": [
+              "manualreal",
+              "cli"
+            ],
+            "metadata": {},
+            "createdAt": "2026-03-31T09:40:02.474Z",
+            "updatedAt": "2026-03-31T09:40:02.474Z"
+          }
+        ]
+      },
+      "requestId": "ad88e784-2fed-4d78-b88c-873f0ec2e75e"
+    }
+  },
+  "memoryDelete": {
+    "status": 200,
+    "text": "{\"ok\":true,\"data\":{\"deleted\":true},\"requestId\":\"6d547e6e-a205-459b-8cc7-668dad114ce9\"}",
+    "json": {
+      "ok": true,
+      "data": {
+        "deleted": true
+      },
+      "requestId": "6d547e6e-a205-459b-8cc7-668dad114ce9"
+    }
+  },
+  "memoryPrune": {
+    "status": 200,
+    "text": "{\"ok\":true,\"data\":{\"result\":{\"deletedCount\":0,\"deletedIds\":[],\"dryRun\":false}},\"requestId\":\"4095b31b-fc5f-4217-8c88-86c68ad29800\"}",
+    "json": {
+      "ok": true,
+      "data": {
+        "result": {
+          "deletedCount": 0,
+          "deletedIds": [],
+          "dryRun": false
+        }
+      },
+      "requestId": "4095b31b-fc5f-4217-8c88-86c68ad29800"
+    }
+  },
+  "finishedAt": "2026-03-31T09:40:02.484Z"
+}
