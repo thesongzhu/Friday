@@ -50,3 +50,20 @@ export type {
   FridayEngineRunRecordReader,
   FridayEngineRunEventReader,
 } from "./friday-engine-run-resume.js";
+
+// Guards (Initiative F)
+export { createFridayBudgetGuard } from "./guards/friday-engine-budget-guard.js";
+export type {
+  FridayBudgetPolicy,
+  FridayBudgetCheckResult,
+  FridayBudgetUsage,
+  FridayBudgetGuard,
+} from "./guards/friday-engine-budget-guard.js";
+
+export { createFridayContentGuard } from "./guards/friday-engine-content-guard.js";
+export type {
+  FridayContentGuardResult,
+  FridayContentGuardMode,
+  FridayContentGuardOptions,
+  FridayContentGuard,
+} from "./guards/friday-engine-content-guard.js";

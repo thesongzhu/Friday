@@ -1,3 +1,86 @@
+// ─── Shell risk classification (Initiative B.3) ───
+
+/**
+ * Typed shell risk levels for command classification.
+ *
+ * - safe: read-only commands with no side effects
+ * - guarded: mutating but reversible, may proceed with logging
+ * - destructive: irreversible mutations requiring approval
+ * - blocked: never allowed (shell injection vectors)
+ */
+export type FridayShellRiskLevel = "safe" | "guarded" | "destructive" | "blocked";
+
+export interface FridayShellRiskClassification {
+  level: FridayShellRiskLevel;
+  reason?: string;
+  program?: string;
+}
+
+const SAFE_PROGRAMS = new Set([
+  "ls", "cat", "head", "tail", "wc", "file", "stat", "which", "whereis",
+  "echo", "printf", "date", "whoami", "uname", "hostname", "pwd",
+  "find", "grep", "rg", "ag", "awk", "sort", "uniq", "diff", "comm",
+  "tree", "du", "df", "free", "top", "ps", "env", "printenv",
+  "git", "npm", "npx", "yarn", "pnpm", "node", "python", "python3",
+  "cargo", "go", "rustc", "gcc", "make", "cmake",
+  "curl", "wget",
+]);
+
+const BLOCKED_SHELL_PATTERNS = [
+  /[;|&`$(){}\n\r<>#!~]/,           // shell metacharacters
+  /[\u0000-\u001f\u007f-\u009f]/,   // control characters
+];
+
+/**
+ * Classify the risk level of a shell command.
+ */
+export function classifyShellRisk(command: string): FridayShellRiskClassification {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return { level: "safe", reason: "empty command" };
+  }
+
+  // Check for shell injection vectors
+  for (const pattern of BLOCKED_SHELL_PATTERNS) {
+    if (pattern.test(trimmed)) {
+      return { level: "blocked", reason: "Shell metacharacters or control characters detected" };
+    }
+  }
+
+  const parts = trimmed.split(/\s+/);
+  const program = parts[0]?.toLowerCase() ?? "";
+
+  // Destructive programs always require approval
+  if (DESTRUCTIVE_PROGRAMS.has(program)) {
+    return { level: "destructive", reason: `${program} is a destructive command`, program };
+  }
+
+  // Protected artifact + destructive keyword
+  const touchesProtected = listPotentialFilePaths(trimmed)
+    .some((fp) => requiresApprovalForProtectedArtifactPath(fp));
+  if (touchesProtected && DESTRUCTIVE_COMMAND_KEYWORD_RE.test(trimmed.toLowerCase())) {
+    return { level: "destructive", reason: "Destructive operation on protected artifact", program };
+  }
+
+  // Sensitive credential manipulation
+  if (SENSITIVE_ASSIGNMENT_RE.test(trimmed)) {
+    return { level: "destructive", reason: "Token/secret mutation detected", program };
+  }
+  if (SENSITIVE_KEY_RE.test(trimmed.toLowerCase()) && MUTATING_PROGRAMS.has(program)) {
+    return { level: "destructive", reason: "Sensitive key manipulation via mutating program", program };
+  }
+
+  // Known safe programs
+  if (SAFE_PROGRAMS.has(program)) {
+    return { level: "safe", program };
+  }
+
+  // Unknown programs — guarded by default
+  return { level: "guarded", reason: "Unknown program, treating as guarded", program };
+}
+
+// ─── Existing approval gate logic ───
+
 const SENSITIVE_KEY_RE = /\b(api[_-]?token|access[_-]?token|refresh[_-]?token|secret|password|credential|private[_-]?key|token)\b/i;
 const SENSITIVE_ASSIGNMENT_RE = /(?:["']?(api[_-]?token|access[_-]?token|refresh[_-]?token|secret|password|credential|private[_-]?key|token)["']?\s*[:=]|(?:export\s+)?[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*=)/i;
 const DESTRUCTIVE_PROGRAMS = new Set(["rm", "unlink", "shred", "truncate"]);
