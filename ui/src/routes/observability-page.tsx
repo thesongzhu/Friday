@@ -9,10 +9,12 @@ import {
   BellRing,
   CheckCircle2,
   ChevronRight,
+  Edit3,
   HeartPulse,
   Mail,
   Pause,
   Play,
+  Plus,
   RotateCcw,
   ShieldCheck,
   Siren,
@@ -325,6 +327,35 @@ export function ObservabilityPage() {
       toast.error(error instanceof Error ? error.message : "Could not delete destination.");
     },
   });
+
+  const createDestinationMutation = useMutation({
+    mutationFn: (input: { type: "slack"; name: string; webhookUrl: string }) =>
+      systemApi.createObservabilityAlertDestination(input),
+    onSuccess: () => {
+      toast.success("Alert destination created.");
+      void queryClient.invalidateQueries({ queryKey: ["observability", "alert-destinations"] });
+      setShowCreateDest(false);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not create destination.");
+    },
+  });
+
+  const updateDestinationMutation = useMutation({
+    mutationFn: (input: { id: string; name?: string; enabled?: boolean }) => {
+      const { id, ...patch } = input;
+      return systemApi.updateObservabilityAlertDestination(id, patch);
+    },
+    onSuccess: () => {
+      toast.success("Alert destination updated.");
+      void queryClient.invalidateQueries({ queryKey: ["observability", "alert-destinations"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not update destination.");
+    },
+  });
+
+  const [showCreateDest, setShowCreateDest] = useState(false);
 
   const overview = overviewQuery.data;
   const alerts = alertsQuery.data?.items ?? [];
@@ -845,43 +876,14 @@ export function ObservabilityPage() {
           {agentLoopRuns.length > 0 || rulesAuditLog.length > 0 ? (
             <div className="space-y-3">
               {agentLoopRuns.slice(0, 3).map((record) => (
-                <div key={record.run.loopRunId} className="agent-subcard p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="font-medium text-white">{record.action?.summary.title ?? record.incident?.summary.rootCauseSummary ?? "Loop run"}</p>
-                      <p className="text-xs text-white/50">{record.run.loopRunId}</p>
-                    </div>
-                    <StatusPill tone={record.run.status === "verified" ? "success" : record.run.status === "halted" ? "warning" : "neutral"}>
-                      {record.run.status.replaceAll("_", " ")}
-                    </StatusPill>
-                  </div>
-                  <p className="mt-3 text-xs text-white/55">
-                    Verification: {record.run.verificationPassed === undefined ? "pending" : record.run.verificationPassed ? "passed" : "failed"} ·
-                    Rollback: {record.run.rollbackAttempted ? (record.run.rollbackSucceeded ? " succeeded" : " attempted") : " not needed"}
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {record.run.status === "paused" ? (
-                      <ActionButton
-                        tone="secondary"
-                        disabled={resumeLoopRunMutation.isPending}
-                        onClick={() => resumeLoopRunMutation.mutate(record.run.loopRunId)}
-                      >
-                        <Play className="mr-1.5 h-3 w-3" />
-                        Resume
-                      </ActionButton>
-                    ) : null}
-                    {record.run.status === "running" || record.run.status === "paused" ? (
-                      <ActionButton
-                        tone="secondary"
-                        disabled={cancelLoopRunMutation.isPending}
-                        onClick={() => cancelLoopRunMutation.mutate(record.run.loopRunId)}
-                      >
-                        <Square className="mr-1.5 h-3 w-3" />
-                        Cancel
-                      </ActionButton>
-                    ) : null}
-                  </div>
-                </div>
+                <LoopRunCard
+                  key={record.run.loopRunId}
+                  record={record}
+                  onResume={(id) => resumeLoopRunMutation.mutate(id)}
+                  onCancel={(id) => cancelLoopRunMutation.mutate(id)}
+                  resumePending={resumeLoopRunMutation.isPending}
+                  cancelPending={cancelLoopRunMutation.isPending}
+                />
               ))}
               {rulesAuditLog.slice(0, 3).map((entry) => (
                 <div key={entry.id} className="agent-subcard p-4">
@@ -981,7 +983,17 @@ export function ObservabilityPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Alert routing" title="Who gets notified when Friday escalates">
+        <ShellCard
+          eyebrow="Alert routing"
+          title="Who gets notified when Friday escalates"
+          aside={
+            <ActionButton tone="secondary" onClick={() => setShowCreateDest(!showCreateDest)}>
+              <Plus className="mr-1.5 h-3 w-3" />
+              Add destination
+            </ActionButton>
+          }
+        >
+          {showCreateDest && <CreateDestinationForm onSubmit={(input) => createDestinationMutation.mutate(input)} pending={createDestinationMutation.isPending} onCancel={() => setShowCreateDest(false)} />}
           {destinations.length > 0 ? (
             <div className="space-y-3">
               {destinations.map((destination) => (
@@ -997,9 +1009,14 @@ export function ObservabilityPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <StatusPill tone={destination.enabled ? "success" : "warning"}>
+                      <button
+                        type="button"
+                        className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition ${destination.enabled ? "bg-emerald-300/15 text-emerald-200 hover:bg-emerald-300/25" : "bg-white/[0.06] text-white/50 hover:bg-white/10"}`}
+                        disabled={updateDestinationMutation.isPending}
+                        onClick={() => updateDestinationMutation.mutate({ id: destination.id, enabled: !destination.enabled })}
+                      >
                         {destination.enabled ? "enabled" : "disabled"}
-                      </StatusPill>
+                      </button>
                       <button
                         type="button"
                         className="rounded-lg p-1.5 text-white/30 transition hover:bg-white/10 hover:text-red-400"
@@ -1013,10 +1030,108 @@ export function ObservabilityPage() {
                 </div>
               ))}
             </div>
-          ) : (
+          ) : !showCreateDest ? (
             <p className="text-sm text-white/60">No alert destinations are configured yet.</p>
-          )}
+          ) : null}
         </ShellCard>
+      </div>
+    </div>
+  );
+}
+
+function LoopRunCard(props: {
+  record: Awaited<ReturnType<typeof systemApi.listAgentLoopRuns>>[number];
+  onResume: (id: string) => void;
+  onCancel: (id: string) => void;
+  resumePending: boolean;
+  cancelPending: boolean;
+}) {
+  const { record } = props;
+  const [expanded, setExpanded] = useState(false);
+  const detailQuery = useQuery({
+    queryKey: ["observability", "loop-run-detail", record.run.loopRunId],
+    queryFn: () => systemApi.getAgentLoopRun(record.run.loopRunId),
+    enabled: expanded,
+  });
+
+  return (
+    <div className="agent-subcard p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="font-medium text-white">{record.action?.summary.title ?? record.incident?.summary.rootCauseSummary ?? "Loop run"}</p>
+          <p className="text-xs text-white/50">{record.run.loopRunId}</p>
+        </div>
+        <StatusPill tone={record.run.status === "verified" ? "success" : record.run.status === "halted" ? "warning" : "neutral"}>
+          {record.run.status.replaceAll("_", " ")}
+        </StatusPill>
+      </div>
+      <p className="mt-3 text-xs text-white/55">
+        Verification: {record.run.verificationPassed === undefined ? "pending" : record.run.verificationPassed ? "passed" : "failed"} ·
+        Rollback: {record.run.rollbackAttempted ? (record.run.rollbackSucceeded ? " succeeded" : " attempted") : " not needed"}
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {record.run.status === "paused" ? (
+          <ActionButton tone="secondary" disabled={props.resumePending} onClick={() => props.onResume(record.run.loopRunId)}>
+            <Play className="mr-1.5 h-3 w-3" />Resume
+          </ActionButton>
+        ) : null}
+        {record.run.status === "running" || record.run.status === "paused" ? (
+          <ActionButton tone="secondary" disabled={props.cancelPending} onClick={() => props.onCancel(record.run.loopRunId)}>
+            <Square className="mr-1.5 h-3 w-3" />Cancel
+          </ActionButton>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-1 text-xs font-medium text-white/50 transition hover:text-white/80"
+        >
+          <ChevronRight className={`h-3 w-3 transition ${expanded ? "rotate-90" : ""}`} />
+          {expanded ? "Less" : "Detail"}
+        </button>
+      </div>
+      {expanded && detailQuery.data ? (
+        <div className="mt-3 rounded-xl border border-white/8 bg-white/[0.02] p-3 text-xs text-white/55 space-y-1">
+          <p>Risk tier: {detailQuery.data.run.riskTier}</p>
+          <p>Attempt: {detailQuery.data.run.attemptNumber}</p>
+          <p>Approval required: {detailQuery.data.run.approvalRequired ? "yes" : "no"}</p>
+          {detailQuery.data.run.haltReason ? <p>Halt reason: {detailQuery.data.run.haltReason}</p> : null}
+          {detailQuery.data.run.lastError ? <p>Last error: {detailQuery.data.run.lastError}</p> : null}
+          {detailQuery.data.run.correlationId ? <p>Correlation: {detailQuery.data.run.correlationId}</p> : null}
+        </div>
+      ) : expanded && detailQuery.isLoading ? (
+        <p className="mt-3 text-xs text-white/40">Loading...</p>
+      ) : null}
+    </div>
+  );
+}
+
+function CreateDestinationForm(props: {
+  onSubmit: (input: { type: "slack"; name: string; webhookUrl: string }) => void;
+  pending: boolean;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [webhookUrl, setWebhookUrl] = useState("");
+  return (
+    <div className="mb-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">New Slack destination</p>
+      <input
+        className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-emerald-300/40 focus:outline-none"
+        placeholder="Name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
+      <input
+        className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-emerald-300/40 focus:outline-none"
+        placeholder="Webhook URL"
+        value={webhookUrl}
+        onChange={(e) => setWebhookUrl(e.target.value)}
+      />
+      <div className="flex gap-2">
+        <ActionButton disabled={props.pending || !name.trim() || !webhookUrl.trim()} onClick={() => props.onSubmit({ type: "slack", name: name.trim(), webhookUrl: webhookUrl.trim() })}>
+          Create
+        </ActionButton>
+        <ActionButton tone="secondary" onClick={props.onCancel}>Cancel</ActionButton>
       </div>
     </div>
   );

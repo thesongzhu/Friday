@@ -148,6 +148,29 @@ export function SettingsPage() {
     },
   });
 
+  const updatePolicyMutation = useMutation({
+    mutationFn: (patch: { paused?: boolean; autoApplyLowRisk?: boolean; cooldownMinutes?: number }) =>
+      systemApi.updateAgentLoopPolicy(patch),
+    onSuccess: () => {
+      toast.success("Agent loop policy updated.");
+      void queryClient.invalidateQueries({ queryKey: systemKeys.agentLoopPolicy() });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not update policy.");
+    },
+  });
+
+  const toggleExpertMutation = useMutation({
+    mutationFn: (enabled: boolean) => systemApi.updateAgentLoopExpertMode({ enabled }),
+    onSuccess: (result) => {
+      toast.success(result.enabled ? "Expert mode enabled" : "Expert mode disabled");
+      void queryClient.invalidateQueries({ queryKey: systemKeys.agentLoopExpertMode() });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not toggle expert mode.");
+    },
+  });
+
   const preview = buildPersonaPreview(draft.settings);
 
   return (
@@ -521,20 +544,43 @@ export function SettingsPage() {
           {agentLoopPolicy ? (
             <div className="space-y-3">
               <div className="grid gap-3 sm:grid-cols-2">
-                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label="Status" value={agentLoopPolicy.paused ? "paused" : "active"} />
                 <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label="Max Attempts" value={String(agentLoopPolicy.maxAttemptsPerFingerprint)} />
+                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label="Cooldown" value={`${agentLoopPolicy.cooldownMinutes} min`} />
               </div>
-              {agentLoopPolicy.cooldownMinutes ? (
-                <DiagnosticRow label="Cooldown" value={`${String(agentLoopPolicy.cooldownMinutes)} min`} />
-              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <ActionButton
+                  tone={agentLoopPolicy.paused ? "primary" : "secondary"}
+                  disabled={updatePolicyMutation.isPending}
+                  onClick={() => updatePolicyMutation.mutate({ paused: !agentLoopPolicy.paused })}
+                >
+                  {agentLoopPolicy.paused ? "Resume loop" : "Pause loop"}
+                </ActionButton>
+                <ActionButton
+                  tone="secondary"
+                  disabled={updatePolicyMutation.isPending}
+                  onClick={() => updatePolicyMutation.mutate({ autoApplyLowRisk: !agentLoopPolicy.autoApplyLowRisk })}
+                >
+                  {agentLoopPolicy.autoApplyLowRisk ? "Disable auto-apply" : "Enable auto-apply"}
+                </ActionButton>
+              </div>
+              <DiagnosticRow label="Require rollback plan" value={agentLoopPolicy.requireRollbackPlan ? "yes" : "no"} />
+              <DiagnosticRow label="Require acceptance check" value={agentLoopPolicy.requireAcceptanceCheck ? "yes" : "no"} />
             </div>
           ) : (
             <p className="text-sm text-white/60">Agent loop policy unavailable.</p>
           )}
           {expertMode ? (
             <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">Expert Mode</p>
-              <DiagnosticRow label="Enabled" value={expertMode.enabled ? "yes" : "no"} />
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">Expert Mode</p>
+                <ActionButton
+                  tone={expertMode.enabled ? "danger" : "primary"}
+                  disabled={toggleExpertMutation.isPending}
+                  onClick={() => toggleExpertMutation.mutate(!expertMode.enabled)}
+                >
+                  {expertMode.enabled ? "Disable" : "Enable"}
+                </ActionButton>
+              </div>
               {expertMode.contextInferenceAllowed !== undefined ? (
                 <DiagnosticRow label="Context Inference" value={expertMode.contextInferenceAllowed ? "allowed" : "denied"} />
               ) : null}
