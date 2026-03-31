@@ -17,6 +17,7 @@ import type { FridayAgentRunEventRepository } from "../persistence/friday-agent-
 import type { FridayAgentArtifactWriter } from "../services/friday-agent-artifact-writer.js";
 import type { FridayAgentEventEmitter } from "./friday-agent-event-emitter.js";
 import type { FridayDecisionEngine } from "./friday-agent-decision-engine.types.js";
+import type { FridayWorldStateManager } from "./friday-agent-world-state-manager.js";
 import type { FridayAgentLlmClient } from "./friday-agent-llm-client.types.js";
 import type { FridayAgentReviewGate } from "./friday-agent-review-gate.js";
 import type {
@@ -299,4 +300,6 @@ export interface CreateFridayAgentRuntimeDeps {
   contextEngine?: FridayContextEngine;
   /** Optional pluggable decision engine for world-model-ready action selection. */
   decisionEngine?: FridayDecisionEngine;
+  /** Optional world state manager for loading user context into decision engine. */
+  worldStateManager?: FridayWorldStateManager;
 }

@@ -7,11 +7,14 @@ import type {
   FridayCommunicationPersonaSettings,
 } from "@friday-operator-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Cpu, KeyRound, MessageCircleMore, Shield, Wifi } from "lucide-react";
+import { AlertTriangle, Brain, Cpu, DollarSign, KeyRound, MessageCircleMore, Shield, Sliders, Wifi, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { healthApi } from "@/lib/api/health";
+import { providerUsageApi } from "@/lib/api/provider-usage";
 import { providersApi } from "@/lib/api/providers";
+import { securityApi } from "@/lib/api/security";
 import { systemApi } from "@/lib/api/system";
+import { apiClient } from "@/lib/api/client";
 import { ShellCard, StatusPill, ActionButton } from "@/components/core/primitives";
 import { systemKeys } from "@/lib/system/query-keys";
 import { summarizeHealthReasons } from "@/lib/system/view-models";
@@ -89,6 +92,39 @@ export function SettingsPage() {
   const { data: persona } = useQuery({
     queryKey: systemKeys.communicationPersona(),
     queryFn: () => systemApi.getCommunicationPersona(),
+    retry: 0,
+  });
+
+  const { data: budgetStatus } = useQuery({
+    queryKey: ["settings", "budget"],
+    queryFn: () => providerUsageApi.getBudget(),
+    retry: 0,
+  });
+
+  const { data: learnedFacts = [] } = useQuery({
+    queryKey: ["settings", "learnedFacts"],
+    queryFn: async () => {
+      const data = await apiClient.get<{ items: Array<{ key: string; value: unknown; confidence: number; evidenceCount: number; lastConfirmedAt: string }> }>("/v1/uix/learned-facts");
+      return data.items;
+    },
+    retry: 0,
+  });
+
+  const { data: securityCenter } = useQuery({
+    queryKey: ["settings", "security"],
+    queryFn: () => securityApi.getCenter(),
+    retry: 0,
+  });
+
+  const { data: agentLoopPolicy } = useQuery({
+    queryKey: systemKeys.agentLoopPolicy(),
+    queryFn: () => systemApi.getAgentLoopPolicy(),
+    retry: 0,
+  });
+
+  const { data: expertMode } = useQuery({
+    queryKey: systemKeys.agentLoopExpertMode(),
+    queryFn: () => systemApi.getAgentLoopExpertMode(),
     retry: 0,
   });
 
@@ -352,6 +388,164 @@ export function SettingsPage() {
           ) : (
             <p className="text-sm text-white/60">Waiting for a system snapshot.</p>
           )}
+        </ShellCard>
+
+        <ShellCard eyebrow="Token Economy" title="LLM Budget">
+          {budgetStatus ? (
+            <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <DiagnosticTile
+                  icon={<DollarSign className="h-4 w-4" />}
+                  label="Status"
+                  value={budgetStatus.state}
+                />
+                <DiagnosticTile
+                  icon={<DollarSign className="h-4 w-4" />}
+                  label="Spent This Month"
+                  value={`$${budgetStatus.spentUsd.toFixed(2)}`}
+                />
+              </div>
+              <div className="space-y-2">
+                <DiagnosticRow label="Month" value={budgetStatus.month} />
+                <DiagnosticRow
+                  label="Monthly Limit"
+                  value={budgetStatus.config ? `$${budgetStatus.config.monthlyLimitUsd.toFixed(2)}` : "No limit set"}
+                />
+                <DiagnosticRow
+                  label="Remaining"
+                  value={budgetStatus.remainingUsd !== null ? `$${budgetStatus.remainingUsd.toFixed(2)}` : "Unlimited"}
+                />
+              </div>
+              {budgetStatus.state !== "ok" ? (
+                <div className={`rounded-2xl border p-3 text-sm ${budgetStatus.state === "over_limit" ? "border-red-500/20 bg-red-500/5 text-red-300" : "border-yellow-500/20 bg-yellow-500/5 text-yellow-300"}`}>
+                  {budgetStatus.state === "over_limit"
+                    ? "Budget exceeded — Friday will prefer local models (Ollama) until the next billing cycle."
+                    : "Approaching budget limit — Friday will prefer cheaper models when possible."}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm text-white/60">Budget data unavailable.</p>
+          )}
+        </ShellCard>
+
+        {learnedFacts.length > 0 ? (
+          <ShellCard eyebrow="Learning" title="What Friday Knows About You">
+            <div className="space-y-3">
+              <p className="text-sm text-white/60">
+                These are preferences and facts Friday has learned from your interactions.
+              </p>
+              {learnedFacts.map((fact) => (
+                <div key={fact.key} className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Brain className="h-3.5 w-3.5 text-white/40" />
+                        <p className="text-sm font-medium text-white">{fact.key}</p>
+                      </div>
+                      <p className="mt-1 text-sm text-white/70">{String(fact.value)}</p>
+                    </div>
+                    <StatusPill tone={fact.confidence >= 0.7 ? "success" : fact.confidence >= 0.4 ? "warning" : "neutral"}>
+                      {(fact.confidence * 100).toFixed(0)}%
+                    </StatusPill>
+                  </div>
+                  <p className="mt-2 text-xs text-white/30">
+                    {String(fact.evidenceCount)} evidence · last confirmed {formatTimestamp(fact.lastConfirmedAt)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </ShellCard>
+        ) : null}
+
+        <ShellCard eyebrow="Security" title="Security Center">
+          {securityCenter ? (
+            <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <DiagnosticTile icon={<Shield className="h-4 w-4" />} label="Health" value={securityCenter.health} />
+                <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label="Active Tokens" value={String(securityCenter.activeTokenCount)} />
+              </div>
+              {securityCenter.findings.length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">Findings</p>
+                  {securityCenter.findings.map((finding) => (
+                    <div key={finding.id} className="rounded-[22px] border border-white/[0.08] bg-black/20 p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-white/40" />
+                          <p className="text-sm text-white/80">{finding.message}</p>
+                        </div>
+                        <StatusPill tone={finding.severity === "high" ? "danger" : finding.severity === "medium" ? "warning" : "neutral"}>
+                          {finding.severity}
+                        </StatusPill>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-white/60">No security findings detected.</p>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-white/60">Security data unavailable.</p>
+          )}
+        </ShellCard>
+
+        <ShellCard eyebrow="Capabilities" title="Tool Availability">
+          {health ? (
+            <div className="space-y-2">
+              {[
+                { name: "Shell execution", enabled: health.capabilities?.exec?.enabled !== false },
+                { name: "Desktop control", enabled: health.capabilities?.desktop?.enabled === true },
+                { name: "System orchestration", enabled: health.capabilities?.system?.enabled === true },
+                { name: "Browser automation", enabled: health.capabilities?.browser?.enabled !== false },
+                { name: "MCP servers", enabled: (health.capabilities?.mcp?.serverCount ?? 0) > 0 },
+              ].map((tool) => (
+                <div key={tool.name} className="flex items-center justify-between rounded-[22px] border border-white/[0.08] bg-black/20 px-4 py-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <Wrench className="h-3.5 w-3.5 text-white/40" />
+                    <span className="text-white/70">{tool.name}</span>
+                  </div>
+                  <StatusPill tone={tool.enabled ? "success" : "neutral"}>
+                    {tool.enabled ? "enabled" : "disabled"}
+                  </StatusPill>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-white/60">Loading tool status...</p>
+          )}
+        </ShellCard>
+
+        <ShellCard eyebrow="Agent Loop" title="Automation Policy">
+          {agentLoopPolicy ? (
+            <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label="Status" value={agentLoopPolicy.enabled ? "enabled" : "disabled"} />
+                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label="Max Iterations" value={String(agentLoopPolicy.maxIterations ?? "unlimited")} />
+              </div>
+              {agentLoopPolicy.cooldownMs ? (
+                <DiagnosticRow label="Cooldown" value={`${String(agentLoopPolicy.cooldownMs / 1000)}s`} />
+              ) : null}
+              {agentLoopPolicy.timeBudgetMinutes ? (
+                <DiagnosticRow label="Time Budget" value={`${String(agentLoopPolicy.timeBudgetMinutes)} min`} />
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm text-white/60">Agent loop policy unavailable.</p>
+          )}
+          {expertMode ? (
+            <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">Expert Mode</p>
+              <DiagnosticRow label="Enabled" value={expertMode.enabled ? "yes" : "no"} />
+              {expertMode.contextInferenceAllowed !== undefined ? (
+                <DiagnosticRow label="Context Inference" value={expertMode.contextInferenceAllowed ? "allowed" : "denied"} />
+              ) : null}
+              {expertMode.probeBudget !== undefined ? (
+                <DiagnosticRow label="Probe Budget" value={String(expertMode.probeBudget)} />
+              ) : null}
+            </div>
+          ) : null}
         </ShellCard>
       </div>
     </div>

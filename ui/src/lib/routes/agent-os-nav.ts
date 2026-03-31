@@ -4,26 +4,17 @@ export interface AgentOsNavItem {
   description: string;
 }
 
-export const AGENT_OS_NAV_ITEMS: AgentOsNavItem[] = [
+/** Primary nav — always visible. */
+export const AGENT_OS_NAV_PRIMARY: AgentOsNavItem[] = [
+  {
+    label: "Chat",
+    path: "/chat",
+    description: "Talk to Friday — ask anything or give it a task",
+  },
   {
     label: "Home",
     path: "/home",
     description: "Goal-first starting point with guided flows",
-  },
-  {
-    label: "Assistant",
-    path: "/assistant",
-    description: "Full dashboard for goals, plans, actions, and issue recovery",
-  },
-  {
-    label: "Marketplace",
-    path: "/marketplace",
-    description: "Browse public assets, support creators, and post custom requests",
-  },
-  {
-    label: "Workflows",
-    path: "/workflows",
-    description: "Deploy, run, export, and inspect workflow state in depth",
   },
   {
     label: "Skills",
@@ -31,9 +22,28 @@ export const AGENT_OS_NAV_ITEMS: AgentOsNavItem[] = [
     description: "Catalog, verification, trust, and lifecycle control",
   },
   {
+    label: "Workflows",
+    path: "/workflows",
+    description: "Deploy, run, export, and inspect workflow state in depth",
+  },
+];
+
+/** Advanced nav — collapsed by default for beginners. */
+export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
+  {
+    label: "Assistant",
+    path: "/assistant",
+    description: "Full dashboard for goals, plans, actions, and issue recovery",
+  },
+  {
     label: "Fleet",
     path: "/fleet",
     description: "Satellites, placement, backlog, and distributed execution health",
+  },
+  {
+    label: "Marketplace",
+    path: "/marketplace",
+    description: "Browse public assets, support creators, and post custom requests",
   },
   {
     label: "Task Queue",
@@ -41,23 +51,37 @@ export const AGENT_OS_NAV_ITEMS: AgentOsNavItem[] = [
     description: "Scheduled work, quick runs, and queue control",
   },
   {
+    label: "Memory",
+    path: "/memory",
+    description: "View, search, and manage what Friday remembers about you",
+  },
+  {
     label: "Observability",
     path: "/observability",
     description: "Trace, audit, alerts, and health for operator debugging",
-  },
-  {
-    label: "Settings",
-    path: "/settings",
-    description: "System diagnostics, providers, and access surfaces",
   },
   {
     label: "Operator Console",
     path: "/command-center",
     description: "Raw live system console, remote sessions, and low-level operator controls",
   },
+  {
+    label: "Settings",
+    path: "/settings",
+    description: "System diagnostics, providers, and access surfaces",
+  },
+];
+
+/** Full list for backward compat. */
+export const AGENT_OS_NAV_ITEMS: AgentOsNavItem[] = [
+  ...AGENT_OS_NAV_PRIMARY,
+  ...AGENT_OS_NAV_ADVANCED,
 ];
 
 export function resolvePageTitle(pathname: string): string {
+  if (pathname === "/chat") {
+    return "Chat";
+  }
   if (pathname === "/" || pathname === "/home") {
     return "Home";
   }
@@ -88,7 +112,10 @@ export function resolvePageTitle(pathname: string): string {
   if (pathname.startsWith("/settings")) {
     return "Settings";
   }
-  if (pathname.startsWith("/command-center") || pathname.startsWith("/sessions") || pathname.startsWith("/memory")) {
+  if (pathname.startsWith("/memory")) {
+    return "Memory";
+  }
+  if (pathname.startsWith("/command-center") || pathname.startsWith("/sessions")) {
     return "Operator Console";
   }
   if (pathname.startsWith("/login")) {

@@ -12,6 +12,7 @@ services:
       FRIDAY_TOKEN_SECRET: ${FRIDAY_TOKEN_SECRET}
       FRIDAY_CORS_ORIGINS: ${FRIDAY_CORS_ORIGINS:-}
       FRIDAY_LOG_REQUESTS: ${FRIDAY_LOG_REQUESTS:-true}
+      FRIDAY_AUTO_SETUP: ${FRIDAY_AUTO_SETUP:-false}
     ports:
       - "${FRIDAY_PORT:-3141}:3141"
     volumes:
@@ -23,3 +24,28 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+    depends_on:
+      ollama:
+        condition: service_healthy
+        required: false
+
+  # Optional local LLM via Ollama — activate with: docker compose --profile local-llm up
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-llm"]
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/version"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    environment:
+      OLLAMA_HOST: 0.0.0.0
+
+volumes:
+  ollama-data:

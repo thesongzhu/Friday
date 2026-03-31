@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -8,15 +8,20 @@ import {
   ArrowRight,
   BellRing,
   CheckCircle2,
+  ChevronRight,
   HeartPulse,
   Mail,
+  Pause,
+  Play,
   RotateCcw,
   ShieldCheck,
   Siren,
+  Square,
   TimerReset,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ShellCard, StatusPill } from "@/components/core/primitives";
+import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { systemApi } from "@/lib/api/system";
 import {
@@ -285,6 +290,39 @@ export function ObservabilityPage() {
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Could not acknowledge alert.");
+    },
+  });
+
+  const resumeLoopRunMutation = useMutation({
+    mutationFn: (loopRunId: string) => systemApi.resumeAgentLoopRun(loopRunId),
+    onSuccess: () => {
+      toast.success("Loop run resumed.");
+      void queryClient.invalidateQueries({ queryKey: ["observability", "agent-loop-runs"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not resume loop run.");
+    },
+  });
+
+  const cancelLoopRunMutation = useMutation({
+    mutationFn: (loopRunId: string) => systemApi.cancelAgentLoopRun(loopRunId),
+    onSuccess: () => {
+      toast.success("Loop run cancelled.");
+      void queryClient.invalidateQueries({ queryKey: ["observability", "agent-loop-runs"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not cancel loop run.");
+    },
+  });
+
+  const deleteDestinationMutation = useMutation({
+    mutationFn: (destinationId: string) => systemApi.deleteObservabilityAlertDestination(destinationId),
+    onSuccess: () => {
+      toast.success("Alert destination deleted.");
+      void queryClient.invalidateQueries({ queryKey: ["observability", "alert-destinations"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not delete destination.");
     },
   });
 
@@ -821,6 +859,28 @@ export function ObservabilityPage() {
                     Verification: {record.run.verificationPassed === undefined ? "pending" : record.run.verificationPassed ? "passed" : "failed"} ·
                     Rollback: {record.run.rollbackAttempted ? (record.run.rollbackSucceeded ? " succeeded" : " attempted") : " not needed"}
                   </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {record.run.status === "paused" ? (
+                      <ActionButton
+                        tone="secondary"
+                        disabled={resumeLoopRunMutation.isPending}
+                        onClick={() => resumeLoopRunMutation.mutate(record.run.loopRunId)}
+                      >
+                        <Play className="mr-1.5 h-3 w-3" />
+                        Resume
+                      </ActionButton>
+                    ) : null}
+                    {record.run.status === "executing" || record.run.status === "paused" ? (
+                      <ActionButton
+                        tone="secondary"
+                        disabled={cancelLoopRunMutation.isPending}
+                        onClick={() => cancelLoopRunMutation.mutate(record.run.loopRunId)}
+                      >
+                        <Square className="mr-1.5 h-3 w-3" />
+                        Cancel
+                      </ActionButton>
+                    ) : null}
+                  </div>
                 </div>
               ))}
               {rulesAuditLog.slice(0, 3).map((entry) => (
@@ -913,22 +973,7 @@ export function ObservabilityPage() {
           {slos.length > 0 ? (
             <div className="space-y-3">
               {slos.map((slo) => (
-                <div key={slo.id} className="agent-subcard p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-white">{slo.name}</p>
-                      <p className="text-xs text-white/50">{slo.sliMetricName}</p>
-                    </div>
-                    <StatusPill tone={slo.status === "healthy" ? "success" : slo.status === "warning" ? "warning" : "danger"}>
-                      {slo.status}
-                    </StatusPill>
-                  </div>
-                  <div className="mt-3 grid gap-2 text-xs text-white/55">
-                    <p>Target: {slo.target}%</p>
-                    <p>Current value: {slo.currentValue?.toFixed(2) ?? "n/a"}%</p>
-                    <p>Budget consumed: {slo.budgetConsumedPercent?.toFixed(2) ?? "0"}%</p>
-                  </div>
-                </div>
+                <SloCard key={slo.id} slo={slo} />
               ))}
             </div>
           ) : (
@@ -951,9 +996,19 @@ export function ObservabilityPage() {
                         <p className="text-xs text-white/50">{destination.type}</p>
                       </div>
                     </div>
-                    <StatusPill tone={destination.enabled ? "success" : "warning"}>
-                      {destination.enabled ? "enabled" : "disabled"}
-                    </StatusPill>
+                    <div className="flex items-center gap-2">
+                      <StatusPill tone={destination.enabled ? "success" : "warning"}>
+                        {destination.enabled ? "enabled" : "disabled"}
+                      </StatusPill>
+                      <button
+                        type="button"
+                        className="rounded-lg p-1.5 text-white/30 transition hover:bg-white/10 hover:text-red-400"
+                        disabled={deleteDestinationMutation.isPending}
+                        onClick={() => deleteDestinationMutation.mutate(destination.id)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -963,6 +1018,68 @@ export function ObservabilityPage() {
           )}
         </ShellCard>
       </div>
+    </div>
+  );
+}
+
+function SloCard(props: { slo: Awaited<ReturnType<typeof systemApi.listObservabilitySlos>>[number] }) {
+  const { slo } = props;
+  const [expanded, setExpanded] = useState(false);
+  const detailQuery = useQuery({
+    queryKey: ["observability", "slo-detail", slo.id],
+    queryFn: () => systemApi.getObservabilitySlo(slo.id),
+    enabled: expanded,
+  });
+
+  return (
+    <div className="agent-subcard p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate font-medium text-white">{slo.name}</p>
+          <p className="text-xs text-white/50">{slo.sliMetricName}</p>
+        </div>
+        <StatusPill tone={slo.status === "healthy" ? "success" : slo.status === "warning" ? "warning" : "danger"}>
+          {slo.status}
+        </StatusPill>
+      </div>
+      <div className="mt-3 grid gap-2 text-xs text-white/55">
+        <p>Target: {slo.target}%</p>
+        <p>Current value: {slo.currentValue?.toFixed(2) ?? "n/a"}%</p>
+        <p>Budget consumed: {slo.budgetConsumedPercent?.toFixed(2) ?? "0"}%</p>
+      </div>
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="mt-3 flex items-center gap-1 text-xs font-medium text-white/50 transition hover:text-white/80"
+      >
+        <ChevronRight className={`h-3 w-3 transition ${expanded ? "rotate-90" : ""}`} />
+        {expanded ? "Hide detail" : "Show detail"}
+      </button>
+      {expanded && detailQuery.data ? (
+        <div className="mt-3 rounded-xl border border-white/8 bg-white/[0.02] p-3 text-xs text-white/55">
+          <div className="grid gap-2">
+            {detailQuery.data.slo.description ? <p>{detailQuery.data.slo.description}</p> : null}
+            <p>Compliance window: {detailQuery.data.slo.complianceWindowDays} days</p>
+            {detailQuery.data.errorBudget ? (
+              <>
+                <p>Error budget remaining: {detailQuery.data.errorBudget.remainingBudgetPercent.toFixed(2)}%</p>
+                <p>Budget exhausted: {detailQuery.data.errorBudget.exhausted ? "Yes" : "No"}</p>
+                <p>Window: {new Date(detailQuery.data.errorBudget.windowStart).toLocaleDateString()} – {new Date(detailQuery.data.errorBudget.windowEnd).toLocaleDateString()}</p>
+              </>
+            ) : null}
+            {detailQuery.data.burnRates.length > 0 ? (
+              <div>
+                <p className="font-medium text-white/70">Burn rates:</p>
+                {detailQuery.data.burnRates.map((rate) => (
+                  <p key={rate.windowLabel}>{rate.windowLabel}: {rate.rate.toFixed(2)}x</p>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : expanded && detailQuery.isLoading ? (
+        <p className="mt-3 text-xs text-white/40">Loading...</p>
+      ) : null}
     </div>
   );
 }

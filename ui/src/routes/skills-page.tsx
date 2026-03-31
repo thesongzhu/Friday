@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BadgeCheck, Download, Package, RefreshCcw, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
+import { HelpTooltip } from "@/components/core/help-tooltip";
 import { skillsApi } from "@/lib/api/skills";
 import { buildObservabilityHref } from "@/lib/observability/view-models";
 import { readLastSkillGeneratorSessionId } from "@/lib/skills/generator-session";
@@ -310,7 +311,7 @@ export function SkillsPage() {
 
         <ShellCard
           eyebrow="Bundled Starter Pack"
-          title="Starter skills that ship with Friday"
+          title={<>Starter <HelpTooltip term="skill">skills</HelpTooltip> that ship with Friday</>}
           aside={<StatusPill tone={sections.starter.length > 0 ? "success" : "neutral"}>{sections.starter.length} bundled</StatusPill>}
         >
           <div className="space-y-3">
@@ -349,12 +350,16 @@ export function SkillsPage() {
 
         <ShellCard
           eyebrow="Installed / Managed"
-          title="Choose the skill Friday should manage"
+          title={<>Choose the <HelpTooltip term="skill" /> Friday should manage</>}
           aside={<StatusPill tone={sections.installed.length > 0 ? "success" : "neutral"}>{sections.installed.length} managed</StatusPill>}
         >
           <div className="space-y-3">
             {sections.installed.length === 0 ? (
-              <p className="text-sm text-white/60">No managed skills yet. Friday can still use the bundled starter pack immediately.</p>
+              <div className="space-y-2 text-sm text-white/60">
+                <p>No managed skills yet. Friday can still use the bundled starter pack immediately.</p>
+                <p>Tell Friday what you want to automate and it will create or install the right skill.</p>
+                <Link to="/chat" className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-200 hover:bg-emerald-400/20">Ask Friday in Chat</Link>
+              </div>
             ) : (
               sections.installed.map((skill) => (
                 <button

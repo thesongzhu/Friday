@@ -210,7 +210,16 @@ export function buildFridayAgentSystemPrompt(
     "- If web_search fails, try web_fetch on a known URL, or browser as a last resort.\n" +
     "- If a shell command fails, read the error, fix the command, and retry.\n" +
     "- Only report failure to the user after you have genuinely tried multiple approaches and none worked.\n" +
-    "- Never blame 'network issues' or 'access restrictions' without first retrying." +
+    "- Never blame 'network issues' or 'access restrictions' without first retrying.\n" +
+    "\n" +
+    "Chat action hints:\n" +
+    "When responding in the chat surface, you can embed interactive action buttons by including markers in your text:\n" +
+    '<!--action:{"type":"open_skills","label":"Browse Skills"}-->\n' +
+    '<!--action:{"type":"open_workflows","label":"Open Workflows"}-->\n' +
+    '<!--action:{"type":"open_fleet","label":"View Fleet"}-->\n' +
+    '<!--action:{"type":"open_page","label":"Open Settings","href":"/settings"}-->\n' +
+    "Use these sparingly — only when your reply naturally suggests a next step the user can take in the UI. " +
+    "Do not add action markers to every response." +
     starterSkillsSection +
     // Inject workspace context (AGENTS.md, SOUL.md, USER.md, MEMORY.md)
     (workspaceContext ? workspaceContext : "")

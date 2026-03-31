@@ -471,7 +471,7 @@ describe("Friday Web Routing E2E", () => {
         env.accessToken,
         "POST",
         "/v1/agent/runs",
-        { task: "hello", providerId, model, timeoutMs: 10_000 },
+        { task: "fetch the homepage of example.com", providerId, model, timeoutMs: 10_000 },
       );
 
       const firstCall = mock.calls[0]!;
@@ -500,7 +500,7 @@ describe("Friday Web Routing E2E", () => {
         env.accessToken,
         "POST",
         "/v1/agent/runs",
-        { task: "hello", providerId, model, timeoutMs: 10_000 },
+        { task: "fetch the homepage of example.com", providerId, model, timeoutMs: 10_000 },
       );
 
       const firstCall = mock.calls[0]!;

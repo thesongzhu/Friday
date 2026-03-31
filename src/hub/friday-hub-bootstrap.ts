@@ -428,6 +428,31 @@ async function autoDetectProvidersFromEnv(
     }
   }
 
+  // Auto-detect Ollama from OLLAMA_BASE_URL (no API key needed)
+  const ollamaUrl = process.env.OLLAMA_BASE_URL;
+  if (ollamaUrl && !existingKinds.has("ollama") && !detected.some((d) => d.kind === "ollama")) {
+    const preset = getFridayProviderPreset("ollama", ollamaUrl);
+    try {
+      const profile = await providerService.createProvider({
+        kind: "ollama",
+        name: "ollama (auto-detected)",
+        baseUrl: preset.baseUrl,
+        api: preset.api,
+        authMode: preset.authMode,
+        apiKey: "",
+        supportedModels: ["llama3.2", "qwen2.5", "gemma2"],
+        defaultModel: "llama3.2",
+        validateOnSave: false,
+      });
+      detected.push({ kind: "ollama", id: profile.id });
+    } catch (err) {
+      console.warn(
+        "[friday] Auto-detect: failed to register ollama from $OLLAMA_BASE_URL:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   // Set default routing if none configured and we registered at least one provider
   if (detected.length > 0) {
     const routing = await providerService.getRoutingConfig();
@@ -441,11 +466,12 @@ async function autoDetectProvidersFromEnv(
           break;
         }
       }
-      const chosenEntry = ENV_PROVIDER_MAP.find((e) => e.kind === chosen.kind)!;
+      const chosenEntry = ENV_PROVIDER_MAP.find((e) => e.kind === chosen.kind);
+      const defaultModel = chosenEntry?.defaultModel ?? (chosen.kind === "ollama" ? "llama3.2" : "default");
       try {
         await providerService.setRoutingConfig({
           defaultProviderId: chosen.id,
-          defaultModel: chosenEntry.defaultModel,
+          defaultModel,
           fallbackProviderIds: detected
             .filter((d) => d.id !== chosen.id)
             .map((d) => d.id),
@@ -2301,7 +2327,7 @@ export async function createFridayHub(
         if (episode) {
           await worldModelStateManager.updateFromEpisode(userId, episode);
         }
-        // Pattern extraction pipeline — stub returns [] today, wired for future implementation
+        // Pattern extraction — analyze episodes for recurring tool sequences, failures, and temporal patterns
         await worldModelPatternExtractor.extractPatterns(userId);
       } catch (err) {
         console.warn("[friday][world-model] afterTurn episode extraction failed:", err instanceof Error ? err.message : String(err));
@@ -2360,6 +2386,25 @@ export async function createFridayHub(
       } catch (err) {
         warnHubBootstrapOperationFailureOnce(err);
         // Non-fatal: world state loading failure should not block agent runs.
+      }
+
+      // ── Learned patterns injection ──
+      // Load patterns discovered from past episodes so the agent can leverage them.
+      try {
+        const patterns = await worldModelPatternExtractor.extractPatterns(input.userId, 50);
+        if (patterns.length > 0) {
+          const patternLines = patterns.map(
+            (p) => `- [${p.kind}] ${p.description} (confidence: ${(p.confidence * 100).toFixed(0)}%)`,
+          );
+          const patternFragment =
+            "\n\n<learned-patterns>\n" +
+            patternLines.join("\n") +
+            "\n</learned-patterns>";
+          workspaceContext = (workspaceContext ?? "") + patternFragment;
+        }
+      } catch (err) {
+        warnHubBootstrapOperationFailureOnce(err);
+        // Non-fatal: pattern loading failure should not block agent runs.
       }
     }
     const starterSkills = registry.list()
@@ -2521,6 +2566,7 @@ export async function createFridayHub(
     evaluateRules,
     contextEngine: agentContextEngine,
     decisionEngine: worldModelDecisionEngine,
+    worldStateManager: worldModelStateManager,
     learningContextBuilder: (input) => {
       if (!_learningContextRef) return { preferences: {} };
       return _learningContextRef.buildContext(input);
