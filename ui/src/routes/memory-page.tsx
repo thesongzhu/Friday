@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Brain, Search, Tag, Trash2 } from "lucide-react";
+import { Brain, Plus, Search, Tag, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { memoryApi } from "@/lib/api/memory";
@@ -55,6 +55,21 @@ export function MemoryPage() {
     },
   });
 
+  const storeMutation = useMutation({
+    mutationFn: (input: { namespace: string; content: string; key: string; tags: string[] }) =>
+      memoryApi.store(input),
+    onSuccess: async () => {
+      toast.success("Memory item stored");
+      setShowAddForm(false);
+      await queryClient.invalidateQueries({ queryKey: ["memory"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to store memory item");
+    },
+  });
+
+  const [showAddForm, setShowAddForm] = useState(false);
+
   const handleSearch = () => {
     setActiveSearch(searchQuery.trim());
   };
@@ -108,10 +123,24 @@ export function MemoryPage() {
                 ? `${String(displayItems.length)} results for "${activeSearch}"`
                 : `${String(displayItems.length)} items total`}
             </p>
-            <ActionButton tone="secondary" onClick={() => pruneMutation.mutate()} disabled={pruneMutation.isPending}>
-              Prune Expired
-            </ActionButton>
+            <div className="flex gap-2">
+              <ActionButton tone="secondary" onClick={() => setShowAddForm(!showAddForm)}>
+                <Plus className="mr-1 h-3 w-3" />
+                Add Memory
+              </ActionButton>
+              <ActionButton tone="secondary" onClick={() => pruneMutation.mutate()} disabled={pruneMutation.isPending}>
+                Prune Expired
+              </ActionButton>
+            </div>
           </div>
+
+          {showAddForm && (
+            <AddMemoryForm
+              onSubmit={(input) => storeMutation.mutate(input)}
+              pending={storeMutation.isPending}
+              onCancel={() => setShowAddForm(false)}
+            />
+          )}
         </div>
       </ShellCard>
 
@@ -179,6 +208,91 @@ export function MemoryPage() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function AddMemoryForm(props: {
+  onSubmit: (input: { namespace: string; content: string; key: string; tags: string[] }) => void;
+  pending: boolean;
+  onCancel: () => void;
+}) {
+  const [namespace, setNamespace] = useState("user");
+  const [key, setKey] = useState("");
+  const [content, setContent] = useState("");
+  const [tagsInput, setTagsInput] = useState("");
+
+  const canSubmit = key.trim().length > 0 && content.trim().length > 0;
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/30 p-4 space-y-3">
+      <p className="text-xs uppercase tracking-[0.16em] text-white/40">Add memory item</p>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="mb-1 block text-xs text-white/50">Namespace</label>
+          <select
+            value={namespace}
+            onChange={(e) => setNamespace(e.target.value)}
+            className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white focus:border-white/20 focus:outline-none"
+          >
+            <option value="user">user</option>
+            <option value="preference">preference</option>
+            <option value="system">system</option>
+            <option value="agent">agent</option>
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-white/50">Key</label>
+          <input
+            type="text"
+            placeholder="e.g. favorite-language"
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/20 focus:outline-none"
+          />
+        </div>
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-white/50">Content</label>
+        <textarea
+          rows={3}
+          placeholder="The information to remember..."
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/20 focus:outline-none resize-none"
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-white/50">Tags (comma-separated)</label>
+        <input
+          type="text"
+          placeholder="e.g. lang, preference"
+          value={tagsInput}
+          onChange={(e) => setTagsInput(e.target.value)}
+          className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/20 focus:outline-none"
+        />
+      </div>
+      <div className="flex gap-2">
+        <ActionButton
+          disabled={!canSubmit || props.pending}
+          onClick={() =>
+            props.onSubmit({
+              namespace,
+              key: key.trim(),
+              content: content.trim(),
+              tags: tagsInput
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean),
+            })
+          }
+        >
+          {props.pending ? "Storing..." : "Store"}
+        </ActionButton>
+        <ActionButton tone="secondary" onClick={props.onCancel}>
+          Cancel
+        </ActionButton>
+      </div>
     </div>
   );
 }

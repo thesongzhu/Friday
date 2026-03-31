@@ -2949,6 +2949,12 @@ function IssueCard(props: {
   rollbackPending: boolean;
 }) {
   const action = props.action;
+  const [detailExpanded, setDetailExpanded] = useState(false);
+  const detailQuery = useQuery({
+    queryKey: ["auto-fix", "action", action?.action.actionId],
+    queryFn: () => systemApi.getAutoFixAction(action!.action.actionId),
+    enabled: detailExpanded && action !== null,
+  });
   const playbook = buildAssistantIssuePlaybook({
     issue: props.issue,
     action,
@@ -3024,6 +3030,39 @@ function IssueCard(props: {
               Details
             </Link>
           </div>
+          <button
+            type="button"
+            onClick={() => setDetailExpanded(!detailExpanded)}
+            className="mt-3 flex items-center gap-1 text-xs font-medium text-white/50 transition hover:text-white/80"
+          >
+            <ChevronRight className={`h-3 w-3 transition ${detailExpanded ? "rotate-90" : ""}`} />
+            {detailExpanded ? "Hide evidence" : "Show evidence"}
+          </button>
+          {detailExpanded && (
+            <div className="mt-2 rounded-2xl border border-white/8 bg-white/[0.02] px-3 py-2 text-xs text-white/55">
+              {detailQuery.isLoading ? (
+                <p>Loading action details...</p>
+              ) : detailQuery.data ? (
+                <div className="space-y-2">
+                  <p><span className="text-white/70">Root cause:</span> {detailQuery.data.evidence.rootCauseSummary}</p>
+                  <p><span className="text-white/70">Plan:</span> {detailQuery.data.evidence.selectedPlan.title} — {detailQuery.data.evidence.selectedPlan.summary}</p>
+                  <p><span className="text-white/70">Steps:</span> {String(detailQuery.data.evidence.selectedPlan.stepCount)} · Rollback: {detailQuery.data.evidence.selectedPlan.rollbackPlanAvailable ? "Yes" : "No"}</p>
+                  <p><span className="text-white/70">Risk tier:</span> {detailQuery.data.evidence.riskTier}</p>
+                  {detailQuery.data.evidence.approvalTrail && (
+                    <p><span className="text-white/70">Approval:</span> {detailQuery.data.evidence.approvalTrail.status}{detailQuery.data.evidence.approvalTrail.reason ? ` — ${detailQuery.data.evidence.approvalTrail.reason}` : ""}</p>
+                  )}
+                  {detailQuery.data.action.appliedAt && (
+                    <p><span className="text-white/70">Applied:</span> {new Date(detailQuery.data.action.appliedAt).toLocaleString()}</p>
+                  )}
+                  {detailQuery.data.action.rolledBackAt && (
+                    <p><span className="text-white/70">Rolled back:</span> {new Date(detailQuery.data.action.rolledBackAt).toLocaleString()}</p>
+                  )}
+                </div>
+              ) : (
+                <p>No details available.</p>
+              )}
+            </div>
+          )}
         </div>
       ) : null}
     </article>
