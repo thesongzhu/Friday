@@ -1,0 +1,16 @@
+{
+  "caseId": "agent-browser-screenshot",
+  "name": "agent-browser-screenshot",
+  "startedAt": "2026-03-31T09:28:15.173Z",
+  "finishedAt": "2026-03-31T09:28:26.260Z",
+  "verdict": "PASS",
+  "severity": "P1",
+  "observed": {
+    "status": "completed",
+    "toolCallCount": 2,
+    "response": "**Task completed successfully.** I opened https://example.com in a headless browser and captured a screenshot. The page loaded with the title \"Example Domain\" and the screenshot was saved as a PNG file (1280x720 pixels, 16.6KB).",
+    "images": [
+      ".friday/artifacts/browser/default/1774949303731-tab-1.png"
+    ]
+  }
+}

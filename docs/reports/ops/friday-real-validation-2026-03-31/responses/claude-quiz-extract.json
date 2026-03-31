@@ -1,0 +1,15 @@
+{
+  "caseId": "claude-quiz-extract",
+  "name": "claude-quiz-extract",
+  "startedAt": "2026-03-31T09:28:07.441Z",
+  "finishedAt": "2026-03-31T09:28:10.326Z",
+  "verdict": "PASS",
+  "severity": "P2",
+  "observed": {
+    "status": "completed",
+    "durationMs": 1166,
+    "toolCallCount": 0,
+    "response": "alice@example.com"
+  },
+  "note": "all expected markers found"
+}

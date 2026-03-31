@@ -1166,6 +1166,10 @@ export function createFridayAgentRuntime(
             const onParentAbort = () => turnTimeoutController.abort(runAbortController.signal.reason);
             runAbortController.signal.addEventListener("abort", onParentAbort, { once: true });
 
+            // OC-009: Validate tool_use/tool_result pairing before sending to LLM.
+            // Anthropic API rejects messages where tool_use blocks lack corresponding tool_result blocks.
+            repairOrphanedToolUseBlocks(messages);
+
             try {
               streamResult = await streamLlmResponse({
                 llmClient,
@@ -1637,7 +1641,11 @@ export function createFridayAgentRuntime(
           }
 
           const generatorClarificationSignal = extractGeneratorClarificationSignal(allToolCalls);
-          if (generatorClarificationSignal) {
+          // Layer-2 guard: if the original user task is clearly a Q&A / summarization
+          // request, do NOT surface generator clarification — the LLM should answer
+          // directly instead of routing through the workflow/skill generator.
+          const QA_BYPASS_L2 = /\b(summarize|summarise|explain|describe|what is|tell me about|list|show|how does|overview|translate|recap|compare|analyze|analyse)\b/i;
+          if (generatorClarificationSignal && !QA_BYPASS_L2.test(params.task)) {
             return await transitionToAwaitingClarification({
               ...generatorClarificationSignal,
               currentPlanReview: planReview,
@@ -2123,6 +2131,56 @@ async function safeEvaluateRules(
     }
   }
   return null;
+}
+
+/**
+ * OC-009: Ensure every tool_use block in the messages array has a matching tool_result.
+ * Anthropic API requires strict tool_use → tool_result pairing. If a prior loop iteration
+ * exited early (abort, generator clarification, etc.), orphaned tool_use blocks may remain.
+ * This mutates the messages array in-place by injecting synthetic error tool_results.
+ */
+function repairOrphanedToolUseBlocks(messages: FridayAgentMessage[]): void {
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i]!;
+    if (msg.role !== "assistant" || typeof msg.content === "string") continue;
+
+    const blocks = msg.content as Array<{ type: string; id?: string; name?: string }>;
+    const toolUseIds = blocks
+      .filter((b) => b.type === "tool_use" && b.id)
+      .map((b) => b.id!);
+
+    if (toolUseIds.length === 0) continue;
+
+    // Check the next message for matching tool_result blocks
+    const next = messages[i + 1];
+    if (!next || next.role !== "user" || typeof next.content === "string") {
+      // No tool_result message follows — inject one
+      const syntheticResults = toolUseIds.map((id) => ({
+        type: "tool_result" as const,
+        tool_use_id: id,
+        content: "Tool result unavailable — execution was interrupted.",
+        is_error: true,
+      }));
+      messages.splice(i + 1, 0, { role: "user", content: syntheticResults });
+      continue;
+    }
+
+    // Check for missing individual tool_results
+    const resultBlocks = (next.content as Array<{ type: string; tool_use_id?: string }>);
+    const resultIds = new Set(
+      resultBlocks.filter((b) => b.type === "tool_result" && b.tool_use_id).map((b) => b.tool_use_id!),
+    );
+    for (const id of toolUseIds) {
+      if (!resultIds.has(id)) {
+        resultBlocks.push({
+          type: "tool_result",
+          tool_use_id: id,
+          content: "Tool result unavailable — execution was interrupted.",
+          is_error: true,
+        } as typeof resultBlocks[number]);
+      }
+    }
+  }
 }
 
 function normalizeHistoryMessages(
@@ -2929,11 +2987,35 @@ function responseStatesAutonomyBoundaryClearly(text: string): boolean {
 
 function taskLooksLikeExternalAction(task: string): boolean {
   if (/https?:\/\/\S+/i.test(task)) return true;
+  // "summarize" removed — it's a Q&A verb, not an external action.
+  // Handled separately by taskIsQaWithProvidedContext().
   const english =
-    /\b(open|visit|browse|search|lookup|check|watch|summari[sz]e|fetch|download|website|youtube|reddit|news|tweet|url|link)\b/i;
+    /\b(open|visit|browse|search|lookup|check|watch|fetch|download|website|youtube|reddit|news|tweet|url|link)\b/i;
   const chinese =
-    /(打开|访问|浏览|搜索|查找|查看|抓取|总结|概括|视频|网页|网站|链接|新闻|油管|YouTube)/;
+    /(打开|访问|浏览|搜索|查找|查看|抓取|视频|网页|网站|链接|新闻|油管|YouTube)/;
   return english.test(task) || chinese.test(task);
+}
+
+/**
+ * Detect Q&A tasks that contain web-action keywords but are asking about
+ * provided/internal content — NOT requesting an external lookup.
+ *
+ * Example: "Summarize this text about automation" → true (pure Q&A)
+ * Example: "Search the web and summarize results" → false (needs external tools)
+ * Example: "Summarize https://example.com" → false (needs fetch)
+ */
+const QA_CONTEXT_VERBS =
+  /\b(summarize|summarise|explain|describe|what is|tell me about|how does|overview|analyze|analyse|recap|compare|translate)\b/i;
+const QA_CONTEXT_VERBS_CN =
+  /(总结|概括|解释|描述|分析|对比|翻译|概述)/;
+const EXPLICIT_EXTERNAL_ACTION =
+  /\b(open|visit|browse|go to|navigate|download|fetch from|look up on|search (?:the )?(?:web|internet|online))\b/i;
+
+function taskIsQaWithProvidedContext(task: string): boolean {
+  if (!QA_CONTEXT_VERBS.test(task) && !QA_CONTEXT_VERBS_CN.test(task)) return false;
+  if (EXPLICIT_EXTERNAL_ACTION.test(task)) return false;
+  if (/https?:\/\/\S+/i.test(task)) return false;
+  return true;
 }
 
 function taskLooksLikeDesktopAction(task: string): boolean {
@@ -3104,6 +3186,9 @@ function toolCallViolatesDesktopInspectionIntent(params: {
 
 function classifyEvidenceTask(task: string): "web" | "desktop" | null {
   if (taskLooksLikeDesktopAction(task)) return "desktop";
+  // Q&A tasks may contain web-action keywords ("search", "check") but are
+  // asking about provided/internal content — skip evidence closure for these.
+  if (taskIsQaWithProvidedContext(task)) return null;
   if (taskLooksLikeExternalAction(task)) return "web";
   return null;
 }

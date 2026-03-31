@@ -418,8 +418,9 @@ export function createFridayProviderInferenceClient(
             oauthMode,
           );
 
-          // For OAuth: prepend required system prefix to the system message
-          const effectiveMessages = oauthMode === "oauth"
+          // For OAuth on non-Anthropic APIs: prepend required system prefix to the system message.
+          // For Anthropic, the prefix is applied in the cache-hint path below to avoid double-prefixing.
+          const effectiveMessages = (oauthMode === "oauth" && api !== "anthropic-messages")
             ? messages.map((m) =>
                 m.role === "system"
                   ? { ...m, content: withOAuthSystemPrefix(m.content, oauthMode) }
@@ -480,8 +481,12 @@ export function createFridayProviderInferenceClient(
             // Merge cache headers — append anthropic-beta flags instead of replacing
             const cacheHeaders = cacheResult.extraHeaders;
             if (cacheHeaders["anthropic-beta"] && headers["anthropic-beta"]) {
-              cacheHeaders["anthropic-beta"] =
-                `${headers["anthropic-beta"]},${cacheHeaders["anthropic-beta"]}`;
+              // Deduplicate beta flags to avoid Anthropic API rejecting unknown combinations
+              const existing = new Set(headers["anthropic-beta"].split(",").map((f: string) => f.trim()));
+              for (const flag of cacheHeaders["anthropic-beta"].split(",")) {
+                existing.add(flag.trim());
+              }
+              cacheHeaders["anthropic-beta"] = [...existing].join(",");
             }
             headers = { ...headers, ...cacheHeaders };
           }
@@ -495,6 +500,10 @@ export function createFridayProviderInferenceClient(
 
           if (!response.ok) {
             const errorText = await response.text();
+            console.error(
+              `[friday][generator-llm] Provider ${provider.name} (${api}, model=${model}) returned ${response.status}:`,
+              errorText.slice(0, 1000),
+            );
             throw new FridayDomainError(
               "PROVIDER_ERROR",
               `Provider ${provider.name} returned ${response.status}: ${errorText.slice(0, 500)}`,

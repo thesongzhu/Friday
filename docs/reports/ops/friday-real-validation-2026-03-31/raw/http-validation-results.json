@@ -1,0 +1,277 @@
+{
+  "startedAt": "2026-03-31T09:27:59.536Z",
+  "finishedAt": "2026-03-31T09:29:17.283Z",
+  "baseUrl": "http://127.0.0.1:3141",
+  "providerId": "11053bd1-a47b-4e07-a195-59a56a96c83c",
+  "model": "claude-sonnet-4-20250514",
+  "sandboxDir": "/Users/jarvis/Desktop/friday-real-test-2026-03-31",
+  "results": [
+    {
+      "caseId": "provider-validate",
+      "name": "provider-validate",
+      "startedAt": "2026-03-31T09:27:59.558Z",
+      "finishedAt": "2026-03-31T09:28:00.689Z",
+      "verdict": "PASS",
+      "severity": "P0",
+      "observed": {
+        "ok": true,
+        "data": {
+          "validation": {
+            "status": "ok",
+            "checkedAt": "2026-03-31T09:28:00.687Z"
+          }
+        },
+        "requestId": "fc5d5812-7afe-45cd-925a-e72c90342cba"
+      },
+      "evidence": [
+        "/v1/providers/11053bd1-a47b-4e07-a195-59a56a96c83c/validate"
+      ]
+    },
+    {
+      "caseId": "claude-quiz-capital",
+      "name": "claude-quiz-capital",
+      "startedAt": "2026-03-31T09:28:00.689Z",
+      "finishedAt": "2026-03-31T09:28:03.935Z",
+      "verdict": "PASS",
+      "severity": "P2",
+      "observed": {
+        "status": "completed",
+        "durationMs": 1414,
+        "toolCallCount": 0,
+        "response": "Paris"
+      },
+      "note": "all expected markers found"
+    },
+    {
+      "caseId": "claude-quiz-json",
+      "name": "claude-quiz-json",
+      "startedAt": "2026-03-31T09:28:03.935Z",
+      "finishedAt": "2026-03-31T09:28:07.440Z",
+      "verdict": "PASS",
+      "severity": "P2",
+      "observed": {
+        "status": "completed",
+        "durationMs": 1968,
+        "toolCallCount": 0,
+        "response": "```json\n{\n  \"answer\": \"4\",\n  \"confidence\": 1.0\n}\n```"
+      },
+      "note": "all expected markers found"
+    },
+    {
+      "caseId": "claude-quiz-extract",
+      "name": "claude-quiz-extract",
+      "startedAt": "2026-03-31T09:28:07.441Z",
+      "finishedAt": "2026-03-31T09:28:10.326Z",
+      "verdict": "PASS",
+      "severity": "P2",
+      "observed": {
+        "status": "completed",
+        "durationMs": 1166,
+        "toolCallCount": 0,
+        "response": "alice@example.com"
+      },
+      "note": "all expected markers found"
+    },
+    {
+      "caseId": "claude-quiz-format",
+      "name": "claude-quiz-format",
+      "startedAt": "2026-03-31T09:28:10.326Z",
+      "finishedAt": "2026-03-31T09:28:13.633Z",
+      "verdict": "PASS",
+      "severity": "P2",
+      "observed": {
+        "status": "completed",
+        "durationMs": 1640,
+        "toolCallCount": 0,
+        "response": "• Red is vibrant and bold\n• Blue appears calm and cool\n• Yellow looks bright and cheerful"
+      },
+      "note": "all expected markers found"
+    },
+    {
+      "caseId": "claude-quiz-summary",
+      "name": "claude-quiz-summary",
+      "startedAt": "2026-03-31T09:28:13.635Z",
+      "finishedAt": "2026-03-31T09:28:15.172Z",
+      "verdict": "FAIL",
+      "severity": "P1",
+      "observed": {
+        "status": "awaiting_clarification",
+        "durationMs": 0,
+        "toolCallCount": 0,
+        "response": "Before I execute this generate workflow, I need one detail to make sure the direction is correct.\nQuestion 1/2: What should trigger this workflow, and what output should it produce?"
+      },
+      "note": "none of expected markers found: friday, approval, rollback"
+    },
+    {
+      "caseId": "agent-browser-screenshot",
+      "name": "agent-browser-screenshot",
+      "startedAt": "2026-03-31T09:28:15.173Z",
+      "finishedAt": "2026-03-31T09:28:26.260Z",
+      "verdict": "PASS",
+      "severity": "P1",
+      "observed": {
+        "status": "completed",
+        "toolCallCount": 2,
+        "response": "**Task completed successfully.** I opened https://example.com in a headless browser and captured a screenshot. The page loaded with the title \"Example Domain\" and the screenshot was saved as a PNG file (1280x720 pixels, 16.6KB).",
+        "images": [
+          ".friday/artifacts/browser/default/1774949303731-tab-1.png"
+        ]
+      }
+    },
+    {
+      "caseId": "agent-desktop-session-info",
+      "name": "agent-desktop-session-info",
+      "startedAt": "2026-03-31T09:28:26.261Z",
+      "finishedAt": "2026-03-31T09:28:36.782Z",
+      "verdict": "BLOCKED",
+      "severity": "P1",
+      "observed": {
+        "status": "completed",
+        "toolCallCount": 1,
+        "response": "Based on the browser status information, here's my summary of the desktop session usability:\n\n## Desktop Session Status Summary\n\n**Current Status: USABLE**\n\n**Key Details:**\n- **Active Sessions:** 1 session running (ID: \"default\")\n- **Session Capacity:** Using 1 of 3 maximum allowed sessions\n- **Browser Type:** Playwright Chromium running in headless mode\n- **Tab Status:** 1 active tab (tab-1)\n- **Presentation Mode:** Headless (no visible desktop window)\n\n**Usability Assessment:**\nThe desktop session is currently **fully operational and ready for use**. The browser session is active with one tab available for navigation, automation, and interaction. The headless mode means it's running in the background without a visible window, which is typical for automated tasks and programmatic browser control.\n\nThe session can handle web navigation, page interactions, screenshots, and other browser-based operations immediately."
+      }
+    },
+    {
+      "caseId": "agent-write-read-sandbox-file",
+      "name": "agent-write-read-sandbox-file",
+      "startedAt": "2026-03-31T09:28:36.783Z",
+      "finishedAt": "2026-03-31T09:29:10.929Z",
+      "verdict": "PASS",
+      "severity": "P0",
+      "observed": {
+        "status": "completed",
+        "toolCallCount": 12,
+        "response": "## Task Completion Summary\n\n✅ **Task completed successfully**\n\n**Actions taken:**\n1. Created the file `manual-real-20260331-agent-note.txt` with the exact text \"Friday real validation manual-real-20260331\"\n2. Moved the file to the target directory `/Users/jarvis/Desktop/friday-real-test-2026-03-31/`\n3. Confirmed the file exists in the correct location (43 bytes, created at 02:28)\n4. Verified the exact contents match the required text: \"Friday real validation manual-real-20260331\"\n\n**File location:** `/Users/jarvis/Desktop/friday-real-test-2026-03-31/manual-real-20260331-agent-note.txt`\n**Contents confirmed:** Exactly matches the required text \"Friday real validation manual-real-20260331\"",
+        "targetFile": "/Users/jarvis/Desktop/friday-real-test-2026-03-31/manual-real-20260331-agent-note.txt",
+        "fileExists": true,
+        "content": "Friday real validation manual-real-20260331"
+      }
+    },
+    {
+      "caseId": "sessions-memory-approval",
+      "name": "sessions-memory-approval",
+      "startedAt": "2026-03-31T09:29:10.929Z",
+      "finishedAt": "2026-03-31T09:29:10.936Z",
+      "verdict": "FAIL",
+      "severity": "P1",
+      "error": "Create session failed: {\"ok\":false,\"error\":{\"code\":\"SESSION_INVALID_INPUT\",\"message\":\"Invalid request body: chatId is required and must be a non-empty string\",\"retryable\":false},\"requestId\":\"a917766c-e246-43c1-9bc4-dd5b54c158b7\"}"
+    },
+    {
+      "caseId": "skill-generator-save",
+      "name": "skill-generator-save",
+      "startedAt": "2026-03-31T09:29:10.937Z",
+      "finishedAt": "2026-03-31T09:29:11.153Z",
+      "verdict": "FAIL",
+      "severity": "P1",
+      "observed": {
+        "ok": false,
+        "error": {
+          "code": "PROVIDER_ERROR",
+          "message": "Internal Server Error",
+          "retryable": false
+        },
+        "requestId": "628bee25-ed56-4f75-971c-ef177cd1d8c5"
+      }
+    },
+    {
+      "caseId": "workflow-generator-publish-run",
+      "name": "workflow-generator-publish-run",
+      "startedAt": "2026-03-31T09:29:11.154Z",
+      "finishedAt": "2026-03-31T09:29:11.605Z",
+      "verdict": "FAIL",
+      "severity": "P1",
+      "observed": {
+        "ok": false,
+        "error": {
+          "code": "PROVIDER_ERROR",
+          "message": "Internal Server Error",
+          "retryable": false
+        },
+        "requestId": "278a276a-aa05-452c-9b4d-f67e959f1355"
+      }
+    },
+    {
+      "caseId": "approval-workflow",
+      "name": "approval-workflow",
+      "startedAt": "2026-03-31T09:29:11.606Z",
+      "finishedAt": "2026-03-31T09:29:11.609Z",
+      "verdict": "FAIL",
+      "severity": "P1",
+      "observed": {
+        "ok": false,
+        "error": {
+          "code": "VALIDATION_ERROR",
+          "message": "name is required and must be a non-empty string",
+          "retryable": false
+        },
+        "requestId": "b25d6ad8-3540-4105-8236-f3d56cd22a7e"
+      }
+    },
+    {
+      "caseId": "self-healing-read-surfaces",
+      "name": "self-healing-read-surfaces",
+      "startedAt": "2026-03-31T09:29:11.610Z",
+      "finishedAt": "2026-03-31T09:29:11.658Z",
+      "verdict": "PASS",
+      "severity": "P2",
+      "observed": {
+        "incidentCount": 75,
+        "actionCount": 3,
+        "incidentsStatus": 200,
+        "actionsStatus": 200
+      }
+    },
+    {
+      "caseId": "persona-preferences-learned-facts",
+      "name": "persona-preferences-learned-facts",
+      "startedAt": "2026-03-31T09:29:11.658Z",
+      "finishedAt": "2026-03-31T09:29:17.282Z",
+      "verdict": "PARTIAL",
+      "severity": "P2",
+      "observed": {
+        "putStatus": 200,
+        "persona": {
+          "category": "communication",
+          "mbti": "ISTJ",
+          "settings": {
+            "tone": "neutral",
+            "verbosity": "concise",
+            "structure": "structured",
+            "questionStyle": "minimal",
+            "directness": "direct",
+            "emojiStyle": "none",
+            "jargonTolerance": "medium",
+            "assumptionStyle": "ask_first",
+            "confirmationStyle": "explicit"
+          },
+          "inheritedFrom": {
+            "mbti": "explicit",
+            "settings": {
+              "tone": "explicit",
+              "verbosity": "explicit",
+              "structure": "explicit",
+              "questionStyle": "explicit",
+              "directness": "explicit",
+              "emojiStyle": "explicit",
+              "jargonTolerance": "explicit",
+              "assumptionStyle": "explicit",
+              "confirmationStyle": "explicit"
+            }
+          },
+          "preview": {
+            "styleLabel": "neutral/concise/direct",
+            "sampleClarifier": "I can do that. Which project should I use first?",
+            "sampleBoundary": "This crosses a high-risk boundary, so I need your approval before changing it."
+          }
+        },
+        "preferenceCount": 10,
+        "learnedFacts": [],
+        "correctionRun": {
+          "status": "completed",
+          "response": "Preference recorded."
+        }
+      },
+      "note": "显式偏好可验证；学习事实是否新增取决于反馈工具和后台学习链路，单次验证按 PARTIAL 处理。"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "caseId": "persona-preferences-learned-facts",
+  "name": "persona-preferences-learned-facts",
+  "startedAt": "2026-03-31T09:29:11.658Z",
+  "finishedAt": "2026-03-31T09:29:17.282Z",
+  "verdict": "PARTIAL",
+  "severity": "P2",
+  "observed": {
+    "putStatus": 200,
+    "persona": {
+      "category": "communication",
+      "mbti": "ISTJ",
+      "settings": {
+        "tone": "neutral",
+        "verbosity": "concise",
+        "structure": "structured",
+        "questionStyle": "minimal",
+        "directness": "direct",
+        "emojiStyle": "none",
+        "jargonTolerance": "medium",
+        "assumptionStyle": "ask_first",
+        "confirmationStyle": "explicit"
+      },
+      "inheritedFrom": {
+        "mbti": "explicit",
+        "settings": {
+          "tone": "explicit",
+          "verbosity": "explicit",
+          "structure": "explicit",
+          "questionStyle": "explicit",
+          "directness": "explicit",
+          "emojiStyle": "explicit",
+          "jargonTolerance": "explicit",
+          "assumptionStyle": "explicit",
+          "confirmationStyle": "explicit"
+        }
+      },
+      "preview": {
+        "styleLabel": "neutral/concise/direct",
+        "sampleClarifier": "I can do that. Which project should I use first?",
+        "sampleBoundary": "This crosses a high-risk boundary, so I need your approval before changing it."
+      }
+    },
+    "preferenceCount": 10,
+    "learnedFacts": [],
+    "correctionRun": {
+      "status": "completed",
+      "response": "Preference recorded."
+    }
+  },
+  "note": "显式偏好可验证；学习事实是否新增取决于反馈工具和后台学习链路，单次验证按 PARTIAL 处理。"
+}

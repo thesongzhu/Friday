@@ -104,6 +104,8 @@ export interface CreateFridayUixSurfaceServiceDeps {
   preferenceRepo?: FridayUixUserPreferenceRepository;
   learningContextBuilder?: (input: { userId: string; nowIso: string }) => { preferences: Record<string, unknown> };
   diagnosticsBuilder?: (input: { userId: string }) => FridayUixAssistantDiagnostics;
+  /** Optional writer to emit learning events when preferences are updated via API. */
+  learningEventWriter?: (events: Array<{ eventId: string; ts: string; userId: string; kind: "user_correction"; payload: Record<string, unknown> }>) => void;
   nowIso?: () => string;
 }
 
@@ -1300,6 +1302,27 @@ export function createFridayUixSurfaceService(
           existingByKey.set(saved.key, saved);
           return saved;
         }));
+      // Emit learning events so the learning pipeline can extract preference facts.
+      if (deps.learningEventWriter && (created > 0 || updated > 0)) {
+        const events = input.request.preferences.map((pref) => ({
+          eventId: deps.idGenerator(),
+          ts: nowIso(),
+          userId: input.userId,
+          kind: "user_correction" as const,
+          payload: {
+            feedbackKind: "preference" as const,
+            correctedField: pref.key,
+            newValue: String(pref.value),
+            field: pref.key,
+            context: `Preference set via API: ${pref.category}/${pref.key}`,
+          },
+        }));
+        try {
+          deps.learningEventWriter(events);
+        } catch {
+          // Non-fatal: learning event emission should not block preference writes.
+        }
+      }
       return {
         preferences,
         created,
