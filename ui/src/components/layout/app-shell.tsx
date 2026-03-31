@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, ChartNoAxesCombined, ChevronDown, Command, Home, MessageCircle, MonitorCog, Package, ShieldCheck, ShoppingBag, Wand2, Waypoints } from "lucide-react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
+import { useSystemEvents } from "@/hooks/use-system-events";
 import { healthApi } from "@/lib/api/health";
 import { systemApi } from "@/lib/api/system";
 import { AGENT_OS_NAV_PRIMARY, AGENT_OS_NAV_ADVANCED, resolvePageTitle } from "@/lib/routes/agent-os-nav";
@@ -34,6 +36,28 @@ export function AppShell() {
     retry: 0,
     refetchInterval: 10_000,
   });
+
+  const { data: pendingApprovals } = useQuery({
+    queryKey: ["shell", "pending-approvals"],
+    queryFn: async () => {
+      const response = await systemApi.listAutoFixActions({ status: "planned", limit: 50 });
+      return response.items.filter((item) => item.summary.requiresApproval);
+    },
+    refetchInterval: 15_000,
+  });
+  const pendingApprovalCount = pendingApprovals?.length ?? 0;
+
+  const { events: systemEvents } = useSystemEvents(true);
+  const lastSeenEventCount = useState({ current: 0 })[0];
+  useEffect(() => {
+    const newEvents = systemEvents.slice(lastSeenEventCount.current);
+    lastSeenEventCount.current = systemEvents.length;
+    for (const event of newEvents) {
+      if (event.event === "autofix.action.pending_approval") {
+        toast.info("New auto-fix requires approval", { description: "Check the Assistant page to review and approve." });
+      }
+    }
+  }, [systemEvents, lastSeenEventCount]);
 
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -132,8 +156,15 @@ export function AppShell() {
                     {item.path === "/command-center" ? <MonitorCog className="h-4 w-4" /> : null}
                     {item.path === "/settings" ? <ShieldCheck className="h-4 w-4" /> : null}
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-white">{item.label}</p>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-white">{item.label}</p>
+                      {item.path === "/assistant" && pendingApprovalCount > 0 && (
+                        <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">
+                          {pendingApprovalCount}
+                        </span>
+                      )}
+                    </div>
                     <p className="mt-1 text-xs leading-5 text-white/50">{item.description}</p>
                   </div>
                 </div>

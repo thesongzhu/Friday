@@ -108,6 +108,18 @@ import type {
   FridayUpdateUserPreferencesRequest,
   FridayUpdateUserPreferencesResponse,
   FridayUserPreference,
+  FridayRegisterAcceptanceTestRequest,
+  FridayRegisterAcceptanceTestResponse,
+  FridayUpdateAcceptanceTestRequest,
+  FridayUpdateAcceptanceTestResponse,
+  FridayDeleteAcceptanceTestResponse,
+  FridayRunAcceptanceTestsRequest,
+  FridayRunAcceptanceTestsResponse,
+  FridayCreateObservabilitySloRequest,
+  FridayCreateObservabilitySloResponse,
+  FridayUpdateObservabilitySloRequest,
+  FridayUpdateObservabilitySloResponse,
+  FridayDeleteObservabilitySloResponse,
 } from "./system-types";
 
 export interface FridayOperatorTransport {
@@ -660,6 +672,43 @@ export function createFridayOperatorClient(options: FridayOperatorClientOptions)
       return data.items;
     },
 
+    async createAcceptanceTest(
+      input: Omit<FridayRegisterAcceptanceTestRequest, "idempotencyKey">,
+    ): Promise<FridayRegisterAcceptanceTestResponse> {
+      return transport.post<FridayRegisterAcceptanceTestRequest, FridayRegisterAcceptanceTestResponse>(
+        "/v1/acceptance/tests",
+        { ...input, idempotencyKey: createIdempotencyKey() },
+      );
+    },
+
+    async updateAcceptanceTest(
+      testId: string,
+      input: FridayUpdateAcceptanceTestRequest,
+    ): Promise<FridayUpdateAcceptanceTestResponse> {
+      return transport.put<FridayUpdateAcceptanceTestRequest, FridayUpdateAcceptanceTestResponse>(
+        `/v1/acceptance/tests/${encodeURIComponent(testId)}`,
+        input,
+      );
+    },
+
+    async deleteAcceptanceTest(
+      testId: string,
+      etag: string,
+    ): Promise<FridayDeleteAcceptanceTestResponse> {
+      return transport.del<FridayDeleteAcceptanceTestResponse>(
+        `/v1/acceptance/tests/${encodeURIComponent(testId)}?etag=${encodeURIComponent(etag)}`,
+      );
+    },
+
+    async runAcceptanceTests(
+      input: Omit<FridayRunAcceptanceTestsRequest, "idempotencyKey">,
+    ): Promise<FridayRunAcceptanceTestsResponse> {
+      return transport.post<FridayRunAcceptanceTestsRequest, FridayRunAcceptanceTestsResponse>(
+        "/v1/acceptance/run",
+        { ...input, idempotencyKey: createIdempotencyKey() },
+      );
+    },
+
     async listRetryEscalations(query?: {
       acknowledged?: boolean;
       limit?: number;
@@ -800,6 +849,31 @@ export function createFridayOperatorClient(options: FridayOperatorClientOptions)
     async getObservabilitySlo(sloId: string) {
       return transport.get<FridayGetObservabilitySloResponse>(
         `/v1/observability/slos/${encodeURIComponent(sloId)}`,
+      );
+    },
+
+    async createObservabilitySlo(
+      input: FridayCreateObservabilitySloRequest,
+    ): Promise<FridayCreateObservabilitySloResponse> {
+      return transport.post<FridayCreateObservabilitySloRequest, FridayCreateObservabilitySloResponse>(
+        "/v1/observability/slos",
+        input,
+      );
+    },
+
+    async updateObservabilitySlo(
+      sloId: string,
+      input: FridayUpdateObservabilitySloRequest,
+    ): Promise<FridayUpdateObservabilitySloResponse> {
+      return transport.put<FridayUpdateObservabilitySloRequest, FridayUpdateObservabilitySloResponse>(
+        `/v1/observability/slos/${encodeURIComponent(sloId)}`,
+        input,
+      );
+    },
+
+    async deleteObservabilitySlo(sloId: string, etag: string): Promise<FridayDeleteObservabilitySloResponse> {
+      return transport.del<FridayDeleteObservabilitySloResponse>(
+        `/v1/observability/slos/${encodeURIComponent(sloId)}?etag=${encodeURIComponent(etag)}`,
       );
     },
 
