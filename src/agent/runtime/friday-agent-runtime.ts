@@ -12,6 +12,9 @@ import {
   FRIDAY_AGENT_RUN_TIMEOUT_MS,
   FRIDAY_AGENT_SESSION_KEY_PREFIX,
   FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS,
+  FRIDAY_AGENT_TOOL_RESULT_CAPS,
+  FRIDAY_AGENT_COMPACTION_THRESHOLD,
+  FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
   FRIDAY_AGENT_TOOL_TIMEOUT_MS,
 } from "../friday-agent.constants.js";
 import type {
@@ -1075,6 +1078,18 @@ export function createFridayAgentRuntime(
           }
 
           iterations++;
+
+          // ── Context compaction: layered retention (Plan C) ──
+          // Replace old middle messages with a summary to prevent context overflow.
+          const preCompactionLen = messages.length;
+          const compacted = compactMessagesIfNeeded(
+            messages,
+            FRIDAY_AGENT_COMPACTION_THRESHOLD,
+            FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
+          );
+          if (compacted.length < preCompactionLen) {
+            messages.splice(0, messages.length, ...compacted);
+          }
 
           // Emit executing event per iteration (IMPL-3)
           handleTrackedEvent("agent.run.executing", {
@@ -4115,7 +4130,8 @@ async function executeToolCall(
     const durationMs = Date.now() - startedAt;
 
     // OC-007: Cap oversized tool result content to prevent context bloat
-    let result = capToolResultContent(rawResult, FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS);
+    const toolCap = FRIDAY_AGENT_TOOL_RESULT_CAPS[toolUse.name] ?? FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS;
+    let result = capToolResultContent(rawResult, toolCap);
     if (result.isError) {
       result = await maybeRecoverToolInputError({
         toolUse,
@@ -4126,10 +4142,10 @@ async function executeToolCall(
         principalId: params.principalId,
         executionContext: params.executionContext,
         emitRunEvent,
-        maxResultChars: FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS,
+        maxResultChars: toolCap,
         initialResult: result,
       });
-      result = capToolResultContent(result, FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS);
+      result = capToolResultContent(result, toolCap);
     }
     if (toolUse.name === "web_fetch" && result.isError) {
       result = await maybeFallbackWebFetchWithBrowser({
@@ -4141,10 +4157,10 @@ async function executeToolCall(
         principalId: params.principalId,
         executionContext: params.executionContext,
         emitRunEvent,
-        maxResultChars: FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS,
+        maxResultChars: toolCap,
         initialResult: result,
       });
-      result = capToolResultContent(result, FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS);
+      result = capToolResultContent(result, toolCap);
     }
 
     emitRunEvent("agent.run.tool_end", buildToolEndEventPayload({
@@ -4853,4 +4869,65 @@ function capToolResultContent(
     result.content.slice(0, maxChars) +
     `\n\n[truncated: output was ${String(result.content.length)} chars, showing first ${String(maxChars)}]`;
   return { ...result, content: truncated };
+}
+
+/**
+ * Plan-C context compaction: layered retention.
+ *
+ * Keeps the first 2 messages (system context + user task) and the last
+ * `keepRecent` messages intact. Middle messages are replaced by a single
+ * summary line so the LLM retains awareness of earlier work without
+ * paying full token cost.  Zero extra LLM calls — pure string operation.
+ */
+function compactMessagesIfNeeded(
+  messages: FridayAgentMessage[],
+  threshold: number,
+  keepRecent: number,
+): FridayAgentMessage[] {
+  if (messages.length <= threshold) return messages;
+
+  const keepFirst = 2; // system prompt context + original user task
+  if (messages.length <= keepFirst + keepRecent) return messages;
+
+  const head = messages.slice(0, keepFirst);
+  const middle = messages.slice(keepFirst, messages.length - keepRecent);
+  const tail = messages.slice(messages.length - keepRecent);
+
+  // Build a compact summary of the middle section
+  const toolNames = new Set<string>();
+  let userMsgCount = 0;
+  let assistantMsgCount = 0;
+  for (const msg of middle) {
+    if (msg.role === "user") {
+      userMsgCount++;
+      // Scan for tool_result blocks that mention tool names
+      if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (typeof block === "object" && block !== null && "type" in block && block.type === "tool_result") {
+            toolNames.add("tool_result");
+          }
+        }
+      }
+    } else if (msg.role === "assistant") {
+      assistantMsgCount++;
+      if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (typeof block === "object" && block !== null && "type" in block && block.type === "tool_use" && "name" in block) {
+            toolNames.add(block.name as string);
+          }
+        }
+      }
+    }
+  }
+
+  const toolList = toolNames.size > 0 ? ` Tools used: ${[...toolNames].join(", ")}.` : "";
+  const summaryText =
+    `[Context compacted: ${String(middle.length)} earlier messages (${String(userMsgCount)} user, ${String(assistantMsgCount)} assistant) were summarized to save context.${toolList}]`;
+
+  const summaryMessage: FridayAgentMessage = {
+    role: "user",
+    content: summaryText,
+  };
+
+  return [...head, summaryMessage, ...tail];
 }

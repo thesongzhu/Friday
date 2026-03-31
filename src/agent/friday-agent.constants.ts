@@ -32,6 +32,22 @@ export const FRIDAY_AGENT_MAX_TOOL_CALLS = 200;
 /** OC-007: Maximum tool result content length in characters before truncation. */
 export const FRIDAY_AGENT_TOOL_RESULT_MAX_CHARS = 50_000;
 
+/** Per-tool-type result caps — override the global default for specific tools. */
+export const FRIDAY_AGENT_TOOL_RESULT_CAPS: Record<string, number> = {
+  exec: 10_000,
+  web_fetch: 15_000,
+  browser: 15_000,
+  canvas: 15_000,
+  web_search: 20_000,
+  read: 50_000,
+};
+
+/** Context compaction: max messages before triggering layered retention. */
+export const FRIDAY_AGENT_COMPACTION_THRESHOLD = 40;
+
+/** Context compaction: number of recent messages to keep in full. */
+export const FRIDAY_AGENT_COMPACTION_KEEP_RECENT = 8;
+
 /** Active run statuses that should be failed on boot recovery. */
 export const FRIDAY_AGENT_ACTIVE_STATUSES = [
   "pending",

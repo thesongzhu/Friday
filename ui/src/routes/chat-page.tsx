@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef } from "react";
-import { MessageSquarePlus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Activity, MessageSquarePlus, Trash2 } from "lucide-react";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { ChatMessageBubble } from "@/components/chat/chat-message";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ChatToolActivity } from "@/components/chat/chat-tool-activity";
 import { ChatActionCard, parseActionsFromText } from "@/components/chat/chat-action-card";
+import { sessionsApi, type SessionUsageResponse } from "@/lib/api/sessions";
 
 export function ChatPage() {
   const {
@@ -18,6 +19,17 @@ export function ChatPage() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [sessionUsage, setSessionUsage] = useState<SessionUsageResponse | null>(null);
+  const sessionKeyRef = useRef<string | null>(null);
+
+  // Fetch session usage after each completed run
+  useEffect(() => {
+    // Get session key from localStorage (same source as useChatSession)
+    const key = localStorage.getItem("friday-chat-session-key");
+    if (!key || key === sessionKeyRef.current && sessionUsage) return;
+    sessionKeyRef.current = key;
+    sessionsApi.getUsage(key).then(setSessionUsage).catch(() => { /* non-fatal */ });
+  }, [messages.length, sessionUsage]);
 
   // Auto-scroll to bottom on new messages or streaming output
   useEffect(() => {
@@ -52,6 +64,13 @@ export function ChatPage() {
         </div>
         {messages.length > 0 && (
           <div className="flex items-center gap-2">
+            {sessionUsage && sessionUsage.totalRuns > 0 && (
+              <span className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/40" title={`Input: ${sessionUsage.totalInputTokens.toLocaleString()} · Output: ${sessionUsage.totalOutputTokens.toLocaleString()}`}>
+                <Activity className="h-3 w-3" />
+                {((sessionUsage.totalInputTokens + sessionUsage.totalOutputTokens) / 1000).toFixed(1)}K tokens
+                {sessionUsage.totalCostUsd > 0 && ` · $${sessionUsage.totalCostUsd.toFixed(3)}`}
+              </span>
+            )}
             <button
               type="button"
               onClick={startNewConversation}
