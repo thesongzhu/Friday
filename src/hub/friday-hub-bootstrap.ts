@@ -3531,6 +3531,8 @@ export async function createFridayHub(
       listLearnedFacts: (input: { userId: string }) =>
         selfLearningRuntime.facts.listActiveFacts({ userId: input.userId, minConfidence: 0, limit: 200 })
           .map((f) => ({ key: f.key, value: f.value, confidence: f.confidence, evidenceCount: f.evidenceCount, lastConfirmedAt: f.lastConfirmedAt })),
+      collectLearningEvents: learningEventWriter,
+      idGenerator,
     },
     searchHealth: {
       provider: configuredSearchProvider && configuredSearchProvider.length > 0

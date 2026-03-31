@@ -366,12 +366,18 @@ export function createFridayAgentDesktopTool(
 
   function handleSessionInfo(): FridayAgentToolResult {
     const info = desktopSessionManager.getSessionInfo();
+    // Surface whether this is a real desktop session or headless-only,
+    // so the LLM does not misreport a headless browser as "desktop usable".
+    const isHeadless = info.state === "connected" && !info.platform;
     return jsonResult({
       sessionId: info.sessionId,
       state: info.state,
       platform: info.platform,
       principalId: info.principalId,
       connectedAt: info.connectedAt,
+      ...(isHeadless
+        ? { warning: "Session is headless browser only — real desktop control (click, type, screenshot via OS) requires macOS TCC permissions (Accessibility, Screen Recording, Input Monitoring, Automation). Check permissions before reporting desktop as usable." }
+        : {}),
     });
   }
 
