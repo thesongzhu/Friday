@@ -3329,6 +3329,10 @@ export async function createFridayHub(
     agentRuntime,
     observability: observabilityService,
     preferenceRepo: uixUserPreferenceRepository,
+    learningEventWriter: (events) => {
+      // Lazy: learningEventWriter is defined after uixService, so use the pipeline directly.
+      selfLearningRuntime.pipeline.processBatch(events);
+    },
     learningContextBuilder: (input) => _learningContextRef?.buildContext(input) ?? { preferences: {} },
     diagnosticsBuilder: () => ({
       generatedAt: nowIso(),

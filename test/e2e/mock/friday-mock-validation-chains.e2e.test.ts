@@ -85,14 +85,9 @@ describe("Friday Validation Chain E2E", () => {
 
   // ═══════════════════════════════════════════════════════════════════════
   // Chain 1: Intent Routing — Q&A with "automation/pipeline" keywords
-  // must NOT enter workflow/skill generation planning gate
-  //
-  // NOTE: Tasks with words like "summarize", "search", "browse" trigger
-  // the evidence closure validator (taskLooksLikeExternalAction), which
-  // requires tool-backed output. We test the intent routing specifically
-  // by using tasks that contain "automation" / "pipeline" (which used to
-  // falsely trigger the GENERATE_WORKFLOW_HINTS regex) but don't trigger
-  // the external-action evidence closure.
+  // must NOT enter workflow/skill generation planning gate.
+  // Also tests that Q&A tasks with "summarize" etc. are NOT killed by
+  // the evidence closure validator (L2-1 fix).
   // ═══════════════════════════════════════════════════════════════════════
 
   describe("Chain 1: Intent routing — Q&A bypass", () => {
@@ -445,6 +440,103 @@ describe("Friday Validation Chain E2E", () => {
       expect(res.json.ok).toBe(true);
       // Must NOT be stuck in awaiting_clarification
       expect(res.json.data.status).not.toBe("awaiting_clarification");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Chain 8: Evidence Closure does NOT kill Q&A tasks (L2-1)
+  //
+  // After the fix, tasks with "summarize" should complete with pure text
+  // response — they no longer trigger the web evidence closure validator.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe("Chain 8: Evidence Closure Q&A bypass", () => {
+    const QA_TASKS_WITH_WEB_WORDS = [
+      "Summarize this text about the project architecture",
+      "Explain how the system handles retries",
+      "Describe the deployment pipeline",
+      "Analyze the error logs from yesterday",
+      "Compare these two approaches to caching",
+    ];
+
+    for (const task of QA_TASKS_WITH_WEB_WORDS) {
+      it(`"${task}" completes without AGENT_OUTPUT_CLOSURE_ERROR`, { timeout: TEST_TIMEOUT_MS }, async () => {
+        const mock = env.mockFor("anthropic");
+        // LLM returns pure text — NO tool calls
+        mock.setDefault({ type: "text", text: "Here is the analysis you requested." });
+
+        const res = await apiFetch<AgentRunResult>(
+          env.baseUrl,
+          env.accessToken,
+          "POST",
+          "/v1/agent/runs",
+          { task, providerId, model, timeoutMs: RUN_TIMEOUT_MS },
+        );
+
+        expect(res.status).toBe(200);
+        expect(res.json.ok).toBe(true);
+        expect(res.json.data.status).toBe("completed");
+        // Must NOT fail with evidence closure error
+        expect(res.json.data.response).not.toContain("AGENT_OUTPUT_CLOSURE_ERROR");
+      });
+    }
+
+    it("actual external-action task still requires tool evidence", { timeout: TEST_TIMEOUT_MS }, async () => {
+      const mock = env.mockFor("anthropic");
+
+      // LLM calls web_search (correct behavior for external task)
+      mock.enqueue({
+        type: "tool_use",
+        toolName: "web_search",
+        toolInput: { query: "latest Node.js release" },
+      });
+      mock.enqueue({
+        type: "text",
+        text: "The latest Node.js LTS release is v22.",
+      });
+
+      const res = await apiFetch<AgentRunResult>(
+        env.baseUrl,
+        env.accessToken,
+        "POST",
+        "/v1/agent/runs",
+        { task: "Search for the latest Node.js release version", providerId, model, timeoutMs: RUN_TIMEOUT_MS },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.json.data.toolCallCount).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Chain 9: Preferences → Learning pipeline connection (L2-3)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe("Chain 9: Preferences write emits learning events", () => {
+    it("PUT preferences succeeds and data persists", { timeout: TEST_TIMEOUT_MS }, async () => {
+      // Write preference
+      const putRes = await apiFetch<{
+        ok: boolean;
+        data?: { preferences: Array<{ key: string; value: unknown }>; created: number; updated: number };
+      }>(env.baseUrl, env.accessToken, "PUT", "/v1/uix/preferences", {
+        preferences: [
+          { category: "communication", key: "persona.verbosity", value: "concise" },
+        ],
+      });
+
+      expect(putRes.status).toBe(200);
+      expect(putRes.json.ok).toBe(true);
+
+      // Read back
+      const getRes = await apiFetch<{
+        ok: boolean;
+        data: { items: Array<{ key: string; value: unknown }> };
+      }>(env.baseUrl, env.accessToken, "GET", "/v1/uix/preferences");
+
+      expect(getRes.status).toBe(200);
+      const verbosity = getRes.json.data.items.find((i) => i.key === "persona.verbosity");
+      expect(verbosity).toBeDefined();
+      expect(verbosity?.value).toBe("concise");
     });
   });
 });

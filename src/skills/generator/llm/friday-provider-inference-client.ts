@@ -418,8 +418,9 @@ export function createFridayProviderInferenceClient(
             oauthMode,
           );
 
-          // For OAuth: prepend required system prefix to the system message
-          const effectiveMessages = oauthMode === "oauth"
+          // For OAuth on non-Anthropic APIs: prepend required system prefix to the system message.
+          // For Anthropic, the prefix is applied in the cache-hint path below to avoid double-prefixing.
+          const effectiveMessages = (oauthMode === "oauth" && api !== "anthropic-messages")
             ? messages.map((m) =>
                 m.role === "system"
                   ? { ...m, content: withOAuthSystemPrefix(m.content, oauthMode) }
