@@ -1597,6 +1597,39 @@ export interface FridayGetObservabilitySloResponse {
   burnRates: FridayObservabilityBurnRate[];
 }
 
+export interface FridayCreateObservabilitySloRequest {
+  name: string;
+  description?: string;
+  sliMetric: { name: string; displayName: string; description: string; type: string; unit: string; module: string };
+  target: number;
+  complianceWindowDays?: number;
+  enabled?: boolean;
+  tags?: string[];
+}
+
+export interface FridayCreateObservabilitySloResponse {
+  slo: FridayObservabilitySloDefinition;
+}
+
+export interface FridayUpdateObservabilitySloRequest {
+  etag: string;
+  name?: string;
+  description?: string;
+  target?: number;
+  complianceWindowDays?: number;
+  enabled?: boolean;
+  tags?: string[];
+}
+
+export interface FridayUpdateObservabilitySloResponse {
+  slo: FridayObservabilitySloDefinition;
+}
+
+export interface FridayDeleteObservabilitySloResponse {
+  deleted: true;
+  sloId: string;
+}
+
 export type FridayAlertDestinationType = "slack" | "email";
 
 export type FridayObservabilityAlertDestination =
@@ -1746,6 +1779,59 @@ export interface FridayListAcceptanceTestsResponse {
 export interface FridayListAcceptanceResultsResponse {
   items: FridayAcceptanceRunSummary[];
   total: number;
+}
+
+export interface FridayRegisterAcceptanceTestRequest {
+  name: string;
+  artifactType: string;
+  checkConfig: Record<string, unknown>;
+  description?: string;
+  priority?: number;
+  enabled?: boolean;
+  shortCircuit?: boolean;
+  tags?: string[];
+  idempotencyKey?: string;
+}
+
+export interface FridayRegisterAcceptanceTestResponse {
+  test: FridayAcceptanceTestSummary;
+}
+
+export interface FridayUpdateAcceptanceTestRequest {
+  etag: string;
+  name?: string;
+  description?: string;
+  checkConfig?: Record<string, unknown>;
+  priority?: number;
+  enabled?: boolean;
+  shortCircuit?: boolean;
+  tags?: string[];
+}
+
+export interface FridayUpdateAcceptanceTestResponse {
+  test: FridayAcceptanceTestSummary;
+}
+
+export interface FridayDeleteAcceptanceTestRequest {
+  etag: string;
+}
+
+export interface FridayDeleteAcceptanceTestResponse {
+  deleted: true;
+  testId: string;
+}
+
+export interface FridayRunAcceptanceTestsRequest {
+  executionId: string;
+  artifacts: Array<{ uri: string; type: string; content?: string }>;
+  metadata?: Record<string, unknown>;
+  idempotencyKey?: string;
+}
+
+export interface FridayRunAcceptanceTestsResponse {
+  passed: boolean;
+  runs: FridayAcceptanceRunSummary[];
+  durationMs: number;
 }
 
 export interface FridayRetryEscalationSummary {
