@@ -839,7 +839,7 @@ export function AssistantPage() {
   });
 
   const rollbackFixMutation = useMutation({
-    mutationFn: (actionId: string) => systemApi.rollbackAutoFixAction(actionId),
+    mutationFn: (actionId: string) => systemApi.rollbackAutoFixAction(actionId, "Rolled back from assistant UI"),
     onSuccess: (result) => {
       toast.success(`Rolled back: ${result.action.summary.title}`);
       void invalidateAssistantShell(queryClient);
@@ -2997,22 +2997,22 @@ function IssueCard(props: {
           </div>
           <p className="text-xs text-white/55">{compactText(action.summary.summary)}</p>
           <div className="mt-3 flex flex-wrap gap-2">
-            {action.summary.requiresApproval && action.action.status !== "denied" ? (
+            {action.summary.requiresApproval && action.action.status !== "rejected" ? (
               <ActionButton disabled={props.approvePending} onClick={() => props.onApprove(action.action.actionId)}>
                 Approve fix
               </ActionButton>
             ) : null}
-            {action.action.status !== "denied" && action.action.status !== "executed" ? (
+            {action.action.status !== "rejected" && action.action.status !== "applied" ? (
               <ActionButton tone="secondary" disabled={props.executePending} onClick={() => props.onExecute(action.action.actionId)}>
                 Execute
               </ActionButton>
             ) : null}
-            {action.action.status !== "denied" && action.action.status !== "executed" ? (
+            {action.action.status !== "rejected" && action.action.status !== "applied" ? (
               <ActionButton tone="secondary" disabled={props.denyPending} onClick={() => props.onDeny(action.action.actionId)}>
                 Deny
               </ActionButton>
             ) : null}
-            {action.action.status === "executed" ? (
+            {action.action.status === "applied" ? (
               <ActionButton tone="secondary" disabled={props.rollbackPending} onClick={() => props.onRollback(action.action.actionId)}>
                 Rollback
               </ActionButton>

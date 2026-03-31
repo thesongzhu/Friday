@@ -462,8 +462,8 @@ export function SettingsPage() {
           {securityCenter ? (
             <div className="space-y-3">
               <div className="grid gap-3 sm:grid-cols-2">
-                <DiagnosticTile icon={<Shield className="h-4 w-4" />} label="Health" value={securityCenter.health} />
-                <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label="Active Tokens" value={String(securityCenter.activeTokenCount)} />
+                <DiagnosticTile icon={<Shield className="h-4 w-4" />} label="Active Tokens" value={String(securityCenter.tokens.active)} />
+                <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label="High Privilege" value={String(securityCenter.tokens.highPrivilegeActive)} />
               </div>
               {securityCenter.findings.length > 0 ? (
                 <div className="space-y-2">
@@ -495,11 +495,11 @@ export function SettingsPage() {
           {health ? (
             <div className="space-y-2">
               {[
-                { name: "Shell execution", enabled: health.capabilities?.exec?.enabled !== false },
-                { name: "Desktop control", enabled: health.capabilities?.desktop?.enabled === true },
+                { name: "Plugins", enabled: health.capabilities?.plugins?.runtimeMode === "full" },
+                { name: "Marketplace", enabled: health.capabilities?.plugins?.marketplaceAvailable === true },
                 { name: "System orchestration", enabled: health.capabilities?.system?.enabled === true },
-                { name: "Browser automation", enabled: health.capabilities?.browser?.enabled !== false },
-                { name: "MCP servers", enabled: (health.capabilities?.mcp?.serverCount ?? 0) > 0 },
+                { name: "Commerce", enabled: health.capabilities?.marketplace?.commerceEnabled === true },
+                { name: "Channels", enabled: (health.capabilities?.channels?.enabledKinds?.length ?? 0) > 0 },
               ].map((tool) => (
                 <div key={tool.name} className="flex items-center justify-between rounded-[22px] border border-white/[0.08] bg-black/20 px-4 py-3 text-sm">
                   <div className="flex items-center gap-2">
@@ -521,14 +521,11 @@ export function SettingsPage() {
           {agentLoopPolicy ? (
             <div className="space-y-3">
               <div className="grid gap-3 sm:grid-cols-2">
-                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label="Status" value={agentLoopPolicy.enabled ? "enabled" : "disabled"} />
-                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label="Max Iterations" value={String(agentLoopPolicy.maxIterations ?? "unlimited")} />
+                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label="Status" value={agentLoopPolicy.paused ? "paused" : "active"} />
+                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label="Max Attempts" value={String(agentLoopPolicy.maxAttemptsPerFingerprint)} />
               </div>
-              {agentLoopPolicy.cooldownMs ? (
-                <DiagnosticRow label="Cooldown" value={`${String(agentLoopPolicy.cooldownMs / 1000)}s`} />
-              ) : null}
-              {agentLoopPolicy.timeBudgetMinutes ? (
-                <DiagnosticRow label="Time Budget" value={`${String(agentLoopPolicy.timeBudgetMinutes)} min`} />
+              {agentLoopPolicy.cooldownMinutes ? (
+                <DiagnosticRow label="Cooldown" value={`${String(agentLoopPolicy.cooldownMinutes)} min`} />
               ) : null}
             </div>
           ) : (
