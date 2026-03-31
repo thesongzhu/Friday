@@ -77,6 +77,9 @@ function makeDeps(): FridayObservabilityRoutesDeps {
     slos: {
       list: vi.fn().mockReturnValue({ items: [], total: 0 }),
       get: vi.fn().mockReturnValue({ slo: { id: "slo-1" }, errorBudget: null, burnRates: [] }),
+      create: vi.fn().mockReturnValue({ slo: { id: "slo-new" }, errorBudget: null, burnRates: [] }),
+      update: vi.fn().mockReturnValue({ slo: { id: "slo-1" }, errorBudget: null, burnRates: [] }),
+      delete: vi.fn().mockReturnValue({ deleted: true, sloId: "slo-1" }),
     },
     alerts: {
       list: vi.fn().mockReturnValue({ items: [], total: 0 }),
@@ -104,9 +107,9 @@ function makeDeps(): FridayObservabilityRoutesDeps {
 
 describe("B-005 FridayObservabilityRoutes", () => {
   describe("route registration", () => {
-    it("registers all 21 routes", () => {
+    it("registers all 24 routes", () => {
       const routes = createFridayObservabilityRoutes(makeDeps());
-      expect(routes.length).toBe(21);
+      expect(routes.length).toBe(24);
     });
 
     it("has unique operationIds", () => {
@@ -436,7 +439,7 @@ describe("B-005 FridayObservabilityRoutes", () => {
 
     it("expected scope distribution", () => {
       expect(readRoutes.length).toBe(13);
-      expect(writeRoutes.length).toBe(8);
+      expect(writeRoutes.length).toBe(11);
     });
   });
 });
