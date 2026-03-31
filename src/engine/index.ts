@@ -12,6 +12,10 @@ export type {
   FridayOrchestrationEngine,
 } from "./friday-orchestration-engine.types.js";
 
+// Concrete engine
+export { createFridayOrchestrationEngine } from "./friday-orchestration-engine.js";
+export type { CreateFridayOrchestrationEngineDeps } from "./friday-orchestration-engine.js";
+
 // Turn preparer
 export { createFridayEngineTurnPreparer } from "./friday-engine-turn-preparer.js";
 export type {
