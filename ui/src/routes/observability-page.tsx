@@ -870,7 +870,7 @@ export function ObservabilityPage() {
                         Resume
                       </ActionButton>
                     ) : null}
-                    {record.run.status === "executing" || record.run.status === "paused" ? (
+                    {record.run.status === "running" || record.run.status === "paused" ? (
                       <ActionButton
                         tone="secondary"
                         disabled={cancelLoopRunMutation.isPending}

@@ -12,8 +12,8 @@
  */
 
 import type {
-  FridayDecisionEngine,
   FridayDecisionContext,
+  FridayDecisionEngine,
   FridayLocalDecision,
 } from "./friday-agent-decision-engine.types.js";
 import type { FridayAgentToolDefinition } from "../model/friday-agent.types.js";
