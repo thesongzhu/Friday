@@ -168,6 +168,11 @@ describe("FridayWorkflowGeneratorRoutes", () => {
       userId: "u-1",
       channel: "test",
       requestedModel: undefined,
+      tenantContext: {
+        hubId: "u-1",
+        userId: "u-1",
+        channelKind: "test",
+      },
     });
     expect(result).toBeDefined();
   });
