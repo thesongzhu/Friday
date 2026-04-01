@@ -130,6 +130,8 @@ export function createFridaySubagentRegistry(
     const resolvedProfile = resolveFridaySubagentProfile(
       input.profile ?? inferFridaySubagentProfile(input.task, input.label),
     );
+    const selectedModel = resolvedProfile.model ?? input.model;
+    const inheritedModelSelection = selectedModel === undefined;
     // Build child system prompt
     const systemPrompt = buildFridaySubagentSystemPrompt({
       task: input.task,
@@ -144,7 +146,7 @@ export function createFridaySubagentRegistry(
     // Create child runtime
     const childRuntime = createChildRuntime({
       providerId: input.providerId,
-      model: resolvedProfile.model ?? input.model,
+      model: selectedModel,
       systemPrompt,
       depth: input.depth + 1,
       rootRunId: input.rootRunId,
@@ -168,7 +170,8 @@ export function createFridaySubagentRegistry(
         runId: childRunId,
         sessionKey: childSessionKey,
         providerId: input.providerId,
-        model: resolvedProfile.model ?? input.model,
+        model: selectedModel,
+        ...(inheritedModelSelection ? { modelSelectionSourceOverride: "inherited" as const } : {}),
         timezone: input.timezone,
         timeoutMs,
         conversationContext: input.conversationContext,

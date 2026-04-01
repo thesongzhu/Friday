@@ -138,6 +138,99 @@ describe("FridayProviderRoutes", () => {
         reasons: [],
         activeProfileKey: "default",
       })),
+      explainRouting: vi.fn(async () => ({
+        requestedProviderId: "prov-001",
+        requestedModel: "gpt-4o",
+        requiresNativeTools: true,
+        selectedBeforeLearning: {
+          providerId: "prov-001",
+          providerKind: "openai" as const,
+          model: "gpt-4o",
+          backendKind: "http" as const,
+        },
+        selectedAfterLearning: {
+          providerId: "prov-001",
+          providerKind: "openai" as const,
+          model: "gpt-4o",
+          backendKind: "http" as const,
+        },
+        selected: {
+          providerId: "prov-001",
+          providerKind: "openai" as const,
+          model: "gpt-4o",
+          backendKind: "http" as const,
+          originalRank: 1,
+          finalRank: 1,
+          selected: true,
+          eligible: true,
+          ineligibilityReasons: [],
+          pinned: false,
+          baseRankScore: 1,
+          historyScore: 0,
+          patternScore: 0,
+          lessonScore: 0,
+          routePenaltyScore: 0,
+          pinBonus: 0,
+          finalScore: 1,
+          matchedLessonIds: [],
+          matchedPatternIds: [],
+        },
+        candidates: [
+          {
+            providerId: "prov-001",
+            providerKind: "openai" as const,
+            model: "gpt-4o",
+            backendKind: "http" as const,
+            originalRank: 1,
+            finalRank: 1,
+            selected: true,
+            eligible: true,
+            ineligibilityReasons: [],
+            pinned: false,
+            baseRankScore: 1,
+            historyScore: 0,
+            patternScore: 0,
+            lessonScore: 0,
+            routePenaltyScore: 0,
+            pinBonus: 0,
+            finalScore: 1,
+            matchedLessonIds: [],
+            matchedPatternIds: [],
+          },
+        ],
+        candidateScores: [
+          {
+            providerId: "prov-001",
+            providerKind: "openai" as const,
+            model: "gpt-4o",
+            backendKind: "http" as const,
+            originalRank: 1,
+            finalRank: 1,
+            selected: true,
+            eligible: true,
+            ineligibilityReasons: [],
+            pinned: false,
+            baseRankScore: 1,
+            historyScore: 0,
+            patternScore: 0,
+            lessonScore: 0,
+            routePenaltyScore: 0,
+            pinBonus: 0,
+            finalScore: 1,
+            matchedLessonIds: [],
+            matchedPatternIds: [],
+          },
+        ],
+        learningAdjusted: false,
+        learningSignalsPresent: false,
+        orderingAdjusted: false,
+        selectedAdjusted: false,
+        reasonCode: "configured" as const,
+        reason: "default route",
+        historyWindow: { sampleLimit: 250 },
+      })),
+      pinRoute: vi.fn(async () => undefined),
+      clearRoutePenalty: vi.fn(async () => 1),
       initiateOAuthLogin: vi.fn(async () => ({
         providerId: "anth-001",
         oauthProvider: "anthropic" as const,
@@ -157,11 +250,11 @@ describe("FridayProviderRoutes", () => {
     };
   }
 
-  it("creates 13 route definitions", () => {
+  it("creates 16 route definitions", () => {
     const routes = createFridayProviderRoutes({
       providerService: makeMockService(),
     });
-    expect(routes).toHaveLength(13);
+    expect(routes).toHaveLength(16);
   });
 
   it("has correct operation ids", () => {
@@ -176,6 +269,9 @@ describe("FridayProviderRoutes", () => {
     expect(operationIds).toContain("providers.delete");
     expect(operationIds).toContain("providers.validate");
     expect(operationIds).toContain("providers.doctor");
+    expect(operationIds).toContain("providers.routing.explain");
+    expect(operationIds).toContain("providers.routing.pin");
+    expect(operationIds).toContain("providers.routing.penalty.clear");
     expect(operationIds).toContain("providers.auth.profiles.list");
     expect(operationIds).toContain("providers.auth.profiles.activate");
     expect(operationIds).toContain("providers.routing.get");
@@ -305,6 +401,110 @@ describe("FridayProviderRoutes", () => {
           activeProfileKey: "default",
         },
       });
+    });
+
+    it("providers.routing.explain delegates query and principal context", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const explainRoute = routes.find(
+        (r) => r.operationId === "providers.routing.explain",
+      )!;
+
+      const result = await explainRoute.handler(
+        makeCtx({
+          principal: { userId: "user-1" } as never,
+          query: {
+            requestedProviderId: "prov-001",
+            requestedModel: "gpt-4o",
+            taskProfileId: "review",
+            estimatedInputTokens: "2048",
+            complexity: "complex",
+            requiresNativeTools: "true",
+          },
+        }),
+      );
+
+      expect(mockService.explainRouting).toHaveBeenCalledWith({
+        requestedProviderId: "prov-001",
+        requestedModel: "gpt-4o",
+        tenantContext: {
+          hubId: "default",
+          userId: "user-1",
+        },
+        routingContext: {
+          estimatedInputTokens: 2048,
+          complexity: "complex",
+          requiresNativeTools: true,
+          taskProfileId: "review",
+        },
+      });
+      expect(result).toHaveProperty("explain.selected.providerId", "prov-001");
+    });
+
+    it("providers.routing.pin validates and delegates", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const pinRoute = routes.find(
+        (r) => r.operationId === "providers.routing.pin",
+      )!;
+
+      const result = await pinRoute.handler(
+        makeCtx({
+          principal: { userId: "user-1" } as never,
+          body: {
+            taskProfileId: "plan",
+            providerId: "prov-001",
+            model: "gpt-4o",
+            backendKind: "http",
+            reason: "operator pin",
+          },
+        }),
+      );
+
+      expect(mockService.pinRoute).toHaveBeenCalledWith({
+        userId: "user-1",
+        taskProfileId: "plan",
+        providerId: "prov-001",
+        model: "gpt-4o",
+        backendKind: "http",
+        reason: "operator pin",
+      });
+      expect(result).toEqual({ pinned: true });
+    });
+
+    it("providers.routing.penalty.clear validates and delegates", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const clearRoute = routes.find(
+        (r) => r.operationId === "providers.routing.penalty.clear",
+      )!;
+
+      const result = await clearRoute.handler(
+        makeCtx({
+          principal: { userId: "user-1" } as never,
+          body: {
+            taskProfileId: "review",
+            providerId: "prov-001",
+            model: "gpt-4o",
+            backendKind: "http",
+          },
+        }),
+      );
+
+      expect(mockService.clearRoutePenalty).toHaveBeenCalledWith({
+        userId: "user-1",
+        taskProfileId: "review",
+        providerId: "prov-001",
+        model: "gpt-4o",
+        backendKind: "http",
+      });
+      expect(result).toEqual({ cleared: 1 });
     });
 
     it("providers.auth.profiles.list returns auth profiles", async () => {

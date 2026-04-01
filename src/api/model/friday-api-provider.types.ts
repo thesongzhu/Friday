@@ -14,6 +14,7 @@ import type {
   FridayProviderKind,
   FridayProviderProfile,
   FridayProviderRegionTag,
+  FridayProviderRoutingExplainReport,
   FridayProviderUsageSummary,
   FridayProviderValidationState,
 } from "#providers";
@@ -95,6 +96,33 @@ export interface FridayValidateProviderResponse {
 
 export interface FridayGetProviderDoctorResponse {
   doctor: FridayProviderDoctorReport;
+}
+
+export interface FridayGetProviderRoutingExplainResponse {
+  explain: FridayProviderRoutingExplainReport;
+}
+
+export interface FridayPinProviderRouteRequest {
+  taskProfileId?: string;
+  providerId: string;
+  model: string;
+  backendKind: FridayProviderBackendKind;
+  reason?: string;
+}
+
+export interface FridayPinProviderRouteResponse {
+  pinned: true;
+}
+
+export interface FridayClearProviderRoutePenaltyRequest {
+  taskProfileId?: string;
+  providerId: string;
+  model: string;
+  backendKind: FridayProviderBackendKind;
+}
+
+export interface FridayClearProviderRoutePenaltyResponse {
+  cleared: boolean;
 }
 
 export interface FridayListProviderAuthProfilesResponse {

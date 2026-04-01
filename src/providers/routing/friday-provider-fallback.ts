@@ -357,7 +357,13 @@ export function createFridayProviderFallback(
       throw new FridayDomainError(
         "PROVIDER_ERROR",
         `All providers failed (${String(attempts.length)}): ${summary}`,
-        { httpStatus: 502, cause: lastError instanceof Error ? lastError : undefined },
+        {
+          httpStatus: 502,
+          cause: lastError instanceof Error ? lastError : undefined,
+          details: {
+            attempts,
+          },
+        },
       );
     },
 

@@ -1,6 +1,8 @@
 import type {
   FridayProviderApi,
   FridayProviderKind,
+  FridayProviderRoutingDecisionTrace,
+  FridayProviderRoutingReasonCode,
   FridayResolvedProviderRoute,
 } from "./friday-provider.types.js";
 
@@ -79,6 +81,12 @@ export interface FridayCostRoutingDecision {
   estimatedInputTokens: number;
   orderedCandidates: FridayResolvedProviderRoute[];
   reason: string;
+  reasonCode?: FridayProviderRoutingReasonCode;
+  learningAdjusted?: boolean;
+  learningSignalsPresent?: boolean;
+  orderingAdjusted?: boolean;
+  selectedAdjusted?: boolean;
+  routeDecisionTrace?: FridayProviderRoutingDecisionTrace;
 }
 
 // ─── Persisted usage record ───

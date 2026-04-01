@@ -142,6 +142,31 @@ describe("FridayPatternExtractor", () => {
     }
   });
 
+  it("extracts successful execution preference patterns from repeated wins", async () => {
+    const db = createTestDb();
+    try {
+      const extractor = createFridayPatternExtractor({ db });
+
+      for (let i = 0; i < 2; i++) {
+        insertEpisode(db, {
+          id: `ep-pref-${i}`,
+          userId: "user-1",
+          taskIntent: "review architecture risks",
+          outcome: "success",
+          toolSequence: ["read", "grep"],
+        });
+      }
+
+      const patterns = await extractor.extractPatterns("user-1");
+      const preference = patterns.find((pattern) => pattern.kind === "preference");
+      expect(preference).toBeDefined();
+      expect(preference!.description).toContain("Repeated successful execution preference");
+      expect((preference!.pattern as { taskFingerprint?: string }).taskFingerprint).toBe("review architecture risks");
+    } finally {
+      db.close();
+    }
+  });
+
   it("isolates patterns by userId", async () => {
     const db = createTestDb();
     try {

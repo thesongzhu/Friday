@@ -140,6 +140,7 @@ function makeService(): FridaySelfHealingApiService {
         outcome: "failed" as const,
       },
     })),
+    manualResolveIncident: vi.fn(),
     getMetrics: vi.fn(() => ({
       day: "2026-03-07",
       incidentsTotal: 1,
@@ -219,5 +220,28 @@ describe("FridayAutoFixRoutes", () => {
     await expect(
       route.handler(makeCtx({ params: { actionId: "action-1" }, body: {} })),
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("passes a structured denial reason code when provided", async () => {
+    const service = makeService();
+    const routes = createFridayAutoFixRoutes({ service });
+    const route = routes.find((entry) => entry.operationId === "autofix.actions.deny")!;
+
+    await route.handler(
+      makeCtx({
+        params: { actionId: "action-1" },
+        body: {
+          reason: "This patch is too risky for prod",
+          reasonCode: "too_risky",
+        },
+      }),
+    );
+
+    expect(service.denyAction).toHaveBeenCalledWith({
+      actionId: "action-1",
+      respondedBy: "user-1",
+      reason: "This patch is too risky for prod",
+      reasonCode: "too_risky",
+    });
   });
 });

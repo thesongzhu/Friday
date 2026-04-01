@@ -4,9 +4,11 @@ import type {
 } from "../model/friday-agent.types.js";
 import type {
   FridayProviderApi,
+  FridayProviderAttempt,
   FridayProviderAuthMode,
   FridayProviderBackendKind,
   FridayProviderCliConfig,
+  FridayProviderRoutingDecisionTrace,
   FridayProviderTenantContext,
 } from "#providers";
 
@@ -37,8 +39,14 @@ export interface FridayAgentLlmMessageEndEvent {
   actualProviderKind?: string;
   /** Provider API type (e.g. "anthropic-messages", "openai-chat"). */
   actualProviderApi?: string;
+  backendKind?: FridayProviderBackendKind;
   /** Estimated cost in USD for this turn. */
   costUsd?: number;
+  /** Ordered failed attempts before the successful route, if any. */
+  attempts?: FridayProviderAttempt[];
+  routingDecisionReason?: string;
+  learningAdjusted?: boolean;
+  routeDecisionTrace?: FridayProviderRoutingDecisionTrace;
 }
 
 export type FridayAgentLlmStreamEvent =
@@ -60,6 +68,12 @@ export interface FridayAgentLlmStreamParams {
   messages: FridayAgentMessage[];
   tools: FridayAgentToolDefinition[];
   temperature?: number;
+  routingContext?: {
+    estimatedInputTokens: number;
+    complexity: "simple" | "medium" | "complex";
+    requiresNativeTools?: boolean;
+    taskProfileId?: string;
+  };
   signal: AbortSignal;
 }
 

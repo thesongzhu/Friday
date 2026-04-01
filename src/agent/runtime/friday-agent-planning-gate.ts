@@ -3,6 +3,7 @@ import type { Database } from "better-sqlite3";
 
 import { FRIDAY_AGENT_ERROR_CODES, FRIDAY_AGENT_MAX_ATTEMPTS } from "../friday-agent.constants.js";
 import type {
+  FridayAgentActualExecution,
   FridayAgentEventMap,
   FridayAgentPlanReviewPayload,
   FridayAgentRunStatus,
@@ -12,11 +13,11 @@ import type { FridayAgentRunRepository } from "../persistence/friday-agent-run-r
 import type { FridayAgentEventEmitter } from "./friday-agent-event-emitter.js";
 import type {
   FridayAgentConversationContext,
-  FridayAgentExecutionContext,
   FridayAgentResumeRunParams,
   FridayAgentRuntime,
   FridayAgentRuntimeResult,
 } from "./friday-agent-runtime.types.js";
+import type { FridayResolvedAgentTaskProfile } from "./friday-agent-task-profile.js";
 
 export type FridayPlanningKind =
   | "generate_skill"
@@ -38,6 +39,7 @@ export interface FridayAgentPlanningGateService {
     sessionKey?: string;
     providerId?: string;
     model?: string;
+    taskProfile?: FridayResolvedAgentTaskProfile;
     constraints?: { readOnly?: boolean };
     reviewRequired?: boolean;
     conversationContext?: FridayAgentConversationContext;
@@ -291,6 +293,7 @@ export function createFridayAgentPlanningGateService(
     sessionKey?: string;
     providerId?: string;
     model?: string;
+    taskProfile?: FridayResolvedAgentTaskProfile;
     constraints?: { readOnly?: boolean };
     kind: FridayPlanningKind;
     status: "awaiting_clarification" | "awaiting_plan_approval";
@@ -298,6 +301,18 @@ export function createFridayAgentPlanningGateService(
     planReview: FridayAgentPlanReviewPayload;
   }): FridayAgentRuntimeResult {
     const existing = deps.db.withReadConnection((reader) => deps.repo.getById(reader, input.runId));
+    const actualExecution: FridayAgentActualExecution = {
+      requestedProviderId: input.providerId,
+      requestedModel: input.model,
+      taskProfileId: input.taskProfile?.id,
+      taskProfileModel: input.taskProfile?.model,
+      modelSelectionSource: input.model
+        ? (input.providerId ? "provider+model" : "model")
+        : input.taskProfile?.model
+          ? "task_profile"
+          : "route_default",
+      turns: [],
+    };
     if (!existing) {
       deps.db.withWriteTransaction((writer) =>
         deps.repo.create(writer, {
@@ -315,6 +330,15 @@ export function createFridayAgentPlanningGateService(
         task: input.task,
         model: input.model ?? "default",
         providerId: input.providerId ?? "default",
+        ...(input.taskProfile
+          ? {
+              taskProfile: {
+                id: input.taskProfile.id,
+                model: input.taskProfile.model,
+                modelSelectionSource: actualExecution.modelSelectionSource,
+              },
+            }
+          : {}),
       }, input.runId);
     }
 
@@ -326,6 +350,7 @@ export function createFridayAgentPlanningGateService(
         responseText: input.message,
         summary: summarize(input.message),
         planReview: input.planReview,
+        actualExecution,
       }));
 
     emitRunEvent("agent.run.planning", {
@@ -440,6 +465,7 @@ export function createFridayAgentPlanningGateService(
         sessionKey: input.existing.sessionKey,
         providerId: input.existing.providerId,
         model: input.existing.model,
+        taskProfile: input.existing.taskProfile,
         constraints: input.existing.constraints,
         kind: gate.kind,
         status: "awaiting_clarification",
@@ -472,6 +498,7 @@ export function createFridayAgentPlanningGateService(
       sessionKey: input.existing.sessionKey,
       providerId: input.existing.providerId,
       model: input.existing.model,
+      taskProfile: input.existing.taskProfile,
       constraints: input.existing.constraints,
       kind: gate.kind,
       status: "awaiting_plan_approval",
@@ -517,6 +544,7 @@ export function createFridayAgentPlanningGateService(
       sessionKey: input.existing.sessionKey,
       providerId: input.existing.providerId,
       model: input.existing.model,
+      taskProfile: input.existing.taskProfile,
       constraints: input.existing.constraints,
       kind: gate.kind,
       status: "awaiting_plan_approval",
@@ -601,6 +629,7 @@ export function createFridayAgentPlanningGateService(
             sessionKey: input.sessionKey,
             providerId: input.providerId,
             model: input.model,
+            taskProfile: input.taskProfile,
             constraints: input.constraints,
             kind,
             status: "awaiting_plan_approval",
@@ -629,6 +658,7 @@ export function createFridayAgentPlanningGateService(
           sessionKey: input.sessionKey,
           providerId: input.providerId,
           model: input.model,
+          taskProfile: input.taskProfile,
           constraints: input.constraints,
           kind,
           status: "awaiting_clarification",

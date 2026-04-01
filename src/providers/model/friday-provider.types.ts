@@ -311,6 +311,87 @@ export interface FridayProviderDoctorReport {
   cliSession?: FridayCliSessionStatus;
 }
 
+export type FridayProviderRoutingReasonCode =
+  | "configured"
+  | "historical_bias"
+  | "operator_override"
+  | "operator_penalty"
+  | "budget_local_only"
+  | "requested_provider"
+  | "requested_model"
+  | "backend_capability_gating";
+
+export interface FridayProviderRoutingExplainCandidate {
+  providerId: string;
+  providerKind: FridayProviderKind;
+  model: string;
+  backendKind: FridayProviderBackendKind;
+  originalRank: number;
+  finalRank: number;
+  selected: boolean;
+  eligible: boolean;
+  ineligibilityReasons: string[];
+  pinned: boolean;
+  routePenalty?: number;
+  historicalSuccessRate?: number;
+  historicalFailureRate?: number;
+  sampleCount?: number;
+  baseRankScore: number;
+  historyScore: number;
+  patternScore: number;
+  lessonScore: number;
+  routePenaltyScore: number;
+  pinBonus: number;
+  finalScore: number;
+  matchedLessonIds: string[];
+  matchedPatternIds: string[];
+}
+
+export interface FridayProviderRoutingSelection {
+  providerId: string;
+  providerKind: FridayProviderKind;
+  model: string;
+  backendKind: FridayProviderBackendKind;
+}
+
+export interface FridayProviderRoutingHistoryWindow {
+  sampleLimit: number;
+}
+
+export interface FridayProviderRoutingDecisionTrace {
+  taskProfileId?: string;
+  requiresNativeTools: boolean;
+  learningAdjusted: boolean;
+  learningSignalsPresent: boolean;
+  orderingAdjusted: boolean;
+  selectedAdjusted: boolean;
+  reasonCode: FridayProviderRoutingReasonCode;
+  reasonText: string;
+  historyWindow: FridayProviderRoutingHistoryWindow;
+  selectedBeforeLearning?: FridayProviderRoutingSelection;
+  selectedAfterLearning?: FridayProviderRoutingSelection;
+  candidateScores: FridayProviderRoutingExplainCandidate[];
+}
+
+export interface FridayProviderRoutingExplainReport {
+  requestedProviderId?: string;
+  requestedModel?: string;
+  taskProfileId?: string;
+  requiresNativeTools: boolean;
+  selectedBeforeLearning?: FridayProviderRoutingSelection;
+  selectedAfterLearning?: FridayProviderRoutingSelection;
+  selected?: FridayProviderRoutingExplainCandidate;
+  candidates: FridayProviderRoutingExplainCandidate[];
+  candidateScores: FridayProviderRoutingExplainCandidate[];
+  learningAdjusted: boolean;
+  learningSignalsPresent: boolean;
+  orderingAdjusted: boolean;
+  selectedAdjusted: boolean;
+  reasonCode: FridayProviderRoutingReasonCode;
+  reason: string;
+  historyWindow: FridayProviderRoutingHistoryWindow;
+}
+
 // ─── DB row shapes (SQLite) ───
 
 export interface FridayProviderProfileRow {

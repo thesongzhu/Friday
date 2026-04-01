@@ -128,6 +128,49 @@ describe("API — Self-healing and assistant routes", () => {
     expect(actions.data.items[0]?.summary.status).toBe("planned");
   });
 
+  it("allows an operator to manually resolve an incident over the real HTTP stack", async () => {
+    const incidentRes = await fetch(`${env.baseUrl}/v1/diagnosis/incidents`, {
+      headers: authHeaders(token),
+    });
+    expect(incidentRes.status).toBe(200);
+    const incidents = (await incidentRes.json()) as {
+      ok: true;
+      data: {
+        items: Array<{ incident: { incidentId: string } }>;
+      };
+    };
+    const incidentId = incidents.data.items[0]?.incident.incidentId;
+    expect(incidentId).toBeTruthy();
+
+    const resolveRes = await fetch(`${env.baseUrl}/v1/diagnosis/incidents/${incidentId!}/manual-resolve`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        title: "Manual stabilization",
+        cause: "The config patch had to be applied by hand",
+        fix: "Patched the missing config and reran the workflow",
+        verificationSummary: "The next workflow run completed successfully",
+      }),
+    });
+    expect(resolveRes.status).toBe(200);
+    const resolved = (await resolveRes.json()) as {
+      ok: true;
+      data: {
+        incident: { status: string };
+        summary: { matchedLessonIds: string[] };
+      };
+    };
+    expect(resolved.data.incident.status).toBe("resolved");
+    expect(resolved.data.summary.matchedLessonIds.length).toBeGreaterThan(0);
+    const lessonCount = env.db.withReadConnection((db) => {
+      const row = db.prepare(
+        "SELECT COUNT(*) AS count FROM learned_lessons",
+      ).get() as { count: number };
+      return row.count;
+    });
+    expect(lessonCount).toBeGreaterThan(0);
+  });
+
   it("serves beginner assistant intent, templates, and issue inbox routes", async () => {
     const intentRes = await fetch(`${env.baseUrl}/v1/uix/intents/resolve`, {
       method: "POST",

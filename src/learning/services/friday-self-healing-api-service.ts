@@ -5,6 +5,7 @@ import type {
   FridayApprovalRequestStatus,
   FridayAutoFixActionEntity,
   FridayAutoFixExecutionResult,
+  FridayAutoFixFeedbackReasonCode,
 } from "../model/friday-auto-fix.types.js";
 import type {
   FridayDiagnosisRecordEntity,
@@ -19,6 +20,7 @@ import type { FridayDiagnosisRecordRepository } from "../persistence/friday-diag
 import type { FridayLearnedLessonRepository } from "../persistence/friday-learned-lesson-repository.js";
 import type { FridayAutoFixActionRepository } from "../persistence/friday-auto-fix-action-repository.js";
 import type { FridayApprovalRequestRepository } from "../persistence/friday-approval-request-repository.js";
+import type { FridayPreferenceFactRepository } from "../persistence/friday-preference-fact-repository.js";
 import type { FridayErrorDiagnosisService } from "./friday-error-diagnosis-service.js";
 import type { FridayAutoFixPlanService } from "./friday-auto-fix-plan-service.js";
 import type { FridayAutoFixRiskAssessmentService } from "./friday-auto-fix-risk-assessment-service.js";
@@ -29,6 +31,11 @@ import type { FridayAutoFixDispatcherService } from "./friday-auto-fix-dispatche
 import type { FridayLearningMetricsService } from "./friday-learning-metrics-service.js";
 import type { FridaySelfLearningPipelineService } from "./friday-self-learning-pipeline-service.js";
 import type { FridayObservabilityApiService } from "../../observability/services/friday-observability-api-service.js";
+import { safeJsonParse } from "#utilities";
+import type {
+  FridayProviderBackendKind,
+  FridayProviderRoutingDecisionTrace,
+} from "#providers";
 
 export interface FridaySelfHealingEventPublisher {
   publish(
@@ -114,6 +121,127 @@ export interface FridayIncidentDiagnosisDetails {
   autoFixEligible: boolean;
 }
 
+export interface FridayLearningLessonRecord {
+  lesson: FridayLearnedLessonEntity;
+  disabled: boolean;
+  disabledReason?: string;
+}
+
+export interface FridayLearningPatternRecord {
+  patternId: string;
+  userId: string;
+  kind: string;
+  description: string;
+  pattern: Record<string, unknown>;
+  confidence: number;
+  sampleCount: number;
+  lastUpdated: string;
+  createdAt: string;
+  demoted: boolean;
+  demotionFactor?: number;
+  demotionReason?: string;
+}
+
+export interface FridayLearningRouteAdjustmentRecord {
+  kind: "pin" | "penalty";
+  key: string;
+  taskProfileId?: string;
+  providerId?: string;
+  model?: string;
+  backendKind?: FridayProviderBackendKind;
+  confidence: number;
+  value: Record<string, unknown>;
+}
+
+export interface FridayLearningRouteBiasRecord extends FridayLearningRouteAdjustmentRecord {
+  source: "operator_pin" | "operator_penalty";
+}
+
+export interface FridayRejectedFixRecord {
+  actionId: string;
+  incidentId: string;
+  title: string;
+  fingerprint: string;
+  reason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FridayRollbackHotspotRecord {
+  fingerprint: string;
+  rolledBackCount: number;
+  appliedCount: number;
+  rejectedCount: number;
+  totalCount: number;
+  lastSeenAt: string;
+}
+
+export interface FridayRouteDecisionDiffRecord {
+  runId: string;
+  createdAt: string;
+  taskProfileId?: string;
+  requestedProviderId?: string;
+  requestedModel?: string;
+  actualProviderId?: string;
+  actualModel?: string;
+  reasonCode?: string;
+  learningAdjusted: boolean;
+  learningSignalsPresent: boolean;
+  selectedBeforeLearning?: {
+    providerId: string;
+    providerKind: string;
+    model: string;
+    backendKind: FridayProviderBackendKind;
+  };
+  selectedAfterLearning?: {
+    providerId: string;
+    providerKind: string;
+    model: string;
+    backendKind: FridayProviderBackendKind;
+  };
+  matchedLessonIds: string[];
+  matchedPatternIds: string[];
+  trace: FridayProviderRoutingDecisionTrace;
+}
+
+export interface FridayBlockedRouteRecord {
+  taskProfileId?: string;
+  providerId: string;
+  model: string;
+  backendKind: FridayProviderBackendKind;
+  reasons: string[];
+  count: number;
+  lastSeenAt: string;
+}
+
+export interface FridayLearningCoverageSummary {
+  lessons: number;
+  patterns: number;
+  routeAdjustments: number;
+  recentDecisionDiffs: number;
+  blockedRoutes: number;
+  rejectedFixes: number;
+  rollbackHotspots: number;
+  incidents: number;
+  diagnoses: number;
+  autoFixActions: number;
+}
+
+export interface FridayLearningOverview {
+  lessons: FridayLearningLessonRecord[];
+  patterns: FridayLearningPatternRecord[];
+  routeAdjustments: FridayLearningRouteAdjustmentRecord[];
+  routeBiases: FridayLearningRouteBiasRecord[];
+  operatorPins: FridayLearningRouteAdjustmentRecord[];
+  penaltyFacts: FridayLearningRouteAdjustmentRecord[];
+  recentDecisionDiffs: FridayRouteDecisionDiffRecord[];
+  blockedRoutes: FridayBlockedRouteRecord[];
+  rejectedFixes: FridayRejectedFixRecord[];
+  recentRejectedFixes: FridayRejectedFixRecord[];
+  rollbackHotspots: FridayRollbackHotspotRecord[];
+  coverage: FridayLearningCoverageSummary;
+}
+
 export interface FridaySelfHealingApiService {
   listIncidents(input: {
     userId: string;
@@ -144,7 +272,32 @@ export interface FridaySelfHealingApiService {
     actionId: string;
     respondedBy: string;
     reason?: string;
+    reasonCode?: FridayAutoFixFeedbackReasonCode;
   }): Promise<FridaySelfHealingActionDetails>;
+  manualResolveIncident(input: {
+    incidentId: string;
+    resolvedBy: string;
+    fix: string;
+    title?: string;
+    cause?: string;
+    verificationSummary?: string;
+  }): FridayIncidentDiagnosisDetails;
+  getLearningOverview(input: {
+    userId: string;
+    limit?: number;
+  }): FridayLearningOverview;
+  setLessonEnabled(input: {
+    userId: string;
+    lessonId: string;
+    enabled: boolean;
+    reason?: string;
+  }): FridayLearningLessonRecord;
+  demotePattern(input: {
+    userId: string;
+    patternId: string;
+    factor: number;
+    reason?: string;
+  }): FridayLearningPatternRecord;
   executeAction(input: {
     actionId: string;
   }): Promise<FridaySelfHealingActionDetails>;
@@ -182,6 +335,7 @@ export interface CreateFridaySelfHealingApiServiceDeps {
   lessonRepo: FridayLearnedLessonRepository;
   actionRepo: FridayAutoFixActionRepository;
   approvalRepo: FridayApprovalRequestRepository;
+  factRepo: FridayPreferenceFactRepository;
   diagnosisService: FridayErrorDiagnosisService;
   planService: FridayAutoFixPlanService;
   riskService: FridayAutoFixRiskAssessmentService;
@@ -237,6 +391,33 @@ function summarizeRootCause(
     return `${incident.category} incident: ${incident.signature}`;
   }
   return "Root cause unavailable";
+}
+
+function isFeedbackReasonCode(value: unknown): value is FridayAutoFixFeedbackReasonCode {
+  return value === "wrong_root_cause"
+    || value === "too_risky"
+    || value === "wrong_fix"
+    || value === "insufficient_evidence"
+    || value === "wrong_model_or_backend_choice";
+}
+
+function isTruthyFlag(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value > 0;
+  return false;
+}
+
+function readObject(value: unknown): Record<string, unknown> | undefined {
+  return value != null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function normalizeLearningKeySegment(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 export function createFridaySelfHealingApiService(
@@ -385,6 +566,329 @@ export function createFridaySelfHealingApiService(
     );
   };
 
+  const emitLearningEvent = (
+    payload: {
+      userId: string;
+      runId?: string;
+      kind: "outcome_confirmed";
+      details: Record<string, unknown>;
+    },
+    correlationId?: string,
+  ): FridaySelfLearningProcessResult => {
+    const result = deps.pipeline.processEvent({
+      eventId: deps.idGenerator(),
+      ts: deps.nowIso(),
+      userId: payload.userId,
+      runId: payload.runId,
+      kind: payload.kind,
+      payload: payload.details,
+    });
+    deps.observability?.recordSelfHealingProcessResults({ results: [result], correlationId });
+    if (deps.agentLoop) {
+      void deps.agentLoop.handleProcessResults({ results: [result], correlationId }).catch((error) => {
+        console.warn(
+          "[friday][self-healing-api] learning-event-handleProcessResults:",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+    }
+    return result;
+  };
+
+  const buildLearningOverview = (input: {
+    userId: string;
+    limit?: number;
+  }): FridayLearningOverview => {
+    const limit = input.limit ?? 20;
+    const lessonRows = deps.db.withReadConnection((db) =>
+      deps.lessonRepo.listRecent(db, limit),
+    );
+    const lessonDisableFacts = deps.db.withReadConnection((db) =>
+      deps.factRepo.listByUser(db, input.userId, 0, 500),
+    )
+      .filter((fact) => fact.key.startsWith("lesson_disabled:"));
+
+    const lessons = lessonRows.map((lesson) => {
+      const disabledFact = lessonDisableFacts.find((fact) => fact.key === `lesson_disabled:${lesson.id}`);
+      const factValue = readObject(disabledFact?.value);
+      return {
+        lesson,
+        disabled: disabledFact ? isTruthyFlag(factValue?.disabled ?? true) : false,
+        ...(disabledFact && typeof factValue?.reason === "string"
+          ? { disabledReason: factValue.reason }
+          : {}),
+      };
+    });
+
+    const demotionFacts = deps.db.withReadConnection((db) =>
+      deps.factRepo.listByUser(db, input.userId, 0, 500),
+    ).filter((fact) => fact.key.startsWith("pattern_demotion:"));
+
+    const patternRows = deps.db.withReadConnection((db) =>
+      db.prepare(
+        `SELECT id, user_id, kind, description, pattern_json, confidence, sample_count, last_updated, created_at
+         FROM friday_learned_patterns
+         WHERE user_id = ?
+         ORDER BY last_updated DESC
+         LIMIT ?`,
+      ).all(input.userId, limit) as Array<{
+        id: string;
+        user_id: string;
+        kind: string;
+        description: string;
+        pattern_json: string;
+        confidence: number;
+        sample_count: number;
+        last_updated: string;
+        created_at: string;
+      }>,
+    );
+
+    const patterns = patternRows.map((row) => {
+      const demotionFact = demotionFacts.find((fact) => fact.key === `pattern_demotion:${row.id}`);
+      const demotionValue = readObject(demotionFact?.value);
+      const factor =
+        typeof demotionValue?.factor === "number" && Number.isFinite(demotionValue.factor)
+          ? Math.max(0, Math.min(1, demotionValue.factor))
+          : undefined;
+      return {
+        patternId: row.id,
+        userId: row.user_id,
+        kind: row.kind,
+        description: row.description,
+        pattern: safeJsonParse<Record<string, unknown>>(row.pattern_json) ?? {},
+        confidence: row.confidence,
+        sampleCount: row.sample_count,
+        lastUpdated: row.last_updated,
+        createdAt: row.created_at,
+        demoted: demotionFact != null,
+        ...(factor !== undefined ? { demotionFactor: factor } : {}),
+        ...(typeof demotionValue?.reason === "string" ? { demotionReason: demotionValue.reason } : {}),
+      };
+    });
+
+    const routeAdjustments = deps.db.withReadConnection((db) =>
+      deps.factRepo.listByUser(db, input.userId, 0, 500),
+    )
+      .filter((fact) => fact.key.startsWith("route_penalty:") || fact.key.startsWith("route_pin:"))
+      .slice(0, limit)
+      .map((fact): FridayLearningRouteAdjustmentRecord => {
+        const parts = fact.key.split(":");
+        const kind = parts[0] === "route_pin" ? "pin" : "penalty";
+        const value = readObject(fact.value) ?? {};
+        return {
+          kind,
+          key: fact.key,
+          ...(parts[1] && parts[1] !== "global" ? { taskProfileId: parts[1] } : {}),
+          ...(typeof value.providerId === "string" ? { providerId: value.providerId } : {}),
+          ...(typeof value.model === "string" ? { model: value.model } : {}),
+          ...(value.backendKind === "http" || value.backendKind === "cli" || value.backendKind === "sdk"
+            ? { backendKind: value.backendKind }
+            : {}),
+          confidence: fact.confidence,
+          value,
+        };
+      });
+    const operatorPins = routeAdjustments.filter((record) => record.kind === "pin");
+    const penaltyFacts = routeAdjustments.filter((record) => record.kind === "penalty");
+    const routeBiases: FridayLearningRouteBiasRecord[] = routeAdjustments.map((record) => ({
+      ...record,
+      source: record.kind === "pin" ? "operator_pin" : "operator_penalty",
+    }));
+
+    const actionRows = deps.db.withReadConnection((db) =>
+      deps.actionRepo.listByUser(db, {
+        userId: input.userId,
+        limit: 200,
+      }),
+    );
+    const rejectedFixes = actionRows
+      .filter((action) => action.status === "rejected")
+      .slice(0, limit)
+      .map((action): FridayRejectedFixRecord => {
+        const approval = deps.db.withReadConnection((db) =>
+          deps.approvalRepo.getByActionId(db, action.actionId),
+        );
+        return {
+          actionId: action.actionId,
+          incidentId: action.incidentId,
+          title: action.plan.title,
+          fingerprint: action.plan.evidence.fingerprint,
+          ...(approval?.responseReason ? { reason: approval.responseReason } : {}),
+          createdAt: action.createdAt,
+          updatedAt: action.updatedAt,
+        };
+      });
+
+    const rollbackHotspotMap = new Map<string, FridayRollbackHotspotRecord>();
+    for (const action of actionRows) {
+      const fingerprint = action.plan.evidence.fingerprint;
+      const current = rollbackHotspotMap.get(fingerprint) ?? {
+        fingerprint,
+        rolledBackCount: 0,
+        appliedCount: 0,
+        rejectedCount: 0,
+        totalCount: 0,
+        lastSeenAt: action.updatedAt,
+      };
+      current.totalCount += 1;
+      if (action.status === "rolled_back") {
+        current.rolledBackCount += 1;
+      } else if (action.status === "applied") {
+        current.appliedCount += 1;
+      } else if (action.status === "rejected") {
+        current.rejectedCount += 1;
+      }
+      if (action.updatedAt > current.lastSeenAt) {
+        current.lastSeenAt = action.updatedAt;
+      }
+      rollbackHotspotMap.set(fingerprint, current);
+    }
+    const rollbackHotspots = [...rollbackHotspotMap.values()]
+      .filter((item) => item.rolledBackCount > 0 || item.rejectedCount > 0)
+      .sort((left, right) =>
+        (right.rolledBackCount + right.rejectedCount) - (left.rolledBackCount + left.rejectedCount)
+      )
+      .slice(0, limit);
+
+    const recentDecisionDiffs = deps.db.withReadConnection((db) =>
+      db.prepare(
+        `SELECT id, created_at, provider_id, model, task_profile_json, actual_execution_json
+         FROM friday_agent_runs
+         WHERE actual_execution_json IS NOT NULL
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      ).all(limit * 5) as Array<{
+        id: string;
+        created_at: string;
+        provider_id: string | null;
+        model: string | null;
+        task_profile_json: string | null;
+        actual_execution_json: string | null;
+      }>,
+    )
+      .map((row): FridayRouteDecisionDiffRecord | null => {
+        const actualExecution = safeJsonParse<Record<string, unknown>>(row.actual_execution_json);
+        const routeDecisionTrace = safeJsonParse<FridayProviderRoutingDecisionTrace>(
+          typeof actualExecution?.routeDecisionTrace === "string"
+            ? actualExecution.routeDecisionTrace
+            : JSON.stringify(actualExecution?.routeDecisionTrace ?? null),
+        );
+        if (!routeDecisionTrace || typeof routeDecisionTrace !== "object") {
+          return null;
+        }
+        const taskProfile = safeJsonParse<Record<string, unknown>>(row.task_profile_json);
+        const selectedBeforeLearning = routeDecisionTrace.selectedBeforeLearning;
+        const selectedAfterLearning = routeDecisionTrace.selectedAfterLearning;
+        const matchedLessonIds = Array.from(
+          new Set(
+            (routeDecisionTrace.candidateScores ?? []).flatMap((candidate) => candidate.matchedLessonIds ?? []),
+          ),
+        );
+        const matchedPatternIds = Array.from(
+          new Set(
+            (routeDecisionTrace.candidateScores ?? []).flatMap((candidate) => candidate.matchedPatternIds ?? []),
+          ),
+        );
+        return {
+          runId: row.id,
+          createdAt: row.created_at,
+          ...(typeof taskProfile?.id === "string" ? { taskProfileId: taskProfile.id } : {}),
+          ...(typeof actualExecution?.requestedProviderId === "string"
+            ? { requestedProviderId: actualExecution.requestedProviderId }
+            : {}),
+          ...(typeof actualExecution?.requestedModel === "string"
+            ? { requestedModel: actualExecution.requestedModel }
+            : {}),
+          ...(typeof actualExecution?.actualProviderId === "string"
+            ? { actualProviderId: actualExecution.actualProviderId }
+            : {}),
+          ...(typeof actualExecution?.actualModel === "string"
+            ? { actualModel: actualExecution.actualModel }
+            : {}),
+          ...(typeof routeDecisionTrace.reasonCode === "string" ? { reasonCode: routeDecisionTrace.reasonCode } : {}),
+          learningAdjusted: routeDecisionTrace.learningAdjusted === true,
+          learningSignalsPresent: routeDecisionTrace.learningSignalsPresent === true,
+          ...(selectedBeforeLearning ? { selectedBeforeLearning } : {}),
+          ...(selectedAfterLearning ? { selectedAfterLearning } : {}),
+          matchedLessonIds,
+          matchedPatternIds,
+          trace: routeDecisionTrace,
+        };
+      })
+      .filter((record): record is FridayRouteDecisionDiffRecord => record != null)
+      .slice(0, limit);
+
+    const blockedRouteMap = new Map<string, FridayBlockedRouteRecord>();
+    for (const diff of recentDecisionDiffs) {
+      for (const candidate of diff.trace.candidateScores) {
+        if (candidate.eligible || candidate.ineligibilityReasons.length === 0) {
+          continue;
+        }
+        const key = [
+          diff.taskProfileId ?? "global",
+          candidate.providerId,
+          candidate.model,
+          candidate.backendKind,
+          candidate.ineligibilityReasons.join(","),
+        ].join("::");
+        const existing = blockedRouteMap.get(key) ?? {
+          ...(diff.taskProfileId ? { taskProfileId: diff.taskProfileId } : {}),
+          providerId: candidate.providerId,
+          model: candidate.model,
+          backendKind: candidate.backendKind,
+          reasons: [...candidate.ineligibilityReasons],
+          count: 0,
+          lastSeenAt: diff.createdAt,
+        };
+        existing.count += 1;
+        if (diff.createdAt > existing.lastSeenAt) {
+          existing.lastSeenAt = diff.createdAt;
+        }
+        blockedRouteMap.set(key, existing);
+      }
+    }
+    const blockedRoutes = [...blockedRouteMap.values()]
+      .sort((left, right) => right.count - left.count || right.lastSeenAt.localeCompare(left.lastSeenAt))
+      .slice(0, limit);
+
+    const incidentCount = deps.db.withReadConnection((db) =>
+      db.prepare(`SELECT COUNT(*) AS count FROM friday_error_incidents WHERE user_id = ?`).get(input.userId) as { count: number },
+    ).count;
+    const diagnosisCount = deps.db.withReadConnection((db) =>
+      db.prepare(`SELECT COUNT(*) AS count FROM friday_diagnosis_records`).get() as { count: number },
+    ).count;
+    const actionCount = deps.db.withReadConnection((db) =>
+      db.prepare(`SELECT COUNT(*) AS count FROM friday_auto_fix_actions WHERE user_id = ?`).get(input.userId) as { count: number },
+    ).count;
+
+    return {
+      lessons,
+      patterns,
+      routeAdjustments,
+      routeBiases,
+      operatorPins,
+      penaltyFacts,
+      recentDecisionDiffs,
+      blockedRoutes,
+      rejectedFixes,
+      recentRejectedFixes: rejectedFixes,
+      rollbackHotspots,
+      coverage: {
+        lessons: lessons.length,
+        patterns: patterns.length,
+        routeAdjustments: routeAdjustments.length,
+        recentDecisionDiffs: recentDecisionDiffs.length,
+        blockedRoutes: blockedRoutes.length,
+        rejectedFixes: rejectedFixes.length,
+        rollbackHotspots: rollbackHotspots.length,
+        incidents: incidentCount,
+        diagnoses: diagnosisCount,
+        autoFixActions: actionCount,
+      },
+    };
+  };
+
   return {
     listIncidents(input) {
       const incidents = deps.db.withReadConnection((db) =>
@@ -485,11 +989,197 @@ export function createFridaySelfHealingApiService(
         actor: { type: "user", id: input.respondedBy, displayName: input.respondedBy },
         description: `Rejected auto-fix action ${details.action.actionId}`,
       });
+      if (details.incident) {
+        const context = details.incident.context;
+        emitLearningEvent(
+          {
+            userId: details.incident.userId,
+            runId: details.incident.runId,
+            kind: "outcome_confirmed",
+            details: {
+              type: "autofix_rejected",
+              actionId: details.action.actionId,
+              incidentId: details.incident.incidentId,
+              fingerprint: details.action.plan.evidence.fingerprint,
+              reasonCode: input.reasonCode,
+              reason: input.reason,
+              taskProfileId:
+                typeof context.taskProfileId === "string" ? context.taskProfileId : undefined,
+              actualProviderId:
+                typeof context.actualProviderId === "string" ? context.actualProviderId : undefined,
+              actualModel:
+                typeof context.actualModel === "string" ? context.actualModel : undefined,
+              backendKind:
+                typeof context.backendKind === "string" ? context.backendKind : undefined,
+            },
+          },
+          approval.requestId,
+        );
+      }
       await deps.agentLoop?.syncAction({
         actionId: details.action.actionId,
         correlationId: approval.requestId,
       });
       return details;
+    },
+
+    manualResolveIncident(input) {
+      const incident = deps.db.withReadConnection((db) =>
+        deps.incidentRepo.getById(db, input.incidentId),
+      );
+      if (!incident) {
+        throw new FridayDomainError("DIAGNOSIS_INCIDENT_NOT_FOUND", `Incident ${input.incidentId} not found`, { httpStatus: 404 });
+      }
+
+      const nowIso = deps.nowIso();
+      const diagnosis = deps.db.withReadConnection((db) =>
+        deps.diagnosisRepo.getLatestByIncidentId(db, incident.incidentId),
+      );
+
+      const rejectedActionIds = deps.db.withWriteTransaction((db) => {
+        const actions = deps.actionRepo.listByUser(db, {
+          userId: incident.userId,
+          incidentId: incident.incidentId,
+          limit: 100,
+        });
+        const plannedActions = actions.filter((action) => action.status === "planned");
+        for (const action of plannedActions) {
+          deps.actionRepo.markRejected(db, action.actionId, nowIso);
+        }
+
+        deps.lessonRepo.upsertByFingerprint(db, {
+          id: deps.idGenerator(),
+          fingerprint: incident.signature,
+          title: input.title ?? `Manual resolution: ${incident.category}`,
+          cause: input.cause ?? summarizeRootCause(diagnosis, incident),
+          fix: input.fix,
+          mitigation: {
+            source: "manual_resolved",
+            resolvedBy: input.resolvedBy,
+            ...(input.verificationSummary ? { verificationSummary: input.verificationSummary } : {}),
+            rejectedActionIds: plannedActions.map((action) => action.actionId),
+          },
+          sourceIncidentId: incident.incidentId,
+          sourceDiagnosisId: diagnosis?.id,
+          nowIso,
+        });
+
+        deps.incidentRepo.updateStatus(db, incident.incidentId, "resolved", nowIso);
+        if (diagnosis) {
+          deps.diagnosisRepo.markResolved(db, diagnosis.id, nowIso);
+        }
+        return plannedActions.map((action) => action.actionId);
+      });
+
+      emitLearningEvent(
+        {
+          userId: incident.userId,
+          runId: incident.runId,
+          kind: "outcome_confirmed",
+          details: {
+            type: "manual_resolved",
+            incidentId: incident.incidentId,
+            fingerprint: incident.signature,
+            resolvedBy: input.resolvedBy,
+            fix: input.fix,
+            cause: input.cause ?? summarizeRootCause(diagnosis, incident),
+            verificationSummary: input.verificationSummary,
+            rejectedActionIds,
+          },
+        },
+        incident.incidentId,
+      );
+
+      deps.publishEvent?.publish(
+        diagnosisStreamId(incident.userId),
+        "diagnosis.incident.resolved",
+        {
+          incidentId: incident.incidentId,
+          userId: incident.userId,
+          runId: incident.runId,
+          status: "resolved",
+        },
+        incident.incidentId,
+      );
+
+      const details = this.getIncident({ incidentId: incident.incidentId });
+      if (!details) {
+        throw new FridayDomainError("DIAGNOSIS_INCIDENT_NOT_FOUND", `Incident ${incident.incidentId} not found after manual resolution`, { httpStatus: 404 });
+      }
+      return details;
+    },
+
+    getLearningOverview(input) {
+      return buildLearningOverview(input);
+    },
+
+    setLessonEnabled(input) {
+      const overview = buildLearningOverview({ userId: input.userId, limit: 500 });
+      const lessonRecord = overview.lessons.find((item) => item.lesson.id === input.lessonId);
+      if (!lessonRecord) {
+        throw new FridayDomainError("DIAGNOSIS_LESSON_NOT_FOUND", `Lesson ${input.lessonId} not found`, {
+          httpStatus: 404,
+        });
+      }
+      const key = `lesson_disabled:${input.lessonId}`;
+      deps.db.withWriteTransaction((db) => {
+        if (input.enabled) {
+          deps.factRepo.deleteByUserAndKey(db, input.userId, key);
+        } else {
+          deps.factRepo.upsert(db, {
+            factId: deps.idGenerator(),
+            userId: input.userId,
+            key,
+            value: {
+              disabled: true,
+              ...(input.reason ? { reason: input.reason } : {}),
+            },
+            confidence: 1,
+            evidenceCountDelta: 1,
+            lastConfirmedAt: deps.nowIso(),
+            sourceEventId: `operator:lesson:${deps.idGenerator()}`,
+            nowIso: deps.nowIso(),
+          });
+        }
+      });
+      return {
+        ...lessonRecord,
+        disabled: !input.enabled,
+        ...(input.enabled ? {} : input.reason ? { disabledReason: input.reason } : {}),
+      };
+    },
+
+    demotePattern(input) {
+      const overview = buildLearningOverview({ userId: input.userId, limit: 500 });
+      const patternRecord = overview.patterns.find((item) => item.patternId === input.patternId);
+      if (!patternRecord) {
+        throw new FridayDomainError("DIAGNOSIS_PATTERN_NOT_FOUND", `Pattern ${input.patternId} not found`, {
+          httpStatus: 404,
+        });
+      }
+      const factor = Math.max(0, Math.min(1, input.factor));
+      deps.db.withWriteTransaction((db) => {
+        deps.factRepo.upsert(db, {
+          factId: deps.idGenerator(),
+          userId: input.userId,
+          key: `pattern_demotion:${input.patternId}`,
+          value: {
+            factor,
+            ...(input.reason ? { reason: input.reason } : {}),
+          },
+          confidence: 1,
+          evidenceCountDelta: 1,
+          lastConfirmedAt: deps.nowIso(),
+          sourceEventId: `operator:pattern:${deps.idGenerator()}`,
+          nowIso: deps.nowIso(),
+        });
+      });
+      return {
+        ...patternRecord,
+        demoted: true,
+        demotionFactor: factor,
+        ...(input.reason ? { demotionReason: input.reason } : {}),
+      };
     },
 
     async executeAction(input) {

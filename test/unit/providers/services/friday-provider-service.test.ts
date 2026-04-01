@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createFridayProviderService } from "#providers";
 import { resetMasterKeyCache } from "#providers";
+import { createFridayPreferenceFactRepository } from "#learning";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
 
 import type { FridayProviderService } from "#providers";
@@ -84,7 +85,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.openai.com",
         authMode: "api-key",
         api: "openai-completions",
-        apiKey: "sk-real-key-123",
+        apiKey: "test-real-key-123",
         supportedModels: ["gpt-4o"],
         validateOnSave: false,
       });
@@ -107,7 +108,7 @@ describe("FridayProviderService", () => {
     });
 
     it("validates on save by default", async () => {
-      process.env.OPENAI_API_KEY = "sk-test";
+      process.env.OPENAI_API_KEY = "test-openai-key";
       try {
         const profile = await service.createProvider({
           kind: "openai",
@@ -160,7 +161,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.anthropic.com",
         authMode: "token",
         api: "anthropic-messages",
-        apiKey: "sk-ant-token-real",
+        apiKey: "test-ant-token-real",
         supportedModels: ["claude-sonnet-4-20250514"],
         validateOnSave: false,
       });
@@ -176,7 +177,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.anthropic.com",
         authMode: "token",
         api: "anthropic-messages",
-        apiKey: "sk-ant-token-real",
+        apiKey: "test-ant-token-real",
         supportedModels: ["claude-sonnet-4-20250514"],
         validateOnSave: false,
       });
@@ -312,7 +313,7 @@ describe("FridayProviderService", () => {
       });
 
       const updated = await service.updateProvider("test-id-0001", {
-        apiKey: "sk-new-key",
+        apiKey: "test-new-key",
         validateOnSave: false,
       });
 
@@ -350,7 +351,7 @@ describe("FridayProviderService", () => {
 
       await service.updateProvider("test-id-0001", {
         authMode: "token",
-        apiKey: "sk-ant-token-switch",
+        apiKey: "test-ant-token-switch",
       });
 
       expect(listAuthProfiles()).toEqual([
@@ -396,7 +397,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.openai.com",
         authMode: "api-key",
         api: "openai-completions",
-        apiKey: "sk-delete-me",
+        apiKey: "test-delete-me",
         supportedModels: ["gpt-4o"],
         validateOnSave: false,
       });
@@ -440,7 +441,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.anthropic.com",
         authMode: "token",
         api: "anthropic-messages",
-        apiKey: "sk-ant-token-real",
+        apiKey: "test-ant-token-real",
         supportedModels: ["claude-sonnet-4-20250514"],
         validateOnSave: false,
       });
@@ -462,7 +463,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.anthropic.com",
         authMode: "token",
         api: "anthropic-messages",
-        apiKey: "sk-ant-token-real",
+        apiKey: "test-ant-token-real",
         supportedModels: ["claude-sonnet-4-20250514"],
         validateOnSave: false,
       });
@@ -921,6 +922,153 @@ describe("FridayProviderService", () => {
     });
   });
 
+  describe("routing explain and operator overrides", () => {
+    it("excludes CLI backends from explainRouting when native tools are required", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "Codex CLI",
+        baseUrl: "",
+        authMode: "external-session",
+        backendKind: "cli",
+        cliConfig: {
+          backendId: "codex-cli",
+          binaryPath: "/usr/local/bin/codex",
+        },
+        api: "openai-responses",
+        supportedModels: ["gpt-5.4"],
+        defaultModel: "gpt-5.4",
+        validateOnSave: false,
+      });
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI HTTP",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-responses",
+        apiKey: "test-http-key",
+        supportedModels: ["gpt-5.4"],
+        defaultModel: "gpt-5.4",
+        validateOnSave: false,
+      });
+      await service.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: ["test-id-0002"],
+      });
+
+      const explain = await service.explainRouting({
+        requestedModel: "gpt-5.4",
+        routingContext: {
+          estimatedInputTokens: 1024,
+          complexity: "medium",
+          requiresNativeTools: true,
+          taskProfileId: "debug",
+        },
+      });
+
+      expect(explain.selected.providerId).toBe("test-id-0002");
+      expect(explain.candidates.some((candidate) => candidate.backendKind === "cli")).toBe(true);
+      expect(
+        explain.candidates.find((candidate) => candidate.backendKind === "cli"),
+      ).toMatchObject({
+        eligible: false,
+        ineligibilityReasons: expect.arrayContaining(["requires_native_tools"]),
+      });
+    });
+
+    it("honors operator-pinned routes in explainRouting", async () => {
+      const primary = await service.createProvider({
+        kind: "openai",
+        name: "Primary",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "test-primary-key",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      const pinned = await service.createProvider({
+        kind: "openai",
+        name: "Pinned",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "test-pinned-key",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await service.setRoutingConfig({
+        defaultProviderId: primary.id,
+        fallbackProviderIds: [pinned.id],
+      });
+      await service.pinRoute({
+        userId: "test-user",
+        taskProfileId: "review",
+        providerId: pinned.id,
+        model: "gpt-4o",
+        backendKind: "http",
+        reason: "operator pin",
+      });
+
+      const explain = await service.explainRouting({
+        tenantContext: {
+          hubId: "tenant-a",
+          userId: "test-user",
+        },
+        routingContext: {
+          estimatedInputTokens: 600,
+          complexity: "medium",
+          requiresNativeTools: true,
+          taskProfileId: "review",
+        },
+      });
+
+      expect(explain.selected.providerId).toBe(pinned.id);
+      expect(explain.learningAdjusted).toBe(true);
+      expect(explain.reason).toContain("Operator pinned");
+      expect(explain.candidates[0]).toMatchObject({
+        providerId: pinned.id,
+        pinned: true,
+      });
+    });
+
+    it("clears stored route penalties", async () => {
+      const factRepo = createFridayPreferenceFactRepository();
+      db.withWriteTransaction((conn) => {
+        factRepo.upsert(conn, {
+          factId: "fact-001",
+          userId: "test-user",
+          key: "route_penalty:review:prov_001:http:gpt_4o",
+          value: {
+            providerId: "prov-001",
+            model: "gpt-4o",
+            backendKind: "http",
+          },
+          confidence: 0.8,
+          evidenceCountDelta: 1,
+          lastConfirmedAt: NOW,
+          sourceEventId: "test:event",
+          nowIso: NOW,
+        });
+      });
+
+      const cleared = await service.clearRoutePenalty({
+        userId: "test-user",
+        taskProfileId: "review",
+        providerId: "prov-001",
+        model: "gpt-4o",
+        backendKind: "http",
+      });
+
+      expect(cleared).toBe(true);
+      const remaining = db.withReadConnection((conn) =>
+        factRepo.getByUserAndKey(conn, "test-user", "route_penalty:review:prov_001:http:gpt_4o"),
+      );
+      expect(remaining).toBeNull();
+    });
+  });
+
   describe("runWithFallback", () => {
     it("throws when no routing configured", async () => {
       await expect(
@@ -931,7 +1079,7 @@ describe("FridayProviderService", () => {
     });
 
     it("runs with credential from env-ref", async () => {
-      process.env.TEST_KEY = "sk-env-key";
+      process.env.TEST_KEY = "test-env-key";
       try {
         await service.createProvider({
           kind: "openai",
@@ -954,7 +1102,7 @@ describe("FridayProviderService", () => {
           run: async (_r, credential) => credential,
         });
 
-        expect(result).toBe("sk-env-key");
+        expect(result).toBe("test-env-key");
         expect(route.provider.kind).toBe("openai");
         expect(attempts).toHaveLength(0);
       } finally {
@@ -1032,8 +1180,8 @@ describe("FridayProviderService", () => {
     });
 
     it("pins execution to the requested provider without falling back", async () => {
-      process.env.OPENAI_KEY = "sk-openai";
-      process.env.ANTHROPIC_KEY = "sk-anthropic";
+      process.env.OPENAI_KEY = "test-openai-key";
+      process.env.ANTHROPIC_KEY = "test-anthropic-key";
       try {
         await service.createProvider({
           kind: "openai",
@@ -1069,7 +1217,7 @@ describe("FridayProviderService", () => {
           run,
         });
 
-        expect(result).toBe("sk-anthropic");
+        expect(result).toBe("test-anthropic-key");
         expect(route.provider.id).toBe("test-id-0002");
         expect(attempts).toHaveLength(0);
         expect(run).toHaveBeenCalledTimes(1);
@@ -1080,8 +1228,8 @@ describe("FridayProviderService", () => {
     });
 
     it("does not fall back to the default provider when a pinned provider run fails", async () => {
-      process.env.OPENAI_KEY = "sk-openai";
-      process.env.ANTHROPIC_KEY = "sk-anthropic";
+      process.env.OPENAI_KEY = "test-openai-key";
+      process.env.ANTHROPIC_KEY = "test-anthropic-key";
       try {
         await service.createProvider({
           kind: "openai",
@@ -1127,7 +1275,7 @@ describe("FridayProviderService", () => {
           expect.objectContaining({
             provider: expect.objectContaining({ id: "test-id-0002" }),
           }),
-          "sk-anthropic",
+          "test-anthropic-key",
         );
       } finally {
         delete process.env.OPENAI_KEY;
@@ -1135,9 +1283,274 @@ describe("FridayProviderService", () => {
       }
     });
 
+    it("filters text-only CLI backends out when the task requires Friday native tools", async () => {
+      process.env.OPENAI_KEY = "test-openai-key";
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "Codex CLI",
+          baseUrl: "",
+          backendKind: "cli",
+          authMode: "external-session",
+          api: "openai-responses",
+          cliConfig: { backendId: "codex-cli" },
+          supportedModels: ["gpt-5.4"],
+          defaultModel: "gpt-5.4",
+          validateOnSave: false,
+        });
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI HTTP",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-responses",
+          apiKey: "$OPENAI_KEY",
+          supportedModels: ["gpt-5.4"],
+          defaultModel: "gpt-5.4",
+          validateOnSave: false,
+        });
+
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: ["test-id-0002"],
+        });
+
+        const { route } = await service.runWithFallback({
+          requestedModel: "gpt-5.4",
+          routingContext: {
+            estimatedInputTokens: 2000,
+            complexity: "medium",
+            requiresNativeTools: true,
+          },
+          run: async (_route, credential) => credential,
+        });
+
+        expect(route.provider.id).toBe("test-id-0002");
+        expect(route.provider.config.backendKind).toBe("http");
+      } finally {
+        delete process.env.OPENAI_KEY;
+      }
+    });
+
+    it("fails cleanly when only text-only CLI backends remain for a tool-using task", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "Codex CLI",
+        baseUrl: "",
+        backendKind: "cli",
+        authMode: "external-session",
+        api: "openai-responses",
+        cliConfig: { backendId: "codex-cli" },
+        supportedModels: ["gpt-5.4"],
+        defaultModel: "gpt-5.4",
+        validateOnSave: false,
+      });
+
+      await service.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: [],
+      });
+
+      await expect(
+        service.runWithFallback({
+          requestedModel: "gpt-5.4",
+          routingContext: {
+            estimatedInputTokens: 2000,
+            complexity: "medium",
+            requiresNativeTools: true,
+          },
+          run: async () => "unreachable",
+        }),
+      ).rejects.toMatchObject({
+        code: "PROVIDER_NO_CANDIDATES",
+      });
+    });
+
+    it("re-orders candidates using historical outcomes for the active task profile", async () => {
+      process.env.OPENAI_KEY = "test-openai-key";
+      process.env.ANTHROPIC_KEY = "test-anthropic-key";
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-responses",
+          apiKey: "$OPENAI_KEY",
+          supportedModels: ["gpt-4o-mini"],
+          defaultModel: "gpt-4o-mini",
+          validateOnSave: false,
+        });
+        await service.createProvider({
+          kind: "anthropic",
+          name: "Claude",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "api-key",
+          api: "anthropic-messages",
+          apiKey: "$ANTHROPIC_KEY",
+          supportedModels: ["claude-sonnet-4-20250514"],
+          defaultModel: "claude-sonnet-4-20250514",
+          validateOnSave: false,
+        });
+
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: ["test-id-0002"],
+        });
+
+        db.withWriteTransaction((conn) => {
+          const insertRun = conn.prepare(
+            `INSERT INTO friday_agent_runs (
+              id, task, status, session_key, provider_id, model, attempt, max_attempts, created_at,
+              completed_at, task_profile_json, actual_execution_json
+            ) VALUES (?, ?, ?, ?, ?, ?, 1, 3, ?, ?, ?, ?)`,
+          );
+
+          insertRun.run(
+            "hist-run-001",
+            "review the architecture",
+            "completed",
+            "sess-001",
+            "test-id-0002",
+            "claude-sonnet-4-20250514",
+            NOW,
+            NOW,
+            JSON.stringify({ id: "review", label: "Review", description: "Review", reasoningEffort: "high", temperature: 0.1 }),
+            JSON.stringify({
+              actualProviderId: "test-id-0002",
+              actualModel: "claude-sonnet-4-20250514",
+              backendKind: "http",
+            }),
+          );
+          insertRun.run(
+            "hist-run-002",
+            "review the architecture",
+            "completed",
+            "sess-002",
+            "test-id-0002",
+            "claude-sonnet-4-20250514",
+            NOW,
+            NOW,
+            JSON.stringify({ id: "review", label: "Review", description: "Review", reasoningEffort: "high", temperature: 0.1 }),
+            JSON.stringify({
+              actualProviderId: "test-id-0002",
+              actualModel: "claude-sonnet-4-20250514",
+              backendKind: "http",
+            }),
+          );
+          insertRun.run(
+            "hist-run-003",
+            "review the architecture",
+            "failed",
+            "sess-003",
+            "test-id-0001",
+            "gpt-4o-mini",
+            NOW,
+            NOW,
+            JSON.stringify({ id: "review", label: "Review", description: "Review", reasoningEffort: "high", temperature: 0.1 }),
+            JSON.stringify({
+              actualProviderId: "test-id-0001",
+              actualModel: "gpt-4o-mini",
+              backendKind: "http",
+            }),
+          );
+        });
+
+        const { route, routingDecision } = await service.runWithFallback({
+          routingContext: {
+            estimatedInputTokens: 1800,
+            complexity: "medium",
+            taskProfileId: "review",
+          },
+          run: async (candidate) => candidate.provider.id,
+        });
+
+        expect(route.provider.id).toBe("test-id-0002");
+        expect(routingDecision.learningAdjusted).toBe(true);
+        expect(routingDecision.reason).toContain("Historical route outcomes influenced candidate scoring.");
+      } finally {
+        delete process.env.OPENAI_KEY;
+        delete process.env.ANTHROPIC_KEY;
+      }
+    });
+
+    it("penalizes routes that operators explicitly rejected for the same task profile", async () => {
+      process.env.OPENAI_KEY = "test-openai-key";
+      process.env.ANTHROPIC_KEY = "test-anthropic-key";
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$OPENAI_KEY",
+          supportedModels: ["gpt-4o-mini"],
+          defaultModel: "gpt-4o-mini",
+          validateOnSave: false,
+        });
+        await service.createProvider({
+          kind: "anthropic",
+          name: "Anthropic",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "api-key",
+          api: "anthropic-messages",
+          apiKey: "$ANTHROPIC_KEY",
+          supportedModels: ["claude-sonnet-4-20250514"],
+          defaultModel: "claude-sonnet-4-20250514",
+          validateOnSave: false,
+        });
+
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: ["test-id-0002"],
+        });
+
+        db.withWriteTransaction((conn) => {
+          conn.prepare(
+            `INSERT INTO preference_facts (
+              fact_id, user_id, key, value_json, confidence, evidence_count,
+              last_confirmed_at, source_event_ids_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ).run(
+            "fact-001",
+            "test-user",
+            "route_penalty:review:test_id_0001:http:gpt_4o_mini",
+            JSON.stringify({ reasonCode: "too_risky" }),
+            0.95,
+            1,
+            NOW,
+            JSON.stringify(["evt-1"]),
+            NOW,
+            NOW,
+          );
+        });
+
+        const { route, routingDecision } = await service.runWithFallback({
+          tenantContext: {
+            hubId: "test-hub",
+            userId: "test-user",
+          },
+          routingContext: {
+            estimatedInputTokens: 900,
+            complexity: "medium",
+            taskProfileId: "review",
+          },
+          run: async (candidate) => candidate.provider.id,
+        });
+
+        expect(route.provider.id).toBe("test-id-0002");
+        expect(routingDecision.learningAdjusted).toBe(true);
+        expect(routingDecision.reason).toContain("Operator route penalties influenced candidate scoring.");
+      } finally {
+        delete process.env.OPENAI_KEY;
+        delete process.env.ANTHROPIC_KEY;
+      }
+    });
+
     it("uses each fallback provider's own supported model when routing.defaultModel is provider-specific", async () => {
-      process.env.OPENAI_KEY = "sk-openai";
-      process.env.ANTHROPIC_KEY = "sk-anthropic";
+      process.env.OPENAI_KEY = "test-openai-key";
+      process.env.ANTHROPIC_KEY = "test-anthropic-key";
       try {
         await service.createProvider({
           kind: "anthropic",
@@ -1436,13 +1849,13 @@ describe("FridayProviderService", () => {
 
       const updated = await service.updateProvider("test-id-0001", {
         authMode: "token",
-        apiKey: "sk-ant-token-switch",
+        apiKey: "test-ant-token-switch",
       });
 
       expect(updated.config.authMode).toBe("token");
       expect(updated.config.oauthProvider).toBeUndefined();
       expect(updated.config.validation?.status).toBe("ok");
-      expect(capturedHeaders["Authorization"]).toBe("Bearer sk-ant-token-switch");
+      expect(capturedHeaders["Authorization"]).toBe("Bearer test-ant-token-switch");
       expect(capturedHeaders["x-api-key"]).toBeUndefined();
     });
   });

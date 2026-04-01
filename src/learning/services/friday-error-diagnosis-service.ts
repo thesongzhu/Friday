@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import type { FridayErrorIncidentRepository } from "../persistence/friday-error-incident-repository.js";
 import type { FridayDiagnosisRecordRepository } from "../persistence/friday-diagnosis-record-repository.js";
 import type { FridayLearnedLessonRepository } from "../persistence/friday-learned-lesson-repository.js";
+import type { FridayPreferenceFactRepository } from "../persistence/friday-preference-fact-repository.js";
 import type {
   FridayDiagnosisRecordEntity,
   FridayErrorIncidentEntity,
@@ -36,6 +37,7 @@ export interface CreateErrorDiagnosisServiceDeps {
   incidentRepo: FridayErrorIncidentRepository;
   diagnosisRepo: FridayDiagnosisRecordRepository;
   lessonRepo: FridayLearnedLessonRepository;
+  factRepo?: FridayPreferenceFactRepository;
   idGenerator: () => string;
 }
 
@@ -60,7 +62,12 @@ export function createFridayErrorDiagnosisService(
 
     // 1. Look up matching lessons
     const lesson = deps.lessonRepo.getByFingerprint(db, fingerprint);
-    const matchedLessons = lesson ? [lesson] : [];
+    const lessonDisabled = lesson && deps.factRepo
+      ? deps.factRepo.getByUserAndKey(db, incident.userId, `lesson_disabled:${lesson.id}`)
+      : null;
+    const matchedLessons = lesson && !(lessonDisabled?.value === true || (typeof lessonDisabled?.value === "object" && lessonDisabled?.value !== null && "disabled" in lessonDisabled.value && lessonDisabled.value.disabled === true))
+      ? [lesson]
+      : [];
 
     // 2. Recurrence count: recent incidents with same signature
     const recentIncidents = deps.incidentRepo.findRecentBySignature(
