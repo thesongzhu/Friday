@@ -85,7 +85,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.openai.com",
         authMode: "api-key",
         api: "openai-completions",
-        apiKey: "test-real-key-123",
+        apiKey: "test-real-key-123", // pragma: allowlist secret
         supportedModels: ["gpt-4o"],
         validateOnSave: false,
       });
@@ -108,7 +108,7 @@ describe("FridayProviderService", () => {
     });
 
     it("validates on save by default", async () => {
-      process.env.OPENAI_API_KEY = "test-openai-key";
+      process.env.OPENAI_API_KEY = "test-openai-key"; // pragma: allowlist secret
       try {
         const profile = await service.createProvider({
           kind: "openai",
@@ -161,7 +161,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.anthropic.com",
         authMode: "token",
         api: "anthropic-messages",
-        apiKey: "test-ant-token-real",
+        apiKey: "test-ant-token-real", // pragma: allowlist secret
         supportedModels: ["claude-sonnet-4-20250514"],
         validateOnSave: false,
       });
@@ -177,7 +177,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.anthropic.com",
         authMode: "token",
         api: "anthropic-messages",
-        apiKey: "test-ant-token-real",
+        apiKey: "test-ant-token-real", // pragma: allowlist secret
         supportedModels: ["claude-sonnet-4-20250514"],
         validateOnSave: false,
       });
@@ -313,7 +313,7 @@ describe("FridayProviderService", () => {
       });
 
       const updated = await service.updateProvider("test-id-0001", {
-        apiKey: "test-new-key",
+        apiKey: "test-new-key", // pragma: allowlist secret
         validateOnSave: false,
       });
 
@@ -351,7 +351,7 @@ describe("FridayProviderService", () => {
 
       await service.updateProvider("test-id-0001", {
         authMode: "token",
-        apiKey: "test-ant-token-switch",
+        apiKey: "test-ant-token-switch", // pragma: allowlist secret
       });
 
       expect(listAuthProfiles()).toEqual([
@@ -397,7 +397,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.openai.com",
         authMode: "api-key",
         api: "openai-completions",
-        apiKey: "test-delete-me",
+        apiKey: "test-delete-me", // pragma: allowlist secret
         supportedModels: ["gpt-4o"],
         validateOnSave: false,
       });
@@ -441,7 +441,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.anthropic.com",
         authMode: "token",
         api: "anthropic-messages",
-        apiKey: "test-ant-token-real",
+        apiKey: "test-ant-token-real", // pragma: allowlist secret
         supportedModels: ["claude-sonnet-4-20250514"],
         validateOnSave: false,
       });
@@ -463,7 +463,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.anthropic.com",
         authMode: "token",
         api: "anthropic-messages",
-        apiKey: "test-ant-token-real",
+        apiKey: "test-ant-token-real", // pragma: allowlist secret
         supportedModels: ["claude-sonnet-4-20250514"],
         validateOnSave: false,
       });
@@ -945,7 +945,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.openai.com",
         authMode: "api-key",
         api: "openai-responses",
-        apiKey: "test-http-key",
+        apiKey: "test-http-key", // pragma: allowlist secret
         supportedModels: ["gpt-5.4"],
         defaultModel: "gpt-5.4",
         validateOnSave: false,
@@ -982,7 +982,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.openai.com",
         authMode: "api-key",
         api: "openai-completions",
-        apiKey: "test-primary-key",
+        apiKey: "test-primary-key", // pragma: allowlist secret
         supportedModels: ["gpt-4o"],
         defaultModel: "gpt-4o",
         validateOnSave: false,
@@ -993,7 +993,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.openai.com",
         authMode: "api-key",
         api: "openai-completions",
-        apiKey: "test-pinned-key",
+        apiKey: "test-pinned-key", // pragma: allowlist secret
         supportedModels: ["gpt-4o"],
         defaultModel: "gpt-4o",
         validateOnSave: false,
@@ -1119,7 +1119,7 @@ describe("FridayProviderService", () => {
           baseUrl: "https://api.openai.com",
           authMode: "api-key",
           api: "openai-completions",
-          apiKey: "global-secret",
+          apiKey: "global-secret", // pragma: allowlist secret
           supportedModels: ["gpt-4o"],
           defaultModel: "gpt-4o",
           validateOnSave: false,
@@ -1849,7 +1849,7 @@ describe("FridayProviderService", () => {
 
       const updated = await service.updateProvider("test-id-0001", {
         authMode: "token",
-        apiKey: "test-ant-token-switch",
+        apiKey: "test-ant-token-switch", // pragma: allowlist secret
       });
 
       expect(updated.config.authMode).toBe("token");
