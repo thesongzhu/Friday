@@ -1,5 +1,5 @@
 import { FridayDomainError } from "#errors";
-import type { FridayProviderService } from "#providers";
+import type { FridayProviderAuthMode, FridayProviderService } from "#providers";
 import type {
   FridayCostRoutingDecision,
   FridayPromptCacheHints,
@@ -9,6 +9,7 @@ import type {
   FridayProviderRouteStrategy,
   FridayResolvedProviderRoute,
 } from "#providers";
+import { isFridayAnthropicBearerAuthMode } from "#providers";
 
 import {
   FRIDAY_ANTHROPIC_OAUTH_HEADERS,
@@ -133,9 +134,9 @@ function buildRequestBody(
  */
 function withOAuthSystemPrefix(
   systemPrompt: string,
-  authMode?: "api-key" | "oauth",
+  authMode?: FridayProviderAuthMode,
 ): string {
-  if (authMode !== "oauth") return systemPrompt;
+  if (!isFridayAnthropicBearerAuthMode(authMode)) return systemPrompt;
   return `${FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX}\n\n${systemPrompt}`;
 }
 
@@ -163,9 +164,9 @@ function buildHeaders(
   api: FridayProviderApi,
   credential: string | null,
   extraHeaders?: Record<string, string>,
-  authMode?: "api-key" | "oauth",
+  authMode?: FridayProviderAuthMode,
 ): Record<string, string> {
-  const isOAuth = authMode === "oauth";
+  const isBearerAuth = isFridayAnthropicBearerAuthMode(authMode);
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...extraHeaders,
@@ -174,7 +175,7 @@ function buildHeaders(
   if (credential) {
     switch (api) {
       case "anthropic-messages":
-        if (isOAuth) {
+        if (isBearerAuth) {
           headers["Authorization"] = `Bearer ${credential}`;
           // OAuth tokens require Claude Code identity headers + beta flags
           Object.assign(headers, FRIDAY_ANTHROPIC_OAUTH_HEADERS);
@@ -345,14 +346,15 @@ export function createFridayProviderInferenceClient(
           summarize: async (prompt) => {
             // Use the provider service itself for summarization
             const summaryResult = await deps.providerService.runWithFallback({
+              tenantContext: request.tenantContext,
               run: async (route, credential) => {
                 const api = route.provider.config.api;
                 const model = route.model;
                 const url = buildUrl(api, route.provider.baseUrl, model);
-                const oauthMode = route.provider.config.authMode === "oauth" ? "oauth" as const : "api-key" as const;
-                const headers = buildHeaders(api, credential, route.provider.config.headers, oauthMode);
+                const authMode = route.provider.config.authMode;
+                const headers = buildHeaders(api, credential, route.provider.config.headers, authMode);
                 const body = buildRequestBody(api, model, [
-                  { role: "system", content: withOAuthSystemPrefix(prompt.system, oauthMode) },
+                  { role: "system", content: withOAuthSystemPrefix(prompt.system, authMode) },
                   { role: "user", content: prompt.user },
                 ], resolvedTaskProfile.temperature);
                 const resp = await fetch(url, {
@@ -400,6 +402,7 @@ export function createFridayProviderInferenceClient(
 
       const fallbackResult = await deps.providerService.runWithFallback({
         requestedModel: request.requestedModel,
+        tenantContext: request.tenantContext,
         routingContext: { estimatedInputTokens, complexity },
         run: async (
           currentRoute: FridayResolvedProviderRoute,
@@ -409,21 +412,21 @@ export function createFridayProviderInferenceClient(
           const api = provider.config.api;
           const model = currentRoute.model;
 
-          const oauthMode = provider.config.authMode === "oauth" ? "oauth" as const : "api-key" as const;
+          const authMode = provider.config.authMode;
           const url = buildUrl(api, provider.baseUrl, model);
           let headers = buildHeaders(
             api,
             credential,
             provider.config.headers,
-            oauthMode,
+            authMode,
           );
 
           // For OAuth on non-Anthropic APIs: prepend required system prefix to the system message.
           // For Anthropic, the prefix is applied in the cache-hint path below to avoid double-prefixing.
-          const effectiveMessages = (oauthMode === "oauth" && api !== "anthropic-messages")
+          const effectiveMessages = (isFridayAnthropicBearerAuthMode(authMode) && api !== "anthropic-messages")
             ? messages.map((m) =>
                 m.role === "system"
-                  ? { ...m, content: withOAuthSystemPrefix(m.content, oauthMode) }
+                  ? { ...m, content: withOAuthSystemPrefix(m.content, authMode) }
                   : m,
               )
             : messages;
@@ -453,7 +456,7 @@ export function createFridayProviderInferenceClient(
             };
 
             // Use the OAuth-prefixed system prompt so cache blocks preserve the required prefix
-            const effectiveSystemPrompt = withOAuthSystemPrefix(request.prompt.system, oauthMode);
+            const effectiveSystemPrompt = withOAuthSystemPrefix(request.prompt.system, authMode);
             const cacheResult = cacheAdapter.applyAnthropicCacheHints({
               systemPrompt: effectiveSystemPrompt,
               userPrompt: request.prompt.user,

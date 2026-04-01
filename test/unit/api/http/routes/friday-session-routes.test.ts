@@ -461,7 +461,9 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.memory.namespace.get", () => {
     it("returns namespace", async () => {
       const svc = createMockService();
-      vi.mocked(svc.getSessionMemoryNamespace).mockResolvedValue("tenant.default.user.user1.shared");
+      vi.mocked(svc.getSessionMemoryNamespace).mockResolvedValue(
+        "tenant.default.channel.discord.user.user1.shared",
+      );
 
       const routes = createFridaySessionRoutes({ sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.memory.namespace.get")!;
@@ -470,7 +472,10 @@ describe("FridaySessionRoutes", () => {
         makeMockCtx({ params: { sessionKey: "discord:default:user1" } }) as never,
       );
 
-      expect(result).toHaveProperty("namespace", "tenant.default.user.user1.shared");
+      expect(result).toHaveProperty(
+        "namespace",
+        "tenant.default.channel.discord.user.user1.shared",
+      );
     });
   });
 
@@ -877,6 +882,57 @@ describe("FridaySessionRoutes", () => {
         expect.objectContaining({
           principalId: "principal-1",
           scopes: ["agent.run"],
+        }),
+      );
+    });
+
+    it("derives tenantContext from authenticated principal for session runs", async () => {
+      const svc = createMockService();
+      const runSession = vi.fn().mockResolvedValue({
+        runId: "run-1",
+        status: "completed",
+        response: "ok",
+        toolCallCount: 0,
+        durationMs: 50,
+        usageInput: 1,
+        usageOutput: 1,
+      });
+
+      vi.mocked(svc.getMessages)
+        .mockResolvedValueOnce([makeMockMessage({ role: "user", contentText: "hello" })])
+        .mockResolvedValueOnce([makeMockMessage({ role: "user", contentText: "hello" })]);
+
+      const routes = createFridaySessionRoutes({
+        sessionService: svc,
+        runSession,
+      });
+      const route = routes.find((r) => r.operationId === "sessions.run")!;
+
+      await route.handler(
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          body: {},
+          principal: {
+            principalType: "user",
+            principalId: "principal-1",
+            tenantId: "tenant-acme",
+            userId: "user-1",
+            role: "owner",
+            scopes: ["agent.run"],
+            tokenId: "token-1",
+            tokenKind: "access",
+            issuedAt: "2026-01-01T00:00:00.000Z",
+            expiresAt: "2026-01-01T01:00:00.000Z",
+          },
+        }) as never,
+      );
+
+      expect(runSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantContext: {
+            hubId: "tenant-acme",
+            userId: "principal-1",
+          },
         }),
       );
     });

@@ -2,6 +2,7 @@ import { FridayDomainError } from "#errors";
 import { spawn } from "node:child_process";
 
 import { FRIDAY_VERSION } from "../../lib/version.js";
+import { createFridayMcpRequestDedup } from "./friday-mcp-request-dedup.js";
 import type {
   FridayMcpAdapter,
   FridayMcpCallToolInput,
@@ -310,6 +311,7 @@ export function createFridayMcpAdapter(
   const spawnImpl = options.spawnImpl ?? spawn;
   const lazyDiscovery = options.lazyDiscovery ?? true;
   const servers = dedupeServers(options.servers);
+  const requestDedup = createFridayMcpRequestDedup();
   const serverById = new Map(servers.map((server) => [server.id, server]));
   const rateLimitWindows = new Map<string, number[]>();
   const serverStateCache = new Map<string, FridayMcpServerState>(
@@ -464,6 +466,7 @@ export function createFridayMcpAdapter(
           };
         },
       });
+      requestDedup.invalidateServer(server.id);
       markServerState(server.id, "loaded", {
         lastLoadedAt: new Date().toISOString(),
       });
@@ -531,6 +534,17 @@ export function createFridayMcpAdapter(
       const correlationId = nextCorrelationId(server.id, "resources.read");
 
       markServerState(server.id, "discoverable");
+      const cached = requestDedup.get<FridayMcpReadResourceResult>(
+        server.id,
+        "resources/read",
+        { uri: input.uri },
+      );
+      if (cached) {
+        console.info(
+          `[friday][marker] mcp_dedup_hit serverId=${server.id} target=resource uri=${input.uri}`,
+        );
+        return cached;
+      }
       const result = await withMcpSession({
         server,
         signal: input.signal,
@@ -555,6 +569,7 @@ export function createFridayMcpAdapter(
           };
         },
       });
+      requestDedup.set(server.id, "resources/read", { uri: input.uri }, result);
       markServerState(server.id, "loaded", {
         lastLoadedAt: new Date().toISOString(),
       });
@@ -622,6 +637,21 @@ export function createFridayMcpAdapter(
       const correlationId = nextCorrelationId(server.id, `prompts.get.${input.name}`);
 
       markServerState(server.id, "discoverable");
+      const dedupArgs = {
+        name: input.name,
+        ...(input.args ?? {}),
+      };
+      const cached = requestDedup.get<FridayMcpGetPromptResult>(
+        server.id,
+        "prompts/get",
+        dedupArgs,
+      );
+      if (cached) {
+        console.info(
+          `[friday][marker] mcp_dedup_hit serverId=${server.id} target=prompt name=${input.name}`,
+        );
+        return cached;
+      }
       const result = await withMcpSession({
         server,
         signal: input.signal,
@@ -649,6 +679,7 @@ export function createFridayMcpAdapter(
           };
         },
       });
+      requestDedup.set(server.id, "prompts/get", dedupArgs, result);
       markServerState(server.id, "loaded", {
         lastLoadedAt: new Date().toISOString(),
       });

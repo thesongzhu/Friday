@@ -1,10 +1,12 @@
 import { FridayDomainError } from "#errors";
 import type {
   FridayProviderApi,
+  FridayProviderAuthMode,
   FridayProviderKind,
   FridayProviderValidationErrorCode,
   FridayProviderValidationState,
 } from "../model/friday-provider.types.js";
+import { isFridayAnthropicBearerAuthMode } from "../model/friday-provider.types.js";
 
 import {
   FRIDAY_ANTHROPIC_OAUTH_HEADERS,
@@ -24,7 +26,7 @@ export interface FridayProviderValidator {
     baseUrl: string;
     credential: string | null;
     model?: string;
-    authMode?: "api-key" | "oauth";
+    authMode?: FridayProviderAuthMode;
   }): Promise<FridayProviderValidationState>;
 }
 
@@ -82,17 +84,17 @@ async function validateOpenAi(
 async function validateAnthropic(
   baseUrl: string,
   credential: string | null,
-  authMode?: "api-key" | "oauth",
+  authMode?: FridayProviderAuthMode,
 ): Promise<FridayProviderValidationState> {
   const url = `${baseUrl.replace(/\/+$/, "")}/v1/messages`;
-  const isOAuth = authMode === "oauth";
+  const isBearerAuth = isFridayAnthropicBearerAuthMode(authMode);
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "anthropic-version": "2023-06-01",
-    ...(isOAuth ? FRIDAY_ANTHROPIC_OAUTH_HEADERS : {}),
+    ...(isBearerAuth ? FRIDAY_ANTHROPIC_OAUTH_HEADERS : {}),
   };
   if (credential) {
-    if (isOAuth) {
+    if (isBearerAuth) {
       headers["Authorization"] = `Bearer ${credential}`;
     } else {
       headers["x-api-key"] = credential;
@@ -101,7 +103,7 @@ async function validateAnthropic(
   const body = JSON.stringify({
     model: "claude-sonnet-4-20250514",
     max_tokens: 1,
-    ...(isOAuth
+    ...(isBearerAuth
       ? {
           system: [
             { type: "text", text: FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX },

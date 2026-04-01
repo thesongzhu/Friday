@@ -13,9 +13,16 @@ import {
   resolveExistingOAuthProvider,
   resolveOrProvisionOAuthProvider,
 } from "../../providers/services/friday-provider-oauth-selection.js";
+import {
+  FRIDAY_PROVIDER_BACKEND_KINDS,
+  FRIDAY_PROVIDER_CLI_BACKEND_IDS,
+  FRIDAY_PROVIDER_KINDS,
+} from "../../providers/model/friday-provider.types.js";
 import type {
   FridayProviderApi,
   FridayProviderAuthMode,
+  FridayProviderBackendKind,
+  FridayProviderCliBackendId,
   FridayProviderKind,
 } from "../../providers/model/friday-provider.types.js";
 import {
@@ -37,6 +44,9 @@ type ProviderAction =
   | "create"
   | "update"
   | "delete"
+  | "doctor"
+  | "auth_profiles"
+  | "activate_profile"
   | "oauth_init"
   | "oauth_complete"
   | "set_default"
@@ -49,6 +59,9 @@ const VALID_ACTIONS = new Set<ProviderAction>([
   "create",
   "update",
   "delete",
+  "doctor",
+  "auth_profiles",
+  "activate_profile",
   "oauth_init",
   "oauth_complete",
   "set_default",
@@ -56,20 +69,24 @@ const VALID_ACTIONS = new Set<ProviderAction>([
   "routing",
 ]);
 
-const VALID_KINDS = new Set<FridayProviderKind>([
-  "openai",
-  "anthropic",
-  "google",
-  "ollama",
-  "openai-compatible",
-]);
+const VALID_KINDS = new Set<FridayProviderKind>(FRIDAY_PROVIDER_KINDS);
 
 const VALID_AUTH_MODES = new Set<FridayProviderAuthMode>([
   "api-key",
   "bearer-token",
   "oauth",
+  "token",
+  "external-session",
   "none",
 ]);
+
+const VALID_BACKEND_KINDS = new Set<FridayProviderBackendKind>(
+  FRIDAY_PROVIDER_BACKEND_KINDS,
+);
+
+const VALID_CLI_BACKEND_IDS = new Set<FridayProviderCliBackendId>(
+  FRIDAY_PROVIDER_CLI_BACKEND_IDS,
+);
 
 const VALID_APIS = new Set<FridayProviderApi>([
   "openai-completions",
@@ -92,6 +109,7 @@ export function createFridayAgentProviderTool(
       "Manage LLM providers (OpenAI, Anthropic, Google, Ollama). " +
       "Actions: list (show all providers), get (single provider by ID), " +
       "create (add new provider), update (modify provider), delete (remove provider), " +
+      "doctor (provider/backend health report), auth_profiles (list auth profiles), activate_profile (switch active auth profile), " +
       "oauth_init (start OAuth flow for Claude Max/Pro - returns authorization URL), " +
       "oauth_complete (finish OAuth with authorization code), " +
       "set_default (set default provider and model), " +
@@ -124,7 +142,25 @@ export function createFridayAgentProviderTool(
         authMode: {
           type: "string",
           enum: Array.from(VALID_AUTH_MODES),
-          description: "Authentication mode: api-key, bearer-token, oauth, none.",
+          description: "Authentication mode: api-key, bearer-token, oauth, token, external-session, none.",
+        },
+        backendKind: {
+          type: "string",
+          enum: Array.from(VALID_BACKEND_KINDS),
+          description: "Execution backend kind: http, cli, or sdk.",
+        },
+        cliBackendId: {
+          type: "string",
+          enum: Array.from(VALID_CLI_BACKEND_IDS),
+          description: "CLI backend identifier for backendKind=cli.",
+        },
+        cliBinaryPath: {
+          type: "string",
+          description: "Optional absolute path to the CLI binary for backendKind=cli.",
+        },
+        profileKey: {
+          type: "string",
+          description: "Auth profile key for activate_profile.",
         },
         api: {
           type: "string",
@@ -184,6 +220,12 @@ export function createFridayAgentProviderTool(
             return await handleUpdate(args);
           case "delete":
             return await handleDelete(args);
+          case "doctor":
+            return await handleDoctor(args);
+          case "auth_profiles":
+            return await handleAuthProfiles(args);
+          case "activate_profile":
+            return await handleActivateProfile(args);
           case "oauth_init":
             return await handleOAuthInit(args);
           case "oauth_complete":
@@ -234,25 +276,34 @@ export function createFridayAgentProviderTool(
       return errorResult(`Invalid kind "${kind}". Valid: ${Array.from(VALID_KINDS).join(", ")}`);
     }
 
+    const backendKind = (readStringParam(args, "backendKind") ?? "http") as FridayProviderBackendKind;
+    if (!VALID_BACKEND_KINDS.has(backendKind)) {
+      return errorResult(`Invalid backendKind "${backendKind}". Valid: ${Array.from(VALID_BACKEND_KINDS).join(", ")}`);
+    }
+
     const name = readStringParam(args, "name") ?? `${kind} Provider`;
-    const baseUrl = readStringParam(args, "baseUrl") ?? getDefaultBaseUrl(kind);
-    const authMode = (readStringParam(args, "authMode") ?? "api-key") as FridayProviderAuthMode;
+    const baseUrl = readStringParam(args, "baseUrl") ?? (backendKind === "http" ? getDefaultBaseUrl(kind) : "");
+    const authMode = (readStringParam(args, "authMode") ?? getDefaultAuthMode(kind, backendKind)) as FridayProviderAuthMode;
     const api = (readStringParam(args, "api") ?? getDefaultApi(kind)) as FridayProviderApi;
     const apiKey = readStringParam(args, "apiKey");
     const supportedModels = (args.supportedModels as string[]) ?? getDefaultModels(kind);
     const defaultModel = readStringParam(args, "defaultModel") ?? supportedModels[0];
     const enabled = readBooleanParam(args, "enabled") ?? true;
+    const cliConfig = readCliConfig(args, kind, backendKind);
 
     const provider = await providerService.createProvider({
       kind,
       name,
       baseUrl,
       authMode,
+      backendKind,
       api,
       apiKey,
       supportedModels,
       defaultModel,
       enabled,
+      cliConfig,
+      deploymentKind: backendKind === "cli" ? "consumer-cli" : undefined,
     });
 
     return jsonResult({
@@ -268,6 +319,7 @@ export function createFridayAgentProviderTool(
     const name = readStringParam(args, "name");
     const baseUrl = readStringParam(args, "baseUrl");
     const authMode = readStringParam(args, "authMode") as FridayProviderAuthMode | undefined;
+    const backendKind = readStringParam(args, "backendKind") as FridayProviderBackendKind | undefined;
     const api = readStringParam(args, "api") as FridayProviderApi | undefined;
     const apiKey = readStringParam(args, "apiKey");
     const supportedModels = args.supportedModels as string[] | undefined;
@@ -277,11 +329,22 @@ export function createFridayAgentProviderTool(
     if (name !== undefined) patch.name = name;
     if (baseUrl !== undefined) patch.baseUrl = baseUrl;
     if (authMode !== undefined) patch.authMode = authMode;
+    if (backendKind !== undefined) patch.backendKind = backendKind;
     if (api !== undefined) patch.api = api;
     if (apiKey !== undefined) patch.apiKey = apiKey;
     if (supportedModels !== undefined) patch.supportedModels = supportedModels;
     if (defaultModel !== undefined) patch.defaultModel = defaultModel;
     if (enabled !== undefined) patch.enabled = enabled;
+    if (backendKind !== undefined) {
+      patch.cliConfig = readCliConfig(args, undefined, backendKind);
+      patch.deploymentKind = backendKind === "cli" ? "consumer-cli" : undefined;
+    } else if (
+      readStringParam(args, "cliBackendId") !== undefined ||
+      readStringParam(args, "cliBinaryPath") !== undefined
+    ) {
+      patch.cliConfig = readCliConfig(args, undefined, "cli");
+      patch.deploymentKind = "consumer-cli";
+    }
 
     const provider = await providerService.updateProvider(providerId, patch);
 
@@ -300,6 +363,25 @@ export function createFridayAgentProviderTool(
       deleted: true,
       providerId,
     });
+  }
+
+  async function handleDoctor(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
+    const providerId = readStringParam(args, "providerId", { required: true });
+    const report = await providerService.doctorProvider(providerId);
+    return jsonResult({ report });
+  }
+
+  async function handleAuthProfiles(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
+    const providerId = readStringParam(args, "providerId", { required: true });
+    const profiles = await providerService.listAuthProfiles(providerId);
+    return jsonResult({ providerId, profiles });
+  }
+
+  async function handleActivateProfile(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
+    const providerId = readStringParam(args, "providerId", { required: true });
+    const profileKey = readStringParam(args, "profileKey", { required: true });
+    const profile = await providerService.activateAuthProfile(providerId, profileKey);
+    return jsonResult({ providerId, profile });
   }
 
   async function handleOAuthInit(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
@@ -414,6 +496,10 @@ export function createFridayAgentProviderTool(
     config: {
       api: string;
       authMode: string;
+      backendKind?: string;
+      deploymentKind?: string;
+      regionTag?: string;
+      cliConfig?: { backendId: string; binaryPath?: string };
       supportedModels?: string[];
       validation?: { status: string; checkedAt?: string; errorMessage?: string };
     };
@@ -428,6 +514,10 @@ export function createFridayAgentProviderTool(
       defaultModel: provider.defaultModel,
       api: provider.config.api,
       authMode: provider.config.authMode,
+      backendKind: provider.config.backendKind ?? "http",
+      deploymentKind: provider.config.deploymentKind ?? "hosted",
+      regionTag: provider.config.regionTag ?? "global",
+      cliConfig: provider.config.cliConfig,
       supportedModels: provider.config.supportedModels ?? [],
       validation: provider.config.validation ?? { status: "never" },
     };
@@ -442,6 +532,8 @@ export function createFridayAgentProviderTool(
     supportedModels?: string[];
     defaultModel?: string;
     enabled?: boolean;
+    backendKind?: FridayProviderBackendKind;
+    cliConfig?: { backendId: FridayProviderCliBackendId; binaryPath?: string };
   } {
     const supportedModels = Array.isArray(args.supportedModels)
       ? (args.supportedModels as unknown[]).filter((model): model is string => typeof model === "string")
@@ -455,16 +547,51 @@ export function createFridayAgentProviderTool(
       supportedModels,
       defaultModel: readStringParam(args, "defaultModel"),
       enabled: readBooleanParam(args, "enabled"),
+      backendKind: readStringParam(args, "backendKind") as FridayProviderBackendKind | undefined,
+      cliConfig: readCliConfig(
+        args,
+        readStringParam(args, "kind") as FridayProviderKind | undefined,
+        readStringParam(args, "backendKind") as FridayProviderBackendKind | undefined,
+      ),
+    };
+  }
+
+  function readCliConfig(
+    args: Record<string, unknown>,
+    kind?: FridayProviderKind,
+    backendKind?: FridayProviderBackendKind,
+  ): { backendId: FridayProviderCliBackendId; binaryPath?: string } | undefined {
+    if (
+      backendKind !== "cli" &&
+      readStringParam(args, "cliBackendId") === undefined &&
+      readStringParam(args, "cliBinaryPath") === undefined
+    ) {
+      return undefined;
+    }
+    const backendIdRaw = readStringParam(args, "cliBackendId")
+      ?? (kind ? inferDefaultCliBackendId(kind) : undefined);
+    if (!backendIdRaw) {
+      throw new Error("cliBackendId is required when backendKind=cli");
+    }
+    const backendId = backendIdRaw as FridayProviderCliBackendId;
+    if (!VALID_CLI_BACKEND_IDS.has(backendId)) {
+      throw new Error(`Invalid cliBackendId "${backendId}"`);
+    }
+    return {
+      backendId,
+      binaryPath: readStringParam(args, "cliBinaryPath") ?? undefined,
     };
   }
 
   function getDefaultBaseUrl(kind: FridayProviderKind): string {
     switch (kind) {
       case "openai":
+      case "openai-codex":
         return "https://api.openai.com";
       case "anthropic":
         return "https://api.anthropic.com";
       case "google":
+      case "google-gemini-cli":
         return "https://generativelanguage.googleapis.com";
       case "ollama":
         return "http://localhost:11434";
@@ -476,11 +603,13 @@ export function createFridayAgentProviderTool(
   function getDefaultApi(kind: FridayProviderKind): FridayProviderApi {
     switch (kind) {
       case "openai":
+      case "openai-codex":
       case "openai-compatible":
         return "openai-completions";
       case "anthropic":
         return "anthropic-messages";
       case "google":
+      case "google-gemini-cli":
         return "google-generative-ai";
       case "ollama":
         return "ollama";
@@ -493,14 +622,50 @@ export function createFridayAgentProviderTool(
     switch (kind) {
       case "openai":
         return ["gpt-4o", "gpt-4o-mini", "gpt-4.1"];
+      case "openai-codex":
+        return ["codex"];
       case "anthropic":
         return ["claude-sonnet-4-20250514", "claude-opus-4-20250514"];
       case "google":
+      case "google-gemini-cli":
         return ["gemini-2.0-flash", "gemini-1.5-pro"];
       case "ollama":
         return ["llama3.2:3b", "qwen2.5-coder:7b"];
       default:
         return [];
+    }
+  }
+
+  function getDefaultAuthMode(
+    kind: FridayProviderKind,
+    backendKind: FridayProviderBackendKind,
+  ): FridayProviderAuthMode {
+    if (backendKind === "cli") {
+      return "external-session";
+    }
+    if (kind === "anthropic") {
+      return "token";
+    }
+    if (kind === "ollama") {
+      return "none";
+    }
+    return "api-key";
+  }
+
+  function inferDefaultCliBackendId(
+    kind: FridayProviderKind,
+  ): FridayProviderCliBackendId | undefined {
+    switch (kind) {
+      case "openai":
+      case "openai-codex":
+        return "codex-cli";
+      case "anthropic":
+        return "claude-cli";
+      case "google":
+      case "google-gemini-cli":
+        return "gemini-cli";
+      default:
+        return undefined;
     }
   }
 }

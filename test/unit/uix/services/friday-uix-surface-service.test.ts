@@ -4,6 +4,24 @@ import { FridayDomainError } from "#errors";
 import { createFridayUixSurfaceService } from "../../../../src/uix/services/friday-uix-surface-service.js";
 
 describe("createFridayUixSurfaceService", () => {
+  function createWizardPersistenceHarness() {
+    const persisted = new Map<string, Record<string, unknown>>();
+    const db = {
+      withWriteTransaction: <T>(callback: (db: Record<string, never>) => T) => callback({}),
+      withReadConnection: <T>(callback: (db: Record<string, never>) => T) => callback({}),
+    };
+    const wizardContextRepo = {
+      save: vi.fn((_db: unknown, context: Record<string, unknown>) => {
+        persisted.set(String(context.contextId), JSON.parse(JSON.stringify(context)) as Record<string, unknown>);
+      }),
+      getById: vi.fn((_db: unknown, contextId: string) => {
+        const value = persisted.get(contextId);
+        return value ? JSON.parse(JSON.stringify(value)) as Record<string, unknown> : null;
+      }),
+    };
+    return { db, wizardContextRepo, persisted };
+  }
+
   it("writes the latest harness summary into assistant focus for skill generation", async () => {
     const sessionService = {
       getOrCreateSession: vi.fn(async () => ({ key: "ui:assistant:assistant-shell" })),
@@ -165,6 +183,119 @@ describe("createFridayUixSurfaceService", () => {
     expect(response.workflow?.deployReady).toBe(false);
     expect(response.unknowns).toContain("Which repository should Friday change first?");
     expect(response.summary).toContain("Which repository");
+  });
+
+  it("restores a persisted wizard context after restart and continues the flow", async () => {
+    const persistence = createWizardPersistenceHarness();
+    const workflowGenerator = {
+      startSession: vi.fn(async () => ({
+        session: { sessionId: "workflow-session-1" },
+        mode: "clarification_required",
+        questions: ["Which repository should Friday change first?"],
+      })),
+    };
+    const serviceA = createFridayUixSurfaceService({
+      db: persistence.db as never,
+      wizardContextRepo: persistence.wizardContextRepo as never,
+      idGenerator: () => "wizard-context-restore",
+      nowIso: (() => {
+        const values = [
+          "2026-04-01T10:00:00.000Z",
+          "2026-04-01T10:05:00.000Z",
+        ];
+        return () => values.shift() ?? "2026-04-01T10:05:00.000Z";
+      })(),
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+        reportStructuredFailure: vi.fn(),
+      } as never,
+      workflowGenerator: workflowGenerator as never,
+      workflowProduct: {} as never,
+    });
+
+    const started = serviceA.startWizard({
+      wizardId: "guided-assistant",
+      userId: "user-1",
+      assistantSessionKey: "ui:assistant:shell",
+      tenantContext: { hubId: "tenant-a", userId: "user-1", channelKind: "assistant" },
+    });
+
+    const serviceB = createFridayUixSurfaceService({
+      db: persistence.db as never,
+      wizardContextRepo: persistence.wizardContextRepo as never,
+      idGenerator: () => "wizard-context-unused",
+      nowIso: () => "2026-04-01T10:06:00.000Z",
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+        reportStructuredFailure: vi.fn(),
+      } as never,
+      workflowGenerator: workflowGenerator as never,
+      workflowProduct: {} as never,
+    });
+
+    const response = await serviceB.continueWizard({
+      wizardId: "guided-assistant",
+      contextId: started.wizard.contextId,
+      userId: "user-1",
+      values: { goal: "Generate a release workflow" },
+    });
+
+    expect(persistence.wizardContextRepo.getById).toHaveBeenCalledWith(expect.any(Object), started.wizard.contextId);
+    expect(response.state).toBe("needs_one_answer");
+    expect(response.workflow?.sessionId).toBe("workflow-session-1");
+    expect(persistence.wizardContextRepo.save).toHaveBeenCalledTimes(2);
+    const restored = persistence.persisted.get(started.wizard.contextId);
+    expect(restored).toMatchObject({
+      principalId: "user-1",
+      status: "awaiting_input",
+      currentStepId: "clarification",
+      assistantSessionKey: "ui:assistant:shell",
+      tenantContext: { hubId: "tenant-a", userId: "user-1", channelKind: "assistant" },
+      startedAt: "2026-04-01T10:00:00.000Z",
+      updatedAt: "2026-04-01T10:06:00.000Z",
+    });
+  });
+
+  it("rejects continuing a persisted wizard from a different principal", async () => {
+    const persistence = createWizardPersistenceHarness();
+    const serviceA = createFridayUixSurfaceService({
+      db: persistence.db as never,
+      wizardContextRepo: persistence.wizardContextRepo as never,
+      idGenerator: () => "wizard-context-owner",
+      nowIso: () => "2026-04-01T11:00:00.000Z",
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+        reportStructuredFailure: vi.fn(),
+      } as never,
+    });
+
+    const started = serviceA.startWizard({
+      wizardId: "guided-assistant",
+      userId: "user-1",
+    });
+
+    const serviceB = createFridayUixSurfaceService({
+      db: persistence.db as never,
+      wizardContextRepo: persistence.wizardContextRepo as never,
+      idGenerator: () => "wizard-context-attacker",
+      nowIso: () => "2026-04-01T11:05:00.000Z",
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+        reportStructuredFailure: vi.fn(),
+      } as never,
+    });
+
+    await expect(
+      serviceB.continueWizard({
+        wizardId: "guided-assistant",
+        contextId: started.wizard.contextId,
+        userId: "user-2",
+        values: { goal: "Try to hijack the wizard" },
+      }),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      httpStatus: 403,
+    } satisfies Partial<FridayDomainError>);
   });
 
   it("reports unexpected template failures into self-healing", async () => {

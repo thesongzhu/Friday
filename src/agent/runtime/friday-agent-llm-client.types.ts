@@ -2,7 +2,13 @@ import type {
   FridayAgentMessage,
   FridayAgentToolDefinition,
 } from "../model/friday-agent.types.js";
-import type { FridayProviderApi, FridayProviderAuthMode } from "#providers";
+import type {
+  FridayProviderApi,
+  FridayProviderAuthMode,
+  FridayProviderBackendKind,
+  FridayProviderCliConfig,
+  FridayProviderTenantContext,
+} from "#providers";
 
 // ─── Streaming event types ───
 
@@ -48,6 +54,7 @@ export interface FridayAgentLlmClient {
 
 export interface FridayAgentLlmStreamParams {
   providerId?: string;
+  tenantContext?: FridayProviderTenantContext;
   model: string;
   systemPrompt: string;
   messages: FridayAgentMessage[];
@@ -59,11 +66,13 @@ export interface FridayAgentLlmStreamParams {
 // ─── Factory deps ───
 
 export interface CreateFridayAgentLlmClientDeps {
-  baseUrl: string;
-  apiKey: string;
+  baseUrl?: string;
+  apiKey?: string;
   /** Provider API type. Defaults to "anthropic-messages" for backwards compat. */
   api?: FridayProviderApi;
-  /** Auth mode is needed for Anthropic OAuth because it uses Bearer headers, not x-api-key. */
+  backendKind?: FridayProviderBackendKind;
+  cliConfig?: FridayProviderCliConfig;
+  /** Auth mode is needed for Anthropic bearer-based auth (oauth/setup-token) because it uses Bearer headers, not x-api-key. */
   authMode?: FridayProviderAuthMode;
   fetchImpl?: typeof fetch;
   /** Allow loopback/private addresses (for self-hosted deployments using local providers like Ollama). */

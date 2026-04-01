@@ -8,6 +8,11 @@ import type {
 } from "./friday-skill-executor.types.js";
 import type { FridaySkillRunSnapshot } from "#ledger";
 import { FridayDomainError } from "#errors";
+import {
+  FRIDAY_ANTHROPIC_OAUTH_HEADERS,
+  FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX,
+  isFridayAnthropicBearerAuthMode,
+} from "#providers";
 import { createFridayShellExecutor } from "./friday-shell-executor.js";
 import { createFridayNodeExecutor } from "./friday-node-executor.js";
 import { createFridaySkillReadonlyRuntimeContext } from "./friday-skill-runtime-bridge.js";
@@ -24,6 +29,12 @@ export function createFridaySkillExecutor(
   const shellExecutor = createFridayShellExecutor();
   const nodeExecutor = createFridayNodeExecutor();
   const activeRuns = new Map<string, { cancelled: boolean; controller: AbortController }>();
+  const resolveTenantContext = (request: FridaySkillExecuteRequest) =>
+    request.tenantContext ?? {
+      hubId: "default",
+      userId: request.userId,
+      channelKind: request.channel,
+    };
 
   return {
     execute(
@@ -34,6 +45,7 @@ export function createFridaySkillExecutor(
       // ─── ai-inference shortcut: route through provider service ───
       if (request.skillId === "ai-inference" && deps.providerService) {
         const providerService = deps.providerService;
+        const tenantContext = resolveTenantContext(request);
         const result = (async (): Promise<FridaySkillExecuteResult> => {
           const start = Date.now();
           try {
@@ -51,6 +63,7 @@ export function createFridaySkillExecutor(
             }
             const { result: aiResult, route, attempts } = await providerService.runWithFallback({
               requestedModel: modelHint,
+              tenantContext,
               run: async (r, credential) => {
                 // Return the resolved route info for the caller to use
                 return { route: r, credential, prompt };
@@ -226,10 +239,12 @@ export function createFridaySkillExecutor(
               let aiHelper: FridaySkillAiHelperContext | undefined;
               if (deps.providerService) {
                 const ps = deps.providerService;
+                const tenantContext = resolveTenantContext(request);
                 aiHelper = {
                   async infer(prompt: string, requestedModel?: string): Promise<string> {
                     const { result } = await ps.runWithFallback({
                       requestedModel,
+                      tenantContext,
                       run: async (route, credential) => {
                         const api = route.provider.config.api;
                         const model = route.model;
@@ -242,10 +257,16 @@ export function createFridaySkillExecutor(
                         // ── Auth headers per provider ──
                         if (credential) {
                           switch (api) {
-                            case "anthropic-messages":
-                              headers["x-api-key"] = credential;
+                            case "anthropic-messages": {
+                              if (isFridayAnthropicBearerAuthMode(route.provider.config.authMode)) {
+                                headers["Authorization"] = `Bearer ${credential}`;
+                                Object.assign(headers, FRIDAY_ANTHROPIC_OAUTH_HEADERS);
+                              } else {
+                                headers["x-api-key"] = credential;
+                              }
                               headers["anthropic-version"] = "2023-06-01";
                               break;
+                            }
                             case "google-generative-ai":
                               headers["x-goog-api-key"] = credential;
                               break;
@@ -277,6 +298,9 @@ export function createFridaySkillExecutor(
                             url = `${baseUrl}/v1/messages`;
                             body = {
                               model,
+                              ...(isFridayAnthropicBearerAuthMode(route.provider.config.authMode)
+                                ? { system: FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX }
+                                : {}),
                               messages: [{ role: "user", content: prompt }],
                               max_tokens: 4096,
                             };

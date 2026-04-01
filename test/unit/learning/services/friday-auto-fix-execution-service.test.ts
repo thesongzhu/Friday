@@ -111,6 +111,176 @@ describe("FridayAutoFixExecutionService", () => {
     expect(result.rollbackAttempted).toBe(false);
   });
 
+  it.each([
+    {
+      kind: "retry_node" as const,
+      target: "tool",
+      payload: {},
+      riskTier: 0,
+      marker: "_retryRequested",
+      timestampMarker: "_retryAt",
+    },
+    {
+      kind: "switch_model_fallback" as const,
+      target: "llm-route",
+      payload: {},
+      riskTier: 0,
+      marker: "_modelFallbackRequested",
+      timestampMarker: "_fallbackAt",
+    },
+    {
+      kind: "trim_payload" as const,
+      target: "workflow-node",
+      payload: {},
+      riskTier: 0,
+      marker: "_trimRequested",
+    },
+    {
+      kind: "apply_config_patch" as const,
+      target: "runtime-config",
+      payload: { key: "value" },
+      riskTier: 1,
+      marker: "_configPatchApplied",
+      timestampMarker: "_appliedAt",
+    },
+    {
+      kind: "grant_permission" as const,
+      target: "filesystem:/tmp",
+      payload: { permission: "write" },
+      riskTier: 1,
+      marker: "_permissionGranted",
+      timestampMarker: "_grantedAt",
+    },
+    {
+      kind: "pause_workflow" as const,
+      target: "workflow-123",
+      payload: {},
+      riskTier: 2,
+      marker: "_workflowPaused",
+      timestampMarker: "_pausedAt",
+    },
+  ])("executes and verifies directive-level step kind '$kind'", async ({
+    kind,
+    target,
+    payload,
+    riskTier,
+    marker,
+    timestampMarker,
+  }) => {
+    const actionRepo = createFridayAutoFixActionRepository();
+    const incidentId = `inc-${kind}`;
+    const diagnosisId = `diag-${kind}`;
+    const actionId = `action-${kind}`;
+
+    const incidentRepo = createFridayErrorIncidentRepository();
+    incidentRepo.insert(db.writer, {
+      incidentId,
+      userId: "test-user",
+      ts: NOW,
+      category: "tool",
+      severity: "medium",
+      signature: `sig-${kind}`,
+      context: {},
+      autoFixEligible: true,
+      status: "open",
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    diagnosisRepo.insert(db.writer, {
+      id: diagnosisId,
+      incidentId,
+      errorFingerprint: `sig-${kind}`,
+      confidence: 0.8,
+      diagnosis: { summary: `test ${kind}` },
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    actionRepo.insert(db.writer, {
+      actionId,
+      incidentId,
+      userId: "test-user",
+      riskTier,
+      plan: {
+        title: `Auto-fix: ${kind}`,
+        summary: `Execute ${kind}`,
+        steps: [
+          {
+            stepId: `step-${kind}`,
+            kind,
+            target,
+            payload: { ...payload },
+            verify: { method: "error_absent", timeoutMs: 5_000 },
+          },
+        ],
+        rollbackPlan: riskTier >= 1
+          ? {
+              summary: `Rollback ${kind}`,
+              steps: [
+                {
+                  stepId: `rollback-${kind}`,
+                  kind,
+                  target,
+                  payload: { revert: true },
+                },
+              ],
+            }
+          : undefined,
+        evidence: {
+          fingerprint: `sig-${kind}`,
+          matchedLessonIds: [],
+          diagnosisId,
+          recurrenceCount: 1,
+        },
+      },
+      rollbackPlan: riskTier >= 1
+        ? {
+            summary: `Rollback ${kind}`,
+            steps: [
+              {
+                stepId: `rollback-${kind}`,
+                kind,
+                target,
+                payload: { revert: true },
+              },
+            ],
+          }
+        : undefined,
+      status: "planned",
+      outcome: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    const executionService = createFridayAutoFixExecutionService({
+      db,
+      actionRepo,
+      incidentRepo,
+      diagnosisRepo,
+      rollbackService: createFridayAutoFixRollbackService({
+        db,
+        actionRepo,
+        nowIso: () => NOW,
+      }),
+      nowIso: () => NOW,
+    });
+
+    const result = await executionService.execute(actionId);
+    const updated = actionRepo.getById(db.writer, actionId);
+    const persistedPayload = updated?.plan.steps[0]?.payload as Record<string, unknown> | undefined;
+
+    expect(result.success).toBe(true);
+    expect(result.verificationPassed).toBe(true);
+    expect(result.action.status).toBe("applied");
+    expect(result.action.outcome).toBe("success");
+    expect(persistedPayload?.[marker]).toBe(true);
+    if (timestampMarker) {
+      expect(typeof persistedPayload?.[timestampMarker]).toBe("string");
+    }
+  });
+
   it("honors injected executors and verifiers for supported kinds", async () => {
     const actionRepo = createFridayAutoFixActionRepository();
     actionRepo.insert(db.writer, {

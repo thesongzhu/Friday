@@ -4,6 +4,7 @@ import type {
   FridayTemplateHarnessStage,
   FridayTemplateHarnessSummary,
 } from "#harness";
+import type { FridayProviderTenantContext } from "#providers";
 
 import type { FridaySkillUiSchemaV1 } from "./friday-skill-ui-schema.types.js";
 
@@ -25,6 +26,7 @@ export interface FridaySkillGenerationSession {
   sessionId: string;
   userId: string;
   channel: string;
+  tenantContext?: FridayProviderTenantContext;
   status: FridaySkillGeneratorSessionStatus;
   goal: string;
   specSummary: string;
@@ -58,6 +60,7 @@ export interface FridayStartSkillGenerationRequest {
   requestedModel?: string;
   userId: string;
   channel: string;
+  tenantContext?: FridayProviderTenantContext;
 }
 
 export interface FridaySkillGenerationTurnRequest {

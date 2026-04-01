@@ -35,16 +35,16 @@ describe("FridaySessionMemoryNamespace", () => {
     it("resolves namespace from userId", () => {
       const session = makeSession({ userId: "user-abc" });
       const ns = resolveFridaySessionMemoryNamespace(session);
-      expect(ns).toBe("tenant.default.user.user-abc.shared");
+      expect(ns).toBe("tenant.default.channel.discord.user.user-abc.shared");
     });
 
     it("normalizes userId to lowercase", () => {
       const session = makeSession({ userId: "User-ABC" });
       const ns = resolveFridaySessionMemoryNamespace(session);
-      expect(ns).toBe("tenant.default.user.user-abc.shared");
+      expect(ns).toBe("tenant.default.channel.discord.user.user-abc.shared");
     });
 
-    it("same userId across channels resolves to same namespace", () => {
+    it("same userId across channels resolves to different namespaces", () => {
       const discordSession = makeSession({
         key: "discord:default:user-x",
         channel: "discord",
@@ -58,7 +58,9 @@ describe("FridaySessionMemoryNamespace", () => {
 
       const ns1 = resolveFridaySessionMemoryNamespace(discordSession);
       const ns2 = resolveFridaySessionMemoryNamespace(slackSession);
-      expect(ns1).toBe(ns2);
+      expect(ns1).toBe("tenant.default.channel.discord.user.user-x.shared");
+      expect(ns2).toBe("tenant.default.channel.slack.user.user-x.shared");
+      expect(ns1).not.toBe(ns2);
     });
 
     it("different userIds resolve to different namespaces", () => {
@@ -73,7 +75,7 @@ describe("FridaySessionMemoryNamespace", () => {
     it("falls back to chatId for DM sessions without userId", () => {
       const session = makeSession({ userId: undefined, chatKind: "dm", chatId: "user1" });
       const ns = resolveFridaySessionMemoryNamespace(session);
-      expect(ns).toBe("tenant.default.user.user1.shared");
+      expect(ns).toBe("tenant.default.channel.discord.user.user1.shared");
     });
 
     it("throws when namespace cannot be resolved (no userId, not DM)", () => {
@@ -96,7 +98,17 @@ describe("FridaySessionMemoryNamespace", () => {
     it("replaces special characters in userId", () => {
       const session = makeSession({ userId: "user@example.com" });
       const ns = resolveFridaySessionMemoryNamespace(session);
-      expect(ns).toBe("tenant.default.user.user-example.com.shared");
+      expect(ns).toBe("tenant.default.channel.discord.user.user-example.com.shared");
+    });
+
+    it("normalizes account and channel segments", () => {
+      const session = makeSession({
+        accountId: "Ops Team",
+        channel: "Slack Connect",
+        userId: "User-ABC",
+      });
+      const ns = resolveFridaySessionMemoryNamespace(session);
+      expect(ns).toBe("tenant.ops-team.channel.slack-connect.user.user-abc.shared");
     });
 
     // ─── Subagent parent walking ───
@@ -120,7 +132,7 @@ describe("FridaySessionMemoryNamespace", () => {
       };
 
       const ns = resolveFridaySessionMemoryNamespace(subagentSession, lookup);
-      expect(ns).toBe("tenant.default.user.user-abc.shared");
+      expect(ns).toBe("tenant.default.channel.discord.user.user-abc.shared");
     });
 
     it("walks multi-level parent chain for nested subagent", () => {
@@ -150,7 +162,7 @@ describe("FridaySessionMemoryNamespace", () => {
       };
 
       const ns = resolveFridaySessionMemoryNamespace(leafSession, lookup);
-      expect(ns).toBe("tenant.default.user.deep-user.shared");
+      expect(ns).toBe("tenant.default.channel.discord.user.deep-user.shared");
     });
 
     it("throws when subagent parent chain has no userId and no DM fallback", () => {

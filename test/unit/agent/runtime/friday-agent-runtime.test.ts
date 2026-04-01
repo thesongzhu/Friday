@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
@@ -3421,6 +3424,115 @@ describe("FridayAgentRuntime", () => {
     expect(toolEndEvents[0].errorCode).toBe("AGENT_VALIDATION_ERROR");
     expect(toolEndEvents[0].routeId).toBe("agent.execute.tool.readonly");
     expect(toolEndEvents[0].correlationId).toBe(result.runId);
+  });
+
+  it("blocks stale writes when a tracked file changes after a read", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-agent-runtime-file-tracker-"));
+    const filePath = join(tempDir, "tracked.txt");
+    writeFileSync(filePath, "initial\n", "utf8");
+
+    const writeSpy = vi.fn(async () => {
+      writeFileSync(filePath, "agent-write\n", "utf8");
+      return { content: "Written" };
+    });
+
+    let streamCallCount = 0;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        streamCallCount += 1;
+        if (streamCallCount === 1) {
+          yield { type: "tool_use", id: "call-read", name: "read", input: { path: filePath } };
+          yield { type: "message_end", stopReason: "tool_use", inputTokens: 5, outputTokens: 3 };
+          return;
+        }
+        if (streamCallCount === 2) {
+          writeFileSync(filePath, "external-change\n", "utf8");
+          yield {
+            type: "tool_use",
+            id: "call-write",
+            name: "write",
+            input: { path: filePath, content: "agent-write\n" },
+          };
+          yield { type: "message_end", stopReason: "tool_use", inputTokens: 5, outputTokens: 3 };
+          return;
+        }
+        yield { type: "text_delta", text: "Write blocked because the file changed." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 3 };
+      },
+    };
+
+    const readTool: FridayAgentToolDefinition = {
+      name: "read",
+      description: "Read file",
+      parameters: {
+        properties: {
+          path: { type: "string" },
+        },
+        required: ["path"],
+      },
+      async execute(args) {
+        const path = typeof args.path === "string" ? args.path : "";
+        return { content: readFileSync(path, "utf8") };
+      },
+    };
+
+    const writeTool: FridayAgentToolDefinition = {
+      name: "write",
+      description: "Write file",
+      parameters: {
+        properties: {
+          path: { type: "string" },
+          content: { type: "string" },
+        },
+        required: ["path", "content"],
+      },
+      execute: writeSpy,
+    };
+
+    const emitter = createFridayAgentEventEmitter();
+    const toolEndEvents: Array<{
+      toolName: string;
+      isError: boolean;
+      summary?: string;
+      routeId?: string;
+    }> = [];
+    emitter.on("agent.run.tool_end", (payload) => {
+      toolEndEvents.push({
+        toolName: payload.toolName,
+        isError: payload.isError,
+        summary: payload.summary,
+        routeId: payload.routeId,
+      });
+    });
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [readTool, writeTool],
+      eventEmitter: emitter,
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    try {
+      const result = await runtime.executeRun({ task: "Read then write tracked file" });
+
+      expect(result.toolCallCount).toBe(2);
+      expect(writeSpy).not.toHaveBeenCalled();
+
+      const blockedWriteEvent = toolEndEvents.find(
+        (event) => event.toolName === "write" && event.isError,
+      );
+      expect(blockedWriteEvent).toBeDefined();
+      expect(blockedWriteEvent?.routeId).toBe("agent.execute.tool.file_tracker");
+      expect(blockedWriteEvent?.summary).toContain("changed since it was last observed");
+      expect(readFileSync(filePath, "utf8")).toBe("external-change\n");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("blocks approval-gated mutating tools before execution", async () => {

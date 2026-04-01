@@ -690,6 +690,7 @@ export function createFridayAgentPlanningGateService(
         }),
         sessionKey: input.sessionKey ?? run.sessionKey,
         providerId: input.providerId ?? run.providerId,
+        tenantContext: input.tenantContext,
         model: input.model ?? run.model,
         timezone: input.timezone,
         timeoutMs: input.timeoutMs,

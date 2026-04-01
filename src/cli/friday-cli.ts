@@ -64,7 +64,12 @@ import {
 import { runFridayCliLoop } from "./friday-cli-run-loop.js";
 import { FRIDAY_VERSION } from "../lib/version.js";
 import { resolveStateDir } from "../state/paths/friday-state-dir-resolver.js";
-import { runFridayCliAuthLoginAnthropic } from "./friday-cli-auth.js";
+import {
+  runFridayCliAuthAttachCli,
+  runFridayCliAuthConnectAnthropicToken,
+  runFridayCliAuthLoginAnthropic,
+  runFridayCliAuthStatus,
+} from "./friday-cli-auth.js";
 
 // ─── Arg parser ───
 
@@ -93,6 +98,8 @@ export interface ParsedArgs {
   authTarget: string | undefined;
   providerId: string | undefined;
   code: string | undefined;
+  token: string | undefined;
+  binaryPath: string | undefined;
   noBrowser: boolean;
   skillsSubcommand: string | undefined;
   template: "node" | "shell" | undefined;
@@ -136,6 +143,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     authTarget: undefined,
     providerId: undefined,
     code: undefined,
+    token: undefined,
+    binaryPath: undefined,
     noBrowser: false,
     skillsSubcommand: undefined,
     template: undefined,
@@ -310,6 +319,18 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
     if (arg === "--code" && i + 1 < args.length) {
       result.code = args[i + 1]!;
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--token" && i + 1 < args.length) {
+      result.token = args[i + 1]!;
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--binary-path" && i + 1 < args.length) {
+      result.binaryPath = args[i + 1]!;
       i += 2;
       continue;
     }
@@ -498,8 +519,12 @@ Create a minimal local skill template with manifest, entrypoint, and SKILL.md.
   if (command === "auth") {
     console.log(`
 friday auth login anthropic [--provider-id <id>] [--code <code#state>] [--no-browser]
+friday auth setup-token anthropic [--provider-id <id>] [--token <token>]
+friday auth paste-token anthropic [--provider-id <id>] [--token <token>]
+friday auth attach-cli codex|claude|gemini [--provider-id <id>] [--binary-path <path>]
+friday auth status [--provider-id <id>]
 
-Authenticate the Anthropic provider through the CLI helper flow.
+Authenticate providers through OAuth, setup-token, or CLI-managed external sessions.
     `.trim());
     return;
   }
@@ -1789,8 +1814,22 @@ async function cmdSkills(parsed: ParsedArgs): Promise<void> {
 }
 
 async function cmdAuth(parsed: ParsedArgs): Promise<void> {
-  if (parsed.authSubcommand !== "login" || parsed.authTarget !== "anthropic") {
+  const validAuthCommand =
+    (parsed.authTarget === "anthropic"
+      && (
+        parsed.authSubcommand === "login"
+        || parsed.authSubcommand === "setup-token"
+        || parsed.authSubcommand === "paste-token"
+      ))
+    || (parsed.authSubcommand === "attach-cli"
+      && (parsed.authTarget === "codex" || parsed.authTarget === "claude" || parsed.authTarget === "gemini"))
+    || (parsed.authSubcommand === "status" && parsed.authTarget === undefined);
+  if (!validAuthCommand) {
     console.error("Usage: friday auth login anthropic [--provider-id <id>] [--code <code#state>] [--no-browser]");
+    console.error("   or: friday auth setup-token anthropic [--provider-id <id>] [--token <token>]");
+    console.error("   or: friday auth paste-token anthropic [--provider-id <id>] [--token <token>]");
+    console.error("   or: friday auth attach-cli codex|claude|gemini [--provider-id <id>] [--binary-path <path>]");
+    console.error("   or: friday auth status [--provider-id <id>]");
     process.exitCode = 1;
     return;
   }
@@ -1800,18 +1839,46 @@ async function cmdAuth(parsed: ParsedArgs): Promise<void> {
   await hub.start();
 
   try {
-    await runFridayCliAuthLoginAnthropic(
-      {
-        providerId: parsed.providerId,
-        code: parsed.code,
-        noBrowser: parsed.noBrowser,
-      },
-      {
-        providerService: hub.providerService,
-        stdout: (msg: string) => console.log(msg),
-        stderr: (msg: string) => console.error(msg),
-      },
-    );
+    const deps = {
+      providerService: hub.providerService,
+      stdout: (msg: string) => console.log(msg),
+      stderr: (msg: string) => console.error(msg),
+    };
+    if (parsed.authSubcommand === "login") {
+      await runFridayCliAuthLoginAnthropic(
+        {
+          providerId: parsed.providerId,
+          code: parsed.code,
+          noBrowser: parsed.noBrowser,
+        },
+        deps,
+      );
+    } else if (parsed.authSubcommand === "attach-cli") {
+      await runFridayCliAuthAttachCli(
+        {
+          providerId: parsed.providerId,
+          binaryPath: parsed.binaryPath,
+          authTarget: parsed.authTarget,
+        },
+        deps,
+      );
+    } else if (parsed.authSubcommand === "status") {
+      await runFridayCliAuthStatus(
+        {
+          providerId: parsed.providerId,
+        },
+        deps,
+      );
+    } else {
+      await runFridayCliAuthConnectAnthropicToken(
+        {
+          providerId: parsed.providerId,
+          token: parsed.token,
+        },
+        deps,
+        parsed.authSubcommand as "setup-token" | "paste-token",
+      );
+    }
   } finally {
     await hub.stop();
   }

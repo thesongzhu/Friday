@@ -51,6 +51,13 @@ export interface FridayAutoFixActionRepository {
     nowIso: string,
   ): FridayAutoFixActionEntity | null;
 
+  setPlan(
+    db: Database.Database,
+    actionId: string,
+    plan: FridayAutoFixPlan,
+    nowIso: string,
+  ): FridayAutoFixActionEntity | null;
+
   setRollbackPlan(
     db: Database.Database,
     actionId: string,
@@ -207,6 +214,18 @@ export function createFridayAutoFixActionRepository(): FridayAutoFixActionReposi
            WHERE action_id = ? AND status = 'planned'`,
         )
         .run(nowIso, actionId).changes;
+      if (changes === 0) return null;
+      return this.getById(db, actionId);
+    },
+
+    setPlan(db, actionId, plan, nowIso) {
+      const changes = db
+        .prepare(
+          `UPDATE auto_fix_actions
+           SET plan_json = ?, updated_at = ?
+           WHERE action_id = ?`,
+        )
+        .run(JSON.stringify(plan), nowIso, actionId).changes;
       if (changes === 0) return null;
       return this.getById(db, actionId);
     },

@@ -308,6 +308,13 @@ export function createFridayWorkflowGeneratorService(
     createFridayProviderInferenceClient({
       providerService: deps.providerService,
     });
+  function resolveTenantContext(session: FridayWorkflowGenerationSession) {
+    return session.tenantContext ?? {
+      hubId: "default",
+      userId: session.userId,
+      channelKind: session.channel,
+    };
+  }
   const harness = createFridayTemplateHarnessService({
     db: deps.db,
     idGenerator: deps.idGenerator,
@@ -778,11 +785,13 @@ export function createFridayWorkflowGeneratorService(
       prompt,
       requestedModel,
       taskProfile: "planning",
+      tenantContext: resolveTenantContext(session),
     });
     return result.parsed;
   }
 
   async function generateSpec(
+    session: FridayWorkflowGenerationSession,
     requirements: FridayWorkflowGenerationRequirements & { _repairContext?: { errors: string; attempt: number } },
     availableSkills: FridayWorkflowGeneratorSkillContext[],
     requestedModel?: string,
@@ -792,11 +801,13 @@ export function createFridayWorkflowGeneratorService(
       prompt,
       requestedModel,
       taskProfile: "deterministic",
+      tenantContext: resolveTenantContext(session),
     });
     return result.parsed;
   }
 
   async function generateVisual(
+    session: FridayWorkflowGenerationSession,
     spec: FridayWorkflowSpecV1,
     requestedModel?: string,
   ): Promise<FridayWorkflowVisualGraphV1> {
@@ -805,11 +816,13 @@ export function createFridayWorkflowGeneratorService(
       prompt,
       requestedModel,
       taskProfile: "creative",
+      tenantContext: resolveTenantContext(session),
     });
     return normalizeVisualLayout(result.parsed, spec);
   }
 
   async function generateTests(
+    session: FridayWorkflowGenerationSession,
     spec: FridayWorkflowSpecV1,
     requestedModel?: string,
   ): Promise<FridayWorkflowSpecTestCase[]> {
@@ -818,6 +831,7 @@ export function createFridayWorkflowGeneratorService(
       prompt,
       requestedModel,
       taskProfile: "review",
+      tenantContext: resolveTenantContext(session),
     });
     return normalizeGeneratedTests(result.parsed, spec);
   }
@@ -893,6 +907,7 @@ export function createFridayWorkflowGeneratorService(
       try {
         // Step 1: Generate spec
         generatedSpec = await generateSpec(
+          session,
           currentRequirements,
           availableSkills,
           requestedModel,
@@ -920,7 +935,7 @@ export function createFridayWorkflowGeneratorService(
       // Step 2: Generate visual layout. Fall back to deterministic layout if the model
       // refuses or returns an unusable auxiliary response.
       try {
-        generatedVisual = await generateVisual(generatedSpec, requestedModel);
+        generatedVisual = await generateVisual(session, generatedSpec, requestedModel);
       } catch (err) {
         generatedVisual = buildFallbackVisualLayout(generatedSpec);
         nonBlockingIssues.push({
@@ -934,7 +949,7 @@ export function createFridayWorkflowGeneratorService(
       // Step 3: Generate tests. Fall back to smoke tests if the provider refuses or
       // returns no structured output, so a valid draft can still be reviewed/saved.
       try {
-        generatedTests = await generateTests(generatedSpec, requestedModel);
+        generatedTests = await generateTests(session, generatedSpec, requestedModel);
       } catch (err) {
         generatedTests = buildFallbackTests(generatedSpec);
         nonBlockingIssues.push({
@@ -1044,6 +1059,7 @@ export function createFridayWorkflowGeneratorService(
         sessionId,
         userId: input.userId,
         channel: input.channel,
+        tenantContext: input.tenantContext,
         status: "collecting_requirements",
         goal: input.goal,
         requirementsSummary: "",

@@ -413,6 +413,10 @@ export interface FridayAutonomousGoalParams {
   readonly signal?: AbortSignal;
   /** Optional timezone for time-sensitive internal runs. */
   readonly timezone?: string;
+  /** Optional principal for policy, memory, and tenant scoping. */
+  readonly principalId?: string;
+  /** Optional tenant routing context for provider resolution. */
+  readonly tenantContext?: FridayProviderTenantContext;
   /** Optional parent goal ID for sub-goal decomposition. */
   readonly parentGoalId?: UUID;
   /** Optional context from a setup recipe. */
@@ -480,6 +484,8 @@ export interface CreateFridayAutonomousEngineDeps {
       sessionKey?: string;
       runId?: string;
       timezone?: string;
+      principalId?: string;
+      tenantContext?: FridayProviderTenantContext;
       timeoutMs?: number;
       signal?: AbortSignal;
     }): Promise<{ runId: string; status: string; response: string; usageInput: number; usageOutput: number }>;
@@ -535,3 +541,4 @@ export interface CreateFridayAutonomousEngineDeps {
   /** Engine configuration overrides. */
   readonly config?: Partial<FridayAutonomousEngineConfig>;
 }
+import type { FridayProviderTenantContext } from "#providers";

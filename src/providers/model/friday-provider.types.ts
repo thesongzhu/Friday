@@ -62,7 +62,48 @@ export const FRIDAY_PROVIDER_APIS = [
 export type FridayProviderApi =
   (typeof FRIDAY_PROVIDER_APIS)[number];
 
-export type FridayProviderAuthMode = "api-key" | "bearer-token" | "oauth" | "none";
+export const FRIDAY_PROVIDER_BACKEND_KINDS = ["http", "cli", "sdk"] as const;
+
+export type FridayProviderBackendKind =
+  (typeof FRIDAY_PROVIDER_BACKEND_KINDS)[number];
+
+export type FridayProviderDeploymentKind =
+  | "hosted"
+  | "local"
+  | "self-hosted"
+  | "consumer-cli";
+
+export type FridayProviderRegionTag =
+  | "global"
+  | "us"
+  | "china"
+  | "local"
+  | "custom";
+
+export const FRIDAY_PROVIDER_CLI_BACKEND_IDS = [
+  "codex-cli",
+  "claude-cli",
+  "gemini-cli",
+] as const;
+
+export type FridayProviderCliBackendId =
+  (typeof FRIDAY_PROVIDER_CLI_BACKEND_IDS)[number];
+
+export type FridayProviderAuthMode =
+  | "api-key"
+  | "bearer-token"
+  | "oauth"
+  | "token"
+  | "external-session"
+  | "none";
+
+export type FridayAnthropicBearerAuthMode = "oauth" | "token";
+
+export function isFridayAnthropicBearerAuthMode(
+  authMode: FridayProviderAuthMode | undefined,
+): authMode is FridayAnthropicBearerAuthMode {
+  return authMode === "oauth" || authMode === "token";
+}
 
 // ─── Key source discriminated union ───
 
@@ -142,13 +183,38 @@ export interface FridayOAuthLoginResult {
 
 // ─── Structured config (stored as config_json) ───
 
+export interface FridayProviderHttpConfig {
+  headersPolicy?: "default" | "custom";
+  timeoutMs?: number;
+}
+
+export interface FridayProviderCliConfig {
+  backendId: FridayProviderCliBackendId;
+  binaryPath?: string;
+  fixedArgProfile?: string;
+  envAllowlist?: string[];
+  cwdPolicy?: "workspace" | "process";
+}
+
+export interface FridayProviderSdkConfig {
+  backendId: string;
+  packageName?: string;
+  runtimeHints?: Record<string, string | number | boolean>;
+}
+
 export interface FridayProviderConfigJson {
   api: FridayProviderApi;
   authMode: FridayProviderAuthMode;
   oauthProvider?: FridayOAuthProviderId;
+  backendKind?: FridayProviderBackendKind;
+  deploymentKind?: FridayProviderDeploymentKind;
+  regionTag?: FridayProviderRegionTag;
   keySource: FridayProviderKeySource;
   supportedModels: string[];
   headers?: Record<string, string>;
+  httpConfig?: FridayProviderHttpConfig;
+  cliConfig?: FridayProviderCliConfig;
+  sdkConfig?: FridayProviderSdkConfig;
   validation?: FridayProviderValidationState;
 }
 
@@ -203,6 +269,48 @@ export interface FridayResolvedProviderRoute {
   model: string;
 }
 
+// ─── Provider doctor / CLI session health ───
+
+export type FridayProviderHealthStatus =
+  | "healthy"
+  | "degraded"
+  | "missing"
+  | "unsupported"
+  | "status_unknown";
+
+export interface FridayCliSessionAccountMetadata {
+  email?: string;
+  orgId?: string;
+  orgName?: string;
+  subscriptionType?: string;
+  authMethod?: string;
+}
+
+export interface FridayCliSessionStatus {
+  backendId: FridayProviderCliBackendId;
+  binaryPath?: string;
+  status: FridayProviderHealthStatus;
+  version?: string;
+  loggedIn?: boolean;
+  checkedAt: string;
+  message?: string;
+  account?: FridayCliSessionAccountMetadata;
+}
+
+export interface FridayProviderDoctorReport {
+  providerId: string;
+  providerKind: FridayProviderKind;
+  backendKind: FridayProviderBackendKind;
+  authMode: FridayProviderAuthMode;
+  checkedAt: string;
+  backendHealth: FridayProviderHealthStatus;
+  authHealth: FridayProviderHealthStatus;
+  routingEligible: boolean;
+  reasons: string[];
+  activeProfileKey?: string;
+  cliSession?: FridayCliSessionStatus;
+}
+
 // ─── DB row shapes (SQLite) ───
 
 export interface FridayProviderProfileRow {
@@ -225,6 +333,38 @@ export interface FridaySecretRow {
   key_id: string;
   expires_at: string | null;
   rotated_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ─── Auth profile store ───
+
+export interface FridayAuthProfile {
+  id: string;
+  providerProfileId: string;
+  providerKind: FridayProviderKind;
+  profileKey: string;
+  label: string;
+  authMode: FridayProviderAuthMode;
+  keySource: FridayProviderKeySource;
+  oauthProvider?: FridayOAuthProviderId;
+  isActive: boolean;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FridayAuthProfileRow {
+  id: string;
+  provider_profile_id: string;
+  provider_kind: string;
+  profile_key: string;
+  display_label: string;
+  auth_mode: string;
+  key_source_json: string | null;
+  oauth_provider: string | null;
+  is_active: number;
+  metadata_json: string | null;
   created_at: string;
   updated_at: string;
 }

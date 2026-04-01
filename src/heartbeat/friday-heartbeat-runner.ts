@@ -65,6 +65,8 @@ export function createFridayHeartbeatRunner(
         task: prompt,
         sessionKey: config.sessionKey,
         historyMessages,
+        principalId: config.principalId,
+        tenantContext: config.tenantContext,
         timezone: config.timezone ?? config.activeHours?.timezone,
         timeoutMs: config.timeoutMs,
       });

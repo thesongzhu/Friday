@@ -7,6 +7,9 @@ export type * from "./model/friday-provider-cost.types.js";
 export {
   FRIDAY_PROVIDER_KINDS,
   FRIDAY_PROVIDER_APIS,
+  FRIDAY_PROVIDER_BACKEND_KINDS,
+  FRIDAY_PROVIDER_CLI_BACKEND_IDS,
+  isFridayAnthropicBearerAuthMode,
 } from "./model/friday-provider.types.js";
 export {
   FRIDAY_PROVIDER_PRESETS,
@@ -23,9 +26,18 @@ export {
   FRIDAY_PROVIDER_CAPABILITIES,
   FRIDAY_PROVIDER_FAMILIES,
   getFridayProviderCapability,
+  getFridayProviderAuthModesForBackend,
   isFridayProviderApiSupportedForKind,
   isFridayProviderAuthModeSupportedForKind,
+  isFridayProviderAuthModeSupportedForKindAndBackend,
+  isFridayProviderBackendKindSupportedForKind,
 } from "./model/friday-provider-capabilities.js";
+
+// CLI backends
+export {
+  probeFridayCliSession,
+  runFridayCliBackendTextCompletion,
+} from "./cli/friday-provider-cli-backend.js";
 
 // Security
 export { encryptSecret, decryptSecret, getMasterKey, resetMasterKeyCache } from "./security/friday-secret-crypto.js";
@@ -33,6 +45,8 @@ export { encryptSecret, decryptSecret, getMasterKey, resetMasterKeyCache } from 
 // Persistence
 export type { FridayProviderProfileRepository } from "./persistence/friday-provider-profile-repository.js";
 export { createFridayProviderProfileRepository } from "./persistence/friday-provider-profile-repository.js";
+export type { FridayAuthProfileRepository } from "./persistence/friday-auth-profile-repository.js";
+export { createFridayAuthProfileRepository } from "./persistence/friday-auth-profile-repository.js";
 export type { FridaySecretRepository, FridaySecretEntity } from "./persistence/friday-secret-repository.js";
 export { createFridaySecretRepository } from "./persistence/friday-secret-repository.js";
 export type { FridayProviderUsageRepository } from "./persistence/friday-provider-usage-repository.js";
@@ -102,7 +116,13 @@ export {
 } from "./oauth/index.js";
 
 // Service
-export type { FridayProviderService, CreateFridayProviderServiceDeps } from "./services/friday-provider-service.types.js";
+export type {
+  FridayProviderService,
+  CreateFridayProviderServiceDeps,
+  FridayProviderTenantContext,
+  FridayProviderCredentialScope,
+  FridayProviderCredentialResolver,
+} from "./services/friday-provider-service.types.js";
 export { createFridayProviderService } from "./services/friday-provider-service.js";
 export { resolveFridayRoutingStabilityWarning } from "./services/friday-provider-routing-warning.js";
 export type {

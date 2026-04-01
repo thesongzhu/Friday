@@ -10,6 +10,7 @@ import {
   type FridayProviderAuthMode,
   type FridayProviderKind,
   type FridayProviderService,
+  getFridayProviderAuthModesForBackend,
   getFridayProviderCapability,
   getFridayProviderPreset,
   getMasterKey,
@@ -122,7 +123,7 @@ interface SetupStateRow {
 // ─── Helpers ───
 
 const VALID_KINDS = FRIDAY_PROVIDER_KIND_SET;
-const VALID_AUTH_MODES = new Set<string>(["api-key", "bearer-token", "oauth", "none"]);
+const VALID_AUTH_MODES = new Set<string>(["api-key", "bearer-token", "oauth", "token", "none"]);
 const VALID_NETWORK_MODES = new Set<string>(["local", "network", "custom"]);
 const VALID_CHANNEL_KINDS = new Set<string>(FRIDAY_SUPPORTED_CHANNEL_KINDS);
 const VALID_STEP_IDS = new Set<string>(["welcome", "security", "communication", "provider", "network", "channels", "skills", "done"]);
@@ -499,7 +500,7 @@ export function createFridaySetupRoutes(
         if (!isFridayProviderAuthModeSupportedForKind(kind, authMode)) {
           throw new FridayDomainError(
             "VALIDATION_ERROR",
-            `authMode '${authMode}' is not supported for '${kind}'. Supported: ${capability.supportedAuthModes.join(", ")}`,
+            `authMode '${authMode}' is not supported for '${kind}'. Supported: ${getFridayProviderAuthModesForBackend(kind, capability.supportedBackendKinds[0] ?? "http").join(", ")}`,
             { httpStatus: 400 },
           );
         }
@@ -541,11 +542,15 @@ export function createFridaySetupRoutes(
               break;
             }
             case "anthropic-messages": {
-              if (authMode === "oauth" && !apiKey) {
+              if ((authMode === "oauth" || authMode === "token") && !apiKey) {
                 availableModels = ["claude-opus-4", "claude-sonnet-4", "claude-haiku-3.5"];
                 defaultModel = "claude-sonnet-4";
                 validated = false;
-                warnings.push("OAuth selected: complete login before provider validation.");
+                warnings.push(
+                  authMode === "oauth"
+                    ? "OAuth selected: complete login before provider validation."
+                    : "Token selected: paste setup-token before provider validation.",
+                );
               } else {
                 const result = await fetchAnthropicModels(baseUrl, apiKey!, ssrf);
                 availableModels = result.models;

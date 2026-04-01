@@ -1,9 +1,14 @@
 import type {
+  FridayAuthProfile,
   FridayModelRoutingConfig,
   FridayOAuthLoginInitiation,
   FridayOAuthLoginResult,
   FridayProviderAttempt,
+  FridayProviderBackendKind,
+  FridayProviderCliConfig,
   FridayProviderConfigJson,
+  FridayProviderDoctorReport,
+  FridayProviderHealthStatus,
   FridayProviderKeySource,
   FridayProviderProfile,
   FridayProviderValidationState,
@@ -18,12 +23,17 @@ import type {
 import type {
   CreateFridayProviderServiceDeps,
   FridayProviderService,
+  FridayProviderTenantContext,
 } from "./friday-provider-service.types.js";
 
 import { safeJsonParse } from "#utilities";
+import { createFridayAuthProfileRepository } from "../persistence/friday-auth-profile-repository.js";
 import { createFridayProviderProfileRepository } from "../persistence/friday-provider-profile-repository.js";
 import { createFridaySecretRepository } from "../persistence/friday-secret-repository.js";
 import { createFridayProviderUsageRepository } from "../persistence/friday-provider-usage-repository.js";
+import {
+  probeFridayCliSession,
+} from "../cli/friday-provider-cli-backend.js";
 import {
   decryptSecret,
   encryptSecret,
@@ -38,11 +48,14 @@ import { createFridayAnthropicOAuthProvider } from "../oauth/friday-anthropic-oa
 import { createFridayOAuthCredentialStore } from "../oauth/friday-oauth-credential-store.js";
 import { createFridayOAuthProviderRegistry, createFridayOAuthTokenManager } from "../oauth/friday-oauth-token-manager.js";
 import {
+  getFridayProviderAuthModesForBackend,
   getFridayProviderCapability,
   isFridayProviderApiSupportedForKind,
-  isFridayProviderAuthModeSupportedForKind,
+  isFridayProviderAuthModeSupportedForKindAndBackend,
+  isFridayProviderBackendKindSupportedForKind,
 } from "../model/friday-provider-capabilities.js";
 import { FridayDomainError } from "#errors";
+import { getFridayProviderPreset } from "../model/friday-provider-catalog.js";
 
 import type { FridayEncryptedEnvelope } from "../security/friday-secret-crypto.js";
 
@@ -104,6 +117,7 @@ export function createFridayProviderService(
   deps: CreateFridayProviderServiceDeps,
 ): FridayProviderService {
   const profileRepo = createFridayProviderProfileRepository();
+  const authProfileRepo = createFridayAuthProfileRepository();
   const secretRepo = createFridaySecretRepository();
   const validator = createFridayProviderValidator();
   const fallback = createFridayProviderFallback();
@@ -172,10 +186,26 @@ export function createFridayProviderService(
     return { kind: "secret-ref", refKey };
   }
 
-  async function resolveCredential(profile: FridayProviderProfile): Promise<string | null> {
+  async function resolveCredential(
+    profile: FridayProviderProfile,
+    tenantContext?: FridayProviderTenantContext,
+  ): Promise<string | null> {
+    if (tenantContext && deps.credentialResolver) {
+      const scoped = await deps.credentialResolver.resolve(profile.id, tenantContext);
+      if (scoped.credential) {
+        return scoped.credential;
+      }
+    }
+    const authProfile = deps.db.withReadConnection((db) =>
+      authProfileRepo.getActiveByProviderProfileId(db, profile.id),
+    );
+    const effectiveAuthMode = authProfile?.authMode ?? profile.config.authMode;
+    const effectiveOauthProvider = authProfile?.oauthProvider ?? profile.config.oauthProvider;
+    const effectiveKeySource = authProfile?.keySource ?? profile.config.keySource;
+
     // OAuth credential resolution — use token manager
-    if (profile.config.authMode === "oauth") {
-      const oauthProvider = profile.config.oauthProvider;
+    if (effectiveAuthMode === "oauth") {
+      const oauthProvider = effectiveOauthProvider;
       if (!oauthProvider) {
         throw new FridayDomainError(
           "PROVIDER_AUTH_INVALID",
@@ -197,7 +227,11 @@ export function createFridayProviderService(
       return accessToken;
     }
 
-    const ks = profile.config.keySource;
+    if (effectiveAuthMode === "external-session") {
+      return null;
+    }
+
+    const ks = effectiveKeySource;
     switch (ks.kind) {
       case "none":
         return null;
@@ -230,6 +264,166 @@ export function createFridayProviderService(
     }
   }
 
+  function buildDefaultAuthProfile(
+    profile: FridayProviderProfile,
+    existing?: FridayAuthProfile | null,
+    options?: {
+      isActive?: boolean;
+      metadata?: Record<string, unknown>;
+    },
+  ): FridayAuthProfile {
+    const now = deps.nowIso();
+    return {
+      id: existing?.id ?? `auth-profile:${profile.id}:default`,
+      providerProfileId: profile.id,
+      providerKind: profile.kind,
+      profileKey: "default",
+      label: `${profile.name} Default`,
+      authMode: profile.config.authMode,
+      keySource: profile.config.keySource,
+      oauthProvider: profile.config.oauthProvider,
+      isActive: options?.isActive ?? existing?.isActive ?? true,
+      metadata: {
+        source: "provider-config-sync",
+        ...(existing?.metadata ?? {}),
+        ...(options?.metadata ?? {}),
+      },
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+  }
+
+  function syncDefaultAuthProfile(
+    db: Parameters<typeof authProfileRepo.upsert>[0],
+    profile: FridayProviderProfile,
+  ): void {
+    const active = authProfileRepo.getActiveByProviderProfileId(db, profile.id);
+    const existing = authProfileRepo.getByProviderProfileIdAndKey(
+      db,
+      profile.id,
+      "default",
+    );
+    authProfileRepo.upsert(
+      db,
+      buildDefaultAuthProfile(profile, existing, {
+        isActive: active == null || active.profileKey === "default",
+      }),
+    );
+  }
+
+  function normalizeProviderConfig(profile: FridayProviderProfile): FridayProviderProfile {
+    const preset = getFridayProviderPreset(profile.kind, profile.baseUrl);
+    const backendKind = profile.config.backendKind ?? preset.backendKind;
+    const config: FridayProviderConfigJson = {
+      ...profile.config,
+      api: profile.config.api ?? preset.api,
+      authMode: profile.config.authMode ?? preset.authMode,
+      backendKind,
+      deploymentKind: profile.config.deploymentKind ?? preset.deploymentKind,
+      regionTag: profile.config.regionTag ?? preset.regionTag,
+      httpConfig: backendKind === "http"
+        ? {
+            headersPolicy: profile.config.httpConfig?.headersPolicy ?? "custom",
+            timeoutMs: profile.config.httpConfig?.timeoutMs,
+          }
+        : undefined,
+      cliConfig: backendKind === "cli"
+        ? profile.config.cliConfig
+        : undefined,
+      sdkConfig: backendKind === "sdk"
+        ? profile.config.sdkConfig
+        : undefined,
+    };
+    return {
+      ...profile,
+      config,
+    };
+  }
+
+  async function validateCliProvider(
+    profile: FridayProviderProfile,
+  ): Promise<FridayProviderValidationState> {
+    const cliConfig = profile.config.cliConfig;
+    if (!cliConfig) {
+      return {
+        status: "failed",
+        checkedAt: deps.nowIso(),
+        errorCode: "PROVIDER_AUTH_INVALID",
+        errorMessage: "CLI backend requires cliConfig",
+      };
+    }
+    const session = await probeFridayCliSession({
+      cliConfig,
+      nowIso: deps.nowIso,
+    });
+    return {
+      status: session.status === "healthy" ? "ok" : "failed",
+      checkedAt: session.checkedAt,
+      errorCode: session.status === "healthy" ? undefined : "PROVIDER_AUTH_INVALID",
+      errorMessage: session.message,
+    };
+  }
+
+  async function buildDoctorReport(
+    profile: FridayProviderProfile,
+  ): Promise<FridayProviderDoctorReport> {
+    const normalized = normalizeProviderConfig(profile);
+    const activeProfile = deps.db.withReadConnection((db) =>
+      authProfileRepo.getActiveByProviderProfileId(db, normalized.id),
+    );
+    const reasons: string[] = [];
+    let backendHealth: FridayProviderHealthStatus = "healthy";
+    let authHealth: FridayProviderHealthStatus = "healthy";
+    let cliSession: FridayProviderDoctorReport["cliSession"];
+
+    if (!normalized.enabled) {
+      backendHealth = "degraded";
+      reasons.push("provider_disabled");
+    }
+
+    if (normalized.config.backendKind === "cli") {
+      if (!normalized.config.cliConfig) {
+        backendHealth = "missing";
+        authHealth = "missing";
+        reasons.push("cli_config_missing");
+      } else {
+        cliSession = await probeFridayCliSession({
+          cliConfig: normalized.config.cliConfig,
+          nowIso: deps.nowIso,
+        });
+        backendHealth = cliSession.status;
+        authHealth = cliSession.status;
+        if (cliSession.status !== "healthy") {
+          reasons.push("cli_session_unhealthy");
+        }
+      }
+    } else if (normalized.config.authMode === "oauth") {
+      authHealth = "status_unknown";
+      reasons.push("oauth_requires_token_manager_check");
+    } else if (normalized.config.keySource.kind === "none" && normalized.config.authMode !== "none") {
+      authHealth = "missing";
+      reasons.push("credential_missing");
+    }
+
+    if ((normalized.config.supportedModels?.length ?? 0) === 0) {
+      reasons.push("no_supported_models");
+    }
+
+    return {
+      providerId: normalized.id,
+      providerKind: normalized.kind,
+      backendKind: normalized.config.backendKind ?? "http",
+      authMode: normalized.config.authMode,
+      checkedAt: deps.nowIso(),
+      backendHealth,
+      authHealth,
+      routingEligible: normalized.enabled && reasons.length === 0,
+      reasons,
+      activeProfileKey: activeProfile?.profileKey,
+      cliSession,
+    };
+  }
+
   /**
    * Resolve the raw API key value from the patch string.
    * - `$ENV_VAR` → read from process.env
@@ -257,10 +451,20 @@ export function createFridayProviderService(
     kind: FridayProviderProfile["kind"];
     api: FridayProviderConfigJson["api"];
     authMode: FridayProviderConfigJson["authMode"];
+    backendKind?: FridayProviderBackendKind;
+    cliConfig?: FridayProviderCliConfig;
     baseUrl: string;
   }): void {
     const capability = getFridayProviderCapability(input.kind);
-    if (!input.baseUrl || input.baseUrl.trim() === "") {
+    const backendKind = input.backendKind ?? "http";
+    if (!isFridayProviderBackendKindSupportedForKind(input.kind, backendKind)) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        `Provider kind '${input.kind}' does not support backendKind '${backendKind}'. Supported backends: ${capability.supportedBackendKinds.join(", ")}`,
+        { httpStatus: 400 },
+      );
+    }
+    if (backendKind === "http" && (!input.baseUrl || input.baseUrl.trim() === "")) {
       throw new FridayDomainError(
         "VALIDATION_ERROR",
         "baseUrl is required and must be a non-empty string",
@@ -277,11 +481,18 @@ export function createFridayProviderService(
       );
     }
     if (
-      !isFridayProviderAuthModeSupportedForKind(input.kind, input.authMode)
+      !isFridayProviderAuthModeSupportedForKindAndBackend(input.kind, backendKind, input.authMode)
     ) {
       throw new FridayDomainError(
         "VALIDATION_ERROR",
-        `Provider kind '${input.kind}' does not support authMode '${input.authMode}'. Supported auth modes: ${capability.supportedAuthModes.join(", ")}`,
+        `Provider kind '${input.kind}' does not support authMode '${input.authMode}' for backend '${backendKind}'. Supported auth modes: ${getFridayProviderAuthModesForBackend(input.kind, backendKind).join(", ")}`,
+        { httpStatus: 400 },
+      );
+    }
+    if (backendKind === "cli" && !input.cliConfig) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        "cliConfig is required when backendKind is 'cli'",
         { httpStatus: 400 },
       );
     }
@@ -434,32 +645,98 @@ export function createFridayProviderService(
       );
     },
 
+    async listAuthProfiles(providerId) {
+      const existing = deps.db.withReadConnection((db) =>
+        profileRepo.getById(db, providerId),
+      );
+      if (!existing) {
+        throw new FridayDomainError("PROVIDER_NOT_FOUND", "Provider not found", {
+          httpStatus: 404,
+        });
+      }
+      return deps.db.withReadConnection((db) =>
+        authProfileRepo.listByProviderProfileId(db, providerId),
+      );
+    },
+
+    async activateAuthProfile(providerId, profileKey) {
+      const existing = deps.db.withReadConnection((db) =>
+        profileRepo.getById(db, providerId),
+      );
+      if (!existing) {
+        throw new FridayDomainError("PROVIDER_NOT_FOUND", "Provider not found", {
+          httpStatus: 404,
+        });
+      }
+      const profile = deps.db.withReadConnection((db) =>
+        authProfileRepo.getByProviderProfileIdAndKey(db, providerId, profileKey),
+      );
+      if (!profile) {
+        throw new FridayDomainError("PROVIDER_AUTH_INVALID", `Auth profile "${profileKey}" not found`, {
+          httpStatus: 404,
+        });
+      }
+      deps.db.withWriteTransaction((db) => {
+        for (const candidate of authProfileRepo.listByProviderProfileId(db, providerId)) {
+          authProfileRepo.upsert(db, {
+            ...candidate,
+            isActive: candidate.profileKey === profileKey,
+            updatedAt: deps.nowIso(),
+          });
+        }
+      });
+      return deps.db.withReadConnection((db) =>
+        authProfileRepo.getActiveByProviderProfileId(db, providerId),
+      ) ?? profile;
+    },
+
+    async doctorProvider(providerId) {
+      const profile = deps.db.withReadConnection((db) =>
+        profileRepo.getById(db, providerId),
+      );
+      if (!profile) {
+        throw new FridayDomainError("PROVIDER_NOT_FOUND", "Provider not found", {
+          httpStatus: 404,
+        });
+      }
+      return await buildDoctorReport(profile);
+    },
+
     async createProvider(input) {
       const id = deps.idGenerator();
       const now = deps.nowIso();
+      const preset = getFridayProviderPreset(input.kind, input.baseUrl);
+      const backendKind = input.backendKind ?? preset.backendKind;
 
       assertProviderCompatibility({
         kind: input.kind,
         api: input.api,
         authMode: input.authMode,
+        backendKind,
+        cliConfig: input.cliConfig,
         baseUrl: input.baseUrl,
       });
 
       // OAuth mode forces keySource to none — credential comes from token manager
       let keySource: FridayProviderKeySource =
-        input.authMode === "oauth"
+        input.authMode === "oauth" || input.authMode === "external-session"
           ? { kind: "none" }
           : resolveKeySource(input.apiKey);
 
       const config: FridayProviderConfigJson = {
         api: input.api,
         authMode: input.authMode,
+        backendKind,
+        deploymentKind: input.deploymentKind ?? preset.deploymentKind,
+        regionTag: input.regionTag ?? preset.regionTag,
         ...(input.authMode === "oauth" ? { oauthProvider: "anthropic" as const } : {}),
         keySource: keySource.kind === "secret-ref"
           ? { kind: "secret-ref", refKey: secretRefKey(id) }
           : keySource,
         supportedModels: input.supportedModels,
         headers: input.headers,
+        httpConfig: backendKind === "http" ? { headersPolicy: "custom" } : undefined,
+        cliConfig: backendKind === "cli" ? input.cliConfig : undefined,
         validation: { status: "never" },
       };
 
@@ -483,6 +760,10 @@ export function createFridayProviderService(
           status: "never",
           errorMessage: "OAuth login required",
         };
+      } else if (input.authMode === "external-session" || backendKind === "cli") {
+        profile.config.validation = input.validateOnSave === false
+          ? { status: "never" }
+          : await validateCliProvider(profile);
       } else if (input.authMode === "none" && input.validateOnSave === undefined) {
         profile.config.validation = {
           status: "never",
@@ -512,6 +793,7 @@ export function createFridayProviderService(
             baseUrl: input.baseUrl,
             credential,
             model: input.defaultModel,
+            authMode: input.authMode,
           });
           profile.config.validation = validationState;
 
@@ -541,10 +823,11 @@ export function createFridayProviderService(
       }
 
       deps.db.withWriteTransaction((db) => {
-        profileRepo.insert(db, profile);
+        profileRepo.insert(db, normalizeProviderConfig(profile));
+        syncDefaultAuthProfile(db, normalizeProviderConfig(profile));
       });
 
-      return profile;
+      return normalizeProviderConfig(profile);
     },
 
     async updateProvider(providerId, patch) {
@@ -563,17 +846,20 @@ export function createFridayProviderService(
       const newAuthMode = patch.authMode ?? existing.config.authMode;
       const nextApi = patch.api ?? existing.config.api;
       const nextBaseUrl = patch.baseUrl ?? existing.baseUrl;
+      const nextBackendKind = patch.backendKind ?? existing.config.backendKind ?? "http";
 
       assertProviderCompatibility({
         kind: existing.kind,
         api: nextApi,
         authMode: newAuthMode,
+        backendKind: nextBackendKind,
+        cliConfig: patch.cliConfig ?? existing.config.cliConfig,
         baseUrl: nextBaseUrl,
       });
 
       // Handle key update
       let keySource = existing.config.keySource;
-      if (newAuthMode === "oauth") {
+      if (newAuthMode === "oauth" || newAuthMode === "external-session") {
         // OAuth mode forces keySource to none
         keySource = { kind: "none" };
       } else if (patch.apiKey !== undefined) {
@@ -597,10 +883,22 @@ export function createFridayProviderService(
       const updatedConfig: FridayProviderConfigJson = {
         api: nextApi,
         authMode: newAuthMode,
+        backendKind: nextBackendKind,
+        deploymentKind: patch.deploymentKind ?? existing.config.deploymentKind,
+        regionTag: patch.regionTag ?? existing.config.regionTag,
         ...(oauthProvider != null ? { oauthProvider } : {}),
         keySource,
         supportedModels: patch.supportedModels ?? existing.config.supportedModels,
         headers: patch.headers ?? existing.config.headers,
+        httpConfig: nextBackendKind === "http"
+          ? existing.config.httpConfig ?? { headersPolicy: "custom" }
+          : undefined,
+        cliConfig: nextBackendKind === "cli"
+          ? patch.cliConfig ?? existing.config.cliConfig
+          : undefined,
+        sdkConfig: nextBackendKind === "sdk"
+          ? existing.config.sdkConfig
+          : undefined,
         validation: existing.config.validation,
       };
 
@@ -622,7 +920,9 @@ export function createFridayProviderService(
           patch.baseUrl !== undefined ||
           patch.defaultModel !== undefined ||
           patch.authMode !== undefined ||
-          patch.api !== undefined));
+          patch.api !== undefined ||
+          patch.backendKind !== undefined ||
+          patch.cliConfig !== undefined));
 
       // Skip validation for OAuth — they need to complete login first
       if (newAuthMode === "oauth" && (patch.authMode === "oauth" || existing.config.authMode === "oauth")) {
@@ -635,8 +935,14 @@ export function createFridayProviderService(
         }
       }
 
+      if (newAuthMode === "external-session" || nextBackendKind === "cli") {
+        updated.config.validation = patch.validateOnSave === false
+          ? { status: "never" }
+          : await validateCliProvider(updated);
+      }
+
       // Validate BEFORE persistence — use raw patch key (not yet persisted)
-      if (shouldValidate) {
+      if (shouldValidate && nextBackendKind !== "cli") {
         try {
           const credential = patch.apiKey !== undefined
             ? resolveRawApiKey(patch.apiKey)
@@ -647,6 +953,7 @@ export function createFridayProviderService(
             baseUrl: updated.baseUrl,
             credential,
             model: updated.defaultModel,
+            authMode: updatedConfig.authMode,
           });
           updated.config.validation = validationState;
 
@@ -685,10 +992,11 @@ export function createFridayProviderService(
       }
 
       deps.db.withWriteTransaction((db) => {
-        profileRepo.update(db, updated);
+        profileRepo.update(db, normalizeProviderConfig(updated));
+        syncDefaultAuthProfile(db, normalizeProviderConfig(updated));
       });
 
-      return updated;
+      return normalizeProviderConfig(updated);
     },
 
     async deleteProvider(providerId) {
@@ -705,6 +1013,7 @@ export function createFridayProviderService(
       oauthTokenManager.clear(providerId);
 
       deps.db.withWriteTransaction((db) => {
+        authProfileRepo.deleteByProviderProfileId(db, providerId);
         // Delete secret if stored
         if (existing.config.keySource.kind === "secret-ref") {
           secretRepo.deleteByRef(
@@ -755,6 +1064,15 @@ export function createFridayProviderService(
       });
 
       let credential: string | null = null;
+      if ((profile.config.backendKind ?? "http") === "cli") {
+        const state = await validateCliProvider(profile);
+        profile.config.validation = state;
+        deps.db.withWriteTransaction((db) => {
+          profileRepo.update(db, normalizeProviderConfig(profile));
+          syncDefaultAuthProfile(db, normalizeProviderConfig(profile));
+        });
+        return state;
+      }
       try {
         credential = await resolveCredential(profile);
       } catch (err) {
@@ -778,12 +1096,13 @@ export function createFridayProviderService(
         baseUrl: profile.baseUrl,
         credential,
         model: profile.defaultModel,
-        authMode: profile.config.authMode === "oauth" ? "oauth" : "api-key",
+        authMode: profile.config.authMode,
       });
 
       profile.config.validation = state;
       deps.db.withWriteTransaction((db) => {
-        profileRepo.update(db, profile);
+        profileRepo.update(db, normalizeProviderConfig(profile));
+        syncDefaultAuthProfile(db, normalizeProviderConfig(profile));
       });
 
       return state;
@@ -846,6 +1165,7 @@ export function createFridayProviderService(
     async runWithFallback<T>(params: {
       requestedModel?: string;
       requestedProviderId?: string;
+      tenantContext?: FridayProviderTenantContext;
       routingContext?: {
         estimatedInputTokens: number;
         complexity: "simple" | "medium" | "complex";
@@ -929,7 +1249,7 @@ export function createFridayProviderService(
       const fallbackResult = await fallback.runWithFallback({
         candidates,
         run: async (route) => {
-          const credential = await resolveCredential(route.provider);
+          const credential = await resolveCredential(route.provider, params.tenantContext);
           return params.run(route, credential);
         },
       });

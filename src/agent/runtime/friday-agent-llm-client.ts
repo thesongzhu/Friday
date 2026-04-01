@@ -2,8 +2,16 @@ import { FridayDomainError } from "#errors";
 import {
   FRIDAY_ANTHROPIC_OAUTH_HEADERS,
   FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX,
+  isFridayAnthropicBearerAuthMode,
 } from "#providers";
-import type { FridayProviderApi, FridayProviderAuthMode } from "#providers";
+import {
+  runFridayCliBackendTextCompletion,
+} from "#providers";
+import type {
+  FridayProviderApi,
+  FridayProviderAuthMode,
+  FridayProviderBackendKind,
+} from "#providers";
 
 import { validateGatewayUrl } from "../tools/friday-agent-gateway-validation.js";
 import { FRIDAY_AGENT_ERROR_CODES } from "../friday-agent.constants.js";
@@ -84,33 +92,77 @@ export function createFridayAgentLlmClient(
 ): FridayAgentLlmClient {
   const { baseUrl, apiKey } = deps;
   const api: FridayProviderApi = deps.api ?? "anthropic-messages";
+  const backendKind: FridayProviderBackendKind = deps.backendKind ?? "http";
   const authMode: FridayProviderAuthMode | undefined = deps.authMode;
   const fetchFn = deps.fetchImpl ?? fetch;
 
-  // SSRF guard: validate the provider baseUrl at construction time.
-  // Self-hosted deployments may need loopback/private access (e.g. local Ollama).
-  const ssrfCheck = validateGatewayUrl(baseUrl, {
-    allowLoopback: deps.allowPrivateNetwork,
-    allowPrivate: deps.allowPrivateNetwork,
-  });
-  if (!ssrfCheck.valid) {
-    throw new FridayDomainError(
-      FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
-      `LLM provider baseUrl blocked by SSRF guard: ${ssrfCheck.error}`,
-      { httpStatus: 403 },
-    );
+  if (backendKind === "http") {
+    const normalizedBaseUrl = baseUrl ?? "";
+    const ssrfCheck = validateGatewayUrl(normalizedBaseUrl, {
+      allowLoopback: deps.allowPrivateNetwork,
+      allowPrivate: deps.allowPrivateNetwork,
+    });
+    if (!ssrfCheck.valid) {
+      throw new FridayDomainError(
+        FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
+        `LLM provider baseUrl blocked by SSRF guard: ${ssrfCheck.error}`,
+        { httpStatus: 403 },
+      );
+    }
   }
 
   return {
     async *stream(params: FridayAgentLlmStreamParams): AsyncIterable<FridayAgentLlmStreamEvent> {
+      if (backendKind === "cli") {
+        if (!deps.cliConfig) {
+          throw new FridayDomainError(
+            FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
+            "CLI backend selected without cliConfig",
+            { httpStatus: 500 },
+          );
+        }
+        if (params.tools.length > 0) {
+          throw new FridayDomainError(
+            FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
+            "CLI backend does not support Friday tool loop yet. Route to an HTTP backend for tool-using tasks.",
+            { httpStatus: 501 },
+          );
+        }
+        const conversation = params.messages
+          .map((message) =>
+            `${message.role.toUpperCase()}: ${
+              typeof message.content === "string"
+                ? message.content
+                : JSON.stringify(message.content)
+            }`,
+          )
+          .join("\n\n");
+        const output = await runFridayCliBackendTextCompletion({
+          cliConfig: deps.cliConfig,
+          systemPrompt: params.systemPrompt,
+          conversation,
+          model: params.model,
+        });
+        if (output.length > 0) {
+          yield { type: "text_delta", text: output };
+        }
+        yield {
+          type: "message_end",
+          stopReason: "end_turn",
+          inputTokens: 0,
+          outputTokens: 0,
+        };
+        return;
+      }
+
       // Dispatch to the appropriate API handler based on provider api type
       if (api === "ollama") {
-        yield* handleOllamaStream(fetchFn, baseUrl, params);
+        yield* handleOllamaStream(fetchFn, baseUrl ?? "", params);
       } else if (api === "openai-completions" || api === "openai-responses") {
-        yield* handleOpenAIStream(fetchFn, baseUrl, apiKey, api, params);
+        yield* handleOpenAIStream(fetchFn, baseUrl ?? "", apiKey ?? "", api, params);
       } else {
         // Default: anthropic-messages (backwards compatible)
-        yield* handleAnthropicStream(fetchFn, baseUrl, apiKey, authMode, params);
+        yield* handleAnthropicStream(fetchFn, baseUrl ?? "", apiKey ?? "", authMode, params);
       }
     },
   };
@@ -125,7 +177,7 @@ async function* handleAnthropicStream(
   authMode: FridayProviderAuthMode | undefined,
   params: FridayAgentLlmStreamParams,
 ): AsyncIterable<FridayAgentLlmStreamEvent> {
-  const isOAuth = authMode === "oauth";
+  const isBearerAuth = isFridayAnthropicBearerAuthMode(authMode);
 
   // OAuth beta endpoints enforce stricter limits on request size.
   // Truncate the system prompt and limit tools to stay within bounds.
@@ -139,7 +191,7 @@ async function* handleAnthropicStream(
   ]);
 
   let systemField: string | AnthropicSystemBlock[];
-  if (isOAuth) {
+  if (isBearerAuth) {
     // OAuth beta requires system as an array of blocks (matching Claude Code format).
     const inner = params.systemPrompt.length > OAUTH_MAX_SYSTEM_CHARS
       ? params.systemPrompt.slice(0, OAUTH_MAX_SYSTEM_CHARS)
@@ -153,7 +205,7 @@ async function* handleAnthropicStream(
   }
 
   let tools: AnthropicToolDefinition[];
-  if (isOAuth) {
+  if (isBearerAuth) {
     // OAuth beta: limit to core tools, sanitize schemas, map names to Claude Code canonical names.
     // Deduplicate by mapped name (multiple Friday tools may map to the same Claude Code name).
     const coreTools = params.tools.filter((t) => OAUTH_CORE_TOOLS.has(t.name));
@@ -193,7 +245,7 @@ async function* handleAnthropicStream(
     headers: {
       "Content-Type": "application/json",
       "anthropic-version": "2023-06-01",
-      ...(isOAuth
+      ...(isBearerAuth
         ? {
             "Authorization": `Bearer ${apiKey}`,
             ...FRIDAY_ANTHROPIC_OAUTH_HEADERS,
@@ -225,7 +277,7 @@ async function* handleAnthropicStream(
 
   for await (const event of parseAnthropicSSEStream(response.body)) {
     // When using OAuth, map Claude Code tool names back to Friday tool names.
-    if (isOAuth && event.type === "tool_use") {
+    if (isBearerAuth && event.type === "tool_use") {
       yield { ...event, name: fromOAuthToolName(event.name) };
     } else {
       yield event;

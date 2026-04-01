@@ -45,4 +45,34 @@ describe("CLI auth argument parsing", () => {
     const result = parseArgs(argv("auth", "login", "anthropic"));
     expect(result.noBrowser).toBe(false);
   });
+
+  it("parses 'auth setup-token anthropic'", () => {
+    const result = parseArgs(argv("auth", "setup-token", "anthropic"));
+    expect(result.command).toBe("auth");
+    expect(result.authSubcommand).toBe("setup-token");
+    expect(result.authTarget).toBe("anthropic");
+  });
+
+  it("parses 'auth paste-token anthropic' with --token", () => {
+    const result = parseArgs(argv("auth", "paste-token", "anthropic", "--token", "tok-ant-test"));
+    expect(result.command).toBe("auth");
+    expect(result.authSubcommand).toBe("paste-token");
+    expect(result.authTarget).toBe("anthropic");
+    expect(result.token).toBe("tok-ant-test");
+  });
+
+  it("parses 'auth attach-cli codex' with --binary-path", () => {
+    const result = parseArgs(argv("auth", "attach-cli", "codex", "--binary-path", "/usr/local/bin/codex"));
+    expect(result.command).toBe("auth");
+    expect(result.authSubcommand).toBe("attach-cli");
+    expect(result.authTarget).toBe("codex");
+    expect(result.binaryPath).toBe("/usr/local/bin/codex");
+  });
+
+  it("parses 'auth status' without a target", () => {
+    const result = parseArgs(argv("auth", "status"));
+    expect(result.command).toBe("auth");
+    expect(result.authSubcommand).toBe("status");
+    expect(result.authTarget).toBeUndefined();
+  });
 });

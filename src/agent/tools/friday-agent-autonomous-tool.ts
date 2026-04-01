@@ -140,6 +140,7 @@ export function createFridayAgentAutonomousTool(
     const priority = readStringParam(args, "priority") as "low" | "normal" | "high" | "critical" | undefined;
     const maxIterations = readNumberParam(args, "maxIterations", { integer: true });
     const timeoutMs = readNumberParam(args, "timeoutMs", { integer: true });
+    const executionContext = getFridayAgentToolExecutionContext(signal);
 
     const result = await autonomousEngine.executeGoal({
       description,
@@ -148,7 +149,9 @@ export function createFridayAgentAutonomousTool(
         ...(maxIterations != null ? { maxIterationsPerGoal: maxIterations } : {}),
         ...(timeoutMs != null ? { maxTimePerGoalMs: timeoutMs } : {}),
       },
-      timezone: getFridayAgentToolExecutionContext(signal)?.timezone,
+      timezone: executionContext?.timezone,
+      principalId: executionContext?.principalId,
+      tenantContext: executionContext?.tenantContext,
       signal,
     });
 

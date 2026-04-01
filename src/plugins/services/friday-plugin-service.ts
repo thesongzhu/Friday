@@ -28,6 +28,7 @@ import type {
   FridayPluginInstallInput,
   FridayPluginService,
 } from "./friday-plugin-service.types.js";
+import { createFridayPluginHealthMonitor } from "./friday-plugin-health-monitor.js";
 import type {
   FridayMarketplacePluginDetail,
   FridayMarketplaceSearchQuery,
@@ -61,6 +62,22 @@ export function createFridayPluginService(
   const allowlistedPluginIds = new Set(previewPolicy?.allowlistedPluginIds ?? []);
   const allowlistedPublisherIds = new Set(previewPolicy?.allowlistedPublisherIds ?? []);
   const supportedSdkVersion = previewPolicy?.sdkVersion ?? FRIDAY_PLUGIN_SDK_PREVIEW_VERSION;
+  const pluginHealthMonitor = createFridayPluginHealthMonitor({
+    onAutoDisable: (pluginId, failures) => {
+      const now = nowIso();
+      registry.setError(
+        pluginId,
+        "PLUGIN_AUTO_DISABLED",
+        `Plugin auto-disabled after ${String(failures)} consecutive enable/load failures`,
+        now,
+      );
+      registry.setStatus(pluginId, "disabled", now);
+      registry.setEnabled(pluginId, false, now);
+      console.warn(
+        `[friday][marker] plugin_auto_disabled pluginId=${pluginId} failures=${String(failures)}`,
+      );
+    },
+  });
 
   /**
    * Builds synthetic package bytes from a local install directory by reading
@@ -190,6 +207,26 @@ export function createFridayPluginService(
       capabilitySummary: buildCapabilitySummary(entity.manifest),
       policySummary: buildPolicySummary(entity.id, entity.manifest),
     };
+  }
+
+  function recordLifecycleFailure(
+    pluginId: string,
+    error: unknown,
+    fallbackStatus?: FridayPluginEntity["status"],
+  ): void {
+    const state = pluginHealthMonitor.recordFailure(pluginId);
+    if (!state.autoDisabled) {
+      const failureAt = nowIso();
+      registry.setError(
+        pluginId,
+        FRIDAY_PLUGIN_ERROR_CODES.LIFECYCLE_ERROR,
+        error instanceof Error ? error.message : String(error),
+        failureAt,
+      );
+      if (fallbackStatus) {
+        registry.setStatus(pluginId, fallbackStatus, failureAt);
+      }
+    }
   }
 
   return {
@@ -347,7 +384,12 @@ export function createFridayPluginService(
         );
       }
 
-      if (entity.status !== "installed" && entity.status !== "configured" && entity.status !== "disabled") {
+      if (
+        entity.status !== "installed"
+        && entity.status !== "configured"
+        && entity.status !== "disabled"
+        && entity.status !== "error"
+      ) {
         throw new FridayDomainError(
           FRIDAY_PLUGIN_ERROR_CODES.INVALID_STATUS_TRANSITION,
           `Cannot enable plugin "${pluginId}" from status "${entity.status}"`,
@@ -364,7 +406,24 @@ export function createFridayPluginService(
       registry.setEnabled(pluginId, true, now);
 
       // Load the plugin via loader to keep runtime state in sync
-      await loader.load(loadPlan);
+      try {
+        await loader.load(loadPlan);
+        pluginHealthMonitor.recordSuccess(pluginId);
+      } catch (err) {
+        const state = pluginHealthMonitor.recordFailure(pluginId);
+        if (!state.autoDisabled) {
+          const failureAt = nowIso();
+          registry.setStatus(pluginId, "error", failureAt);
+          registry.setEnabled(pluginId, false, failureAt);
+          registry.setError(
+            pluginId,
+            "PLUGIN_LOAD_FAILED",
+            err instanceof Error ? err.message : String(err),
+            failureAt,
+          );
+        }
+        throw err;
+      }
 
       return enrichPluginEntity(requirePlugin(pluginId));
     },
@@ -393,7 +452,13 @@ export function createFridayPluginService(
       if (entity.status === "running") {
         const loadedPlugins = loader.getLoaded();
         if (loadedPlugins.has(pluginId)) {
-          await loader.unload([pluginId]);
+          try {
+            await loader.unload([pluginId]);
+            pluginHealthMonitor.recordSuccess(pluginId);
+          } catch (err) {
+            recordLifecycleFailure(pluginId, err, entity.status);
+            throw err;
+          }
         }
       }
 
@@ -406,6 +471,7 @@ export function createFridayPluginService(
       } else {
         registry.setEnabled(pluginId, false, nowIso());
       }
+      pluginHealthMonitor.reset(pluginId);
 
       return enrichPluginEntity(requirePlugin(pluginId));
     },
@@ -435,13 +501,20 @@ export function createFridayPluginService(
       if (entity.status === "running") {
         const loadedPlugins = loader.getLoaded();
         if (loadedPlugins.has(pluginId)) {
-          await loader.unload([pluginId]);
+          try {
+            await loader.unload([pluginId]);
+            pluginHealthMonitor.recordSuccess(pluginId);
+          } catch (err) {
+            recordLifecycleFailure(pluginId, err, entity.status);
+            throw err;
+          }
         } else {
           registry.setStatus(pluginId, "disabled", nowIso());
         }
       }
 
       registry.remove(pluginId);
+      pluginHealthMonitor.reset(pluginId);
     },
 
     async searchMarketplace(query: FridayMarketplaceSearchQuery): Promise<FridayMarketplaceSearchResult> {

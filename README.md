@@ -434,11 +434,31 @@ Friday supports OAuth for Anthropic provider registration:
 ```bash
 # Via CLI
 friday auth login anthropic
+friday auth setup-token anthropic
+friday auth paste-token anthropic
 
 # Via API
 POST /v1/auth/oauth/anthropic/initiate   # Start OAuth flow
 POST /v1/auth/oauth/anthropic/callback    # Complete OAuth flow
 ```
+
+`setup-token` / `paste-token` are technical compatibility paths for Anthropic subscription auth.
+They store the pasted token as provider auth mode `token` and do not provide refresh semantics.
+Anthropic API key remains the safer recommended production path.
+
+### OpenAI / Codex auth boundary
+
+Friday does **not** currently expose a stable direct OpenAI OAuth mode for the existing
+`api.openai.com` provider path.
+
+- Use `api-key` / `bearer-token` for the current `openai` / `openai-codex` HTTP provider surfaces.
+- On **2026-03-31**, real probes against a locally signed-in Codex CLI account showed:
+  - `GET https://api.openai.com/v1/models` failed with missing `api.model.read`
+  - `POST https://api.openai.com/v1/responses` failed with missing `api.responses.write`
+- Treat ChatGPT/Codex subscription auth as a future **Codex CLI / Codex SDK backend** integration,
+  not as a drop-in replacement for the current Friday HTTP provider route.
+
+OpenAI API credentials remain the currently supported production path for Friday's OpenAI providers.
 
 ### Token refresh
 
@@ -1170,10 +1190,10 @@ export FRIDAY_MCP_SERVERS='[
 
 ## Known Limitations
 
-- **Wizard/onboarding state is in-memory**: Guided wizard contexts and onboarding session progress are stored in in-memory Maps and are lost on service restart. Database persistence is planned.
+- **Wizard/onboarding state is SQLite-backed**: `/assistant` guided wizard contexts are now persisted in `uix_guided_contexts` and can be resumed after service restart. Onboarding session progress remains persisted in `uix_onboarding_sessions` and restores on boot. Broader approval/automation restart proof is still tracked separately.
 - **Persona requires principalId**: The MBTI communication persona is only applied when the agent run has a `principalId`. Anonymous or system-triggered runs receive the default neutral persona.
 - **Learning feedback is not user-visible**: While Friday learns user preferences and applies them to communication style, there is no UI surface that shows users what has been learned or lets them review/edit learned facts directly.
-- **Auto-fix step executor gaps**: Some auto-fix step kinds (`retry_node`, `switch_model_fallback`, `trim_payload`, `apply_config_patch`, `grant_permission`, `pause_workflow`) return `false` unconditionally because hub-level wiring for those specific step types is not yet implemented. Core step kinds (`disable_skill`, `clear_memory_entries`) are fully wired.
+- **Auto-fix execution is still partially directive-level**: The default executor/verifier path now covers `retry_node`, `switch_model_fallback`, `trim_payload`, `apply_config_patch`, `grant_permission`, and `pause_workflow` with deterministic payload markers and verification evidence, rather than returning `false` unconditionally. `disable_skill` is the main hub-wired side-effect today. The remaining step kinds still need richer hub/runtime wiring before they count as fully automated operational repairs.
 - **Cross-platform releases**: Only macOS native companion exists. iOS, Android, and Windows are planned but not yet implemented. The Node.js hub runs on any platform with Node 22+.
 
 ---

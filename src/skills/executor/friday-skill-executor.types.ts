@@ -1,6 +1,7 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridaySkillRunStore } from "#ledger";
 import type { FridayBrowserManager } from "#browser";
+import type { FridayProviderAuthMode, FridayProviderTenantContext } from "#providers";
 import type {
   FridayChannelCapabilityContract,
   FridayChannelRegistry,
@@ -166,6 +167,7 @@ export interface FridaySkillExecuteRequest {
   sessionId: string;
   userId: string;
   channel: string;
+  tenantContext?: FridayProviderTenantContext;
   timeoutMs?: number;
 }
 
@@ -210,8 +212,9 @@ export interface CreateFridaySkillExecutorDeps {
 export interface FridayProviderServiceLike {
   runWithFallback<T>(params: {
     requestedModel?: string;
+    tenantContext?: FridayProviderTenantContext;
     run: (
-      route: { provider: { kind: string; baseUrl: string; config: { api: string } }; model: string },
+      route: { provider: { kind: string; baseUrl: string; config: { api: string; authMode?: FridayProviderAuthMode } }; model: string },
       credential: string | null,
     ) => Promise<T>;
   }): Promise<{

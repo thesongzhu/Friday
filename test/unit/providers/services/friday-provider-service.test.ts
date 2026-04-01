@@ -11,7 +11,26 @@ describe("FridayProviderService", () => {
   let idGen: () => string;
   let service: FridayProviderService;
   const NOW = "2026-02-17T10:00:00.000Z";
+  const NOW_MS = Date.parse(NOW);
   const originalFetch = globalThis.fetch;
+
+  function listAuthProfiles() {
+    return db.withReadConnection((conn) =>
+      conn.prepare(
+        `SELECT provider_profile_id, profile_key, display_label, auth_mode, key_source_json, oauth_provider, is_active
+         FROM auth_profiles
+         ORDER BY provider_profile_id ASC, profile_key ASC`,
+      ).all() as Array<{
+        provider_profile_id: string;
+        profile_key: string;
+        display_label: string;
+        auth_mode: string;
+        key_source_json: string | null;
+        oauth_provider: string | null;
+        is_active: number;
+      }>,
+    );
+  }
 
   beforeEach(() => {
     db = createTestDb();
@@ -133,6 +152,71 @@ describe("FridayProviderService", () => {
         }),
       ).rejects.toThrow("does not support api");
     });
+
+    it("creates an anthropic token provider with encrypted token storage", async () => {
+      const profile = await service.createProvider({
+        kind: "anthropic",
+        name: "Claude Setup Token",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "token",
+        api: "anthropic-messages",
+        apiKey: "sk-ant-token-real",
+        supportedModels: ["claude-sonnet-4-20250514"],
+        validateOnSave: false,
+      });
+
+      expect(profile.config.authMode).toBe("token");
+      expect(profile.config.keySource.kind).toBe("secret-ref");
+    });
+
+    it("syncs a default auth profile row on create", async () => {
+      await service.createProvider({
+        kind: "anthropic",
+        name: "Claude Setup Token",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "token",
+        api: "anthropic-messages",
+        apiKey: "sk-ant-token-real",
+        supportedModels: ["claude-sonnet-4-20250514"],
+        validateOnSave: false,
+      });
+
+      expect(listAuthProfiles()).toEqual([
+        expect.objectContaining({
+          provider_profile_id: "test-id-0001",
+          profile_key: "default",
+          display_label: "Claude Setup Token Default",
+          auth_mode: "token",
+          oauth_provider: null,
+          is_active: 1,
+        }),
+      ]);
+    });
+
+    it("creates a cli-backed external-session provider without persisting secrets", async () => {
+      const profile = await service.createProvider({
+        kind: "openai",
+        name: "Codex CLI",
+        baseUrl: "",
+        authMode: "external-session",
+        backendKind: "cli",
+        cliConfig: {
+          backendId: "codex-cli",
+          binaryPath: "/usr/local/bin/codex",
+        },
+        api: "openai-responses",
+        supportedModels: ["codex"],
+        validateOnSave: false,
+      });
+
+      expect(profile.config.backendKind).toBe("cli");
+      expect(profile.config.authMode).toBe("external-session");
+      expect(profile.config.keySource).toEqual({ kind: "none" });
+      expect(profile.config.cliConfig).toEqual({
+        backendId: "codex-cli",
+        binaryPath: "/usr/local/bin/codex",
+      });
+    });
   });
 
   describe("listProviders", () => {
@@ -253,6 +337,32 @@ describe("FridayProviderService", () => {
         }),
       ).rejects.toThrow("does not support authMode");
     });
+
+    it("syncs the default auth profile when auth mode changes", async () => {
+      await service.createProvider({
+        kind: "anthropic",
+        name: "Anthropic OAuth",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "oauth",
+        api: "anthropic-messages",
+        supportedModels: ["claude-sonnet-4-20250514"],
+      });
+
+      await service.updateProvider("test-id-0001", {
+        authMode: "token",
+        apiKey: "sk-ant-token-switch",
+      });
+
+      expect(listAuthProfiles()).toEqual([
+        expect.objectContaining({
+          provider_profile_id: "test-id-0001",
+          profile_key: "default",
+          auth_mode: "token",
+          oauth_provider: null,
+          is_active: 1,
+        }),
+      ]);
+    });
   });
 
   describe("deleteProvider", () => {
@@ -279,6 +389,25 @@ describe("FridayProviderService", () => {
       );
     });
 
+    it("deletes synced auth profiles with the provider", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "Delete Me",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "sk-delete-me",
+        supportedModels: ["gpt-4o"],
+        validateOnSave: false,
+      });
+
+      expect(listAuthProfiles()).toHaveLength(1);
+
+      await service.deleteProvider("test-id-0001");
+
+      expect(listAuthProfiles()).toHaveLength(0);
+    });
+
     it("cleans up routing config on delete", async () => {
       await service.createProvider({
         kind: "openai",
@@ -300,6 +429,100 @@ describe("FridayProviderService", () => {
       const routing = await service.getRoutingConfig();
       expect(routing.defaultProviderId).toBe("");
       expect(routing.fallbackProviderIds).toEqual([]);
+    });
+  });
+
+  describe("auth profile management", () => {
+    it("lists auth profiles for a provider", async () => {
+      await service.createProvider({
+        kind: "anthropic",
+        name: "Claude Setup Token",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "token",
+        api: "anthropic-messages",
+        apiKey: "sk-ant-token-real",
+        supportedModels: ["claude-sonnet-4-20250514"],
+        validateOnSave: false,
+      });
+
+      const profiles = await service.listAuthProfiles("test-id-0001");
+      expect(profiles).toEqual([
+        expect.objectContaining({
+          profileKey: "default",
+          authMode: "token",
+          isActive: true,
+        }),
+      ]);
+    });
+
+    it("activates a secondary auth profile", async () => {
+      await service.createProvider({
+        kind: "anthropic",
+        name: "Claude Setup Token",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "token",
+        api: "anthropic-messages",
+        apiKey: "sk-ant-token-real",
+        supportedModels: ["claude-sonnet-4-20250514"],
+        validateOnSave: false,
+      });
+
+      db.withWriteTransaction((conn) => {
+        conn.prepare(
+          `INSERT INTO auth_profiles
+             (id, provider_profile_id, provider_kind, profile_key, display_label,
+              auth_mode, key_source_json, oauth_provider, is_active, metadata_json,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          "auth-2",
+          "test-id-0001",
+          "anthropic",
+          "cli-session",
+          "Claude CLI",
+          "external-session",
+          JSON.stringify({ kind: "none" }),
+          null,
+          0,
+          JSON.stringify({ backendId: "claude-cli" }),
+          NOW,
+          NOW,
+        );
+      });
+
+      const active = await service.activateAuthProfile("test-id-0001", "cli-session");
+      expect(active).toMatchObject({
+        profileKey: "cli-session",
+        authMode: "external-session",
+        isActive: true,
+      });
+
+      expect(listAuthProfiles()).toEqual([
+        expect.objectContaining({ profile_key: "cli-session", is_active: 1 }),
+        expect.objectContaining({ profile_key: "default", is_active: 0 }),
+      ]);
+    });
+
+    it("returns a doctor report for an http provider", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "$OPENAI_API_KEY",
+        supportedModels: ["gpt-4o"],
+        validateOnSave: false,
+      });
+
+      const report = await service.doctorProvider("test-id-0001");
+      expect(report).toMatchObject({
+        providerId: "test-id-0001",
+        providerKind: "openai",
+        backendKind: "http",
+        authMode: "api-key",
+        activeProfileKey: "default",
+      });
     });
   });
 
@@ -739,6 +962,50 @@ describe("FridayProviderService", () => {
       }
     });
 
+    it("prefers the active auth profile over provider config when resolving credentials", async () => {
+      process.env.AUTH_PROFILE_ENV = "profile-secret";
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "global-secret",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
+
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: [],
+        });
+
+        db.withWriteTransaction((conn) => {
+          conn.prepare(
+            `UPDATE auth_profiles
+             SET auth_mode = ?, key_source_json = ?, updated_at = ?
+             WHERE provider_profile_id = ? AND profile_key = ?`,
+          ).run(
+            "api-key",
+            JSON.stringify({ kind: "env-ref", envVar: "AUTH_PROFILE_ENV" }),
+            NOW,
+            "test-id-0001",
+            "default",
+          );
+        });
+
+        const { result } = await service.runWithFallback({
+          run: async (_route, credential) => credential,
+        });
+
+        expect(result).toBe("profile-secret");
+      } finally {
+        delete process.env.AUTH_PROFILE_ENV;
+      }
+    });
+
     it("reports the broken routing reference when zero candidates are available", async () => {
       db.withWriteTransaction((conn) => {
         conn.prepare(
@@ -928,6 +1195,125 @@ describe("FridayProviderService", () => {
         delete process.env.ANTHROPIC_KEY;
       }
     });
+
+    it("prefers tenant-scoped credentials when tenantContext is provided", async () => {
+      const credentialResolver = {
+        resolve: vi.fn(async () => ({
+          tenantContext: { hubId: "tenant-ops", userId: "user-1" },
+          credential: "tenant-secret",
+          providerId: "test-id-0001",
+          isTenantOverride: true,
+        })),
+        setTenantCredential: vi.fn(),
+        removeTenantCredential: vi.fn(),
+        listTenantScopes: vi.fn(async () => []),
+      };
+      const scopedService = createFridayProviderService({
+        db,
+        idGenerator: idGen,
+        nowIso: () => NOW,
+        nowMs: () => NOW_MS,
+        fetchImpl: globalThis.fetch as typeof fetch,
+        credentialResolver,
+      });
+
+      await scopedService.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "global-secret",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+
+      await scopedService.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: [],
+      });
+
+      const { result } = await scopedService.runWithFallback({
+        tenantContext: {
+          hubId: "tenant-ops",
+          userId: "user-1",
+        },
+        run: async (_route, credential) => credential,
+      });
+
+      expect(result).toBe("tenant-secret");
+      expect(credentialResolver.resolve).toHaveBeenCalledWith("test-id-0001", {
+        hubId: "tenant-ops",
+        userId: "user-1",
+      });
+    });
+
+    it("keeps tenant-scoped credentials isolated across different tenants in one service instance", async () => {
+      const credentialResolver = {
+        resolve: vi.fn(async (_providerId: string, tenantContext: { hubId: string; userId?: string }) => ({
+          tenantContext,
+          credential: `${tenantContext.hubId}:${tenantContext.userId ?? "anon"}:secret`,
+          providerId: "test-id-0001",
+          isTenantOverride: true,
+        })),
+        setTenantCredential: vi.fn(),
+        removeTenantCredential: vi.fn(),
+        listTenantScopes: vi.fn(async () => []),
+      };
+      const scopedService = createFridayProviderService({
+        db,
+        idGenerator: idGen,
+        nowIso: () => NOW,
+        nowMs: () => NOW_MS,
+        fetchImpl: globalThis.fetch as typeof fetch,
+        credentialResolver,
+      });
+
+      await scopedService.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "global-secret",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+
+      await scopedService.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: [],
+      });
+
+      const tenantA = await scopedService.runWithFallback({
+        tenantContext: {
+          hubId: "tenant-a",
+          userId: "alice",
+        },
+        run: async (_route, credential) => credential,
+      });
+      const tenantB = await scopedService.runWithFallback({
+        tenantContext: {
+          hubId: "tenant-b",
+          userId: "bob",
+        },
+        run: async (_route, credential) => credential,
+      });
+
+      expect(tenantA.result).toBe("tenant-a:alice:secret");
+      expect(tenantB.result).toBe("tenant-b:bob:secret");
+      expect(tenantA.result).not.toBe(tenantB.result);
+      expect(credentialResolver.resolve).toHaveBeenNthCalledWith(1, "test-id-0001", {
+        hubId: "tenant-a",
+        userId: "alice",
+      });
+      expect(credentialResolver.resolve).toHaveBeenNthCalledWith(2, "test-id-0001", {
+        hubId: "tenant-b",
+        userId: "bob",
+      });
+    });
   });
 
   describe("OAuth provider lifecycle", () => {
@@ -1030,6 +1416,34 @@ describe("FridayProviderService", () => {
 
       const result = await service.getProvider("test-id-0001");
       expect(result).toBeNull();
+    });
+
+    it("switches from oauth to token and validates with Bearer auth", async () => {
+      let capturedHeaders: Record<string, string> = {};
+      globalThis.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        capturedHeaders = (init?.headers ?? {}) as Record<string, string>;
+        return new Response("{}", { status: 200 });
+      }) as typeof fetch;
+
+      await service.createProvider({
+        kind: "anthropic",
+        name: "Anthropic OAuth",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "oauth",
+        api: "anthropic-messages",
+        supportedModels: ["claude-sonnet-4-20250514"],
+      });
+
+      const updated = await service.updateProvider("test-id-0001", {
+        authMode: "token",
+        apiKey: "sk-ant-token-switch",
+      });
+
+      expect(updated.config.authMode).toBe("token");
+      expect(updated.config.oauthProvider).toBeUndefined();
+      expect(updated.config.validation?.status).toBe("ok");
+      expect(capturedHeaders["Authorization"]).toBe("Bearer sk-ant-token-switch");
+      expect(capturedHeaders["x-api-key"]).toBeUndefined();
     });
   });
 });

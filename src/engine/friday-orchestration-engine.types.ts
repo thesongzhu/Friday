@@ -12,6 +12,7 @@ import type { FridayAgentContextCostSummary, FridayAgentConversationContext, Fri
 import type { FridayAgentTaskProfileInput, FridayResolvedAgentTaskProfile } from "../agent/runtime/friday-agent-task-profile.js";
 import type { FridayAgentRunConstraints } from "../agent/model/friday-agent.types.js";
 import type { FridayConversationTurnKind } from "../sessions/model/friday-session.types.js";
+import type { FridayProviderTenantContext } from "#providers";
 
 // ─── Engine input ───
 
@@ -25,6 +26,8 @@ export interface FridayEngineRunInput {
   sessionKey?: string;
   /** Preferred LLM provider. */
   providerId?: string;
+  /** Tenant/user/channel context for provider credential routing. */
+  tenantContext?: FridayProviderTenantContext;
   /** Preferred model override. */
   model?: string;
   /** If the message is a reply, the referenced message id. */

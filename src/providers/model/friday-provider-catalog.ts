@@ -1,7 +1,10 @@
 import type {
   FridayProviderApi,
   FridayProviderAuthMode,
+  FridayProviderBackendKind,
+  FridayProviderDeploymentKind,
   FridayProviderKind,
+  FridayProviderRegionTag,
 } from "./friday-provider.types.js";
 import { FRIDAY_PROVIDER_KINDS } from "./friday-provider.types.js";
 
@@ -9,241 +12,107 @@ export interface FridayProviderPreset {
   kind: FridayProviderKind;
   api: FridayProviderApi;
   authMode: FridayProviderAuthMode;
+  backendKind: FridayProviderBackendKind;
+  deploymentKind: FridayProviderDeploymentKind;
+  regionTag: FridayProviderRegionTag;
   /**
    * Optional base URL default. Empty means caller must provide one.
    */
   baseUrl: string;
 }
 
+function hostedPreset(
+  kind: FridayProviderKind,
+  api: FridayProviderApi,
+  authMode: FridayProviderAuthMode,
+  baseUrl: string,
+  regionTag: FridayProviderRegionTag = "global",
+): FridayProviderPreset {
+  return {
+    kind,
+    api,
+    authMode,
+    backendKind: "http",
+    deploymentKind: "hosted",
+    regionTag,
+    baseUrl,
+  };
+}
+
+function selfHostedPreset(
+  kind: FridayProviderKind,
+  api: FridayProviderApi,
+  authMode: FridayProviderAuthMode,
+  baseUrl: string,
+  regionTag: FridayProviderRegionTag = "custom",
+): FridayProviderPreset {
+  return {
+    kind,
+    api,
+    authMode,
+    backendKind: "http",
+    deploymentKind: "self-hosted",
+    regionTag,
+    baseUrl,
+  };
+}
+
+function localPreset(
+  kind: FridayProviderKind,
+  api: FridayProviderApi,
+  authMode: FridayProviderAuthMode,
+  baseUrl: string,
+): FridayProviderPreset {
+  return {
+    kind,
+    api,
+    authMode,
+    backendKind: "http",
+    deploymentKind: "local",
+    regionTag: "local",
+    baseUrl,
+  };
+}
+
 export const FRIDAY_PROVIDER_PRESETS: Record<FridayProviderKind, FridayProviderPreset> = {
-  openai: {
-    kind: "openai",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://api.openai.com",
-  },
-  "openai-codex": {
-    kind: "openai-codex",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://api.openai.com",
-  },
-  anthropic: {
-    kind: "anthropic",
-    api: "anthropic-messages",
-    authMode: "api-key",
-    baseUrl: "https://api.anthropic.com",
-  },
-  google: {
-    kind: "google",
-    api: "google-generative-ai",
-    authMode: "api-key",
-    baseUrl: "https://generativelanguage.googleapis.com",
-  },
-  "google-vertex": {
-    kind: "google-vertex",
-    api: "google-generative-ai",
-    authMode: "api-key",
-    baseUrl: "",
-  },
-  "google-antigravity": {
-    kind: "google-antigravity",
-    api: "google-generative-ai",
-    authMode: "api-key",
-    baseUrl: "",
-  },
-  "google-gemini-cli": {
-    kind: "google-gemini-cli",
-    api: "google-generative-ai",
-    authMode: "api-key",
-    baseUrl: "",
-  },
-  openrouter: {
-    kind: "openrouter",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://openrouter.ai/api",
-  },
-  xai: {
-    kind: "xai",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://api.x.ai",
-  },
-  mistral: {
-    kind: "mistral",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://api.mistral.ai",
-  },
-  groq: {
-    kind: "groq",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://api.groq.com/openai",
-  },
-  cerebras: {
-    kind: "cerebras",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://api.cerebras.ai",
-  },
-  "github-copilot": {
-    kind: "github-copilot",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "",
-  },
-  huggingface: {
-    kind: "huggingface",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://router.huggingface.co",
-  },
-  opencode: {
-    kind: "opencode",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "",
-  },
-  "vercel-ai-gateway": {
-    kind: "vercel-ai-gateway",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://ai-gateway.vercel.sh",
-  },
-  kilocode: {
-    kind: "kilocode",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://api.kilo.ai/api/gateway",
-  },
-  moonshot: {
-    kind: "moonshot",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://api.moonshot.ai",
-  },
-  "kimi-coding": {
-    kind: "kimi-coding",
-    api: "anthropic-messages",
-    authMode: "api-key",
-    baseUrl: "https://api.moonshot.ai/anthropic",
-  },
-  qwen: {
-    kind: "qwen",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode",
-  },
-  "qwen-portal": {
-    kind: "qwen-portal",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "",
-  },
-  volcengine: {
-    kind: "volcengine",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "",
-  },
-  byteplus: {
-    kind: "byteplus",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "",
-  },
-  synthetic: {
-    kind: "synthetic",
-    api: "anthropic-messages",
-    authMode: "api-key",
-    baseUrl: "https://api.synthetic.new/anthropic",
-  },
-  minimax: {
-    kind: "minimax",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://api.minimaxi.com",
-  },
-  ollama: {
-    kind: "ollama",
-    api: "ollama",
-    authMode: "none",
-    baseUrl: "http://localhost:11434",
-  },
-  vllm: {
-    kind: "vllm",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "http://127.0.0.1:8000",
-  },
-  litellm: {
-    kind: "litellm",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "http://127.0.0.1:4000",
-  },
-  together: {
-    kind: "together",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://api.together.xyz",
-  },
-  nvidia: {
-    kind: "nvidia",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://integrate.api.nvidia.com",
-  },
-  qianfan: {
-    kind: "qianfan",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "",
-  },
-  venice: {
-    kind: "venice",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://api.venice.ai",
-  },
-  xiaomi: {
-    kind: "xiaomi",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "",
-  },
-  zai: {
-    kind: "zai",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://api.z.ai",
-  },
-  glm: {
-    kind: "glm",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-  },
-  bedrock: {
-    kind: "bedrock",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "",
-  },
-  "cloudflare-ai-gateway": {
-    kind: "cloudflare-ai-gateway",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "",
-  },
-  "openai-compatible": {
-    kind: "openai-compatible",
-    api: "openai-responses",
-    authMode: "bearer-token",
-    baseUrl: "",
-  },
+  openai: hostedPreset("openai", "openai-responses", "bearer-token", "https://api.openai.com"),
+  "openai-codex": hostedPreset("openai-codex", "openai-responses", "bearer-token", "https://api.openai.com"),
+  anthropic: hostedPreset("anthropic", "anthropic-messages", "api-key", "https://api.anthropic.com"),
+  google: hostedPreset("google", "google-generative-ai", "api-key", "https://generativelanguage.googleapis.com"),
+  "google-vertex": hostedPreset("google-vertex", "google-generative-ai", "api-key", ""),
+  "google-antigravity": hostedPreset("google-antigravity", "google-generative-ai", "api-key", ""),
+  "google-gemini-cli": hostedPreset("google-gemini-cli", "google-generative-ai", "api-key", ""),
+  openrouter: hostedPreset("openrouter", "openai-responses", "bearer-token", "https://openrouter.ai/api"),
+  xai: hostedPreset("xai", "openai-responses", "bearer-token", "https://api.x.ai", "us"),
+  mistral: hostedPreset("mistral", "openai-responses", "bearer-token", "https://api.mistral.ai"),
+  groq: hostedPreset("groq", "openai-responses", "bearer-token", "https://api.groq.com/openai", "us"),
+  cerebras: hostedPreset("cerebras", "openai-responses", "bearer-token", "https://api.cerebras.ai", "us"),
+  "github-copilot": hostedPreset("github-copilot", "openai-responses", "bearer-token", ""),
+  huggingface: hostedPreset("huggingface", "openai-responses", "bearer-token", "https://router.huggingface.co"),
+  opencode: hostedPreset("opencode", "openai-responses", "bearer-token", ""),
+  "vercel-ai-gateway": hostedPreset("vercel-ai-gateway", "openai-responses", "bearer-token", "https://ai-gateway.vercel.sh"),
+  kilocode: hostedPreset("kilocode", "openai-responses", "bearer-token", "https://api.kilo.ai/api/gateway"),
+  moonshot: hostedPreset("moonshot", "openai-responses", "bearer-token", "https://api.moonshot.ai", "china"),
+  "kimi-coding": hostedPreset("kimi-coding", "anthropic-messages", "api-key", "https://api.moonshot.ai/anthropic", "china"),
+  qwen: hostedPreset("qwen", "openai-responses", "bearer-token", "https://dashscope.aliyuncs.com/compatible-mode", "china"),
+  "qwen-portal": hostedPreset("qwen-portal", "openai-responses", "bearer-token", "", "china"),
+  volcengine: hostedPreset("volcengine", "openai-responses", "bearer-token", "", "china"),
+  byteplus: hostedPreset("byteplus", "openai-responses", "bearer-token", "", "china"),
+  synthetic: hostedPreset("synthetic", "anthropic-messages", "api-key", "https://api.synthetic.new/anthropic"),
+  minimax: hostedPreset("minimax", "openai-responses", "bearer-token", "https://api.minimaxi.com", "china"),
+  ollama: localPreset("ollama", "ollama", "none", "http://localhost:11434"),
+  vllm: selfHostedPreset("vllm", "openai-responses", "bearer-token", "http://127.0.0.1:8000", "local"),
+  litellm: selfHostedPreset("litellm", "openai-responses", "bearer-token", "http://127.0.0.1:4000", "local"),
+  together: hostedPreset("together", "openai-responses", "bearer-token", "https://api.together.xyz"),
+  nvidia: hostedPreset("nvidia", "openai-responses", "bearer-token", "https://integrate.api.nvidia.com"),
+  qianfan: hostedPreset("qianfan", "openai-responses", "bearer-token", "", "china"),
+  venice: hostedPreset("venice", "openai-responses", "bearer-token", "https://api.venice.ai"),
+  xiaomi: hostedPreset("xiaomi", "openai-responses", "bearer-token", "", "china"),
+  zai: hostedPreset("zai", "openai-responses", "bearer-token", "https://api.z.ai", "china"),
+  glm: hostedPreset("glm", "openai-responses", "bearer-token", "https://open.bigmodel.cn/api/paas/v4", "china"),
+  bedrock: hostedPreset("bedrock", "openai-responses", "bearer-token", ""),
+  "cloudflare-ai-gateway": hostedPreset("cloudflare-ai-gateway", "openai-responses", "bearer-token", ""),
+  "openai-compatible": selfHostedPreset("openai-compatible", "openai-responses", "bearer-token", "", "custom"),
 };
 
 export const FRIDAY_PROVIDER_KIND_SET = new Set<string>(FRIDAY_PROVIDER_KINDS);
@@ -259,19 +128,18 @@ export function getFridayProviderPreset(
   baseUrl: string;
   api: FridayProviderApi;
   authMode: FridayProviderAuthMode;
+  backendKind: FridayProviderBackendKind;
+  deploymentKind: FridayProviderDeploymentKind;
+  regionTag: FridayProviderRegionTag;
 } {
   const preset = FRIDAY_PROVIDER_PRESETS[kind];
-  if (kind === "ollama") {
-    return {
-      baseUrl: baseUrlOverride ?? preset.baseUrl,
-      api: preset.api,
-      authMode: preset.authMode,
-    };
-  }
   return {
     baseUrl: baseUrlOverride ?? preset.baseUrl,
     api: preset.api,
     authMode: preset.authMode,
+    backendKind: preset.backendKind,
+    deploymentKind: preset.deploymentKind,
+    regionTag: preset.regionTag,
   };
 }
 
@@ -308,4 +176,3 @@ export function detectFridayProviderKindFromApiKey(apiKey: string): {
   }
   return { kind: "openai-compatible", confidence: "medium" };
 }
-

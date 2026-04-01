@@ -14,6 +14,7 @@ import type {
   FridayTemplateHarnessStage,
   FridayTemplateHarnessSummary,
 } from "#harness";
+import type { FridayProviderTenantContext } from "#providers";
 
 // ─── Session status ───
 
@@ -33,6 +34,7 @@ export interface FridayWorkflowGenerationSession {
   sessionId: string;
   userId: string;
   channel: string;
+  tenantContext?: FridayProviderTenantContext;
   status: FridayWorkflowGeneratorSessionStatus;
   goal: string;
   requirementsSummary: string;
@@ -67,6 +69,7 @@ export interface FridayStartWorkflowGenerationRequest {
   requestedModel?: string;
   userId: string;
   channel: string;
+  tenantContext?: FridayProviderTenantContext;
 }
 
 export interface FridayWorkflowGenerationTurnRequest {
