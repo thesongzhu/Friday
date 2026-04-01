@@ -262,7 +262,7 @@ describe("createFridayAgentProviderTool", () => {
         deploymentKind: "consumer-cli",
         regionTag: "global",
         keySource: { kind: "none" },
-        supportedModels: ["codex"],
+        supportedModels: ["gpt-5.4"],
         cliConfig: { backendId: "codex-cli", binaryPath: "/usr/local/bin/codex" },
         validation: { status: "never" },
       },
@@ -279,8 +279,8 @@ describe("createFridayAgentProviderTool", () => {
       backendKind: "cli",
       cliBackendId: "codex-cli",
       cliBinaryPath: "/usr/local/bin/codex",
-      supportedModels: ["codex"],
-      defaultModel: "codex",
+      supportedModels: ["gpt-5.4"],
+      defaultModel: "gpt-5.4",
     }, signal());
     const parsed = JSON.parse(result.content) as Record<string, any>;
 
