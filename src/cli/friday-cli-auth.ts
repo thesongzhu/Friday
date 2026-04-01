@@ -48,8 +48,8 @@ const CLI_AUTH_TARGETS = {
     kind: "openai-codex" as FridayProviderKind,
     backendId: "codex-cli" as FridayProviderCliBackendId,
     name: "Codex CLI",
-    supportedModels: ["codex"],
-    defaultModel: "codex",
+    supportedModels: ["gpt-5.4"],
+    defaultModel: "gpt-5.4",
   },
   claude: {
     kind: "anthropic" as FridayProviderKind,
