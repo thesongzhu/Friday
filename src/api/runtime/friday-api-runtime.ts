@@ -97,6 +97,10 @@ import type {
   FridayAgentTaskProfileInput,
 } from "#agent";
 import { buildFridayEvidenceBlocks } from "#agent";
+import { createFridayOrchestrationEngine } from "#engine";
+import type { FridayEngineRunResult } from "#engine";
+import type { CreateFridayEngineTurnPreparerDeps } from "#engine";
+import type { CreateFridayEngineRunExecutorDeps } from "#engine";
 import { createFridayHealthRoutes } from "../http/routes/friday-health-routes.js";
 import { createFridayApiTokenRepository } from "../persistence/friday-api-token-repository.js";
 import type { FridayAuthPrincipal } from "../model/friday-api-common.types.js";
@@ -1642,7 +1646,93 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     return `agent-run:${input.runId}:${input.kind}:${status}:${gateState}:${String(answerCount)}`;
   };
 
-  const executeAgentRunWithSessionContext = deps.agentRuntime
+  // ── Orchestration Engine (Initiative A-WIRE) ──
+  // Alignment invariant: the engine's turn preparer loads loadSessionHistoryMessages(sessionKey)
+  // and injects historyMessages, into agentRuntime.executeRun() internally.
+  const apiDispatchDeps: FridayDeterministicDispatchDeps = {
+    capabilitySnapshotGetter: deps.capabilitySnapshotGetter,
+    taskStatusSnapshotGetter: deps.taskStatusSnapshotGetter,
+    getDaemonStatus: deps.daemonStatusGetter,
+    listMcpServers: deps.listMcpServers,
+    approvalService,
+    workflowExecutionService: workflowRuntime.execution,
+  };
+  const managedAsyncDeps: FridayManagedAsyncDispatchDeps = {
+    workflowExecutionService: workflowRuntime.execution,
+  };
+
+  // Narrow session deps to the engine's expected interface
+  const engineSessionDeps = {
+    getMessages: (key: string, limit?: number) => sessionService.getMessages(key, limit),
+    addMessage: (key: string, msg: Parameters<typeof sessionService.addMessage>[1]) =>
+      sessionService.addMessage(key, msg),
+    getConversationFocus: (key: string) => sessionService.getConversationFocus(key),
+    setConversationFocus: (key: string, state: Parameters<typeof sessionService.setConversationFocus>[1]) =>
+      sessionService.setConversationFocus(key, state).then(() => undefined),
+  };
+
+  const orchestrationEngine = deps.agentRuntime
+    ? createFridayOrchestrationEngine({
+      turnPreparerDeps: {
+        sessionDeps: engineSessionDeps,
+        historyLimit: SESSION_CONTEXT_HISTORY_LIMIT,
+        nowIso: deps.nowIso,
+        prepareTurn: prepareFridayConversationTurn as CreateFridayEngineTurnPreparerDeps["prepareTurn"],
+        buildEvidenceBlocks: buildFridayEvidenceBlocks as CreateFridayEngineTurnPreparerDeps["buildEvidenceBlocks"],
+        classifyExecution: classifyFridayExecution,
+        capabilitySnapshotGetter: deps.capabilitySnapshotGetter as CreateFridayEngineTurnPreparerDeps["capabilitySnapshotGetter"],
+        taskStatusSnapshotGetter: deps.taskStatusSnapshotGetter as CreateFridayEngineTurnPreparerDeps["taskStatusSnapshotGetter"],
+      },
+      runExecutorDeps: {
+        agentRuntime: deps.agentRuntime!,
+        sessionDeps: engineSessionDeps,
+        planningGate: agentPlanningGate,
+        nowIso: deps.nowIso,
+        dispatchDeterministic,
+        dispatchManagedAsync,
+        finalizeFocus: finalizeFridayConversationFocus as CreateFridayEngineRunExecutorDeps["finalizeFocus"],
+        deterministicDispatchDeps: apiDispatchDeps as unknown as Record<string, unknown>,
+        managedAsyncDispatchDeps: managedAsyncDeps as unknown as Record<string, unknown>,
+        resolveIdempotencyKey: resolveAgentMirrorIdempotencyKey,
+      },
+    })
+    : undefined;
+
+  /**
+   * Map `FridayEngineRunResult` back to the `FridayAgentRuntimeResult`-compatible
+   * shape that existing callers (agent routes, session routes) expect.
+   */
+  function engineResultToRuntimeResult(
+    engineResult: FridayEngineRunResult,
+  ): {
+    runId: string;
+    status: FridayAgentRunStatus;
+    response: string;
+    toolCallCount: number;
+    durationMs: number;
+    usageInput: number;
+    usageOutput: number;
+    images?: string[];
+    finalResponse?: string;
+    contextCostSummary?: FridayEngineRunResult["contextCostSummary"];
+    taskProfile?: FridayEngineRunResult["taskProfile"];
+  } {
+    return {
+      runId: engineResult.runId,
+      status: engineResult.status as FridayAgentRunStatus,
+      response: engineResult.response ?? "",
+      toolCallCount: engineResult.toolCallCount,
+      durationMs: engineResult.durationMs,
+      usageInput: engineResult.usageInput ?? 0,
+      usageOutput: engineResult.usageOutput ?? 0,
+      images: engineResult.images,
+      finalResponse: engineResult.response,
+      contextCostSummary: engineResult.contextCostSummary,
+      taskProfile: engineResult.taskProfile,
+    };
+  }
+
+  const executeAgentRunWithSessionContext = orchestrationEngine
     ? async (input: {
       task: string;
       runId: string;
@@ -1663,426 +1753,26 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       taskAlreadyInHistory?: boolean;
       idempotencyPrefix: "api-agent-run" | "api-session-run";
     }) => {
-      const task = input.task.trim();
-      const shouldPersistUserMessage = input.sessionKey && input.persistTaskMessage !== false;
-      let inboundIdempotencyKey: string | undefined;
-      let currentUserSequence: number | undefined;
-      let focusState = input.sessionKey
-        ? await sessionService.getConversationFocus(input.sessionKey).catch(() => null)
-        : null;
-
-      if (input.sessionKey) {
-        focusState = await sessionService.getConversationFocus(input.sessionKey).catch(() => focusState);
-      }
-
-      if (input.sessionKey && shouldPersistUserMessage) {
-        inboundIdempotencyKey = `${input.idempotencyPrefix}:${input.runId}:user`;
-        const inboundMessage = await sessionService.addMessage(input.sessionKey, {
-          role: "user",
-          content: task,
-          contentText: task,
-          idempotencyKey: inboundIdempotencyKey,
-          metadata: input.replyToMessageId
-            ? { replyToMessageId: input.replyToMessageId }
-            : undefined,
-        });
-        currentUserSequence = inboundMessage.sequence;
-      }
-
-      let historyMessages: FridayAgentMessage[] | undefined;
-      let taskPrompt = task;
-      let replyAnchorMessageId: string | undefined;
-      let replyAnchorSequence: number | undefined;
-      let conversationContext:
-        | {
-          turnKind?: "new_topic" | "follow_up" | "clarification" | "status_check" | "continue_active_task";
-          previousTopicSummary?: string;
-          currentTopicSummary?: string;
-          selectedBlocks?: FridayConversationBlock[];
-          selectionReasons?: string[];
-          replyToMessageId?: string;
-        }
-        | undefined;
-      let planningDecision: ReturnType<NonNullable<typeof agentPlanningGate>["handleTurn"]> | undefined;
-      if (input.sessionKey) {
-        const historyRecords = await loadSessionHistoryMessages(input.sessionKey);
-        if (input.taskAlreadyInHistory && !shouldPersistUserMessage) {
-          const lastMatchingUserMessage = [...historyRecords]
-            .reverse()
-            .find((message) => message.role === "user" && message.contentText.trim() === task);
-          currentUserSequence = lastMatchingUserMessage?.sequence;
-        }
-
-        let preparedTurn = prepareFridayConversationTurn({
-          task,
-          historyRecords: historyRecords.filter((message) =>
-            !inboundIdempotencyKey || message.idempotencyKey !== inboundIdempotencyKey),
-          focusState,
-          currentUserSequence,
-          replyToMessageId: input.replyToMessageId,
-        });
-
-        const evidenceBlocks = buildFridayEvidenceBlocks({
-          task,
-          turnKind: preparedTurn.turnKind,
-          focusState,
-          capabilitiesSnapshot: deps.capabilitySnapshotGetter
-            ? await Promise.resolve(deps.capabilitySnapshotGetter({
-                readOnly: input.constraints?.readOnly ?? false,
-              })).catch(() => undefined)
-            : undefined,
-          taskStatusSnapshot: deps.taskStatusSnapshotGetter
-            ? await Promise.resolve(deps.taskStatusSnapshotGetter({
-                runId: input.runId,
-                sessionKey: input.sessionKey,
-                readOnly: input.constraints?.readOnly ?? false,
-              })).catch(() => undefined)
-            : undefined,
-        });
-
-        if (evidenceBlocks.length > 0) {
-          preparedTurn = prepareFridayConversationTurn({
-            task,
-            historyRecords: historyRecords.filter((message) =>
-              !inboundIdempotencyKey || message.idempotencyKey !== inboundIdempotencyKey),
-            focusState,
-            currentUserSequence,
-            replyToMessageId: input.replyToMessageId,
-            evidenceBlocks,
-          });
-        }
-        if (
-          input.sessionKey
-          && preparedTurn.turnKind !== "status_check"
-          && preparedTurn.turnKind !== "clarification"
-        ) {
-          await sessionService.setConversationFocus(input.sessionKey, {
-            ...(focusState ?? { updatedAt: deps.nowIso() }),
-            activeRunId: input.runId,
-            updatedAt: deps.nowIso(),
-          }).catch(() => undefined);
-          focusState = await sessionService.getConversationFocus(input.sessionKey).catch(() => focusState);
-        }
-        historyMessages = preparedTurn.historyMessages;
-        taskPrompt = preparedTurn.taskPrompt;
-        conversationContext = {
-          turnKind: preparedTurn.turnKind,
-          previousTopicSummary: preparedTurn.previousTopicSummary,
-          currentTopicSummary: preparedTurn.currentTopicSummary,
-          selectedBlocks: preparedTurn.selectedBlocks,
-          selectionReasons: preparedTurn.selectionReasons,
-          replyToMessageId: input.replyToMessageId,
-        };
-        replyAnchorMessageId = preparedTurn.replyAnchorMessageId;
-        replyAnchorSequence = preparedTurn.replyAnchorSequence;
-      } else if (deps.capabilitySnapshotGetter) {
-        const evidenceBlocks = buildFridayEvidenceBlocks({
-          task,
-          turnKind: "new_topic",
-          capabilitiesSnapshot: await Promise.resolve(deps.capabilitySnapshotGetter({
-            readOnly: input.constraints?.readOnly ?? false,
-          })).catch(() => undefined),
-        });
-        if (evidenceBlocks.length > 0) {
-          conversationContext = {
-            turnKind: "new_topic",
-            currentTopicSummary: task,
-            selectedBlocks: evidenceBlocks.map((block) => ({
-              id: block.id,
-              source: block.source,
-              summary: block.summary,
-              score: block.score,
-              reason: block.reason,
-            })),
-            selectionReasons: evidenceBlocks.map((block) => `${block.source} → ${block.reason}`),
-          };
-        }
-      }
-
-      // ── Deterministic / managed control-plane dispatch (Rules 3/5) ──
-      const resolvedTurnKindForClassifier = conversationContext?.turnKind ?? "new_topic";
-      const executionClass = classifyFridayExecution({
-        task,
-        turnKind: resolvedTurnKindForClassifier,
-        focusState,
-      });
-      const apiDispatchDeps: FridayDeterministicDispatchDeps = {
-        capabilitySnapshotGetter: deps.capabilitySnapshotGetter,
-        taskStatusSnapshotGetter: deps.taskStatusSnapshotGetter,
-        getDaemonStatus: deps.daemonStatusGetter,
-        listMcpServers: deps.listMcpServers,
-        approvalService,
-        workflowExecutionService: workflowRuntime.execution,
-      };
-      const managedAsyncDeps: FridayManagedAsyncDispatchDeps = {
-        workflowExecutionService: workflowRuntime.execution,
-      };
-      const finalizeControlPlaneResult = async (responseText: string) => {
-        const result = {
-          runId: input.runId,
-          status: "completed" as const,
-          response: responseText,
-          toolCallCount: 0,
-          durationMs: 0,
-          usageInput: 0,
-          usageOutput: 0,
-        };
-        if (input.sessionKey) {
-          await sessionService.addMessage(input.sessionKey, {
-            role: "assistant",
-            content: result.response,
-            contentText: result.response,
-            idempotencyKey: resolveAgentMirrorIdempotencyKey({
-              runId: result.runId,
-              kind: "deterministic",
-            }),
-          }).catch(() => undefined);
-          await sessionService.setConversationFocus(
-            input.sessionKey,
-            finalizeFridayConversationFocus({
-              task,
-              responseText: result.response,
-              runId: result.runId,
-              turnKind: resolvedTurnKindForClassifier,
-              focusState,
-              currentUserSequence,
-              replyAnchorMessageId,
-              replyAnchorSequence,
-              pendingPlanRunId: resolvedTurnKindForClassifier === "status_check" ? undefined : null,
-              nowIso: deps.nowIso(),
-            }),
-          ).catch(() => undefined);
-        }
-        return result;
-      };
-
-      if (executionClass.category === "sync_immediate") {
-        const deterministicResult = await dispatchDeterministic(
-          {
-            classification: executionClass,
-            sessionKey: input.sessionKey,
-            runId: input.runId,
-            actorId: input.principalId,
-          },
-          apiDispatchDeps,
-        );
-        if (deterministicResult.handled && deterministicResult.response) {
-          return await finalizeControlPlaneResult(deterministicResult.response);
-        }
-      }
-      if (executionClass.category === "managed_async") {
-        const managedResult = await dispatchManagedAsync(
-          {
-            classification: executionClass,
-          },
-          managedAsyncDeps,
-        );
-        if (managedResult.handled && managedResult.response) {
-          return await finalizeControlPlaneResult(managedResult.response);
-        }
-      }
-      // ── End deterministic dispatch ──
-
-      if (input.sessionKey && agentPlanningGate) {
-          const resolvedTurnKind = conversationContext?.turnKind ?? "new_topic";
-          planningDecision = agentPlanningGate.handleTurn({
-            runId: input.runId,
-            task,
-            sessionKey: input.sessionKey,
-            providerId: input.providerId,
-            model: input.model,
-            constraints: input.constraints,
-            reviewRequired: input.reviewRequired,
-            conversationContext,
-            focusState,
-          });
-
-          if (planningDecision.action === "return") {
-            await sessionService.addMessage(input.sessionKey, {
-              role: "assistant",
-              content: planningDecision.result.response,
-              contentText: planningDecision.result.response,
-              idempotencyKey: resolveAgentMirrorIdempotencyKey({
-                runId: planningDecision.result.runId,
-                kind: "planning",
-                status: planningDecision.result.status,
-              }),
-            }).catch(() => undefined);
-            await sessionService.setConversationFocus(
-              input.sessionKey,
-              finalizeFridayConversationFocus({
-                task,
-                responseText: planningDecision.result.response,
-                runId: planningDecision.result.runId,
-                turnKind: resolvedTurnKind,
-                focusState,
-                currentUserSequence,
-                replyAnchorMessageId,
-                replyAnchorSequence,
-                pendingPlanRunId: planningDecision.pendingPlanRunId ?? null,
-                nowIso: deps.nowIso(),
-              }),
-            ).catch(() => undefined);
-            return planningDecision.result;
-          }
-
-          if (planningDecision.action === "approve") {
-            const approved = await agentPlanningGate.approvePlan({
-              runId: planningDecision.runId,
-              sessionKey: input.sessionKey,
-              providerId: input.providerId,
-              model: input.model,
-              timezone: input.timezone,
-              timeoutMs: input.timeoutMs,
-              signal: input.signal,
-              constraints: input.constraints,
-              principalId: input.principalId,
-              scopes: input.scopes,
-              executionContext: input.executionContext,
-              historyMessages,
-              conversationContext,
-            });
-            await sessionService.setConversationFocus(
-              input.sessionKey,
-              finalizeFridayConversationFocus({
-                task,
-                responseText: approved.response,
-                runId: approved.runId,
-                turnKind: resolvedTurnKind,
-                focusState: await sessionService.getConversationFocus(input.sessionKey).catch(() => focusState),
-                currentUserSequence,
-                replyAnchorMessageId,
-                replyAnchorSequence,
-                pendingPlanRunId:
-                  approved.status === "awaiting_clarification" || approved.status === "awaiting_plan_approval"
-                    ? approved.runId
-                    : null,
-                nowIso: deps.nowIso(),
-              }),
-            ).catch(() => undefined);
-            return approved;
-          }
-
-          if (planningDecision.action === "reject") {
-            const rejected = agentPlanningGate.rejectPlan({
-              runId: planningDecision.runId,
-            });
-            await sessionService.addMessage(input.sessionKey, {
-              role: "assistant",
-              content: rejected.response,
-              contentText: rejected.response,
-              idempotencyKey: resolveAgentMirrorIdempotencyKey({
-                runId: rejected.runId,
-                kind: "planning-reject",
-              }),
-            }).catch(() => undefined);
-            await sessionService.setConversationFocus(
-              input.sessionKey,
-              finalizeFridayConversationFocus({
-                task,
-                responseText: rejected.response,
-                runId: rejected.runId,
-                turnKind: resolvedTurnKind,
-                focusState,
-                currentUserSequence,
-                replyAnchorMessageId,
-                replyAnchorSequence,
-                pendingPlanRunId: null,
-                nowIso: deps.nowIso(),
-              }),
-            ).catch(() => undefined);
-            return rejected;
-          }
-      }
-
-      if (!input.sessionKey && agentPlanningGate) {
-        planningDecision = agentPlanningGate.handleTurn({
-          runId: input.runId,
-          task,
-          providerId: input.providerId,
-          model: input.model,
-          constraints: input.constraints,
-          reviewRequired: input.reviewRequired,
-          conversationContext,
-          focusState,
-        });
-        if (planningDecision.action === "return") {
-          return planningDecision.result;
-        }
-        if (planningDecision.action === "approve") {
-          return await agentPlanningGate.approvePlan({
-            runId: planningDecision.runId,
-            providerId: input.providerId,
-            model: input.model,
-            timezone: input.timezone,
-            timeoutMs: input.timeoutMs,
-            signal: input.signal,
-            constraints: input.constraints,
-            principalId: input.principalId,
-            scopes: input.scopes,
-            executionContext: input.executionContext,
-            historyMessages,
-            conversationContext,
-            taskProfile: input.taskProfile,
-          });
-        }
-        if (planningDecision.action === "reject") {
-          return agentPlanningGate.rejectPlan({
-            runId: planningDecision.runId,
-          });
-        }
-      }
-
-      const result = await deps.agentRuntime!.executeRun({
-        task,
-        taskPrompt,
-        conversationContext,
-        sessionKey: input.sessionKey,
+      const engineResult = await orchestrationEngine.executeRun({
+        task: input.task,
         runId: input.runId,
+        sessionKey: input.sessionKey,
         providerId: input.providerId,
         model: input.model,
+        replyToMessageId: input.replyToMessageId,
         timezone: input.timezone,
         timeoutMs: input.timeoutMs,
         signal: input.signal,
         reviewRequired: input.reviewRequired,
-        constraints: conversationContext?.turnKind === "status_check"
-          ? { ...(input.constraints ?? {}), readOnly: true }
-          : input.constraints,
+        constraints: input.constraints,
         principalId: input.principalId,
         scopes: input.scopes,
         executionContext: input.executionContext,
-        historyMessages,
         taskProfile: input.taskProfile,
+        taskAlreadyInHistory: input.taskAlreadyInHistory ?? (input.persistTaskMessage === false),
+        idempotencyPrefix: input.idempotencyPrefix,
       });
-
-      if (input.sessionKey && conversationContext?.turnKind) {
-        const latestFocusState = await sessionService
-          .getConversationFocus(input.sessionKey)
-          .catch(() => focusState);
-        const nextPendingPlanRunId = result.status === "awaiting_clarification"
-          || result.status === "awaiting_plan_approval"
-          ? result.runId
-          : conversationContext.turnKind === "status_check"
-            ? undefined
-            : null;
-        await sessionService.setConversationFocus(
-          input.sessionKey,
-          finalizeFridayConversationFocus({
-            task,
-            responseText: result.response,
-            runId: result.runId,
-            turnKind: conversationContext.turnKind,
-                focusState: latestFocusState,
-                currentUserSequence,
-                replyAnchorMessageId,
-                replyAnchorSequence,
-                pendingPlanRunId: nextPendingPlanRunId,
-                nowIso: deps.nowIso(),
-              }),
-        ).catch(() => undefined);
-      }
-
-      return result;
+      return engineResultToRuntimeResult(engineResult);
     }
     : undefined;
 

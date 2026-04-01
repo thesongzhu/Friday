@@ -195,6 +195,7 @@
     "#workflows": "./dist/workflows/index.js",
     "#plugins": "./dist/plugins/index.js",
     "#agent": "./dist/agent/index.js",
+    "#engine": "./dist/engine/index.js",
     "#browser": "./dist/browser/index.js",
     "#channels": "./dist/channels/index.js",
     "#cli": "./dist/cli/index.js",

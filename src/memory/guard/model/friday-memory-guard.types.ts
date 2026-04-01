@@ -21,6 +21,12 @@ export interface FridayMemoryGuardSubject {
   hubId: string;
   userId?: string;
   accessLevel: FridayMemoryGuardAccessLevel;
+  /**
+   * Channel kind for cross-channel namespace isolation (Initiative H.3).
+   * When set, memory namespaces include a channel-level segment:
+   * `tenant.{hubId}.channel.{channelKind}.user.{userId}.{namespace}`
+   */
+  channelKind?: string;
 }
 
 export interface FridayMemoryGuardContext {
