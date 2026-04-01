@@ -319,7 +319,7 @@ export function createFridayProviderRoutes(
     },
 
     {
-      operationId: "providers.authProfiles.list",
+      operationId: "providers.auth.profiles.list",
       method: "GET",
       path: "/v1/providers/:providerId/auth-profiles",
       auth: { public: false, anyOfScopes: ["hub.admin"] },
@@ -331,7 +331,7 @@ export function createFridayProviderRoutes(
     },
 
     {
-      operationId: "providers.authProfiles.activate",
+      operationId: "providers.auth.profiles.activate",
       method: "POST",
       path: "/v1/providers/:providerId/auth-profiles/:profileKey/activate",
       auth: { public: false, anyOfScopes: ["hub.admin"] },

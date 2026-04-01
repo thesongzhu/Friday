@@ -176,8 +176,8 @@ describe("FridayProviderRoutes", () => {
     expect(operationIds).toContain("providers.delete");
     expect(operationIds).toContain("providers.validate");
     expect(operationIds).toContain("providers.doctor");
-    expect(operationIds).toContain("providers.authProfiles.list");
-    expect(operationIds).toContain("providers.authProfiles.activate");
+    expect(operationIds).toContain("providers.auth.profiles.list");
+    expect(operationIds).toContain("providers.auth.profiles.activate");
     expect(operationIds).toContain("providers.routing.get");
     expect(operationIds).toContain("providers.routing.set");
   });
@@ -307,13 +307,13 @@ describe("FridayProviderRoutes", () => {
       });
     });
 
-    it("providers.authProfiles.list returns auth profiles", async () => {
+    it("providers.auth.profiles.list returns auth profiles", async () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({
         providerService: mockService,
       });
       const listRoute = routes.find(
-        (r) => r.operationId === "providers.authProfiles.list",
+        (r) => r.operationId === "providers.auth.profiles.list",
       )!;
 
       const result = await listRoute.handler(
@@ -324,13 +324,13 @@ describe("FridayProviderRoutes", () => {
       });
     });
 
-    it("providers.authProfiles.activate switches the active profile", async () => {
+    it("providers.auth.profiles.activate switches the active profile", async () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({
         providerService: mockService,
       });
       const activateRoute = routes.find(
-        (r) => r.operationId === "providers.authProfiles.activate",
+        (r) => r.operationId === "providers.auth.profiles.activate",
       )!;
 
       const result = await activateRoute.handler(
