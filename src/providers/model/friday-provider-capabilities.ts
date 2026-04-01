@@ -1,7 +1,7 @@
 import type {
   FridayProviderApi,
-  FridayProviderBackendKind,
   FridayProviderAuthMode,
+  FridayProviderBackendKind,
   FridayProviderCliBackendId,
   FridayProviderKind,
 } from "./friday-provider.types.js";
