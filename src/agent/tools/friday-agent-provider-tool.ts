@@ -623,7 +623,7 @@ export function createFridayAgentProviderTool(
       case "openai":
         return ["gpt-4o", "gpt-4o-mini", "gpt-4.1"];
       case "openai-codex":
-        return ["codex"];
+        return ["gpt-5.4"];
       case "anthropic":
         return ["claude-sonnet-4-20250514", "claude-opus-4-20250514"];
       case "google":

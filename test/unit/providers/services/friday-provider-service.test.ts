@@ -205,7 +205,7 @@ describe("FridayProviderService", () => {
           binaryPath: "/usr/local/bin/codex",
         },
         api: "openai-responses",
-        supportedModels: ["codex"],
+        supportedModels: ["gpt-5.4"],
         validateOnSave: false,
       });
 
