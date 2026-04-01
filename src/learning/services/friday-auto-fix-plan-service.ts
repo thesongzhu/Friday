@@ -2,6 +2,7 @@ import type {
   FridayDiagnosisRecordEntity,
   FridayErrorIncidentEntity,
   FridayLearnedLessonEntity,
+  JsonObject,
 } from "../model/friday-learning.types.js";
 import type { FridayAutoFixPlan, FridayAutoFixStepKind } from "../model/friday-auto-fix.types.js";
 
@@ -33,6 +34,17 @@ export function createFridayAutoFixPlanService(
     buildPlans(input) {
       const { incident, diagnosis, matchedLessons, recurrenceCount } = input;
       const plans: FridayAutoFixPlan[] = [];
+      const basePayload: JsonObject = {
+        incidentId: incident.incidentId,
+        category: incident.category,
+        signature: incident.signature,
+        ...(typeof incident.runId === "string" ? { runId: incident.runId } : {}),
+        ...(typeof incident.nodeId === "string" ? { nodeId: incident.nodeId } : {}),
+        ...(typeof incident.context.providerId === "string" ? { providerId: incident.context.providerId } : {}),
+        ...(typeof incident.context.actualProviderId === "string" ? { actualProviderId: incident.context.actualProviderId } : {}),
+        ...(typeof incident.context.model === "string" ? { model: incident.context.model } : {}),
+        ...(typeof incident.context.actualModel === "string" ? { actualModel: incident.context.actualModel } : {}),
+      };
 
       if (matchedLessons.length === 0) {
         // No lessons: generate a single retry-based plan
@@ -44,10 +56,9 @@ export function createFridayAutoFixPlanService(
             {
               stepId: deps.idGenerator(),
               kind: stepKind,
-              target: incident.nodeId ?? incident.category,
+              target: incident.runId ?? incident.nodeId ?? incident.category,
               payload: {
-                category: incident.category,
-                signature: incident.signature,
+                ...basePayload,
               },
               verify: {
                 method: "error_absent",
@@ -68,17 +79,16 @@ export function createFridayAutoFixPlanService(
           plan.rollbackPlan = {
             summary: `Revert ${stepKind} for ${incident.category}`,
             steps: [
-              {
-                stepId: deps.idGenerator(),
-                kind: stepKind,
-                target: incident.nodeId ?? incident.category,
-                payload: {
-                  revert: true,
-                  category: incident.category,
-                  signature: incident.signature,
+                {
+                  stepId: deps.idGenerator(),
+                  kind: stepKind,
+                  target: incident.runId ?? incident.nodeId ?? incident.category,
+                  payload: {
+                    revert: true,
+                    ...basePayload,
+                  },
                 },
-              },
-            ],
+              ],
           };
         }
 
@@ -95,8 +105,9 @@ export function createFridayAutoFixPlanService(
             {
               stepId: deps.idGenerator(),
               kind: stepKind,
-              target: incident.nodeId ?? incident.category,
+              target: incident.runId ?? incident.nodeId ?? incident.category,
               payload: {
+                ...basePayload,
                 lessonId: lesson.id,
                 fix: lesson.fix,
                 ...(lesson.mitigation ?? {}),
@@ -120,15 +131,16 @@ export function createFridayAutoFixPlanService(
           plan.rollbackPlan = {
             summary: `Revert config change for ${lesson.title}`,
             steps: [
-              {
-                stepId: deps.idGenerator(),
-                kind: stepKind,
-                target: incident.nodeId ?? incident.category,
-                payload: {
-                  revert: true,
-                  lessonId: lesson.id,
+                {
+                  stepId: deps.idGenerator(),
+                  kind: stepKind,
+                  target: incident.runId ?? incident.nodeId ?? incident.category,
+                  payload: {
+                    revert: true,
+                    ...basePayload,
+                    lessonId: lesson.id,
+                  },
                 },
-              },
             ],
           };
         }

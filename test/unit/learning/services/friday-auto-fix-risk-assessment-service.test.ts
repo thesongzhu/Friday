@@ -383,4 +383,46 @@ describe("FridayAutoFixRiskAssessmentService", () => {
       expect(result.reasons.some((r) => r.includes("spike"))).toBe(true);
     });
   });
+
+  describe("adaptive policy budget gating", () => {
+    it("disables auto-apply when repeated rejections place the fingerprint into cooldown", () => {
+      const incidentRepo = createFridayErrorIncidentRepository();
+      const plan = makePlan("retry_node");
+      for (let i = 1; i <= 3; i++) {
+        incidentRepo.insert(db.writer, {
+          incidentId: `inc-rej-${i}`,
+          userId: "test-user",
+          ts: NOW,
+          category: "tool",
+          severity: "medium",
+          signature: "sig-abc",
+          context: {},
+          autoFixEligible: true,
+          status: "open",
+          createdAt: NOW,
+          updatedAt: NOW,
+        });
+        actionRepo.insert(db.writer, {
+          actionId: `action-rej-${i}`,
+          incidentId: `inc-rej-${i}`,
+          userId: "test-user",
+          riskTier: 0,
+          plan,
+          status: "planned",
+          outcome: null,
+          createdAt: NOW,
+          updatedAt: NOW,
+        });
+        actionRepo.markRejected(db.writer, `action-rej-${i}`, NOW);
+      }
+
+      const result = service.assess({
+        incident: baseIncident,
+        plan,
+        nowIso: NOW,
+      });
+      expect(result.autoApplyAllowed).toBe(false);
+      expect(result.reasons.some((reason) => reason.includes("cooldown"))).toBe(true);
+    });
+  });
 });

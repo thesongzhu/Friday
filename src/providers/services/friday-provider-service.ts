@@ -11,6 +11,12 @@ import type {
   FridayProviderHealthStatus,
   FridayProviderKeySource,
   FridayProviderProfile,
+  FridayProviderRegionTag,
+  FridayProviderRoutingDecisionTrace,
+  FridayProviderRoutingExplainCandidate,
+  FridayProviderRoutingExplainReport,
+  FridayProviderRoutingReasonCode,
+  FridayProviderRoutingSelection,
   FridayProviderValidationState,
   FridayResolvedProviderRoute,
 } from "../model/friday-provider.types.js";
@@ -27,6 +33,7 @@ import type {
 } from "./friday-provider-service.types.js";
 
 import { safeJsonParse } from "#utilities";
+import { createFridayPreferenceFactRepository } from "../../learning/persistence/friday-preference-fact-repository.js";
 import { createFridayAuthProfileRepository } from "../persistence/friday-auth-profile-repository.js";
 import { createFridayProviderProfileRepository } from "../persistence/friday-provider-profile-repository.js";
 import { createFridaySecretRepository } from "../persistence/friday-secret-repository.js";
@@ -111,6 +118,60 @@ function explainPinnedProviderNoCandidates(
   return `Provider "${provider.id}" does not have any eligible models for routing.`;
 }
 
+interface FridayHistoricalRunRouteRow {
+  status: string;
+  actual_execution_json: string | null;
+  task_profile_json: string | null;
+}
+
+interface FridayHistoricalRouteStats {
+  successCount: number;
+  failureCount: number;
+  sampleCount: number;
+}
+
+interface FridayPreparedRoutingCandidate {
+  candidate: FridayResolvedProviderRoute;
+  originalRank: number;
+  finalRank: number;
+  eligible: boolean;
+  ineligibilityReasons: string[];
+  pinned: boolean;
+  routePenalty: number;
+  history?: FridayHistoricalRouteStats;
+  baseRankScore: number;
+  historyScore: number;
+  patternScore: number;
+  lessonScore: number;
+  routePenaltyScore: number;
+  pinBonus: number;
+  finalScore: number;
+  matchedLessonIds: string[];
+  matchedPatternIds: string[];
+}
+
+interface FridayRoutePreferenceState {
+  penalties: Map<string, number>;
+  pinnedRoute?:
+    | {
+        providerId: string;
+        model: string;
+        backendKind: FridayProviderBackendKind;
+      }
+    | undefined;
+}
+
+function normalizeRoutePenaltySegment(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+}
+
+const ROUTE_HISTORY_SAMPLE_LIMIT = 250;
+
 // ─── Factory ───
 
 export function createFridayProviderService(
@@ -122,6 +183,7 @@ export function createFridayProviderService(
   const validator = createFridayProviderValidator();
   const fallback = createFridayProviderFallback();
   const usageRepo = createFridayProviderUsageRepository();
+  const preferenceFactRepo = createFridayPreferenceFactRepository();
   const pricingCatalog = createFridayProviderPricingCatalog();
   const costRouter = createFridayProviderCostRouter({ pricingCatalog });
   const budgetService = createFridayProviderBudgetService({
@@ -262,6 +324,451 @@ export function createFridayProviderService(
         return decryptSecret(envelope, masterKey);
       }
     }
+  }
+
+  function buildRouteHistoryKey(
+    providerId: string,
+    model: string,
+    backendKind: FridayProviderBackendKind,
+  ): string {
+    return `${providerId}::${model}::${backendKind}`;
+  }
+
+  function buildRoutePenaltyKey(input: {
+    taskProfileId?: string;
+    providerId: string;
+    model: string;
+    backendKind: FridayProviderBackendKind;
+  }): string {
+    return [
+      "route_penalty",
+      normalizeRoutePenaltySegment(input.taskProfileId ?? "global"),
+      normalizeRoutePenaltySegment(input.providerId),
+      normalizeRoutePenaltySegment(input.backendKind),
+      normalizeRoutePenaltySegment(input.model),
+    ].join(":");
+  }
+
+  function buildRoutePinKey(taskProfileId?: string): string {
+    return [
+      "route_pin",
+      normalizeRoutePenaltySegment(taskProfileId ?? "global"),
+    ].join(":");
+  }
+
+  function loadHistoricalRouteStats(input: {
+    candidates: FridayResolvedProviderRoute[];
+    taskProfileId?: string;
+  }): Map<string, FridayHistoricalRouteStats> {
+    if (!input.taskProfileId) {
+      return new Map();
+    }
+
+    const candidateKeys = new Set(
+      input.candidates.map((candidate) =>
+        buildRouteHistoryKey(
+          candidate.provider.id,
+          candidate.model,
+          candidate.provider.config.backendKind ?? "http",
+        )
+      ),
+    );
+
+    const rows = deps.db.withReadConnection((db) =>
+      db.prepare(
+        `SELECT status, actual_execution_json, task_profile_json
+         FROM friday_agent_runs
+         WHERE status IN ('completed', 'failed')
+           AND actual_execution_json IS NOT NULL
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      ).all(ROUTE_HISTORY_SAMPLE_LIMIT) as FridayHistoricalRunRouteRow[],
+    );
+
+    const stats = new Map<string, FridayHistoricalRouteStats>();
+
+    for (const row of rows) {
+      const taskProfile = safeJsonParse<Record<string, unknown>>(row.task_profile_json);
+      if (taskProfile?.id !== input.taskProfileId) {
+        continue;
+      }
+
+      const actualExecution = safeJsonParse<Record<string, unknown>>(row.actual_execution_json);
+      const actualProviderId = typeof actualExecution?.actualProviderId === "string"
+        ? actualExecution.actualProviderId
+        : undefined;
+      const actualModel = typeof actualExecution?.actualModel === "string"
+        ? actualExecution.actualModel
+        : undefined;
+      const backendKind = actualExecution?.backendKind === "cli"
+        || actualExecution?.backendKind === "sdk"
+        || actualExecution?.backendKind === "http"
+        ? actualExecution.backendKind
+        : "http";
+
+      if (!actualProviderId || !actualModel) {
+        continue;
+      }
+
+      const key = buildRouteHistoryKey(actualProviderId, actualModel, backendKind);
+      if (!candidateKeys.has(key)) {
+        continue;
+      }
+
+      const current = stats.get(key) ?? {
+        successCount: 0,
+        failureCount: 0,
+        sampleCount: 0,
+      };
+      current.sampleCount += 1;
+      if (row.status === "completed") {
+        current.successCount += 1;
+      } else if (row.status === "failed") {
+        current.failureCount += 1;
+      }
+      stats.set(key, current);
+    }
+
+    return stats;
+  }
+
+  function loadRoutePreferenceState(input: {
+    candidates: FridayResolvedProviderRoute[];
+    taskProfileId?: string;
+    userId?: string;
+  }): FridayRoutePreferenceState {
+    const penalties = new Map<string, number>();
+    let pinnedRoute: FridayRoutePreferenceState["pinnedRoute"];
+
+    if (!input.userId) {
+      return { penalties, pinnedRoute };
+    }
+
+    const preferenceRows = deps.db.withReadConnection((db) =>
+      db.prepare(
+        `SELECT key, confidence, value_json
+         FROM preference_facts
+         WHERE user_id = ?
+           AND (key LIKE 'route_penalty:%' OR key LIKE 'route_pin:%')
+         ORDER BY updated_at DESC
+         LIMIT 200`,
+      ).all(input.userId) as Array<{ key: string; confidence: number; value_json: string }>,
+    );
+
+    const directPin = preferenceRows.find((row) => row.key === buildRoutePinKey(input.taskProfileId));
+    const globalPin = preferenceRows.find((row) => row.key === buildRoutePinKey());
+    const resolvedPin = directPin ?? globalPin;
+    if (resolvedPin) {
+      const pinValue = safeJsonParse<Record<string, unknown>>(resolvedPin.value_json);
+      if (
+        typeof pinValue?.providerId === "string"
+        && typeof pinValue?.model === "string"
+        && (pinValue.backendKind === "http" || pinValue.backendKind === "cli" || pinValue.backendKind === "sdk")
+      ) {
+        pinnedRoute = {
+          providerId: pinValue.providerId,
+          model: pinValue.model,
+          backendKind: pinValue.backendKind,
+        };
+      }
+    }
+
+    for (const candidate of input.candidates) {
+      const backendKind = candidate.provider.config.backendKind ?? "http";
+      const directKey = buildRoutePenaltyKey({
+        taskProfileId: input.taskProfileId,
+        providerId: candidate.provider.id,
+        model: candidate.model,
+        backendKind,
+      });
+      const globalKey = buildRoutePenaltyKey({
+        providerId: candidate.provider.id,
+        model: candidate.model,
+        backendKind,
+      });
+      const directPenalty = preferenceRows.find((row) => row.key === directKey)?.confidence ?? 0;
+      const globalPenalty = preferenceRows.find((row) => row.key === globalKey)?.confidence ?? 0;
+      const penalty = Math.max(directPenalty, globalPenalty * 0.75);
+      if (penalty > 0) {
+        penalties.set(buildRouteHistoryKey(candidate.provider.id, candidate.model, backendKind), penalty);
+      }
+    }
+
+    return { penalties, pinnedRoute };
+  }
+
+  function getCandidateRegionTag(candidate: FridayResolvedProviderRoute): FridayProviderRegionTag {
+    return candidate.provider.config.regionTag ?? "global";
+  }
+
+  function isLocalCandidate(candidate: FridayResolvedProviderRoute): boolean {
+    const deploymentKind = candidate.provider.config.deploymentKind;
+    return deploymentKind === "local" || deploymentKind === "self-hosted" || candidate.provider.kind === "ollama";
+  }
+
+  function isSelectionMatch(
+    candidate: FridayResolvedProviderRoute,
+    selection?: FridayProviderRoutingSelection,
+  ): boolean {
+    if (!selection) {
+      return false;
+    }
+    return (
+      candidate.provider.id === selection.providerId
+      && candidate.provider.kind === selection.providerKind
+      && candidate.model === selection.model
+      && (candidate.provider.config.backendKind ?? "http") === selection.backendKind
+    );
+  }
+
+  function toSelection(candidate?: FridayResolvedProviderRoute): FridayProviderRoutingSelection | undefined {
+    if (!candidate) {
+      return undefined;
+    }
+    return {
+      providerId: candidate.provider.id,
+      providerKind: candidate.provider.kind,
+      model: candidate.model,
+      backendKind: candidate.provider.config.backendKind ?? "http",
+    };
+  }
+
+  function buildRouteDecisionTrace(input: {
+    candidates: FridayResolvedProviderRoute[];
+    requestedProviderId?: string;
+    requestedModel?: string;
+    userId?: string;
+    taskProfileId?: string;
+    routingContext?: {
+      requiresNativeTools?: boolean;
+      preferredRegion?: FridayProviderRegionTag;
+      allowedRegions?: FridayProviderRegionTag[];
+      localOnly?: boolean;
+      noEgress?: boolean;
+      consumerPlanAllowed?: boolean;
+      requiresOfficialSDK?: boolean;
+    };
+    budgetLocalOnly?: boolean;
+  }): {
+    orderedCandidates: FridayResolvedProviderRoute[];
+    explain: FridayProviderRoutingExplainCandidate[];
+    selected?: FridayProviderRoutingExplainCandidate;
+    trace: FridayProviderRoutingDecisionTrace;
+  } {
+    const historyStats = loadHistoricalRouteStats({
+      candidates: input.candidates,
+      taskProfileId: input.taskProfileId,
+    });
+    const preferenceState = loadRoutePreferenceState({
+      candidates: input.candidates,
+      taskProfileId: input.taskProfileId,
+      userId: input.userId,
+    });
+
+    const initialStates: FridayPreparedRoutingCandidate[] = input.candidates.map((candidate, index) => {
+      const backendKind = candidate.provider.config.backendKind ?? "http";
+      const key = buildRouteHistoryKey(candidate.provider.id, candidate.model, backendKind);
+      const history = historyStats.get(key);
+      const routePenalty = preferenceState.penalties.get(key) ?? 0;
+      const pinned = Boolean(
+        preferenceState.pinnedRoute
+        && preferenceState.pinnedRoute.providerId === candidate.provider.id
+        && preferenceState.pinnedRoute.model === candidate.model
+        && preferenceState.pinnedRoute.backendKind === backendKind
+      );
+      const ineligibilityReasons: string[] = [];
+      if (input.budgetLocalOnly && !isLocalCandidate(candidate)) {
+        ineligibilityReasons.push("budget_local_only");
+      }
+      if (input.routingContext?.requiresNativeTools && backendKind === "cli") {
+        ineligibilityReasons.push("requires_native_tools");
+      }
+      if (input.routingContext?.localOnly && !isLocalCandidate(candidate)) {
+        ineligibilityReasons.push("local_only_required");
+      }
+      if (input.routingContext?.noEgress && !isLocalCandidate(candidate)) {
+        ineligibilityReasons.push("no_egress_required");
+      }
+      if (
+        Array.isArray(input.routingContext?.allowedRegions)
+        && input.routingContext.allowedRegions.length > 0
+        && !input.routingContext.allowedRegions.includes(getCandidateRegionTag(candidate))
+      ) {
+        ineligibilityReasons.push("region_not_allowed");
+      }
+      if (input.routingContext?.requiresOfficialSDK && backendKind !== "sdk") {
+        ineligibilityReasons.push("official_sdk_required");
+      }
+      if (input.routingContext?.consumerPlanAllowed === false && backendKind === "cli") {
+        ineligibilityReasons.push("consumer_plan_not_allowed");
+      }
+
+      const baseRankScore = input.candidates.length - index;
+      const successRate = (history?.successCount ?? 0) / Math.max(history?.sampleCount ?? 1, 1);
+      const failureRate = (history?.failureCount ?? 0) / Math.max(history?.sampleCount ?? 1, 1);
+      const historyScore = history
+        ? successRate * 4 - failureRate * 2 + Math.min(history.sampleCount, 5) * 0.25
+        : 0;
+      const routePenaltyScore = routePenalty > 0 ? routePenalty * -1.5 : 0;
+      const pinBonus = pinned ? 50 : 0;
+
+      return {
+        candidate,
+        originalRank: index + 1,
+        finalRank: index + 1,
+        eligible: ineligibilityReasons.length === 0,
+        ineligibilityReasons,
+        pinned,
+        routePenalty,
+        history,
+        baseRankScore,
+        historyScore,
+        patternScore: 0,
+        lessonScore: 0,
+        routePenaltyScore,
+        pinBonus,
+        finalScore: baseRankScore + historyScore + routePenaltyScore + pinBonus,
+        matchedLessonIds: [],
+        matchedPatternIds: [],
+      };
+    });
+
+    const preferredRegion = input.routingContext?.preferredRegion;
+    if (preferredRegion) {
+      const hasPreferredEligible = initialStates.some((state) =>
+        state.eligible && getCandidateRegionTag(state.candidate) === preferredRegion,
+      );
+      if (hasPreferredEligible) {
+        for (const state of initialStates) {
+          if (state.eligible && getCandidateRegionTag(state.candidate) !== preferredRegion) {
+            state.eligible = false;
+            state.ineligibilityReasons.push("preferred_region_mismatch");
+          }
+        }
+      }
+    }
+
+    const eligibleBeforeLearning = initialStates.filter((state) => state.eligible);
+    const selectedBeforeLearning = toSelection(eligibleBeforeLearning[0]?.candidate);
+    const sortedEligible = [...eligibleBeforeLearning].sort((left, right) => {
+      if (right.finalScore !== left.finalScore) {
+        return right.finalScore - left.finalScore;
+      }
+      return left.originalRank - right.originalRank;
+    });
+    const selectedAfterLearning = toSelection(sortedEligible[0]?.candidate);
+
+    const eligibleOrderChanged =
+      sortedEligible.map((state) => state.originalRank).join(",")
+      !== eligibleBeforeLearning.map((state) => state.originalRank).join(",");
+    const selectedAdjusted = JSON.stringify(selectedBeforeLearning) !== JSON.stringify(selectedAfterLearning);
+    const learningSignalsPresent = historyStats.size > 0 || preferenceState.penalties.size > 0 || preferenceState.pinnedRoute != null;
+    const learningAdjusted = eligibleOrderChanged || selectedAdjusted;
+
+    const finalStates = [
+      ...sortedEligible,
+      ...initialStates.filter((state) => !state.eligible),
+    ].map((state, index) => ({
+      ...state,
+      finalRank: index + 1,
+    }));
+
+    let reasonCode: FridayProviderRoutingReasonCode = "configured";
+    if (input.budgetLocalOnly) {
+      reasonCode = "budget_local_only";
+    } else if (preferenceState.pinnedRoute) {
+      reasonCode = "operator_override";
+    } else if (preferenceState.penalties.size > 0) {
+      reasonCode = "operator_penalty";
+    } else if (historyStats.size > 0) {
+      reasonCode = "historical_bias";
+    } else if (input.requestedProviderId) {
+      reasonCode = "requested_provider";
+    } else if (input.requestedModel) {
+      reasonCode = "requested_model";
+    } else if (initialStates.some((state) => state.ineligibilityReasons.length > 0)) {
+      reasonCode = "backend_capability_gating";
+    }
+
+    const reasonText = (() => {
+      switch (reasonCode) {
+        case "budget_local_only":
+          return "Budget policy restricted routing to local/self-hosted providers.";
+        case "operator_override":
+          return `Operator pinned ${selectedAfterLearning?.providerId ?? "the selected route"} for task profile ${input.taskProfileId ?? "global"}.`;
+        case "operator_penalty":
+          return "Operator route penalties influenced candidate scoring.";
+        case "historical_bias":
+          return "Historical route outcomes influenced candidate scoring.";
+        case "requested_provider":
+          return "Routing was constrained to the explicitly requested provider.";
+        case "requested_model":
+          return "Routing was constrained to providers that support the requested model.";
+        case "backend_capability_gating":
+          return "Capability and policy gating excluded one or more candidates from routing.";
+        default:
+          return "Routing followed the configured route order.";
+      }
+    })();
+
+    const explain = finalStates.map((state) => {
+      const successRate = state.history
+        ? state.history.successCount / Math.max(state.history.sampleCount, 1)
+        : undefined;
+      const failureRate = state.history
+        ? state.history.failureCount / Math.max(state.history.sampleCount, 1)
+        : undefined;
+      return {
+        providerId: state.candidate.provider.id,
+        providerKind: state.candidate.provider.kind,
+        model: state.candidate.model,
+        backendKind: state.candidate.provider.config.backendKind ?? "http",
+        originalRank: state.originalRank,
+        finalRank: state.finalRank,
+        selected: isSelectionMatch(state.candidate, selectedAfterLearning),
+        eligible: state.eligible,
+        ineligibilityReasons: [...state.ineligibilityReasons],
+        pinned: state.pinned,
+        ...(state.routePenalty > 0 ? { routePenalty: state.routePenalty } : {}),
+        ...(successRate !== undefined ? { historicalSuccessRate: successRate } : {}),
+        ...(failureRate !== undefined ? { historicalFailureRate: failureRate } : {}),
+        ...(state.history ? { sampleCount: state.history.sampleCount } : {}),
+        baseRankScore: state.baseRankScore,
+        historyScore: state.historyScore,
+        patternScore: state.patternScore,
+        lessonScore: state.lessonScore,
+        routePenaltyScore: state.routePenaltyScore,
+        pinBonus: state.pinBonus,
+        finalScore: state.finalScore,
+        matchedLessonIds: [...state.matchedLessonIds],
+        matchedPatternIds: [...state.matchedPatternIds],
+      } satisfies FridayProviderRoutingExplainCandidate;
+    });
+
+    const selected = explain.find((candidate) => candidate.selected);
+    const orderedCandidates = sortedEligible.map((state) => state.candidate);
+
+    return {
+      orderedCandidates,
+      explain,
+      selected,
+      trace: {
+        ...(input.taskProfileId ? { taskProfileId: input.taskProfileId } : {}),
+        requiresNativeTools: input.routingContext?.requiresNativeTools === true,
+        learningAdjusted,
+        learningSignalsPresent,
+        orderingAdjusted: eligibleOrderChanged,
+        selectedAdjusted,
+        reasonCode,
+        reasonText,
+        historyWindow: {
+          sampleLimit: ROUTE_HISTORY_SAMPLE_LIMIT,
+        },
+        ...(selectedBeforeLearning ? { selectedBeforeLearning } : {}),
+        ...(selectedAfterLearning ? { selectedAfterLearning } : {}),
+        candidateScores: explain,
+      },
+    };
   }
 
   function buildDefaultAuthProfile(
@@ -700,6 +1207,125 @@ export function createFridayProviderService(
         });
       }
       return await buildDoctorReport(profile);
+    },
+
+    async explainRouting(input): Promise<FridayProviderRoutingExplainReport> {
+      const routing = loadRoutingConfig();
+      if (!routing || !routing.defaultProviderId) {
+        throw new FridayDomainError(
+          "PROVIDER_NO_ROUTING",
+          "No model routing configured. Register a provider and set routing before asking for a route explanation.",
+          { httpStatus: 400 },
+        );
+      }
+      const providers = deps.db.withReadConnection((db) => profileRepo.list(db));
+      const pinnedProvider = input.requestedProviderId
+        ? assertRequestedProviderAvailable(providers, input.requestedProviderId)
+        : undefined;
+      let candidates = fallback.resolveCandidates({
+        routing: pinnedProvider
+          ? {
+              defaultProviderId: pinnedProvider.id,
+              fallbackProviderIds: [],
+            }
+          : routing,
+        providers,
+        requestedModel: input.requestedModel,
+      });
+      const requiresNativeTools = input.routingContext?.requiresNativeTools === true;
+      if (candidates.length === 0) {
+        throw new FridayDomainError(
+          "PROVIDER_NO_CANDIDATES",
+          pinnedProvider
+            ? explainPinnedProviderNoCandidates(pinnedProvider, input.requestedModel)
+            : explainNoCandidates(routing, providers),
+          { httpStatus: 400 },
+        );
+      }
+
+      const budget = await budgetService.getBudgetStatus();
+      const estimatedInputTokens = input.routingContext?.estimatedInputTokens ?? 0;
+      const complexity = input.routingContext?.complexity ?? "medium";
+      const routingDecision = costRouter.planRoutes({
+        candidates,
+        estimatedInputTokens,
+        complexity,
+        budget,
+      });
+      const enforcePin = routing.enforceRequestedModel === true && !!input.requestedModel;
+      const baseCandidates = (!input.requestedModel && !enforcePin && !pinnedProvider)
+        ? routingDecision.orderedCandidates
+        : candidates;
+      const traceBuilder = buildRouteDecisionTrace({
+        candidates: baseCandidates,
+        requestedProviderId: input.requestedProviderId,
+        requestedModel: input.requestedModel,
+        userId: input.tenantContext?.userId,
+        taskProfileId: input.routingContext?.taskProfileId,
+        routingContext: input.routingContext,
+        budgetLocalOnly: routingDecision.strategy === "budget_local_only" && !enforcePin && !pinnedProvider,
+      });
+      if (traceBuilder.orderedCandidates.length === 0) {
+        throw new FridayDomainError(
+          "PROVIDER_NO_CANDIDATES",
+          requiresNativeTools
+            ? "No candidates remain because this task requires Friday native tools and the available CLI backends are text-only or policy-gated."
+            : pinnedProvider
+              ? explainPinnedProviderNoCandidates(pinnedProvider, input.requestedModel)
+              : explainNoCandidates(routing, providers),
+          { httpStatus: 400 },
+        );
+      }
+
+      return {
+        ...(input.requestedProviderId ? { requestedProviderId: input.requestedProviderId } : {}),
+        ...(input.requestedModel ? { requestedModel: input.requestedModel } : {}),
+        ...(input.routingContext?.taskProfileId ? { taskProfileId: input.routingContext.taskProfileId } : {}),
+        requiresNativeTools,
+        ...(traceBuilder.trace.selectedBeforeLearning ? { selectedBeforeLearning: traceBuilder.trace.selectedBeforeLearning } : {}),
+        ...(traceBuilder.trace.selectedAfterLearning ? { selectedAfterLearning: traceBuilder.trace.selectedAfterLearning } : {}),
+        ...(traceBuilder.selected ? { selected: traceBuilder.selected } : {}),
+        candidates: traceBuilder.explain,
+        candidateScores: traceBuilder.explain,
+        learningAdjusted: traceBuilder.trace.learningAdjusted,
+        learningSignalsPresent: traceBuilder.trace.learningSignalsPresent,
+        orderingAdjusted: traceBuilder.trace.orderingAdjusted,
+        selectedAdjusted: traceBuilder.trace.selectedAdjusted,
+        reasonCode: traceBuilder.trace.reasonCode,
+        reason: traceBuilder.trace.reasonText,
+        historyWindow: traceBuilder.trace.historyWindow,
+      };
+    },
+
+    async pinRoute(input) {
+      deps.db.withWriteTransaction((db) => {
+        preferenceFactRepo.upsert(db, {
+          factId: deps.idGenerator(),
+          userId: input.userId,
+          key: buildRoutePinKey(input.taskProfileId),
+          value: {
+            providerId: input.providerId,
+            model: input.model,
+            backendKind: input.backendKind,
+            ...(input.reason ? { reason: input.reason } : {}),
+          },
+          confidence: 1,
+          evidenceCountDelta: 1,
+          lastConfirmedAt: deps.nowIso(),
+          sourceEventId: `operator:route-pin:${deps.idGenerator()}`,
+          nowIso: deps.nowIso(),
+        });
+      });
+    },
+
+    async clearRoutePenalty(input) {
+      return deps.db.withWriteTransaction((db) =>
+        preferenceFactRepo.deleteByUserAndKey(
+          db,
+          input.userId,
+          buildRoutePenaltyKey(input),
+        ),
+      );
     },
 
     async createProvider(input) {
@@ -1169,6 +1795,8 @@ export function createFridayProviderService(
       routingContext?: {
         estimatedInputTokens: number;
         complexity: "simple" | "medium" | "complex";
+        requiresNativeTools?: boolean;
+        taskProfileId?: string;
       };
       run: (
         route: FridayResolvedProviderRoute,
@@ -1231,19 +1859,39 @@ export function createFridayProviderService(
       const enforcePin = routing.enforceRequestedModel === true && !!params.requestedModel;
 
       if (routingDecision.strategy === "budget_local_only" && !enforcePin && !pinnedProvider) {
-        // Budget exceeded — filter candidates to local/free providers only
-        const localOnly = candidates.filter((c) => c.provider.kind === "ollama");
-        if (localOnly.length === 0) {
+        const hasLocalCandidate = candidates.some((candidate) => isLocalCandidate(candidate));
+        if (!hasLocalCandidate) {
           throw new FridayDomainError(
             "LLM_BUDGET_EXCEEDED",
             "Monthly LLM budget exceeded and no free/local providers are available",
             { httpStatus: 429 },
           );
         }
-        candidates = localOnly;
-      } else if (!params.requestedModel && !enforcePin && !pinnedProvider) {
-        // Use cost-reordered candidates when no specific model was requested
-        candidates = routingDecision.orderedCandidates;
+      }
+
+      const traceBuilder = buildRouteDecisionTrace({
+        candidates: (!params.requestedModel && !enforcePin && !pinnedProvider)
+          ? routingDecision.orderedCandidates
+          : candidates,
+        requestedProviderId: params.requestedProviderId,
+        requestedModel: params.requestedModel,
+        userId: params.tenantContext?.userId,
+        taskProfileId: params.routingContext?.taskProfileId,
+        routingContext: params.routingContext,
+        budgetLocalOnly: routingDecision.strategy === "budget_local_only" && !enforcePin && !pinnedProvider,
+      });
+
+      candidates = traceBuilder.orderedCandidates;
+      if (candidates.length === 0) {
+        throw new FridayDomainError(
+          "PROVIDER_NO_CANDIDATES",
+          params.routingContext?.requiresNativeTools
+            ? "No model providers can satisfy this task because the remaining candidates are text-only CLI backends or policy-gated for this run."
+            : pinnedProvider
+              ? explainPinnedProviderNoCandidates(pinnedProvider, params.requestedModel)
+              : explainNoCandidates(routing, providers),
+          { httpStatus: 400 },
+        );
       }
 
       const fallbackResult = await fallback.runWithFallback({
@@ -1256,7 +1904,17 @@ export function createFridayProviderService(
 
       return {
         ...fallbackResult,
-        routingDecision,
+        routingDecision: {
+          ...routingDecision,
+          orderedCandidates: candidates,
+          reason: traceBuilder.trace.reasonText,
+          reasonCode: traceBuilder.trace.reasonCode,
+          learningAdjusted: traceBuilder.trace.learningAdjusted,
+          learningSignalsPresent: traceBuilder.trace.learningSignalsPresent,
+          orderingAdjusted: traceBuilder.trace.orderingAdjusted,
+          selectedAdjusted: traceBuilder.trace.selectedAdjusted,
+          routeDecisionTrace: traceBuilder.trace,
+        },
       };
     },
 

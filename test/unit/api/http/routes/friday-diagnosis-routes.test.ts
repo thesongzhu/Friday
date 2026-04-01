@@ -58,10 +58,54 @@ function makeService(): FridaySelfHealingApiService {
     listIncidents: vi.fn(() => [details]),
     getIncident: vi.fn((input: { incidentId: string }) => (input.incidentId === "missing" ? null : details)),
     getIncidentDiagnosis: vi.fn((input: { incidentId: string }) => (input.incidentId === "missing" ? null : details)),
+    getLearningOverview: vi.fn(() => ({
+      lessons: [],
+      patterns: [],
+      routeAdjustments: [],
+      routeBiases: [],
+      operatorPins: [],
+      penaltyFacts: [],
+      recentDecisionDiffs: [],
+      blockedRoutes: [],
+      rejectedFixes: [],
+      recentRejectedFixes: [],
+      rollbackHotspots: [],
+      coverage: {
+        lessons: 0,
+        patterns: 0,
+        routeAdjustments: 0,
+        recentDecisionDiffs: 0,
+        blockedRoutes: 0,
+        rejectedFixes: 0,
+        rollbackHotspots: 0,
+        incidents: 0,
+        diagnoses: 0,
+        autoFixActions: 0,
+      },
+    })),
     listActions: vi.fn(() => []),
     getAction: vi.fn(() => null),
     approveAction: vi.fn(),
     denyAction: vi.fn(),
+    manualResolveIncident: vi.fn(() => ({
+      ...details,
+      incident: {
+        ...details.incident,
+        status: "resolved" as const,
+      },
+    })),
+    setLessonEnabled: vi.fn((input: { lessonId: string; enabled: boolean; reason?: string }) => ({
+      lessonId: input.lessonId,
+      enabled: input.enabled,
+      reason: input.reason ?? null,
+      updatedAt: NOW,
+    })),
+    demotePattern: vi.fn((input: { patternId: string; factor: number; reason?: string }) => ({
+      patternId: input.patternId,
+      factor: input.factor,
+      reason: input.reason ?? null,
+      updatedAt: NOW,
+    })),
     executeAction: vi.fn(),
     rollbackAction: vi.fn(),
     getMetrics: vi.fn(),
@@ -74,11 +118,15 @@ function makeService(): FridaySelfHealingApiService {
 describe("FridayDiagnosisRoutes", () => {
   it("creates diagnosis route definitions", () => {
     const routes = createFridayDiagnosisRoutes({ service: makeService() });
-    expect(routes).toHaveLength(3);
+    expect(routes).toHaveLength(7);
     expect(routes.map((route) => route.operationId)).toEqual([
       "diagnosis.incidents.list",
       "diagnosis.incidents.get",
       "diagnosis.incidents.diagnosis.get",
+      "diagnosis.learning.overview",
+      "diagnosis.incidents.manual.resolve",
+      "diagnosis.lessons.enabled.set",
+      "diagnosis.patterns.demote",
     ]);
   });
 
@@ -122,5 +170,100 @@ describe("FridayDiagnosisRoutes", () => {
     await expect(
       route.handler(makeCtx({ principal: null })),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("manually resolves an incident with the authenticated user", async () => {
+    const service = makeService();
+    const routes = createFridayDiagnosisRoutes({ service });
+    const route = routes.find((entry) => entry.operationId === "diagnosis.incidents.manual.resolve")!;
+
+    const result = await route.handler(
+      makeCtx({
+        params: { incidentId: "incident-1" },
+        body: {
+          title: "Manual repair",
+          cause: "Patched a missing flag",
+          fix: "Added the missing flag and re-ran the workflow",
+          verificationSummary: "Workflow completed on retry",
+        },
+      }),
+    ) as { incident: { status: string } };
+
+    expect(service.manualResolveIncident).toHaveBeenCalledWith({
+      incidentId: "incident-1",
+      resolvedBy: "user-1",
+      title: "Manual repair",
+      cause: "Patched a missing flag",
+      fix: "Added the missing flag and re-ran the workflow",
+      verificationSummary: "Workflow completed on retry",
+    });
+    expect(result.incident.status).toBe("resolved");
+  });
+
+  it("returns learning overview for the authenticated user", async () => {
+    const service = makeService();
+    const routes = createFridayDiagnosisRoutes({ service });
+    const route = routes.find((entry) => entry.operationId === "diagnosis.learning.overview")!;
+
+    const result = await route.handler(
+      makeCtx({ query: { limit: "10" } }),
+    ) as { lessons: unknown[]; patterns: unknown[] };
+
+    expect(service.getLearningOverview).toHaveBeenCalledWith({
+      userId: "user-1",
+      limit: 10,
+    });
+    expect(result.lessons).toEqual([]);
+    expect(result.patterns).toEqual([]);
+  });
+
+  it("toggles lesson enabled state with a boolean body", async () => {
+    const service = makeService();
+    const routes = createFridayDiagnosisRoutes({ service });
+    const route = routes.find((entry) => entry.operationId === "diagnosis.lessons.enabled.set")!;
+
+    const result = await route.handler(
+      makeCtx({
+        params: { lessonId: "lesson-1" },
+        body: {
+          enabled: false,
+          reason: "Operator override",
+        },
+      }),
+    ) as { lesson: { lessonId: string; enabled: boolean; reason?: string | null } };
+
+    expect(service.setLessonEnabled).toHaveBeenCalledWith({
+      userId: "user-1",
+      lessonId: "lesson-1",
+      enabled: false,
+      reason: "Operator override",
+    });
+    expect(result.lesson.lessonId).toBe("lesson-1");
+    expect(result.lesson.enabled).toBe(false);
+  });
+
+  it("demotes a learned pattern with bounded factor", async () => {
+    const service = makeService();
+    const routes = createFridayDiagnosisRoutes({ service });
+    const route = routes.find((entry) => entry.operationId === "diagnosis.patterns.demote")!;
+
+    const result = await route.handler(
+      makeCtx({
+        params: { patternId: "pattern-1" },
+        body: {
+          factor: 0.25,
+          reason: "Too aggressive",
+        },
+      }),
+    ) as { pattern: { patternId: string; factor: number } };
+
+    expect(service.demotePattern).toHaveBeenCalledWith({
+      userId: "user-1",
+      patternId: "pattern-1",
+      factor: 0.25,
+      reason: "Too aggressive",
+    });
+    expect(result.pattern.patternId).toBe("pattern-1");
+    expect(result.pattern.factor).toBe(0.25);
   });
 });

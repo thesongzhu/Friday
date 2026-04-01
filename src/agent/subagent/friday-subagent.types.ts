@@ -169,6 +169,7 @@ export interface CreateFridaySubagentRegistryDeps {
       runId?: string;
       providerId?: string;
       model?: string;
+      modelSelectionSourceOverride?: "inherited";
       timezone?: string;
       timeoutMs?: number;
       conversationContext?: FridayAgentConversationContext;

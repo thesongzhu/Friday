@@ -4,6 +4,7 @@ import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js
 import { createFridayAutoFixDispatcherService } from "#learning";
 import { createFridayAutoFixExecutionService } from "#learning";
 import { createFridayAutoFixRollbackService } from "#learning";
+import { createFridayAutoFixRiskAssessmentService } from "#learning";
 import { createFridayAutoFixActionRepository } from "#learning";
 import { createFridayApprovalRequestRepository } from "#learning";
 import { createFridayErrorIncidentRepository } from "#learning";
@@ -38,13 +39,14 @@ describe("FridayAutoFixDispatcherService", () => {
 
   let actionRepo: ReturnType<typeof createFridayAutoFixActionRepository>;
   let approvalRepo: ReturnType<typeof createFridayApprovalRequestRepository>;
+  let incidentRepo: ReturnType<typeof createFridayErrorIncidentRepository>;
 
   beforeEach(() => {
     db = createTestDb();
 
     actionRepo = createFridayAutoFixActionRepository();
     approvalRepo = createFridayApprovalRequestRepository();
-    const incidentRepo = createFridayErrorIncidentRepository();
+    incidentRepo = createFridayErrorIncidentRepository();
     const diagnosisRepo = createFridayDiagnosisRecordRepository();
 
     // Setup FK deps
@@ -129,12 +131,19 @@ describe("FridayAutoFixDispatcherService", () => {
       }),
       nowIso: () => NOW,
     });
+    const riskService = createFridayAutoFixRiskAssessmentService({
+      db,
+      actionRepo,
+    });
 
     service = createFridayAutoFixDispatcherService({
       db,
       actionRepo,
       approvalRepo,
+      incidentRepo,
+      riskService,
       executionService,
+      nowIso: () => NOW,
     });
   });
 
@@ -167,6 +176,39 @@ describe("FridayAutoFixDispatcherService", () => {
   it("returns empty when no planned actions exist", async () => {
     // Execute the only eligible one first
     await service.runReadyActions({ maxRiskTier: 0 });
+    const results = await service.runReadyActions({ maxRiskTier: 0 });
+    expect(results).toHaveLength(0);
+  });
+
+  it("skips planned actions when adaptive risk reassessment caps auto-apply", async () => {
+    for (let i = 3; i <= 10; i++) {
+      incidentRepo.insert(db.writer, {
+        incidentId: `inc-rj-${i}`,
+        userId: "test-user",
+        ts: NOW,
+        category: "tool",
+        severity: "medium",
+        signature: "sig-abc",
+        context: {},
+        autoFixEligible: true,
+        status: "open",
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+      actionRepo.insert(db.writer, {
+        actionId: `action-rj-${i}`,
+        incidentId: `inc-rj-${i}`,
+        userId: "test-user",
+        riskTier: 0,
+        plan: basePlan,
+        status: "planned",
+        outcome: null,
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+      actionRepo.markRejected(db.writer, `action-rj-${i}`, NOW);
+    }
+
     const results = await service.runReadyActions({ maxRiskTier: 0 });
     expect(results).toHaveLength(0);
   });

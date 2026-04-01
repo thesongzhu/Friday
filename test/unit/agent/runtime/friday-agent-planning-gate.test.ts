@@ -41,9 +41,11 @@ function createRunRepository(store: Map<string, FridayAgentRunRecord>): FridayAg
         ...(input.completedAt !== undefined ? { completedAt: input.completedAt } : {}),
         ...(input.durationMs !== undefined ? { durationMs: input.durationMs } : {}),
         ...(input.planReview !== undefined ? { planReview: input.planReview } : {}),
+        ...(input.actualExecution !== undefined ? { actualExecution: input.actualExecution } : {}),
         ...(input.responseText !== undefined ? { responseText: input.responseText } : {}),
         ...(input.summary !== undefined ? { summary: input.summary } : {}),
         ...(input.constraints !== undefined ? { constraints: input.constraints } : {}),
+        ...(input.taskProfile !== undefined ? { taskProfile: input.taskProfile } : {}),
       };
       store.set(next.id, next);
       return next;
@@ -152,6 +154,12 @@ describe("friday-agent-planning-gate", () => {
     expect(decision.result.response).toContain("# Proposed plan");
     expect(runs.get("run-1")?.status).toBe("awaiting_plan_approval");
     expect(runs.get("run-1")?.planReview?.gate?.planMarkdown).toContain("Reply `approve` to continue");
+    expect(runs.get("run-1")?.actualExecution).toMatchObject({
+      requestedProviderId: undefined,
+      requestedModel: undefined,
+      modelSelectionSource: "route_default",
+      turns: [],
+    });
   });
 
   it("treats 'create a new workflow' as a planning-gated workflow request", () => {
@@ -169,6 +177,7 @@ describe("friday-agent-planning-gate", () => {
     }
     expect(decision.result.status).toBe("awaiting_clarification");
     expect(decision.pendingPlanRunId).toBe("run-new-workflow");
+    expect(runs.get("run-new-workflow")?.actualExecution?.turns).toEqual([]);
   });
 
   it("moves from clarification to plan approval when the user answers follow-up questions", () => {

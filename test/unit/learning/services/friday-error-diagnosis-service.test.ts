@@ -5,6 +5,7 @@ import { createFridayErrorDiagnosisService } from "#learning";
 import { createFridayErrorIncidentRepository } from "#learning";
 import { createFridayDiagnosisRecordRepository } from "#learning";
 import { createFridayLearnedLessonRepository } from "#learning";
+import { createFridayPreferenceFactRepository } from "#learning";
 import type { FridayErrorDiagnosisService } from "#learning";
 import type { FridayErrorIncidentEntity } from "#learning";
 
@@ -35,12 +36,14 @@ describe("FridayErrorDiagnosisService", () => {
     const incidentRepo = createFridayErrorIncidentRepository();
     const diagnosisRepo = createFridayDiagnosisRecordRepository();
     const lessonRepo = createFridayLearnedLessonRepository();
+    const factRepo = createFridayPreferenceFactRepository();
 
     service = createFridayErrorDiagnosisService({
       db,
       incidentRepo,
       diagnosisRepo,
       lessonRepo,
+      factRepo,
       idGenerator: idGen,
     });
 
@@ -94,6 +97,38 @@ describe("FridayErrorDiagnosisService", () => {
     expect(result.diagnosis.confidence).toBeGreaterThanOrEqual(0.6);
     expect(result.autoFixEligible).toBe(true);
     expect(result.candidatePlans.length).toBeGreaterThan(0);
+  });
+
+  it("ignores disabled lessons when a matching disable fact exists", () => {
+    const lessonRepo = createFridayLearnedLessonRepository();
+    const factRepo = createFridayPreferenceFactRepository();
+    lessonRepo.upsertByFingerprint(db.writer, {
+      id: "lesson-disabled",
+      fingerprint: "sig-tool-timeout",
+      title: "Tool Timeout Fix",
+      cause: "Network latency",
+      fix: "Increase timeout to 30s",
+      nowIso: NOW,
+    });
+    factRepo.upsert(db.writer, {
+      factId: "fact-001",
+      userId: "test-user",
+      key: "lesson_disabled:lesson-disabled",
+      value: {
+        disabled: true,
+        reason: "Operator override",
+      },
+      confidence: 1,
+      evidenceCountDelta: 1,
+      lastConfirmedAt: NOW,
+      sourceEventId: "test:event",
+      nowIso: NOW,
+    });
+
+    const result = service.diagnose({ incident: baseIncident, nowIso: NOW });
+    expect(result.matchedLessons).toHaveLength(0);
+    expect(result.diagnosis.diagnosis.matchedLessonIds).toEqual([]);
+    expect(result.autoFixEligible).toBe(false);
   });
 
   it("boosts confidence with recurrence", () => {

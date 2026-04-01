@@ -2,6 +2,7 @@ import type { FridayRouteDefinition } from "../../model/friday-api-common.types.
 
 import type {
   FridayActivateProviderAuthProfileResponse,
+  FridayClearProviderRoutePenaltyResponse,
   FridayCompleteAnthropicOAuthCallbackRequest,
   FridayCompleteAnthropicOAuthCallbackResponse,
   FridayCreateProviderRequest,
@@ -9,11 +10,13 @@ import type {
   FridayDeleteProviderResponse,
   FridayGetProviderDoctorResponse,
   FridayGetProviderResponse,
+  FridayGetProviderRoutingExplainResponse,
   FridayGetRoutingConfigResponse,
   FridayInitiateAnthropicOAuthRequest,
   FridayInitiateAnthropicOAuthResponse,
   FridayListProviderAuthProfilesResponse,
   FridayListProvidersResponse,
+  FridayPinProviderRouteResponse,
   FridaySetRoutingConfigRequest,
   FridaySetRoutingConfigResponse,
   FridayUpdateProviderRequest,
@@ -315,6 +318,113 @@ export function createFridayProviderRoutes(
         const { providerId } = ctx.params as { providerId: string };
         const doctor = await deps.providerService.doctorProvider(providerId);
         return { doctor };
+      },
+    },
+    {
+      operationId: "providers.routing.explain",
+      method: "GET",
+      path: "/v1/providers/routing/explain",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      async handler(ctx): Promise<FridayGetProviderRoutingExplainResponse> {
+        const query = (ctx.query ?? {}) as Record<string, unknown>;
+        const requestedProviderId = typeof query.requestedProviderId === "string" && query.requestedProviderId.trim().length > 0
+          ? query.requestedProviderId
+          : undefined;
+        const requestedModel = typeof query.requestedModel === "string" && query.requestedModel.trim().length > 0
+          ? query.requestedModel
+          : undefined;
+        const taskProfileId = typeof query.taskProfileId === "string" && query.taskProfileId.trim().length > 0
+          ? query.taskProfileId
+          : undefined;
+        const estimatedInputTokens = typeof query.estimatedInputTokens === "string"
+          ? Math.max(0, Number.parseInt(query.estimatedInputTokens, 10) || 0)
+          : 0;
+        const complexity = query.complexity === "simple" || query.complexity === "medium" || query.complexity === "complex"
+          ? query.complexity
+          : "medium";
+        const requiresNativeTools = query.requiresNativeTools === true || query.requiresNativeTools === "true";
+        const explain = await deps.providerService.explainRouting({
+          requestedProviderId,
+          requestedModel,
+          tenantContext: ctx.principal?.userId
+            ? {
+                hubId: "default",
+                userId: ctx.principal.userId,
+              }
+            : undefined,
+          routingContext: {
+            estimatedInputTokens,
+            complexity,
+            requiresNativeTools,
+            taskProfileId,
+          },
+        });
+        return { explain };
+      },
+    },
+    {
+      operationId: "providers.routing.pin",
+      method: "POST",
+      path: "/v1/providers/routing/pin",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      rateLimitPolicyId: "provider.write",
+      async handler(ctx): Promise<FridayPinProviderRouteResponse> {
+        if (!ctx.principal?.userId) {
+          throw new FridayDomainError("UNAUTHORIZED", "A user-scoped principal is required", {
+            httpStatus: 401,
+          });
+        }
+        const body = ctx.body as Record<string, unknown> | null;
+        if (!body || typeof body !== "object") {
+          throw new FridayDomainError("VALIDATION_ERROR", "Request body is required", { httpStatus: 400 });
+        }
+        if (typeof body.providerId !== "string" || typeof body.model !== "string") {
+          throw new FridayDomainError("VALIDATION_ERROR", "providerId and model are required", { httpStatus: 400 });
+        }
+        if (body.backendKind !== "http" && body.backendKind !== "cli" && body.backendKind !== "sdk") {
+          throw new FridayDomainError("VALIDATION_ERROR", "backendKind must be one of: http, cli, sdk", { httpStatus: 400 });
+        }
+        await deps.providerService.pinRoute({
+          userId: ctx.principal.userId,
+          taskProfileId: typeof body.taskProfileId === "string" ? body.taskProfileId : undefined,
+          providerId: body.providerId,
+          model: body.model,
+          backendKind: body.backendKind,
+          reason: typeof body.reason === "string" ? body.reason : undefined,
+        });
+        return { pinned: true };
+      },
+    },
+    {
+      operationId: "providers.routing.penalty.clear",
+      method: "POST",
+      path: "/v1/providers/routing/penalties/clear",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      rateLimitPolicyId: "provider.write",
+      async handler(ctx): Promise<FridayClearProviderRoutePenaltyResponse> {
+        if (!ctx.principal?.userId) {
+          throw new FridayDomainError("UNAUTHORIZED", "A user-scoped principal is required", {
+            httpStatus: 401,
+          });
+        }
+        const body = ctx.body as Record<string, unknown> | null;
+        if (!body || typeof body !== "object") {
+          throw new FridayDomainError("VALIDATION_ERROR", "Request body is required", { httpStatus: 400 });
+        }
+        if (typeof body.providerId !== "string" || typeof body.model !== "string") {
+          throw new FridayDomainError("VALIDATION_ERROR", "providerId and model are required", { httpStatus: 400 });
+        }
+        if (body.backendKind !== "http" && body.backendKind !== "cli" && body.backendKind !== "sdk") {
+          throw new FridayDomainError("VALIDATION_ERROR", "backendKind must be one of: http, cli, sdk", { httpStatus: 400 });
+        }
+        const cleared = await deps.providerService.clearRoutePenalty({
+          userId: ctx.principal.userId,
+          taskProfileId: typeof body.taskProfileId === "string" ? body.taskProfileId : undefined,
+          providerId: body.providerId,
+          model: body.model,
+          backendKind: body.backendKind,
+        });
+        return { cleared };
       },
     },
 

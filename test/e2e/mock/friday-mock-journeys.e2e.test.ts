@@ -420,6 +420,17 @@ describe("Friday Mock Journeys E2E — Provider Failover", () => {
       fallbackProviderIds: [ollamaProvider.providerId],
     });
 
+    // Pin the mock-bad route for the default task profile so this scenario
+    // deterministically exercises the 429 cooldown path instead of allowing
+    // cost/learning reordering to bypass the primary candidate.
+    await apiFetch(env.baseUrl, env.accessToken, "POST", "/v1/providers/routing/pin", {
+      taskProfileId: "default",
+      providerId: badProviderId,
+      model: "mock-bad",
+      backendKind: "http",
+      reason: "mock-failover-test",
+    });
+
     // Set up the good mock to respond
     ollamaMock.setDefault({
       type: "text",

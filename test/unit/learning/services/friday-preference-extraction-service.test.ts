@@ -326,6 +326,47 @@ describe("FridayPreferenceExtractionService", () => {
     });
   });
 
+  describe("outcome_confirmed events", () => {
+    it("extracts operator rejection feedback into correction signals", () => {
+      const event = makeEvent({
+        kind: "outcome_confirmed",
+        payload: {
+          type: "autofix_rejected",
+          reasonCode: "too_risky",
+          reason: "This patch is too risky for prod",
+          taskProfileId: "review",
+          actualProviderId: "provider-1",
+          actualModel: "gpt-4o-mini",
+          backendKind: "http",
+          fingerprint: "fp-1",
+        },
+      });
+
+      const signals = service.extract(event);
+      expect(signals).toHaveLength(2);
+      expect(signals[0]!.kind).toBe("correction");
+      expect(signals[0]!.key).toBe("autofix:rejection_reason:too_risky");
+      expect(signals[1]!.key).toBe("route_penalty:review:provider_1:http:gpt_4o_mini");
+    });
+
+    it("extracts manual resolution feedback into a correction signal", () => {
+      const event = makeEvent({
+        kind: "outcome_confirmed",
+        payload: {
+          type: "manual_resolved",
+          fingerprint: "workflow-timeout",
+          cause: "Bad timeout default",
+          fix: "Raised timeout to 30s and retried",
+        },
+      });
+
+      const signals = service.extract(event);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]!.kind).toBe("correction");
+      expect(signals[0]!.key).toBe("manual_resolution:workflow_timeout");
+    });
+  });
+
   describe("assistant_message events", () => {
     it("returns empty to avoid self-reinforcement", () => {
       const event = makeEvent({
