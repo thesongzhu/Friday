@@ -22,13 +22,13 @@ import type { FridaySessionConversationFocusState } from "../sessions/model/frid
 import type {
   FridayEngineRunInput,
   FridayEngineRunResult,
-  FridayRunTerminalStatus,
   FridayRunError,
+  FridayRunTerminalStatus,
 } from "./friday-orchestration-engine.types.js";
 import type {
-  FridayPreparedEngineContext,
-  FridayExecutionClassification,
   FridayEngineTurnPreparerSessionDeps,
+  FridayExecutionClassification,
+  FridayPreparedEngineContext,
 } from "./friday-engine-turn-preparer.js";
 
 // ─── Dependency interfaces (narrow) ───

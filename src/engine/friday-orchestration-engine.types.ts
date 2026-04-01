@@ -8,7 +8,7 @@
  * `FridayEngineRunInput` and receive a `FridayEngineRunResult`.
  */
 
-import type { FridayAgentExecutionContext, FridayAgentConversationContext, FridayAgentContextCostSummary } from "../agent/runtime/friday-agent-runtime.types.js";
+import type { FridayAgentContextCostSummary, FridayAgentConversationContext, FridayAgentExecutionContext } from "../agent/runtime/friday-agent-runtime.types.js";
 import type { FridayAgentTaskProfileInput, FridayResolvedAgentTaskProfile } from "../agent/runtime/friday-agent-task-profile.js";
 import type { FridayAgentRunConstraints } from "../agent/model/friday-agent.types.js";
 import type { FridayConversationTurnKind } from "../sessions/model/friday-session.types.js";
