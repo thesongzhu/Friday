@@ -3,6 +3,10 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import { FridayDomainError } from "#errors";
 import type { FridayEvaluationContext, FridayEvaluationResult } from "#rules";
+import type {
+  FridayProviderAttempt,
+  FridayProviderBackendKind,
+} from "#providers";
 
 import {
   FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
@@ -303,13 +307,27 @@ export function createFridayAgentRuntime(
       const activeSubagentIds = new Set<string>();
 
       // Resolve per-run overrides (FIX-1)
-      const requestedProviderId = normalizeDefaultRouteSentinel(params.providerId)
+      const explicitRequestedProviderId = normalizeDefaultRouteSentinel(params.providerId);
+      const explicitRequestedModel = normalizeDefaultRouteSentinel(params.model);
+      const taskProfileRequestedModel = normalizeDefaultRouteSentinel(params.taskProfile?.model);
+      const requestedProviderId = explicitRequestedProviderId
         ?? normalizeDefaultRouteSentinel(providerId);
-      const requestedModel = normalizeDefaultRouteSentinel(params.model)
+      const requestedModel = explicitRequestedModel
+        ?? taskProfileRequestedModel
         ?? normalizeDefaultRouteSentinel(model);
+      const modelSelectionSource: FridayAgentActualExecution["modelSelectionSource"] =
+        params.modelSelectionSourceOverride === "inherited"
+          ? "inherited"
+          : explicitRequestedProviderId && explicitRequestedModel
+            ? "provider+model"
+            : explicitRequestedModel
+              ? "model"
+              : taskProfileRequestedModel
+                ? "task_profile"
+                : "route_default";
       const resolvedTaskProfile = resolveFridayAgentTaskProfile({
         id: params.taskProfile?.id ?? "default",
-        model: params.taskProfile?.model ?? requestedModel,
+        model: requestedModel,
         temperature: params.taskProfile?.temperature,
         reasoningEffort: params.taskProfile?.reasoningEffort,
         reason: params.taskProfile?.reason,
@@ -528,6 +546,87 @@ export function createFridayAgentRuntime(
       let latestArtifacts: FridayAgentArtifact[] = [];
       let latestActualExecution: FridayAgentActualExecution | undefined;
       let latestCostUsd: number | undefined;
+      let latestFallbackAttempts: FridayProviderAttempt[] = [];
+      let latestBackendKind: FridayProviderBackendKind | undefined;
+      let latestActualProviderKind: string | undefined;
+      let latestActualProviderApi: string | undefined;
+      let latestRoutingDecisionReason: string | undefined;
+      let latestLearningAdjusted = false;
+      let latestRouteDecisionTrace: FridayAgentActualExecution["routeDecisionTrace"] | undefined;
+
+      const estimateRoutingContext = (): NonNullable<FridayAgentLlmStreamParams["routingContext"]> => {
+        const estimatedChars =
+          params.task.length
+          + messages.reduce((sum, message) => {
+            if (typeof message.content === "string") {
+              return sum + message.content.length;
+            }
+            return sum + JSON.stringify(message.content).length;
+          }, 0);
+        const complexity = resolvedTaskProfile.id === "planning" || resolvedTaskProfile.id === "review"
+          ? "complex"
+          : estimatedChars < 1200
+            ? "simple"
+            : "medium";
+        return {
+          estimatedInputTokens: Math.max(1, Math.ceil(estimatedChars / 4)),
+          complexity,
+          requiresNativeTools: true,
+          taskProfileId: resolvedTaskProfile.id,
+        };
+      };
+
+      const summarizeBlockedTools = (): FridayAgentActualExecution["blockedTools"] => {
+        const blocked = allToolCalls
+          .filter((record) => record.result.isError && (
+            record.result.routeId === "agent.execute.tool.guard"
+            || record.result.routeId === "agent.execute.tool.policy"
+            || record.result.routeId === "agent.execute.tool.readonly"
+            || record.result.routeId === "agent.execute.tool.approval_required"
+          ))
+          .map((record) => ({
+            toolName: record.toolName,
+            reason: record.result.content,
+            ...(record.result.routeId ? { routeId: record.result.routeId } : {}),
+          }));
+        return blocked.length > 0 ? blocked : undefined;
+      };
+
+      const buildActualExecution = (input?: {
+        finalFailureReason?: string;
+        fallbackAttempts?: FridayProviderAttempt[];
+        backendKind?: FridayProviderBackendKind;
+        routingDecisionReason?: string;
+        learningAdjusted?: boolean;
+        routeDecisionTrace?: FridayAgentActualExecution["routeDecisionTrace"];
+      }): FridayAgentActualExecution => {
+        const totalCostUsd = actualTurns.reduce((sum, turn) => sum + (turn.costUsd ?? 0), 0);
+        const lastTurn = actualTurns[actualTurns.length - 1];
+        return {
+          requestedProviderId,
+          requestedModel,
+          taskProfileId: resolvedTaskProfile.id,
+          taskProfileModel: resolvedTaskProfile.model,
+          modelSelectionSource,
+          actualProviderId: lastTurn?.providerId,
+          actualModel: lastTurn?.model,
+          actualProviderKind: latestActualProviderKind,
+          actualProviderApi: latestActualProviderApi,
+          backendKind: input?.backendKind ?? latestBackendKind,
+          totalCostUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
+          fallbackAttempts: (input?.fallbackAttempts ?? latestFallbackAttempts).length > 0
+            ? [...(input?.fallbackAttempts ?? latestFallbackAttempts)]
+            : undefined,
+          routingDecisionReason: input?.routingDecisionReason ?? latestRoutingDecisionReason,
+          learningAdjusted: input?.learningAdjusted ?? (latestLearningAdjusted ? true : undefined),
+          ...(input?.routeDecisionTrace ?? latestRouteDecisionTrace
+            ? { routeDecisionTrace: input?.routeDecisionTrace ?? latestRouteDecisionTrace }
+            : {}),
+          blockedTools: summarizeBlockedTools(),
+          ...(input?.finalFailureReason ? { finalFailureReason: input.finalFailureReason } : {}),
+          turns: actualTurns,
+        };
+      };
 
       const persistRunArtifacts = (input: {
         status: string;
@@ -579,13 +678,7 @@ export function createFridayAgentRuntime(
       }): Promise<FridayAgentRuntimeResult> => {
         const durationMs = Date.now() - startedAt;
         const totalCostUsd = actualTurns.reduce((sum, turn) => sum + (turn.costUsd ?? 0), 0);
-        const lastTurn = actualTurns[actualTurns.length - 1];
-        const actualExecution: FridayAgentActualExecution = {
-          actualProviderId: lastTurn?.providerId,
-          actualModel: lastTurn?.model,
-          totalCostUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
-          turns: actualTurns,
-        };
+        const actualExecution = buildActualExecution();
         latestActualExecution = actualExecution;
         latestCostUsd = totalCostUsd > 0 ? totalCostUsd : undefined;
 
@@ -679,6 +772,7 @@ export function createFridayAgentRuntime(
                 durationMs,
                 errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
                 errorMessage: message,
+                actualExecution: buildActualExecution({ finalFailureReason: message }),
                 summary: deriveSummary(message),
                 taskProfile: resolvedTaskProfile,
               }),
@@ -714,6 +808,11 @@ export function createFridayAgentRuntime(
           task: params.task,
           model: requestedModel,
           providerId: requestedProviderId,
+          taskProfile: {
+            id: resolvedTaskProfile.id,
+            model: resolvedTaskProfile.model,
+            modelSelectionSource,
+          },
           contextSelection: conversationContext
             ? {
               turnKind: conversationContext.turnKind,
@@ -785,6 +884,9 @@ export function createFridayAgentRuntime(
                 durationMs,
                 errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
                 errorMessage: `Plan rejected by review gate: ${decision.reason ?? "no reason"}`,
+                actualExecution: buildActualExecution({
+                  finalFailureReason: `Plan rejected by review gate: ${decision.reason ?? "no reason"}`,
+                }),
                 planReview,
                 taskProfile: resolvedTaskProfile,
               }),
@@ -1186,11 +1288,12 @@ export function createFridayAgentRuntime(
                 llmClient,
                 providerId: requestedProviderId,
                 tenantContext: params.tenantContext,
-                model: requestedModel ?? "default",
+                model: resolvedTaskProfile.model ?? requestedModel ?? "default",
                 systemPrompt: effectiveSystemPrompt,
                 messages,
                 tools,
                 temperature: resolvedTaskProfile.temperature,
+                routingContext: estimateRoutingContext(),
                 signal: turnTimeoutController.signal,
                 eventEmitter,
                 runId,
@@ -1205,6 +1308,69 @@ export function createFridayAgentRuntime(
 
           totalInputTokens += inputTokens;
           totalOutputTokens += outputTokens;
+          latestFallbackAttempts = turnMeta?.attempts ? [...turnMeta.attempts] : [];
+          latestBackendKind = turnMeta?.backendKind ?? latestBackendKind;
+          latestActualProviderKind = turnMeta?.actualProviderKind ?? latestActualProviderKind;
+          latestActualProviderApi = turnMeta?.actualProviderApi ?? latestActualProviderApi;
+          latestRoutingDecisionReason = turnMeta?.routingDecisionReason ?? latestRoutingDecisionReason;
+          latestLearningAdjusted = turnMeta?.learningAdjusted ?? latestLearningAdjusted;
+          latestRouteDecisionTrace = turnMeta?.routeDecisionTrace ?? latestRouteDecisionTrace;
+
+          if (turnMeta?.actualProviderId || turnMeta?.actualModel) {
+            handleTrackedEvent("agent.run.route_selected", {
+              runId,
+              requestedProviderId,
+              requestedModel,
+              taskProfileId: resolvedTaskProfile.id,
+              taskProfileModel: resolvedTaskProfile.model,
+              modelSelectionSource,
+              actualProviderId: turnMeta.actualProviderId,
+              actualModel: turnMeta.actualModel,
+              actualProviderKind: turnMeta.actualProviderKind,
+              actualProviderApi: turnMeta.actualProviderApi,
+              backendKind: turnMeta.backendKind,
+              routingDecisionReason: turnMeta.routingDecisionReason,
+              learningAdjusted: turnMeta.learningAdjusted,
+              routeDecisionTrace: turnMeta.routeDecisionTrace,
+            });
+          }
+          if (latestFallbackAttempts.length > 0) {
+            handleTrackedEvent("agent.run.route_fallback", {
+              runId,
+              requestedProviderId,
+              requestedModel,
+              actualProviderId: turnMeta?.actualProviderId,
+              actualModel: turnMeta?.actualModel,
+              attempts: latestFallbackAttempts,
+              fallbackCount: latestFallbackAttempts.length,
+            });
+          }
+          const intendedModelForAudit = explicitRequestedModel ?? taskProfileRequestedModel;
+          if (
+            intendedModelForAudit
+            && turnMeta?.actualModel
+            && turnMeta.actualModel !== intendedModelForAudit
+          ) {
+            handleTrackedEvent("agent.run.route_mismatch", {
+              runId,
+              requestedProviderId,
+              requestedModel,
+              taskProfileModel: resolvedTaskProfile.model,
+              intendedModel: intendedModelForAudit,
+              actualProviderId: turnMeta.actualProviderId,
+              actualModel: turnMeta.actualModel,
+              reason: latestFallbackAttempts.length > 0
+                ? "explicit_fallback"
+                : turnMeta.routeDecisionTrace?.reasonCode === "operator_override"
+                  ? "operator_override"
+                  : turnMeta.routeDecisionTrace?.reasonCode === "historical_bias"
+                    || turnMeta.routeDecisionTrace?.reasonCode === "operator_penalty"
+                    ? "historical_bias"
+                : turnMeta.backendKind === "cli"
+                  ? "backend_capability_gating"
+                  : "provider_unsupported",
+            });
+          }
 
           // Track actual turn metadata (IMPL-2)
           actualTurns.push({
@@ -1605,6 +1771,9 @@ export function createFridayAgentRuntime(
               status: "cancelled",
               completedAt: nowIso(),
               durationMs,
+              actualExecution: buildActualExecution({
+                finalFailureReason: "Agent run cancelled",
+              }),
               responseText: responseText || undefined,
               contextCostSummary: latestContextCostSummary,
               taskProfile: resolvedTaskProfile,
@@ -1629,13 +1798,7 @@ export function createFridayAgentRuntime(
 
         // ─── Build actual execution metadata (IMPL-2) ───
         const totalCostUsd = actualTurns.reduce((sum, t) => sum + (t.costUsd ?? 0), 0);
-        const lastTurn = actualTurns[actualTurns.length - 1];
-        const actualExecution: FridayAgentActualExecution = {
-          actualProviderId: lastTurn?.providerId,
-          actualModel: lastTurn?.model,
-          totalCostUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
-          turns: actualTurns,
-        };
+        const actualExecution = buildActualExecution();
         latestActualExecution = actualExecution;
         latestCostUsd = totalCostUsd > 0 ? totalCostUsd : undefined;
 
@@ -1721,7 +1884,9 @@ export function createFridayAgentRuntime(
                 usageInput: totalInputTokens,
                 usageOutput: totalOutputTokens,
                 costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
-                actualExecution,
+                actualExecution: buildActualExecution({
+                  finalFailureReason: "Validation criteria not met",
+                }),
                 testResults: testResults as unknown as FridayAgentTestResult[],
                 artifacts: persistedArtifacts.artifacts,
                 responseText: responseText || undefined,
@@ -1803,7 +1968,9 @@ export function createFridayAgentRuntime(
               usageInput: totalInputTokens,
               usageOutput: totalOutputTokens,
               costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
-              actualExecution,
+              actualExecution: buildActualExecution({
+                finalFailureReason: outputClosureGap.developerMessage,
+              }),
               testResults: testResults as unknown as FridayAgentTestResult[],
               artifacts: persistedArtifacts.artifacts,
               responseText: failureResponse,
@@ -1910,6 +2077,26 @@ export function createFridayAgentRuntime(
         const errorCode = error instanceof FridayDomainError
           ? error.code
           : FRIDAY_AGENT_ERROR_CODES.LLM_ERROR;
+        const errorFallbackAttempts = error instanceof FridayDomainError &&
+            Array.isArray(error.details["attempts"])
+          ? error.details["attempts"] as FridayProviderAttempt[]
+          : [];
+        if (errorFallbackAttempts.length > 0) {
+          latestFallbackAttempts = errorFallbackAttempts;
+          handleTrackedEvent("agent.run.route_fallback", {
+            runId,
+            requestedProviderId,
+            requestedModel,
+            actualProviderId: undefined,
+            actualModel: undefined,
+            attempts: errorFallbackAttempts,
+            fallbackCount: errorFallbackAttempts.length,
+          });
+        }
+        latestActualExecution = latestActualExecution ?? buildActualExecution({
+          finalFailureReason: errorMessage,
+          fallbackAttempts: errorFallbackAttempts,
+        });
 
         const summaryText = deriveSummary(responseText);
         const completedAt = nowIso();
@@ -3576,6 +3763,7 @@ interface StreamLlmResponseParams {
   messages: FridayAgentMessage[];
   tools: FridayAgentToolDefinition[];
   temperature?: number;
+  routingContext?: FridayAgentLlmStreamParams["routingContext"];
   signal: AbortSignal;
   eventEmitter: CreateFridayAgentRuntimeDeps["eventEmitter"];
   runId: string;
@@ -3587,7 +3775,12 @@ interface TurnMeta {
   actualModel?: string;
   actualProviderKind?: string;
   actualProviderApi?: string;
+  backendKind?: FridayProviderBackendKind;
   costUsd?: number;
+  attempts?: FridayProviderAttempt[];
+  routingDecisionReason?: string;
+  learningAdjusted?: boolean;
+  routeDecisionTrace?: FridayAgentActualExecution["routeDecisionTrace"];
 }
 
 interface StreamLlmResponseResult {
@@ -3621,6 +3814,7 @@ async function streamLlmResponse(
     messages: params.messages,
     tools: params.tools,
     temperature: params.temperature,
+    routingContext: params.routingContext,
     signal: params.signal,
   });
 
@@ -3653,7 +3847,12 @@ async function streamLlmResponse(
             actualModel: event.actualModel,
             actualProviderKind: event.actualProviderKind,
             actualProviderApi: event.actualProviderApi,
+            backendKind: event.backendKind,
             costUsd: event.costUsd,
+            attempts: event.attempts,
+            routingDecisionReason: event.routingDecisionReason,
+            learningAdjusted: event.learningAdjusted,
+            routeDecisionTrace: event.routeDecisionTrace,
           };
         }
         break;

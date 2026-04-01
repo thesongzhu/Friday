@@ -17,9 +17,13 @@ function readSuggestedFixes(details: FridayIncidentDiagnosisDetails): string[] {
 
 function readMatchedLessonIds(details: FridayIncidentDiagnosisDetails): string[] {
   const matchedLessonIdsRaw = details.diagnosis?.diagnosis["matchedLessonIds"];
-  return Array.isArray(matchedLessonIdsRaw)
+  const matchedLessonIds = Array.isArray(matchedLessonIdsRaw)
     ? matchedLessonIdsRaw.filter((value): value is string => typeof value === "string")
     : [];
+  if (matchedLessonIds.length > 0) {
+    return matchedLessonIds;
+  }
+  return details.lesson ? [details.lesson.id] : [];
 }
 
 export function toFridayDiagnosisSummary(

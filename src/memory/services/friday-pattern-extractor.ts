@@ -77,8 +77,14 @@ export function createFridayPatternExtractor(
       const toolSeqPatterns = extractToolSequencePatterns(episodes);
       const failurePatterns = extractFailureModePatterns(episodes);
       const temporalPatterns = extractTemporalPatterns(episodes);
+      const preferencePatterns = extractPreferencePatterns(episodes);
 
-      const allExtracted = [...toolSeqPatterns, ...failurePatterns, ...temporalPatterns];
+      const allExtracted = [
+        ...toolSeqPatterns,
+        ...failurePatterns,
+        ...temporalPatterns,
+        ...preferencePatterns,
+      ];
       if (allExtracted.length === 0) return [];
 
       // 3. Upsert into friday_learned_patterns
@@ -317,6 +323,64 @@ function extractTemporalPatterns(episodes: EpisodeRow[]): ExtractedPattern[] {
   });
 
   return results;
+}
+
+// ─── Successful Execution Preference Patterns ───────────────────
+
+/**
+ * Capture repeated successful task + tool-sequence combinations as execution
+ * preferences. These are intentionally lightweight and only require two
+ * matching successful episodes so the world model can learn from real usage
+ * earlier than the higher-threshold trigram and temporal patterns.
+ */
+function extractPreferencePatterns(episodes: EpisodeRow[]): ExtractedPattern[] {
+  const successful = episodes.filter((episode) => episode.outcome === "success");
+  if (successful.length < 2) return [];
+
+  const counts = new Map<string, {
+    count: number;
+    intentPrefix: string;
+    toolSequence: string[];
+  }>();
+
+  for (const episode of successful) {
+    const intentPrefix = normalizeIntent(episode.task_intent);
+    const toolSequence = safeJsonParse<string[]>(episode.tool_sequence_json) ?? [];
+    const stableSequence = toolSequence.slice(0, 3);
+    const sequenceKey = stableSequence.length > 0 ? stableSequence.join(" → ") : "no-tools";
+    const key = `${intentPrefix}::${sequenceKey}`;
+    const existing = counts.get(key);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      counts.set(key, {
+        count: 1,
+        intentPrefix,
+        toolSequence: stableSequence,
+      });
+    }
+  }
+
+  const results: ExtractedPattern[] = [];
+  for (const [key, data] of counts) {
+    if (data.count < 2) continue;
+    results.push({
+      kind: "preference",
+      key: `pref:${key}`,
+      description: `Repeated successful execution preference for "${data.intentPrefix}" tasks (${data.count} occurrences)`,
+      pattern: {
+        taskFingerprint: data.intentPrefix,
+        preferredToolSequence: data.toolSequence,
+        outcome: "success",
+        occurrences: data.count,
+      },
+      confidence: Math.min(0.9, 0.35 + data.count * 0.1),
+      sampleCount: data.count,
+    });
+  }
+
+  results.sort((left, right) => right.sampleCount - left.sampleCount);
+  return results.slice(0, 10);
 }
 
 // ─── Helpers ────────────────────────────────────────────────────

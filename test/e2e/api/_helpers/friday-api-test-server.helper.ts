@@ -29,6 +29,7 @@ import {
   createFridayDiagnosisRecordRepository,
   createFridayErrorIncidentRepository,
   createFridayLearnedLessonRepository,
+  createFridayPreferenceFactRepository,
   createFridaySelfHealingApiService,
   createFridaySelfLearningRuntime,
 } from "#learning";
@@ -177,6 +178,7 @@ export async function createFridayApiTestEnv(
       lessonRepo: createFridayLearnedLessonRepository(),
       actionRepo: createFridayAutoFixActionRepository(),
       approvalRepo: createFridayApprovalRequestRepository(),
+      factRepo: createFridayPreferenceFactRepository(),
       diagnosisService: selfLearningRuntime.diagnosis,
       planService: selfLearningRuntime.autoFixPlan,
       riskService: selfLearningRuntime.autoFixRisk,

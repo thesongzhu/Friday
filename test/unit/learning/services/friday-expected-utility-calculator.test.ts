@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  FridayAdaptiveUtilityStrategy,
   FridayHeuristicUtilityStrategy,
   type FridayUtilityInput,
 } from "../../../../src/learning/services/friday-expected-utility-calculator.js";
@@ -147,5 +148,58 @@ describe("FridayHeuristicUtilityStrategy", () => {
     expect(result).toHaveProperty("expectedUtility");
     expect(result).toHaveProperty("recommendation");
     expect(result).toHaveProperty("reasoning");
+  });
+});
+
+describe("FridayAdaptiveUtilityStrategy", () => {
+  const strategy = new FridayAdaptiveUtilityStrategy();
+
+  function makeInput(overrides: Partial<FridayUtilityInput> = {}): FridayUtilityInput {
+    return {
+      riskTier: 0,
+      confidence: 0.8,
+      predictedSuccessProb: 0.8,
+      estimatedBenefitScore: 0.7,
+      estimatedCostScore: 0.2,
+      ...overrides,
+    };
+  }
+
+  it("downgrades auto_apply to suggest when the budget is capped", () => {
+    const result = strategy.compute(
+      makeInput({
+        policyBudgetState: "capped",
+      }),
+    );
+
+    expect(result.recommendation).toBe("suggest");
+    expect(result.policyBudgetState).toBe("capped");
+    expect(result.learningSignals).toContain("budget:capped");
+  });
+
+  it("forces defer when the budget is in cooldown", () => {
+    const result = strategy.compute(
+      makeInput({
+        policyBudgetState: "cooldown",
+      }),
+    );
+
+    expect(result.recommendation).toBe("defer");
+    expect(result.policyBudgetState).toBe("cooldown");
+    expect(result.learningSignals).toContain("budget:cooldown");
+  });
+
+  it("accounts for human rejection and rollback frequency", () => {
+    const baseline = strategy.compute(makeInput());
+    const penalized = strategy.compute(
+      makeInput({
+        humanRejectionRate: 0.75,
+        rollbackFrequency: 0.5,
+      }),
+    );
+
+    expect(penalized.expectedUtility).toBeLessThan(baseline.expectedUtility);
+    expect(penalized.learningSignals).toContain("human_rejection:0.75");
+    expect(penalized.reasoning).toContain("rollback=");
   });
 });

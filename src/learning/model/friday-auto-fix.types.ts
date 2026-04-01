@@ -13,6 +13,12 @@ export type FridayAutoFixRiskTier = 0 | 1 | 2;
 export type FridayAutoFixActionStatus = "planned" | "applied" | "rolled_back" | "rejected";
 export type FridayAutoFixOutcome = "success" | "failed" | null;
 export type FridayApprovalRequestStatus = "pending" | "approved" | "rejected" | "expired";
+export type FridayAutoFixFeedbackReasonCode =
+  | "wrong_root_cause"
+  | "too_risky"
+  | "wrong_fix"
+  | "insufficient_evidence"
+  | "wrong_model_or_backend_choice";
 
 export type FridayAutoFixStepKind =
   | "retry_node"

@@ -1,5 +1,5 @@
 import { FridayDomainError } from "#errors";
-import type { FridaySelfHealingApiService } from "#learning";
+import type { FridayAutoFixFeedbackReasonCode, FridaySelfHealingApiService } from "#learning";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
   FridayAutoFixApprovalResponse,
@@ -48,6 +48,24 @@ function readReason(body: unknown): string | undefined {
   return typeof record.reason === "string" && record.reason.trim().length > 0
     ? record.reason
     : undefined;
+}
+
+function readReasonCode(body: unknown): string | undefined {
+  if (!body || typeof body !== "object") {
+    return undefined;
+  }
+  const record = body as Record<string, unknown>;
+  return typeof record.reasonCode === "string" && record.reasonCode.trim().length > 0
+    ? record.reasonCode.trim()
+    : undefined;
+}
+
+function isFeedbackReasonCode(value: string | undefined): value is FridayAutoFixFeedbackReasonCode {
+  return value === "wrong_root_cause"
+    || value === "too_risky"
+    || value === "wrong_fix"
+    || value === "insufficient_evidence"
+    || value === "wrong_model_or_backend_choice";
 }
 
 function toActionRecord(
@@ -134,6 +152,10 @@ export function createFridayAutoFixRoutes(
           actionId,
           respondedBy,
           reason: readReason(ctx.body),
+          reasonCode: (() => {
+            const reasonCode = readReasonCode(ctx.body);
+            return isFeedbackReasonCode(reasonCode) ? reasonCode : undefined;
+          })(),
         });
         return {
           approval: updated.approval,

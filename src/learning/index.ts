@@ -31,6 +31,7 @@ export type {
   FridayAutoFixActionStatus,
   FridayAutoFixOutcome,
   FridayApprovalRequestStatus,
+  FridayAutoFixFeedbackReasonCode,
   FridayAutoFixStepKind,
   FridayAutoFixPlanStep,
   FridayAutoFixRollbackStep,
@@ -147,6 +148,16 @@ export type {
   FridayIncidentDiagnosisDetails,
   FridaySelfHealingIssueCard,
   FridaySelfHealingEventPublisher,
+  FridayLearningLessonRecord,
+  FridayLearningPatternRecord,
+  FridayLearningRouteAdjustmentRecord,
+  FridayLearningRouteBiasRecord,
+  FridayRejectedFixRecord,
+  FridayRollbackHotspotRecord,
+  FridayRouteDecisionDiffRecord,
+  FridayBlockedRouteRecord,
+  FridayLearningCoverageSummary,
+  FridayLearningOverview,
 } from "./services/friday-self-healing-api-service.js";
 
 export { createFridayAgentLoopService } from "./services/friday-agent-loop-service.js";

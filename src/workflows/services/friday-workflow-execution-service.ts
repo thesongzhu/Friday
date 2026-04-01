@@ -95,6 +95,10 @@ export interface FridayWorkflowExecutionService {
     input: FridayWorkflowStartRunInput,
   ): Promise<FridayWorkflowRunEntity>;
   resumeRun(runId: UUID, options?: FridayWorkflowResumeOptions): Promise<FridayWorkflowRunEntity>;
+  pauseRun(
+    runId: UUID,
+    reason?: string,
+  ): Promise<FridayWorkflowRunEntity>;
   cancelRun(
     runId: UUID,
     reason?: string,
@@ -1372,6 +1376,36 @@ export function createFridayWorkflowExecutionService(
         });
       });
 
+      return deps.db.withReadConnection((db) =>
+        deps.runRepo.getRunById(db, runId),
+      )!;
+    },
+
+    async pauseRun(runId, reason) {
+      const runEntity = deps.db.withReadConnection((db) =>
+        deps.runRepo.getRunById(db, runId),
+      );
+      if (!runEntity) {
+        throw new FridayDomainError("WORKFLOW_RUN_NOT_FOUND", "Workflow run not found", { httpStatus: 404 });
+      }
+      if (runEntity.status === "paused") {
+        return runEntity;
+      }
+      if (runEntity.status === "completed" || runEntity.status === "failed" || runEntity.status === "cancelled") {
+        throw new FridayDomainError(
+          "WORKFLOW_RUN_NOT_PAUSABLE",
+          `Workflow run ${runId} is '${runEntity.status}' and cannot be paused`,
+          { httpStatus: 409 },
+        );
+      }
+
+      deps.db.withWriteTransaction((db) => {
+        deps.runRepo.updateRunStatus(db, runId, "paused", deps.nowIso());
+      });
+      await deps.publishEvent?.("workflow.run.paused", {
+        runId,
+        ...(reason ? { reason } : {}),
+      });
       return deps.db.withReadConnection((db) =>
         deps.runRepo.getRunById(db, runId),
       )!;

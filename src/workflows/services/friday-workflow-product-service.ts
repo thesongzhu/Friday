@@ -22,6 +22,11 @@ import type { FridayObservabilityApiService } from "../../observability/services
 import type { FridayWorkflowBuilderRuntime } from "../builder/runtime/friday-workflow-builder-runtime.js";
 import { createFridayWorkflowBuilderSpecVersionRepository } from "../builder/persistence/friday-workflow-builder-spec-version-repository.js";
 import type { FridayWorkflowGeneratorService } from "../generator/services/friday-workflow-generator-service.types.js";
+import {
+  FRIDAY_WORKFLOW_GENERATION_APPROVAL_NAMESPACE,
+  type FridayWorkflowGenerationApprovalRecord,
+} from "../generator/persistence/friday-workflow-generation-approval-repository.js";
+import { safeJsonParse } from "#utilities";
 
 export interface FridayWorkflowProductService {
   deployDraft(input: {
@@ -230,6 +235,20 @@ export function createFridayWorkflowProductService(
   deps: CreateFridayWorkflowProductServiceDeps,
 ): FridayWorkflowProductService {
   const specVersionRepo = createFridayWorkflowBuilderSpecVersionRepository();
+  function getSavedApproval(sessionId: string): FridayWorkflowGenerationApprovalRecord | null {
+    return deps.db.withReadConnection((db) => {
+      const row = db
+        .prepare("SELECT value_json FROM memory_items WHERE namespace = ? AND key = ?")
+        .get(
+          FRIDAY_WORKFLOW_GENERATION_APPROVAL_NAMESPACE,
+          sessionId,
+        ) as { value_json: string } | undefined;
+      if (!row) {
+        return null;
+      }
+      return safeJsonParse<FridayWorkflowGenerationApprovalRecord>(row.value_json) ?? null;
+    });
+  }
 
   function makeUniqueSlug(base: string): string {
     const normalized = base
@@ -381,7 +400,8 @@ export function createFridayWorkflowProductService(
         );
       }
       const sessionState = await deps.workflowGenerator.getSession(input.sessionId);
-      if (!sessionState) {
+      const approvalRecord = getSavedApproval(input.sessionId);
+      if (!sessionState && !approvalRecord) {
         throw new FridayDomainError(
           "WORKFLOW_GENERATOR_DRAFT_NOT_FOUND",
           "Generate a workflow draft before preparing deploy actions",
@@ -389,9 +409,15 @@ export function createFridayWorkflowProductService(
         );
       }
 
-      if (!sessionState.draft) {
-        const workflowId = sessionState.session.workflowId as UUID | undefined;
-        const workflowVersionId = sessionState.session.workflowVersionId as UUID | undefined;
+      if (!sessionState?.draft) {
+        const workflowId = (
+          sessionState?.session.workflowId
+          ?? approvalRecord?.workflowId
+        ) as UUID | undefined;
+        const workflowVersionId = (
+          sessionState?.session.workflowVersionId
+          ?? approvalRecord?.workflowVersionId
+        ) as UUID | undefined;
         if (!workflowId || !workflowVersionId) {
           throw new FridayDomainError(
             "WORKFLOW_GENERATOR_DRAFT_NOT_FOUND",
@@ -419,10 +445,12 @@ export function createFridayWorkflowProductService(
           workflowName: workflow.name,
           draftId: restoredDraft.draftId,
           sessionId: input.sessionId,
-          summary: "Friday restored the saved workflow session into a deployable draft.",
+          summary: sessionState
+            ? "Friday restored the saved workflow session into a deployable draft."
+            : "Friday restored the saved workflow approval into a deployable draft.",
           routeTarget: "/workflows",
           deployReady: true,
-          questions: sessionState.session.openQuestions,
+          questions: sessionState?.session.openQuestions ?? [],
         };
       }
 

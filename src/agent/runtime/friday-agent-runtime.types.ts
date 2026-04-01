@@ -173,6 +173,8 @@ export interface FridayAgentRuntime {
     executionContext?: FridayAgentExecutionContext;
     /** Optional model-routing/temperature profile for the run. */
     taskProfile?: FridayAgentTaskProfileInput;
+    /** Internal-only override used when a child runtime inherits its parent model. */
+    modelSelectionSourceOverride?: "inherited";
     /** Resume an existing awaiting-plan run instead of creating a new record. */
     resumeExistingRun?: boolean;
     /** Skip re-entering the planning review gate because the plan was already approved. */
@@ -243,6 +245,7 @@ export interface FridayAgentResumeRunParams {
   conversationContext?: FridayAgentConversationContext;
   planReviewOverride?: FridayAgentPlanReviewPayload;
   taskProfile?: FridayAgentTaskProfileInput;
+  modelSelectionSourceOverride?: "inherited";
 }
 
 // ─── Factory deps ───

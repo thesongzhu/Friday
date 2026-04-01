@@ -96,6 +96,7 @@ export function createFridaySelfLearningRuntime(
     incidentRepo,
     diagnosisRepo,
     lessonRepo,
+    factRepo,
     idGenerator: deps.idGenerator,
   });
 
@@ -148,7 +149,10 @@ export function createFridaySelfLearningRuntime(
     db: deps.db,
     actionRepo,
     approvalRepo,
+    incidentRepo,
+    riskService: autoFixRisk,
     executionService: autoFixExecution,
+    nowIso: deps.nowIso,
   });
 
   // 11. Create metrics service (with action repo for Phase 7)

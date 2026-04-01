@@ -2,11 +2,14 @@ import { FridayDomainError } from "#errors";
 import type { FridaySelfHealingApiService } from "#learning";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
+  FridayDemotePatternResponse,
   FridayDiagnosisIncidentRecord,
   FridayDiagnosisSummary,
   FridayGetDiagnosisIncidentResponse,
   FridayGetIncidentDiagnosisResponse,
+  FridayGetLearningOverviewResponse,
   FridayListDiagnosisIncidentsResponse,
+  FridaySetLessonEnabledResponse,
 } from "../../model/friday-api-self-healing.types.js";
 import {
   toFridayDiagnosisIncidentRecord,
@@ -40,6 +43,16 @@ function requireUserId(principal: { userId?: string } | null): string {
     });
   }
   return principal.userId;
+}
+
+function readTrimmedString(body: unknown, key: string): string | undefined {
+  if (!body || typeof body !== "object") {
+    return undefined;
+  }
+  const value = (body as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
 }
 
 function toDiagnosisSummary(
@@ -140,6 +153,99 @@ export function createFridayDiagnosisRoutes(
               evidence: details.action.evidence,
             }
             : null,
+        };
+      },
+    },
+    {
+      operationId: "diagnosis.learning.overview",
+      method: "GET",
+      path: "/v1/diagnosis/learning/overview",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      async handler(ctx): Promise<FridayGetLearningOverviewResponse> {
+        const userId = requireUserId(ctx.principal);
+        const query = (ctx.query ?? {}) as Record<string, unknown>;
+        const limit = readPositiveInt(query.limit);
+        return deps.service.getLearningOverview({ userId, limit });
+      },
+    },
+    {
+      operationId: "diagnosis.incidents.manual.resolve",
+      method: "POST",
+      path: "/v1/diagnosis/incidents/:incidentId/manual-resolve",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      rateLimitPolicyId: "generator.write",
+      async handler(ctx): Promise<FridayGetDiagnosisIncidentResponse> {
+        const resolvedBy = requireUserId(ctx.principal);
+        const { incidentId } = ctx.params as { incidentId: string };
+        const fix = readTrimmedString(ctx.body, "fix");
+        if (!fix) {
+          throw new FridayDomainError("VALIDATION_ERROR", "fix is required", {
+            httpStatus: 400,
+          });
+        }
+        const details = deps.service.manualResolveIncident({
+          incidentId,
+          resolvedBy,
+          fix,
+          title: readTrimmedString(ctx.body, "title"),
+          cause: readTrimmedString(ctx.body, "cause"),
+          verificationSummary: readTrimmedString(ctx.body, "verificationSummary"),
+        });
+        return {
+          incident: details.incident,
+          diagnosis: details.diagnosis,
+          summary: toDiagnosisSummary(deps, details),
+          action: details.action ? toFridayDiagnosisIncidentRecord(details).action : null,
+        };
+      },
+    },
+    {
+      operationId: "diagnosis.lessons.enabled.set",
+      method: "POST",
+      path: "/v1/diagnosis/lessons/:lessonId/enabled",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      rateLimitPolicyId: "generator.write",
+      async handler(ctx): Promise<FridaySetLessonEnabledResponse> {
+        const userId = requireUserId(ctx.principal);
+        const { lessonId } = ctx.params as { lessonId: string };
+        const enabledRaw = (ctx.body as Record<string, unknown> | null)?.enabled;
+        if (typeof enabledRaw !== "boolean") {
+          throw new FridayDomainError("VALIDATION_ERROR", "enabled must be a boolean", {
+            httpStatus: 400,
+          });
+        }
+        return {
+          lesson: deps.service.setLessonEnabled({
+            userId,
+            lessonId,
+            enabled: enabledRaw,
+            reason: readTrimmedString(ctx.body, "reason"),
+          }),
+        };
+      },
+    },
+    {
+      operationId: "diagnosis.patterns.demote",
+      method: "POST",
+      path: "/v1/diagnosis/patterns/:patternId/demote",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      rateLimitPolicyId: "generator.write",
+      async handler(ctx): Promise<FridayDemotePatternResponse> {
+        const userId = requireUserId(ctx.principal);
+        const { patternId } = ctx.params as { patternId: string };
+        const factorRaw = (ctx.body as Record<string, unknown> | null)?.factor;
+        if (typeof factorRaw !== "number" || !Number.isFinite(factorRaw)) {
+          throw new FridayDomainError("VALIDATION_ERROR", "factor must be a finite number", {
+            httpStatus: 400,
+          });
+        }
+        return {
+          pattern: deps.service.demotePattern({
+            userId,
+            patternId,
+            factor: factorRaw,
+            reason: readTrimmedString(ctx.body, "reason"),
+          }),
         };
       },
     },

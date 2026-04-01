@@ -1,6 +1,11 @@
 import type { FridayResolvedAgentTaskProfile } from "../runtime/friday-agent-task-profile.js";
 import type { FridayAgentContextCostSummary } from "../runtime/friday-agent-runtime.types.js";
 import type { FridayToolCallSummary } from "../services/friday-tool-call-summary.js";
+import type {
+  FridayProviderAttempt,
+  FridayProviderBackendKind,
+  FridayProviderRoutingDecisionTrace,
+} from "#providers";
 
 // ─── Agent run status ───
 
@@ -209,11 +214,27 @@ export interface FridayAgentPlanReviewPayload {
 // ─── Actual execution metadata (IMPL-2) ───
 
 export interface FridayAgentActualExecution {
+  requestedProviderId?: string;
+  requestedModel?: string;
+  taskProfileId?: string;
+  taskProfileModel?: string;
+  modelSelectionSource?: "provider+model" | "model" | "task_profile" | "route_default" | "inherited";
   actualProviderId?: string;
   actualModel?: string;
   actualProviderKind?: string;
   actualProviderApi?: string;
+  backendKind?: FridayProviderBackendKind;
   totalCostUsd?: number;
+  fallbackAttempts?: FridayProviderAttempt[];
+  routingDecisionReason?: string;
+  learningAdjusted?: boolean;
+  routeDecisionTrace?: FridayProviderRoutingDecisionTrace;
+  blockedTools?: Array<{
+    toolName: string;
+    reason: string;
+    routeId?: string;
+  }>;
+  finalFailureReason?: string;
   turns: FridayAgentActualTurn[];
 }
 
@@ -263,6 +284,16 @@ export interface FridayAgentRunStartedPayload {
   task: string;
   model: string;
   providerId: string;
+  taskProfile?: {
+    id: string;
+    model?: string;
+    modelSelectionSource?:
+      | "provider+model"
+      | "model"
+      | "task_profile"
+      | "route_default"
+      | "inherited";
+  };
   contextSelection?: {
     turnKind?: string;
     selectedBlocks: Array<{
@@ -396,6 +427,51 @@ export interface FridayAgentRunCancelledPayload {
   reason?: string;
 }
 
+export interface FridayAgentRouteSelectedPayload {
+  runId: string;
+  requestedProviderId?: string;
+  requestedModel?: string;
+  taskProfileId?: string;
+  taskProfileModel?: string;
+  modelSelectionSource?: FridayAgentActualExecution["modelSelectionSource"];
+  actualProviderId?: string;
+  actualModel?: string;
+  actualProviderKind?: string;
+  actualProviderApi?: string;
+  backendKind?: FridayProviderBackendKind;
+  routingDecisionReason?: string;
+  learningAdjusted?: boolean;
+  routeDecisionTrace?: FridayProviderRoutingDecisionTrace;
+}
+
+export interface FridayAgentRouteFallbackPayload {
+  runId: string;
+  requestedProviderId?: string;
+  requestedModel?: string;
+  actualProviderId?: string;
+  actualModel?: string;
+  attempts: FridayProviderAttempt[];
+  fallbackCount: number;
+}
+
+export interface FridayAgentRouteMismatchPayload {
+  runId: string;
+  requestedProviderId?: string;
+  requestedModel?: string;
+  intendedModel: string;
+  actualModel: string;
+  actualProviderId?: string;
+  backendKind?: FridayProviderBackendKind;
+  taskProfileModel?: string;
+  reason:
+    | "explicit_fallback"
+    | "provider_unsupported"
+    | "policy_downgrade"
+    | "backend_capability_gating"
+    | "operator_override"
+    | "historical_bias";
+}
+
 // ─── Sub-agent event payloads ───
 
 export interface FridaySubagentSpawnedPayload {
@@ -426,6 +502,9 @@ export interface FridaySubagentCompletedPayload {
 export interface FridayAgentEventMap {
   "agent.run.started": FridayAgentRunStartedPayload;
   "agent.run.planning": FridayAgentRunPlanningPayload;
+  "agent.run.route_selected": FridayAgentRouteSelectedPayload;
+  "agent.run.route_fallback": FridayAgentRouteFallbackPayload;
+  "agent.run.route_mismatch": FridayAgentRouteMismatchPayload;
   "agent.run.awaiting_clarification": FridayAgentRunAwaitingClarificationPayload;
   "agent.run.plan_ready": FridayAgentRunPlanReadyPayload;
   "agent.run.awaiting_plan_approval": FridayAgentRunAwaitingPlanApprovalPayload;

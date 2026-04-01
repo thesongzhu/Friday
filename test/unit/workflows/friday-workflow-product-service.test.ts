@@ -5,6 +5,14 @@ import { createFridayWorkflowProductService } from "../../../src/workflows/servi
 const NOW = "2026-03-07T12:00:00.000Z";
 
 function makeDeps() {
+  let approvalRecord:
+    | {
+      sessionId: string;
+      workflowId: string;
+      workflowVersionId: string;
+      savedAt: string;
+    }
+    | null = null;
   const workflow = {
     id: "wf-1",
     slug: "release-flow",
@@ -194,7 +202,51 @@ function makeDeps() {
       db: {
         withReadConnection: (fn) => fn({
           prepare: vi.fn(() => ({
-            get: vi.fn(() => undefined),
+            get: vi.fn((namespace?: string, key?: string) => {
+              if (
+                namespace === "workflow-generator-approval"
+                && key === approvalRecord?.sessionId
+              ) {
+                return {
+                  id: "approval-row-1",
+                  value_json: JSON.stringify(approvalRecord),
+                };
+              }
+              return undefined;
+            }),
+          })),
+        } as never),
+        withWriteTransaction: (fn) => fn({
+          prepare: vi.fn(() => ({
+            get: vi.fn((namespace?: string, key?: string) => {
+              if (
+                namespace === "workflow-generator-approval"
+                && key === approvalRecord?.sessionId
+              ) {
+                return {
+                  id: "approval-row-1",
+                  value_json: JSON.stringify(approvalRecord),
+                };
+              }
+              return undefined;
+            }),
+            run: vi.fn(
+              (
+                _id: string,
+                namespace: string,
+                key: string,
+                valueJson: string,
+              ) => {
+                if (namespace === "workflow-generator-approval") {
+                  approvalRecord = JSON.parse(valueJson) as {
+                    sessionId: string;
+                    workflowId: string;
+                    workflowVersionId: string;
+                    savedAt: string;
+                  };
+                }
+              },
+            ),
           })),
         } as never),
       },
@@ -206,6 +258,9 @@ function makeDeps() {
     observability,
     selfHealing,
     workflowGenerator,
+    setApprovalRecord: (record: typeof approvalRecord) => {
+      approvalRecord = record;
+    },
   };
 }
 
@@ -332,5 +387,74 @@ describe("createFridayWorkflowProductService", () => {
     expect(result.draftId).toBe("draft-restored");
     expect(result.deployReady).toBe(true);
     expect(result.summary).toContain("restored");
+  });
+
+  it("restores a deployable draft from the saved approval record when session identity is stale", async () => {
+    const { service, builderRuntime, workflowGenerator, setApprovalRecord } = makeDeps();
+    vi.mocked(workflowGenerator.getSession).mockResolvedValueOnce({
+      session: {
+        sessionId: "session-1",
+        userId: "user-1",
+        channel: "assistant",
+        status: "generating",
+        goal: "Deploy release flow",
+        requirementsSummary: "{}",
+        openQuestions: [],
+        decisions: [],
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+      turns: [],
+    });
+    setApprovalRecord({
+      sessionId: "session-1",
+      workflowId: "wf-1",
+      workflowVersionId: "version-1",
+      savedAt: NOW,
+    });
+    vi.mocked(builderRuntime.drafts.createDraft).mockReturnValueOnce({
+      draftId: "draft-restored",
+      workflowId: "wf-1",
+      title: "Release Flow Draft",
+      status: "active",
+      revision: 1,
+      spec: {
+        schemaVersion: "1.0",
+        workflowId: "wf-1",
+        name: "Release Flow",
+        description: "Deploy the release workflow",
+        trigger: { type: "manual" },
+        inputs: [],
+        startStepId: "step-1",
+        steps: [{ id: "step-1", type: "tool_call" }],
+        edges: [],
+        outputs: [],
+        tests: [],
+      },
+      visual: {
+        schemaVersion: "1.0",
+        workflowId: "wf-1",
+        viewport: { x: 0, y: 0, zoom: 1 },
+        panelLayout: { leftOpen: true, rightOpen: true, bottomOpen: false },
+        nodes: [{ nodeId: "step-1", x: 100, y: 120 }],
+        edges: [],
+      },
+      createdAt: NOW,
+      updatedAt: NOW,
+      autosave: { enabled: true, intervalMs: 30000 },
+    } as never);
+
+    const result = await service.materializeGeneratedSession({
+      sessionId: "session-1",
+      actorUserId: "user-1",
+    });
+
+    expect(builderRuntime.drafts.createDraft).toHaveBeenCalledWith(expect.objectContaining({
+      workflowId: "wf-1",
+      ownerUserId: "user-1",
+    }));
+    expect(result.workflowId).toBe("wf-1");
+    expect(result.draftId).toBe("draft-restored");
+    expect(result.summary).toContain("saved workflow");
   });
 });

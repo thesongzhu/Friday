@@ -15,6 +15,7 @@ import type {
   FridayProviderKind,
   FridayProviderProfile,
   FridayProviderRegionTag,
+  FridayProviderRoutingExplainReport,
   FridayProviderValidationState,
   FridayResolvedProviderRoute,
 } from "../model/friday-provider.types.js";
@@ -37,6 +38,38 @@ export interface FridayProviderService {
   listAuthProfiles(providerId: string): Promise<FridayAuthProfile[]>;
   activateAuthProfile(providerId: string, profileKey: string): Promise<FridayAuthProfile>;
   doctorProvider(providerId: string): Promise<FridayProviderDoctorReport>;
+  explainRouting(input: {
+    requestedModel?: string;
+    requestedProviderId?: string;
+    tenantContext?: FridayProviderTenantContext;
+    routingContext?: {
+      estimatedInputTokens: number;
+      complexity: FridayTaskComplexity;
+      requiresNativeTools?: boolean;
+      taskProfileId?: string;
+      preferredRegion?: FridayProviderRegionTag;
+      allowedRegions?: FridayProviderRegionTag[];
+      localOnly?: boolean;
+      noEgress?: boolean;
+      consumerPlanAllowed?: boolean;
+      requiresOfficialSDK?: boolean;
+    };
+  }): Promise<FridayProviderRoutingExplainReport>;
+  pinRoute(input: {
+    userId: string;
+    taskProfileId?: string;
+    providerId: string;
+    model: string;
+    backendKind: FridayProviderBackendKind;
+    reason?: string;
+  }): Promise<void>;
+  clearRoutePenalty(input: {
+    userId: string;
+    taskProfileId?: string;
+    providerId: string;
+    model: string;
+    backendKind: FridayProviderBackendKind;
+  }): Promise<boolean>;
 
   createProvider(input: {
     kind: FridayProviderKind;
@@ -97,6 +130,14 @@ export interface FridayProviderService {
     routingContext?: {
       estimatedInputTokens: number;
       complexity: FridayTaskComplexity;
+      requiresNativeTools?: boolean;
+      taskProfileId?: string;
+      preferredRegion?: FridayProviderRegionTag;
+      allowedRegions?: FridayProviderRegionTag[];
+      localOnly?: boolean;
+      noEgress?: boolean;
+      consumerPlanAllowed?: boolean;
+      requiresOfficialSDK?: boolean;
     };
     run: (
       route: FridayResolvedProviderRoute,
