@@ -60,6 +60,67 @@ const STARTER_SKILL_EXAMPLES: Record<string, string> = {
   "incident-brief-generator": "Turn these logs and notes into a concise incident brief.",
 };
 
+type SetupProviderRecommendation = {
+  backend: string;
+  auth: string;
+  why: string;
+  boundary: string;
+  operatorNote: string;
+};
+
+function getProviderBootstrapRecommendation(kind: ProviderKind): SetupProviderRecommendation {
+  switch (kind) {
+    case "openai":
+      return {
+        backend: "HTTP for native tools, Codex CLI later for consumer-plan text work",
+        auth: "API key or bearer token",
+        why: "OpenAI HTTP is the reliable path when Friday needs native tools, route fallback, and full run evidence.",
+        boundary: "ChatGPT / Codex consumer sessions are intentionally attached later as CLI backends, not reused as HTTP OAuth credentials.",
+        operatorNote: "Use Settings after setup if you want to attach Codex CLI for text-only review, analysis, or coding assistance.",
+      };
+    case "anthropic":
+      return {
+        backend: "HTTP first, Claude CLI optional later",
+        auth: "API key, token/setup-token, or OAuth",
+        why: "Anthropic HTTP keeps tool-capable runs and verification inside Friday while Claude CLI stays a text-only backend.",
+        boundary: "Claude CLI should not be treated as a native-tool backend for runs that require Friday tools.",
+        operatorNote: "Attach Claude CLI later in Settings when you want a consumer-plan text route beside the HTTP provider.",
+      };
+    case "google":
+      return {
+        backend: "HTTP first, Gemini CLI only if explicitly installed",
+        auth: "API key",
+        why: "Google HTTP is the stable route for tool-capable work and routing explainability.",
+        boundary: "Gemini CLI is optional and environment-dependent; setup does not assume it exists.",
+        operatorNote: "If Gemini CLI is installed later, attach it as an external-session backend from Settings.",
+      };
+    case "ollama":
+      return {
+        backend: "Local/self-hosted HTTP",
+        auth: "None or local token if configured",
+        why: "Ollama is the preferred no-egress or local-only route and stays fully explainable inside Friday's HTTP stack.",
+        boundary: "Local models trade cost and privacy benefits against capability and latency differences.",
+        operatorNote: "Use local-only policies in Settings when you want Ollama to outrank hosted providers for sensitive tasks.",
+      };
+    case "openai-compatible":
+      return {
+        backend: "HTTP",
+        auth: "API key or bearer token",
+        why: "OpenAI-compatible gateways fit Friday's routed HTTP path and keep doctor, explain, and fallback behavior consistent.",
+        boundary: "Friday only treats officially compatible HTTP gateways as first-class here; it does not infer hidden consumer OAuth flows.",
+        operatorNote: "Add region and no-egress constraints later in Settings if this gateway fronts a local or regional deployment.",
+      };
+    default:
+      return {
+        backend: "HTTP",
+        auth: "API key",
+        why: "HTTP keeps Friday's provider routing, auditing, and explainability intact during setup.",
+        boundary: "Specialized backend behavior is added later from Settings if the provider family supports it.",
+        operatorNote: "Finish setup with the stable HTTP path first, then attach advanced backends after the shell is healthy.",
+      };
+  }
+}
+
 function titleCase(value: string): string {
   return value
     .split(/[-_]/g)
@@ -176,6 +237,11 @@ export function SetupPage() {
       ? discovered.filter((kind): kind is ChannelKind => DEFAULT_CHANNELS.includes(kind as ChannelKind))
       : DEFAULT_CHANNELS;
   }, [supportedHealth?.capabilities?.channels?.supportedKinds]);
+
+  const providerRecommendation = useMemo(
+    () => getProviderBootstrapRecommendation(providerKind),
+    [providerKind],
+  );
 
   const detectProviderMutation = useMutation({
     mutationFn: () =>
@@ -441,6 +507,24 @@ export function SetupPage() {
                   </div>
                 </div>
               ) : null}
+              <div className="rounded-[22px] border border-cyan-300/20 bg-cyan-300/[0.06] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100/70">
+                  Recommended backend/auth
+                </p>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.16em] text-white/35">Backend</p>
+                    <p className="mt-1 text-sm font-medium text-white">{providerRecommendation.backend}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.16em] text-white/35">Auth</p>
+                    <p className="mt-1 text-sm font-medium text-white">{providerRecommendation.auth}</p>
+                  </div>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-white/72">{providerRecommendation.why}</p>
+                <p className="mt-3 text-sm leading-6 text-white/52">{providerRecommendation.boundary}</p>
+                <p className="mt-3 text-sm leading-6 text-cyan-100/70">{providerRecommendation.operatorNote}</p>
+              </div>
             </div>
           </ShellCard>
 

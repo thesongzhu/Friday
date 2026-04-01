@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Brain, Cpu, DollarSign, KeyRound, MessageCircleMore, Shield, Sliders, Wifi, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { healthApi } from "@/lib/api/health";
+import { learningApi } from "@/lib/api/learning";
 import { providerUsageApi } from "@/lib/api/provider-usage";
 import { providersApi } from "@/lib/api/providers";
 import { securityApi } from "@/lib/api/security";
@@ -128,6 +129,100 @@ export function SettingsPage() {
     retry: 0,
   });
 
+  const { data: routingConfig } = useQuery({
+    queryKey: ["settings", "routing-config"],
+    queryFn: () => providersApi.getRouting(),
+    retry: 0,
+  });
+
+  const { data: learningOverview } = useQuery({
+    queryKey: ["settings", "learning-overview"],
+    queryFn: () => learningApi.getOverview(12),
+    retry: 0,
+  });
+
+  const selectedProviderId = routingConfig?.defaultProviderId ?? providers[0]?.id;
+  const { data: routingExplain } = useQuery({
+    queryKey: ["settings", "routing-explain", selectedProviderId],
+    enabled: Boolean(selectedProviderId),
+    queryFn: () => providersApi.explainRouting({
+      requestedProviderId: selectedProviderId,
+      taskProfileId: "review",
+      estimatedInputTokens: 1200,
+      complexity: "medium",
+      requiresNativeTools: true,
+    }),
+    retry: 0,
+  });
+
+  const pinRouteMutation = useMutation({
+    mutationFn: (input: { providerId: string; model: string; backendKind: "http" | "cli" | "sdk"; taskProfileId?: string }) =>
+      providersApi.pinRoute({
+        providerId: input.providerId,
+        model: input.model,
+        backendKind: input.backendKind,
+        taskProfileId: input.taskProfileId,
+        reason: "Pinned from settings operator console",
+      }),
+    onSuccess: async () => {
+      toast.success("Route pinned");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings", "routing-explain"] }),
+        queryClient.invalidateQueries({ queryKey: ["settings", "learning-overview"] }),
+      ]);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not pin route");
+    },
+  });
+
+  const clearPenaltyMutation = useMutation({
+    mutationFn: (input: { providerId: string; model: string; backendKind: "http" | "cli" | "sdk"; taskProfileId?: string }) =>
+      providersApi.clearRoutePenalty(input),
+    onSuccess: async () => {
+      toast.success("Route penalty cleared");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings", "routing-explain"] }),
+        queryClient.invalidateQueries({ queryKey: ["settings", "learning-overview"] }),
+      ]);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not clear route penalty");
+    },
+  });
+
+  const lessonToggleMutation = useMutation({
+    mutationFn: (input: { lessonId: string; enabled: boolean }) =>
+      learningApi.setLessonEnabled({
+        lessonId: input.lessonId,
+        enabled: input.enabled,
+        reason: "Updated from settings operator console",
+      }),
+    onSuccess: async () => {
+      toast.success("Lesson updated");
+      await queryClient.invalidateQueries({ queryKey: ["settings", "learning-overview"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not update lesson");
+    },
+  });
+
+  const demotePatternMutation = useMutation({
+    mutationFn: (patternId: string) =>
+      learningApi.demotePattern({
+        patternId,
+        factor: 0.5,
+        reason: "Demoted from settings operator console",
+      }),
+    onSuccess: async () => {
+      toast.success("Pattern demoted");
+      await queryClient.invalidateQueries({ queryKey: ["settings", "learning-overview"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Could not demote pattern");
+    },
+  });
+
   useEffect(() => {
     if (persona) {
       setDraft(buildPersonaDraft(persona));
@@ -241,6 +336,84 @@ export function SettingsPage() {
                 </div>
               ))}
             </div>
+          )}
+        </ShellCard>
+
+        <ShellCard eyebrow="Operator" title="Routing Explainability">
+          {routingExplain ? (
+            <div className="space-y-4">
+              <div className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-white">Current decision</p>
+                    <p className="text-xs text-white/50">{routingExplain.reasonCode} · history window {routingExplain.historyWindow.sampleLimit}</p>
+                  </div>
+                  <StatusPill tone={routingExplain.learningAdjusted ? "success" : routingExplain.learningSignalsPresent ? "warning" : "neutral"}>
+                    {routingExplain.learningAdjusted ? "adjusted" : routingExplain.learningSignalsPresent ? "signals present" : "configured"}
+                  </StatusPill>
+                </div>
+                <p className="mt-3 text-sm text-white/70">{routingExplain.reason}</p>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <DiagnosticRow
+                    label="Before learning"
+                    value={routingExplain.selectedBeforeLearning ? `${routingExplain.selectedBeforeLearning.providerId} / ${routingExplain.selectedBeforeLearning.model}` : "n/a"}
+                  />
+                  <DiagnosticRow
+                    label="After learning"
+                    value={routingExplain.selectedAfterLearning ? `${routingExplain.selectedAfterLearning.providerId} / ${routingExplain.selectedAfterLearning.model}` : "n/a"}
+                  />
+                </div>
+              </div>
+              <div className="space-y-3">
+                {routingExplain.candidateScores.slice(0, 4).map((candidate) => (
+                  <div key={`${candidate.providerId}:${candidate.model}:${candidate.backendKind}`} className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-white">{candidate.providerId} / {candidate.model}</p>
+                        <p className="text-xs text-white/50">{candidate.backendKind} · rank {candidate.originalRank} → {candidate.finalRank}</p>
+                      </div>
+                      <StatusPill tone={candidate.selected ? "success" : candidate.eligible ? "neutral" : "warning"}>
+                        {candidate.selected ? "selected" : candidate.eligible ? "eligible" : "blocked"}
+                      </StatusPill>
+                    </div>
+                    <p className="mt-2 text-xs text-white/50">
+                      score {candidate.finalScore.toFixed(2)} = base {candidate.baseRankScore.toFixed(2)} + history {candidate.historyScore.toFixed(2)} + lesson {candidate.lessonScore.toFixed(2)} + pattern {candidate.patternScore.toFixed(2)} + pin {candidate.pinBonus.toFixed(2)} + penalty {candidate.routePenaltyScore.toFixed(2)}
+                    </p>
+                    {candidate.ineligibilityReasons.length > 0 ? (
+                      <p className="mt-2 text-xs text-yellow-300">{candidate.ineligibilityReasons.join(", ")}</p>
+                    ) : null}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <ActionButton
+                        tone="secondary"
+                        disabled={pinRouteMutation.isPending}
+                        onClick={() => pinRouteMutation.mutate({
+                          providerId: candidate.providerId,
+                          model: candidate.model,
+                          backendKind: candidate.backendKind,
+                          taskProfileId: routingExplain.taskProfileId,
+                        })}
+                      >
+                        Pin Route
+                      </ActionButton>
+                      <ActionButton
+                        tone="secondary"
+                        disabled={clearPenaltyMutation.isPending}
+                        onClick={() => clearPenaltyMutation.mutate({
+                          providerId: candidate.providerId,
+                          model: candidate.model,
+                          backendKind: candidate.backendKind,
+                          taskProfileId: routingExplain.taskProfileId,
+                        })}
+                      >
+                        Clear Penalty
+                      </ActionButton>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-white/60">Routing explain preview unavailable.</p>
           )}
         </ShellCard>
 
@@ -480,6 +653,75 @@ export function SettingsPage() {
             </div>
           </ShellCard>
         ) : null}
+
+        <ShellCard eyebrow="Operator" title="Learning Controls">
+          {learningOverview ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <DiagnosticTile icon={<Brain className="h-4 w-4" />} label="Lessons" value={String(learningOverview.coverage.lessons)} />
+                <DiagnosticTile icon={<Brain className="h-4 w-4" />} label="Patterns" value={String(learningOverview.coverage.patterns)} />
+                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label="Route Adjustments" value={String(learningOverview.coverage.routeAdjustments)} />
+                <DiagnosticTile icon={<AlertTriangle className="h-4 w-4" />} label="Blocked Routes" value={String(learningOverview.coverage.blockedRoutes)} />
+              </div>
+              <div className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">Lessons</p>
+                {learningOverview.lessons.slice(0, 3).map((record) => (
+                  <div key={record.lesson.id} className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-white">{record.lesson.title}</p>
+                        <p className="text-xs text-white/50">{record.lesson.cause}</p>
+                      </div>
+                      <StatusPill tone={record.disabled ? "warning" : "success"}>
+                        {record.disabled ? "disabled" : "enabled"}
+                      </StatusPill>
+                    </div>
+                    <p className="mt-2 text-sm text-white/70">{record.lesson.fix}</p>
+                    <div className="mt-3 flex gap-2">
+                      <ActionButton
+                        tone="secondary"
+                        disabled={lessonToggleMutation.isPending}
+                        onClick={() => lessonToggleMutation.mutate({
+                          lessonId: record.lesson.id,
+                          enabled: record.disabled,
+                        })}
+                      >
+                        {record.disabled ? "Enable Lesson" : "Disable Lesson"}
+                      </ActionButton>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">Patterns</p>
+                {learningOverview.patterns.slice(0, 3).map((record) => (
+                  <div key={record.patternId} className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-white">{record.description}</p>
+                        <p className="text-xs text-white/50">{record.kind} · samples {record.sampleCount}</p>
+                      </div>
+                      <StatusPill tone={record.demoted ? "warning" : "neutral"}>
+                        {record.demoted ? "demoted" : "active"}
+                      </StatusPill>
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      <ActionButton
+                        tone="secondary"
+                        disabled={demotePatternMutation.isPending}
+                        onClick={() => demotePatternMutation.mutate(record.patternId)}
+                      >
+                        Demote Pattern
+                      </ActionButton>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-white/60">Learning controls unavailable.</p>
+          )}
+        </ShellCard>
 
         <ShellCard eyebrow="Security" title="Security Center">
           {securityCenter ? (

@@ -1773,6 +1773,175 @@ export interface FridayProviderDoctorReport {
   cliSession?: FridayCliSessionStatus;
 }
 
+export interface FridayProviderRoutingSelection {
+  providerId: string;
+  providerKind: FridayProviderKind;
+  model: string;
+  backendKind: FridayProviderBackendKind;
+}
+
+export interface FridayProviderRoutingExplainCandidate {
+  providerId: string;
+  providerKind: FridayProviderKind;
+  model: string;
+  backendKind: FridayProviderBackendKind;
+  originalRank: number;
+  finalRank: number;
+  selected: boolean;
+  eligible: boolean;
+  ineligibilityReasons: string[];
+  pinned: boolean;
+  routePenalty?: number;
+  historicalSuccessRate?: number;
+  historicalFailureRate?: number;
+  sampleCount?: number;
+  baseRankScore: number;
+  historyScore: number;
+  patternScore: number;
+  lessonScore: number;
+  routePenaltyScore: number;
+  pinBonus: number;
+  finalScore: number;
+  matchedLessonIds: string[];
+  matchedPatternIds: string[];
+}
+
+export interface FridayProviderRoutingExplainReport {
+  requestedProviderId?: string;
+  requestedModel?: string;
+  taskProfileId?: string;
+  requiresNativeTools: boolean;
+  selectedBeforeLearning?: FridayProviderRoutingSelection;
+  selectedAfterLearning?: FridayProviderRoutingSelection;
+  selected?: FridayProviderRoutingExplainCandidate;
+  candidates: FridayProviderRoutingExplainCandidate[];
+  candidateScores: FridayProviderRoutingExplainCandidate[];
+  learningAdjusted: boolean;
+  learningSignalsPresent: boolean;
+  orderingAdjusted: boolean;
+  selectedAdjusted: boolean;
+  reasonCode: string;
+  reason: string;
+  historyWindow: {
+    sampleLimit: number;
+  };
+}
+
+export interface FridayLearningLessonRecord {
+  lesson: {
+    id: string;
+    title: string;
+    cause: string;
+    fix: string;
+    confidence: number;
+    createdAt: string;
+    updatedAt: string;
+  };
+  disabled: boolean;
+  disabledReason?: string;
+}
+
+export interface FridayLearningPatternRecord {
+  patternId: string;
+  userId: string;
+  kind: string;
+  description: string;
+  pattern: Record<string, unknown>;
+  confidence: number;
+  sampleCount: number;
+  lastUpdated: string;
+  createdAt: string;
+  demoted: boolean;
+  demotionFactor?: number;
+  demotionReason?: string;
+}
+
+export interface FridayLearningRouteAdjustmentRecord {
+  kind: "pin" | "penalty";
+  key: string;
+  taskProfileId?: string;
+  providerId?: string;
+  model?: string;
+  backendKind?: FridayProviderBackendKind;
+  confidence: number;
+  value: Record<string, unknown>;
+}
+
+export interface FridayRouteDecisionDiffRecord {
+  runId: string;
+  createdAt: string;
+  taskProfileId?: string;
+  requestedProviderId?: string;
+  requestedModel?: string;
+  actualProviderId?: string;
+  actualModel?: string;
+  reasonCode?: string;
+  learningAdjusted: boolean;
+  learningSignalsPresent: boolean;
+  selectedBeforeLearning?: FridayProviderRoutingSelection;
+  selectedAfterLearning?: FridayProviderRoutingSelection;
+  matchedLessonIds: string[];
+  matchedPatternIds: string[];
+  trace: {
+    candidateScores: FridayProviderRoutingExplainCandidate[];
+  };
+}
+
+export interface FridayBlockedRouteRecord {
+  taskProfileId?: string;
+  providerId: string;
+  model: string;
+  backendKind: FridayProviderBackendKind;
+  reasons: string[];
+  count: number;
+  lastSeenAt: string;
+}
+
+export interface FridayRejectedFixRecord {
+  actionId: string;
+  incidentId: string;
+  title: string;
+  fingerprint: string;
+  reason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FridayRollbackHotspotRecord {
+  fingerprint: string;
+  rolledBackCount: number;
+  appliedCount: number;
+  rejectedCount: number;
+  totalCount: number;
+  lastSeenAt: string;
+}
+
+export interface FridayLearningOverview {
+  lessons: FridayLearningLessonRecord[];
+  patterns: FridayLearningPatternRecord[];
+  routeAdjustments: FridayLearningRouteAdjustmentRecord[];
+  routeBiases: FridayLearningRouteAdjustmentRecord[];
+  operatorPins: FridayLearningRouteAdjustmentRecord[];
+  penaltyFacts: FridayLearningRouteAdjustmentRecord[];
+  recentDecisionDiffs: FridayRouteDecisionDiffRecord[];
+  blockedRoutes: FridayBlockedRouteRecord[];
+  rejectedFixes: FridayRejectedFixRecord[];
+  recentRejectedFixes: FridayRejectedFixRecord[];
+  rollbackHotspots: FridayRollbackHotspotRecord[];
+  coverage: {
+    lessons: number;
+    patterns: number;
+    routeAdjustments: number;
+    recentDecisionDiffs: number;
+    blockedRoutes: number;
+    rejectedFixes: number;
+    rollbackHotspots: number;
+    incidents: number;
+    diagnoses: number;
+    autoFixActions: number;
+  };
+}
+
 // ─── Provider usage types ───
 
 export interface FridayProviderUsageSummaryRow {
