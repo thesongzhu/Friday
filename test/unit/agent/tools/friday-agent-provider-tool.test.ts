@@ -65,6 +65,9 @@ function createMockProviderService(
     getUsageSummary: vi.fn(),
     getBudgetStatus: vi.fn(),
     setBudgetConfig: vi.fn(),
+    listAuthProfiles: vi.fn().mockResolvedValue([]),
+    activateAuthProfile: vi.fn(),
+    doctorProvider: vi.fn(),
     initiateOAuthLogin: vi.fn(),
     completeOAuthLogin: vi.fn(),
     ...overrides,
@@ -244,5 +247,134 @@ describe("createFridayAgentProviderTool", () => {
     expect(result.isError).toBe(true);
     expect(result.content).toContain('Provider "missing-provider" not found');
     expect(providerService.setRoutingConfig).not.toHaveBeenCalled();
+  });
+
+  it("creates a CLI-backed external-session provider", async () => {
+    const provider = makeProvider({
+      id: "provider-codex-cli",
+      kind: "openai",
+      name: "Codex CLI",
+      baseUrl: "",
+      config: {
+        api: "openai-responses",
+        authMode: "external-session",
+        backendKind: "cli",
+        deploymentKind: "consumer-cli",
+        regionTag: "global",
+        keySource: { kind: "none" },
+        supportedModels: ["codex"],
+        cliConfig: { backendId: "codex-cli", binaryPath: "/usr/local/bin/codex" },
+        validation: { status: "never" },
+      },
+    });
+    const providerService = createMockProviderService({
+      createProvider: vi.fn().mockResolvedValue(provider),
+    });
+    const tool = createFridayAgentProviderTool({ providerService });
+
+    const result = await tool.execute({
+      action: "create",
+      kind: "openai",
+      name: "Codex CLI",
+      backendKind: "cli",
+      cliBackendId: "codex-cli",
+      cliBinaryPath: "/usr/local/bin/codex",
+      supportedModels: ["codex"],
+      defaultModel: "codex",
+    }, signal());
+    const parsed = JSON.parse(result.content) as Record<string, any>;
+
+    expect(result.isError).toBeUndefined();
+    expect(providerService.createProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "openai",
+        backendKind: "cli",
+        authMode: "external-session",
+        deploymentKind: "consumer-cli",
+        cliConfig: {
+          backendId: "codex-cli",
+          binaryPath: "/usr/local/bin/codex",
+        },
+      }),
+    );
+    expect(parsed.provider.backendKind).toBe("cli");
+    expect(parsed.provider.authMode).toBe("external-session");
+  });
+
+  it("returns provider doctor output", async () => {
+    const providerService = createMockProviderService({
+      doctorProvider: vi.fn().mockResolvedValue({
+        providerId: "anthropic-oauth-1",
+        providerKind: "anthropic",
+        backendKind: "cli",
+        authMode: "external-session",
+        checkedAt: "2026-03-31T00:00:00.000Z",
+        backendHealth: "healthy",
+        authHealth: "healthy",
+        routingEligible: true,
+        reasons: [],
+        activeProfileKey: "default",
+        cliSession: {
+          backendId: "claude-cli",
+          status: "healthy",
+          checkedAt: "2026-03-31T00:00:00.000Z",
+        },
+      }),
+    });
+    const tool = createFridayAgentProviderTool({ providerService });
+
+    const result = await tool.execute({ action: "doctor", providerId: "anthropic-oauth-1" }, signal());
+    const parsed = JSON.parse(result.content) as Record<string, any>;
+
+    expect(result.isError).toBeUndefined();
+    expect(providerService.doctorProvider).toHaveBeenCalledWith("anthropic-oauth-1");
+    expect(parsed.report.backendKind).toBe("cli");
+    expect(parsed.report.cliSession.backendId).toBe("claude-cli");
+  });
+
+  it("lists and activates auth profiles", async () => {
+    const providerService = createMockProviderService({
+      listAuthProfiles: vi.fn().mockResolvedValue([
+        {
+          id: "auth-default",
+          providerProfileId: "anthropic-oauth-1",
+          providerKind: "anthropic",
+          profileKey: "default",
+          label: "Default",
+          authMode: "oauth",
+          keySource: { kind: "none" },
+          isActive: true,
+          metadata: {},
+          createdAt: "2026-03-31T00:00:00.000Z",
+          updatedAt: "2026-03-31T00:00:00.000Z",
+        },
+      ]),
+      activateAuthProfile: vi.fn().mockResolvedValue({
+        id: "auth-cli",
+        providerProfileId: "anthropic-oauth-1",
+        providerKind: "anthropic",
+        profileKey: "cli-session",
+        label: "Claude CLI",
+        authMode: "external-session",
+        keySource: { kind: "none" },
+        isActive: true,
+        metadata: {},
+        createdAt: "2026-03-31T00:00:00.000Z",
+        updatedAt: "2026-03-31T01:00:00.000Z",
+      }),
+    });
+    const tool = createFridayAgentProviderTool({ providerService });
+
+    const listResult = await tool.execute({ action: "auth_profiles", providerId: "anthropic-oauth-1" }, signal());
+    const activateResult = await tool.execute({ action: "activate_profile", providerId: "anthropic-oauth-1", profileKey: "cli-session" }, signal());
+
+    expect(JSON.parse(listResult.content)).toMatchObject({
+      providerId: "anthropic-oauth-1",
+      profiles: [expect.objectContaining({ profileKey: "default" })],
+    });
+    expect(JSON.parse(activateResult.content)).toMatchObject({
+      providerId: "anthropic-oauth-1",
+      profile: expect.objectContaining({ profileKey: "cli-session", authMode: "external-session" }),
+    });
   });
 });

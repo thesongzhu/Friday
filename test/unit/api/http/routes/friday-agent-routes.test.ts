@@ -373,6 +373,40 @@ describe("FridayAgentRoutes", () => {
       );
     });
 
+    it("derives tenantContext from authenticated principal", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const ctx = {
+        body: { task: "Secure run" },
+        params: {},
+        query: {},
+        headers: {},
+        principal: {
+          principalType: "user",
+          principalId: "principal-1",
+          tenantId: "tenant-acme",
+          scopes: ["agent.run"],
+          tokenId: "token-1",
+          tokenKind: "access",
+          issuedAt: "2026-01-01T00:00:00.000Z",
+          expiresAt: "2026-01-01T01:00:00.000Z",
+        },
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await route.handler(ctx);
+
+      expect(stubDeps.startRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantContext: {
+            hubId: "tenant-acme",
+            userId: "principal-1",
+          },
+        }),
+      );
+    });
+
     it("checks marketplace entitlement when marketplaceListingId is provided", async () => {
       const assertListingEntitled = vi.fn().mockResolvedValue(undefined);
       const routes = createFridayAgentRoutes({

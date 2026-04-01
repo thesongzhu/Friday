@@ -1,5 +1,6 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridayAgentRunStatus } from "#agent";
+import type { FridayProviderTenantContext } from "#providers";
 
 export type FridayHeartbeatRunStatus = "ok" | "skipped" | "error";
 
@@ -18,6 +19,8 @@ export interface FridayHeartbeatConfig {
   promptPath?: string;
   fallbackPrompt: string;
   sessionKey: string;
+  principalId?: string;
+  tenantContext?: FridayProviderTenantContext;
   timezone?: string;
   timeoutMs?: number;
 }
@@ -65,6 +68,8 @@ export interface FridayHeartbeatAgentRuntimeLike {
     task: string;
     sessionKey?: string;
     historyMessages?: FridayHeartbeatContextMessage[];
+    principalId?: string;
+    tenantContext?: FridayProviderTenantContext;
     timezone?: string;
     timeoutMs?: number;
   }): Promise<{ runId: string; status: FridayAgentRunStatus; response?: string }>;

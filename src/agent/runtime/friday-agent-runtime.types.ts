@@ -1,6 +1,7 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridayEvaluationContext, FridayEvaluationResult } from "#rules";
 import type { FridayConversationBlock } from "#sessions";
+import type { FridayProviderTenantContext } from "#providers";
 import type { FridayWorkspaceContext } from "./friday-agent-workspace-context.js";
 
 import type {
@@ -81,6 +82,7 @@ export interface FridayAgentDelegationRequest {
   task: string;
   taskPrompt?: string;
   providerId?: string;
+  tenantContext?: FridayProviderTenantContext;
   model?: string;
   timezone?: string;
   timeoutMs: number;
@@ -151,6 +153,7 @@ export interface FridayAgentRuntime {
     sessionKey?: string;
     runId?: string;
     providerId?: string;
+    tenantContext?: FridayProviderTenantContext;
     model?: string;
     timezone?: string;
     maxAttempts?: number;
@@ -227,6 +230,7 @@ export interface FridayAgentResumeRunParams {
   taskPrompt?: string;
   sessionKey?: string;
   providerId?: string;
+  tenantContext?: FridayProviderTenantContext;
   model?: string;
   timezone?: string;
   timeoutMs?: number;

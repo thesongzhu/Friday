@@ -439,7 +439,7 @@ describe("FridaySessionService", () => {
     it("returns namespace for session with userId", async () => {
       await service.createSession({ channel: "discord", chatId: "user-ns1", userId: "user-ns1" });
       const ns = await service.getSessionMemoryNamespace("discord:default:user-ns1");
-      expect(ns).toBe("tenant.default.user.user-ns1.shared");
+      expect(ns).toBe("tenant.default.channel.discord.user.user-ns1.shared");
     });
 
     it("throws for nonexistent session", async () => {
@@ -452,7 +452,7 @@ describe("FridaySessionService", () => {
     it("falls back to chatId for DM sessions", async () => {
       await service.createSession({ channel: "discord", chatId: "dmuser" });
       const ns = await service.getSessionMemoryNamespace("discord:default:dmuser");
-      expect(ns).toBe("tenant.default.user.dmuser.shared");
+      expect(ns).toBe("tenant.default.channel.discord.user.dmuser.shared");
     });
   });
 
@@ -481,7 +481,7 @@ describe("FridaySessionService", () => {
       await service.createSession({ channel: "discord", chatId: "fork-ns", userId: "fork-ns" });
       const result = await service.forkSession("discord:default:fork-ns");
 
-      expect(result.forkSession.memoryNamespace).toBe("tenant.default.user.fork-ns.shared");
+      expect(result.forkSession.memoryNamespace).toBe("tenant.default.channel.discord.user.fork-ns.shared");
     });
 
     it("creates fork with custom context window count", async () => {

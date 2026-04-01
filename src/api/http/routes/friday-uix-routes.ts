@@ -1,4 +1,5 @@
 import { FridayDomainError } from "#errors";
+import type { FridayProviderTenantContext } from "#providers";
 import { isMbti } from "../../../uix/services/friday-communication-persona.js";
 import type { FridayUixSurfaceService } from "../../../uix/services/friday-uix-surface-service.js";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
@@ -72,6 +73,33 @@ function readAssistantSessionKey(body: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function buildTenantContext(principal: unknown): FridayProviderTenantContext | undefined {
+  if (!principal || typeof principal !== "object") {
+    return undefined;
+  }
+  const record = principal as {
+    userId?: unknown;
+    principalId?: unknown;
+    tenantId?: unknown;
+  };
+  const userId = typeof record.userId === "string" && record.userId.trim().length > 0
+    ? record.userId.trim()
+    : typeof record.principalId === "string" && record.principalId.trim().length > 0
+      ? record.principalId.trim()
+      : undefined;
+  if (!userId) {
+    return undefined;
+  }
+  const tenantId = typeof record.tenantId === "string" && record.tenantId.trim().length > 0
+    ? record.tenantId.trim()
+    : userId;
+  return {
+    hubId: tenantId,
+    userId,
+    channelKind: "assistant",
+  };
 }
 
 export function createFridayUixRoutes(
@@ -219,6 +247,7 @@ export function createFridayUixRoutes(
           userId,
           parameters,
           assistantSessionKey: readAssistantSessionKey(ctx.body),
+          tenantContext: buildTenantContext(ctx.principal),
         });
       },
     },
@@ -234,6 +263,7 @@ export function createFridayUixRoutes(
           wizardId,
           userId,
           assistantSessionKey: readAssistantSessionKey(ctx.body),
+          tenantContext: buildTenantContext(ctx.principal),
         });
       },
     },
@@ -253,6 +283,7 @@ export function createFridayUixRoutes(
           userId,
           values,
           assistantSessionKey: readAssistantSessionKey(ctx.body),
+          tenantContext: buildTenantContext(ctx.principal),
         });
       },
     },

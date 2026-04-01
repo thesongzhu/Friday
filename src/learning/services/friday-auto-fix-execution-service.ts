@@ -8,6 +8,7 @@ import type { FridayAutoFixRollbackService } from "./friday-auto-fix-rollback-se
 import type { UUID } from "../model/friday-learning.types.js";
 import type {
   FridayAutoFixExecutionResult,
+  FridayAutoFixPlan,
   FridayAutoFixPlanStep,
   FridayAutoFixRollbackStep,
   FridayAutoFixStepKind,
@@ -195,6 +196,16 @@ export function createFridayAutoFixExecutionService(
   const executors = { ...DEFAULT_EXECUTORS, ...deps.stepExecutors };
   const verifiers = { ...DEFAULT_VERIFIERS, ...deps.stepVerifiers };
 
+  function persistPlanEvidence(
+    actionId: UUID,
+    plan: FridayAutoFixPlan,
+    nowIso: string,
+  ): void {
+    deps.db.withWriteTransaction((db) => {
+      deps.actionRepo.setPlan(db, actionId, plan, nowIso);
+    });
+  }
+
   async function finalizeFailedAction(
     actionId: UUID,
     nowIso: string,
@@ -267,6 +278,8 @@ export function createFridayAutoFixExecutionService(
       }
 
       if (!executionSucceeded) {
+        persistPlanEvidence(actionId, action.plan, nowIso);
+
         // Execution failed — attempt rollback
         const rollbackPlan = action.rollbackPlan ?? action.plan.rollbackPlan;
         if (rollbackPlan) {
@@ -294,6 +307,8 @@ export function createFridayAutoFixExecutionService(
           false,
         );
       }
+
+      persistPlanEvidence(actionId, action.plan, nowIso);
 
       // Run verification per step kind
       let verificationPassed = true;

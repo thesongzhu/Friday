@@ -37,7 +37,10 @@ import type {
 } from "../model/friday-agent.types.js";
 import type { FridayWorldState } from "../model/friday-agent-world-state.types.js";
 import { createFridayAgentRunRepository } from "../persistence/friday-agent-run-repository.js";
-import type { FridayAgentLlmStreamEvent } from "./friday-agent-llm-client.types.js";
+import type {
+  FridayAgentLlmStreamEvent,
+  FridayAgentLlmStreamParams,
+} from "./friday-agent-llm-client.types.js";
 import type {
   CreateFridayAgentRuntimeDeps,
   FridayAgentConversationContext,
@@ -49,6 +52,12 @@ import type {
 import { evaluateFridayAnswerAlignment } from "./friday-agent-answer-alignment.js";
 import { notifyFridayContextEngineAfterTurn } from "./friday-agent-context-engine.js";
 import type { FridayDecisionContext } from "./friday-agent-decision-engine.types.js";
+import { createFridayFileVersionTracker } from "./friday-agent-file-version-tracker.js";
+import {
+  classifyToolBatchDependencies,
+  executeToolBatch,
+  extractFilePaths,
+} from "./friday-agent-tool-batch-executor.js";
 import { attachFridayAgentToolExecutionContext } from "./friday-agent-tool-execution-context.js";
 import { shouldDelegateFridayAgentTask } from "./friday-agent-delegation-policy.js";
 import { resolveFridayAgentTaskProfile } from "./friday-agent-task-profile.js";
@@ -854,6 +863,7 @@ export function createFridayAgentRuntime(
             task: params.task,
             taskPrompt: llmTask,
             providerId: requestedProviderId,
+            tenantContext: params.tenantContext,
             model: requestedModel,
             timezone: params.timezone,
             timeoutMs,
@@ -1080,6 +1090,7 @@ export function createFridayAgentRuntime(
         let answerAlignmentRetries = 0;
         let desktopInspectionRetries = 0;
         let artifactTruthRetries = 0;
+        const fileVersionTracker = createFridayFileVersionTracker();
 
         while (iterations < FRIDAY_AGENT_MAX_LOOP_ITERATIONS) {
           if (runAbortController.signal.aborted) {
@@ -1174,6 +1185,7 @@ export function createFridayAgentRuntime(
               streamResult = await streamLlmResponse({
                 llmClient,
                 providerId: requestedProviderId,
+                tenantContext: params.tenantContext,
                 model: requestedModel ?? "default",
                 systemPrompt: effectiveSystemPrompt,
                 messages,
@@ -1382,52 +1394,25 @@ export function createFridayAgentRuntime(
 
           // 6. Execute tool calls and build tool_result blocks
           const toolResultBlocks: FridayAgentToolResultBlock[] = [];
+          const toolCallRecordsByIndex = new Map<number, FridayAgentToolCallRecord>();
+          const executableToolUses: Array<{ index: number; toolUse: FridayAgentToolUseBlock }> = [];
 
-          for (const toolUse of toolUseBlocks) {
+          for (let toolIndex = 0; toolIndex < toolUseBlocks.length; toolIndex += 1) {
+            const toolUse = toolUseBlocks[toolIndex]!;
             if (runAbortController.signal.aborted) {
               break;
             }
 
             if (disabledToolNames.has(toolUse.name)) {
-              const blockedResult = {
-                content: `Tool '${toolUse.name}' is disabled for this run.`,
-                isError: true,
-              };
-              const blockedRecord: FridayAgentToolCallRecord = {
-                toolCallId: toolUse.id,
-                toolName: toolUse.name,
-                args: toolUse.input,
-                result: blockedResult,
-                durationMs: 0,
-                startedAt: nowIso(),
-              };
-              allToolCalls.push(blockedRecord);
-
-              handleTrackedEvent("agent.run.tool_start", {
+              toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                toolUse,
                 runId,
-                toolName: toolUse.name,
-                toolCallId: toolUse.id,
-                params: toolUse.input,
-              });
-
-              handleTrackedEvent("agent.run.tool_end", {
-                runId,
-                toolName: toolUse.name,
-                toolCallId: toolUse.id,
-                durationMs: 0,
-                isError: true,
-                summary: blockedResult.content.slice(0, 200),
-                errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+                nowIso,
+                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
                 routeId: "agent.execute.tool.guard",
                 correlationId: runId,
-              });
-
-              toolResultBlocks.push({
-                type: "tool_result",
-                tool_use_id: toolUse.id,
-                content: blockedResult.content,
-                is_error: true,
-              });
+                message: `Tool '${toolUse.name}' is disabled for this run.`,
+              }));
               continue;
             }
 
@@ -1446,166 +1431,100 @@ export function createFridayAgentRuntime(
                 sessionId: sessionKey,
                 scopes,
               }, runAbortController.signal);
-              // P1-SEC-006: Treat null (rules evaluation error) as deny — fail-closed
               if (policyResult === null || (policyResult && !policyResult.allowed)) {
                 const message = policyResult?.message
                   ?? (policyResult === null
                     ? `Tool '${toolUse.name}' blocked — policy evaluation temporarily unavailable`
                     : `Tool '${toolUse.name}' blocked by policy`);
-                const blockedResult = {
-                  content: message,
-                  isError: true,
-                };
-                const blockedRecord: FridayAgentToolCallRecord = {
-                  toolCallId: toolUse.id,
-                  toolName: toolUse.name,
-                  args: toolUse.input,
-                  result: blockedResult,
-                  durationMs: 0,
-                  startedAt: nowIso(),
-                };
-                allToolCalls.push(blockedRecord);
-
-                handleTrackedEvent("agent.run.tool_start", {
+                toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                  toolUse,
                   runId,
-                  toolName: toolUse.name,
-                  toolCallId: toolUse.id,
-                  params: toolUse.input,
-                });
-
-                handleTrackedEvent("agent.run.tool_end", {
-                  runId,
-                  toolName: toolUse.name,
-                  toolCallId: toolUse.id,
-                  durationMs: 0,
-                  isError: true,
-                  summary: message.slice(0, 200),
-                  errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+                  nowIso,
+                  emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
                   routeId: "agent.execute.tool.policy",
                   correlationId: runId,
-                });
-
-                toolResultBlocks.push({
-                  type: "tool_result",
-                  tool_use_id: toolUse.id,
-                  content: message,
-                  is_error: true,
-                });
+                  message,
+                }));
                 continue;
               }
             }
 
-            // IMPL-4: readOnly constraint check
             if (isReadOnly && isMutatingToolCall(toolUse.name, toolUse.input)) {
-              const blockedResult = {
-                content: `Tool '${toolUse.name}' blocked: run has readOnly constraint`,
-                isError: true,
-              };
-              const blockedRecord: FridayAgentToolCallRecord = {
-                toolCallId: toolUse.id,
-                toolName: toolUse.name,
-                args: toolUse.input,
-                result: blockedResult,
-                durationMs: 0,
-                startedAt: nowIso(),
-              };
-              allToolCalls.push(blockedRecord);
-
-              handleTrackedEvent("agent.run.tool_start", {
+              toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                toolUse,
                 runId,
-                toolName: toolUse.name,
-                toolCallId: toolUse.id,
-                params: toolUse.input,
-              });
-
-              handleTrackedEvent("agent.run.tool_end", {
-                runId,
-                toolName: toolUse.name,
-                toolCallId: toolUse.id,
-                durationMs: 0,
-                isError: true,
-                summary: blockedResult.content.slice(0, 200),
-                errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+                nowIso,
+                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
                 routeId: "agent.execute.tool.readonly",
                 correlationId: runId,
-              });
-
-              toolResultBlocks.push({
-                type: "tool_result",
-                tool_use_id: toolUse.id,
-                content: blockedResult.content,
-                is_error: true,
-              });
+                message: `Tool '${toolUse.name}' blocked: run has readOnly constraint`,
+              }));
               continue;
             }
 
             const approvalRequiredReason = getApprovalRequiredReasonForToolCall(toolUse.name, toolUse.input);
             if (approvalRequiredReason) {
-              const blockedResult = {
-                content: `Tool '${toolUse.name}' blocked pending approval. ${approvalRequiredReason}`,
-                isError: true,
-              };
-              const blockedRecord: FridayAgentToolCallRecord = {
-                toolCallId: toolUse.id,
-                toolName: toolUse.name,
-                args: toolUse.input,
-                result: blockedResult,
-                durationMs: 0,
-                startedAt: nowIso(),
-              };
-              allToolCalls.push(blockedRecord);
-
-              handleTrackedEvent("agent.run.tool_start", {
+              toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                toolUse,
                 runId,
-                toolName: toolUse.name,
-                toolCallId: toolUse.id,
-                params: toolUse.input,
-              });
-
-              handleTrackedEvent("agent.run.tool_end", {
-                runId,
-                toolName: toolUse.name,
-                toolCallId: toolUse.id,
-                durationMs: 0,
-                isError: true,
-                summary: blockedResult.content.slice(0, 200),
-                errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+                nowIso,
+                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
                 routeId: "agent.execute.tool.approval_required",
                 correlationId: runId,
-              });
-
-              toolResultBlocks.push({
-                type: "tool_result",
-                tool_use_id: toolUse.id,
-                content: blockedResult.content,
-                is_error: true,
-              });
+                message: `Tool '${toolUse.name}' blocked pending approval. ${approvalRequiredReason}`,
+              }));
               continue;
             }
 
-            const toolCallRecord = await executeToolCall({
-              toolUse,
-              toolMap,
-              signal: runAbortController.signal,
-              runId,
-              sessionKey,
-              readOnly: isReadOnly,
-              timezone: runTimeContext.timezone,
-              taskPrompt: llmTask,
-              conversationContext,
-              principalId,
-              executionContext,
-              nowIso,
-              emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
-            });
+            executableToolUses.push({ index: toolIndex, toolUse });
+          }
 
+          if (executableToolUses.length > 0 && !runAbortController.signal.aborted) {
+            const executableBlocks = executableToolUses.map(({ toolUse }) => toolUse);
+            const groups = classifyToolBatchDependencies(executableBlocks);
+            if (executableToolUses.length > 1 && groups.some((group) => group.tools.length > 1)) {
+              console.info(
+                `[friday][marker] tool_batch_executed runId=${runId} groups=${String(groups.length)} tools=${String(executableToolUses.length)}`,
+              );
+            }
+            const executedRecords = await executeToolBatch(
+              groups,
+              async (toolUse) =>
+                executeToolCall({
+                  toolUse: toolUse as FridayAgentToolUseBlock,
+                  toolMap,
+                  signal: runAbortController.signal,
+                  runId,
+                  sessionKey,
+                  readOnly: isReadOnly,
+                  timezone: runTimeContext.timezone,
+                  taskPrompt: llmTask,
+                  conversationContext,
+                  principalId,
+                  tenantContext: params.tenantContext,
+                  executionContext,
+                  fileVersionTracker,
+                  nowIso,
+                  emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                }),
+            );
+            for (let recordIndex = 0; recordIndex < executedRecords.length; recordIndex += 1) {
+              const planned = executableToolUses[recordIndex];
+              if (!planned) continue;
+              toolCallRecordsByIndex.set(planned.index, executedRecords[recordIndex]!);
+            }
+          }
+
+          for (let toolIndex = 0; toolIndex < toolUseBlocks.length; toolIndex += 1) {
+            const toolUse = toolUseBlocks[toolIndex]!;
+            const toolCallRecord = toolCallRecordsByIndex.get(toolIndex);
+            if (!toolCallRecord) {
+              continue;
+            }
             allToolCalls.push(toolCallRecord);
-
-            // P2-RUNTIME-006: Early exit if tool call limit reached mid-batch
             if (allToolCalls.length >= FRIDAY_AGENT_MAX_TOOL_CALLS) {
               break;
             }
-
             toolResultBlocks.push({
               type: "tool_result",
               tool_use_id: toolUse.id,
@@ -3651,6 +3570,7 @@ function deriveSummary(responseText: string, maxLen = 200): string | undefined {
 interface StreamLlmResponseParams {
   llmClient: CreateFridayAgentRuntimeDeps["llmClient"];
   providerId?: string;
+  tenantContext?: FridayAgentLlmStreamParams["tenantContext"];
   model: string;
   systemPrompt: string;
   messages: FridayAgentMessage[];
@@ -3695,6 +3615,7 @@ async function streamLlmResponse(
 
   const stream = params.llmClient.stream({
     providerId: params.providerId,
+    tenantContext: params.tenantContext,
     model: params.model,
     systemPrompt: params.systemPrompt,
     messages: params.messages,
@@ -4012,7 +3933,9 @@ interface ExecuteToolCallParams {
   taskPrompt?: string;
   conversationContext?: FridayAgentConversationContext;
   principalId?: string;
+  tenantContext?: FridayAgentLlmStreamParams["tenantContext"];
   executionContext?: FridayAgentExecutionContext;
+  fileVersionTracker?: ReturnType<typeof createFridayFileVersionTracker>;
   nowIso: () => string;
   emitRunEvent: (name: string, payload: Record<string, unknown>) => void;
 }
@@ -4115,6 +4038,50 @@ function buildToolEndEventPayload(params: {
   };
 }
 
+function emitImmediateToolCallResult(params: {
+  toolUse: FridayAgentToolUseBlock;
+  runId: string;
+  nowIso: () => string;
+  emitRunEvent: (name: string, payload: Record<string, unknown>) => void;
+  routeId: string;
+  correlationId: string;
+  message: string;
+  errorCode?: string;
+}): FridayAgentToolCallRecord {
+  const result = {
+    content: params.message,
+    isError: true,
+  };
+
+  params.emitRunEvent("agent.run.tool_start", {
+    runId: params.runId,
+    toolName: params.toolUse.name,
+    toolCallId: params.toolUse.id,
+    params: params.toolUse.input,
+  });
+
+  params.emitRunEvent("agent.run.tool_end", {
+    runId: params.runId,
+    toolName: params.toolUse.name,
+    toolCallId: params.toolUse.id,
+    durationMs: 0,
+    isError: true,
+    summary: result.content.slice(0, 200),
+    errorCode: params.errorCode ?? FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+    routeId: params.routeId,
+    correlationId: params.correlationId,
+  });
+
+  return {
+    toolCallId: params.toolUse.id,
+    toolName: params.toolUse.name,
+    args: params.toolUse.input,
+    result,
+    durationMs: 0,
+    startedAt: params.nowIso(),
+  };
+}
+
 async function executeToolCall(
   params: ExecuteToolCallParams,
 ): Promise<FridayAgentToolCallRecord> {
@@ -4136,6 +4103,46 @@ async function executeToolCall(
     toolCallId: toolUse.id,
     params: toolUse.input,
   });
+
+  const touchedPaths = extractFilePaths(toolUse.name, toolUse.input);
+  if (params.fileVersionTracker && isMutatingToolCall(toolUse.name, toolUse.input)) {
+    for (const filePath of touchedPaths) {
+      const conflict = params.fileVersionTracker.checkBeforeWrite(filePath);
+      if (conflict.conflict) {
+        const result = {
+          content:
+            `Tool '${toolUse.name}' blocked: file changed since it was last observed in this run ` +
+            `(${conflict.reason}) for ${filePath}`,
+          isError: true,
+        };
+        const durationMs = Date.now() - startedAt;
+
+        console.warn(
+          `[friday][marker] tool_write_conflict_blocked runId=${runId} tool=${toolUse.name} path=${filePath} reason=${conflict.reason}`,
+        );
+        emitRunEvent("agent.run.tool_end", {
+          runId,
+          toolName: toolUse.name,
+          toolCallId: toolUse.id,
+          durationMs,
+          isError: true,
+          summary: result.content.slice(0, 200),
+          errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+          routeId: "agent.execute.tool.file_tracker",
+          correlationId,
+        });
+
+        return {
+          toolCallId: toolUse.id,
+          toolName: toolUse.name,
+          args: toolUse.input,
+          result,
+          durationMs,
+          startedAt: nowIso(),
+        };
+      }
+    }
+  }
 
   const tool = toolMap.get(toolUse.name);
   if (!tool) {
@@ -4226,6 +4233,8 @@ async function executeToolCall(
       timezone: params.timezone,
       taskPrompt: params.taskPrompt,
       conversationContext: params.conversationContext,
+      principalId: params.principalId,
+      tenantContext: params.tenantContext,
     });
     const rawResult = await tool.execute(toolArgs, toolSignal);
     const durationMs = Date.now() - startedAt;
@@ -4274,6 +4283,12 @@ async function executeToolCall(
       correlationId,
       toolCallSummary: summarizeToolCall(toolUse.name, toolUse.input, result, 0, 0),
     }));
+
+    if (!result.isError && params.fileVersionTracker && touchedPaths.length > 0) {
+      for (const filePath of touchedPaths) {
+        params.fileVersionTracker.recordRead(filePath);
+      }
+    }
 
     return {
       toolCallId: toolUse.id,

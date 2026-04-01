@@ -1,6 +1,8 @@
 import type {
   FridayProviderApi,
   FridayProviderAuthMode,
+  FridayProviderBackendKind,
+  FridayProviderCliBackendId,
   FridayProviderKind,
 } from "./friday-provider.types.js";
 import { FRIDAY_PROVIDER_KINDS } from "./friday-provider.types.js";
@@ -16,7 +18,9 @@ export interface FridayProviderCapability {
   kind: FridayProviderKind;
   family: FridayProviderFamily;
   supportedApis: readonly FridayProviderApi[];
-  supportedAuthModes: readonly FridayProviderAuthMode[];
+  supportedBackendKinds: readonly FridayProviderBackendKind[];
+  supportedAuthModesByBackend: Readonly<Record<FridayProviderBackendKind, readonly FridayProviderAuthMode[]>>;
+  defaultCliBackendId?: FridayProviderCliBackendId;
   /**
    * True when operator must provide an explicit baseUrl (no stable default).
    */
@@ -30,49 +34,67 @@ const OLLAMA_APIS: readonly FridayProviderApi[] = ["ollama"];
 
 const OPENAI_CLOUD_AUTH: readonly FridayProviderAuthMode[] = ["api-key", "bearer-token"];
 const OPENAI_PROXY_AUTH: readonly FridayProviderAuthMode[] = ["api-key", "bearer-token", "none"];
-const ANTHROPIC_AUTH: readonly FridayProviderAuthMode[] = ["api-key", "oauth"];
+const ANTHROPIC_AUTH: readonly FridayProviderAuthMode[] = ["api-key", "oauth", "token"];
 const GOOGLE_AUTH: readonly FridayProviderAuthMode[] = ["api-key"];
 const LOCAL_AUTH: readonly FridayProviderAuthMode[] = ["none", "api-key", "bearer-token"];
+const CLI_EXTERNAL_SESSION_AUTH: readonly FridayProviderAuthMode[] = ["external-session"];
+const SDK_EXTERNAL_SESSION_AUTH: readonly FridayProviderAuthMode[] = ["external-session"];
 
 export const FRIDAY_PROVIDER_CAPABILITIES: Record<FridayProviderKind, FridayProviderCapability> = {
-  openai: capability("openai", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  "openai-codex": capability("openai-codex", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  anthropic: capability("anthropic", "anthropic-compatible", ANTHROPIC_APIS, ANTHROPIC_AUTH),
-  google: capability("google", "google-compatible", GOOGLE_APIS, ["api-key"]),
-  "google-vertex": capability("google-vertex", "google-compatible", GOOGLE_APIS, GOOGLE_AUTH),
-  "google-antigravity": capability("google-antigravity", "google-compatible", GOOGLE_APIS, GOOGLE_AUTH),
-  "google-gemini-cli": capability("google-gemini-cli", "google-compatible", GOOGLE_APIS, GOOGLE_AUTH),
-  openrouter: capability("openrouter", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  xai: capability("xai", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  mistral: capability("mistral", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  groq: capability("groq", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  cerebras: capability("cerebras", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  "github-copilot": capability("github-copilot", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  huggingface: capability("huggingface", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  opencode: capability("opencode", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  "vercel-ai-gateway": capability("vercel-ai-gateway", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  kilocode: capability("kilocode", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  moonshot: capability("moonshot", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  "kimi-coding": capability("kimi-coding", "anthropic-compatible", ANTHROPIC_APIS, ["api-key"]),
-  qwen: capability("qwen", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  "qwen-portal": capability("qwen-portal", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  volcengine: capability("volcengine", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  byteplus: capability("byteplus", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  synthetic: capability("synthetic", "anthropic-compatible", ANTHROPIC_APIS, ["api-key"]),
-  minimax: capability("minimax", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  ollama: capability("ollama", "local-runtime", OLLAMA_APIS, LOCAL_AUTH),
-  vllm: capability("vllm", "openai-compatible", OPENAI_APIS, LOCAL_AUTH),
-  litellm: capability("litellm", "openai-compatible", OPENAI_APIS, LOCAL_AUTH),
-  together: capability("together", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  nvidia: capability("nvidia", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  qianfan: capability("qianfan", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  venice: capability("venice", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  xiaomi: capability("xiaomi", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  zai: capability("zai", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  glm: capability("glm", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  bedrock: capability("bedrock", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  "cloudflare-ai-gateway": capability("cloudflare-ai-gateway", "openai-compatible", OPENAI_APIS, OPENAI_CLOUD_AUTH),
-  "openai-compatible": capability("openai-compatible", "openai-compatible", OPENAI_APIS, OPENAI_PROXY_AUTH),
+  openai: capability("openai", "openai-compatible", OPENAI_APIS, {
+    http: OPENAI_CLOUD_AUTH,
+    cli: CLI_EXTERNAL_SESSION_AUTH,
+    sdk: [],
+  }, { defaultCliBackendId: "codex-cli" }),
+  "openai-codex": capability("openai-codex", "openai-compatible", OPENAI_APIS, {
+    http: OPENAI_CLOUD_AUTH,
+    cli: CLI_EXTERNAL_SESSION_AUTH,
+    sdk: SDK_EXTERNAL_SESSION_AUTH,
+  }, { defaultCliBackendId: "codex-cli" }),
+  anthropic: capability("anthropic", "anthropic-compatible", ANTHROPIC_APIS, {
+    http: ANTHROPIC_AUTH,
+    cli: CLI_EXTERNAL_SESSION_AUTH,
+    sdk: [],
+  }, { defaultCliBackendId: "claude-cli" }),
+  google: capability("google", "google-compatible", GOOGLE_APIS, {
+    http: ["api-key"],
+    cli: CLI_EXTERNAL_SESSION_AUTH,
+    sdk: [],
+  }, { defaultCliBackendId: "gemini-cli" }),
+  "google-vertex": capability("google-vertex", "google-compatible", GOOGLE_APIS, { http: GOOGLE_AUTH, cli: [], sdk: [] }),
+  "google-antigravity": capability("google-antigravity", "google-compatible", GOOGLE_APIS, { http: GOOGLE_AUTH, cli: [], sdk: [] }),
+  "google-gemini-cli": capability("google-gemini-cli", "google-compatible", GOOGLE_APIS, { http: GOOGLE_AUTH, cli: CLI_EXTERNAL_SESSION_AUTH, sdk: [] }, { defaultCliBackendId: "gemini-cli" }),
+  openrouter: capability("openrouter", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  xai: capability("xai", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  mistral: capability("mistral", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  groq: capability("groq", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  cerebras: capability("cerebras", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  "github-copilot": capability("github-copilot", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  huggingface: capability("huggingface", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  opencode: capability("opencode", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  "vercel-ai-gateway": capability("vercel-ai-gateway", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  kilocode: capability("kilocode", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  moonshot: capability("moonshot", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  "kimi-coding": capability("kimi-coding", "anthropic-compatible", ANTHROPIC_APIS, { http: ["api-key"], cli: [], sdk: [] }),
+  qwen: capability("qwen", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  "qwen-portal": capability("qwen-portal", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  volcengine: capability("volcengine", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  byteplus: capability("byteplus", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  synthetic: capability("synthetic", "anthropic-compatible", ANTHROPIC_APIS, { http: ["api-key"], cli: [], sdk: [] }),
+  minimax: capability("minimax", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  ollama: capability("ollama", "local-runtime", OLLAMA_APIS, { http: LOCAL_AUTH, cli: [], sdk: [] }),
+  vllm: capability("vllm", "openai-compatible", OPENAI_APIS, { http: LOCAL_AUTH, cli: [], sdk: [] }),
+  litellm: capability("litellm", "openai-compatible", OPENAI_APIS, { http: LOCAL_AUTH, cli: [], sdk: [] }),
+  together: capability("together", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  nvidia: capability("nvidia", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  qianfan: capability("qianfan", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  venice: capability("venice", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  xiaomi: capability("xiaomi", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  zai: capability("zai", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  glm: capability("glm", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  bedrock: capability("bedrock", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  "cloudflare-ai-gateway": capability("cloudflare-ai-gateway", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  "openai-compatible": capability("openai-compatible", "openai-compatible", OPENAI_APIS, { http: OPENAI_PROXY_AUTH, cli: [], sdk: [] }),
 };
 
 export const FRIDAY_PROVIDER_FAMILIES: readonly FridayProviderFamily[] = [
@@ -93,25 +115,64 @@ export function isFridayProviderApiSupportedForKind(
   return FRIDAY_PROVIDER_CAPABILITIES[kind].supportedApis.includes(api);
 }
 
+export function isFridayProviderBackendKindSupportedForKind(
+  kind: FridayProviderKind,
+  backendKind: FridayProviderBackendKind,
+): boolean {
+  return FRIDAY_PROVIDER_CAPABILITIES[kind].supportedBackendKinds.includes(backendKind);
+}
+
 export function isFridayProviderAuthModeSupportedForKind(
   kind: FridayProviderKind,
   authMode: FridayProviderAuthMode,
 ): boolean {
-  return FRIDAY_PROVIDER_CAPABILITIES[kind].supportedAuthModes.includes(authMode);
+  const capability = FRIDAY_PROVIDER_CAPABILITIES[kind];
+  return capability.supportedBackendKinds.some((backendKind) =>
+    capability.supportedAuthModesByBackend[backendKind]?.includes(authMode),
+  );
+}
+
+export function isFridayProviderAuthModeSupportedForKindAndBackend(
+  kind: FridayProviderKind,
+  backendKind: FridayProviderBackendKind,
+  authMode: FridayProviderAuthMode,
+): boolean {
+  const modes = FRIDAY_PROVIDER_CAPABILITIES[kind].supportedAuthModesByBackend[backendKind] ?? [];
+  return modes.includes(authMode);
+}
+
+export function getFridayProviderAuthModesForBackend(
+  kind: FridayProviderKind,
+  backendKind: FridayProviderBackendKind,
+): readonly FridayProviderAuthMode[] {
+  return FRIDAY_PROVIDER_CAPABILITIES[kind].supportedAuthModesByBackend[backendKind] ?? [];
 }
 
 function capability(
   kind: FridayProviderKind,
   family: FridayProviderFamily,
   supportedApis: readonly FridayProviderApi[],
-  supportedAuthModes: readonly FridayProviderAuthMode[],
+  supportedAuthModesByBackend: Partial<Record<FridayProviderBackendKind, readonly FridayProviderAuthMode[]>>,
+  options?: {
+    defaultCliBackendId?: FridayProviderCliBackendId;
+  },
 ): FridayProviderCapability {
   const preset = FRIDAY_PROVIDER_PRESETS[kind];
+  const normalizedByBackend: Readonly<Record<FridayProviderBackendKind, readonly FridayProviderAuthMode[]>> = {
+    http: supportedAuthModesByBackend.http ?? [],
+    cli: supportedAuthModesByBackend.cli ?? [],
+    sdk: supportedAuthModesByBackend.sdk ?? [],
+  };
+  const supportedBackendKinds = (Object.entries(normalizedByBackend) as Array<[FridayProviderBackendKind, readonly FridayProviderAuthMode[]]>)
+    .filter(([, modes]) => modes.length > 0)
+    .map(([backendKind]) => backendKind);
   return {
     kind,
     family,
     supportedApis,
-    supportedAuthModes,
+    supportedBackendKinds,
+    supportedAuthModesByBackend: normalizedByBackend,
+    defaultCliBackendId: options?.defaultCliBackendId,
     requiresBaseUrl: preset.baseUrl.trim() === "",
   };
 }

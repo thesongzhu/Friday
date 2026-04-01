@@ -1369,6 +1369,24 @@ async function runLocalStage(ledger) {
         throw new Error(`Agent run failed: ${JSON.stringify(run.json)}`);
       }
       const agentRunResult = inspectAgentClosureResult(run.json, { label: "agentRun" });
+      const sessionNamespaceResponse = await apiFetch(
+        baseUrl,
+        token,
+        "GET",
+        `/v1/sessions/${encodeURIComponent(sessionKey)}/memory-namespace`,
+      );
+      if (sessionNamespaceResponse.status !== 200 || !sessionNamespaceResponse.json.ok) {
+        throw new Error(
+          `Session memory namespace failed: ${JSON.stringify(sessionNamespaceResponse.json)}`,
+        );
+      }
+      const sessionMemoryNamespace = getFirstNonEmptyString(sessionNamespaceResponse.json, [
+        ["data", "namespace"],
+        ["namespace"],
+      ]);
+      if (!sessionMemoryNamespace) {
+        throw new Error("Session memory namespace response did not include a namespace");
+      }
       const store = await apiFetch(baseUrl, token, "POST", "/v1/memory/store", {
         namespace: "closure-agent",
         content: `Agent response: ${run.json.data.response ?? ""}`,
@@ -1377,7 +1395,7 @@ async function runLocalStage(ledger) {
       });
       const search = await apiFetch(baseUrl, token, "POST", "/v1/memory/search", {
         namespace: "closure-agent",
-        query: "octopus facts",
+        query: "Agent response",
       });
       const automationCreate = await apiFetch(baseUrl, token, "POST", "/v1/agent/automations", {
         name: "Closure Automation",
@@ -1404,6 +1422,7 @@ async function runLocalStage(ledger) {
       const responsePath = writeResponseEvidence(ledger.paths, "local-sessions-agent-memory", {
         sessionCreate: sessionCreate.json,
         agentRun: run.json,
+        sessionMemoryNamespace: sessionNamespaceResponse.json,
         memoryStore: store.json,
         memorySearch: search.json,
         automationCreate: automationCreate.json,

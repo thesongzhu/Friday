@@ -1,4 +1,5 @@
 import type {
+  FridayAuthProfile,
   FridayLlmBudgetConfig,
   FridayLlmBudgetStatus,
   FridayModelRoutingConfig,
@@ -6,8 +7,13 @@ import type {
   FridayOAuthLoginResult,
   FridayProviderApi,
   FridayProviderAuthMode,
+  FridayProviderBackendKind,
+  FridayProviderCliConfig,
+  FridayProviderDeploymentKind,
+  FridayProviderDoctorReport,
   FridayProviderKind,
   FridayProviderProfile,
+  FridayProviderRegionTag,
   FridayProviderUsageSummary,
   FridayProviderValidationState,
 } from "#providers";
@@ -18,12 +24,16 @@ export interface FridayCreateProviderRequest {
   kind: FridayProviderKind;
   name: string;
   baseUrl: string;
+  backendKind?: FridayProviderBackendKind;
   authMode: FridayProviderAuthMode;
   api: FridayProviderApi;
   apiKey?: string;
   supportedModels: string[];
   defaultModel?: string;
   headers?: Record<string, string>;
+  cliConfig?: FridayProviderCliConfig;
+  deploymentKind?: FridayProviderDeploymentKind;
+  regionTag?: FridayProviderRegionTag;
   enabled?: boolean;
   validateOnSave?: boolean;
 }
@@ -31,12 +41,16 @@ export interface FridayCreateProviderRequest {
 export interface FridayUpdateProviderRequest {
   name?: string;
   baseUrl?: string;
+  backendKind?: FridayProviderBackendKind;
   authMode?: FridayProviderAuthMode;
   api?: FridayProviderApi;
   apiKey?: string;
   supportedModels?: string[];
   defaultModel?: string;
   headers?: Record<string, string>;
+  cliConfig?: FridayProviderCliConfig;
+  deploymentKind?: FridayProviderDeploymentKind;
+  regionTag?: FridayProviderRegionTag;
   enabled?: boolean;
   validateOnSave?: boolean;
 }
@@ -77,6 +91,22 @@ export interface FridayDeleteProviderResponse {
 
 export interface FridayValidateProviderResponse {
   validation: FridayProviderValidationState;
+}
+
+export interface FridayGetProviderDoctorResponse {
+  doctor: FridayProviderDoctorReport;
+}
+
+export interface FridayListProviderAuthProfilesResponse {
+  items: FridayAuthProfile[];
+}
+
+export interface FridayActivateProviderAuthProfileRequest {
+  profileKey: string;
+}
+
+export interface FridayActivateProviderAuthProfileResponse {
+  profile: FridayAuthProfile;
 }
 
 export interface FridayGetRoutingConfigResponse {

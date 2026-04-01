@@ -121,6 +121,8 @@ function createSpawnSubagentTool(
           constraints: toolExecutionContext?.readOnly
             ? { readOnly: true }
             : undefined,
+          principalId: toolExecutionContext?.principalId,
+          tenantContext: toolExecutionContext?.tenantContext,
           signal,
         };
 

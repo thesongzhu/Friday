@@ -172,11 +172,13 @@ export function createFridaySubagentRegistry(
         timezone: input.timezone,
         timeoutMs,
         conversationContext: input.conversationContext,
+        tenantContext: input.tenantContext,
         signal: input.signal,
         constraints: {
           ...(input.constraints ?? {}),
           ...(resolvedProfile.readOnly ? { readOnly: true } : {}),
         },
+        principalId: input.principalId,
         taskProfile: { id: resolvedProfile.taskProfile },
       });
 

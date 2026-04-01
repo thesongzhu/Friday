@@ -9,7 +9,11 @@
   "author": {
     "name": "Your Name"
   },
-  "tags": [],
+  "tags": [
+    "generated",
+    "cli-backed",
+    "skill.stabilized"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -45,9 +49,9 @@
   "inputs": [],
   "outputs": [
     {
-      "key": "currentDateTime",
+      "key": "dateTime",
       "type": "string",
-      "description": "The current date and time in ISO format."
+      "description": "Current date and time in ISO format"
     }
   ],
   "permissions": {

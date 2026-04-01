@@ -1,4 +1,5 @@
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
+import type { FridayProviderTenantContext } from "#providers";
 import {
   errorResult,
   jsonResult,
@@ -32,6 +33,7 @@ export interface FridayImageAnalysisRequest {
   model?: string;
   detail: ImageDetail;
   maxTokens?: number;
+  tenantContext?: FridayProviderTenantContext;
 }
 
 export interface FridayImageAnalysisInput {

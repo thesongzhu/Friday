@@ -14,7 +14,13 @@ import {
   getAssistantStarterTask,
 } from "@/lib/assistant/starter-tasks";
 import { trackStarterSkillBatch } from "@/lib/skills/starter-skill-telemetry";
-import type { ChannelKind, ProviderKind, SetupStepId } from "@/lib/setup/types";
+import type {
+  AuthMode,
+  ChannelKind,
+  ProviderApi,
+  ProviderKind,
+  SetupStepId,
+} from "@/lib/setup/types";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import {
   buildPersonaPreview,
@@ -71,8 +77,8 @@ export function SetupPage() {
   const [providerBaseUrl, setProviderBaseUrl] = useState("");
   const [providerModels, setProviderModels] = useState<string[]>([]);
   const [providerDefaultModel, setProviderDefaultModel] = useState("");
-  const [providerApi, setProviderApi] = useState<"openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai" | "ollama">("openai-responses");
-  const [providerAuthMode, setProviderAuthMode] = useState<"api-key" | "bearer-token" | "oauth" | "none">("api-key");
+  const [providerApi, setProviderApi] = useState<ProviderApi>("openai-responses");
+  const [providerAuthMode, setProviderAuthMode] = useState<AuthMode>("api-key");
   const [providerValidated, setProviderValidated] = useState(false);
   const [networkMode, setNetworkMode] = useState<"local" | "network" | "custom">("local");
   const [networkHost, setNetworkHost] = useState("127.0.0.1");

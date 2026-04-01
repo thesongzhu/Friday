@@ -1,4 +1,5 @@
 import type { FridaySqliteLayer } from "#state";
+import type { FridayProviderTenantContext } from "#providers";
 import type {
   FridayAgentConversationContext,
   FridayAgentRuntimeResult,
@@ -137,11 +138,13 @@ export interface FridaySubagentRegistrySpawnInput {
   timezone?: string;
   timeoutMs?: number;
   conversationContext?: FridayAgentConversationContext;
+  tenantContext?: FridayProviderTenantContext;
   parentRunId: string;
   parentSessionKey: string;
   depth: number;
   rootRunId: string;
   constraints?: FridayAgentRunConstraints;
+  principalId?: string;
   signal: AbortSignal;
 }
 
@@ -169,8 +172,10 @@ export interface CreateFridaySubagentRegistryDeps {
       timezone?: string;
       timeoutMs?: number;
       conversationContext?: FridayAgentConversationContext;
+      tenantContext?: FridayProviderTenantContext;
       signal?: AbortSignal;
       constraints?: FridayAgentRunConstraints;
+      principalId?: string;
       taskProfile?: FridayAgentTaskProfileInput;
     }) => Promise<FridayAgentRuntimeResult>;
   };

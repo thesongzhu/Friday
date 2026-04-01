@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import { FridayDomainError } from "#errors";
+import type { FridayProviderTenantContext } from "#providers";
 
 import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridaySkillRegistry } from "#skills";
@@ -24,6 +25,25 @@ import type {
   FridayStartSessionResponse,
   FridaySubmitTurnResponse,
 } from "../../model/friday-api-skill-generator.types.js";
+
+function buildTenantContext(principal: unknown, fallbackUserId: string, fallbackChannel: string): FridayProviderTenantContext {
+  const record = principal && typeof principal === "object"
+    ? principal as { tenantId?: unknown; principalId?: unknown; userId?: unknown }
+    : {};
+  const userId = typeof record.userId === "string" && record.userId.trim().length > 0
+    ? record.userId.trim()
+    : typeof record.principalId === "string" && record.principalId.trim().length > 0
+      ? record.principalId.trim()
+      : fallbackUserId;
+  const tenantId = typeof record.tenantId === "string" && record.tenantId.trim().length > 0
+    ? record.tenantId.trim()
+    : userId;
+  return {
+    hubId: tenantId,
+    userId,
+    channelKind: fallbackChannel,
+  };
+}
 
 // ─── Validation helpers ───
 
@@ -315,6 +335,7 @@ export function createFridaySkillGeneratorRoutes(
           requestedModel: body.requestedModel,
           userId: body.userId,
           channel: body.channel,
+          tenantContext: buildTenantContext(ctx.principal, body.userId, body.channel),
         });
         if (result.mode === "generation_failed") {
           await reportGenerationFailure({

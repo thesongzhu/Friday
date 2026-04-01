@@ -6,9 +6,9 @@
   "fields": [],
   "outputs": [
     {
-      "id": "currentDateTime-output",
-      "outputKey": "currentDateTime",
-      "label": "currentDateTime",
+      "id": "dateTime-output",
+      "outputKey": "dateTime",
+      "label": "dateTime",
       "widget": "text"
     }
   ],

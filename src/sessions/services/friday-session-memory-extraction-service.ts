@@ -208,6 +208,11 @@ export function createFridaySessionMemoryExtractionService(
         const llmResponse = await llmClient.extractMemoryItems(
           batch,
           FRIDAY_SESSION_MEMORY_EXTRACTION_DEFAULT_MAX_ITEMS_PER_BATCH,
+          {
+            hubId: session.accountId,
+            channelKind: session.channel,
+            ...(session.userId ? { userId: session.userId } : {}),
+          },
         );
 
         if (llmResponse.items.length === 0) {

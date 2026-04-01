@@ -24,6 +24,12 @@ function signalWithContext(
     timezone: string;
     taskPrompt: string;
     conversationContext: FridayAgentConversationContext;
+    principalId: string;
+    tenantContext: {
+      hubId: string;
+      userId?: string;
+      channelKind?: string;
+    };
   }>,
 ): AbortSignal {
   const controller = new AbortController();
@@ -34,6 +40,8 @@ function signalWithContext(
     timezone: overrides?.timezone,
     taskPrompt: overrides?.taskPrompt,
     conversationContext: overrides?.conversationContext,
+    principalId: overrides?.principalId,
+    tenantContext: overrides?.tenantContext,
   });
 }
 
@@ -180,6 +188,36 @@ describe("FridayAgentSubagentTools", () => {
       expect(parsed.profile).toBe("review");
       expect(registry.spawnDetached).toHaveBeenCalledWith(expect.objectContaining({
         profile: "review",
+      }));
+    });
+
+    it("passes principal and tenant context into the spawned subagent input", async () => {
+      const registry = mockRegistry();
+      const tools = createFridayAgentSubagentTools({
+        registry,
+        subagentContext: makeContext(),
+      });
+
+      const spawnTool = tools.find((t) => t.name === "spawn_subagent")!;
+      await spawnTool.execute(
+        { task: "Investigate tenant scoped provider issue" },
+        signalWithContext({
+          principalId: "user-ctx-1",
+          tenantContext: {
+            hubId: "tenant-a",
+            userId: "user-ctx-1",
+            channelKind: "agent",
+          },
+        }),
+      );
+
+      expect(registry.spawnDetached).toHaveBeenCalledWith(expect.objectContaining({
+        principalId: "user-ctx-1",
+        tenantContext: {
+          hubId: "tenant-a",
+          userId: "user-ctx-1",
+          channelKind: "agent",
+        },
       }));
     });
 

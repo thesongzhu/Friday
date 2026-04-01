@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
-# Output the current date and time in ISO format as JSON
-currentDateTime=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-echo "{ \"currentDateTime\": \"$currentDateTime\" }"
+# Get the current date and time in ISO 8601 format
+current_date_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Output the result as JSON
+printf '{"dateTime": "%s"}\n' "$current_date_time"

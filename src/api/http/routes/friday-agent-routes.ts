@@ -11,6 +11,7 @@ import type {
   FridayAgentRuntimeResult,
   FridayAgentTaskProfileInput,
 } from "#agent";
+import type { FridayProviderTenantContext } from "#providers";
 import { FridayDomainError } from "#errors";
 import { isValidCronExpression } from "#jobs";
 import type { FridayAgentRunEventRecord } from "#agent";
@@ -59,6 +60,7 @@ export interface FridayAgentRoutesDeps {
     };
     principalId?: string;
     scopes?: string[];
+    tenantContext?: FridayProviderTenantContext;
   }) => Promise<FridayAgentRuntimeResult>;
   getRun: (runId: string) => FridayAgentRunRecord | null;
   listRuns: (query: {
@@ -89,6 +91,29 @@ interface FridaySseResponse {
 export function createFridayAgentRoutes(
   deps: FridayAgentRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  function buildTenantContext(principal: unknown): FridayProviderTenantContext | undefined {
+    if (!principal || typeof principal !== "object") {
+      return undefined;
+    }
+    const record = principal as {
+      principalId?: unknown;
+      tenantId?: unknown;
+    };
+    const principalId = typeof record.principalId === "string" && record.principalId.trim().length > 0
+      ? record.principalId.trim()
+      : undefined;
+    if (!principalId) {
+      return undefined;
+    }
+    const tenantId = typeof record.tenantId === "string" && record.tenantId.trim().length > 0
+      ? record.tenantId.trim()
+      : principalId;
+    return {
+      hubId: tenantId,
+      userId: principalId,
+    };
+  }
+
   function serializeReplayEvent(
     event: FridayAgentRunEventRecord,
     replayed: boolean,
@@ -243,6 +268,7 @@ export function createFridayAgentRoutes(
           ? {
             principalId: ctx.principal.principalId,
             scopes: ctx.principal.scopes,
+            tenantContext: buildTenantContext(ctx.principal),
           }
           : {};
 

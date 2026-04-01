@@ -103,6 +103,23 @@ export { buildFridayAgentSystemPrompt } from "./runtime/friday-agent-system-prom
 export type { FridayWorkspaceContext, FridayWorkspaceContextFile } from "./runtime/friday-agent-workspace-context.js";
 export { loadFridayWorkspaceContext } from "./runtime/friday-agent-workspace-context.js";
 export type { FridayAgentAutomationSessionTarget } from "./services/friday-agent-automation-service.types.js";
+export type {
+  FridayToolUseBlock,
+  FridayToolCallResult,
+  FridayToolBatchGroup,
+  ToolCallExecutor,
+} from "./runtime/friday-agent-tool-batch-executor.js";
+export {
+  classifyToolBatchDependencies,
+  executeToolBatch,
+  extractFilePaths,
+} from "./runtime/friday-agent-tool-batch-executor.js";
+export type {
+  FridayFileSnapshot,
+  FridayFileConflictResult,
+  FridayFileVersionTracker,
+} from "./runtime/friday-agent-file-version-tracker.js";
+export { createFridayFileVersionTracker } from "./runtime/friday-agent-file-version-tracker.js";
 
 // ─── LLM client ───
 

@@ -10,9 +10,42 @@ export type SetupStepId =
 
 export type ProviderKind =
   | "openai"
+  | "openai-codex"
   | "anthropic"
   | "google"
+  | "google-antigravity"
+  | "google-vertex"
+  | "google-gemini-cli"
   | "ollama"
+  | "openrouter"
+  | "groq"
+  | "mistral"
+  | "together"
+  | "xai"
+  | "cerebras"
+  | "github-copilot"
+  | "huggingface"
+  | "opencode"
+  | "vercel-ai-gateway"
+  | "kilocode"
+  | "qwen"
+  | "qwen-portal"
+  | "moonshot"
+  | "kimi-coding"
+  | "glm"
+  | "minimax"
+  | "qianfan"
+  | "volcengine"
+  | "byteplus"
+  | "synthetic"
+  | "venice"
+  | "zai"
+  | "xiaomi"
+  | "bedrock"
+  | "cloudflare-ai-gateway"
+  | "litellm"
+  | "vllm"
+  | "nvidia"
   | "openai-compatible";
 
 export type ProviderApi =
@@ -22,7 +55,15 @@ export type ProviderApi =
   | "google-generative-ai"
   | "ollama";
 
-export type AuthMode = "api-key" | "bearer-token" | "oauth" | "none";
+export type ProviderBackendKind = "http" | "cli" | "sdk";
+
+export type AuthMode =
+  | "api-key"
+  | "bearer-token"
+  | "oauth"
+  | "token"
+  | "external-session"
+  | "none";
 
 export type ChannelKind =
   | "qq"
