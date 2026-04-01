@@ -126,6 +126,61 @@ export interface FridayProviderService {
   }): Promise<FridayOAuthLoginResult>;
 }
 
+// ─── Tenant Credential Scoping (Initiative H.1) ───
+
+export interface FridayProviderTenantContext {
+  /** Hub/tenant identifier for credential isolation. */
+  hubId: string;
+  /** Optional channel kind to scope credentials further. */
+  channelKind?: string;
+  /** Optional user ID for per-user credential overrides. */
+  userId?: string;
+}
+
+export interface FridayProviderCredentialScope {
+  /** Tenant context for credential resolution. */
+  tenantContext: FridayProviderTenantContext;
+  /** Resolved credential (API key or OAuth token). */
+  credential: string | null;
+  /** Which provider profile the credential was resolved from. */
+  providerId: string;
+  /** Whether this is a tenant-specific override vs. global default. */
+  isTenantOverride: boolean;
+}
+
+export interface FridayProviderCredentialResolver {
+  /**
+   * Resolve the credential for a given provider + tenant context.
+   * Checks tenant-specific credentials first, then falls back to global.
+   */
+  resolve(
+    providerId: string,
+    tenantContext: FridayProviderTenantContext,
+  ): Promise<FridayProviderCredentialScope>;
+
+  /**
+   * Store a tenant-specific credential override.
+   */
+  setTenantCredential(input: {
+    providerId: string;
+    tenantContext: FridayProviderTenantContext;
+    credential: string;
+  }): Promise<void>;
+
+  /**
+   * Remove a tenant-specific credential override.
+   */
+  removeTenantCredential(input: {
+    providerId: string;
+    tenantContext: FridayProviderTenantContext;
+  }): Promise<void>;
+
+  /**
+   * List all tenant-specific credential scopes for a provider.
+   */
+  listTenantScopes(providerId: string): Promise<FridayProviderCredentialScope[]>;
+}
+
 // ─── Service dependencies ───
 
 export interface CreateFridayProviderServiceDeps {
@@ -134,4 +189,6 @@ export interface CreateFridayProviderServiceDeps {
   nowIso: () => string;
   fetchImpl?: typeof fetch;
   nowMs?: () => number;
+  /** Optional tenant credential resolver for multi-tenant deployments. */
+  credentialResolver?: FridayProviderCredentialResolver;
 }

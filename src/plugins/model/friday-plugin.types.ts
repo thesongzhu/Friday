@@ -207,6 +207,18 @@ export interface FridayPluginPolicySummary {
 
 // ─── Manifest ───
 
+/** Host capabilities that a plugin may require (Initiative G.1). */
+export type FridayPluginRequiredCapability =
+  | "filesystem"
+  | "network"
+  | "shell"
+  | "memory"
+  | "channel"
+  | "browser"
+  | "desktop"
+  | "provider"
+  | "mcp";
+
 export interface FridayPluginManifest {
   schemaVersion: "1.0";
   id: string;
@@ -223,6 +235,11 @@ export interface FridayPluginManifest {
   };
   signature?: FridayPluginSignature;
   previewSdk?: FridayPluginSdkPreviewManifest;
+  /**
+   * Host capabilities this plugin requires (Initiative G.1).
+   * Install/enable will fail if the host does not support all listed capabilities.
+   */
+  requiredCapabilities?: FridayPluginRequiredCapability[];
 }
 
 // ─── Persistence Entity ───

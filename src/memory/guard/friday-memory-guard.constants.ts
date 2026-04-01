@@ -23,6 +23,8 @@ export const FRIDAY_MEMORY_GUARD_TAG_REGEX =
 
 export const FRIDAY_MEMORY_GUARD_TENANT_PREFIX = "tenant";
 export const FRIDAY_MEMORY_GUARD_USER_SEGMENT = "user";
+/** Channel-level namespace isolation segment (Initiative H.3). */
+export const FRIDAY_MEMORY_GUARD_CHANNEL_SEGMENT = "channel";
 export const FRIDAY_MEMORY_GUARD_RESERVED_NAMESPACE_PREFIXES = ["system"] as const;
 
 // ─── Rate limits (token bucket, compile-time constants) ───

@@ -37,6 +37,7 @@ const pathAliases = {
   "#media-understanding": resolve(__dirname, "src/media-understanding/index.ts"),
   "#link-understanding": resolve(__dirname, "src/link-understanding/index.ts"),
   "#heartbeat": resolve(__dirname, "src/heartbeat/index.ts"),
+  "#engine": resolve(__dirname, "src/engine/index.ts"),
 };
 
 export default defineConfig({
