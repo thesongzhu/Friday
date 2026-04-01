@@ -85,7 +85,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.openai.com",
         authMode: "api-key",
         api: "openai-completions",
-        apiKey: "sk-real-key-123",
+        apiKey: "test-real-key-123",
         supportedModels: ["gpt-4o"],
         validateOnSave: false,
       });
@@ -108,7 +108,7 @@ describe("FridayProviderService", () => {
     });
 
     it("validates on save by default", async () => {
-      process.env.OPENAI_API_KEY = "sk-test";
+      process.env.OPENAI_API_KEY = "test-openai-key";
       try {
         const profile = await service.createProvider({
           kind: "openai",
@@ -161,7 +161,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.anthropic.com",
         authMode: "token",
         api: "anthropic-messages",
-        apiKey: "sk-ant-token-real",
+        apiKey: "test-ant-token-real",
         supportedModels: ["claude-sonnet-4-20250514"],
         validateOnSave: false,
       });
@@ -177,7 +177,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.anthropic.com",
         authMode: "token",
         api: "anthropic-messages",
-        apiKey: "sk-ant-token-real",
+        apiKey: "test-ant-token-real",
         supportedModels: ["claude-sonnet-4-20250514"],
         validateOnSave: false,
       });
@@ -313,7 +313,7 @@ describe("FridayProviderService", () => {
       });
 
       const updated = await service.updateProvider("test-id-0001", {
-        apiKey: "sk-new-key",
+        apiKey: "test-new-key",
         validateOnSave: false,
       });
 
@@ -351,7 +351,7 @@ describe("FridayProviderService", () => {
 
       await service.updateProvider("test-id-0001", {
         authMode: "token",
-        apiKey: "sk-ant-token-switch",
+        apiKey: "test-ant-token-switch",
       });
 
       expect(listAuthProfiles()).toEqual([
@@ -397,7 +397,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.openai.com",
         authMode: "api-key",
         api: "openai-completions",
-        apiKey: "sk-delete-me",
+        apiKey: "test-delete-me",
         supportedModels: ["gpt-4o"],
         validateOnSave: false,
       });
@@ -441,7 +441,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.anthropic.com",
         authMode: "token",
         api: "anthropic-messages",
-        apiKey: "sk-ant-token-real",
+        apiKey: "test-ant-token-real",
         supportedModels: ["claude-sonnet-4-20250514"],
         validateOnSave: false,
       });
@@ -463,7 +463,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.anthropic.com",
         authMode: "token",
         api: "anthropic-messages",
-        apiKey: "sk-ant-token-real",
+        apiKey: "test-ant-token-real",
         supportedModels: ["claude-sonnet-4-20250514"],
         validateOnSave: false,
       });
@@ -1079,7 +1079,7 @@ describe("FridayProviderService", () => {
     });
 
     it("runs with credential from env-ref", async () => {
-      process.env.TEST_KEY = "sk-env-key";
+      process.env.TEST_KEY = "test-env-key";
       try {
         await service.createProvider({
           kind: "openai",
@@ -1102,7 +1102,7 @@ describe("FridayProviderService", () => {
           run: async (_r, credential) => credential,
         });
 
-        expect(result).toBe("sk-env-key");
+        expect(result).toBe("test-env-key");
         expect(route.provider.kind).toBe("openai");
         expect(attempts).toHaveLength(0);
       } finally {
@@ -1849,13 +1849,13 @@ describe("FridayProviderService", () => {
 
       const updated = await service.updateProvider("test-id-0001", {
         authMode: "token",
-        apiKey: "sk-ant-token-switch",
+        apiKey: "test-ant-token-switch",
       });
 
       expect(updated.config.authMode).toBe("token");
       expect(updated.config.oauthProvider).toBeUndefined();
       expect(updated.config.validation?.status).toBe("ok");
-      expect(capturedHeaders["Authorization"]).toBe("Bearer sk-ant-token-switch");
+      expect(capturedHeaders["Authorization"]).toBe("Bearer test-ant-token-switch");
       expect(capturedHeaders["x-api-key"]).toBeUndefined();
     });
   });
