@@ -1,4 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { runFridayMigrations, FRIDAY_SQLITE_MIGRATIONS } from "#state";
 
@@ -49,6 +54,82 @@ describe("Friday Migration Chain (V001–V024)", () => {
     expect(second.skippedVersions).toHaveLength(FRIDAY_SQLITE_MIGRATIONS.length);
     const expectedVersions = FRIDAY_SQLITE_MIGRATIONS.map((m) => m.version);
     expect(second.skippedVersions).toEqual(expectedVersions);
+  });
+
+  it("serializes concurrent migration runners against the same sqlite file", async () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-migration-race-"));
+    const dbPath = join(root, "race.db");
+    const workerPath = fileURLToPath(
+      new URL("./helpers/run-friday-migrations-worker.mjs", import.meta.url),
+    );
+
+    async function runWorker(): Promise<{
+      code: number | null;
+      stdout: string;
+      stderr: string;
+    }> {
+      return await new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, [workerPath, dbPath, "350"], {
+          cwd: process.cwd(),
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.setEncoding("utf8");
+        child.stderr.setEncoding("utf8");
+        child.stdout.on("data", (chunk) => {
+          stdout += chunk;
+        });
+        child.stderr.on("data", (chunk) => {
+          stderr += chunk;
+        });
+        child.on("error", reject);
+        child.on("close", (code) => {
+          resolve({ code, stdout, stderr });
+        });
+      });
+    }
+
+    try {
+      const [first, second] = await Promise.all([runWorker(), runWorker()]);
+
+      expect(first.code).toBe(0);
+      expect(second.code).toBe(0);
+
+      const firstResult = JSON.parse(first.stdout.trim()) as {
+        ok: boolean;
+        result: { applied: Array<{ version: number }>; skippedVersions: number[] };
+      };
+      const secondResult = JSON.parse(second.stdout.trim()) as {
+        ok: boolean;
+        result: { applied: Array<{ version: number }>; skippedVersions: number[] };
+      };
+
+      expect(firstResult.ok).toBe(true);
+      expect(secondResult.ok).toBe(true);
+
+      const appliedCounts = [firstResult, secondResult]
+        .map((item) => item.result.applied.length)
+        .sort((a, b) => a - b);
+      const skippedCounts = [firstResult, secondResult]
+        .map((item) => item.result.skippedVersions.length)
+        .sort((a, b) => a - b);
+
+      expect(appliedCounts).toEqual([0, 1]);
+      expect(skippedCounts).toEqual([0, 1]);
+
+      const verifyDb = new Database(dbPath);
+      const rows = verifyDb
+        .prepare("SELECT version, checksum FROM schema_migrations ORDER BY version")
+        .all() as Array<{ version: number; checksum: string }>;
+      verifyDb.close();
+
+      expect(rows).toEqual([
+        { version: 1, checksum: "concurrency-probe-v1" },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   // ─── Expected tables from V001 ───
