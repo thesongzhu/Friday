@@ -493,7 +493,7 @@
                 "category": "workflow",
                 "severity": "high",
                 "message": "audit-manual-resolve-incident",
-                "signature": "ba9d5e6843ac8201"
+                "signature": "workflow-manual-resolve-signature"
               },
               "confidence": 1,
               "sourceEventId": "3cb13cf9-807b-4d40-bd25-9cbc71641f87",
@@ -509,12 +509,12 @@
               "ts": "2026-04-01T21:34:20.870Z",
               "category": "workflow",
               "severity": "high",
-              "signature": "ba9d5e6843ac8201",
+              "signature": "workflow-manual-resolve-signature",
               "context": {
                 "category": "workflow",
                 "severity": "high",
                 "message": "audit-manual-resolve-incident",
-                "signature": "ba9d5e6843ac8201"
+                "signature": "workflow-manual-resolve-signature"
               },
               "autoFixEligible": false,
               "status": "open",
@@ -526,10 +526,10 @@
             {
               "id": "a4b811cf-ad94-4e4e-a505-7236f53c3211",
               "incidentId": "221a666d-78df-48cb-9574-d8100698c09d",
-              "errorFingerprint": "ba9d5e6843ac8201",
+              "errorFingerprint": "workflow-manual-resolve-fingerprint",
               "confidence": 0.55,
               "diagnosis": {
-                "summary": "Diagnosis for workflow error: ba9d5e6843ac8201",
+                "summary": "Diagnosis for workflow error: workflow-manual-resolve-fingerprint",
                 "rankedCauses": [
                   {
                     "cause": "Detected workflow failure",
@@ -560,7 +560,7 @@
                 "category": "workflow",
                 "severity": "high",
                 "message": "audit-manual-resolve-incident",
-                "signature": "ba9d5e6843ac8201"
+                "signature": "workflow-manual-resolve-signature"
               },
               "confidence": 1,
               "sourceEventId": "b006b89c-f8c3-4ace-86bc-a40fba81ff43",
@@ -576,12 +576,12 @@
               "ts": "2026-04-01T21:34:20.878Z",
               "category": "workflow",
               "severity": "high",
-              "signature": "ba9d5e6843ac8201",
+              "signature": "workflow-manual-resolve-signature",
               "context": {
                 "category": "workflow",
                 "severity": "high",
                 "message": "audit-manual-resolve-incident",
-                "signature": "ba9d5e6843ac8201"
+                "signature": "workflow-manual-resolve-signature"
               },
               "autoFixEligible": true,
               "status": "open",
@@ -593,10 +593,10 @@
             {
               "id": "e65ceb4c-88d0-490d-b9e2-daef34141383",
               "incidentId": "934adf87-3380-49d7-ba3d-3acd95a23d08",
-              "errorFingerprint": "ba9d5e6843ac8201",
+              "errorFingerprint": "workflow-manual-resolve-fingerprint",
               "confidence": 0.6,
               "diagnosis": {
-                "summary": "Diagnosis for workflow error: ba9d5e6843ac8201",
+                "summary": "Diagnosis for workflow error: workflow-manual-resolve-fingerprint",
                 "rankedCauses": [
                   {
                     "cause": "Detected workflow failure",
@@ -664,7 +664,7 @@
                 "model": "gpt-4o-mini",
                 "actualModel": "gpt-4o-mini",
                 "runId": "8a69cce2-4b2a-4587-9a15-ffcc0e1708c5",
-                "signature": "fb3bd9d57c436f8b"
+                "signature": "workflow-retry-low-risk-signature"
               },
               "confidence": 1,
               "sourceEventId": "455a69e1-9034-49e4-b148-ee3ff60e9b16",
@@ -680,7 +680,7 @@
               "ts": "2026-04-01T21:34:20.892Z",
               "category": "workflow",
               "severity": "low",
-              "signature": "fb3bd9d57c436f8b",
+              "signature": "workflow-retry-low-risk-signature",
               "context": {
                 "category": "workflow",
                 "severity": "low",
@@ -691,7 +691,7 @@
                 "model": "gpt-4o-mini",
                 "actualModel": "gpt-4o-mini",
                 "runId": "8a69cce2-4b2a-4587-9a15-ffcc0e1708c5",
-                "signature": "fb3bd9d57c436f8b"
+                "signature": "workflow-retry-low-risk-signature"
               },
               "autoFixEligible": true,
               "status": "open",
@@ -703,10 +703,10 @@
             {
               "id": "75b92e36-6c79-4704-9c85-b098b0e290b1",
               "incidentId": "357dd06d-16ab-412d-8eb2-764e8678ca0d",
-              "errorFingerprint": "fb3bd9d57c436f8b",
+              "errorFingerprint": "workflow-retry-low-risk-fingerprint",
               "confidence": 0.6499999999999999,
               "diagnosis": {
-                "summary": "Diagnosis for workflow error: fb3bd9d57c436f8b",
+                "summary": "Diagnosis for workflow error: workflow-retry-low-risk-fingerprint",
                 "rankedCauses": [
                   {
                     "cause": "Detected workflow failure",
@@ -743,7 +743,7 @@
                 "model": "gpt-4o-mini",
                 "actualModel": "gpt-4o-mini",
                 "runId": "8a69cce2-4b2a-4587-9a15-ffcc0e1708c5",
-                "signature": "fb3bd9d57c436f8b"
+                "signature": "workflow-retry-low-risk-signature"
               },
               "confidence": 1,
               "sourceEventId": "0a53646e-1b93-4d72-8fd3-da29416da21c",
@@ -759,7 +759,7 @@
               "ts": "2026-04-01T21:34:20.895Z",
               "category": "workflow",
               "severity": "low",
-              "signature": "fb3bd9d57c436f8b",
+              "signature": "workflow-retry-low-risk-signature",
               "context": {
                 "category": "workflow",
                 "severity": "low",
@@ -770,7 +770,7 @@
                 "model": "gpt-4o-mini",
                 "actualModel": "gpt-4o-mini",
                 "runId": "8a69cce2-4b2a-4587-9a15-ffcc0e1708c5",
-                "signature": "fb3bd9d57c436f8b"
+                "signature": "workflow-retry-low-risk-signature"
               },
               "autoFixEligible": true,
               "status": "open",
@@ -782,10 +782,10 @@
             {
               "id": "8aeb75c4-a920-469e-bef0-3f09f592adcc",
               "incidentId": "54b60ed6-e910-4e21-8a16-807dc88b56a6",
-              "errorFingerprint": "fb3bd9d57c436f8b",
+              "errorFingerprint": "workflow-retry-low-risk-fingerprint",
               "confidence": 0.7,
               "diagnosis": {
-                "summary": "Diagnosis for workflow error: fb3bd9d57c436f8b",
+                "summary": "Diagnosis for workflow error: workflow-retry-low-risk-fingerprint",
                 "rankedCauses": [
                   {
                     "cause": "Detected workflow failure",
