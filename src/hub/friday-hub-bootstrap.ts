@@ -144,7 +144,7 @@ import type { FridayDeterministicDispatchDeps } from "../sessions/services/frida
 import { dispatchManagedAsync } from "../sessions/services/friday-managed-async-dispatch.js";
 import type { FridayManagedAsyncDispatchDeps } from "../sessions/services/friday-managed-async-dispatch.js";
 import { createFridayOrchestrationEngine } from "#engine";
-import type { CreateFridayEngineTurnPreparerDeps, CreateFridayEngineRunExecutorDeps } from "#engine";
+import type { CreateFridayEngineRunExecutorDeps, CreateFridayEngineTurnPreparerDeps } from "#engine";
 import type { FridayImageAnalysisFn } from "#agent";
 import type {
   FridayAgentCapabilitiesSnapshot,
@@ -4826,6 +4826,7 @@ export async function createFridayHub(
               // The engine handles: focus loading, history, turn preparation,
               // evidence blocks, deterministic dispatch, planning gate,
               // agent runtime execution, and focus finalization.
+              // Alignment invariant: the engine injects historyMessages, into executeRun() internally.
               const engineResult = await channelOrchestrationEngine.executeRun({
                 task: text,
                 runId,
@@ -4889,7 +4890,7 @@ export async function createFridayHub(
                 const assistantMirrorIdempotencyKey = resolveAgentMirrorIdempotencyKey({
                   runId: result.runId,
                   kind: "assistant",
-                  status: result.status as import("#agent").FridayAgentRunStatus,
+                  status: result.status as FridayAgentRunStatus,
                 });
                 await hubSessionService.updateMessageMetadataByIdempotency(sessionKey, {
                   idempotencyKey: assistantMirrorIdempotencyKey,

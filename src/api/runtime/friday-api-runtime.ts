@@ -1647,6 +1647,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   };
 
   // ── Orchestration Engine (Initiative A-WIRE) ──
+  // Alignment invariant: the engine's turn preparer loads loadSessionHistoryMessages(sessionKey)
+  // and injects historyMessages, into agentRuntime.executeRun() internally.
   const apiDispatchDeps: FridayDeterministicDispatchDeps = {
     capabilitySnapshotGetter: deps.capabilitySnapshotGetter,
     taskStatusSnapshotGetter: deps.taskStatusSnapshotGetter,
