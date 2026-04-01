@@ -35,7 +35,7 @@
               "providerId": "db1788d2-4f5d-419c-8f88-c207ef7f27fb",
               "providerKind": "openai",
               "model": "gpt-4o-mini",
-              "error": "LLM request failed (401): {\n  \"error\": {\n    \"message\": \"Incorrect API key provided: sk-frida***********alid. You can find your API key at https://platform.openai.com/account/api-keys.\",\n    \"type\": \"invalid_request_error\",\n    \"code\": \"invalid_api_key\",\n    \"param\": null\n  },\n  \"status\": 401\n} code=AGENT_LLM_ERROR",
+              "error": "LLM request failed (401): invalid_api_key (credential redacted) code=AGENT_LLM_ERROR",
               "reason": "auth",
               "status": 401,
               "code": "AGENT_LLM_ERROR",
