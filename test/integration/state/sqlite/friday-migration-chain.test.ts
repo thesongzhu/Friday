@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { runFridayMigrations, FRIDAY_SQLITE_MIGRATIONS } from "#state";
+import { ensureFridayApiBuildForNodeWorkers } from "../../../helpers/friday-ensure-api-build.helper.js";
 
 describe("Friday Migration Chain (V001–V024)", () => {
   const dbs: Database.Database[] = [];
@@ -57,6 +58,8 @@ describe("Friday Migration Chain (V001–V024)", () => {
   });
 
   it("serializes concurrent migration runners against the same sqlite file", async () => {
+    await ensureFridayApiBuildForNodeWorkers();
+
     const root = mkdtempSync(join(tmpdir(), "friday-migration-race-"));
     const dbPath = join(root, "race.db");
     const workerPath = fileURLToPath(

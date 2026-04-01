@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createFridaySqliteLayer } from "#state";
 import type { FridaySqliteLayer } from "#state";
+import { ensureFridayApiBuildForNodeWorkers } from "../../../helpers/friday-ensure-api-build.helper.js";
 
 describe("friday-sqlite-layer", () => {
   let tmpDir: string;
@@ -97,6 +98,8 @@ describe("friday-sqlite-layer", () => {
   });
 
   it("allows two processes to initialize the same sqlite file concurrently", async () => {
+    await ensureFridayApiBuildForNodeWorkers();
+
     const dbPath = path.join(tmpDir, "concurrent.db");
     const workerPath = fileURLToPath(
       new URL("./helpers/create-sqlite-layer-worker.mjs", import.meta.url),
