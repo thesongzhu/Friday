@@ -945,7 +945,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.openai.com",
         authMode: "api-key",
         api: "openai-responses",
-        apiKey: "sk-http",
+        apiKey: "test-http-key",
         supportedModels: ["gpt-5.4"],
         defaultModel: "gpt-5.4",
         validateOnSave: false,
@@ -982,7 +982,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.openai.com",
         authMode: "api-key",
         api: "openai-completions",
-        apiKey: "sk-primary",
+        apiKey: "test-primary-key",
         supportedModels: ["gpt-4o"],
         defaultModel: "gpt-4o",
         validateOnSave: false,
@@ -993,7 +993,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.openai.com",
         authMode: "api-key",
         api: "openai-completions",
-        apiKey: "sk-pinned",
+        apiKey: "test-pinned-key",
         supportedModels: ["gpt-4o"],
         defaultModel: "gpt-4o",
         validateOnSave: false,
@@ -1180,8 +1180,8 @@ describe("FridayProviderService", () => {
     });
 
     it("pins execution to the requested provider without falling back", async () => {
-      process.env.OPENAI_KEY = "sk-openai";
-      process.env.ANTHROPIC_KEY = "sk-anthropic";
+      process.env.OPENAI_KEY = "test-openai-key";
+      process.env.ANTHROPIC_KEY = "test-anthropic-key";
       try {
         await service.createProvider({
           kind: "openai",
@@ -1217,7 +1217,7 @@ describe("FridayProviderService", () => {
           run,
         });
 
-        expect(result).toBe("sk-anthropic");
+        expect(result).toBe("test-anthropic-key");
         expect(route.provider.id).toBe("test-id-0002");
         expect(attempts).toHaveLength(0);
         expect(run).toHaveBeenCalledTimes(1);
@@ -1228,8 +1228,8 @@ describe("FridayProviderService", () => {
     });
 
     it("does not fall back to the default provider when a pinned provider run fails", async () => {
-      process.env.OPENAI_KEY = "sk-openai";
-      process.env.ANTHROPIC_KEY = "sk-anthropic";
+      process.env.OPENAI_KEY = "test-openai-key";
+      process.env.ANTHROPIC_KEY = "test-anthropic-key";
       try {
         await service.createProvider({
           kind: "openai",
@@ -1275,7 +1275,7 @@ describe("FridayProviderService", () => {
           expect.objectContaining({
             provider: expect.objectContaining({ id: "test-id-0002" }),
           }),
-          "sk-anthropic",
+          "test-anthropic-key",
         );
       } finally {
         delete process.env.OPENAI_KEY;
@@ -1284,7 +1284,7 @@ describe("FridayProviderService", () => {
     });
 
     it("filters text-only CLI backends out when the task requires Friday native tools", async () => {
-      process.env.OPENAI_KEY = "sk-openai";
+      process.env.OPENAI_KEY = "test-openai-key";
       try {
         await service.createProvider({
           kind: "openai",
@@ -1367,8 +1367,8 @@ describe("FridayProviderService", () => {
     });
 
     it("re-orders candidates using historical outcomes for the active task profile", async () => {
-      process.env.OPENAI_KEY = "sk-openai";
-      process.env.ANTHROPIC_KEY = "sk-anthropic";
+      process.env.OPENAI_KEY = "test-openai-key";
+      process.env.ANTHROPIC_KEY = "test-anthropic-key";
       try {
         await service.createProvider({
           kind: "openai",
@@ -1475,8 +1475,8 @@ describe("FridayProviderService", () => {
     });
 
     it("penalizes routes that operators explicitly rejected for the same task profile", async () => {
-      process.env.OPENAI_KEY = "sk-openai";
-      process.env.ANTHROPIC_KEY = "sk-anthropic";
+      process.env.OPENAI_KEY = "test-openai-key";
+      process.env.ANTHROPIC_KEY = "test-anthropic-key";
       try {
         await service.createProvider({
           kind: "openai",
@@ -1549,8 +1549,8 @@ describe("FridayProviderService", () => {
     });
 
     it("uses each fallback provider's own supported model when routing.defaultModel is provider-specific", async () => {
-      process.env.OPENAI_KEY = "sk-openai";
-      process.env.ANTHROPIC_KEY = "sk-anthropic";
+      process.env.OPENAI_KEY = "test-openai-key";
+      process.env.ANTHROPIC_KEY = "test-anthropic-key";
       try {
         await service.createProvider({
           kind: "anthropic",
