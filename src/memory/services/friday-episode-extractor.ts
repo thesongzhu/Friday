@@ -29,7 +29,7 @@ export interface CreateFridayEpisodeExtractorDeps {
 // ─── Public interface ───────────────────────────────────────────
 
 export interface FridayEpisodeExtractor {
-  /** Build an episode from a completed/failed agent run. Returns null if run has no events. */
+  /** Build an episode from a completed/failed agent run. Returns null only when the run record does not exist. */
   extractFromRun(runId: string, userId: string): Promise<FridayEpisode | null>;
 }
 
@@ -58,21 +58,7 @@ export function createFridayEpisodeExtractor(
 
   return {
     async extractFromRun(runId, userId) {
-      // 1. Read tool events
-      const events = db.withReadConnection((conn) =>
-        conn
-          .prepare(
-            `SELECT event_name, payload_json, seq
-             FROM friday_agent_run_events
-             WHERE run_id = ? AND event_name IN ('agent.run.tool_start', 'agent.run.tool_end')
-             ORDER BY seq`,
-          )
-          .all(runId) as RunEventRow[],
-      );
-
-      if (events.length === 0) return null;
-
-      // 2. Read run record for task/status/profile
+      // 1. Read run record for task/status/profile.
       const run = db.withReadConnection((conn) =>
         conn
           .prepare(
@@ -85,8 +71,22 @@ export function createFridayEpisodeExtractor(
 
       if (!run) return null;
 
+      // 2. Read tool events (best-effort; a run with no tool events still
+      // produces a minimal episode so world-model readiness is visible in
+      // real end-to-end flows).
+      const events = db.withReadConnection((conn) =>
+        conn
+          .prepare(
+            `SELECT event_name, payload_json, seq
+             FROM friday_agent_run_events
+             WHERE run_id = ? AND event_name IN ('agent.run.tool_start', 'agent.run.tool_end')
+             ORDER BY seq`,
+          )
+          .all(runId) as RunEventRow[],
+      );
+
       // 3. Pair tool_start → tool_end into steps
-      const steps = buildSteps(events);
+      const steps = events.length > 0 ? buildSteps(events) : [];
 
       // 4. Derive outcome
       const outcome = deriveOutcome(run.status);

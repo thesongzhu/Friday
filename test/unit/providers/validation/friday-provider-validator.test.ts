@@ -207,6 +207,39 @@ describe("FridayProviderValidator", () => {
       expect(result.errorCode).toBe("PROVIDER_AUTH_INVALID");
       expect(result.httpStatus).toBe(401);
     });
+
+    it("validates Anthropic with token mode — sends Bearer token and Claude-compatible headers", async () => {
+      let capturedHeaders: Record<string, string> = {};
+      let capturedBody = "";
+      mockFetch((_url, init) => {
+        capturedHeaders = Object.fromEntries(
+          Object.entries(init.headers ?? {}),
+        ) as Record<string, string>;
+        capturedBody = typeof init.body === "string" ? init.body : "";
+        return new Response("{}", { status: 200 });
+      });
+
+      const validator = createFridayProviderValidator();
+      const result = await validator.validate({
+        kind: "anthropic",
+        api: "anthropic-messages",
+        baseUrl: "https://api.anthropic.com",
+        credential: "sk-ant-token01-test-token",
+        authMode: "token",
+      });
+
+      expect(result.status).toBe("ok");
+      expect(capturedHeaders["Authorization"]).toBe("Bearer sk-ant-token01-test-token");
+      expect(capturedHeaders["x-api-key"]).toBeUndefined();
+      expect(capturedHeaders["anthropic-beta"]).toContain("oauth-2025-04-20");
+
+      const parsedBody = JSON.parse(capturedBody) as Record<string, unknown>;
+      const systemContent = parsedBody["system"];
+      const systemText = typeof systemContent === "string"
+        ? systemContent
+        : JSON.stringify(systemContent);
+      expect(systemText).toContain(FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX);
+    });
   });
 
   describe("google validation", () => {

@@ -82,13 +82,17 @@ describe("FridayEpisodeExtractor", () => {
     });
   }
 
-  it("returns null when run has no events", async () => {
+  it("extracts a minimal episode when run has no tool events", async () => {
     seedRun("run-empty", "do nothing", "completed");
 
     const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
     const episode = await extractor.extractFromRun("run-empty", "user-1");
 
-    expect(episode).toBeNull();
+    expect(episode).not.toBeNull();
+    expect(episode!.runId).toBe("run-empty");
+    expect(episode!.steps).toEqual([]);
+    expect(episode!.toolSequence).toEqual([]);
+    expect(episode!.outcome).toBe("success");
   });
 
   it("returns null when run ID does not exist at all", async () => {

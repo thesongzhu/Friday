@@ -38,6 +38,7 @@ import type {
 import type { FridaySessionService } from "#sessions";
 import type { FridaySessionStatus } from "#sessions";
 import type { FridaySessionMemoryExtractionService } from "#sessions";
+import type { FridayProviderTenantContext } from "#providers";
 
 // ─── Dependencies ───
 
@@ -54,6 +55,7 @@ export interface FridaySessionRoutesDeps {
     timeoutMs?: number;
     principalId?: string;
     scopes?: string[];
+    tenantContext?: FridayProviderTenantContext;
     persistTaskMessage?: boolean;
     taskAlreadyInHistory?: boolean;
   }) => Promise<FridaySessionRunResponse["run"]>;
@@ -108,6 +110,29 @@ function sanitizeMetadata(metadata: unknown): Record<string, unknown> | undefine
     );
   }
   return sanitizeMetadataValue(metadata, "metadata") as Record<string, unknown>;
+}
+
+function buildTenantContext(principal: unknown): FridayProviderTenantContext | undefined {
+  if (!principal || typeof principal !== "object") {
+    return undefined;
+  }
+  const record = principal as {
+    principalId?: unknown;
+    tenantId?: unknown;
+  };
+  const principalId = typeof record.principalId === "string" && record.principalId.trim().length > 0
+    ? record.principalId.trim()
+    : undefined;
+  if (!principalId) {
+    return undefined;
+  }
+  const tenantId = typeof record.tenantId === "string" && record.tenantId.trim().length > 0
+    ? record.tenantId.trim()
+    : principalId;
+  return {
+    hubId: tenantId,
+    userId: principalId,
+  };
 }
 
 // ─── Validation helpers ───
@@ -690,6 +715,7 @@ export function createFridaySessionRoutes(
             ? {
               principalId: ctx.principal.principalId,
               scopes: ctx.principal.scopes,
+              tenantContext: buildTenantContext(ctx.principal),
             }
             : {}),
         });

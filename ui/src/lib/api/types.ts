@@ -1627,9 +1627,42 @@ export interface FridayMemoryPruneResult {
 
 export type FridayProviderKind =
   | "openai"
+  | "openai-codex"
   | "anthropic"
   | "google"
+  | "google-vertex"
+  | "google-antigravity"
+  | "google-gemini-cli"
+  | "openrouter"
+  | "xai"
+  | "mistral"
+  | "groq"
+  | "cerebras"
+  | "github-copilot"
+  | "huggingface"
+  | "opencode"
+  | "vercel-ai-gateway"
+  | "kilocode"
+  | "moonshot"
+  | "kimi-coding"
+  | "qwen"
+  | "qwen-portal"
+  | "volcengine"
+  | "byteplus"
+  | "synthetic"
+  | "minimax"
   | "ollama"
+  | "vllm"
+  | "litellm"
+  | "together"
+  | "nvidia"
+  | "qianfan"
+  | "venice"
+  | "xiaomi"
+  | "zai"
+  | "glm"
+  | "bedrock"
+  | "cloudflare-ai-gateway"
   | "openai-compatible";
 
 export type FridayProviderApi =
@@ -1639,7 +1672,17 @@ export type FridayProviderApi =
   | "google-generative-ai"
   | "ollama";
 
-export type FridayProviderAuthMode = "api-key" | "bearer-token" | "oauth" | "none";
+export type FridayProviderBackendKind = "http" | "cli" | "sdk";
+
+export type FridayProviderAuthMode = "api-key" | "bearer-token" | "oauth" | "token" | "external-session" | "none";
+
+export interface FridayProviderCliConfig {
+  backendId: "codex-cli" | "claude-cli" | "gemini-cli";
+  binaryPath?: string;
+  fixedArgProfile?: string;
+  envAllowlist?: string[];
+  cwdPolicy?: "workspace" | "process";
+}
 
 export interface FridayProviderValidationState {
   status: "never" | "ok" | "failed";
@@ -1652,10 +1695,14 @@ export interface FridayProviderValidationState {
 export interface FridayProviderConfigJson {
   api: FridayProviderApi;
   authMode: FridayProviderAuthMode;
+  backendKind?: FridayProviderBackendKind;
+  deploymentKind?: "hosted" | "local" | "self-hosted" | "consumer-cli";
+  regionTag?: "global" | "us" | "china" | "local" | "custom";
   oauthProvider?: string;
   keySource: { kind: string; refKey?: string; envVar?: string };
   supportedModels: string[];
   headers?: Record<string, string>;
+  cliConfig?: FridayProviderCliConfig;
   validation?: FridayProviderValidationState;
 }
 
@@ -1693,6 +1740,37 @@ export interface FridayOAuthLoginResult {
   expiresAt: string;
   tokenType: string;
   scope: string;
+}
+
+export interface FridayCliSessionStatus {
+  backendId: "codex-cli" | "claude-cli" | "gemini-cli";
+  binaryPath?: string;
+  status: "healthy" | "degraded" | "missing" | "unsupported" | "status_unknown";
+  version?: string;
+  loggedIn?: boolean;
+  checkedAt: string;
+  message?: string;
+  account?: {
+    email?: string;
+    orgId?: string;
+    orgName?: string;
+    subscriptionType?: string;
+    authMethod?: string;
+  };
+}
+
+export interface FridayProviderDoctorReport {
+  providerId: string;
+  providerKind: FridayProviderKind;
+  backendKind: FridayProviderBackendKind;
+  authMode: FridayProviderAuthMode;
+  checkedAt: string;
+  backendHealth: "healthy" | "degraded" | "missing" | "unsupported" | "status_unknown";
+  authHealth: "healthy" | "degraded" | "missing" | "unsupported" | "status_unknown";
+  routingEligible: boolean;
+  reasons: string[];
+  activeProfileKey?: string;
+  cliSession?: FridayCliSessionStatus;
 }
 
 // ─── Provider usage types ───

@@ -1,15 +1,18 @@
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 
 import type {
+  FridayActivateProviderAuthProfileResponse,
   FridayCompleteAnthropicOAuthCallbackRequest,
   FridayCompleteAnthropicOAuthCallbackResponse,
   FridayCreateProviderRequest,
   FridayCreateProviderResponse,
   FridayDeleteProviderResponse,
+  FridayGetProviderDoctorResponse,
   FridayGetProviderResponse,
   FridayGetRoutingConfigResponse,
   FridayInitiateAnthropicOAuthRequest,
   FridayInitiateAnthropicOAuthResponse,
+  FridayListProviderAuthProfilesResponse,
   FridayListProvidersResponse,
   FridaySetRoutingConfigRequest,
   FridaySetRoutingConfigResponse,
@@ -19,7 +22,11 @@ import type {
 } from "../../model/friday-api-provider.types.js";
 
 import type { FridayProviderService } from "#providers";
-import { FRIDAY_PROVIDER_APIS, FRIDAY_PROVIDER_KINDS } from "#providers";
+import {
+  FRIDAY_PROVIDER_APIS,
+  FRIDAY_PROVIDER_BACKEND_KINDS,
+  FRIDAY_PROVIDER_KINDS,
+} from "#providers";
 import { FridayDomainError } from "#errors";
 import {
   resolveExistingOAuthProvider,
@@ -30,7 +37,23 @@ import {
 
 const VALID_KINDS = new Set<string>(FRIDAY_PROVIDER_KINDS);
 const VALID_APIS = new Set<string>(FRIDAY_PROVIDER_APIS);
-const VALID_AUTH_MODES = new Set(["api-key", "bearer-token", "oauth", "none"]);
+const VALID_BACKEND_KINDS = new Set<string>(FRIDAY_PROVIDER_BACKEND_KINDS);
+const VALID_AUTH_MODES = new Set(["api-key", "bearer-token", "oauth", "token", "external-session", "none"]);
+
+function validateCliConfig(value: unknown, errors: string[]): void {
+  if (value === undefined) return;
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    errors.push("cliConfig must be an object when provided");
+    return;
+  }
+  const cliConfig = value as Record<string, unknown>;
+  if (typeof cliConfig.backendId !== "string" || cliConfig.backendId.trim() === "") {
+    errors.push("cliConfig.backendId is required when cliConfig is provided");
+  }
+  if (cliConfig.binaryPath !== undefined && typeof cliConfig.binaryPath !== "string") {
+    errors.push("cliConfig.binaryPath must be a string when provided");
+  }
+}
 
 function validateCreateBody(body: unknown): asserts body is FridayCreateProviderRequest {
   if (body == null || typeof body !== "object") {
@@ -45,8 +68,15 @@ function validateCreateBody(body: unknown): asserts body is FridayCreateProvider
   if (typeof b.name !== "string" || b.name.trim() === "") {
     errors.push("name is required and must be a non-empty string");
   }
-  if (typeof b.baseUrl !== "string" || b.baseUrl.trim() === "") {
+  const backendKind = typeof b.backendKind === "string" ? b.backendKind : "http";
+  if (!VALID_BACKEND_KINDS.has(backendKind)) {
+    errors.push(`backendKind must be one of: ${[...VALID_BACKEND_KINDS].join(", ")}`);
+  }
+  if (backendKind === "http" && (typeof b.baseUrl !== "string" || b.baseUrl.trim() === "")) {
     errors.push("baseUrl is required and must be a non-empty string");
+  }
+  if (backendKind !== "http" && b.baseUrl !== undefined && typeof b.baseUrl !== "string") {
+    errors.push("baseUrl must be a string when provided");
   }
   if (typeof b.authMode !== "string" || !VALID_AUTH_MODES.has(b.authMode)) {
     errors.push(`authMode must be one of: ${[...VALID_AUTH_MODES].join(", ")}`);
@@ -72,6 +102,7 @@ function validateCreateBody(body: unknown): asserts body is FridayCreateProvider
   if (b.headers !== undefined && (b.headers == null || typeof b.headers !== "object" || Array.isArray(b.headers))) {
     errors.push("headers must be an object when provided");
   }
+  validateCliConfig(b.cliConfig, errors);
 
   if (errors.length > 0) {
     throw new FridayDomainError("VALIDATION_ERROR", `Invalid request body: ${errors.join("; ")}`, { httpStatus: 400 });
@@ -90,6 +121,9 @@ function validateUpdateBody(body: unknown): asserts body is FridayUpdateProvider
   }
   if (b.name !== undefined && (typeof b.name !== "string" || b.name.trim() === "")) {
     errors.push("name must be a non-empty string when provided");
+  }
+  if (b.backendKind !== undefined && (typeof b.backendKind !== "string" || !VALID_BACKEND_KINDS.has(b.backendKind))) {
+    errors.push(`backendKind must be one of: ${[...VALID_BACKEND_KINDS].join(", ")}`);
   }
   if (b.baseUrl !== undefined && (typeof b.baseUrl !== "string" || b.baseUrl.trim() === "")) {
     errors.push("baseUrl must be a non-empty string when provided");
@@ -118,6 +152,7 @@ function validateUpdateBody(body: unknown): asserts body is FridayUpdateProvider
   if (b.headers !== undefined && (b.headers == null || typeof b.headers !== "object" || Array.isArray(b.headers))) {
     errors.push("headers must be an object when provided");
   }
+  validateCliConfig(b.cliConfig, errors);
 
   if (errors.length > 0) {
     throw new FridayDomainError("VALIDATION_ERROR", `Invalid request body: ${errors.join("; ")}`, { httpStatus: 400 });
@@ -203,7 +238,7 @@ export function createFridayProviderRoutes(
         const raw = ctx.body as Record<string, unknown> | null;
         if (raw && typeof raw === "object" && raw.config && typeof raw.config === "object") {
           const config = raw.config as Record<string, unknown>;
-          const liftFields = ["api", "authMode", "supportedModels", "apiKey", "defaultModel", "headers"] as const;
+          const liftFields = ["api", "authMode", "supportedModels", "apiKey", "defaultModel", "headers", "backendKind", "cliConfig", "deploymentKind", "regionTag"] as const;
           for (const field of liftFields) {
             if (config[field] !== undefined && raw[field] === undefined) {
               raw[field] = config[field];
@@ -268,6 +303,43 @@ export function createFridayProviderRoutes(
         const validation =
           await deps.providerService.validateProvider(providerId);
         return { validation };
+      },
+    },
+
+    {
+      operationId: "providers.doctor",
+      method: "GET",
+      path: "/v1/providers/:providerId/doctor",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      async handler(ctx): Promise<FridayGetProviderDoctorResponse> {
+        const { providerId } = ctx.params as { providerId: string };
+        const doctor = await deps.providerService.doctorProvider(providerId);
+        return { doctor };
+      },
+    },
+
+    {
+      operationId: "providers.authProfiles.list",
+      method: "GET",
+      path: "/v1/providers/:providerId/auth-profiles",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      async handler(ctx): Promise<FridayListProviderAuthProfilesResponse> {
+        const { providerId } = ctx.params as { providerId: string };
+        const items = await deps.providerService.listAuthProfiles(providerId);
+        return { items };
+      },
+    },
+
+    {
+      operationId: "providers.authProfiles.activate",
+      method: "POST",
+      path: "/v1/providers/:providerId/auth-profiles/:profileKey/activate",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      rateLimitPolicyId: "provider.write",
+      async handler(ctx): Promise<FridayActivateProviderAuthProfileResponse> {
+        const { providerId, profileKey } = ctx.params as { providerId: string; profileKey: string };
+        const profile = await deps.providerService.activateAuthProfile(providerId, profileKey);
+        return { profile };
       },
     },
 

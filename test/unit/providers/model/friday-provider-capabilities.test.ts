@@ -5,7 +5,10 @@ import {
   FRIDAY_PROVIDER_KINDS,
   FRIDAY_PROVIDER_PRESETS,
   getFridayProviderCapability,
+  getFridayProviderAuthModesForBackend,
   isFridayProviderApiSupportedForKind,
+  isFridayProviderAuthModeSupportedForKindAndBackend,
+  isFridayProviderBackendKindSupportedForKind,
   isFridayProviderAuthModeSupportedForKind,
 } from "#providers";
 
@@ -24,21 +27,45 @@ describe("friday-provider-capabilities", () => {
         `${kind} preset api ${preset.api} must be allowed by capabilities`,
       ).toBe(true);
       expect(
-        isFridayProviderAuthModeSupportedForKind(kind, preset.authMode),
-        `${kind} preset authMode ${preset.authMode} must be allowed by capabilities`,
+        isFridayProviderBackendKindSupportedForKind(kind, preset.backendKind),
+        `${kind} preset backend ${preset.backendKind} must be allowed by capabilities`,
+      ).toBe(true);
+      expect(
+        isFridayProviderAuthModeSupportedForKindAndBackend(kind, preset.backendKind, preset.authMode),
+        `${kind} preset authMode ${preset.authMode} must be allowed by backend-aware capabilities`,
       ).toBe(true);
     }
   });
 
   it("allows oauth only where implemented", () => {
     expect(isFridayProviderAuthModeSupportedForKind("anthropic", "oauth")).toBe(true);
+    expect(isFridayProviderAuthModeSupportedForKind("anthropic", "token")).toBe(true);
     expect(isFridayProviderAuthModeSupportedForKind("openai", "oauth")).toBe(false);
+    expect(isFridayProviderAuthModeSupportedForKind("openai", "token")).toBe(false);
     expect(isFridayProviderAuthModeSupportedForKind("google", "oauth")).toBe(false);
   });
 
   it("supports keyless openai-compatible gateways but not cloud openai", () => {
     expect(isFridayProviderAuthModeSupportedForKind("openai-compatible", "none")).toBe(true);
     expect(isFridayProviderAuthModeSupportedForKind("openai", "none")).toBe(false);
+  });
+
+  it("treats codex and claude CLI as first-class backends", () => {
+    expect(isFridayProviderBackendKindSupportedForKind("openai", "cli")).toBe(true);
+    expect(isFridayProviderBackendKindSupportedForKind("anthropic", "cli")).toBe(true);
+    expect(isFridayProviderAuthModeSupportedForKindAndBackend("openai", "cli", "external-session")).toBe(true);
+    expect(isFridayProviderAuthModeSupportedForKindAndBackend("anthropic", "cli", "external-session")).toBe(true);
+    expect(isFridayProviderAuthModeSupportedForKindAndBackend("openai", "cli", "oauth")).toBe(false);
+  });
+
+  it("surfaces backend-specific auth modes", () => {
+    expect(getFridayProviderAuthModesForBackend("anthropic", "http")).toEqual(
+      expect.arrayContaining(["api-key", "oauth", "token"]),
+    );
+    expect(getFridayProviderAuthModesForBackend("anthropic", "cli")).toEqual(["external-session"]);
+    expect(getFridayProviderAuthModesForBackend("ollama", "http")).toEqual(
+      expect.arrayContaining(["none"]),
+    );
   });
 
   it("marks custom adapters as requiring explicit baseUrl", () => {

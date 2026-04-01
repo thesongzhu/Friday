@@ -57,6 +57,7 @@ This document is the current architecture reference for steady-state Friday runt
 
 - Public route families `/v1/diagnosis/*`, `/v1/auto-fix/*`, and `/v1/uix/*` are part of the active steady-state product surface.
 - Self-healing is supervised by default: higher-risk fixes require explicit approval, and rollback/evidence are part of the public contract.
+- Auto-fix execution is active, but only a subset is hub-wired operational side effects today. `disable_skill` is hub-backed; `retry_node`, `switch_model_fallback`, `trim_payload`, `apply_config_patch`, `grant_permission`, and `pause_workflow` currently execute via deterministic directive-level executors/verifiers that produce verification evidence without claiming full runtime-side automation.
 - Failures must surface as incidents, diagnoses, actions, or evidence; do not hide self-healing failures behind silent fallback.
 - `/assistant` is the beginner-first web surface for plain-language intent resolution, guided wizards, issue inbox, fix approvals, and direct skill generation.
 - Expert autonomy is an opt-in layer above the supervised defaults. It may infer bounded context, run safe probes, and continue through cross-surface reasoning, but destructive or production-sensitive actions still require final approval.
@@ -164,7 +165,7 @@ This document is the current architecture reference for steady-state Friday runt
 - Learned preference facts use a Bayesian-inspired confidence model with 30-day half-life exponential decay, conflict penalty (0.30), and evidence boost (logarithmic diminishing returns).
 - The self-learning context enrichment service is wired through hub bootstrap (`_learningContextRef`) and becomes available after self-learning runtime creation.
 - Persona settings affect wording, guidance, and clarification style only. They must not weaken approval gates, rollback rules, or destructive-action safeguards.
-- Wizard and onboarding session state is currently in-memory (`Map`). Database persistence for wizard contexts is a known gap.
+- Guided wizard contexts in `/assistant` are persisted in SQLite (`uix_guided_contexts`) and can be resumed after service restart. Onboarding session progress is also persisted in SQLite (`uix_onboarding_sessions`) and restored on boot.
 - Learning feedback is not yet user-visible. Users cannot inspect or edit learned preference facts through any current UI surface.
 
 ## Runtime admin and security surfaces
@@ -185,6 +186,8 @@ This document is the current architecture reference for steady-state Friday runt
 - Public auth failures use the current runtime taxonomy: `UNAUTHORIZED`, `FORBIDDEN`, `RATE_LIMITED`, and related canonical codes from `src/api/model/friday-api-error-codes.ts`.
 - Scope taxonomy is defined by the current auth model, including `security.read` / `security.write`, `fleet.read`, `diagnosis.read` / `diagnosis.write`, and the workflow, skill, plugin, and session scopes present in `src/api/model/friday-api-auth.types.ts`.
 - Provider kind and routing semantics are defined by the current provider model and cost-routing types. `openai-compatible` and `google` are canonical provider kinds; historical SSD wording around `"custom"` providers is not the active contract.
+- Anthropic provider auth now has three real runtime modes: `api-key`, `oauth`, and `token`. The `token` mode is a compatibility path for pasted/setup subscription tokens and does not imply refresh semantics.
+- OpenAI subscription/Codex account sign-in is **not** a current steady-state auth surface for Friday's `api.openai.com` provider path. The active OpenAI provider contract remains API-scoped `api-key` / `bearer-token` credentials. Subscription-based Codex access should be treated as a future Codex client/backend integration rather than a drop-in OAuth mode for the current HTTP provider path.
 
 ## Compatibility retirement policy
 

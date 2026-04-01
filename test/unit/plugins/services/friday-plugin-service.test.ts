@@ -364,6 +364,30 @@ describe("FridayPluginService", () => {
     await expect(service.enablePlugin("nonexistent")).rejects.toThrow(FridayDomainError);
   });
 
+  it("auto-disables a plugin after repeated enable/load failures", async () => {
+    service.installPlugin({
+      manifest: makeManifest("friday.test.flaky"),
+      installPath: "/plugins/flaky",
+      source: "local",
+      userApproved: true,
+    });
+    vi.spyOn(loader, "load").mockRejectedValue(
+      new FridayDomainError("PLUGIN_LOAD_FAILED", "boom", { httpStatus: 500 }),
+    );
+
+    await expect(service.enablePlugin("friday.test.flaky")).rejects.toThrow(FridayDomainError);
+    await expect(service.enablePlugin("friday.test.flaky")).rejects.toThrow(FridayDomainError);
+    await expect(service.enablePlugin("friday.test.flaky")).rejects.toThrow(FridayDomainError);
+
+    const plugin = service.getPlugin("friday.test.flaky");
+    expect(plugin).toMatchObject({
+      status: "disabled",
+      enabled: false,
+      lastErrorCode: "PLUGIN_AUTO_DISABLED",
+    });
+    expect(plugin?.lastErrorMessage).toContain("auto-disabled");
+  });
+
   // ─── disablePlugin ───
 
   it("disables an enabled plugin", async () => {
@@ -413,6 +437,32 @@ describe("FridayPluginService", () => {
     const disabled = await service.disablePlugin("friday.channel.discord");
     expect(disabled.status).toBe("disabled");
     expect(disabled.enabled).toBe(false);
+  });
+
+  it("auto-disables a plugin after repeated unload/deactivate failures", async () => {
+    service.installPlugin({
+      manifest: makeManifest("friday.test.unload-flaky"),
+      installPath: "/plugins/unload-flaky",
+      source: "local",
+      userApproved: true,
+    });
+    await service.enablePlugin("friday.test.unload-flaky");
+
+    vi.spyOn(loader, "unload").mockRejectedValue(
+      new FridayDomainError("PLUGIN_LIFECYCLE_ERROR", "deactivate boom", { httpStatus: 500 }),
+    );
+
+    await expect(service.disablePlugin("friday.test.unload-flaky")).rejects.toThrow(FridayDomainError);
+    await expect(service.disablePlugin("friday.test.unload-flaky")).rejects.toThrow(FridayDomainError);
+    await expect(service.disablePlugin("friday.test.unload-flaky")).rejects.toThrow(FridayDomainError);
+
+    const plugin = service.getPlugin("friday.test.unload-flaky");
+    expect(plugin).toMatchObject({
+      status: "disabled",
+      enabled: false,
+      lastErrorCode: "PLUGIN_AUTO_DISABLED",
+    });
+    expect(plugin?.lastErrorMessage).toContain("auto-disabled");
   });
 
   // ─── uninstallPlugin ───

@@ -5,6 +5,7 @@ import type { FridaySessionService } from "#sessions";
 import type { FridaySqliteLayer } from "#state";
 import type { FridaySkillExecutor } from "#skills";
 import type { FridaySkillGeneratorService } from "#skills/generator";
+import type { FridayProviderTenantContext } from "#providers";
 import type { FridayWorkflowGeneratorService, FridayWorkflowProductService } from "#workflows";
 import type {
   FridayActionTemplateSummary,
@@ -26,6 +27,7 @@ import type {
 } from "../api/friday-uix-api.types.js";
 import type { FridayUserPreference } from "../model/friday-uix.types.js";
 import type { FridayUixUserPreferenceRepository } from "../persistence/friday-uix-user-preference-repository.js";
+import type { FridayUixGuidedContextRepository } from "../persistence/friday-uix-guided-context-repository.js";
 import {
   FRIDAY_COMMUNICATION_PREFERENCE_KEYS,
   FRIDAY_DEFAULT_COMMUNICATION_PERSONA,
@@ -35,11 +37,16 @@ import {
 } from "./friday-communication-persona.js";
 
 interface FridayWizardContextRecord extends FridayGuidedWizardState {
+  principalId: string;
   skillSessionId?: string;
   workflowSessionId?: string;
   flowKind?: "skill" | "workflow";
   resolvedIntent?: FridayBeginnerIntentResolution["intent"];
   assistantSessionKey?: string;
+  tenantContext?: FridayProviderTenantContext;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt?: string;
 }
 
 export interface FridayUixSurfaceService {
@@ -71,11 +78,13 @@ export interface FridayUixSurfaceService {
     userId: string;
     parameters: Record<string, unknown>;
     assistantSessionKey?: string;
+    tenantContext?: FridayProviderTenantContext;
   }): Promise<FridayUixTemplateExecutionResponse>;
   startWizard(input: {
     wizardId: string;
     userId: string;
     assistantSessionKey?: string;
+    tenantContext?: FridayProviderTenantContext;
   }): FridayUixWizardResponse;
   continueWizard(input: {
     wizardId: string;
@@ -83,6 +92,7 @@ export interface FridayUixSurfaceService {
     userId: string;
     values: Record<string, unknown>;
     assistantSessionKey?: string;
+    tenantContext?: FridayProviderTenantContext;
   }): Promise<FridayUixWizardResponse>;
   listIssues(input: {
     userId: string;
@@ -102,6 +112,7 @@ export interface CreateFridayUixSurfaceServiceDeps {
   sessionService?: FridaySessionService;
   observability?: FridayObservabilityApiService;
   preferenceRepo?: FridayUixUserPreferenceRepository;
+  wizardContextRepo?: FridayUixGuidedContextRepository;
   learningContextBuilder?: (input: { userId: string; nowIso: string }) => { preferences: Record<string, unknown> };
   diagnosticsBuilder?: (input: { userId: string }) => FridayUixAssistantDiagnostics;
   /** Optional writer to emit learning events when preferences are updated via API. */
@@ -646,6 +657,91 @@ export function createFridayUixSurfaceService(
     };
   }
 
+  function persistWizardContext(context: FridayWizardContextRecord): void {
+    if (!deps.db || !deps.wizardContextRepo) {
+      return;
+    }
+    deps.db.withWriteTransaction((db) =>
+      deps.wizardContextRepo!.save(db, {
+        contextId: context.contextId,
+        wizardId: context.wizardId,
+        title: context.title,
+        principalId: context.principalId,
+        channelId: context.assistantSessionKey ?? "assistant",
+        status: context.status,
+        currentStepId: context.currentStepId,
+        steps: context.steps as unknown as Array<Record<string, unknown>>,
+        collectedValues: context.collectedValues,
+        nextActionLabel: context.nextActionLabel,
+        objective: context.objective,
+        assumptions: context.assumptions,
+        unknowns: context.unknowns,
+        successTest: context.successTest,
+        fallbackPath: context.fallbackPath,
+        skillSessionId: context.skillSessionId,
+        workflowSessionId: context.workflowSessionId,
+        flowKind: context.flowKind,
+        resolvedIntent: context.resolvedIntent,
+        assistantSessionKey: context.assistantSessionKey,
+        tenantContext: context.tenantContext,
+        startedAt: context.startedAt,
+        updatedAt: context.updatedAt,
+        finishedAt: context.finishedAt,
+      }),
+    );
+  }
+
+  function touchWizardContext(
+    context: FridayWizardContextRecord,
+    options: { terminal?: boolean } = {},
+  ): void {
+    const timestamp = nowIso();
+    context.updatedAt = timestamp;
+    if (options.terminal) {
+      context.finishedAt ??= timestamp;
+    } else if (context.status !== "completed" && context.status !== "failed") {
+      context.finishedAt = undefined;
+    }
+    persistWizardContext(context);
+  }
+
+  function restoreWizardContext(contextId: string): FridayWizardContextRecord | null {
+    if (!deps.db || !deps.wizardContextRepo) {
+      return null;
+    }
+    const restored = deps.db.withReadConnection((db) =>
+      deps.wizardContextRepo!.getById(db, contextId),
+    );
+    if (!restored) {
+      return null;
+    }
+    return {
+      wizardId: restored.wizardId,
+      contextId: restored.contextId,
+      title: restored.title,
+      status: restored.status as FridayGuidedWizardState["status"],
+      currentStepId: restored.currentStepId,
+      steps: restored.steps as unknown as FridayGuidedWizardState["steps"],
+      collectedValues: restored.collectedValues,
+      nextActionLabel: restored.nextActionLabel,
+      objective: restored.objective,
+      assumptions: restored.assumptions,
+      unknowns: restored.unknowns,
+      successTest: restored.successTest,
+      fallbackPath: restored.fallbackPath,
+      principalId: restored.principalId,
+      skillSessionId: restored.skillSessionId,
+      workflowSessionId: restored.workflowSessionId,
+      flowKind: restored.flowKind,
+      resolvedIntent: restored.resolvedIntent as FridayBeginnerIntentResolution["intent"] | undefined,
+      assistantSessionKey: restored.assistantSessionKey,
+      tenantContext: restored.tenantContext,
+      startedAt: restored.startedAt,
+      updatedAt: restored.updatedAt,
+      finishedAt: restored.finishedAt,
+    };
+  }
+
   async function syncAssistantHarnessFocus(input: {
     assistantSessionKey?: string;
     harness?: FridayTemplateHarnessSummary | null;
@@ -1006,6 +1102,7 @@ export function createFridayUixSurfaceService(
   async function startWorkflowSession(input: {
     goal: string;
     userId: string;
+    tenantContext?: FridayProviderTenantContext;
   }): Promise<{
     response: Awaited<ReturnType<FridayWorkflowGeneratorService["startSession"]>>;
     workflow?: ReturnType<FridayWorkflowProductService["materializeGeneratedSession"]> extends Promise<infer T>
@@ -1023,6 +1120,11 @@ export function createFridayUixSurfaceService(
       goal: input.goal,
       userId: input.userId,
       channel: "assistant",
+      tenantContext: input.tenantContext ?? {
+        hubId: "default",
+        userId: input.userId,
+        channelKind: "assistant",
+      },
     });
     if (response.mode === "clarification_required") {
       return { response };
@@ -1134,6 +1236,7 @@ export function createFridayUixSurfaceService(
     guidanceText: string;
     intent: FridayBeginnerIntentResolution["intent"];
     defaultSummary: string;
+    tenantContext?: FridayProviderTenantContext;
   }) {
     if (!deps.skillExecutor) {
       throw new FridayDomainError(
@@ -1148,6 +1251,11 @@ export function createFridayUixSurfaceService(
       sessionId: `assistant-template:${input.templateId}`,
       userId: input.userId,
       channel: "assistant",
+      tenantContext: input.tenantContext ?? {
+        hubId: "default",
+        userId: input.userId,
+        channelKind: "assistant",
+      },
     });
     const result = await handle.result;
     if (result.status !== "completed") {
@@ -1385,6 +1493,11 @@ export function createFridayUixSurfaceService(
             goal,
             userId: input.userId,
             channel: "assistant",
+            tenantContext: input.tenantContext ?? {
+              hubId: "default",
+              userId: input.userId,
+              channelKind: "assistant",
+            },
           });
           const harness = await loadSkillHarnessSummary(response.session.sessionId);
           const responsePayload: FridayUixTemplateExecutionResponse = applyGuidance({
@@ -1446,6 +1559,7 @@ export function createFridayUixSurfaceService(
             : await startWorkflowSession({
               goal,
               userId: input.userId,
+              tenantContext: input.tenantContext,
             });
           const previewResponse = response.response;
           const harness = previewResponse?.session.sessionId ?? sessionId
@@ -1563,7 +1677,11 @@ export function createFridayUixSurfaceService(
               })(),
             }
             : goal
-              ? await startWorkflowSession({ goal, userId: input.userId })
+              ? await startWorkflowSession({
+                goal,
+                userId: input.userId,
+                tenantContext: input.tenantContext,
+              })
               : null;
           if (!generated) {
             throw new FridayDomainError(
@@ -1672,6 +1790,7 @@ export function createFridayUixSurfaceService(
             const executed = await executeStarterSkillTemplate({
               templateId: input.templateId,
               userId: input.userId,
+              tenantContext: input.tenantContext,
               skillId: "failed-deploy-recovery-brief",
               guidanceText: "Recover failed deploy",
               intent: "review_issues",
@@ -1744,6 +1863,7 @@ export function createFridayUixSurfaceService(
             const executed = await executeStarterSkillTemplate({
               templateId: input.templateId,
               userId: input.userId,
+              tenantContext: input.tenantContext,
               skillId: "review-open-issues",
               parameters: { limit: 10 },
               guidanceText: "Review detected issues",
@@ -1786,6 +1906,7 @@ export function createFridayUixSurfaceService(
           const executed = await executeStarterSkillTemplate({
             templateId: input.templateId,
             userId: input.userId,
+            tenantContext: input.tenantContext,
             skillId: "idea-clarifier",
             parameters: input.parameters,
             guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Clarify an idea",
@@ -1804,6 +1925,7 @@ export function createFridayUixSurfaceService(
           const executed = await executeStarterSkillTemplate({
             templateId: input.templateId,
             userId: input.userId,
+            tenantContext: input.tenantContext,
             skillId: "implementation-plan-review",
             parameters: input.parameters,
             guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Review implementation plan",
@@ -1822,6 +1944,7 @@ export function createFridayUixSurfaceService(
           const executed = await executeStarterSkillTemplate({
             templateId: input.templateId,
             userId: input.userId,
+            tenantContext: input.tenantContext,
             skillId: "browser-qa-report",
             parameters: input.parameters,
             guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "QA this page or app",
@@ -1840,6 +1963,7 @@ export function createFridayUixSurfaceService(
           const executed = await executeStarterSkillTemplate({
             templateId: input.templateId,
             userId: input.userId,
+            tenantContext: input.tenantContext,
             skillId: "workspace-diff-review",
             parameters: input.parameters,
             guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Review current changes",
@@ -1858,6 +1982,7 @@ export function createFridayUixSurfaceService(
           const executed = await executeStarterSkillTemplate({
             templateId: input.templateId,
             userId: input.userId,
+            tenantContext: input.tenantContext,
             skillId: "release-doc-sync",
             parameters: {
               ...input.parameters,
@@ -1879,6 +2004,7 @@ export function createFridayUixSurfaceService(
           const executed = await executeStarterSkillTemplate({
             templateId: input.templateId,
             userId: input.userId,
+            tenantContext: input.tenantContext,
             skillId: "page-benchmark-report",
             parameters: input.parameters,
             guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Benchmark this page",
@@ -1897,6 +2023,7 @@ export function createFridayUixSurfaceService(
           const executed = await executeStarterSkillTemplate({
             templateId: input.templateId,
             userId: input.userId,
+            tenantContext: input.tenantContext,
             skillId: "release-canary-check",
             parameters: input.parameters,
             guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Run release canary check",
@@ -1915,6 +2042,7 @@ export function createFridayUixSurfaceService(
           const executed = await executeStarterSkillTemplate({
             templateId: input.templateId,
             userId: input.userId,
+            tenantContext: input.tenantContext,
             skillId: "engineering-retro",
             parameters: input.parameters,
             guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Generate engineering retro",
@@ -1933,6 +2061,7 @@ export function createFridayUixSurfaceService(
           const executed = await executeStarterSkillTemplate({
             templateId: input.templateId,
             userId: input.userId,
+            tenantContext: input.tenantContext,
             skillId: "product-scope-review",
             parameters: input.parameters,
             guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Review product scope",
@@ -1951,6 +2080,7 @@ export function createFridayUixSurfaceService(
           const executed = await executeStarterSkillTemplate({
             templateId: input.templateId,
             userId: input.userId,
+            tenantContext: input.tenantContext,
             skillId: "design-plan-review",
             parameters: input.parameters,
             guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Review design plan",
@@ -1969,6 +2099,7 @@ export function createFridayUixSurfaceService(
           const executed = await executeStarterSkillTemplate({
             templateId: input.templateId,
             userId: input.userId,
+            tenantContext: input.tenantContext,
             skillId: "security-review",
             parameters: input.parameters,
             guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Run security review",
@@ -1987,6 +2118,7 @@ export function createFridayUixSurfaceService(
           const executed = await executeStarterSkillTemplate({
             templateId: input.templateId,
             userId: input.userId,
+            tenantContext: input.tenantContext,
             skillId: "browser-qa-fix",
             parameters: {
               ...input.parameters,
@@ -2067,10 +2199,13 @@ export function createFridayUixSurfaceService(
         intent: "general_help",
         questions: ["What should Friday do first?"],
       });
+      const startedAt = nowIso();
       const context: FridayWizardContextRecord = {
         wizardId: input.wizardId,
         contextId: deps.idGenerator(),
+        principalId: input.userId,
         assistantSessionKey: input.assistantSessionKey,
+        tenantContext: input.tenantContext,
         title: wizardDef.title,
         status: "awaiting_input",
         currentStepId: "goal",
@@ -2095,8 +2230,11 @@ export function createFridayUixSurfaceService(
         unknowns: initialGuidance.unknowns,
         successTest: initialGuidance.successTest,
         fallbackPath: initialGuidance.fallbackPath,
+        startedAt,
+        updatedAt: startedAt,
       };
       wizardContexts.set(context.contextId, context);
+      persistWizardContext(context);
       void deps.observability?.recordAssistantEvent({
         userId: input.userId,
         event: "wizard_started",
@@ -2108,104 +2246,75 @@ export function createFridayUixSurfaceService(
 
     async continueWizard(input) {
       try {
-        const context = wizardContexts.get(input.contextId);
+        const context = wizardContexts.get(input.contextId) ?? restoreWizardContext(input.contextId);
         if (!context || context.wizardId !== input.wizardId) {
           throw new FridayDomainError("UIX_GUIDED_CONTEXT_NOT_FOUND", "Wizard context not found", {
             httpStatus: 404,
           });
         }
+        if (context.principalId !== input.userId) {
+          throw new FridayDomainError("FORBIDDEN", "Wizard context does not belong to this user", {
+            httpStatus: 403,
+          });
+        }
+        wizardContexts.set(context.contextId, context);
         const assistantSessionKey = input.assistantSessionKey ?? context.assistantSessionKey;
         context.assistantSessionKey = assistantSessionKey;
+        context.tenantContext = input.tenantContext ?? context.tenantContext;
 
-      if (context.currentStepId === "goal") {
-        const goal = typeof input.values.goal === "string" ? input.values.goal.trim() : "";
-        if (!goal) {
-          throw new FridayDomainError("VALIDATION_ERROR", "goal is required", { httpStatus: 400 });
-        }
-        context.collectedValues.goal = goal;
-        const resolvedIntent = resolveIntentFromText(goal, input.userId);
-        Object.assign(context, buildUserGuidance(input.userId, {
-          text: goal,
-          intent: resolvedIntent.intent,
-        }));
-        context.resolvedIntent = resolvedIntent.intent;
-        if (
-          resolvedIntent.intent === "generate_workflow"
-          || resolvedIntent.intent === "deploy_workflow"
-          || resolvedIntent.intent === "export_workflow_bundle"
-        ) {
-          context.flowKind = "workflow";
-          const response = await startWorkflowSession({ goal, userId: input.userId });
-          context.workflowSessionId = response.response.session.sessionId;
-          const harness = await loadWorkflowHarnessSummary(context.workflowSessionId);
-          if (!response.workflow) {
-            context.currentStepId = "clarification";
-            context.status = "awaiting_input";
-            context.collectedValues.questions = response.response.questions ?? [];
-            const wizardResponse = applyGuidance({
-              ...makeWizard(context),
-              summary: (response.response.questions ?? []).join(" "),
-              result: {
-                sessionId: response.response.session.sessionId,
-                mode: response.response.mode,
-                questions: response.response.questions ?? [],
-              },
-              workflow: {
-                kind: "session_started" as const,
-                workflowName: summarizeWorkflowName(goal),
-                sessionId: response.response.session.sessionId,
-                summary: "Friday needs one more answer before it can generate the workflow.",
-                routeTarget: "/assistant" as const,
-                deployReady: false,
-                questions: response.response.questions ?? [],
-              },
-              harness: harness ?? undefined,
-            }, buildUserGuidance(input.userId, {
-              text: goal,
-              intent: resolvedIntent.intent,
-              questions: response.response.questions ?? [],
-            }));
-            await syncAssistantHarnessFocus({
-              assistantSessionKey,
-              harness,
-            });
-            await deps.observability?.recordAssistantEvent({
-              userId: input.userId,
-              event: "wizard_continued",
-              summary: wizardResponse.summary ?? "Friday needs clarification before generating the workflow.",
-              result: wizardResponse,
-            });
-            return wizardResponse;
+        if (context.currentStepId === "goal") {
+          const goal = typeof input.values.goal === "string" ? input.values.goal.trim() : "";
+          if (!goal) {
+            throw new FridayDomainError("VALIDATION_ERROR", "goal is required", { httpStatus: 400 });
           }
-
+          context.collectedValues.goal = goal;
+          const resolvedIntent = resolveIntentFromText(goal, input.userId);
+          Object.assign(context, buildUserGuidance(input.userId, {
+            text: goal,
+            intent: resolvedIntent.intent,
+          }));
+          context.resolvedIntent = resolvedIntent.intent;
           if (
-            resolvedIntent.intent === "deploy_workflow"
+            resolvedIntent.intent === "generate_workflow"
+            || resolvedIntent.intent === "deploy_workflow"
             || resolvedIntent.intent === "export_workflow_bundle"
           ) {
-            if (response.workflow.deployReady && response.workflow.workflowId && response.workflow.draftId) {
-              const deployed = await deployWorkflowCard({
-                workflowId: response.workflow.workflowId,
-                draftId: response.workflow.draftId,
-                actorUserId: input.userId,
-                workflowName: response.workflow.workflowName,
-                runNow: resolvedIntent.intent === "deploy_workflow",
-                includeExport: resolvedIntent.intent === "export_workflow_bundle",
-              });
-              context.status = "completed";
-              context.nextActionLabel = "Done";
+            context.flowKind = "workflow";
+            const response = await startWorkflowSession({
+              goal,
+              userId: input.userId,
+              tenantContext: context.tenantContext,
+            });
+            context.workflowSessionId = response.response.session.sessionId;
+            const harness = await loadWorkflowHarnessSummary(context.workflowSessionId);
+            if (!response.workflow) {
+              context.currentStepId = "clarification";
+              context.status = "awaiting_input";
+              context.collectedValues.questions = response.response.questions ?? [];
               const wizardResponse = applyGuidance({
                 ...makeWizard(context),
-                summary: deployed.workflow.summary,
+                summary: (response.response.questions ?? []).join(" "),
                 result: {
-                  sessionId: response.workflow.sessionId,
-                  deployment: deployed.deployment,
+                  sessionId: response.response.session.sessionId,
+                  mode: response.response.mode,
+                  questions: response.response.questions ?? [],
                 },
-                workflow: deployed.workflow,
+                workflow: {
+                  kind: "session_started" as const,
+                  workflowName: summarizeWorkflowName(goal),
+                  sessionId: response.response.session.sessionId,
+                  summary: "Friday needs one more answer before it can generate the workflow.",
+                  routeTarget: "/assistant" as const,
+                  deployReady: false,
+                  questions: response.response.questions ?? [],
+                },
                 harness: harness ?? undefined,
               }, buildUserGuidance(input.userId, {
                 text: goal,
                 intent: resolvedIntent.intent,
+                questions: response.response.questions ?? [],
               }));
+              touchWizardContext(context);
               await syncAssistantHarnessFocus({
                 assistantSessionKey,
                 harness,
@@ -2213,27 +2322,98 @@ export function createFridayUixSurfaceService(
               await deps.observability?.recordAssistantEvent({
                 userId: input.userId,
                 event: "wizard_continued",
-                summary: wizardResponse.summary ?? "Friday deployed the workflow.",
+                summary: wizardResponse.summary ?? "Friday needs clarification before generating the workflow.",
                 result: wizardResponse,
               });
               return wizardResponse;
             }
+
+            if (
+              resolvedIntent.intent === "deploy_workflow"
+              || resolvedIntent.intent === "export_workflow_bundle"
+            ) {
+              if (response.workflow.deployReady && response.workflow.workflowId && response.workflow.draftId) {
+                const deployed = await deployWorkflowCard({
+                  workflowId: response.workflow.workflowId,
+                  draftId: response.workflow.draftId,
+                  actorUserId: input.userId,
+                  workflowName: response.workflow.workflowName,
+                  runNow: resolvedIntent.intent === "deploy_workflow",
+                  includeExport: resolvedIntent.intent === "export_workflow_bundle",
+                });
+                context.status = "completed";
+                context.nextActionLabel = "Done";
+                const wizardResponse = applyGuidance({
+                  ...makeWizard(context),
+                  summary: deployed.workflow.summary,
+                  result: {
+                    sessionId: response.workflow.sessionId,
+                    deployment: deployed.deployment,
+                  },
+                  workflow: deployed.workflow,
+                  harness: harness ?? undefined,
+                }, buildUserGuidance(input.userId, {
+                  text: goal,
+                  intent: resolvedIntent.intent,
+                }));
+                touchWizardContext(context, { terminal: true });
+                await syncAssistantHarnessFocus({
+                  assistantSessionKey,
+                  harness,
+                });
+                await deps.observability?.recordAssistantEvent({
+                  userId: input.userId,
+                  event: "wizard_continued",
+                  summary: wizardResponse.summary ?? "Friday deployed the workflow.",
+                  result: wizardResponse,
+                });
+                return wizardResponse;
+              }
+              const wizardResponse = applyGuidance({
+                ...makeWizard(context),
+                summary: "Friday prepared the workflow draft, but it is not yet safe to deploy.",
+                workflow: blockedWorkflowCard({
+                  workflowName: response.workflow.workflowName,
+                  summary: "The workflow still needs fixes before deploy.",
+                  questions: response.workflow.questions,
+                  sessionId: response.workflow.sessionId,
+                }),
+                harness: harness ?? undefined,
+              }, buildUserGuidance(input.userId, {
+                text: goal,
+                intent: resolvedIntent.intent,
+                blockedByPolicy: true,
+                unknowns: response.workflow.questions,
+              }));
+              touchWizardContext(context);
+              await syncAssistantHarnessFocus({
+                assistantSessionKey,
+                harness,
+              });
+              await deps.observability?.recordAssistantEvent({
+                userId: input.userId,
+                event: "wizard_continued",
+                summary: wizardResponse.summary,
+                result: wizardResponse,
+              });
+              return wizardResponse;
+            }
+
+            context.status = "completed";
+            context.nextActionLabel = "Done";
             const wizardResponse = applyGuidance({
               ...makeWizard(context),
-              summary: "Friday prepared the workflow draft, but it is not yet safe to deploy.",
-              workflow: blockedWorkflowCard({
-                workflowName: response.workflow.workflowName,
-                summary: "The workflow still needs fixes before deploy.",
-                questions: response.workflow.questions,
+              summary: response.workflow.summary,
+              workflow: response.workflow,
+              result: {
                 sessionId: response.workflow.sessionId,
-              }),
+              },
               harness: harness ?? undefined,
             }, buildUserGuidance(input.userId, {
               text: goal,
               intent: resolvedIntent.intent,
-              blockedByPolicy: true,
-              unknowns: response.workflow.questions,
             }));
+            touchWizardContext(context, { terminal: true });
             await syncAssistantHarnessFocus({
               assistantSessionKey,
               harness,
@@ -2241,72 +2421,80 @@ export function createFridayUixSurfaceService(
             await deps.observability?.recordAssistantEvent({
               userId: input.userId,
               event: "wizard_continued",
-              summary: wizardResponse.summary,
+              summary: wizardResponse.summary ?? "Friday generated a workflow draft.",
               result: wizardResponse,
             });
             return wizardResponse;
           }
 
+          context.flowKind = "skill";
+          if (!deps.skillGenerator) {
+            throw new FridayDomainError(
+              "UIX_SKILL_GENERATOR_UNAVAILABLE",
+              "Skill generation is not available in this runtime",
+              { httpStatus: 503 },
+            );
+          }
+          const response = await deps.skillGenerator.startSession({
+            goal,
+            userId: input.userId,
+            channel: "assistant",
+            tenantContext: context.tenantContext ?? {
+              hubId: "default",
+              userId: input.userId,
+              channelKind: "assistant",
+            },
+          });
+          const harness = await loadSkillHarnessSummary(response.session.sessionId);
+          context.skillSessionId = response.session.sessionId;
+          if (response.mode === "clarification_required") {
+            context.currentStepId = "clarification";
+            context.status = "awaiting_input";
+            context.collectedValues.questions = response.questions ?? [];
+            const wizardResponse = applyGuidance({
+              ...makeWizard(context),
+              summary: (response.questions ?? []).join(" "),
+              result: {
+                sessionId: response.session.sessionId,
+                mode: response.mode,
+                questions: response.questions ?? [],
+              },
+              harness: harness ?? undefined,
+            }, buildUserGuidance(input.userId, {
+              text: goal,
+              intent: "generate_skill",
+              questions: response.questions ?? [],
+            }));
+            touchWizardContext(context);
+            await syncAssistantHarnessFocus({
+              assistantSessionKey,
+              harness,
+            });
+            await deps.observability?.recordAssistantEvent({
+              userId: input.userId,
+              event: "wizard_continued",
+              summary: wizardResponse.summary ?? "Friday needs clarification before generating the skill.",
+              result: wizardResponse,
+            });
+            return wizardResponse;
+          }
           context.status = "completed";
           context.nextActionLabel = "Done";
           const wizardResponse = applyGuidance({
             ...makeWizard(context),
-            summary: response.workflow.summary,
-            workflow: response.workflow,
-            result: {
-              sessionId: response.workflow.sessionId,
-            },
-            harness: harness ?? undefined,
-          }, buildUserGuidance(input.userId, {
-            text: goal,
-            intent: resolvedIntent.intent,
-          }));
-          await syncAssistantHarnessFocus({
-            assistantSessionKey,
-            harness,
-          });
-          await deps.observability?.recordAssistantEvent({
-            userId: input.userId,
-            event: "wizard_continued",
-            summary: wizardResponse.summary ?? "Friday generated a workflow draft.",
-            result: wizardResponse,
-          });
-          return wizardResponse;
-        }
-
-        context.flowKind = "skill";
-        if (!deps.skillGenerator) {
-          throw new FridayDomainError(
-            "UIX_SKILL_GENERATOR_UNAVAILABLE",
-            "Skill generation is not available in this runtime",
-            { httpStatus: 503 },
-          );
-        }
-        const response = await deps.skillGenerator.startSession({
-          goal,
-          userId: input.userId,
-          channel: "assistant",
-        });
-        const harness = await loadSkillHarnessSummary(response.session.sessionId);
-        context.skillSessionId = response.session.sessionId;
-        if (response.mode === "clarification_required") {
-          context.currentStepId = "clarification";
-          context.status = "awaiting_input";
-          context.collectedValues.questions = response.questions ?? [];
-          const wizardResponse = applyGuidance({
-            ...makeWizard(context),
-            summary: (response.questions ?? []).join(" "),
+            summary: "Friday generated a skill draft and moved it into review.",
             result: {
               sessionId: response.session.sessionId,
               mode: response.mode,
-              questions: response.questions ?? [],
+              draftSkillId: response.draft?.manifest.id,
+              validationOk: response.draft?.validation.ok,
             },
             harness: harness ?? undefined,
           }, buildUserGuidance(input.userId, {
             text: goal,
             intent: "generate_skill",
-            questions: response.questions ?? [],
           }));
+          touchWizardContext(context, { terminal: true });
           await syncAssistantHarnessFocus({
             assistantSessionKey,
             harness,
@@ -2314,83 +2502,201 @@ export function createFridayUixSurfaceService(
           await deps.observability?.recordAssistantEvent({
             userId: input.userId,
             event: "wizard_continued",
-            summary: wizardResponse.summary ?? "Friday needs clarification before generating the skill.",
+            summary: wizardResponse.summary ?? "Friday generated a skill draft.",
             result: wizardResponse,
           });
           return wizardResponse;
         }
-        context.status = "completed";
-        context.nextActionLabel = "Done";
-        const wizardResponse = applyGuidance({
-          ...makeWizard(context),
-          summary: "Friday generated a skill draft and moved it into review.",
-          result: {
-            sessionId: response.session.sessionId,
-            mode: response.mode,
-            draftSkillId: response.draft?.manifest.id,
-            validationOk: response.draft?.validation.ok,
-          },
-          harness: harness ?? undefined,
-        }, buildUserGuidance(input.userId, {
-          text: goal,
-          intent: "generate_skill",
-        }));
-        await syncAssistantHarnessFocus({
-          assistantSessionKey,
-          harness,
-        });
-        await deps.observability?.recordAssistantEvent({
-          userId: input.userId,
-          event: "wizard_continued",
-          summary: wizardResponse.summary ?? "Friday generated a skill draft.",
-          result: wizardResponse,
-        });
-        return wizardResponse;
-      }
 
-      if (context.currentStepId === "clarification") {
-        const answer = typeof input.values.answer === "string" ? input.values.answer.trim() : "";
-        if (!answer) {
-          throw new FridayDomainError("VALIDATION_ERROR", "answer is required", { httpStatus: 400 });
-        }
-        if (context.flowKind === "workflow") {
-          if (!context.workflowSessionId) {
-            throw new FridayDomainError("STATE_CONFLICT", "Wizard has no active workflow session", {
-              httpStatus: 409,
-            });
+        if (context.currentStepId === "clarification") {
+          const answer = typeof input.values.answer === "string" ? input.values.answer.trim() : "";
+          if (!answer) {
+            throw new FridayDomainError("VALIDATION_ERROR", "answer is required", { httpStatus: 400 });
           }
-          context.collectedValues.answer = answer;
-          const response = await continueWorkflowSession({
-            sessionId: context.workflowSessionId,
-            message: answer,
-            userId: input.userId,
-          });
-          const harness = await loadWorkflowHarnessSummary(context.workflowSessionId);
-          if (!response.workflow) {
-            context.collectedValues.questions = response.response.questions ?? [];
+          if (context.flowKind === "workflow") {
+            if (!context.workflowSessionId) {
+              throw new FridayDomainError("STATE_CONFLICT", "Wizard has no active workflow session", {
+                httpStatus: 409,
+              });
+            }
+            context.collectedValues.answer = answer;
+            const response = await continueWorkflowSession({
+              sessionId: context.workflowSessionId,
+              message: answer,
+              userId: input.userId,
+            });
+            const harness = await loadWorkflowHarnessSummary(context.workflowSessionId);
+            if (!response.workflow) {
+              context.collectedValues.questions = response.response.questions ?? [];
+              const wizardResponse = applyGuidance({
+                ...makeWizard(context),
+                summary: (response.response.questions ?? []).join(" "),
+                result: {
+                  sessionId: context.workflowSessionId,
+                  mode: response.response.mode,
+                  questions: response.response.questions ?? [],
+                },
+                workflow: {
+                  kind: "session_started" as const,
+                  workflowName: summarizeWorkflowName(String(context.collectedValues.goal ?? "Workflow")),
+                  sessionId: context.workflowSessionId,
+                  summary: "Friday still needs clarification before it can generate the workflow.",
+                  routeTarget: "/assistant" as const,
+                  deployReady: false,
+                  questions: response.response.questions ?? [],
+                },
+                harness: harness ?? undefined,
+              }, buildUserGuidance(input.userId, {
+                text: String(context.collectedValues.goal ?? "Workflow"),
+                intent: context.resolvedIntent ?? "generate_workflow",
+                questions: response.response.questions ?? [],
+              }));
+              touchWizardContext(context);
+              await syncAssistantHarnessFocus({
+                assistantSessionKey,
+                harness,
+              });
+              await deps.observability?.recordAssistantEvent({
+                userId: input.userId,
+                event: "wizard_continued",
+                summary: wizardResponse.summary ?? "Friday still needs clarification.",
+                result: wizardResponse,
+              });
+              return wizardResponse;
+            }
+
+            if (
+              context.resolvedIntent === "deploy_workflow"
+              || context.resolvedIntent === "export_workflow_bundle"
+            ) {
+              if (response.workflow.deployReady && response.workflow.workflowId && response.workflow.draftId) {
+                const deployed = await deployWorkflowCard({
+                  workflowId: response.workflow.workflowId,
+                  draftId: response.workflow.draftId,
+                  actorUserId: input.userId,
+                  workflowName: response.workflow.workflowName,
+                  runNow: context.resolvedIntent === "deploy_workflow",
+                  includeExport: context.resolvedIntent === "export_workflow_bundle",
+                });
+                context.status = "completed";
+                context.nextActionLabel = "Done";
+                const wizardResponse = applyGuidance({
+                  ...makeWizard(context),
+                  summary: deployed.workflow.summary,
+                  result: {
+                    sessionId: context.workflowSessionId,
+                    deployment: deployed.deployment,
+                  },
+                  workflow: deployed.workflow,
+                  harness: harness ?? undefined,
+                }, buildUserGuidance(input.userId, {
+                  text: String(context.collectedValues.goal ?? "Workflow"),
+                  intent: context.resolvedIntent ?? "deploy_workflow",
+                }));
+                touchWizardContext(context, { terminal: true });
+                await syncAssistantHarnessFocus({
+                  assistantSessionKey,
+                  harness,
+                });
+                await deps.observability?.recordAssistantEvent({
+                  userId: input.userId,
+                  event: "wizard_continued",
+                  summary: wizardResponse.summary ?? "Friday deployed the workflow.",
+                  result: wizardResponse,
+                });
+                return wizardResponse;
+              }
+              const wizardResponse = applyGuidance({
+                ...makeWizard(context),
+                summary: "Friday prepared the workflow draft, but it is not yet safe to deploy.",
+                workflow: blockedWorkflowCard({
+                  workflowName: response.workflow.workflowName,
+                  summary: "The workflow still needs fixes before deploy.",
+                  questions: response.workflow.questions,
+                  sessionId: response.workflow.sessionId,
+                }),
+                harness: harness ?? undefined,
+              }, buildUserGuidance(input.userId, {
+                text: String(context.collectedValues.goal ?? "Workflow"),
+                intent: context.resolvedIntent ?? "deploy_workflow",
+                blockedByPolicy: true,
+                unknowns: response.workflow.questions,
+              }));
+              touchWizardContext(context);
+              await syncAssistantHarnessFocus({
+                assistantSessionKey,
+                harness,
+              });
+              await deps.observability?.recordAssistantEvent({
+                userId: input.userId,
+                event: "wizard_continued",
+                summary: wizardResponse.summary,
+                result: wizardResponse,
+              });
+              return wizardResponse;
+            }
+
+            context.status = "completed";
+            context.nextActionLabel = "Done";
             const wizardResponse = applyGuidance({
               ...makeWizard(context),
-              summary: (response.response.questions ?? []).join(" "),
+              summary: response.workflow.summary,
               result: {
                 sessionId: context.workflowSessionId,
-                mode: response.response.mode,
-                questions: response.response.questions ?? [],
               },
-              workflow: {
-                kind: "session_started" as const,
-                workflowName: summarizeWorkflowName(String(context.collectedValues.goal ?? "Workflow")),
-                sessionId: context.workflowSessionId,
-                summary: "Friday still needs clarification before it can generate the workflow.",
-                routeTarget: "/assistant" as const,
-                deployReady: false,
-                questions: response.response.questions ?? [],
-              },
+              workflow: response.workflow,
               harness: harness ?? undefined,
             }, buildUserGuidance(input.userId, {
               text: String(context.collectedValues.goal ?? "Workflow"),
               intent: context.resolvedIntent ?? "generate_workflow",
-              questions: response.response.questions ?? [],
             }));
+            touchWizardContext(context, { terminal: true });
+            await syncAssistantHarnessFocus({
+              assistantSessionKey,
+              harness,
+            });
+            await deps.observability?.recordAssistantEvent({
+              userId: input.userId,
+              event: "wizard_continued",
+              summary: wizardResponse.summary ?? "Friday generated a workflow draft.",
+              result: wizardResponse,
+            });
+            return wizardResponse;
+          }
+          if (!context.skillSessionId) {
+            throw new FridayDomainError("STATE_CONFLICT", "Wizard has no active skill session", {
+              httpStatus: 409,
+            });
+          }
+          if (!deps.skillGenerator) {
+            throw new FridayDomainError(
+              "UIX_SKILL_GENERATOR_UNAVAILABLE",
+              "Skill generation is not available in this runtime",
+              { httpStatus: 503 },
+            );
+          }
+          context.collectedValues.answer = answer;
+          const response = await deps.skillGenerator.submitTurn(context.skillSessionId, {
+            message: answer,
+          });
+          const harness = await loadSkillHarnessSummary(context.skillSessionId);
+          if (response.mode === "clarification_required") {
+            context.collectedValues.questions = response.questions ?? [];
+            const wizardResponse = applyGuidance({
+              ...makeWizard(context),
+              summary: (response.questions ?? []).join(" "),
+              result: {
+                sessionId: context.skillSessionId,
+                mode: response.mode,
+                questions: response.questions ?? [],
+              },
+              harness: harness ?? undefined,
+            }, buildUserGuidance(input.userId, {
+              text: String(context.collectedValues.goal ?? "Skill"),
+              intent: "generate_skill",
+              questions: response.questions ?? [],
+            }));
+            touchWizardContext(context);
             await syncAssistantHarnessFocus({
               assistantSessionKey,
               harness,
@@ -2403,135 +2709,23 @@ export function createFridayUixSurfaceService(
             });
             return wizardResponse;
           }
-
-          if (
-            context.resolvedIntent === "deploy_workflow"
-            || context.resolvedIntent === "export_workflow_bundle"
-          ) {
-            if (response.workflow.deployReady && response.workflow.workflowId && response.workflow.draftId) {
-              const deployed = await deployWorkflowCard({
-                workflowId: response.workflow.workflowId,
-                draftId: response.workflow.draftId,
-                actorUserId: input.userId,
-                workflowName: response.workflow.workflowName,
-                runNow: context.resolvedIntent === "deploy_workflow",
-                includeExport: context.resolvedIntent === "export_workflow_bundle",
-              });
-              context.status = "completed";
-              context.nextActionLabel = "Done";
-              const wizardResponse = applyGuidance({
-                ...makeWizard(context),
-                summary: deployed.workflow.summary,
-              result: {
-                sessionId: context.workflowSessionId,
-                deployment: deployed.deployment,
-              },
-              workflow: deployed.workflow,
-              harness: harness ?? undefined,
-            }, buildUserGuidance(input.userId, {
-              text: String(context.collectedValues.goal ?? "Workflow"),
-              intent: context.resolvedIntent ?? "deploy_workflow",
-              }));
-              await syncAssistantHarnessFocus({
-                assistantSessionKey,
-                harness,
-              });
-              await deps.observability?.recordAssistantEvent({
-                userId: input.userId,
-                event: "wizard_continued",
-                summary: wizardResponse.summary ?? "Friday deployed the workflow.",
-                result: wizardResponse,
-              });
-              return wizardResponse;
-            }
-            const wizardResponse = applyGuidance({
-              ...makeWizard(context),
-              summary: "Friday prepared the workflow draft, but it is not yet safe to deploy.",
-              workflow: blockedWorkflowCard({
-                workflowName: response.workflow.workflowName,
-                summary: "The workflow still needs fixes before deploy.",
-                questions: response.workflow.questions,
-                sessionId: response.workflow.sessionId,
-              }),
-              harness: harness ?? undefined,
-            }, buildUserGuidance(input.userId, {
-              text: String(context.collectedValues.goal ?? "Workflow"),
-              intent: context.resolvedIntent ?? "deploy_workflow",
-              blockedByPolicy: true,
-              unknowns: response.workflow.questions,
-            }));
-            await syncAssistantHarnessFocus({
-              assistantSessionKey,
-              harness,
-            });
-            await deps.observability?.recordAssistantEvent({
-              userId: input.userId,
-              event: "wizard_continued",
-              summary: wizardResponse.summary,
-              result: wizardResponse,
-            });
-            return wizardResponse;
-          }
-
           context.status = "completed";
           context.nextActionLabel = "Done";
           const wizardResponse = applyGuidance({
             ...makeWizard(context),
-            summary: response.workflow.summary,
-            result: {
-              sessionId: context.workflowSessionId,
-            },
-            workflow: response.workflow,
-            harness: harness ?? undefined,
-          }, buildUserGuidance(input.userId, {
-            text: String(context.collectedValues.goal ?? "Workflow"),
-            intent: context.resolvedIntent ?? "generate_workflow",
-          }));
-          await syncAssistantHarnessFocus({
-            assistantSessionKey,
-            harness,
-          });
-          await deps.observability?.recordAssistantEvent({
-            userId: input.userId,
-            event: "wizard_continued",
-            summary: wizardResponse.summary ?? "Friday generated a workflow draft.",
-            result: wizardResponse,
-          });
-          return wizardResponse;
-        }
-        if (!context.skillSessionId) {
-          throw new FridayDomainError("STATE_CONFLICT", "Wizard has no active skill session", {
-            httpStatus: 409,
-          });
-        }
-        if (!deps.skillGenerator) {
-          throw new FridayDomainError(
-            "UIX_SKILL_GENERATOR_UNAVAILABLE",
-            "Skill generation is not available in this runtime",
-            { httpStatus: 503 },
-          );
-        }
-        context.collectedValues.answer = answer;
-        const response = await deps.skillGenerator.submitTurn(context.skillSessionId, {
-          message: answer,
-        });
-        const harness = await loadSkillHarnessSummary(context.skillSessionId);
-        if (response.mode === "clarification_required") {
-          context.collectedValues.questions = response.questions ?? [];
-          const wizardResponse = applyGuidance({
-            ...makeWizard(context),
-            summary: (response.questions ?? []).join(" "),
+            summary: "Friday generated a skill draft and moved it into review.",
             result: {
               sessionId: context.skillSessionId,
               mode: response.mode,
-              questions: response.questions ?? [],
+              draftSkillId: response.draft?.manifest.id,
+              validationOk: response.draft?.validation.ok,
             },
             harness: harness ?? undefined,
           }, buildUserGuidance(input.userId, {
             text: String(context.collectedValues.goal ?? "Skill"),
             intent: "generate_skill",
-            questions: response.questions ?? [],
           }));
+          touchWizardContext(context, { terminal: true });
           await syncAssistantHarnessFocus({
             assistantSessionKey,
             harness,
@@ -2539,39 +2733,11 @@ export function createFridayUixSurfaceService(
           await deps.observability?.recordAssistantEvent({
             userId: input.userId,
             event: "wizard_continued",
-            summary: wizardResponse.summary ?? "Friday still needs clarification.",
+            summary: wizardResponse.summary ?? "Friday generated a skill draft.",
             result: wizardResponse,
           });
           return wizardResponse;
         }
-        context.status = "completed";
-        context.nextActionLabel = "Done";
-        const wizardResponse = applyGuidance({
-          ...makeWizard(context),
-          summary: "Friday generated a skill draft and moved it into review.",
-          result: {
-            sessionId: context.skillSessionId,
-            mode: response.mode,
-            draftSkillId: response.draft?.manifest.id,
-            validationOk: response.draft?.validation.ok,
-          },
-          harness: harness ?? undefined,
-        }, buildUserGuidance(input.userId, {
-          text: String(context.collectedValues.goal ?? "Skill"),
-          intent: "generate_skill",
-        }));
-        await syncAssistantHarnessFocus({
-          assistantSessionKey,
-          harness,
-        });
-        await deps.observability?.recordAssistantEvent({
-          userId: input.userId,
-          event: "wizard_continued",
-          summary: wizardResponse.summary ?? "Friday generated a skill draft.",
-          result: wizardResponse,
-        });
-        return wizardResponse;
-      }
 
         throw new FridayDomainError("STATE_CONFLICT", "Wizard is not advanceable", {
           httpStatus: 409,

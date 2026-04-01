@@ -1,6 +1,7 @@
 import { FridayDomainError } from "#errors";
 import { createFridayMemoryGuardServiceFactory } from "#memory";
 import { createFridaySecretAdminService } from "#providers";
+import type { FridayProviderTenantContext } from "#providers";
 import {
   createFridaySessionMemoryExtractionService,
   createFridaySessionService,
@@ -216,6 +217,43 @@ function resolvePrincipalTenantId(principal: FridayAuthPrincipal | null): string
     return principal.tenantId.trim();
   }
   return principal.principalId;
+}
+
+function resolveRunTenantContext(input: {
+  tenantContext?: FridayProviderTenantContext;
+  session?: {
+    accountId?: string;
+    channel?: string;
+    userId?: string | null;
+  } | null;
+  principalId?: string;
+}): FridayProviderTenantContext | undefined {
+  const explicitHubId = input.tenantContext?.hubId?.trim();
+  const sessionHubId = input.session?.accountId?.trim();
+  const hubId = explicitHubId && explicitHubId.length > 0
+    ? explicitHubId
+    : sessionHubId && sessionHubId.length > 0
+      ? sessionHubId
+      : undefined;
+  if (!hubId) {
+    return undefined;
+  }
+
+  const explicitUserId = input.tenantContext?.userId?.trim();
+  const principalId = input.principalId?.trim();
+  const sessionUserId = input.session?.userId?.trim() ?? undefined;
+  const explicitChannelKind = input.tenantContext?.channelKind?.trim();
+  const sessionChannelKind = input.session?.channel?.trim();
+
+  return {
+    hubId,
+    ...(explicitChannelKind || sessionChannelKind
+      ? { channelKind: explicitChannelKind ?? sessionChannelKind }
+      : {}),
+    ...(explicitUserId || principalId || sessionUserId
+      ? { userId: explicitUserId ?? principalId ?? sessionUserId }
+      : {}),
+  };
 }
 
 function assertTenantScopedAccess(
@@ -1749,15 +1787,25 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       scopes?: string[];
       executionContext?: FridayAgentExecutionContext;
       taskProfile?: FridayAgentTaskProfileInput;
+      tenantContext?: FridayProviderTenantContext;
       persistTaskMessage?: boolean;
       taskAlreadyInHistory?: boolean;
       idempotencyPrefix: "api-agent-run" | "api-session-run";
     }) => {
+      const sessionRecord = input.sessionKey
+        ? await sessionService.getSession(input.sessionKey).catch(() => null)
+        : null;
+      const tenantContext = resolveRunTenantContext({
+        tenantContext: input.tenantContext,
+        session: sessionRecord,
+        principalId: input.principalId,
+      });
       const engineResult = await orchestrationEngine.executeRun({
         task: input.task,
         runId: input.runId,
         sessionKey: input.sessionKey,
         providerId: input.providerId,
+        tenantContext,
         model: input.model,
         replyToMessageId: input.replyToMessageId,
         timezone: input.timezone,
@@ -1802,6 +1850,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       scopes?: string[];
       executionContext?: FridayAgentExecutionContext;
       taskProfile?: FridayAgentTaskProfileInput;
+      tenantContext?: FridayProviderTenantContext;
       persistTaskMessage?: boolean;
       taskAlreadyInHistory?: boolean;
     }) => {
@@ -1819,6 +1868,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         scopes: input.scopes,
         executionContext: input.executionContext,
         taskProfile: input.taskProfile,
+        tenantContext: input.tenantContext,
         persistTaskMessage: input.persistTaskMessage,
         taskAlreadyInHistory: input.taskAlreadyInHistory,
         idempotencyPrefix: "api-session-run",
@@ -1866,6 +1916,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       taskProfile?: FridayAgentTaskProfileInput;
       principalId?: string;
       scopes?: string[];
+      tenantContext?: FridayProviderTenantContext;
     }) => {
       // Create the AbortController and pre-generate the runId BEFORE starting
       // the run so that cancelRun can abort in-flight execution.
@@ -1888,6 +1939,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           constraints: input.constraints,
           principalId: input.principalId,
           scopes: input.scopes,
+          tenantContext: input.tenantContext,
           executionContext: input.executionContext,
           taskProfile: input.taskProfile,
           idempotencyPrefix: "api-agent-run",

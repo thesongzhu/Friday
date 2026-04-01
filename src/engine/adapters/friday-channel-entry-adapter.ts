@@ -75,6 +75,11 @@ export function createFridayChannelEntryAdapter(deps: FridayChannelEntryAdapterD
       replyToMessageId: msg.replyToMessageId,
       timezone: msg.timezone,
       principalId: msg.senderId,
+      tenantContext: {
+        hubId: "default",
+        userId: msg.senderId,
+        channelKind: msg.channelKind,
+      },
       idempotencyPrefix: `channel-${msg.channelKind}`,
     };
 

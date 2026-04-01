@@ -8,6 +8,9 @@ import type {
   FridayProviderKind,
   FridayProviderAuthMode,
   FridayProviderApi,
+  FridayProviderBackendKind,
+  FridayProviderCliConfig,
+  FridayProviderDoctorReport,
 } from "./types";
 
 // ─── Request types ───
@@ -18,6 +21,10 @@ export interface CreateProviderInput {
   baseUrl: string;
   authMode: FridayProviderAuthMode;
   api: FridayProviderApi;
+  backendKind?: FridayProviderBackendKind;
+  cliConfig?: FridayProviderCliConfig;
+  deploymentKind?: "hosted" | "local" | "self-hosted" | "consumer-cli";
+  regionTag?: "global" | "us" | "china" | "local" | "custom";
   apiKey?: string;
   supportedModels: string[];
   defaultModel?: string;
@@ -31,6 +38,10 @@ export interface UpdateProviderInput {
   baseUrl?: string;
   authMode?: FridayProviderAuthMode;
   api?: FridayProviderApi;
+  backendKind?: FridayProviderBackendKind;
+  cliConfig?: FridayProviderCliConfig;
+  deploymentKind?: "hosted" | "local" | "self-hosted" | "consumer-cli";
+  regionTag?: "global" | "us" | "china" | "local" | "custom";
   apiKey?: string;
   supportedModels?: string[];
   defaultModel?: string;
@@ -89,6 +100,30 @@ interface CompleteOAuthResponse {
   oauth: FridayOAuthLoginResult;
 }
 
+interface GetProviderDoctorResponse {
+  doctor: FridayProviderDoctorReport;
+}
+
+interface ListProviderAuthProfilesResponse {
+  items: Array<{
+    id: string;
+    providerProfileId: string;
+    providerKind: FridayProviderKind;
+    profileKey: string;
+    label: string;
+    authMode: FridayProviderAuthMode;
+    oauthProvider?: string;
+    isActive: boolean;
+    metadata: Record<string, unknown>;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+}
+
+interface ActivateProviderAuthProfileResponse {
+  profile: ListProviderAuthProfilesResponse["items"][number];
+}
+
 // ─── API ───
 
 export const providersApi = {
@@ -133,6 +168,31 @@ export const providersApi = {
       {},
     );
     return data.validation;
+  },
+
+  async doctor(providerId: string): Promise<FridayProviderDoctorReport> {
+    const data = await apiClient.get<GetProviderDoctorResponse>(
+      `/v1/providers/${encodeURIComponent(providerId)}/doctor`,
+    );
+    return data.doctor;
+  },
+
+  async listAuthProfiles(providerId: string): Promise<ListProviderAuthProfilesResponse["items"]> {
+    const data = await apiClient.get<ListProviderAuthProfilesResponse>(
+      `/v1/providers/${encodeURIComponent(providerId)}/auth-profiles`,
+    );
+    return data.items;
+  },
+
+  async activateAuthProfile(
+    providerId: string,
+    profileKey: string,
+  ): Promise<ActivateProviderAuthProfileResponse["profile"]> {
+    const data = await apiClient.post<Record<string, never>, ActivateProviderAuthProfileResponse>(
+      `/v1/providers/${encodeURIComponent(providerId)}/auth-profiles/${encodeURIComponent(profileKey)}/activate`,
+      {},
+    );
+    return data.profile;
   },
 
   async getRouting(): Promise<FridayModelRoutingConfig> {

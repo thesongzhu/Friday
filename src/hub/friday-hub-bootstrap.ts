@@ -258,6 +258,7 @@ import {
 } from "../system/index.js";
 import type { FridaySystemRemoteMode, FridaySystemService } from "../system/index.js";
 import { buildFridayCommunicationPromptFragment, resolveFridayCommunicationPersona } from "../uix/services/friday-communication-persona.js";
+import { createFridayUixGuidedContextRepository } from "../uix/persistence/friday-uix-guided-context-repository.js";
 import { createFridayUixUserPreferenceRepository } from "../uix/persistence/friday-uix-user-preference-repository.js";
 import { createFridayOnboardingSessionRepository } from "../uix/persistence/friday-onboarding-session-repository.js";
 import { createFridayUixSurfaceService } from "../uix/services/friday-uix-surface-service.js";
@@ -1027,11 +1028,14 @@ export async function createFridayHub(
       const { result: events, route } = await providerService.runWithFallback({
         requestedModel: resolvedModel,
         requestedProviderId: params.providerId,
+        tenantContext: params.tenantContext,
         run: async (_route, credential) => {
           const innerClient = createFridayAgentLlmClient({
             baseUrl: _route.provider.baseUrl,
             apiKey: credential ?? "",
             api: _route.provider.config.api,
+            backendKind: _route.provider.config.backendKind,
+            cliConfig: _route.provider.config.cliConfig,
             authMode: _route.provider.config.authMode,
             allowPrivateNetwork: config.ssrfPolicy?.allowPrivateNetwork,
           });
@@ -2324,13 +2328,33 @@ export async function createFridayHub(
     ...workspaceContextEngine,
     async afterTurn(input: FridayContextEngineAfterTurnInput) {
       try {
-        const userId = input.userId ?? "default";
+        const session = await hubSessionService.getSession(input.sessionKey).catch(() => null);
+        const userId = input.userId
+          ?? session?.userId
+          ?? (session?.chatKind === "dm" ? session.chatId : undefined);
+        if (!userId) {
+          console.warn(
+            `[friday][world-model] afterTurn skipped: no userId for session ${input.sessionKey}`,
+          );
+          return;
+        }
         const episode = await worldModelEpisodeExtractor.extractFromRun(input.runId, userId);
         if (episode) {
           await worldModelStateManager.updateFromEpisode(userId, episode);
+          console.info(
+            `[friday][marker] world_model_episode_extracted runId=${input.runId} userId=${userId} steps=${String(episode.steps.length)}`,
+          );
+          console.info(
+            `[friday][marker] world_model_snapshot_saved runId=${input.runId} userId=${userId}`,
+          );
         }
         // Pattern extraction — analyze episodes for recurring tool sequences, failures, and temporal patterns
-        await worldModelPatternExtractor.extractPatterns(userId);
+        const patterns = await worldModelPatternExtractor.extractPatterns(userId);
+        if (patterns.length > 0) {
+          console.info(
+            `[friday][marker] world_model_pattern_upserted runId=${input.runId} userId=${userId} count=${String(patterns.length)}`,
+          );
+        }
       } catch (err) {
         console.warn("[friday][world-model] afterTurn episode extraction failed:", err instanceof Error ? err.message : String(err));
       }
@@ -2546,6 +2570,7 @@ export async function createFridayHub(
   // always have access to learned preferences — no startup window gap.
   const _learningContextRef = selfLearningRuntime.context;
   const uixUserPreferenceRepository = createFridayUixUserPreferenceRepository();
+  const uixGuidedContextRepository = createFridayUixGuidedContextRepository();
 
   const agentRuntime = createFridayAgentRuntime({
     db: stateRuntime!.sqlite,
@@ -2607,11 +2632,13 @@ export async function createFridayHub(
         timezone: input.timezone,
         timeoutMs: input.timeoutMs,
         conversationContext: input.conversationContext,
+        tenantContext: input.tenantContext,
         parentRunId: input.runId,
         parentSessionKey: input.sessionKey,
         depth: 0,
         rootRunId: input.runId,
         constraints: input.constraints,
+        principalId: input.principalId,
         signal: input.signal,
       });
 
@@ -3331,6 +3358,7 @@ export async function createFridayHub(
     agentRuntime,
     observability: observabilityService,
     preferenceRepo: uixUserPreferenceRepository,
+    wizardContextRepo: uixGuidedContextRepository,
     learningEventWriter: (events) => {
       // Lazy: learningEventWriter is defined after uixService, so use the pipeline directly.
       selfLearningRuntime.pipeline.processBatch(events);
@@ -3923,6 +3951,12 @@ export async function createFridayHub(
         cooldownMs: heartbeatCooldownMs,
         timeoutMs: heartbeatTimeoutMs,
         sessionKey: process.env.FRIDAY_HEARTBEAT_SESSION_KEY ?? "system:heartbeat",
+        principalId: process.env.FRIDAY_HEARTBEAT_PRINCIPAL_ID ?? "system",
+        tenantContext: {
+          hubId: "default",
+          userId: process.env.FRIDAY_HEARTBEAT_PRINCIPAL_ID ?? "system",
+          channelKind: "heartbeat",
+        },
         promptPath: process.env.FRIDAY_HEARTBEAT_PROMPT_PATH,
         fallbackPrompt:
           "Run a proactive system heartbeat check. If there is no urgent action needed, respond only with HEARTBEAT_OK. " +
@@ -4317,6 +4351,7 @@ export async function createFridayHub(
     const resolvedModel = request.model ?? "gpt-4o";
     const { result, route } = await providerService.runWithFallback({
       requestedModel: resolvedModel,
+      tenantContext: request.tenantContext,
       run: async (_route, credential) => {
         const baseUrl = _route.provider.baseUrl ?? "https://api.openai.com/v1";
         const response = await fetch(`${baseUrl}/chat/completions`, {

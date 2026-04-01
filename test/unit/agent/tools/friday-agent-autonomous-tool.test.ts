@@ -7,13 +7,25 @@ function signal(): AbortSignal {
   return new AbortController().signal;
 }
 
-function signalWithContext(timezone: string): AbortSignal {
+function signalWithContext(
+  timezone: string,
+  overrides?: Partial<{
+    principalId: string;
+    tenantContext: {
+      hubId: string;
+      userId?: string;
+      channelKind?: string;
+    };
+  }>,
+): AbortSignal {
   const controller = new AbortController();
   return attachFridayAgentToolExecutionContext(controller.signal, {
     runId: "run-ctx-1",
     sessionKey: "agent:run:ctx-1",
     readOnly: false,
     timezone,
+    principalId: overrides?.principalId,
+    tenantContext: overrides?.tenantContext,
   });
 }
 
@@ -100,6 +112,34 @@ describe("FridayAgentAutonomousTool", () => {
         expect.objectContaining({
           description: "Check the latest news",
           timezone: "America/Los_Angeles",
+        }),
+      );
+    });
+
+    it("passes principal and tenant context from the parent execution context", async () => {
+      const engine = createMockEngine();
+      const tool = createFridayAgentAutonomousTool({ autonomousEngine: engine });
+
+      await tool.execute(
+        { action: "execute_goal", description: "Repair the system" },
+        signalWithContext("America/Los_Angeles", {
+          principalId: "user-ctx-1",
+          tenantContext: {
+            hubId: "tenant-a",
+            userId: "user-ctx-1",
+            channelKind: "agent",
+          },
+        }),
+      );
+
+      expect(engine.executeGoal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          principalId: "user-ctx-1",
+          tenantContext: {
+            hubId: "tenant-a",
+            userId: "user-ctx-1",
+            channelKind: "agent",
+          },
         }),
       );
     });

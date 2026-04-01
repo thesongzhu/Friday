@@ -1,14 +1,20 @@
 import type { FridaySqliteLayer } from "#state";
 
 import type {
+  FridayAuthProfile,
   FridayModelRoutingConfig,
   FridayOAuthLoginInitiation,
   FridayOAuthLoginResult,
   FridayProviderApi,
   FridayProviderAttempt,
   FridayProviderAuthMode,
+  FridayProviderBackendKind,
+  FridayProviderCliConfig,
+  FridayProviderDoctorReport,
+  FridayProviderDeploymentKind,
   FridayProviderKind,
   FridayProviderProfile,
+  FridayProviderRegionTag,
   FridayProviderValidationState,
   FridayResolvedProviderRoute,
 } from "../model/friday-provider.types.js";
@@ -28,17 +34,24 @@ import type {
 export interface FridayProviderService {
   listProviders(): Promise<FridayProviderProfile[]>;
   getProvider(providerId: string): Promise<FridayProviderProfile | null>;
+  listAuthProfiles(providerId: string): Promise<FridayAuthProfile[]>;
+  activateAuthProfile(providerId: string, profileKey: string): Promise<FridayAuthProfile>;
+  doctorProvider(providerId: string): Promise<FridayProviderDoctorReport>;
 
   createProvider(input: {
     kind: FridayProviderKind;
     name: string;
     baseUrl: string;
+    backendKind?: FridayProviderBackendKind;
     authMode: FridayProviderAuthMode;
     api: FridayProviderApi;
     apiKey?: string;
     supportedModels: string[];
     defaultModel?: string;
     headers?: Record<string, string>;
+    cliConfig?: FridayProviderCliConfig;
+    deploymentKind?: FridayProviderDeploymentKind;
+    regionTag?: FridayProviderRegionTag;
     enabled?: boolean;
     validateOnSave?: boolean;
   }): Promise<FridayProviderProfile>;
@@ -48,12 +61,16 @@ export interface FridayProviderService {
     patch: {
       name?: string;
       baseUrl?: string;
+      backendKind?: FridayProviderBackendKind;
       authMode?: FridayProviderAuthMode;
       api?: FridayProviderApi;
       apiKey?: string;
       supportedModels?: string[];
       defaultModel?: string;
       headers?: Record<string, string>;
+      cliConfig?: FridayProviderCliConfig;
+      deploymentKind?: FridayProviderDeploymentKind;
+      regionTag?: FridayProviderRegionTag;
       enabled?: boolean;
       validateOnSave?: boolean;
     },
@@ -76,6 +93,7 @@ export interface FridayProviderService {
   runWithFallback<T>(params: {
     requestedModel?: string;
     requestedProviderId?: string;
+    tenantContext?: FridayProviderTenantContext;
     routingContext?: {
       estimatedInputTokens: number;
       complexity: FridayTaskComplexity;

@@ -3,6 +3,7 @@ import type {
   FridayInferenceSessionContext,
   FridayProviderNormalizedUsage,
   FridayProviderRouteStrategy,
+  FridayProviderTenantContext,
 } from "#providers";
 import type { FridayAgentTaskProfileId, FridayAgentTaskProfileInput } from "../../../agent/runtime/friday-agent-task-profile.js";
 
@@ -13,6 +14,7 @@ export interface FridayInferenceRequest {
   requestedModel?: string;
   sessionContext?: FridayInferenceSessionContext;
   taskProfile?: FridayAgentTaskProfileId | FridayAgentTaskProfileInput;
+  tenantContext?: FridayProviderTenantContext;
 }
 
 // ─── Inference result ───

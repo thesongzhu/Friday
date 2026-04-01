@@ -51,7 +51,7 @@ export interface FridayToolBatchGroup {
  * Extract file paths referenced by a tool call.
  * Used to detect dependencies between tools.
  */
-function extractFilePaths(toolName: string, args: Record<string, unknown>): string[] {
+export function extractFilePaths(toolName: string, args: Record<string, unknown>): string[] {
   const paths: string[] = [];
   // Direct file path parameters
   for (const key of ["path", "file_path", "filePath", "file", "target"]) {

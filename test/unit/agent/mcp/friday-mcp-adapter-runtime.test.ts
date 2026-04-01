@@ -222,4 +222,51 @@ describe("createFridayMcpAdapter — runtime adversarial behavior", () => {
     expect(second.isError).toBe(false);
     expect(second.content).toContain("recovered");
   });
+
+  it("deduplicates repeated read-only resource reads", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as {
+        id?: number;
+        method?: string;
+      };
+
+      if (payload.method === "initialize") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 1, { protocolVersion: "2024-11-05" }));
+      }
+      if (payload.method === "resources/read") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 2, {
+          contents: [{ type: "text", text: "same-content" }],
+        }));
+      }
+      return okHttpResponse("{}");
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const adapter = createFridayMcpAdapter({
+      servers: [
+        {
+          id: "dedup-http",
+          transport: "http",
+          url: "https://mcp.example.com/rpc",
+        },
+      ],
+    });
+
+    const first = await adapter.readResource({
+      serverId: "dedup-http",
+      uri: "file://docs/readme.md",
+    });
+    const second = await adapter.readResource({
+      serverId: "dedup-http",
+      uri: "file://docs/readme.md",
+    });
+
+    expect(first.content).toContain("same-content");
+    expect(second.content).toContain("same-content");
+    const methods = fetchMock.mock.calls.map(([, init]) => {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+      return payload.method ?? "unknown";
+    });
+    expect(methods.filter((method) => method === "resources/read")).toHaveLength(1);
+  });
 });

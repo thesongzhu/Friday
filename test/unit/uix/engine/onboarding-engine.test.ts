@@ -123,6 +123,60 @@ describe("OnboardingEngine", () => {
       const session = engine.startSession("flow-1", "user-1")!;
       expect(engine.getSessionByUser("flow-1", "user-1")?.id).toBe(session.id);
     });
+
+    it("restores active sessions from persistence on startup", () => {
+      const restoredSession = {
+        id: "sess-9",
+        flowId: "flow-1",
+        principalId: "user-1",
+        status: "in_progress" as const,
+        stepProgress: [
+          { stepId: "step-1", status: "completed" as const, data: {} },
+          { stepId: "step-2", status: "active" as const, data: {} },
+        ],
+        currentStepIndex: 1,
+        startedAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:05:00.000Z",
+      };
+      const persistence = {
+        save: vi.fn(),
+        loadActive: vi.fn().mockReturnValue([restoredSession]),
+      };
+
+      const persistedEngine = createOnboardingEngine({ persistence });
+      persistedEngine.registerFlow(makeFlow());
+
+      expect(persistence.loadActive).toHaveBeenCalledTimes(1);
+      expect(persistedEngine.getSession("sess-9")).toEqual(restoredSession);
+      expect(persistedEngine.getSessionByUser("flow-1", "user-1")?.id).toBe("sess-9");
+    });
+
+    it("persists session changes after start and completion", () => {
+      const persistence = {
+        save: vi.fn(),
+        loadActive: vi.fn().mockReturnValue([]),
+      };
+      const persistedEngine = createOnboardingEngine({ persistence });
+      persistedEngine.registerFlow(makeFlow());
+
+      const session = persistedEngine.startSession("flow-1", "user-1")!;
+      expect(persistence.save).toHaveBeenCalledWith(expect.objectContaining({
+        id: session.id,
+        flowId: "flow-1",
+        principalId: "user-1",
+        status: "in_progress",
+      }));
+
+      persistedEngine.completeStep(session.id, "step-1", { ready: true });
+      expect(persistence.save).toHaveBeenLastCalledWith(expect.objectContaining({
+        id: session.id,
+        currentStepIndex: 1,
+        stepProgress: expect.arrayContaining([
+          expect.objectContaining({ stepId: "step-1", status: "completed", data: { ready: true } }),
+          expect.objectContaining({ stepId: "step-2", status: "active" }),
+        ]),
+      }));
+    });
   });
 
   describe("step progression", () => {

@@ -200,4 +200,44 @@ describe("FridayHeartbeatRunner", () => {
       }),
     );
   });
+
+  it("forwards principal and tenant context into the heartbeat agent run", async () => {
+    const repo = createMemoryRepo();
+    const executeRun = vi.fn(async () => ({
+      runId: "run-5",
+      status: "completed" as const,
+      response: "HEARTBEAT_OK",
+    }));
+
+    const runner = createFridayHeartbeatRunner({
+      config: {
+        enabled: true,
+        intervalMs: 60_000,
+        cooldownMs: 0,
+        fallbackPrompt: "check",
+        sessionKey: "system:heartbeat",
+        principalId: "system-heartbeat",
+        tenantContext: {
+          hubId: "default",
+          userId: "system-heartbeat",
+          channelKind: "heartbeat",
+        },
+      },
+      repository: repo.repository,
+      agentRuntime: { executeRun },
+      nowIso: () => "2026-02-23T10:00:00.000Z",
+      idGenerator: () => "hb-6",
+    });
+
+    await runner.runOnce();
+
+    expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+      principalId: "system-heartbeat",
+      tenantContext: {
+        hubId: "default",
+        userId: "system-heartbeat",
+        channelKind: "heartbeat",
+      },
+    }));
+  });
 });

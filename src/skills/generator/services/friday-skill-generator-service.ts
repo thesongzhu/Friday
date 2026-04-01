@@ -417,6 +417,13 @@ export function createFridaySkillGeneratorService(
     createFridayProviderInferenceClient({
       providerService: deps.providerService,
     });
+  function resolveTenantContext(session: FridaySkillGenerationSession) {
+    return session.tenantContext ?? {
+      hubId: "default",
+      userId: session.userId,
+      channelKind: session.channel,
+    };
+  }
   const harness = createFridayTemplateHarnessService({
     db: deps.db,
     idGenerator: deps.idGenerator,
@@ -969,6 +976,7 @@ export function createFridaySkillGeneratorService(
       prompt,
       requestedModel,
       taskProfile: "planning",
+      tenantContext: resolveTenantContext(session),
     });
     return result.parsed;
   }
@@ -1013,6 +1021,7 @@ export function createFridaySkillGeneratorService(
   }
 
   async function generateManifest(
+    session: FridaySkillGenerationSession,
     spec: Record<string, unknown>,
     requestedModel?: string,
   ): Promise<SkillManifestV2> {
@@ -1023,6 +1032,7 @@ export function createFridaySkillGeneratorService(
         prompt,
         requestedModel,
         taskProfile: "deterministic",
+        tenantContext: resolveTenantContext(session),
       });
       parsed = result.parsed;
     } catch (err) {
@@ -1059,6 +1069,7 @@ export function createFridaySkillGeneratorService(
   }
 
   async function generateCode(
+    session: FridaySkillGenerationSession,
     manifest: SkillManifestV2,
     runtimeKind: "shell" | "node",
     requestedModel?: string,
@@ -1070,6 +1081,7 @@ export function createFridaySkillGeneratorService(
         prompt,
         requestedModel,
         taskProfile: "review",
+        tenantContext: resolveTenantContext(session),
       });
       parsed = result.parsed;
     } catch (err) {
@@ -1093,6 +1105,7 @@ export function createFridaySkillGeneratorService(
   }
 
   async function generateUi(
+    session: FridaySkillGenerationSession,
     manifest: SkillManifestV2,
     requestedModel?: string,
   ): Promise<FridaySkillUiSchemaV1> {
@@ -1103,6 +1116,7 @@ export function createFridaySkillGeneratorService(
         prompt,
         requestedModel,
         taskProfile: "deterministic",
+        tenantContext: resolveTenantContext(session),
       });
       parsed = result.parsed;
     } catch (err) {
@@ -1191,17 +1205,17 @@ export function createFridaySkillGeneratorService(
 
       try {
         // Step 1: Generate manifest
-        repairedManifest = await generateManifest(currentSpec, requestedModel);
+        repairedManifest = await generateManifest(session, currentSpec, requestedModel);
 
         // Determine runtime kind
         const runtimeKind: "shell" | "node" =
           repairedManifest.runtime.kind === "shell" ? "shell" : "node";
 
         // Step 2: Generate code files
-        repairedFiles = await generateCode(repairedManifest, runtimeKind, requestedModel);
+        repairedFiles = await generateCode(session, repairedManifest, runtimeKind, requestedModel);
 
         // Step 3: Generate UI schema
-        repairedUiSchema = await generateUi(repairedManifest, requestedModel);
+        repairedUiSchema = await generateUi(session, repairedManifest, requestedModel);
 
         // Step 4: Validate all artifacts
         allIssues = collectAllIssues(repairedManifest, repairedFiles, repairedUiSchema);
@@ -1279,6 +1293,7 @@ export function createFridaySkillGeneratorService(
         sessionId,
         userId: input.userId,
         channel: input.channel,
+        tenantContext: input.tenantContext,
         status: "collecting_requirements",
         goal: input.goal,
         specSummary: "",
