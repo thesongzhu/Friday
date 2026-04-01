@@ -54,6 +54,116 @@ function writeText(filePath, text) {
   fs.writeFileSync(filePath, text, "utf8");
 }
 
+export async function closeWritableStream(stream, timeoutMs = 5_000) {
+  if (!stream || stream.destroyed || stream.closed) {
+    return;
+  }
+  await new Promise((resolve) => {
+    let settled = false;
+    const settle = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      stream.removeListener("finish", settle);
+      stream.removeListener("close", settle);
+      stream.removeListener("error", settle);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      try {
+        stream.destroy();
+      } catch {
+        // ignore cleanup failure
+      }
+      settle();
+    }, timeoutMs);
+    stream.once("finish", settle);
+    stream.once("close", settle);
+    stream.once("error", settle);
+    try {
+      if (!stream.writableEnded) {
+        stream.end();
+      } else if (stream.closed || stream.destroyed) {
+        settle();
+      }
+    } catch {
+      settle();
+    }
+  });
+}
+
+export async function stopManagedChildProcess(
+  child,
+  { graceMs = 5_000, forceKillMs = 2_000 } = {},
+) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  await new Promise((resolve) => {
+    let settled = false;
+    const settle = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(forceKillTimer);
+      clearTimeout(finalTimer);
+      child.removeListener("close", settle);
+      child.removeListener("error", settle);
+      resolve();
+    };
+    const forceKillTimer = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          settle();
+        }
+      }
+    }, graceMs);
+    const finalTimer = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // ignore duplicate cleanup failure
+        }
+      }
+      settle();
+    }, graceMs + forceKillMs);
+    child.once("close", settle);
+    child.once("error", settle);
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      settle();
+    }
+  });
+}
+
+function createCleanupRegistry() {
+  const tasks = [];
+  return {
+    add(task) {
+      tasks.push(task);
+    },
+    async run() {
+      const errors = [];
+      while (tasks.length > 0) {
+        const task = tasks.pop();
+        try {
+          await task();
+        } catch (error) {
+          errors.push(error instanceof Error ? error.message : String(error));
+        }
+      }
+      return errors;
+    },
+  };
+}
+
 function sanitizeName(value) {
   return value.replace(/[^a-z0-9._-]+/gi, "-");
 }
@@ -216,21 +326,24 @@ async function runCommand({
     }
   }, timeoutMs + 5_000);
 
-  const result = await new Promise((resolve, reject) => {
-    child.on("error", reject);
-    child.on("close", (code, signal) => {
-      resolve({
-        code: code ?? 1,
-        signal,
-        output: combined,
-        durationMs: Date.now() - startedAt,
+  let result;
+  try {
+    result = await new Promise((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", (code, signal) => {
+        resolve({
+          code: code ?? 1,
+          signal,
+          output: combined,
+          durationMs: Date.now() - startedAt,
+        });
       });
     });
-  }).finally(() => {
+  } finally {
     clearTimeout(timeout);
     clearTimeout(forceKillTimeout);
-    stream.end();
-  });
+    await closeWritableStream(stream, 5_000);
+  }
 
   return {
     id,
@@ -942,6 +1055,13 @@ async function runLocalStage(ledger) {
     stdio: ["ignore", "pipe", "pipe"],
   });
   const serverLogStream = fs.createWriteStream(serverLogPath, { flags: "w" });
+  const cleanupRegistry = createCleanupRegistry();
+  cleanupRegistry.add(async () => {
+    await closeWritableStream(serverLogStream, 5_000);
+  });
+  cleanupRegistry.add(async () => {
+    await stopManagedChildProcess(server, { graceMs: 5_000, forceKillMs: 2_000 });
+  });
   server.stdout.on("data", (chunk) => serverLogStream.write(chunk));
   server.stderr.on("data", (chunk) => serverLogStream.write(chunk));
 
@@ -2184,29 +2304,10 @@ async function runLocalStage(ledger) {
       });
     }
   } finally {
-    await new Promise((resolve) => {
-      if (server.exitCode !== null || server.signalCode !== null) {
-        resolve();
-        return;
-      }
-      let settled = false;
-      const settle = () => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        clearTimeout(forceKillTimer);
-        resolve();
-      };
-      const forceKillTimer = setTimeout(() => {
-        if (server.exitCode === null && server.signalCode === null) {
-          server.kill("SIGKILL");
-        }
-      }, 5_000);
-      server.once("close", settle);
-      server.kill("SIGTERM");
-    });
-    serverLogStream.end();
+    const cleanupErrors = await cleanupRegistry.run();
+    if (cleanupErrors.length > 0) {
+      writeJson(path.join(ledger.paths.logs, "local-runtime-cleanup-errors.json"), cleanupErrors);
+    }
   }
 }
 
