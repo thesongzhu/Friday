@@ -11,6 +11,7 @@ import type {
   FridayProviderBackendKind,
   FridayProviderCliConfig,
   FridayProviderDoctorReport,
+  FridayProviderRoutingExplainReport,
 } from "./types";
 
 // ─── Request types ───
@@ -104,6 +105,10 @@ interface GetProviderDoctorResponse {
   doctor: FridayProviderDoctorReport;
 }
 
+interface GetProviderRoutingExplainResponse {
+  explain: FridayProviderRoutingExplainReport;
+}
+
 interface ListProviderAuthProfilesResponse {
   items: Array<{
     id: string;
@@ -122,6 +127,30 @@ interface ListProviderAuthProfilesResponse {
 
 interface ActivateProviderAuthProfileResponse {
   profile: ListProviderAuthProfilesResponse["items"][number];
+}
+
+export interface ExplainRoutingInput {
+  requestedProviderId?: string;
+  requestedModel?: string;
+  taskProfileId?: string;
+  estimatedInputTokens?: number;
+  complexity?: "simple" | "medium" | "complex";
+  requiresNativeTools?: boolean;
+}
+
+interface PinRouteInput {
+  taskProfileId?: string;
+  providerId: string;
+  model: string;
+  backendKind: FridayProviderBackendKind;
+  reason?: string;
+}
+
+interface ClearRoutePenaltyInput {
+  taskProfileId?: string;
+  providerId: string;
+  model: string;
+  backendKind: FridayProviderBackendKind;
 }
 
 // ─── API ───
@@ -175,6 +204,33 @@ export const providersApi = {
       `/v1/providers/${encodeURIComponent(providerId)}/doctor`,
     );
     return data.doctor;
+  },
+
+  async explainRouting(input: ExplainRoutingInput): Promise<FridayProviderRoutingExplainReport> {
+    const params = new URLSearchParams();
+    if (input.requestedProviderId) params.set("requestedProviderId", input.requestedProviderId);
+    if (input.requestedModel) params.set("requestedModel", input.requestedModel);
+    if (input.taskProfileId) params.set("taskProfileId", input.taskProfileId);
+    if (typeof input.estimatedInputTokens === "number") params.set("estimatedInputTokens", String(input.estimatedInputTokens));
+    if (input.complexity) params.set("complexity", input.complexity);
+    if (typeof input.requiresNativeTools === "boolean") params.set("requiresNativeTools", String(input.requiresNativeTools));
+    const qs = params.toString();
+    const data = await apiClient.get<GetProviderRoutingExplainResponse>(
+      `/v1/providers/routing/explain${qs ? `?${qs}` : ""}`,
+    );
+    return data.explain;
+  },
+
+  async pinRoute(input: PinRouteInput): Promise<void> {
+    await apiClient.post<PinRouteInput, { pinned: true }>("/v1/providers/routing/pin", input);
+  },
+
+  async clearRoutePenalty(input: ClearRoutePenaltyInput): Promise<boolean> {
+    const data = await apiClient.post<ClearRoutePenaltyInput, { cleared: boolean }>(
+      "/v1/providers/routing/penalties/clear",
+      input,
+    );
+    return data.cleared;
   },
 
   async listAuthProfiles(providerId: string): Promise<ListProviderAuthProfilesResponse["items"]> {
