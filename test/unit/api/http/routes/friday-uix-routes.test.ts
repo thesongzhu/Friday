@@ -5,6 +5,11 @@ import type { FridayUixSurfaceService } from "../../../../src/uix/services/frida
 import type { FridayCommunicationPersona } from "../../../../src/uix/services/friday-communication-persona.js";
 
 const NOW = "2026-03-07T10:00:00.000Z";
+const ASSISTANT_TENANT_CONTEXT = {
+  hubId: "user-1",
+  userId: "user-1",
+  channelKind: "assistant",
+} as const;
 
 function makeCtx(
   overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {},
@@ -286,6 +291,7 @@ describe("FridayUixRoutes", () => {
       userId: "user-1",
       parameters: { goal: "Deploy the release workflow" },
       assistantSessionKey: "ui:assistant:assistant-shell",
+      tenantContext: ASSISTANT_TENANT_CONTEXT,
     });
   });
 
@@ -316,6 +322,7 @@ describe("FridayUixRoutes", () => {
       wizardId: "guided-assistant",
       userId: "user-1",
       assistantSessionKey: "ui:assistant:assistant-shell",
+      tenantContext: ASSISTANT_TENANT_CONTEXT,
     });
     expect(service.continueWizard).toHaveBeenCalledWith({
       wizardId: "guided-assistant",
@@ -323,6 +330,7 @@ describe("FridayUixRoutes", () => {
       userId: "user-1",
       values: { goal: "Generate a skill" },
       assistantSessionKey: "ui:assistant:assistant-shell",
+      tenantContext: ASSISTANT_TENANT_CONTEXT,
     });
   });
 
