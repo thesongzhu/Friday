@@ -5,6 +5,8 @@ import { createFridaySqliteReadPool } from "./friday-sqlite-read-pool.js";
 import { runFridayMigrations } from "./friday-migration-runner.js";
 import { FRIDAY_SQLITE_MIGRATIONS } from "./migrations/index.js";
 
+export const FRIDAY_SQLITE_STARTUP_BUSY_TIMEOUT_FLOOR_MS = 30_000;
+
 /**
  * Creates Phase 0 sqlite runtime:
  * writer connection -> pragmas -> migrations -> read pool.
@@ -16,11 +18,21 @@ export function createFridaySqliteLayer(
 
   // 1. Open writer connection
   const writer = new Database(dbPath);
-  applyFridayWritePragmas(writer, pragmas);
+  const startupPragmas = {
+    ...pragmas,
+    busyTimeoutMs: Math.max(pragmas.busyTimeoutMs, FRIDAY_SQLITE_STARTUP_BUSY_TIMEOUT_FLOOR_MS),
+  };
+  applyFridayWritePragmas(writer, startupPragmas);
 
-  // 2. Run migrations on writer
-  if (shouldRunMigrations) {
-    runFridayMigrations({ db: writer, migrations: FRIDAY_SQLITE_MIGRATIONS });
+  try {
+    // 2. Run migrations on writer
+    if (shouldRunMigrations) {
+      runFridayMigrations({ db: writer, migrations: FRIDAY_SQLITE_MIGRATIONS });
+    }
+  } finally {
+    if (startupPragmas.busyTimeoutMs !== pragmas.busyTimeoutMs) {
+      writer.pragma(`busy_timeout = ${pragmas.busyTimeoutMs}`);
+    }
   }
 
   // 3. Open read pool

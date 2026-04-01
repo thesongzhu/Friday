@@ -10,7 +10,7 @@ if (!dbPath) {
 
 const holdMs = Number(holdMsArg ?? "0");
 const db = new Database(dbPath);
-db.pragma("busy_timeout = 5000");
+db.pragma("busy_timeout = 30000");
 
 const migrations = [
   {

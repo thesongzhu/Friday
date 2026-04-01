@@ -93,8 +93,8 @@ describe("Friday Migration Chain (V001–V024)", () => {
     try {
       const [first, second] = await Promise.all([runWorker(), runWorker()]);
 
-      expect(first.code).toBe(0);
-      expect(second.code).toBe(0);
+      expect(first.code, first.stderr || first.stdout).toBe(0);
+      expect(second.code, second.stderr || second.stdout).toBe(0);
 
       const firstResult = JSON.parse(first.stdout.trim()) as {
         ok: boolean;

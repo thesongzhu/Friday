@@ -129,9 +129,20 @@ describe("friday-sqlite-layer", () => {
 
     const [first, second] = await Promise.all([runWorker(), runWorker()]);
 
-    expect(first.code).toBe(0);
-    expect(second.code).toBe(0);
+    expect(first.code, first.stderr || first.stdout).toBe(0);
+    expect(second.code, second.stderr || second.stdout).toBe(0);
     expect(JSON.parse(first.stdout.trim())).toMatchObject({ ok: true, dbPath });
     expect(JSON.parse(second.stdout.trim())).toMatchObject({ ok: true, dbPath });
+  });
+
+  it("restores the configured busy timeout after startup serialization", () => {
+    layer = createFridaySqliteLayer({
+      dbPath: path.join(tmpDir, "startup-timeout-reset.db"),
+      readPoolSize: 1,
+      pragmas: { busyTimeoutMs: 5000, synchronous: "NORMAL" },
+    });
+
+    const timeout = layer.writer.pragma("busy_timeout", { simple: true }) as number;
+    expect(timeout).toBe(5000);
   });
 });
