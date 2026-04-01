@@ -97,7 +97,10 @@ describe("friday-sqlite-layer", () => {
     expect(() => layer.checkpoint("FULL")).not.toThrow();
   });
 
-  it("allows two processes to initialize the same sqlite file concurrently", async () => {
+  it(
+    "allows two processes to initialize the same sqlite file concurrently",
+    { timeout: 60_000 },
+    async () => {
     await ensureFridayApiBuildForNodeWorkers();
 
     const dbPath = path.join(tmpDir, "concurrent.db");
@@ -136,7 +139,8 @@ describe("friday-sqlite-layer", () => {
     expect(second.code, second.stderr || second.stdout).toBe(0);
     expect(JSON.parse(first.stdout.trim())).toMatchObject({ ok: true, dbPath });
     expect(JSON.parse(second.stdout.trim())).toMatchObject({ ok: true, dbPath });
-  });
+    },
+  );
 
   it("restores the configured busy timeout after startup serialization", () => {
     layer = createFridaySqliteLayer({

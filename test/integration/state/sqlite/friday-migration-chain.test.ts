@@ -57,7 +57,10 @@ describe("Friday Migration Chain (V001–V024)", () => {
     expect(second.skippedVersions).toEqual(expectedVersions);
   });
 
-  it("serializes concurrent migration runners against the same sqlite file", async () => {
+  it(
+    "serializes concurrent migration runners against the same sqlite file",
+    { timeout: 60_000 },
+    async () => {
     await ensureFridayApiBuildForNodeWorkers();
 
     const root = mkdtempSync(join(tmpdir(), "friday-migration-race-"));
@@ -133,7 +136,8 @@ describe("Friday Migration Chain (V001–V024)", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+    },
+  );
 
   // ─── Expected tables from V001 ───
 
