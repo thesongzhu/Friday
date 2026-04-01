@@ -7,9 +7,19 @@ import type {
   FridayAutoFixRiskTier,
 } from "#learning";
 import type {
+  FridayBlockedRouteRecord,
   FridayDiagnosisRecordEntity,
   FridayErrorIncidentEntity,
+  FridayLearningCoverageSummary,
+  FridayLearningLessonRecord,
   FridayLearningMetricsEntity,
+  FridayLearningOverview,
+  FridayLearningPatternRecord,
+  FridayLearningRouteAdjustmentRecord,
+  FridayLearningRouteBiasRecord,
+  FridayRejectedFixRecord,
+  FridayRollbackHotspotRecord,
+  FridayRouteDecisionDiffRecord,
 } from "#learning";
 
 export interface FridayDiagnosisSummary {
@@ -139,3 +149,54 @@ export interface FridayAutoFixExecutionResponse {
 export interface FridayAutoFixMetricsResponse {
   metrics: FridayLearningMetricsEntity | FridayLearningMetricsEntity[];
 }
+
+export interface FridayGetLearningOverviewResponse extends FridayLearningOverview {}
+
+export interface FridaySetLessonEnabledResponse {
+  lesson: FridayLearningLessonRecord;
+}
+
+export interface FridayDemotePatternResponse {
+  pattern: FridayLearningPatternRecord;
+}
+
+export interface FridayPinRouteRequest {
+  taskProfileId?: string;
+  providerId: string;
+  model: string;
+  backendKind: "http" | "cli" | "sdk";
+  reason?: string;
+}
+
+export interface FridayProviderRoutingExplainCandidate {
+  providerId: string;
+  providerKind: string;
+  model: string;
+  backendKind: "http" | "cli" | "sdk";
+  originalRank: number;
+  finalRank: number;
+  pinned: boolean;
+  routePenalty?: number;
+  historicalSuccessRate?: number;
+  historicalFailureRate?: number;
+  sampleCount?: number;
+}
+
+export interface FridayProviderRoutingExplainResponse {
+  requestedProviderId?: string;
+  requestedModel?: string;
+  taskProfileId?: string;
+  requiresNativeTools: boolean;
+  selected?: FridayProviderRoutingExplainCandidate;
+  candidates: FridayProviderRoutingExplainCandidate[];
+  learningAdjusted: boolean;
+  reason: string;
+}
+
+export interface FridayRouteAdjustmentRecord extends FridayLearningRouteAdjustmentRecord {}
+export interface FridayRouteBiasRecord extends FridayLearningRouteBiasRecord {}
+export interface FridayBlockedRouteListRecord extends FridayBlockedRouteRecord {}
+export interface FridayRejectedFixListRecord extends FridayRejectedFixRecord {}
+export interface FridayRollbackHotspotListRecord extends FridayRollbackHotspotRecord {}
+export interface FridayRouteDecisionDiffListRecord extends FridayRouteDecisionDiffRecord {}
+export interface FridayLearningCoverageRecord extends FridayLearningCoverageSummary {}

@@ -6,6 +6,8 @@ import { createFridayAutoFixRollbackService } from "#learning";
 import { createFridayAutoFixActionRepository } from "#learning";
 import { createFridayErrorIncidentRepository } from "#learning";
 import { createFridayDiagnosisRecordRepository } from "#learning";
+import { createFridayLearnedLessonRepository } from "#learning";
+import { createFridayAutoFixLessonExtractionService } from "#learning";
 import type { FridayAutoFixExecutionService } from "#learning";
 import type { FridayAutoFixActionEntity, FridayAutoFixPlan } from "#learning";
 import type { FridayAutoFixActionRepository } from "#learning";
@@ -391,6 +393,43 @@ describe("FridayAutoFixExecutionService", () => {
     const diagnosisRepo = createFridayDiagnosisRecordRepository();
     const records = diagnosisRepo.listByFingerprint(db.writer, "sig-abc");
     expect(records[0]!.resolvedAt).toBe(NOW);
+  });
+
+  it("extracts a learned lesson and resolves the incident after successful execution", async () => {
+    const lessonRepo = createFridayLearnedLessonRepository();
+    const lessonService = createFridayAutoFixLessonExtractionService({
+      db,
+      lessonRepo,
+      incidentRepo: createFridayErrorIncidentRepository(),
+      diagnosisRepo: createFridayDiagnosisRecordRepository(),
+      idGenerator: () => "lesson-001",
+    });
+    const actionRepo = createFridayAutoFixActionRepository();
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    const lessonAwareService = createFridayAutoFixExecutionService({
+      db,
+      actionRepo,
+      incidentRepo,
+      diagnosisRepo,
+      lessonExtractionService: lessonService,
+      rollbackService: createFridayAutoFixRollbackService({
+        db,
+        actionRepo,
+        nowIso: () => NOW,
+      }),
+      nowIso: () => NOW,
+    });
+
+    const result = await lessonAwareService.execute("action-001");
+    expect(result.success).toBe(true);
+
+    const lesson = lessonRepo.getByFingerprint(db.writer, "sig-abc");
+    expect(lesson).not.toBeNull();
+    expect(lesson!.sourceIncidentId).toBe("inc-001");
+
+    const incident = incidentRepo.getById(db.writer, "inc-001");
+    expect(incident?.status).toBe("resolved");
   });
 
   it("throws for nonexistent action", async () => {

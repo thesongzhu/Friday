@@ -28,6 +28,7 @@ import {
 } from "../setup/index.js";
 import { createOnboardingEngine } from "../uix/engine/index.js";
 import { FridayDomainError } from "#errors";
+import { safeJsonParse } from "#utilities";
 import { initializeFridayState } from "#state";
 import type { FridayStateRuntime } from "#state";
 import { createFridayLocalDaemonService } from "#daemon";
@@ -208,6 +209,7 @@ import {
   createFridayDiagnosisRecordRepository,
   createFridayErrorIncidentRepository,
   createFridayLearnedLessonRepository,
+  createFridayPreferenceFactRepository,
   createFridaySelfHealingApiService,
   createFridaySelfLearningRuntime,
 } from "#learning";
@@ -1025,10 +1027,11 @@ export async function createFridayHub(
       const resolvedModel = params.model === FRIDAY_AGENT_ROUTE_DEFAULT_MODEL
         ? undefined
         : params.model;
-      const { result: events, route } = await providerService.runWithFallback({
+      const { result: events, route, attempts, routingDecision } = await providerService.runWithFallback({
         requestedModel: resolvedModel,
         requestedProviderId: params.providerId,
         tenantContext: params.tenantContext,
+        routingContext: params.routingContext,
         run: async (_route, credential) => {
           const innerClient = createFridayAgentLlmClient({
             baseUrl: _route.provider.baseUrl,
@@ -1074,7 +1077,12 @@ export async function createFridayHub(
             actualModel: route.model,
             actualProviderKind: route.provider.kind,
             actualProviderApi: route.provider.config.api,
+            backendKind: route.provider.config.backendKind ?? "http",
             costUsd,
+            attempts,
+            routingDecisionReason: routingDecision.reason,
+            learningAdjusted: routingDecision.learningAdjusted,
+            routeDecisionTrace: routingDecision.routeDecisionTrace,
           };
         } else {
           yield event;
@@ -2419,14 +2427,43 @@ export async function createFridayHub(
       try {
         const patterns = await worldModelPatternExtractor.extractPatterns(input.userId, 50);
         if (patterns.length > 0) {
-          const patternLines = patterns.map(
-            (p) => `- [${p.kind}] ${p.description} (confidence: ${(p.confidence * 100).toFixed(0)}%)`,
+          const demotionFacts = stateRuntime.sqlite.withReadConnection((db) =>
+            db.prepare(
+              `SELECT key, value_json
+               FROM preference_facts
+               WHERE user_id = ?
+                 AND key LIKE 'pattern_demotion:%'
+               ORDER BY updated_at DESC
+               LIMIT 200`,
+            ).all(input.userId) as Array<{ key: string; value_json: string }>,
           );
-          const patternFragment =
+          const effectivePatterns = patterns
+            .map((pattern) => {
+              const demotion = demotionFacts.find((fact) => fact.key === `pattern_demotion:${pattern.id}`);
+              if (!demotion) {
+                return { pattern, factor: 1 };
+              }
+              const value = safeJsonParse<Record<string, unknown>>(demotion.value_json);
+              const factor =
+                typeof value?.factor === "number" && Number.isFinite(value.factor)
+                  ? Math.max(0, Math.min(1, value.factor))
+                  : 0.5;
+              return { pattern, factor };
+            })
+            .filter((entry) => entry.factor > 0)
+            .sort((left, right) =>
+              (right.pattern.confidence * right.factor) - (left.pattern.confidence * left.factor)
+            );
+          const patternLines = effectivePatterns.map(
+            ({ pattern, factor }) => `- [${pattern.kind}] ${pattern.description} (confidence: ${((pattern.confidence * factor) * 100).toFixed(0)}%)`,
+          );
+          if (patternLines.length > 0) {
+            const patternFragment =
             "\n\n<learned-patterns>\n" +
             patternLines.join("\n") +
             "\n</learned-patterns>";
-          workspaceContext = (workspaceContext ?? "") + patternFragment;
+            workspaceContext = (workspaceContext ?? "") + patternFragment;
+          }
         }
       } catch (err) {
         warnHubBootstrapOperationFailureOnce(err);
@@ -2555,6 +2592,8 @@ export async function createFridayHub(
   const hubAutoFixSupport = createFridayHubAutoFixExecutionSupport({
     registry,
     memoryState,
+    providerService,
+    workflowRuntime,
     nowIso,
   });
 
@@ -3276,6 +3315,7 @@ export async function createFridayHub(
     lessonRepo: createFridayLearnedLessonRepository(),
     actionRepo: createFridayAutoFixActionRepository(),
     approvalRepo: createFridayApprovalRequestRepository(),
+    factRepo: createFridayPreferenceFactRepository(),
     diagnosisService: selfLearningRuntime.diagnosis,
     planService: selfLearningRuntime.autoFixPlan,
     riskService: selfLearningRuntime.autoFixRisk,

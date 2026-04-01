@@ -4360,6 +4360,86 @@ describe("FridayAgentRuntime", () => {
     expect(run?.actualExecution?.totalCostUsd).toBe(0.005);
   });
 
+  it("treats taskProfile.model as the requested model when no explicit model override is provided", async () => {
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "message_end",
+          stopReason: "end_turn",
+          inputTokens: 12,
+          outputTokens: 6,
+          actualProviderId: "openai-1",
+          actualModel: "gpt-5.4",
+          actualProviderKind: "openai",
+          actualProviderApi: "openai-responses",
+        },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "route-default-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Use the task profile model",
+      taskProfile: { id: "planning", model: "gpt-5.4" },
+    });
+
+    const repo = createFridayAgentRunRepository();
+    const run = db.withReadConnection((reader) => repo.getById(reader, result.runId));
+    expect(run?.actualExecution).toMatchObject({
+      requestedModel: "gpt-5.4",
+      taskProfileId: "planning",
+      taskProfileModel: "gpt-5.4",
+      modelSelectionSource: "task_profile",
+      actualModel: "gpt-5.4",
+    });
+  });
+
+  it("persists actual execution metadata for failed runs", async () => {
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        throw new Error("provider exploded");
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "route-default-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Fail while keeping execution audit",
+      taskProfile: { id: "deterministic", model: "gpt-5.4-mini" },
+    });
+
+    const repo = createFridayAgentRunRepository();
+    const run = db.withReadConnection((reader) => repo.getById(reader, result.runId));
+    expect(result.status).toBe("failed");
+    expect(run?.actualExecution).toMatchObject({
+      requestedModel: "gpt-5.4-mini",
+      taskProfileId: "deterministic",
+      taskProfileModel: "gpt-5.4-mini",
+      modelSelectionSource: "task_profile",
+      finalFailureReason: "provider exploded",
+    });
+  });
+
   // ─── Boot recovery: resumeStaleRunsOnBoot ───
 
   it("marks stale runs as failed on boot", async () => {

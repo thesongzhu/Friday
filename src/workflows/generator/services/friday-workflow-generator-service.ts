@@ -38,6 +38,9 @@ import type {
 import {
   createFridayWorkflowGenerationSessionRepository,
 } from "../persistence/friday-workflow-generation-session-repository.js";
+import {
+  createFridayWorkflowGenerationApprovalRepository,
+} from "../persistence/friday-workflow-generation-approval-repository.js";
 
 import type {
   FridayWorkflowGenerationSessionRepository,
@@ -303,6 +306,11 @@ export function createFridayWorkflowGeneratorService(
       idGenerator: deps.idGenerator,
       nowIso: deps.nowIso,
     });
+  const approvalRepo = createFridayWorkflowGenerationApprovalRepository({
+    db: deps.db,
+    idGenerator: deps.idGenerator,
+    nowIso: deps.nowIso,
+  });
 
   const llm: FridayProviderInferenceClient =
     createFridayProviderInferenceClient({
@@ -1481,6 +1489,12 @@ export function createFridayWorkflowGeneratorService(
       };
       const syncedSaved = await syncWorkflowHarness(savedSession);
       repo.updateSession(syncedSaved.session);
+      approvalRepo.save({
+        sessionId,
+        workflowId: workflow.id,
+        workflowVersionId: publishedVersion.id,
+        savedAt: deps.nowIso(),
+      });
 
       // Clean up persisted draft
       deleteDraft(sessionId);

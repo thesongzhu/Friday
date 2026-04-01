@@ -223,6 +223,84 @@ export function createFridayPreferenceExtractionService(
           break;
         }
 
+        case "outcome_confirmed": {
+          const outcomeType = typeof event.payload["type"] === "string"
+            ? event.payload["type"]
+            : undefined;
+          if (outcomeType === "autofix_rejected") {
+            const reasonCode =
+              typeof event.payload["reasonCode"] === "string"
+                ? event.payload["reasonCode"]
+                : "unspecified";
+            signals.push(
+              makeSignal(
+                "correction",
+                `autofix:rejection_reason:${normalizeKey(reasonCode)}`,
+                {
+                  reasonCode,
+                  reason: event.payload["reason"],
+                  fingerprint: event.payload["fingerprint"],
+                },
+                0.85,
+              ),
+            );
+
+            const taskProfileId =
+              typeof event.payload["taskProfileId"] === "string"
+                ? event.payload["taskProfileId"]
+                : "global";
+            const providerId =
+              typeof event.payload["actualProviderId"] === "string"
+                ? event.payload["actualProviderId"]
+                : undefined;
+            const model =
+              typeof event.payload["actualModel"] === "string"
+                ? event.payload["actualModel"]
+                : undefined;
+            const backendKind =
+              typeof event.payload["backendKind"] === "string"
+                ? event.payload["backendKind"]
+                : undefined;
+
+            if (providerId && model && backendKind) {
+              signals.push(
+                makeSignal(
+                  "correction",
+                  `route_penalty:${normalizeKey(taskProfileId)}:${normalizeKey(providerId)}:${normalizeKey(backendKind)}:${normalizeKey(model)}`,
+                  {
+                    providerId,
+                    model,
+                    backendKind,
+                    taskProfileId,
+                    reasonCode,
+                    actionId: event.payload["actionId"],
+                    fingerprint: event.payload["fingerprint"],
+                  },
+                  0.75,
+                ),
+              );
+            }
+          } else if (outcomeType === "manual_resolved") {
+            const fingerprint =
+              typeof event.payload["fingerprint"] === "string"
+                ? event.payload["fingerprint"]
+                : "unknown";
+            signals.push(
+              makeSignal(
+                "correction",
+                `manual_resolution:${normalizeKey(fingerprint)}`,
+                {
+                  fix: event.payload["fix"],
+                  cause: event.payload["cause"],
+                  verificationSummary: event.payload["verificationSummary"],
+                },
+                0.9,
+              ),
+            );
+          }
+          break;
+        }
+
         case "assistant_message":
           // No preference signal to avoid self-reinforcement loops
           break;

@@ -643,6 +643,8 @@ function isRevertPayload(payload: unknown): boolean {
 export function createFridayHubAutoFixExecutionSupport(deps: {
   registry: FridaySkillRegistry;
   memoryState: FridayHubMemoryStateService;
+  providerService?: FridayProviderService;
+  workflowRuntime?: FridayWorkflowRuntime;
   nowIso: () => string;
 }): FridayHubAutoFixExecutionSupport {
   // P2-07: Only override step kinds that need hub-level service access.
@@ -650,6 +652,32 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
   // correctly set directive markers and return true.
   const stepExecutors: Partial<Record<FridayAutoFixStepKind, StepExecutor>> = {};
   const stepVerifiers: Partial<Record<FridayAutoFixStepKind, StepVerifier>> = {};
+
+  const readPayloadRecord = (payload: unknown): Record<string, unknown> | null =>
+    typeof payload === "object" && payload !== null && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : null;
+
+  const readString = (
+    payload: Record<string, unknown> | null,
+    ...keys: string[]
+  ): string | undefined => {
+    for (const key of keys) {
+      const value = payload?.[key];
+      if (typeof value === "string" && value.trim().length > 0) {
+        return value.trim();
+      }
+    }
+    return undefined;
+  };
+
+  const readNumber = (
+    payload: Record<string, unknown> | null,
+    key: string,
+  ): number | undefined => {
+    const value = payload?.[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  };
 
   stepExecutors.disable_skill = async (step) => {
     if (!step.target) {
@@ -678,6 +706,176 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
     const revert = isRevertPayload(step.payload);
     const statuses = await deps.memoryState.listSkillStatuses();
     return statuses[step.target] === (revert ? "installed" : "disabled");
+  };
+
+  const workflowRuntime = deps.workflowRuntime;
+  if (workflowRuntime) {
+    stepExecutors.retry_node = async (step) => {
+      const payload = readPayloadRecord(step.payload);
+      const runId = readString(payload, "runId", "workflowRunId");
+      const nodeId = readString(payload, "nodeId");
+      if (!runId) {
+        return false;
+      }
+
+      const beforeCount = nodeId
+        ? workflowRuntime.execution.getRunNodes(runId).filter((node) => node.nodeId === nodeId).length
+        : workflowRuntime.execution.getRunNodes(runId).length;
+      await workflowRuntime.execution.retryRun(runId, nodeId ? [nodeId] : undefined);
+      const afterCount = nodeId
+        ? workflowRuntime.execution.getRunNodes(runId).filter((node) => node.nodeId === nodeId).length
+        : workflowRuntime.execution.getRunNodes(runId).length;
+
+      if (payload) {
+        payload._retryRequested = true;
+        payload._retryRunId = runId;
+        if (nodeId) {
+          payload._retryNodeId = nodeId;
+        }
+        payload._retryCountBefore = beforeCount;
+        payload._retryCountAfter = afterCount;
+        payload._retryAt = deps.nowIso();
+      }
+      return afterCount > beforeCount;
+    };
+
+    stepVerifiers.retry_node = async (step) => {
+      const payload = readPayloadRecord(step.payload);
+      const runId = readString(payload, "_retryRunId", "runId", "workflowRunId");
+      if (!runId) {
+        return false;
+      }
+      const nodeId = readString(payload, "_retryNodeId", "nodeId");
+      const beforeCount = readNumber(payload, "_retryCountBefore") ?? 0;
+      const currentCount = nodeId
+        ? workflowRuntime.execution.getRunNodes(runId).filter((node) => node.nodeId === nodeId).length
+        : workflowRuntime.execution.getRunNodes(runId).length;
+      return payload?._retryRequested === true && currentCount > beforeCount;
+    };
+
+    stepExecutors.pause_workflow = async (step) => {
+      const payload = readPayloadRecord(step.payload);
+      const runId = readString(payload, "runId", "workflowRunId") ?? step.target;
+      if (!runId) {
+        return false;
+      }
+      const run = await workflowRuntime.execution.pauseRun(
+        runId,
+        readString(payload, "reason") ?? `auto-fix pause_workflow @ ${deps.nowIso()}`,
+      );
+      if (payload) {
+        payload._workflowPaused = run.status === "paused";
+        payload._pausedRunId = runId;
+        payload._pausedAt = deps.nowIso();
+      }
+      return run.status === "paused";
+    };
+
+    stepVerifiers.pause_workflow = async (step) => {
+      const payload = readPayloadRecord(step.payload);
+      const runId = readString(payload, "_pausedRunId", "runId", "workflowRunId") ?? step.target;
+      if (!runId) {
+        return false;
+      }
+      return workflowRuntime.execution.getRun(runId)?.status === "paused";
+    };
+  }
+
+  const providerService = deps.providerService;
+  if (providerService) {
+    stepExecutors.switch_model_fallback = async (step) => {
+      const payload = readPayloadRecord(step.payload);
+      const routing = await providerService.getRoutingConfig();
+      const providers = await providerService.listProviders();
+      const requestedModel = readString(payload, "model", "requestedModel");
+      const preferredProviderId = readString(
+        payload,
+        "nextProviderId",
+        "fallbackProviderId",
+        "providerId",
+      );
+      const eligibleProviders = providers.filter((provider) =>
+        provider.enabled &&
+        provider.id !== routing.defaultProviderId &&
+        (requestedModel == null || provider.config.supportedModels.includes(requestedModel)));
+      const nextProviderId = preferredProviderId && eligibleProviders.some((provider) => provider.id === preferredProviderId)
+        ? preferredProviderId
+        : eligibleProviders[0]?.id;
+      if (!nextProviderId) {
+        return false;
+      }
+      const nextModel = requestedModel
+        ?? providers.find((provider) => provider.id === nextProviderId)?.defaultModel
+        ?? routing.defaultModel;
+      const fallbackProviderIds = [
+        routing.defaultProviderId,
+        ...routing.fallbackProviderIds,
+      ].filter((providerId, index, all) =>
+        providerId &&
+        providerId !== nextProviderId &&
+        all.indexOf(providerId) === index);
+      await providerService.setRoutingConfig({
+        defaultProviderId: nextProviderId,
+        defaultModel: nextModel,
+        fallbackProviderIds,
+        ...(routing.enforceRequestedModel !== undefined
+          ? { enforceRequestedModel: routing.enforceRequestedModel }
+          : {}),
+      });
+      if (payload) {
+        payload._modelFallbackRequested = true;
+        payload._routeSwitchedFrom = routing.defaultProviderId;
+        payload._routeSwitchedTo = nextProviderId;
+        payload._fallbackAt = deps.nowIso();
+      }
+      return true;
+    };
+
+    stepVerifiers.switch_model_fallback = async (step) => {
+      const payload = readPayloadRecord(step.payload);
+      const route = await providerService.getRoutingConfig();
+      const switchedTo = readString(payload, "_routeSwitchedTo");
+      return payload?._modelFallbackRequested === true &&
+        typeof switchedTo === "string" &&
+        route.defaultProviderId === switchedTo;
+    };
+  }
+
+  stepExecutors.trim_payload = async (step) => {
+    const payload = readPayloadRecord(step.payload);
+    if (!payload) {
+      return false;
+    }
+    const maxChars = readNumber(payload, "maxChars") ?? 4000;
+    const candidateFields = ["prompt", "content", "text", "body", "message", "input"];
+    const trimmedFields: string[] = [];
+    for (const field of candidateFields) {
+      const value = payload[field];
+      if (typeof value === "string" && value.length > maxChars) {
+        payload[field] = `${value.slice(0, Math.max(0, maxChars - 1))}…`;
+        trimmedFields.push(field);
+      }
+    }
+    if (trimmedFields.length === 0) {
+      return false;
+    }
+    payload._trimRequested = true;
+    payload._trimmedFields = trimmedFields;
+    payload._trimTargetLength = maxChars;
+    return true;
+  };
+
+  stepVerifiers.trim_payload = async (step) => {
+    const payload = readPayloadRecord(step.payload);
+    if (!payload || payload._trimRequested !== true) {
+      return false;
+    }
+    const maxChars = readNumber(payload, "_trimTargetLength") ?? 4000;
+    const trimmedFields = Array.isArray(payload._trimmedFields)
+      ? payload._trimmedFields.filter((value): value is string => typeof value === "string")
+      : [];
+    return trimmedFields.length > 0 &&
+      trimmedFields.every((field) => typeof payload[field] === "string" && (payload[field] as string).length <= maxChars);
   };
 
   return {

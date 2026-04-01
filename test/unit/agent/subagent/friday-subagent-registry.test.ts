@@ -265,6 +265,21 @@ describe("FridaySubagentRegistry", () => {
       );
     });
 
+    it("marks inherited child runs so model selection is auditable", async () => {
+      const executeRun = vi.fn().mockResolvedValue(makeResult());
+      const createChildRuntime = vi.fn().mockReturnValue({ executeRun });
+      const registry = createRegistry({ createChildRuntime });
+
+      await registry.spawn(spawnInput());
+
+      expect(createChildRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({ model: undefined }),
+      );
+      expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+        modelSelectionSourceOverride: "inherited",
+      }));
+    });
+
     it("passes taskPrompt and conversationContext through to the child executeRun", async () => {
       const executeRun = vi.fn().mockResolvedValue(makeResult());
       const createChildRuntime = vi.fn().mockReturnValue({ executeRun });

@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures route count to detect accidental additions/removals 1`] = `250`;
+exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures route count to detect accidental additions/removals 1`] = `257`;
 
 exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route surface as a stable contract 1`] = `
 [
@@ -954,6 +954,54 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
     "authKind": "authenticated",
     "index": 80,
     "method": "GET",
+    "operationId": "diagnosis.learning.overview",
+    "path": "/v1/diagnosis/learning/overview",
+    "rateLimitPolicyId": null,
+    "roles": [],
+    "scopes": [
+      "diagnosis.read",
+    ],
+  },
+  {
+    "authKind": "authenticated",
+    "index": 81,
+    "method": "POST",
+    "operationId": "diagnosis.incidents.manual.resolve",
+    "path": "/v1/diagnosis/incidents/:incidentId/manual-resolve",
+    "rateLimitPolicyId": "generator.write",
+    "roles": [],
+    "scopes": [
+      "diagnosis.write",
+    ],
+  },
+  {
+    "authKind": "authenticated",
+    "index": 82,
+    "method": "POST",
+    "operationId": "diagnosis.lessons.enabled.set",
+    "path": "/v1/diagnosis/lessons/:lessonId/enabled",
+    "rateLimitPolicyId": "generator.write",
+    "roles": [],
+    "scopes": [
+      "diagnosis.write",
+    ],
+  },
+  {
+    "authKind": "authenticated",
+    "index": 83,
+    "method": "POST",
+    "operationId": "diagnosis.patterns.demote",
+    "path": "/v1/diagnosis/patterns/:patternId/demote",
+    "rateLimitPolicyId": "generator.write",
+    "roles": [],
+    "scopes": [
+      "diagnosis.write",
+    ],
+  },
+  {
+    "authKind": "authenticated",
+    "index": 84,
+    "method": "GET",
     "operationId": "autofix.actions.list",
     "path": "/v1/auto-fix/actions",
     "rateLimitPolicyId": null,
@@ -964,7 +1012,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 81,
+    "index": 85,
     "method": "GET",
     "operationId": "autofix.actions.get",
     "path": "/v1/auto-fix/actions/:actionId",
@@ -976,7 +1024,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 82,
+    "index": 86,
     "method": "POST",
     "operationId": "autofix.actions.approve",
     "path": "/v1/auto-fix/actions/:actionId/approve",
@@ -988,7 +1036,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 83,
+    "index": 87,
     "method": "POST",
     "operationId": "autofix.actions.deny",
     "path": "/v1/auto-fix/actions/:actionId/deny",
@@ -1000,7 +1048,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 84,
+    "index": 88,
     "method": "POST",
     "operationId": "autofix.actions.execute",
     "path": "/v1/auto-fix/actions/:actionId/execute",
@@ -1012,7 +1060,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 85,
+    "index": 89,
     "method": "POST",
     "operationId": "autofix.actions.rollback",
     "path": "/v1/auto-fix/actions/:actionId/rollback",
@@ -1024,7 +1072,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 86,
+    "index": 90,
     "method": "GET",
     "operationId": "autofix.metrics.get",
     "path": "/v1/auto-fix/metrics",
@@ -1036,7 +1084,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 87,
+    "index": 91,
     "method": "POST",
     "operationId": "realtime.subscribe",
     "path": "/v1/realtime/subscriptions",
@@ -1053,7 +1101,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 88,
+    "index": 92,
     "method": "POST",
     "operationId": "realtime.pull",
     "path": "/v1/realtime/pull",
@@ -1070,7 +1118,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 89,
+    "index": 93,
     "method": "POST",
     "operationId": "realtime.ack",
     "path": "/v1/realtime/ack",
@@ -1087,7 +1135,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 90,
+    "index": 94,
     "method": "GET",
     "operationId": "providers.usage.get",
     "path": "/v1/providers/usage",
@@ -1099,7 +1147,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 91,
+    "index": 95,
     "method": "GET",
     "operationId": "providers.budget.get",
     "path": "/v1/providers/budget",
@@ -1111,7 +1159,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 92,
+    "index": 96,
     "method": "PUT",
     "operationId": "providers.budget.set",
     "path": "/v1/providers/budget",
@@ -1123,7 +1171,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 93,
+    "index": 97,
     "method": "GET",
     "operationId": "providers.list",
     "path": "/v1/providers",
@@ -1135,7 +1183,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 94,
+    "index": 98,
     "method": "GET",
     "operationId": "providers.get",
     "path": "/v1/providers/:providerId",
@@ -1147,7 +1195,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 95,
+    "index": 99,
     "method": "POST",
     "operationId": "providers.create",
     "path": "/v1/providers",
@@ -1159,7 +1207,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 96,
+    "index": 100,
     "method": "PATCH",
     "operationId": "providers.update",
     "path": "/v1/providers/:providerId",
@@ -1171,7 +1219,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 97,
+    "index": 101,
     "method": "DELETE",
     "operationId": "providers.delete",
     "path": "/v1/providers/:providerId",
@@ -1183,7 +1231,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 98,
+    "index": 102,
     "method": "POST",
     "operationId": "providers.validate",
     "path": "/v1/providers/:providerId/validate",
@@ -1195,7 +1243,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 99,
+    "index": 103,
     "method": "GET",
     "operationId": "providers.doctor",
     "path": "/v1/providers/:providerId/doctor",
@@ -1207,7 +1255,43 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 100,
+    "index": 104,
+    "method": "GET",
+    "operationId": "providers.routing.explain",
+    "path": "/v1/providers/routing/explain",
+    "rateLimitPolicyId": null,
+    "roles": [],
+    "scopes": [
+      "hub.admin",
+    ],
+  },
+  {
+    "authKind": "authenticated",
+    "index": 105,
+    "method": "POST",
+    "operationId": "providers.routing.pin",
+    "path": "/v1/providers/routing/pin",
+    "rateLimitPolicyId": "provider.write",
+    "roles": [],
+    "scopes": [
+      "hub.admin",
+    ],
+  },
+  {
+    "authKind": "authenticated",
+    "index": 106,
+    "method": "POST",
+    "operationId": "providers.routing.penalty.clear",
+    "path": "/v1/providers/routing/penalties/clear",
+    "rateLimitPolicyId": "provider.write",
+    "roles": [],
+    "scopes": [
+      "hub.admin",
+    ],
+  },
+  {
+    "authKind": "authenticated",
+    "index": 107,
     "method": "GET",
     "operationId": "providers.auth.profiles.list",
     "path": "/v1/providers/:providerId/auth-profiles",
@@ -1219,7 +1303,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 101,
+    "index": 108,
     "method": "POST",
     "operationId": "providers.auth.profiles.activate",
     "path": "/v1/providers/:providerId/auth-profiles/:profileKey/activate",
@@ -1231,7 +1315,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 102,
+    "index": 109,
     "method": "GET",
     "operationId": "providers.routing.get",
     "path": "/v1/model-routing",
@@ -1243,7 +1327,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 103,
+    "index": 110,
     "method": "PUT",
     "operationId": "providers.routing.set",
     "path": "/v1/model-routing",
@@ -1255,7 +1339,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 104,
+    "index": 111,
     "method": "POST",
     "operationId": "auth.oauth.anthropic.initiate",
     "path": "/v1/auth/oauth/anthropic/initiate",
@@ -1267,7 +1351,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 105,
+    "index": 112,
     "method": "POST",
     "operationId": "auth.oauth.anthropic.callback",
     "path": "/v1/auth/oauth/anthropic/callback",
@@ -1279,7 +1363,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 106,
+    "index": 113,
     "method": "GET",
     "operationId": "setup.status",
     "path": "/v1/setup/status",
@@ -1291,7 +1375,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 107,
+    "index": 114,
     "method": "POST",
     "operationId": "providers.detect",
     "path": "/v1/providers/detect",
@@ -1303,7 +1387,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 108,
+    "index": 115,
     "method": "GET",
     "operationId": "setup.network.get",
     "path": "/v1/setup/network",
@@ -1315,7 +1399,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 109,
+    "index": 116,
     "method": "POST",
     "operationId": "setup.network.save",
     "path": "/v1/setup/network",
@@ -1327,7 +1411,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 110,
+    "index": 117,
     "method": "POST",
     "operationId": "setup.channels.save",
     "path": "/v1/setup/channels",
@@ -1339,7 +1423,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 111,
+    "index": 118,
     "method": "POST",
     "operationId": "setup.complete",
     "path": "/v1/setup/complete",
@@ -1351,7 +1435,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 112,
+    "index": 119,
     "method": "GET",
     "operationId": "skills.list",
     "path": "/v1/skills",
@@ -1364,7 +1448,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 113,
+    "index": 120,
     "method": "GET",
     "operationId": "skills.catalog.list",
     "path": "/v1/skills/catalog",
@@ -1377,7 +1461,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 114,
+    "index": 121,
     "method": "GET",
     "operationId": "skills.get",
     "path": "/v1/skills/:skillId",
@@ -1390,7 +1474,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 115,
+    "index": 122,
     "method": "POST",
     "operationId": "skills.install",
     "path": "/v1/skills/install",
@@ -1403,7 +1487,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 116,
+    "index": 123,
     "method": "POST",
     "operationId": "skills.update",
     "path": "/v1/skills/:skillId/update",
@@ -1416,7 +1500,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 117,
+    "index": 124,
     "method": "DELETE",
     "operationId": "skills.delete",
     "path": "/v1/skills/:skillId",
@@ -1429,7 +1513,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 118,
+    "index": 125,
     "method": "POST",
     "operationId": "skills.manifest.validate",
     "path": "/v1/skills/validate-manifest",
@@ -1442,7 +1526,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 119,
+    "index": 126,
     "method": "POST",
     "operationId": "skills.verify",
     "path": "/v1/skills/:skillId/verify",
@@ -1455,7 +1539,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 120,
+    "index": 127,
     "method": "POST",
     "operationId": "skills.generator.sessions.create",
     "path": "/v1/skills/generator/sessions",
@@ -1467,7 +1551,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 121,
+    "index": 128,
     "method": "GET",
     "operationId": "skills.generator.sessions.get",
     "path": "/v1/skills/generator/sessions/:sessionId",
@@ -1479,7 +1563,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 122,
+    "index": 129,
     "method": "POST",
     "operationId": "skills.generator.sessions.messages.create",
     "path": "/v1/skills/generator/sessions/:sessionId/messages",
@@ -1491,7 +1575,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 123,
+    "index": 130,
     "method": "POST",
     "operationId": "skills.generator.sessions.generate",
     "path": "/v1/skills/generator/sessions/:sessionId/generate",
@@ -1503,7 +1587,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 124,
+    "index": 131,
     "method": "POST",
     "operationId": "skills.generator.sessions.test",
     "path": "/v1/skills/generator/sessions/:sessionId/test",
@@ -1515,7 +1599,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 125,
+    "index": 132,
     "method": "GET",
     "operationId": "skills.generator.sessions.evidence.get",
     "path": "/v1/skills/generator/sessions/:sessionId/evidence",
@@ -1527,7 +1611,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 126,
+    "index": 133,
     "method": "POST",
     "operationId": "skills.generator.sessions.approve",
     "path": "/v1/skills/generator/sessions/:sessionId/approve",
@@ -1539,7 +1623,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 127,
+    "index": 134,
     "method": "DELETE",
     "operationId": "skills.generator.sessions.cancel",
     "path": "/v1/skills/generator/sessions/:sessionId",
@@ -1551,7 +1635,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 128,
+    "index": 135,
     "method": "GET",
     "operationId": "skills.ui.get",
     "path": "/v1/skills/:skillId/ui",
@@ -1563,7 +1647,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 129,
+    "index": 136,
     "method": "POST",
     "operationId": "uix.intents.resolve",
     "path": "/v1/uix/intents/resolve",
@@ -1577,7 +1661,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 130,
+    "index": 137,
     "method": "GET",
     "operationId": "uix.templates.list",
     "path": "/v1/uix/templates",
@@ -1591,7 +1675,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 131,
+    "index": 138,
     "method": "GET",
     "operationId": "uix.diagnostics.get",
     "path": "/v1/uix/diagnostics",
@@ -1605,7 +1689,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 132,
+    "index": 139,
     "method": "GET",
     "operationId": "uix.preferences.list",
     "path": "/v1/uix/preferences",
@@ -1617,7 +1701,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 133,
+    "index": 140,
     "method": "PUT",
     "operationId": "uix.preferences.update",
     "path": "/v1/uix/preferences",
@@ -1629,7 +1713,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 134,
+    "index": 141,
     "method": "DELETE",
     "operationId": "uix.preferences.delete",
     "path": "/v1/uix/preferences/:preferenceId",
@@ -1641,7 +1725,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 135,
+    "index": 142,
     "method": "GET",
     "operationId": "uix.persona.get",
     "path": "/v1/uix/persona",
@@ -1653,7 +1737,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 136,
+    "index": 143,
     "method": "POST",
     "operationId": "uix.templates.execute",
     "path": "/v1/uix/templates/:templateId/execute",
@@ -1667,7 +1751,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 137,
+    "index": 144,
     "method": "POST",
     "operationId": "uix.wizards.start",
     "path": "/v1/uix/wizards/:wizardId/start",
@@ -1681,7 +1765,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 138,
+    "index": 145,
     "method": "POST",
     "operationId": "uix.wizards.continue",
     "path": "/v1/uix/wizards/:wizardId/continue",
@@ -1695,7 +1779,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 139,
+    "index": 146,
     "method": "GET",
     "operationId": "uix.issues.list",
     "path": "/v1/uix/issues",
@@ -1707,7 +1791,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 140,
+    "index": 147,
     "method": "GET",
     "operationId": "uix.user.profile.get",
     "path": "/v1/uix/user-profile",
@@ -1719,7 +1803,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 141,
+    "index": 148,
     "method": "PUT",
     "operationId": "uix.user.profile.update",
     "path": "/v1/uix/user-profile",
@@ -1731,7 +1815,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 142,
+    "index": 149,
     "method": "POST",
     "operationId": "uix.investigate",
     "path": "/v1/uix/investigate",
@@ -1743,7 +1827,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 143,
+    "index": 150,
     "method": "GET",
     "operationId": "uix.learnedfacts.list",
     "path": "/v1/uix/learned-facts",
@@ -1755,7 +1839,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 144,
+    "index": 151,
     "method": "GET",
     "operationId": "skills.converters.list",
     "path": "/v1/skills/converters",
@@ -1767,7 +1851,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 145,
+    "index": 152,
     "method": "POST",
     "operationId": "skills.convert",
     "path": "/v1/skills/convert",
@@ -1779,7 +1863,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 146,
+    "index": 153,
     "method": "POST",
     "operationId": "skills.import",
     "path": "/v1/skills/import",
@@ -1791,7 +1875,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 147,
+    "index": 154,
     "method": "POST",
     "operationId": "skills.pack",
     "path": "/v1/skills/pack",
@@ -1803,7 +1887,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 148,
+    "index": 155,
     "method": "POST",
     "operationId": "workflows.generator.sessions.create",
     "path": "/v1/workflows/generator/sessions",
@@ -1815,7 +1899,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 149,
+    "index": 156,
     "method": "GET",
     "operationId": "workflows.generator.sessions.get",
     "path": "/v1/workflows/generator/sessions/:sessionId",
@@ -1827,7 +1911,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 150,
+    "index": 157,
     "method": "POST",
     "operationId": "workflows.generator.sessions.messages.create",
     "path": "/v1/workflows/generator/sessions/:sessionId/messages",
@@ -1839,7 +1923,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 151,
+    "index": 158,
     "method": "POST",
     "operationId": "workflows.generator.sessions.generate",
     "path": "/v1/workflows/generator/sessions/:sessionId/generate",
@@ -1851,7 +1935,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 152,
+    "index": 159,
     "method": "GET",
     "operationId": "workflows.generator.sessions.evidence.get",
     "path": "/v1/workflows/generator/sessions/:sessionId/evidence",
@@ -1863,7 +1947,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 153,
+    "index": 160,
     "method": "POST",
     "operationId": "workflows.generator.sessions.approve",
     "path": "/v1/workflows/generator/sessions/:sessionId/approve",
@@ -1875,7 +1959,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 154,
+    "index": 161,
     "method": "DELETE",
     "operationId": "workflows.generator.sessions.cancel",
     "path": "/v1/workflows/generator/sessions/:sessionId",
@@ -1887,7 +1971,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 155,
+    "index": 162,
     "method": "GET",
     "operationId": "rules.bundles.list",
     "path": "/v1/rules/bundles",
@@ -1899,7 +1983,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 156,
+    "index": 163,
     "method": "GET",
     "operationId": "rules.bundles.get",
     "path": "/v1/rules/bundles/:bundleId",
@@ -1911,7 +1995,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 157,
+    "index": 164,
     "method": "POST",
     "operationId": "rules.bundles.create",
     "path": "/v1/rules/bundles",
@@ -1923,7 +2007,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 158,
+    "index": 165,
     "method": "GET",
     "operationId": "rules.list",
     "path": "/v1/rules/bundles/:bundleId/rules",
@@ -1935,7 +2019,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 159,
+    "index": 166,
     "method": "POST",
     "operationId": "rules.evaluate",
     "path": "/v1/rules/evaluate",
@@ -1947,7 +2031,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 160,
+    "index": 167,
     "method": "POST",
     "operationId": "rules.simulate",
     "path": "/v1/rules/simulate",
@@ -1959,7 +2043,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 161,
+    "index": 168,
     "method": "GET",
     "operationId": "rules.versions.list",
     "path": "/v1/rules/:ruleId/versions",
@@ -1971,7 +2055,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 162,
+    "index": 169,
     "method": "GET",
     "operationId": "rules.audit.log.list",
     "path": "/v1/rules/audit-log",
@@ -1983,7 +2067,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 163,
+    "index": 170,
     "method": "POST",
     "operationId": "node.runner.execute",
     "path": "/v1/node-runner/execute",
@@ -1995,7 +2079,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 164,
+    "index": 171,
     "method": "GET",
     "operationId": "node.runner.executions.get",
     "path": "/v1/node-runner/executions/:executionId",
@@ -2007,7 +2091,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 165,
+    "index": 172,
     "method": "GET",
     "operationId": "node.runner.executions.list",
     "path": "/v1/node-runner/executions",
@@ -2019,7 +2103,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 166,
+    "index": 173,
     "method": "POST",
     "operationId": "acceptance.run",
     "path": "/v1/acceptance/run",
@@ -2031,7 +2115,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 167,
+    "index": 174,
     "method": "GET",
     "operationId": "acceptance.results.get",
     "path": "/v1/acceptance/results/:resultId",
@@ -2043,7 +2127,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 168,
+    "index": 175,
     "method": "GET",
     "operationId": "acceptance.results.list",
     "path": "/v1/acceptance/results",
@@ -2055,7 +2139,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 169,
+    "index": 176,
     "method": "GET",
     "operationId": "acceptance.runs.get",
     "path": "/v1/acceptance/runs/:runId",
@@ -2067,7 +2151,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 170,
+    "index": 177,
     "method": "GET",
     "operationId": "acceptance.tests.list",
     "path": "/v1/acceptance/tests",
@@ -2079,7 +2163,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 171,
+    "index": 178,
     "method": "GET",
     "operationId": "acceptance.tests.get",
     "path": "/v1/acceptance/tests/:testId",
@@ -2091,7 +2175,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 172,
+    "index": 179,
     "method": "POST",
     "operationId": "acceptance.tests.create",
     "path": "/v1/acceptance/tests",
@@ -2103,7 +2187,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 173,
+    "index": 180,
     "method": "PUT",
     "operationId": "acceptance.tests.update",
     "path": "/v1/acceptance/tests/:testId",
@@ -2115,7 +2199,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 174,
+    "index": 181,
     "method": "DELETE",
     "operationId": "acceptance.tests.delete",
     "path": "/v1/acceptance/tests/:testId",
@@ -2127,7 +2211,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 175,
+    "index": 182,
     "method": "GET",
     "operationId": "acceptance.tests.versions.list",
     "path": "/v1/acceptance/tests/:testId/versions",
@@ -2139,7 +2223,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 176,
+    "index": 183,
     "method": "GET",
     "operationId": "acceptance.artifacts.history",
     "path": "/v1/acceptance/artifacts/history",
@@ -2151,7 +2235,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 177,
+    "index": 184,
     "method": "GET",
     "operationId": "retry.policies.list",
     "path": "/v1/retry/policies",
@@ -2163,7 +2247,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 178,
+    "index": 185,
     "method": "GET",
     "operationId": "retry.policies.get",
     "path": "/v1/retry/policies/:policyId",
@@ -2175,7 +2259,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 179,
+    "index": 186,
     "method": "POST",
     "operationId": "retry.policies.create",
     "path": "/v1/retry/policies",
@@ -2187,7 +2271,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 180,
+    "index": 187,
     "method": "PUT",
     "operationId": "retry.policies.update",
     "path": "/v1/retry/policies/:policyId",
@@ -2199,7 +2283,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 181,
+    "index": 188,
     "method": "DELETE",
     "operationId": "retry.policies.delete",
     "path": "/v1/retry/policies/:policyId",
@@ -2211,7 +2295,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 182,
+    "index": 189,
     "method": "POST",
     "operationId": "retry.classify",
     "path": "/v1/retry/classify",
@@ -2223,7 +2307,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 183,
+    "index": 190,
     "method": "POST",
     "operationId": "retry.decide",
     "path": "/v1/retry/decide",
@@ -2235,7 +2319,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 184,
+    "index": 191,
     "method": "GET",
     "operationId": "retry.traces.list",
     "path": "/v1/retry/traces",
@@ -2247,7 +2331,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 185,
+    "index": 192,
     "method": "GET",
     "operationId": "retry.traces.get",
     "path": "/v1/retry/traces/:traceId",
@@ -2259,7 +2343,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 186,
+    "index": 193,
     "method": "GET",
     "operationId": "retry.costs.summary",
     "path": "/v1/retry/costs",
@@ -2271,7 +2355,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 187,
+    "index": 194,
     "method": "GET",
     "operationId": "retry.escalations.list",
     "path": "/v1/retry/escalations",
@@ -2283,7 +2367,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 188,
+    "index": 195,
     "method": "POST",
     "operationId": "retry.escalations.acknowledge",
     "path": "/v1/retry/escalations/:escalationId/acknowledge",
@@ -2295,7 +2379,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 189,
+    "index": 196,
     "method": "GET",
     "operationId": "retry.circuit.breakers.list",
     "path": "/v1/retry/circuit-breakers",
@@ -2307,7 +2391,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 190,
+    "index": 197,
     "method": "GET",
     "operationId": "playbook.list",
     "path": "/v1/playbooks",
@@ -2319,7 +2403,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 191,
+    "index": 198,
     "method": "GET",
     "operationId": "playbook.get",
     "path": "/v1/playbooks/:playbookId",
@@ -2331,7 +2415,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 192,
+    "index": 199,
     "method": "POST",
     "operationId": "playbook.select",
     "path": "/v1/playbooks/select",
@@ -2343,7 +2427,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 193,
+    "index": 200,
     "method": "GET",
     "operationId": "playbook.candidates.list",
     "path": "/v1/playbooks/candidates",
@@ -2355,7 +2439,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 194,
+    "index": 201,
     "method": "POST",
     "operationId": "playbook.candidates.promote",
     "path": "/v1/playbooks/candidates/:candidateId/promote",
@@ -2367,7 +2451,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 195,
+    "index": 202,
     "method": "POST",
     "operationId": "playbook.rollback",
     "path": "/v1/playbooks/:playbookId/rollback",
@@ -2379,7 +2463,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 196,
+    "index": 203,
     "method": "GET",
     "operationId": "playbook.scores",
     "path": "/v1/playbooks/:playbookId/scores",
@@ -2391,7 +2475,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 197,
+    "index": 204,
     "method": "POST",
     "operationId": "memory.store",
     "path": "/v1/memory/store",
@@ -2403,7 +2487,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 198,
+    "index": 205,
     "method": "POST",
     "operationId": "memory.search",
     "path": "/v1/memory/search",
@@ -2415,7 +2499,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 199,
+    "index": 206,
     "method": "GET",
     "operationId": "memory.get",
     "path": "/v1/memory/items/:id",
@@ -2427,7 +2511,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 200,
+    "index": 207,
     "method": "GET",
     "operationId": "memory.list",
     "path": "/v1/memory/items",
@@ -2439,7 +2523,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 201,
+    "index": 208,
     "method": "DELETE",
     "operationId": "memory.delete",
     "path": "/v1/memory/items/:id",
@@ -2451,7 +2535,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 202,
+    "index": 209,
     "method": "POST",
     "operationId": "memory.prune",
     "path": "/v1/memory/prune",
@@ -2463,7 +2547,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 203,
+    "index": 210,
     "method": "GET",
     "operationId": "sessions.usage.get",
     "path": "/v1/sessions/:sessionKey/usage",
@@ -2475,7 +2559,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 204,
+    "index": 211,
     "method": "GET",
     "operationId": "sessions.usage.list",
     "path": "/v1/sessions/usage",
@@ -2487,7 +2571,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 205,
+    "index": 212,
     "method": "GET",
     "operationId": "sessions.list",
     "path": "/v1/sessions",
@@ -2499,7 +2583,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 206,
+    "index": 213,
     "method": "POST",
     "operationId": "sessions.create",
     "path": "/v1/sessions",
@@ -2511,7 +2595,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 207,
+    "index": 214,
     "method": "GET",
     "operationId": "sessions.get",
     "path": "/v1/sessions/:sessionKey",
@@ -2523,7 +2607,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 208,
+    "index": 215,
     "method": "POST",
     "operationId": "sessions.archive",
     "path": "/v1/sessions/:sessionKey/archive",
@@ -2535,7 +2619,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 209,
+    "index": 216,
     "method": "POST",
     "operationId": "sessions.reset",
     "path": "/v1/sessions/:sessionKey/reset",
@@ -2547,7 +2631,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 210,
+    "index": 217,
     "method": "POST",
     "operationId": "sessions.prune",
     "path": "/v1/sessions/prune",
@@ -2559,7 +2643,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 211,
+    "index": 218,
     "method": "POST",
     "operationId": "sessions.sweep",
     "path": "/v1/sessions/sweep",
@@ -2571,7 +2655,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 212,
+    "index": 219,
     "method": "GET",
     "operationId": "sessions.messages.list",
     "path": "/v1/sessions/:sessionKey/messages",
@@ -2583,7 +2667,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 213,
+    "index": 220,
     "method": "POST",
     "operationId": "sessions.messages.create",
     "path": "/v1/sessions/:sessionKey/messages",
@@ -2595,7 +2679,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 214,
+    "index": 221,
     "method": "POST",
     "operationId": "sessions.run",
     "path": "/v1/sessions/:sessionKey/run",
@@ -2609,7 +2693,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 215,
+    "index": 222,
     "method": "GET",
     "operationId": "sessions.memory.namespace.get",
     "path": "/v1/sessions/:sessionKey/memory-namespace",
@@ -2621,7 +2705,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 216,
+    "index": 223,
     "method": "POST",
     "operationId": "sessions.forks.create",
     "path": "/v1/sessions/:sessionKey/fork",
@@ -2633,7 +2717,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 217,
+    "index": 224,
     "method": "GET",
     "operationId": "sessions.forks.list",
     "path": "/v1/sessions/:sessionKey/forks",
@@ -2645,7 +2729,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 218,
+    "index": 225,
     "method": "POST",
     "operationId": "sessions.forks.merge",
     "path": "/v1/sessions/:sessionKey/merge",
@@ -2657,7 +2741,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 219,
+    "index": 226,
     "method": "POST",
     "operationId": "sessions.memory.extract",
     "path": "/v1/sessions/:sessionKey/memory/extract",
@@ -2669,7 +2753,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 220,
+    "index": 227,
     "method": "POST",
     "operationId": "sessions.memory.remember",
     "path": "/v1/sessions/:sessionKey/memory/remember",
@@ -2681,7 +2765,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 221,
+    "index": 228,
     "method": "GET",
     "operationId": "sessions.memory.extraction.get",
     "path": "/v1/sessions/:sessionKey/memory/extraction",
@@ -2693,7 +2777,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 222,
+    "index": 229,
     "method": "POST",
     "operationId": "sessions.memory.extraction.retry",
     "path": "/v1/sessions/memory/extraction/retry",
@@ -2705,7 +2789,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 223,
+    "index": 230,
     "method": "GET",
     "operationId": "plugins.list",
     "path": "/v1/plugins",
@@ -2717,7 +2801,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 224,
+    "index": 231,
     "method": "GET",
     "operationId": "plugins.get",
     "path": "/v1/plugins/:id",
@@ -2729,7 +2813,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 225,
+    "index": 232,
     "method": "GET",
     "operationId": "plugins.versions.list",
     "path": "/v1/plugins/:id/versions",
@@ -2741,7 +2825,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 226,
+    "index": 233,
     "method": "POST",
     "operationId": "plugins.install",
     "path": "/v1/plugins/:id/install",
@@ -2753,7 +2837,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 227,
+    "index": 234,
     "method": "POST",
     "operationId": "plugins.enable",
     "path": "/v1/plugins/:id/enable",
@@ -2765,7 +2849,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 228,
+    "index": 235,
     "method": "POST",
     "operationId": "plugins.disable",
     "path": "/v1/plugins/:id/disable",
@@ -2777,7 +2861,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 229,
+    "index": 236,
     "method": "DELETE",
     "operationId": "plugins.uninstall",
     "path": "/v1/plugins/:id",
@@ -2789,7 +2873,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 230,
+    "index": 237,
     "method": "GET",
     "operationId": "marketplace.plugins.list",
     "path": "/v1/marketplace/plugins",
@@ -2801,7 +2885,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 231,
+    "index": 238,
     "method": "GET",
     "operationId": "marketplace.plugins.get",
     "path": "/v1/marketplace/plugins/:id",
@@ -2813,7 +2897,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 232,
+    "index": 239,
     "method": "GET",
     "operationId": "marketplace.plugins.versions.list",
     "path": "/v1/marketplace/plugins/:id/versions",
@@ -2825,7 +2909,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 233,
+    "index": 240,
     "method": "POST",
     "operationId": "marketplace.plugins.install",
     "path": "/v1/marketplace/plugins/:id/install",
@@ -2837,7 +2921,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 234,
+    "index": 241,
     "method": "POST",
     "operationId": "agent.runs.start",
     "path": "/v1/agent/runs",
@@ -2850,7 +2934,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 235,
+    "index": 242,
     "method": "GET",
     "operationId": "agent.runs.list",
     "path": "/v1/agent/runs",
@@ -2863,7 +2947,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 236,
+    "index": 243,
     "method": "GET",
     "operationId": "agent.runs.get",
     "path": "/v1/agent/runs/:runId",
@@ -2876,7 +2960,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 237,
+    "index": 244,
     "method": "POST",
     "operationId": "agent.runs.cancel",
     "path": "/v1/agent/runs/:runId/cancel",
@@ -2889,7 +2973,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 238,
+    "index": 245,
     "method": "POST",
     "operationId": "agent.runs.approve.plan",
     "path": "/v1/agent/runs/:runId/approve-plan",
@@ -2902,7 +2986,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 239,
+    "index": 246,
     "method": "POST",
     "operationId": "agent.runs.reject.plan",
     "path": "/v1/agent/runs/:runId/reject-plan",
@@ -2915,7 +2999,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 240,
+    "index": 247,
     "method": "GET",
     "operationId": "agent.runs.events",
     "path": "/v1/agent/runs/:runId/events",
@@ -2928,7 +3012,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 241,
+    "index": 248,
     "method": "POST",
     "operationId": "agent.automations.create",
     "path": "/v1/agent/automations",
@@ -2941,7 +3025,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 242,
+    "index": 249,
     "method": "GET",
     "operationId": "agent.automations.list",
     "path": "/v1/agent/automations",
@@ -2954,7 +3038,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 243,
+    "index": 250,
     "method": "GET",
     "operationId": "agent.automations.get",
     "path": "/v1/agent/automations/:automationId",
@@ -2967,7 +3051,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 244,
+    "index": 251,
     "method": "PATCH",
     "operationId": "agent.automations.update",
     "path": "/v1/agent/automations/:automationId",
@@ -2980,7 +3064,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 245,
+    "index": 252,
     "method": "DELETE",
     "operationId": "agent.automations.delete",
     "path": "/v1/agent/automations/:automationId",
@@ -2993,7 +3077,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 246,
+    "index": 253,
     "method": "POST",
     "operationId": "agent.automations.run",
     "path": "/v1/agent/automations/:automationId/run",
@@ -3006,7 +3090,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 247,
+    "index": 254,
     "method": "GET",
     "operationId": "agent.subagents.list",
     "path": "/v1/agent/subagents",
@@ -3018,7 +3102,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 248,
+    "index": 255,
     "method": "GET",
     "operationId": "agent.subagents.get",
     "path": "/v1/agent/subagents/:subagentId",
@@ -3030,7 +3114,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "authenticated",
-    "index": 249,
+    "index": 256,
     "method": "GET",
     "operationId": "agent.runs.subagents.list",
     "path": "/v1/agent/runs/:runId/subagents",

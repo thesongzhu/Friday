@@ -2,9 +2,11 @@ import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
 import type { FridayAutoFixActionRepository } from "../persistence/friday-auto-fix-action-repository.js";
 import type { FridayApprovalRequestRepository } from "../persistence/friday-approval-request-repository.js";
+import type { FridayErrorIncidentRepository } from "../persistence/friday-error-incident-repository.js";
 import type { FridayAutoFixExecutionService } from "./friday-auto-fix-execution-service.js";
 import type { UUID } from "../model/friday-learning.types.js";
 import type { FridayAutoFixExecutionResult } from "../model/friday-auto-fix.types.js";
+import type { FridayAutoFixRiskAssessmentService } from "./friday-auto-fix-risk-assessment-service.js";
 
 export interface FridayAutoFixDispatcherService {
   runReadyActions(input?: {
@@ -20,7 +22,10 @@ export interface CreateAutoFixDispatcherServiceDeps {
   db: FridaySqliteLayer;
   actionRepo: FridayAutoFixActionRepository;
   approvalRepo: FridayApprovalRequestRepository;
+  incidentRepo: FridayErrorIncidentRepository;
+  riskService: FridayAutoFixRiskAssessmentService;
   executionService: FridayAutoFixExecutionService;
+  nowIso: () => string;
 }
 
 export function createFridayAutoFixDispatcherService(
@@ -41,6 +46,20 @@ export function createFridayAutoFixDispatcherService(
 
       const results: FridayAutoFixExecutionResult[] = [];
       for (const action of planned) {
+        const incident = deps.db.withReadConnection((db) =>
+          deps.incidentRepo.getById(db, action.incidentId),
+        );
+        if (!incident) {
+          continue;
+        }
+        const risk = deps.riskService.assess({
+          incident,
+          plan: action.plan,
+          nowIso: deps.nowIso(),
+        });
+        if (risk.requiresApproval || !risk.autoApplyAllowed) {
+          continue;
+        }
         const result = await deps.executionService.execute(action.actionId);
         results.push(result);
       }

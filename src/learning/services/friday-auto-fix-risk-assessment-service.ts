@@ -8,7 +8,7 @@ import type {
   FridayRiskAssessment,
 } from "../model/friday-auto-fix.types.js";
 import {
-  FridayHeuristicUtilityStrategy,
+  FridayAdaptiveUtilityStrategy,
   type FridayUtilityInput,
   type FridayUtilityStrategy,
 } from "./friday-expected-utility-calculator.js";
@@ -52,7 +52,7 @@ const TIER_2_STEPS: Set<FridayAutoFixStepKind> = new Set([
 export function createFridayAutoFixRiskAssessmentService(
   deps: CreateAutoFixRiskAssessmentServiceDeps,
 ): FridayAutoFixRiskAssessmentService {
-  const strategy = deps.utilityStrategy ?? new FridayHeuristicUtilityStrategy();
+  const strategy = deps.utilityStrategy ?? new FridayAdaptiveUtilityStrategy();
 
   return {
     assess(input) {
@@ -115,8 +115,34 @@ export function createFridayAutoFixRiskAssessmentService(
         }
       }
 
-      const requiresApproval = riskTier === 2;
-      const autoApplyAllowed = riskTier < 2;
+      const recentActions = deps.db.withReadConnection((db) =>
+        deps.actionRepo.listByUser(db, {
+          userId: incident.userId,
+          limit: 200,
+        }),
+      ).filter((action) => action.plan.evidence.fingerprint === incident.signature);
+
+      const executedRecent = recentActions.filter((action) => action.status === "applied" || action.status === "rolled_back");
+      const successCount = recentActions.filter((action) =>
+        action.status === "applied" && action.outcome === "success"
+      ).length;
+      const rollbackCount = recentActions.filter((action) => action.status === "rolled_back").length;
+      const rejectedCount = recentActions.filter((action) => action.status === "rejected").length;
+      const sampleCount = recentActions.length;
+      const historySuccessRate = sampleCount > 0 ? successCount / sampleCount : undefined;
+      const routeFailureRate = sampleCount > 0 ? (rollbackCount + rejectedCount) / sampleCount : undefined;
+      const rollbackFrequency = executedRecent.length > 0 ? rollbackCount / executedRecent.length : undefined;
+      const humanRejectionRate = sampleCount > 0 ? rejectedCount / sampleCount : undefined;
+
+      let policyBudgetState: FridayUtilityInput["policyBudgetState"] = "open";
+      if (rollbackCount >= 2 || (rollbackFrequency ?? 0) >= 0.5) {
+        policyBudgetState = "capped";
+        reasons.push("Recent rollback history caps auto-apply for this fingerprint");
+      }
+      if (rollbackCount >= 3 || rejectedCount >= 2) {
+        policyBudgetState = "cooldown";
+        reasons.push("Recent rollback/rejection history places this fingerprint into cooldown");
+      }
 
       if (baseTier === 0 && riskTier === 0) {
         reasons.push("Stateless remediation — safe to auto-apply");
@@ -133,9 +159,24 @@ export function createFridayAutoFixRiskAssessmentService(
           predictedSuccessProb: confidence,
           estimatedBenefitScore: Math.min(1, Math.log2(1 + recurrence) / 5),
           estimatedCostScore: riskTier / 2,
+          historicalSuccessRate: historySuccessRate,
+          routeFailureRate,
+          lessonMatchCount: plan.evidence.matchedLessonIds.length,
+          patternStrength:
+            typeof incident.context.patternStrength === "number"
+              ? Math.max(0, Math.min(1, incident.context.patternStrength))
+              : undefined,
+          rollbackFrequency,
+          humanRejectionRate,
+          policyBudgetState,
         };
         utilityResult = strategy.compute(utilityInput);
       }
+
+      const requiresApproval = riskTier === 2;
+      const autoApplyAllowed = riskTier < 2
+        && policyBudgetState === "open"
+        && (utilityResult?.recommendation ?? "auto_apply") === "auto_apply";
 
       return {
         riskTier,
