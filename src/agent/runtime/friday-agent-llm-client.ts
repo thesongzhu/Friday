@@ -71,6 +71,14 @@ const CLAUDE_CODE_TO_FRIDAY_NAMES: ReadonlyMap<string, string> = new Map(
   [...FRIDAY_TO_CLAUDE_CODE_NAMES.entries()].map(([friday, cc]) => [cc, friday]),
 );
 
+const FRIDAY_CLI_BACKEND_TEXT_ONLY_NOTE = [
+  "Runtime capability boundary:",
+  "- Friday tools are unavailable in this backend.",
+  "- You do not have access to files, shell, browser, network, or live workspace state.",
+  "- Never claim to have read a file, inspected the repository, run a command, browsed the web, or used a Friday tool.",
+  "- If the request depends on those capabilities, clearly say this Friday CLI backend is text-only and ask to reroute to an HTTP backend for tool-using tasks.",
+].join("\n");
+
 function toOAuthToolName(fridayName: string): string {
   return FRIDAY_TO_CLAUDE_CODE_NAMES.get(fridayName) ?? fridayName;
 }
@@ -121,13 +129,6 @@ export function createFridayAgentLlmClient(
             { httpStatus: 500 },
           );
         }
-        if (params.tools.length > 0) {
-          throw new FridayDomainError(
-            FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
-            "CLI backend does not support Friday tool loop yet. Route to an HTTP backend for tool-using tasks.",
-            { httpStatus: 501 },
-          );
-        }
         const conversation = params.messages
           .map((message) =>
             `${message.role.toUpperCase()}: ${
@@ -137,9 +138,12 @@ export function createFridayAgentLlmClient(
             }`,
           )
           .join("\n\n");
+        const cliSystemPrompt = params.tools.length > 0
+          ? `${params.systemPrompt}\n\n${FRIDAY_CLI_BACKEND_TEXT_ONLY_NOTE}`
+          : params.systemPrompt;
         const output = await runFridayCliBackendTextCompletion({
           cliConfig: deps.cliConfig,
-          systemPrompt: params.systemPrompt,
+          systemPrompt: cliSystemPrompt,
           conversation,
           model: params.model,
         });

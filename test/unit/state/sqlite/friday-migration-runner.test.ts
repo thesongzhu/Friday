@@ -126,7 +126,7 @@ describe("friday-migration-runner", () => {
     expect(result.skippedVersions).toEqual([31, 32]);
   });
 
-  it("failed migration rolls back that migration transaction", () => {
+  it("failed migration rolls back the entire pending migration batch", () => {
     const badMigration: FridaySqliteMigration = {
       version: 2,
       name: "bad-migration",
@@ -140,11 +140,11 @@ describe("friday-migration-runner", () => {
       runFridayMigrations({ db, migrations: [V001_INITIAL_MIGRATION, badMigration] }),
     ).toThrow();
 
-    // First migration (V001) should have been applied (separate transaction)
+    // The full pending migration batch is atomic under one IMMEDIATE transaction.
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
       .all();
-    expect(tables).toHaveLength(1);
+    expect(tables).toHaveLength(0);
 
     // Bad migration's table should not exist (rolled back)
     const badTables = db

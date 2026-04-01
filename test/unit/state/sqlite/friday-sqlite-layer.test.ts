@@ -2,8 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { createFridaySqliteLayer } from "#state";
 import type { FridaySqliteLayer } from "#state";
+import { ensureFridayApiBuildForNodeWorkers } from "../../../helpers/friday-ensure-api-build.helper.js";
 
 describe("friday-sqlite-layer", () => {
   let tmpDir: string;
@@ -92,5 +95,61 @@ describe("friday-sqlite-layer", () => {
     });
 
     expect(() => layer.checkpoint("FULL")).not.toThrow();
+  });
+
+  it(
+    "allows two processes to initialize the same sqlite file concurrently",
+    { timeout: 60_000 },
+    async () => {
+    await ensureFridayApiBuildForNodeWorkers();
+
+    const dbPath = path.join(tmpDir, "concurrent.db");
+    const workerPath = fileURLToPath(
+      new URL("./helpers/create-sqlite-layer-worker.mjs", import.meta.url),
+    );
+
+    async function runWorker(): Promise<{
+      code: number | null;
+      stdout: string;
+      stderr: string;
+    }> {
+      return await new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, [workerPath, dbPath], {
+          cwd: process.cwd(),
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.setEncoding("utf8");
+        child.stderr.setEncoding("utf8");
+        child.stdout.on("data", (chunk) => {
+          stdout += chunk;
+        });
+        child.stderr.on("data", (chunk) => {
+          stderr += chunk;
+        });
+        child.on("error", reject);
+        child.on("close", (code) => resolve({ code, stdout, stderr }));
+      });
+    }
+
+    const [first, second] = await Promise.all([runWorker(), runWorker()]);
+
+    expect(first.code, first.stderr || first.stdout).toBe(0);
+    expect(second.code, second.stderr || second.stdout).toBe(0);
+    expect(JSON.parse(first.stdout.trim())).toMatchObject({ ok: true, dbPath });
+    expect(JSON.parse(second.stdout.trim())).toMatchObject({ ok: true, dbPath });
+    },
+  );
+
+  it("restores the configured busy timeout after startup serialization", () => {
+    layer = createFridaySqliteLayer({
+      dbPath: path.join(tmpDir, "startup-timeout-reset.db"),
+      readPoolSize: 1,
+      pragmas: { busyTimeoutMs: 5000, synchronous: "NORMAL" },
+    });
+
+    const timeout = layer.writer.pragma("busy_timeout", { simple: true }) as number;
+    expect(timeout).toBe(5000);
   });
 });
