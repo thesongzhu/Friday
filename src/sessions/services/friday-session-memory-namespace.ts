@@ -2,8 +2,10 @@ import { FridayDomainError } from "#errors";
 
 import {
   FRIDAY_SESSION_ERROR_CODES,
-  FRIDAY_SESSION_MEMORY_NAMESPACE_PREFIX,
+  FRIDAY_SESSION_MEMORY_NAMESPACE_CHANNEL_SEGMENT,
   FRIDAY_SESSION_MEMORY_NAMESPACE_SHARED_SEGMENT,
+  FRIDAY_SESSION_MEMORY_NAMESPACE_TENANT_SEGMENT,
+  FRIDAY_SESSION_MEMORY_NAMESPACE_USER_SEGMENT,
   FRIDAY_SESSION_MEMORY_SOURCE_PREFIX,
 } from "../friday-session.constants.js";
 import type { FridaySessionRecord } from "../model/friday-session.types.js";
@@ -15,12 +17,13 @@ export type FridaySessionLookupFn = (key: string) => FridaySessionRecord | null;
 /**
  * Resolve a memory namespace for a session.
  *
- * The namespace is deterministic by userId: same userId across channels
- * resolves to the same namespace prefix, enabling cross-channel memory sharing.
+ * The namespace is deterministic by account/channel/user so that
+ * memory is isolated per channel instead of being shared across all
+ * channels for the same user.
  *
  * For subagent sessions without a userId, walks the parent chain to find one.
  *
- * Format: `tenant.default.user.<normalizedUserId>.shared`
+ * Format: `tenant.<accountId>.channel.<channel>.user.<normalizedUserId>.shared`
  */
 export function resolveFridaySessionMemoryNamespace(
   session: FridaySessionRecord,
@@ -36,9 +39,19 @@ export function resolveFridaySessionMemoryNamespace(
     );
   }
 
-  const normalizedUserId = userId.toLowerCase().replace(/[^a-z0-9._-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  const normalizedAccountId = normalizeNamespaceSegment(session.accountId || "default");
+  const normalizedChannel = normalizeNamespaceSegment(session.channel || "unknown");
+  const normalizedUserId = normalizeNamespaceSegment(userId);
 
-  return `${FRIDAY_SESSION_MEMORY_NAMESPACE_PREFIX}.${normalizedUserId}.${FRIDAY_SESSION_MEMORY_NAMESPACE_SHARED_SEGMENT}`;
+  return [
+    FRIDAY_SESSION_MEMORY_NAMESPACE_TENANT_SEGMENT,
+    normalizedAccountId,
+    FRIDAY_SESSION_MEMORY_NAMESPACE_CHANNEL_SEGMENT,
+    normalizedChannel,
+    FRIDAY_SESSION_MEMORY_NAMESPACE_USER_SEGMENT,
+    normalizedUserId,
+    FRIDAY_SESSION_MEMORY_NAMESPACE_SHARED_SEGMENT,
+  ].join(".");
 }
 
 /**
@@ -107,4 +120,14 @@ function resolveEffectiveUserId(
   }
 
   return undefined;
+}
+
+function normalizeNamespaceSegment(value: string): string {
+  const normalized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  return normalized.length > 0 ? normalized : "default";
 }

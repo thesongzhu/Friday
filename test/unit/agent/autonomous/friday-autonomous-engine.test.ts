@@ -94,6 +94,30 @@ describe("FridayAutonomousEngine", () => {
       );
     });
 
+    it("passes principal and tenant context through planning calls", async () => {
+      await engine.executeGoal({
+        description: "Investigate provider routing",
+        principalId: "user-ctx-1",
+        tenantContext: {
+          hubId: "tenant-a",
+          userId: "user-ctx-1",
+          channelKind: "agent",
+        },
+        signal: signal(),
+      });
+
+      expect(deps.agentRuntime.executeRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          principalId: "user-ctx-1",
+          tenantContext: {
+            hubId: "tenant-a",
+            userId: "user-ctx-1",
+            channelKind: "agent",
+          },
+        }),
+      );
+    });
+
     it("should use VLM for visual analysis when screenshots are available", async () => {
       const vlmFn = vi.fn().mockResolvedValue({
         text: JSON.stringify({ kind: "complete", summary: "Done" }),

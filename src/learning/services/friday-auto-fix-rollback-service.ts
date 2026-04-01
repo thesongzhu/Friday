@@ -2,7 +2,7 @@ import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
 import type { FridayAutoFixActionRepository } from "../persistence/friday-auto-fix-action-repository.js";
 import type { UUID } from "../model/friday-learning.types.js";
-import type { FridayAutoFixExecutionResult } from "../model/friday-auto-fix.types.js";
+import type { FridayAutoFixExecutionResult, FridayAutoFixPlan } from "../model/friday-auto-fix.types.js";
 import type {
   StepExecutor,
   StepVerifier,
@@ -24,6 +24,16 @@ export interface CreateAutoFixRollbackServiceDeps {
 export function createFridayAutoFixRollbackService(
   deps: CreateAutoFixRollbackServiceDeps,
 ): FridayAutoFixRollbackService {
+  function persistRollbackEvidence(
+    actionId: UUID,
+    rollbackPlan: NonNullable<FridayAutoFixPlan["rollbackPlan"]>,
+    nowIso: string,
+  ): void {
+    deps.db.withWriteTransaction((db) => {
+      deps.actionRepo.setRollbackPlan(db, actionId, rollbackPlan, nowIso);
+    });
+  }
+
   return {
     async rollback(actionId, reason) {
       const nowIso = deps.nowIso();
@@ -64,6 +74,7 @@ export function createFridayAutoFixRollbackService(
       for (const step of rollbackPlan.steps) {
         const executor = executors[step.kind];
         if (!executor) {
+          persistRollbackEvidence(actionId, rollbackPlan, nowIso);
           return {
             action,
             success: false,
@@ -74,6 +85,7 @@ export function createFridayAutoFixRollbackService(
           };
         }
         if (!await executor(step)) {
+          persistRollbackEvidence(actionId, rollbackPlan, nowIso);
           return {
             action,
             success: false,
@@ -85,6 +97,7 @@ export function createFridayAutoFixRollbackService(
         }
         const verifier = verifiers[step.kind];
         if (verifier && !await verifier(step)) {
+          persistRollbackEvidence(actionId, rollbackPlan, nowIso);
           return {
             action,
             success: false,
@@ -95,6 +108,8 @@ export function createFridayAutoFixRollbackService(
           };
         }
       }
+
+      persistRollbackEvidence(actionId, rollbackPlan, nowIso);
 
       return deps.db.withWriteTransaction((db) => {
         const rolledBack = deps.actionRepo.markRolledBack(

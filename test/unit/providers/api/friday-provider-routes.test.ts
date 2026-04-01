@@ -98,6 +98,46 @@ describe("FridayProviderRoutes", () => {
       getUsageSummary: vi.fn(async () => ({ groups: [] })),
       getBudgetStatus: vi.fn(async () => ({ monthlyLimitUsd: 0, monthlySpentUsd: 0, remainingUsd: 0, usagePercent: 0, budgetExceeded: false })),
       setBudgetConfig: vi.fn(async () => ({ monthlyLimitUsd: 0 })),
+      listAuthProfiles: vi.fn(async () => [
+        {
+          id: "auth-default",
+          providerProfileId: "prov-001",
+          providerKind: "openai" as const,
+          profileKey: "default",
+          label: "OpenAI Default",
+          authMode: "api-key" as const,
+          keySource: { kind: "env-ref", envVar: "OPENAI_API_KEY" },
+          isActive: true,
+          metadata: {},
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ]),
+      activateAuthProfile: vi.fn(async () => ({
+        id: "auth-default",
+        providerProfileId: "prov-001",
+        providerKind: "openai" as const,
+        profileKey: "default",
+        label: "OpenAI Default",
+        authMode: "api-key" as const,
+        keySource: { kind: "env-ref", envVar: "OPENAI_API_KEY" },
+        isActive: true,
+        metadata: {},
+        createdAt: NOW,
+        updatedAt: NOW,
+      })),
+      doctorProvider: vi.fn(async () => ({
+        providerId: "prov-001",
+        providerKind: "openai" as const,
+        backendKind: "http" as const,
+        authMode: "api-key" as const,
+        checkedAt: NOW,
+        backendHealth: "healthy" as const,
+        authHealth: "healthy" as const,
+        routingEligible: true,
+        reasons: [],
+        activeProfileKey: "default",
+      })),
       initiateOAuthLogin: vi.fn(async () => ({
         providerId: "anth-001",
         oauthProvider: "anthropic" as const,
@@ -117,11 +157,11 @@ describe("FridayProviderRoutes", () => {
     };
   }
 
-  it("creates 10 route definitions", () => {
+  it("creates 13 route definitions", () => {
     const routes = createFridayProviderRoutes({
       providerService: makeMockService(),
     });
-    expect(routes).toHaveLength(10);
+    expect(routes).toHaveLength(13);
   });
 
   it("has correct operation ids", () => {
@@ -135,6 +175,9 @@ describe("FridayProviderRoutes", () => {
     expect(operationIds).toContain("providers.update");
     expect(operationIds).toContain("providers.delete");
     expect(operationIds).toContain("providers.validate");
+    expect(operationIds).toContain("providers.doctor");
+    expect(operationIds).toContain("providers.authProfiles.list");
+    expect(operationIds).toContain("providers.authProfiles.activate");
     expect(operationIds).toContain("providers.routing.get");
     expect(operationIds).toContain("providers.routing.set");
   });
@@ -240,6 +283,61 @@ describe("FridayProviderRoutes", () => {
       );
       expect(result).toEqual({
         validation: { status: "ok", checkedAt: NOW },
+      });
+    });
+
+    it("providers.doctor returns doctor report", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const doctorRoute = routes.find(
+        (r) => r.operationId === "providers.doctor",
+      )!;
+
+      const result = await doctorRoute.handler(
+        makeCtx({ params: { providerId: "prov-001" } }),
+      );
+      expect(result).toMatchObject({
+        doctor: {
+          providerId: "prov-001",
+          backendKind: "http",
+          activeProfileKey: "default",
+        },
+      });
+    });
+
+    it("providers.authProfiles.list returns auth profiles", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const listRoute = routes.find(
+        (r) => r.operationId === "providers.authProfiles.list",
+      )!;
+
+      const result = await listRoute.handler(
+        makeCtx({ params: { providerId: "prov-001" } }),
+      );
+      expect(result).toMatchObject({
+        items: [expect.objectContaining({ profileKey: "default" })],
+      });
+    });
+
+    it("providers.authProfiles.activate switches the active profile", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const activateRoute = routes.find(
+        (r) => r.operationId === "providers.authProfiles.activate",
+      )!;
+
+      const result = await activateRoute.handler(
+        makeCtx({ params: { providerId: "prov-001", profileKey: "default" } }),
+      );
+      expect(result).toMatchObject({
+        profile: expect.objectContaining({ profileKey: "default", isActive: true }),
       });
     });
 

@@ -5,6 +5,12 @@
 // always reflects the actual tools available to the LLM — no
 // stale tool lists.
 
+import {
+  createDefaultPromptSectionRegistry,
+  FRIDAY_PROMPT_SECTION_CAPABILITIES,
+  type FridayPromptSection,
+} from "./friday-agent-prompt-section.js";
+
 export interface BuildFridayAgentSystemPromptParams {
   /** Names of all currently registered tools. */
   toolNames: string[];
@@ -117,30 +123,43 @@ export function buildFridayAgentSystemPrompt(
       : "",
   ].filter((section) => section.length > 0);
   const starterSkillsSection = starterSkillSections.length > 0
-    ? `\n\n${starterSkillSections.join("\n\n")}`
-    : "";
-  const timeContextSection = currentTime
-    ? "Current time context:\n" +
-      `- nowIso: ${currentTime.nowIso}\n` +
-      `- timezone: ${currentTime.timezone}\n` +
-      `- localDate: ${currentTime.localDate}\n\n`
+    ? starterSkillSections.join("\n\n")
     : "";
   const timelinessReference = currentTime
     ? `Treat ${currentTime.localDate} in ${currentTime.timezone} as the reference date for words like latest/current/today.`
     : "Treat the current run date and timezone as the reference for words like latest/current/today.";
 
+  const registry = createDefaultPromptSectionRegistry();
+  const runtimeAwareCapabilitiesSection: FridayPromptSection = {
+    ...FRIDAY_PROMPT_SECTION_CAPABILITIES,
+    build() {
+      return "Capabilities:\n" + capabilityLines;
+    },
+  };
+  registry.remove(FRIDAY_PROMPT_SECTION_CAPABILITIES.id);
+  registry.register(runtimeAwareCapabilitiesSection);
+  if (starterSkillsSection.length === 0) {
+    registry.remove("starter_skills");
+  }
+
+  const promptPrelude = registry.build({
+    toolNames,
+    toolSet,
+    modelIdentity,
+    version,
+    workspaceContext,
+    starterSkills,
+    runtimeCapabilities,
+    currentTime,
+    ...(starterSkillsSection.length > 0
+      ? {
+          starterSkills,
+        }
+      : {}),
+  });
+
   return (
-    `You are Friday v${version}, an autonomous AI agent. ` +
-    `Your underlying model is ${modelIdentity}. ` +
-    "You were created by Jarvis as an open-source project. " +
-    "You are designed to solve problems end-to-end — from answering questions to executing multi-step tasks autonomously. " +
-    "You can read and modify files, run shell commands, and execute tests. When you make code changes, validate them before reporting completion. " +
-    "Your only hard constraint: never break existing functionality. Always run tests after modifying code. " +
-    "\n\n" +
-    "Capabilities:\n" +
-    `${capabilityLines}\n` +
-    "\n\n" +
-    timeContextSection +
+    `${promptPrelude}\n\n` +
     "Tool selection strategy:\n" +
     "- Capabilities/runtime questions (what Friday can do, which features are enabled/disabled, messaging/MCP/provider status): use capabilities first — never guess runtime state\n" +
     "- Status/progress questions (current task, delegated task progress, latest result, blockers): use task_status first — never fabricate progress\n" +
@@ -220,9 +239,6 @@ export function buildFridayAgentSystemPrompt(
     '<!--action:{"type":"open_fleet","label":"View Fleet"}-->\n' +
     '<!--action:{"type":"open_page","label":"Open Settings","href":"/settings"}-->\n' +
     "Use these sparingly — only when your reply naturally suggests a next step the user can take in the UI. " +
-    "Do not add action markers to every response." +
-    starterSkillsSection +
-    // Inject workspace context (AGENTS.md, SOUL.md, USER.md, MEMORY.md)
-    (workspaceContext ? workspaceContext : "")
+    "Do not add action markers to every response."
   );
 }

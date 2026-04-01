@@ -41,6 +41,7 @@ export interface FridayEngineRunExecutorAgentRuntime {
     sessionKey?: string;
     runId?: string;
     providerId?: string;
+    tenantContext?: FridayEngineRunInput["tenantContext"];
     model?: string;
     timezone?: string;
     timeoutMs?: number;
@@ -72,6 +73,7 @@ export interface FridayEnginePlanningGate {
     runId: string;
     sessionKey?: string;
     providerId?: string;
+    tenantContext?: FridayEngineRunInput["tenantContext"];
     model?: string;
     timezone?: string;
     timeoutMs?: number;
@@ -364,6 +366,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
           runId: decision.runId,
           sessionKey: input.sessionKey,
           providerId: input.providerId,
+          tenantContext: input.tenantContext,
           model: input.model,
           timezone: input.timezone,
           timeoutMs: input.timeoutMs,
@@ -445,6 +448,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
       sessionKey: input.sessionKey,
       runId: input.runId,
       providerId: input.providerId,
+      tenantContext: input.tenantContext,
       model: input.model,
       timezone: input.timezone,
       timeoutMs: input.timeoutMs,

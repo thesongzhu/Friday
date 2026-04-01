@@ -9,7 +9,11 @@
   "author": {
     "name": "Your Name"
   },
-  "tags": [],
+  "tags": [
+    "generated",
+    "cli-backed",
+    "skill.stabilized"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",

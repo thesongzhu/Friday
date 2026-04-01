@@ -1,3 +1,4 @@
+import type { FridayProviderTenantContext } from "#providers";
 import type { FridayAgentConversationContext } from "./friday-agent-runtime.types.js";
 
 export interface FridayAgentToolExecutionContext {
@@ -7,6 +8,8 @@ export interface FridayAgentToolExecutionContext {
   timezone?: string;
   taskPrompt?: string;
   conversationContext?: FridayAgentConversationContext;
+  principalId?: string;
+  tenantContext?: FridayProviderTenantContext;
 }
 
 const FRIDAY_AGENT_TOOL_EXECUTION_CONTEXT = Symbol.for("friday.agent.toolExecutionContext");
@@ -37,9 +40,14 @@ export function getFridayAgentToolExecutionContext(
     || typeof candidate.readOnly !== "boolean"
     || (candidate.timezone !== undefined && typeof candidate.timezone !== "string")
     || (candidate.taskPrompt !== undefined && typeof candidate.taskPrompt !== "string")
+    || (candidate.principalId !== undefined && typeof candidate.principalId !== "string")
     || (
       candidate.conversationContext !== undefined
       && (typeof candidate.conversationContext !== "object" || candidate.conversationContext === null || Array.isArray(candidate.conversationContext))
+    )
+    || (
+      candidate.tenantContext !== undefined
+      && (typeof candidate.tenantContext !== "object" || candidate.tenantContext === null || Array.isArray(candidate.tenantContext))
     )
   ) {
     return null;
@@ -51,5 +59,7 @@ export function getFridayAgentToolExecutionContext(
     timezone: candidate.timezone,
     taskPrompt: candidate.taskPrompt,
     conversationContext: candidate.conversationContext as FridayAgentConversationContext | undefined,
+    principalId: candidate.principalId,
+    tenantContext: candidate.tenantContext as FridayProviderTenantContext | undefined,
   };
 }

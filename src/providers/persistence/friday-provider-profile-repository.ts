@@ -6,6 +6,7 @@ import type {
   FridayProviderProfile,
   FridayProviderProfileRow,
 } from "../model/friday-provider.types.js";
+import { getFridayProviderPreset } from "../model/friday-provider-catalog.js";
 
 // ─── Repository interface ───
 
@@ -20,13 +21,25 @@ export interface FridayProviderProfileRepository {
 // ─── Row ↔ Entity mapping ───
 
 function rowToProfile(row: FridayProviderProfileRow): FridayProviderProfile {
+  const preset = getFridayProviderPreset(row.kind as FridayProviderProfile["kind"], row.endpoint_url ?? "");
   const config: FridayProviderConfigJson = safeJsonParse<FridayProviderConfigJson>(row.config_json)
     ?? {
-        api: "openai-completions",
-        authMode: "api-key",
+        api: preset.api,
+        authMode: preset.authMode,
+        backendKind: preset.backendKind,
+        deploymentKind: preset.deploymentKind,
+        regionTag: preset.regionTag,
         keySource: { kind: "none" },
         supportedModels: [],
       };
+  const normalizedConfig: FridayProviderConfigJson = {
+    ...config,
+    api: config.api ?? preset.api,
+    authMode: config.authMode ?? preset.authMode,
+    backendKind: config.backendKind ?? preset.backendKind,
+    deploymentKind: config.deploymentKind ?? preset.deploymentKind,
+    regionTag: config.regionTag ?? preset.regionTag,
+  };
 
   return {
     id: row.id,
@@ -35,7 +48,7 @@ function rowToProfile(row: FridayProviderProfileRow): FridayProviderProfile {
     baseUrl: row.endpoint_url ?? "",
     enabled: row.enabled === 1,
     defaultModel: row.default_model ?? undefined,
-    config,
+    config: normalizedConfig,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

@@ -6,6 +6,12 @@ import Database from "better-sqlite3";
 import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
 import { initializeFridayState } from "#state";
+import {
+  createFridayAgentRunRepository,
+  createFridaySubagentRunRepository,
+} from "#agent";
+import { buildFridaySubagentSessionKey } from "#sessions";
+import type { FridayCompiledWorkflowGraphV2 } from "#workflows";
 
 describe("FridayHub Bootstrap Integration", () => {
   const tmpDirs: string[] = [];
@@ -23,12 +29,72 @@ describe("FridayHub Bootstrap Integration", () => {
     lastStateDir = stateDir;
     const bundledSkillsDir = makeTmpDir();
     const managedSkillsDir = makeTmpDir();
+    const hub = await createHubForDirs(stateDir, bundledSkillsDir, managedSkillsDir);
+    return hub;
+  }
+
+  async function createHubForDirs(
+    stateDir: string,
+    bundledSkillsDir: string,
+    managedSkillsDir: string,
+  ): Promise<FridayHub> {
     const hub = await createFridayHub({
       stateDir,
       skillDirs: [bundledSkillsDir, managedSkillsDir],
     });
     hubs.push(hub);
     return hub;
+  }
+
+  function makeApprovalOnlyGraph(
+    workflowId: string,
+    versionId: string,
+  ): FridayCompiledWorkflowGraphV2 {
+    return {
+      schemaVersion: "2.0",
+      workflowId,
+      workflowVersionId: versionId,
+      sourceSpecSchemaVersion: "1.0",
+      graph: {
+        nodes: [
+          { id: "trigger", type: "trigger", label: "Trigger", config: {} },
+          {
+            id: "approval1",
+            type: "approval",
+            label: "Approval Gate",
+            config: {
+              approverRole: "admin",
+              message: "Please approve restart durability",
+              timeoutMs: 3_600_000,
+            },
+          },
+        ],
+        edges: [
+          { id: "e1", sourceNodeId: "trigger", targetNodeId: "approval1" },
+        ],
+      },
+      failurePolicy: { onFailure: "fail_fast", notifyUser: false },
+      tests: [],
+      checksum: "placeholder",
+    };
+  }
+
+  async function waitForWorkflowRunStable(
+    hub: FridayHub,
+    runId: string,
+    timeoutMs = 5_000,
+  ): Promise<string> {
+    const start = Date.now();
+    const transient = new Set(["queued", "running"]);
+    while (Date.now() - start < timeoutMs) {
+      const run = hub.workflowRuntime.execution.getRun(runId);
+      if (run && !transient.has(run.status)) {
+        return run.status;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const run = hub.workflowRuntime.execution.getRun(runId);
+    return run?.status ?? "unknown";
   }
 
   afterEach(async () => {
@@ -312,6 +378,208 @@ describe("FridayHub Bootstrap Integration", () => {
       expect(row!.id).toBe("agent-loop-cooldown-sweep");
       expect(row!.interval_ms).toBe(60_000);
       expect(row!.enabled).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("replays persisted scheduled automations onto the scheduler after restart", async () => {
+    const stateDir = makeTmpDir();
+    lastStateDir = stateDir;
+    const bundledSkillsDir = makeTmpDir();
+    const managedSkillsDir = makeTmpDir();
+    const dbPath = path.join(stateDir, "friday.db");
+
+    const firstHub = await createHubForDirs(stateDir, bundledSkillsDir, managedSkillsDir);
+    await firstHub.start();
+
+    const automation = firstHub.apiRuntime.agentAutomationService!.save({
+      name: "Restarted automation",
+      taskTemplate: "Summarize the latest workspace state",
+      schedule: {
+        type: "cron",
+        cron: "* * * * *",
+        timezone: "UTC",
+      },
+    });
+    const jobId = `agent-automation:${automation.id}`;
+
+    let db = new Database(dbPath);
+    try {
+      db.prepare("DELETE FROM friday_scheduler_jobs WHERE id = ?").run(jobId);
+    } finally {
+      db.close();
+    }
+
+    await firstHub.stop();
+
+    const secondHub = await createHubForDirs(stateDir, bundledSkillsDir, managedSkillsDir);
+    await secondHub.start();
+
+    db = new Database(dbPath);
+    try {
+      const row = db
+        .prepare(
+          `SELECT id, enabled, schedule_kind, schedule_cron_expr, schedule_tz, next_run_at
+           FROM friday_scheduler_jobs
+           WHERE id = ?`,
+        )
+        .get(jobId) as
+          | {
+              id: string;
+              enabled: number;
+              schedule_kind: string;
+              schedule_cron_expr: string | null;
+              schedule_tz: string | null;
+              next_run_at: string | null;
+            }
+          | undefined;
+      expect(row).toBeDefined();
+      expect(row!.id).toBe(jobId);
+      expect(row!.enabled).toBe(1);
+      expect(row!.schedule_kind).toBe("cron");
+      expect(row!.schedule_cron_expr).toBe("* * * * *");
+      expect(row!.schedule_tz).toBe("UTC");
+      expect(row!.next_run_at).toBeTruthy();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("preserves pending workflow approvals across restart and resumes on approval", async () => {
+    const stateDir = makeTmpDir();
+    lastStateDir = stateDir;
+    const bundledSkillsDir = makeTmpDir();
+    const managedSkillsDir = makeTmpDir();
+
+    const firstHub = await createHubForDirs(stateDir, bundledSkillsDir, managedSkillsDir);
+    await firstHub.start();
+
+    const workflow = firstHub.workflowRuntime.crud.createWorkflow({
+      slug: "restart-approval-proof",
+      name: "Restart Approval Proof",
+    });
+    const version = firstHub.workflowRuntime.crud.createVersion(
+      workflow.id,
+      makeApprovalOnlyGraph(workflow.id, "placeholder"),
+    );
+    firstHub.workflowRuntime.crud.publishVersion(workflow.id, version.versionNumber);
+
+    const run = await firstHub.workflowRuntime.execution.startRun({
+      workflowId: workflow.id,
+      workflowVersionId: version.id,
+      triggerType: "manual",
+    });
+
+    const firstStatus = await waitForWorkflowRunStable(firstHub, run.id);
+    expect(["waiting_for_approval", "paused", "blocked", "pause_for_approval"]).toContain(firstStatus);
+
+    const firstPending = firstHub.workflowRuntime.approval.listPending({});
+    const approval = firstPending.find((item) => item.runId === run.id);
+    expect(approval).toBeDefined();
+    expect(approval!.status).toBe("pending");
+
+    await firstHub.stop();
+
+    const secondHub = await createHubForDirs(stateDir, bundledSkillsDir, managedSkillsDir);
+    await secondHub.start();
+
+    const restartedPending = secondHub.workflowRuntime.approval.listPending({});
+    const restartedApproval = restartedPending.find((item) => item.id === approval!.id);
+    expect(restartedApproval).toBeDefined();
+    expect(restartedApproval!.status).toBe("pending");
+    expect(restartedApproval!.runId).toBe(run.id);
+
+    const approvalResult = await secondHub.workflowRuntime.approval.approve({
+      approvalId: restartedApproval!.id,
+      decidedByUserId: "admin-001",
+      comment: "Resume after restart",
+    });
+    expect(approvalResult.approval.status).toBe("approved");
+    expect(approvalResult.resumed).toBe(true);
+
+    const finalStatus = await waitForWorkflowRunStable(secondHub, run.id);
+    expect(finalStatus).toBe("completed");
+  });
+
+  it("marks persisted stale agent and subagent runs as failed on startup", async () => {
+    const stateDir = makeTmpDir();
+    lastStateDir = stateDir;
+    const bundledSkillsDir = makeTmpDir();
+    const managedSkillsDir = makeTmpDir();
+    const dbPath = path.join(stateDir, "friday.db");
+    const nowIso = new Date().toISOString();
+    const agentRunRepo = createFridayAgentRunRepository();
+    const subagentRunRepo = createFridaySubagentRunRepository();
+
+    const seedHub = await createHubForDirs(stateDir, bundledSkillsDir, managedSkillsDir);
+
+    let db = new Database(dbPath);
+    try {
+      agentRunRepo.create(db, {
+        id: "stale-agent-run",
+        task: "Resume me after reboot",
+        sessionKey: "agent:run:stale-agent-run",
+        maxAttempts: 3,
+        nowIso,
+      });
+      agentRunRepo.update(db, {
+        id: "stale-agent-run",
+        status: "executing",
+      });
+
+      agentRunRepo.create(db, {
+        id: "parent-run",
+        task: "Parent completed run",
+        sessionKey: "agent:run:parent-run",
+        maxAttempts: 3,
+        nowIso,
+      });
+      agentRunRepo.update(db, {
+        id: "parent-run",
+        status: "completed",
+        completedAt: nowIso,
+      });
+
+      subagentRunRepo.create(db, {
+        id: "stale-subagent-run",
+        parentRunId: "parent-run",
+        parentSessionKey: "agent:run:parent-run",
+        childRunId: "child-run-stale",
+        childSessionKey: buildFridaySubagentSessionKey("agent:run:parent-run", "child-run-stale"),
+        task: "Child run left mid-flight",
+        depth: 1,
+        nowIso,
+      });
+      subagentRunRepo.update(db, {
+        id: "stale-subagent-run",
+        status: "running",
+        startedAt: nowIso,
+      });
+    } finally {
+      db.close();
+    }
+
+    await seedHub.stop();
+
+    const restartedHub = await createHubForDirs(stateDir, bundledSkillsDir, managedSkillsDir);
+    await restartedHub.start();
+
+    db = new Database(dbPath);
+    try {
+      const staleAgent = agentRunRepo.getById(db, "stale-agent-run");
+      const parentRun = agentRunRepo.getById(db, "parent-run");
+      const staleSubagent = subagentRunRepo.getById(db, "stale-subagent-run");
+
+      expect(staleAgent?.status).toBe("failed");
+      expect(staleAgent?.errorCode).toBe("AGENT_RUN_INTERRUPTED");
+      expect(staleAgent?.errorMessage).toContain("system restarted");
+
+      expect(parentRun?.status).toBe("completed");
+
+      expect(staleSubagent?.status).toBe("failed");
+      expect(staleSubagent?.outcome?.status).toBe("failed");
+      expect(staleSubagent?.outcome?.response).toContain("system restarted");
     } finally {
       db.close();
     }

@@ -2,9 +2,26 @@ import { describe, it, expect, vi } from "vitest";
 import { createFridayAgentSessionsTool } from "#agent";
 import type { FridaySessionService } from "../../../../src/sessions/services/friday-session-service.types.js";
 import type { FridayAgentRuntime, FridayAgentRuntimeResult } from "#agent";
+import { attachFridayAgentToolExecutionContext } from "../../../../src/agent/runtime/friday-agent-tool-execution-context.js";
 
 function signal(): AbortSignal {
   return new AbortController().signal;
+}
+
+function signalWithContext(): AbortSignal {
+  const controller = new AbortController();
+  return attachFridayAgentToolExecutionContext(controller.signal, {
+    runId: "run-ctx-1",
+    sessionKey: "agent:run:ctx-1",
+    readOnly: false,
+    timezone: "America/Los_Angeles",
+    principalId: "user-ctx-1",
+    tenantContext: {
+      hubId: "tenant-a",
+      userId: "user-ctx-1",
+      channelKind: "agent",
+    },
+  });
 }
 
 function makeSessionRecord(overrides?: Record<string, unknown>) {
@@ -229,6 +246,30 @@ describe("FridayAgentSessionsTool", () => {
         { role: "user", content: "older" },
         { role: "assistant", content: "older reply" },
       ],
+    }));
+  });
+
+  it("passes principal and tenant context from tool execution metadata into executeRun", async () => {
+    const svc = mockSessionService();
+    const runtime = mockAgentRuntime();
+    const tool = createFridayAgentSessionsTool({
+      sessionService: svc,
+      agentRuntime: runtime,
+    });
+
+    await tool.execute(
+      { action: "send", sessionId: "agent:main:abc", message: "Route with tenant scope" },
+      signalWithContext(),
+    );
+
+    expect(runtime.executeRun).toHaveBeenCalledWith(expect.objectContaining({
+      timezone: "America/Los_Angeles",
+      principalId: "user-ctx-1",
+      tenantContext: {
+        hubId: "tenant-a",
+        userId: "user-ctx-1",
+        channelKind: "agent",
+      },
     }));
   });
 

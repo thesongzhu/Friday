@@ -52,6 +52,11 @@ export function createFridayAgentSkillTool(
         sessionId: "agent",
         userId: "agent",
         channel: "agent",
+        tenantContext: {
+          hubId: "default",
+          userId: "agent",
+          channelKind: "agent",
+        },
         timeoutMs,
       };
 

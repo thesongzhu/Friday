@@ -204,6 +204,48 @@ describe("createFridayProviderInferenceClient", () => {
     }
   });
 
+  it("forwards tenantContext into provider fallback routing", async () => {
+    const mockProvider = createMockProvider({});
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: '{"state":"ready_for_generation","spec":{}}' } }],
+      }),
+    });
+
+    try {
+      const client = createFridayProviderInferenceClient({
+        providerService: mockProvider,
+      });
+
+      await client.infer<{ state: string }>({
+        prompt: {
+          system: "You are a test assistant",
+          user: "Test input",
+        },
+        tenantContext: {
+          hubId: "tenant-acme",
+          userId: "user-123",
+          channelKind: "assistant",
+        },
+      });
+
+      expect(mockProvider.runWithFallback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantContext: {
+            hubId: "tenant-acme",
+            userId: "user-123",
+            channelKind: "assistant",
+          },
+        }),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("infer sends OAuth identity headers and system prefix for OAuth providers", async () => {
     const oauthProfile: FridayProviderProfile = {
       id: "oauth-provider",
@@ -632,6 +674,89 @@ describe("createFridayProviderInferenceClient", () => {
         ? systemContent
         : JSON.stringify(systemContent);
       expect(systemText).not.toContain(FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("infer adds Claude-compatible Bearer headers for Anthropic token auth mode", async () => {
+    const anthropicTokenProfile: FridayProviderProfile = {
+      id: "anthropic-token-provider",
+      kind: "anthropic",
+      name: "Anthropic Token",
+      baseUrl: "https://api.anthropic.com",
+      enabled: true,
+      defaultModel: "claude-sonnet-4-20250514",
+      config: {
+        api: "anthropic-messages",
+        authMode: "token",
+        keySource: { kind: "none" },
+        supportedModels: ["claude-sonnet-4-20250514"],
+      },
+      createdAt: "2025-01-01T00:00:00Z",
+      updatedAt: "2025-01-01T00:00:00Z",
+    };
+
+    const tokenRoute: FridayResolvedProviderRoute = {
+      provider: anthropicTokenProfile,
+      model: "claude-sonnet-4-20250514",
+    };
+
+    const mockProvider: FridayProviderService = {
+      listProviders: vi.fn(),
+      getProvider: vi.fn(),
+      createProvider: vi.fn(),
+      updateProvider: vi.fn(),
+      deleteProvider: vi.fn(),
+      validateProvider: vi.fn(),
+      getRoutingConfig: vi.fn(),
+      setRoutingConfig: vi.fn(),
+      resolveRoute: vi.fn(),
+      runWithFallback: vi.fn().mockImplementation(async (params: {
+        run: (route: FridayResolvedProviderRoute, credential: string | null) => Promise<unknown>;
+      }) => {
+        const result = await params.run(tokenRoute, "sk-ant-token-live");
+        return { result, route: tokenRoute, attempts: [] };
+      }),
+    } as unknown as FridayProviderService;
+
+    let capturedHeaders: Record<string, string> = {};
+    let capturedBody: Record<string, unknown> = {};
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+      capturedHeaders = init.headers as Record<string, string>;
+      capturedBody = JSON.parse(init.body as string) as Record<string, unknown>;
+      return {
+        ok: true,
+        json: async () => ({
+          content: [{ type: "text", text: '{"state":"ready"}' }],
+          usage: { input_tokens: 10, output_tokens: 5 },
+        }),
+      };
+    });
+
+    try {
+      const client = createFridayProviderInferenceClient({
+        providerService: mockProvider,
+      });
+
+      await client.infer<{ state: string }>({
+        prompt: {
+          system: "You are a test assistant",
+          user: "Test input",
+        },
+      });
+
+      expect(capturedHeaders["Authorization"]).toBe("Bearer sk-ant-token-live");
+      expect(capturedHeaders["x-api-key"]).toBeUndefined();
+      expect(capturedHeaders["anthropic-beta"]).toContain("oauth-2025-04-20");
+
+      const systemContent = capturedBody["system"];
+      const systemText = typeof systemContent === "string"
+        ? systemContent
+        : JSON.stringify(systemContent);
+      expect(systemText).toContain(FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX);
     } finally {
       globalThis.fetch = originalFetch;
     }

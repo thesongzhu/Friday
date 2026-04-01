@@ -1,5 +1,16 @@
 import { FridayDomainError } from "#errors";
-import type { FridayProviderApi, FridayProviderService, FridayResolvedProviderRoute } from "#providers";
+import type {
+  FridayProviderApi,
+  FridayProviderAuthMode,
+  FridayProviderService,
+  FridayProviderTenantContext,
+  FridayResolvedProviderRoute,
+} from "#providers";
+import {
+  FRIDAY_ANTHROPIC_OAUTH_HEADERS,
+  FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX,
+  isFridayAnthropicBearerAuthMode,
+} from "#providers";
 import { resolveFridayAgentTaskProfile } from "../../agent/runtime/friday-agent-task-profile.js";
 
 import { FRIDAY_SESSION_MEMORY_EXTRACTION_ERROR_CODES } from "../friday-session-memory-extraction.constants.js";
@@ -22,6 +33,7 @@ export interface FridaySessionMemoryExtractionLlmClient {
   extractMemoryItems(
     messages: FridaySessionMessageRecord[],
     maxItems: number,
+    tenantContext?: FridayProviderTenantContext,
   ): Promise<FridaySessionMemoryExtractionLlmResponse>;
 }
 
@@ -66,9 +78,13 @@ function buildRequestBody(
   systemPrompt: string,
   userPrompt: string,
   temperature: number,
+  authMode?: FridayProviderAuthMode,
 ): Record<string, unknown> {
+  const effectiveSystemPrompt = isFridayAnthropicBearerAuthMode(authMode)
+    ? `${FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX}\n\n${systemPrompt}`
+    : systemPrompt;
   const messages = [
-    { role: "system" as const, content: systemPrompt },
+    { role: "system" as const, content: effectiveSystemPrompt },
     { role: "user" as const, content: userPrompt },
   ];
 
@@ -95,7 +111,7 @@ function buildRequestBody(
     case "anthropic-messages":
       return {
         model,
-        system: systemPrompt,
+        system: effectiveSystemPrompt,
         messages: [{ role: "user", content: userPrompt }],
         max_tokens: 4096,
         temperature,
@@ -138,6 +154,7 @@ function buildHeaders(
   api: FridayProviderApi,
   credential: string | null,
   extraHeaders?: Record<string, string>,
+  authMode?: FridayProviderAuthMode,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -147,7 +164,12 @@ function buildHeaders(
   if (credential) {
     switch (api) {
       case "anthropic-messages":
-        headers["x-api-key"] = credential;
+        if (isFridayAnthropicBearerAuthMode(authMode)) {
+          headers["Authorization"] = `Bearer ${credential}`;
+          Object.assign(headers, FRIDAY_ANTHROPIC_OAUTH_HEADERS);
+        } else {
+          headers["x-api-key"] = credential;
+        }
         headers["anthropic-version"] = "2023-06-01";
         break;
       case "google-generative-ai":
@@ -296,7 +318,7 @@ export function createFridaySessionMemoryExtractionLlmClient(
   deps: CreateFridaySessionMemoryExtractionLlmClientDeps,
 ): FridaySessionMemoryExtractionLlmClient {
   return {
-    async extractMemoryItems(messages, maxItems) {
+    async extractMemoryItems(messages, maxItems, tenantContext) {
       if (messages.length === 0) {
         return { items: [] };
       }
@@ -306,6 +328,7 @@ export function createFridaySessionMemoryExtractionLlmClient(
       const validMessageIds = new Set(messages.map((m) => m.id));
 
       const fallbackResult = await deps.providerService.runWithFallback({
+        tenantContext,
         run: async (
           currentRoute: FridayResolvedProviderRoute,
           credential: string | null,
@@ -315,13 +338,14 @@ export function createFridaySessionMemoryExtractionLlmClient(
           const model = currentRoute.model;
 
           const url = buildUrl(api, provider.baseUrl, model);
-          const headers = buildHeaders(api, credential, provider.config.headers);
+          const headers = buildHeaders(api, credential, provider.config.headers, provider.config.authMode);
           const body = buildRequestBody(
             api,
             model,
             EXTRACTION_SYSTEM_PROMPT,
             userPrompt,
             taskProfile.temperature ?? 0,
+            provider.config.authMode,
           );
 
           const response = await fetch(url, {

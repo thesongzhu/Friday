@@ -89,6 +89,14 @@ function resolveNamespace(
     };
   }
 
+  if (scopePrefix && isNamespaceInScope(requestedNamespace, scopePrefix)) {
+    return {
+      requestedNamespace,
+      effectiveNamespace: requestedNamespace,
+      scopePrefix,
+    };
+  }
+
   // For tenants, prefix namespace with scope
   const effectiveNamespace = scopePrefix
     ? `${scopePrefix}.${requestedNamespace}`

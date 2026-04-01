@@ -136,6 +136,52 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
     });
   });
 
+  describe("fully qualified namespace reuse", () => {
+    it("does not double-prefix a fully qualified in-scope namespace on store", async () => {
+      const { guard, core } = createGuardTestSetup({
+        subject: {
+          hubId: "default",
+          userId: "user1",
+          accessLevel: "tenant",
+          channelKind: "discord",
+        },
+      });
+
+      await guard.store(
+        "tenant.default.channel.discord.user.user1.notes",
+        "remember this",
+      );
+
+      expect(core.store).toHaveBeenCalledWith(
+        "tenant.default.channel.discord.user.user1.notes",
+        expect.any(String),
+        expect.anything(),
+      );
+    });
+
+    it("passes a fully qualified in-scope namespace through on search", async () => {
+      const { guard, core } = createGuardTestSetup({
+        subject: {
+          hubId: "default",
+          userId: "user1",
+          accessLevel: "tenant",
+          channelKind: "discord",
+        },
+      });
+
+      await guard.search("hello", {
+        namespace: "tenant.default.channel.discord.user.user1.notes",
+      });
+
+      expect(core.search).toHaveBeenCalledWith(
+        "hello",
+        expect.objectContaining({
+          namespace: "tenant.default.channel.discord.user.user1.notes",
+        }),
+      );
+    });
+  });
+
   // ─── Fix 2b (CX R2): scopeNamespaceFilter includes prefix itself ───
 
   describe("scopeNamespaceFilter includes prefix namespace (CX R2)", () => {

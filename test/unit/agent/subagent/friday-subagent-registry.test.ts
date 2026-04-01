@@ -321,6 +321,30 @@ describe("FridaySubagentRegistry", () => {
       );
     });
 
+    it("passes principal and tenant context through to child executeRun", async () => {
+      const executeRun = vi.fn().mockResolvedValue(makeResult());
+      const createChildRuntime = vi.fn().mockReturnValue({ executeRun });
+
+      const registry = createRegistry({ createChildRuntime });
+      await registry.spawn(spawnInput({
+        principalId: "user-ctx-1",
+        tenantContext: {
+          hubId: "tenant-a",
+          userId: "user-ctx-1",
+          channelKind: "agent",
+        },
+      }));
+
+      expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+        principalId: "user-ctx-1",
+        tenantContext: {
+          hubId: "tenant-a",
+          userId: "user-ctx-1",
+          channelKind: "agent",
+        },
+      }));
+    });
+
     it("persists requesterSessionKey and rootRunId", async () => {
       const registry = createRegistry();
       await registry.spawn(spawnInput({ rootRunId: "root-123" }));

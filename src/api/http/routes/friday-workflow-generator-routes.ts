@@ -1,4 +1,5 @@
 import { FridayDomainError } from "#errors";
+import type { FridayProviderTenantContext } from "#providers";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { FridayWorkflowGeneratorService } from "#workflows";
 import type { FridayObservabilityApiService } from "../../../observability/services/friday-observability-api-service.js";
@@ -18,6 +19,25 @@ import type {
 export interface FridayWorkflowGeneratorRoutesDeps {
   workflowGenerator: FridayWorkflowGeneratorService;
   observability?: FridayObservabilityApiService;
+}
+
+function buildTenantContext(principal: unknown, fallbackUserId: string, fallbackChannel: string): FridayProviderTenantContext {
+  const record = principal && typeof principal === "object"
+    ? principal as { tenantId?: unknown; principalId?: unknown; userId?: unknown }
+    : {};
+  const userId = typeof record.userId === "string" && record.userId.trim().length > 0
+    ? record.userId.trim()
+    : typeof record.principalId === "string" && record.principalId.trim().length > 0
+      ? record.principalId.trim()
+      : fallbackUserId;
+  const tenantId = typeof record.tenantId === "string" && record.tenantId.trim().length > 0
+    ? record.tenantId.trim()
+    : userId;
+  return {
+    hubId: tenantId,
+    userId,
+    channelKind: fallbackChannel,
+  };
 }
 
 // ─── Validation helpers ───
@@ -187,6 +207,7 @@ export function createFridayWorkflowGeneratorRoutes(
           requestedModel: body.requestedModel,
           userId: body.userId,
           channel: body.channel,
+          tenantContext: buildTenantContext(ctx.principal, body.userId, body.channel),
         });
         if (result.mode === "generation_failed") {
           await reportGenerationFailure({

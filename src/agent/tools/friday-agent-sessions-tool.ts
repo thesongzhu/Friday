@@ -254,6 +254,7 @@ export function createFridayAgentSessionsTool(
     // Trigger agent execution on this session
     activeSessionSendDepth.set(sessionId, currentDepth + 1);
     const runtime = getRuntime();
+    const toolExecutionContext = getFridayAgentToolExecutionContext(signal);
     let result;
     try {
       result = await runtime.executeRun({
@@ -261,7 +262,9 @@ export function createFridayAgentSessionsTool(
         sessionKey: sessionId,
         signal,
         historyMessages,
-        timezone: getFridayAgentToolExecutionContext(signal)?.timezone,
+        timezone: toolExecutionContext?.timezone,
+        principalId: toolExecutionContext?.principalId,
+        tenantContext: toolExecutionContext?.tenantContext,
       });
     } finally {
       const depth = activeSessionSendDepth.get(sessionId) ?? 1;
