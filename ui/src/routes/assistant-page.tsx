@@ -21,6 +21,7 @@ import { useAgentRunEvents } from "@/hooks/use-agent-run-events";
 import { agentApi } from "@/lib/api/agent";
 import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { fleetApi } from "@/lib/api/fleet";
+import { learningApi } from "@/lib/api/learning";
 import {
   marketplaceApi,
   type FridayCreatorProfile,
@@ -514,6 +515,12 @@ export function AssistantPage() {
     queryKey: ["assistant-shell", "auto-fix-metrics"],
     queryFn: () => systemApi.getAutoFixMetrics(),
     refetchInterval: 30_000,
+  });
+
+  const learningOverviewQuery = useQuery({
+    queryKey: ["assistant-shell", "learning-overview"],
+    queryFn: () => learningApi.getOverview(6),
+    refetchInterval: 20_000,
   });
 
   const loopPolicyQuery = useQuery({
@@ -1118,6 +1125,51 @@ export function AssistantPage() {
               expertModeEnabled={expertModeQuery.data?.enabled ?? false}
             />
 
+            <ShellCard eyebrow="Operator learning" title="Why Friday changed routes, and what it learned from prior runs">
+              {learningOverviewQuery.data ? (
+                <div className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-4">
+                    <AssistantMetric label="Lessons" value={String(learningOverviewQuery.data.coverage.lessons)} />
+                    <AssistantMetric label="Patterns" value={String(learningOverviewQuery.data.coverage.patterns)} />
+                    <AssistantMetric label="Route shifts" value={String(learningOverviewQuery.data.coverage.recentDecisionDiffs)} />
+                    <AssistantMetric label="Blocked routes" value={String(learningOverviewQuery.data.coverage.blockedRoutes)} />
+                  </div>
+                  {learningOverviewQuery.data.recentDecisionDiffs[0] ? (
+                    <div className="agent-subcard p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="font-medium text-white">Latest route decision diff</p>
+                          <p className="text-xs text-white/50">
+                            {learningOverviewQuery.data.recentDecisionDiffs[0].reasonCode ?? "configured"} · {formatTimestamp(learningOverviewQuery.data.recentDecisionDiffs[0].createdAt)}
+                          </p>
+                        </div>
+                        <StatusPill tone={learningOverviewQuery.data.recentDecisionDiffs[0].learningAdjusted ? "success" : "warning"}>
+                          {learningOverviewQuery.data.recentDecisionDiffs[0].learningAdjusted ? "selection changed" : "signals only"}
+                        </StatusPill>
+                      </div>
+                      <p className="mt-3 text-sm text-white/70">
+                        Before: {learningOverviewQuery.data.recentDecisionDiffs[0].selectedBeforeLearning
+                          ? `${learningOverviewQuery.data.recentDecisionDiffs[0].selectedBeforeLearning.providerId} / ${learningOverviewQuery.data.recentDecisionDiffs[0].selectedBeforeLearning.model}`
+                          : "n/a"}
+                      </p>
+                      <p className="mt-1 text-sm text-white/70">
+                        After: {learningOverviewQuery.data.recentDecisionDiffs[0].selectedAfterLearning
+                          ? `${learningOverviewQuery.data.recentDecisionDiffs[0].selectedAfterLearning.providerId} / ${learningOverviewQuery.data.recentDecisionDiffs[0].selectedAfterLearning.model}`
+                          : "n/a"}
+                      </p>
+                      <p className="mt-3 text-xs text-white/50">
+                        Matched lessons {learningOverviewQuery.data.recentDecisionDiffs[0].matchedLessonIds.length} · matched patterns {learningOverviewQuery.data.recentDecisionDiffs[0].matchedPatternIds.length}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-white/60">No recent route shifts yet.</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-white/60">Learning overview is loading...</p>
+              )}
+            </ShellCard>
+
             <OutcomeReceiptCard
               receipt={latestOutcomeReceipt}
               savePending={saveAutomationMutation.isPending}
@@ -1679,6 +1731,15 @@ function GoalIntakeCard(props: {
         ) : null}
       </div>
     </ShellCard>
+  );
+}
+
+function AssistantMetric(props: { label: string; value: string }) {
+  return (
+    <div className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">{props.label}</p>
+      <p className="mt-3 text-lg font-semibold text-white">{props.value}</p>
+    </div>
   );
 }
 

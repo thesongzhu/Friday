@@ -25,6 +25,7 @@ import {
 import { toast } from "sonner";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
+import { learningApi } from "@/lib/api/learning";
 import { systemApi } from "@/lib/api/system";
 import {
   buildObservabilityActionQueue,
@@ -288,6 +289,12 @@ export function ObservabilityPage() {
     refetchInterval: 10_000,
   });
 
+  const learningOverviewQuery = useQuery({
+    queryKey: ["observability", "learning-overview"],
+    queryFn: () => learningApi.getOverview(12),
+    refetchInterval: 20_000,
+  });
+
   const acknowledgeAlertMutation = useMutation({
     mutationFn: (input: { alertId: string; note?: string }) =>
       systemApi.acknowledgeObservabilityAlert(input.alertId, input.note),
@@ -420,6 +427,7 @@ export function ObservabilityPage() {
   const retryCostSummary = retryCostSummaryQuery.data;
   const rulesAuditLog = rulesAuditLogQuery.data ?? [];
   const assistantDiagnostics = assistantDiagnosticsQuery.data;
+  const learningOverview = learningOverviewQuery.data;
   const latestAssistantRun = assistantDiagnostics?.recentRuns[0] ?? null;
   const assistantMcpStateCounts = (assistantDiagnostics?.mcpServerStates ?? []).reduce(
     (summary, state) => {
@@ -716,6 +724,49 @@ export function ObservabilityPage() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <ShellCard eyebrow="Learning explainability" title="Lessons, route shifts, and blocked candidates">
+          {learningOverview ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <ObservabilityTile
+                  icon={<CheckCircle2 className="h-4 w-4" />}
+                  label="Lessons"
+                  value={String(learningOverview.coverage.lessons)}
+                  detail={`${learningOverview.coverage.routeAdjustments} route adjustments available to operator controls`}
+                />
+                <ObservabilityTile
+                  icon={<RotateCcw className="h-4 w-4" />}
+                  label="Recent route shifts"
+                  value={String(learningOverview.coverage.recentDecisionDiffs)}
+                  detail={`${learningOverview.coverage.blockedRoutes} blocked routes observed in recent decision traces`}
+                />
+              </div>
+              {learningOverview.recentDecisionDiffs.slice(0, 2).map((record) => (
+                <div key={record.runId} className="agent-subcard p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-white">{record.reasonCode ?? "configured"}</p>
+                      <p className="text-xs text-white/50">{formatTimestamp(record.createdAt)}</p>
+                    </div>
+                    <StatusPill tone={record.learningAdjusted ? "success" : "warning"}>
+                      {record.learningAdjusted ? "selection changed" : "signals present"}
+                    </StatusPill>
+                  </div>
+                  <p className="mt-3 text-sm text-white/70">
+                    {record.selectedBeforeLearning
+                      ? `${record.selectedBeforeLearning.providerId} / ${record.selectedBeforeLearning.model}`
+                      : "n/a"} → {record.selectedAfterLearning
+                      ? `${record.selectedAfterLearning.providerId} / ${record.selectedAfterLearning.model}`
+                      : "n/a"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-white/60">Learning overview is loading...</p>
+          )}
+        </ShellCard>
+
         {focus === "overview" || focus === "assistant" ? (
           <ShellCard eyebrow="Assistant diagnostics" title="Context governance, MCP loading, and task profiles">
             {assistantDiagnostics ? (
