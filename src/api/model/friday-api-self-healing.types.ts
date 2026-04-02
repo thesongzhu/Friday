@@ -21,6 +21,7 @@ import type {
   FridayRollbackHotspotRecord,
   FridayRouteDecisionDiffRecord,
 } from "#learning";
+import type { FridayProviderRoutingExplainReport } from "#providers";
 
 export interface FridayDiagnosisSummary {
   incidentId: string;
@@ -168,30 +169,7 @@ export interface FridayPinRouteRequest {
   reason?: string;
 }
 
-export interface FridayProviderRoutingExplainCandidate {
-  providerId: string;
-  providerKind: string;
-  model: string;
-  backendKind: "http" | "cli" | "sdk";
-  originalRank: number;
-  finalRank: number;
-  pinned: boolean;
-  routePenalty?: number;
-  historicalSuccessRate?: number;
-  historicalFailureRate?: number;
-  sampleCount?: number;
-}
-
-export interface FridayProviderRoutingExplainResponse {
-  requestedProviderId?: string;
-  requestedModel?: string;
-  taskProfileId?: string;
-  requiresNativeTools: boolean;
-  selected?: FridayProviderRoutingExplainCandidate;
-  candidates: FridayProviderRoutingExplainCandidate[];
-  learningAdjusted: boolean;
-  reason: string;
-}
+export type FridayProviderRoutingExplainResponse = FridayProviderRoutingExplainReport;
 
 export interface FridayRouteAdjustmentRecord extends FridayLearningRouteAdjustmentRecord {}
 export interface FridayRouteBiasRecord extends FridayLearningRouteBiasRecord {}

@@ -1157,6 +1157,9 @@ export function AssistantPage() {
                           ? `${learningOverviewQuery.data.recentDecisionDiffs[0].selectedAfterLearning.providerId} / ${learningOverviewQuery.data.recentDecisionDiffs[0].selectedAfterLearning.model}`
                           : "n/a"}
                       </p>
+                      {learningOverviewQuery.data.recentDecisionDiffs[0].reasonText ? (
+                        <p className="mt-2 text-xs text-white/50">{learningOverviewQuery.data.recentDecisionDiffs[0].reasonText}</p>
+                      ) : null}
                       <p className="mt-3 text-xs text-white/50">
                         Matched lessons {learningOverviewQuery.data.recentDecisionDiffs[0].matchedLessonIds.length} · matched patterns {learningOverviewQuery.data.recentDecisionDiffs[0].matchedPatternIds.length}
                       </p>

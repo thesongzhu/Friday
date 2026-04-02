@@ -966,6 +966,7 @@ describe("FridayProviderService", () => {
       });
 
       expect(explain.selected.providerId).toBe("test-id-0002");
+      expect(explain.reasonCode).toBe("requested_model");
       expect(explain.candidates.some((candidate) => candidate.backendKind === "cli")).toBe(true);
       expect(
         explain.candidates.find((candidate) => candidate.backendKind === "cli"),
@@ -1027,6 +1028,7 @@ describe("FridayProviderService", () => {
       expect(explain.selected.providerId).toBe(pinned.id);
       expect(explain.learningAdjusted).toBe(true);
       expect(explain.reason).toContain("Operator pinned");
+      expect(explain.reasonText).toContain("Operator pinned");
       expect(explain.candidates[0]).toMatchObject({
         providerId: pinned.id,
         pinned: true,
@@ -1468,6 +1470,23 @@ describe("FridayProviderService", () => {
         expect(route.provider.id).toBe("test-id-0002");
         expect(routingDecision.learningAdjusted).toBe(true);
         expect(routingDecision.reason).toContain("Historical route outcomes influenced candidate scoring.");
+
+        const explain = await service.explainRouting({
+          routingContext: {
+            estimatedInputTokens: 1800,
+            complexity: "medium",
+            taskProfileId: "review",
+          },
+        });
+
+        expect(explain.reasonText).toContain("Historical route outcomes influenced candidate scoring.");
+        expect(
+          explain.candidateScores.find((candidate) => candidate.providerId === "test-id-0002")?.historyStats,
+        ).toMatchObject({
+          sampleCount: 2,
+          successRate: 1,
+          failureRate: 0,
+        });
       } finally {
         delete process.env.OPENAI_KEY;
         delete process.env.ANTHROPIC_KEY;
