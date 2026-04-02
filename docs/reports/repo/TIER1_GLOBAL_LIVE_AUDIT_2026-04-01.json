@@ -1,0 +1,104 @@
+{
+  "generatedAt": "2026-04-01T22:17:44.724Z",
+  "scope": "tier1-global",
+  "sourceMatrixPath": "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json",
+  "sourceReportPath": "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_2026-04-01.md",
+  "results": [
+    {
+      "target": "openai-http",
+      "status": "passed",
+      "summary": "Friday-routed OpenAI HTTP live path passed.",
+      "evidence": [
+        "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
+      ]
+    },
+    {
+      "target": "codex-cli",
+      "status": "passed",
+      "summary": "Codex CLI external-session backend passed a Friday-routed text completion.",
+      "evidence": [
+        "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
+      ]
+    },
+    {
+      "target": "claude-cli",
+      "status": "passed",
+      "summary": "Claude CLI external-session backend passed a Friday-routed text completion.",
+      "evidence": [
+        "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
+      ]
+    },
+    {
+      "target": "anthropic-http",
+      "status": "blocked",
+      "reason": "Anthropic live credentials are not configured in this environment."
+    },
+    {
+      "target": "google-gemini",
+      "status": "blocked",
+      "reason": "Neither Gemini CLI nor Google live credentials are available in this environment."
+    },
+    {
+      "target": "openrouter",
+      "status": "blocked",
+      "reason": "OPENROUTER_API_KEY is not configured in this environment."
+    },
+    {
+      "target": "xai",
+      "status": "blocked",
+      "reason": "XAI_API_KEY is not configured in this environment."
+    },
+    {
+      "target": "mistral",
+      "status": "blocked",
+      "reason": "MISTRAL_API_KEY is not configured in this environment."
+    },
+    {
+      "target": "groq",
+      "status": "blocked",
+      "reason": "GROQ_API_KEY is not configured in this environment."
+    },
+    {
+      "target": "together",
+      "status": "blocked",
+      "reason": "TOGETHER_API_KEY is not configured in this environment."
+    }
+  ],
+  "blockers": [
+    {
+      "target": "anthropic-http",
+      "status": "blocked",
+      "reason": "Anthropic live credentials are not configured in this environment."
+    },
+    {
+      "target": "google-gemini",
+      "status": "blocked",
+      "reason": "Neither Gemini CLI nor Google live credentials are available in this environment."
+    },
+    {
+      "target": "openrouter",
+      "status": "blocked",
+      "reason": "OPENROUTER_API_KEY is not configured in this environment."
+    },
+    {
+      "target": "xai",
+      "status": "blocked",
+      "reason": "XAI_API_KEY is not configured in this environment."
+    },
+    {
+      "target": "mistral",
+      "status": "blocked",
+      "reason": "MISTRAL_API_KEY is not configured in this environment."
+    },
+    {
+      "target": "groq",
+      "status": "blocked",
+      "reason": "GROQ_API_KEY is not configured in this environment."
+    },
+    {
+      "target": "together",
+      "status": "blocked",
+      "reason": "TOGETHER_API_KEY is not configured in this environment."
+    }
+  ]
+}
