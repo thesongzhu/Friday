@@ -185,6 +185,7 @@ export interface FridayRouteDecisionDiffRecord {
   actualProviderId?: string;
   actualModel?: string;
   reasonCode?: string;
+  reasonText?: string;
   learningAdjusted: boolean;
   learningSignalsPresent: boolean;
   selectedBeforeLearning?: {
@@ -807,6 +808,7 @@ export function createFridaySelfHealingApiService(
             ? { actualModel: actualExecution.actualModel }
             : {}),
           ...(typeof routeDecisionTrace.reasonCode === "string" ? { reasonCode: routeDecisionTrace.reasonCode } : {}),
+          ...(typeof routeDecisionTrace.reasonText === "string" ? { reasonText: routeDecisionTrace.reasonText } : {}),
           learningAdjusted: routeDecisionTrace.learningAdjusted === true,
           learningSignalsPresent: routeDecisionTrace.learningSignalsPresent === true,
           ...(selectedBeforeLearning ? { selectedBeforeLearning } : {}),
