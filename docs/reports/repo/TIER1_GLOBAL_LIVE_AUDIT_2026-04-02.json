@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-02T01:26:31.545Z",
+  "generatedAt": "2026-04-02T03:30:31.707Z",
   "scope": "tier1-global",
   "sourceMatrixPath": "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json",
   "sourceReportPath": "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_2026-04-01.md",
@@ -75,6 +75,10 @@
       "target": "anthropic-http",
       "status": "blocked",
       "reason": "Anthropic live credentials are not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "anthropic",
       "runner": "global",
       "backendKind": "http",
@@ -83,7 +87,11 @@
         "oauth",
         "token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "ANTHROPIC_API_KEY",
+        "FRIDAY_E2E_LIVE_ANTHROPIC"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -97,6 +105,11 @@
       "target": "google-gemini",
       "status": "blocked",
       "reason": "Neither Gemini CLI nor Google live credentials are available in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "google",
       "runner": "global",
       "backendKind": "http",
@@ -104,7 +117,11 @@
         "api-key",
         "external-session"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "GOOGLE_API_KEY"
+      ],
+      "requiredBinary": "gemini",
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -118,6 +135,10 @@
       "target": "openrouter",
       "status": "blocked",
       "reason": "OPENROUTER_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "openrouter",
       "runner": "global",
       "backendKind": "http",
@@ -125,7 +146,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "OPENROUTER_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -139,6 +163,10 @@
       "target": "xai",
       "status": "blocked",
       "reason": "XAI_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "xai",
       "runner": "global",
       "backendKind": "http",
@@ -146,7 +174,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "XAI_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -160,6 +191,10 @@
       "target": "mistral",
       "status": "blocked",
       "reason": "MISTRAL_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "mistral",
       "runner": "global",
       "backendKind": "http",
@@ -167,7 +202,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "MISTRAL_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -181,6 +219,10 @@
       "target": "groq",
       "status": "blocked",
       "reason": "GROQ_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "groq",
       "runner": "global",
       "backendKind": "http",
@@ -188,7 +230,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "GROQ_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -202,6 +247,10 @@
       "target": "together",
       "status": "blocked",
       "reason": "TOGETHER_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "together",
       "runner": "global",
       "backendKind": "http",
@@ -209,7 +258,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "TOGETHER_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -225,6 +277,10 @@
       "target": "anthropic-http",
       "status": "blocked",
       "reason": "Anthropic live credentials are not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "anthropic",
       "runner": "global",
       "backendKind": "http",
@@ -233,7 +289,11 @@
         "oauth",
         "token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "ANTHROPIC_API_KEY",
+        "FRIDAY_E2E_LIVE_ANTHROPIC"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -247,6 +307,11 @@
       "target": "google-gemini",
       "status": "blocked",
       "reason": "Neither Gemini CLI nor Google live credentials are available in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "google",
       "runner": "global",
       "backendKind": "http",
@@ -254,7 +319,11 @@
         "api-key",
         "external-session"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "GOOGLE_API_KEY"
+      ],
+      "requiredBinary": "gemini",
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -268,6 +337,10 @@
       "target": "openrouter",
       "status": "blocked",
       "reason": "OPENROUTER_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "openrouter",
       "runner": "global",
       "backendKind": "http",
@@ -275,7 +348,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "OPENROUTER_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -289,6 +365,10 @@
       "target": "xai",
       "status": "blocked",
       "reason": "XAI_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "xai",
       "runner": "global",
       "backendKind": "http",
@@ -296,7 +376,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "XAI_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -310,6 +393,10 @@
       "target": "mistral",
       "status": "blocked",
       "reason": "MISTRAL_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "mistral",
       "runner": "global",
       "backendKind": "http",
@@ -317,7 +404,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "MISTRAL_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -331,6 +421,10 @@
       "target": "groq",
       "status": "blocked",
       "reason": "GROQ_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "groq",
       "runner": "global",
       "backendKind": "http",
@@ -338,7 +432,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "GROQ_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -352,6 +449,10 @@
       "target": "together",
       "status": "blocked",
       "reason": "TOGETHER_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "together",
       "runner": "global",
       "backendKind": "http",
@@ -359,7 +460,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "TOGETHER_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,

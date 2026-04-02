@@ -1,6 +1,6 @@
 # Tier1 China Live Audit
 
-- Generated at: 2026-04-02T01:26:34.378Z
+- Generated at: 2026-04-02T03:30:31.696Z
 - Source matrix: /Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json
 - Source report: /Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_2026-04-01.md
 
@@ -11,13 +11,13 @@ No China-tier provider family could be fully live-verified on this machine on Ap
 ## Results
 
 - qwen: blocked — QWEN_API_KEY is not configured in this environment.
-  - blockerType: missing_runner
+  - blockerTypes: missing_runner, missing_credentials
 - moonshot-kimi: blocked — MOONSHOT_API_KEY is not configured in this environment.
-  - blockerType: missing_runner
+  - blockerTypes: missing_runner, missing_credentials
 - glm: blocked — ZHIPU_API_KEY is not configured in this environment.
-  - blockerType: missing_runner
+  - blockerTypes: missing_runner, missing_credentials
 - volcengine-byteplus: blocked — VOLCENGINE_API_KEY is not configured in this environment.
-  - blockerType: missing_runner
+  - blockerTypes: missing_runner, missing_credentials
 
 ## Blockers
 

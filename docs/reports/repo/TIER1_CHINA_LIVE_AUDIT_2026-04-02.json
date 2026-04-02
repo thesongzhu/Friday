@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-02T01:26:34.378Z",
+  "generatedAt": "2026-04-02T03:30:31.696Z",
   "scope": "tier1-china",
   "sourceMatrixPath": "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json",
   "sourceReportPath": "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_2026-04-01.md",
@@ -8,6 +8,11 @@
       "target": "qwen",
       "status": "blocked",
       "reason": "QWEN_API_KEY is not configured in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "qwen",
       "runner": "china",
       "backendKind": "http",
@@ -16,7 +21,10 @@
         "bearer-token",
         "token"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "QWEN_API_KEY"
+      ],
+      "requiredRunner": "china-egress-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -30,6 +38,11 @@
       "target": "moonshot-kimi",
       "status": "blocked",
       "reason": "MOONSHOT_API_KEY is not configured in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "moonshot-kimi",
       "runner": "china",
       "backendKind": "http",
@@ -38,7 +51,10 @@
         "bearer-token",
         "token"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "MOONSHOT_API_KEY"
+      ],
+      "requiredRunner": "china-egress-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -52,6 +68,11 @@
       "target": "glm",
       "status": "blocked",
       "reason": "ZHIPU_API_KEY is not configured in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "glm",
       "runner": "china",
       "backendKind": "http",
@@ -60,7 +81,10 @@
         "bearer-token",
         "token"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "ZHIPU_API_KEY"
+      ],
+      "requiredRunner": "china-egress-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -74,6 +98,11 @@
       "target": "volcengine-byteplus",
       "status": "blocked",
       "reason": "VOLCENGINE_API_KEY is not configured in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "volcengine-byteplus",
       "runner": "china",
       "backendKind": "http",
@@ -82,7 +111,10 @@
         "bearer-token",
         "token"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "VOLCENGINE_API_KEY"
+      ],
+      "requiredRunner": "china-egress-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -98,6 +130,11 @@
       "target": "qwen",
       "status": "blocked",
       "reason": "QWEN_API_KEY is not configured in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "qwen",
       "runner": "china",
       "backendKind": "http",
@@ -106,7 +143,10 @@
         "bearer-token",
         "token"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "QWEN_API_KEY"
+      ],
+      "requiredRunner": "china-egress-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -120,6 +160,11 @@
       "target": "moonshot-kimi",
       "status": "blocked",
       "reason": "MOONSHOT_API_KEY is not configured in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "moonshot-kimi",
       "runner": "china",
       "backendKind": "http",
@@ -128,7 +173,10 @@
         "bearer-token",
         "token"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "MOONSHOT_API_KEY"
+      ],
+      "requiredRunner": "china-egress-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -142,6 +190,11 @@
       "target": "glm",
       "status": "blocked",
       "reason": "ZHIPU_API_KEY is not configured in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "glm",
       "runner": "china",
       "backendKind": "http",
@@ -150,7 +203,10 @@
         "bearer-token",
         "token"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "ZHIPU_API_KEY"
+      ],
+      "requiredRunner": "china-egress-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -164,6 +220,11 @@
       "target": "volcengine-byteplus",
       "status": "blocked",
       "reason": "VOLCENGINE_API_KEY is not configured in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "volcengine-byteplus",
       "runner": "china",
       "backendKind": "http",
@@ -172,7 +233,10 @@
         "bearer-token",
         "token"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "VOLCENGINE_API_KEY"
+      ],
+      "requiredRunner": "china-egress-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,

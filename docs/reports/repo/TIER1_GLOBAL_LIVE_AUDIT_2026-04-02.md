@@ -1,6 +1,6 @@
 # Tier1 Global Live Audit
 
-- Generated at: 2026-04-02T01:26:31.545Z
+- Generated at: 2026-04-02T03:30:31.707Z
 - Source matrix: /Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json
 - Source report: /Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_2026-04-01.md
 
@@ -14,19 +14,19 @@ Passed 3 of 10 global tier1 targets on April 1, 2026. Missing or unrun families 
 - codex-cli: passed — Codex CLI external-session backend passed a Friday-routed text completion.
 - claude-cli: passed — Claude CLI external-session backend passed a Friday-routed text completion.
 - anthropic-http: blocked — Anthropic live credentials are not configured in this environment.
-  - blockerType: missing_credentials
+  - blockerTypes: missing_credentials
 - google-gemini: blocked — Neither Gemini CLI nor Google live credentials are available in this environment.
-  - blockerType: missing_runner
+  - blockerTypes: missing_runner, missing_credentials
 - openrouter: blocked — OPENROUTER_API_KEY is not configured in this environment.
-  - blockerType: missing_credentials
+  - blockerTypes: missing_credentials
 - xai: blocked — XAI_API_KEY is not configured in this environment.
-  - blockerType: missing_credentials
+  - blockerTypes: missing_credentials
 - mistral: blocked — MISTRAL_API_KEY is not configured in this environment.
-  - blockerType: missing_credentials
+  - blockerTypes: missing_credentials
 - groq: blocked — GROQ_API_KEY is not configured in this environment.
-  - blockerType: missing_credentials
+  - blockerTypes: missing_credentials
 - together: blocked — TOGETHER_API_KEY is not configured in this environment.
-  - blockerType: missing_credentials
+  - blockerTypes: missing_credentials
 
 ## Blockers
 
