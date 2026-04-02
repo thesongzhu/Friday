@@ -227,6 +227,7 @@ describe("FridayProviderRoutes", () => {
         selectedAdjusted: false,
         reasonCode: "configured" as const,
         reason: "default route",
+        reasonText: "default route",
         historyWindow: { sampleLimit: 250 },
       })),
       pinRoute: vi.fn(async () => undefined),
