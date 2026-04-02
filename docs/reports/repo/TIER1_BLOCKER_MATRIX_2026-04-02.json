@@ -1,0 +1,310 @@
+{
+  "generatedAt": "2026-04-02T01:26:58.241Z",
+  "totals": {
+    "blocked": 14
+  },
+  "blockers": [
+    {
+      "target": "anthropic-http",
+      "status": "blocked",
+      "reason": "Anthropic live credentials are not configured in this environment.",
+      "family": "anthropic",
+      "runner": "global",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "oauth",
+        "token"
+      ],
+      "blockerType": "missing_credentials",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "google-gemini",
+      "status": "blocked",
+      "reason": "Neither Gemini CLI nor Google live credentials are available in this environment.",
+      "family": "google",
+      "runner": "global",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "external-session"
+      ],
+      "blockerType": "missing_runner",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "openrouter",
+      "status": "blocked",
+      "reason": "OPENROUTER_API_KEY is not configured in this environment.",
+      "family": "openrouter",
+      "runner": "global",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token"
+      ],
+      "blockerType": "missing_credentials",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "xai",
+      "status": "blocked",
+      "reason": "XAI_API_KEY is not configured in this environment.",
+      "family": "xai",
+      "runner": "global",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token"
+      ],
+      "blockerType": "missing_credentials",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "mistral",
+      "status": "blocked",
+      "reason": "MISTRAL_API_KEY is not configured in this environment.",
+      "family": "mistral",
+      "runner": "global",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token"
+      ],
+      "blockerType": "missing_credentials",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "groq",
+      "status": "blocked",
+      "reason": "GROQ_API_KEY is not configured in this environment.",
+      "family": "groq",
+      "runner": "global",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token"
+      ],
+      "blockerType": "missing_credentials",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "together",
+      "status": "blocked",
+      "reason": "TOGETHER_API_KEY is not configured in this environment.",
+      "family": "together",
+      "runner": "global",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token"
+      ],
+      "blockerType": "missing_credentials",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "qwen",
+      "status": "blocked",
+      "reason": "QWEN_API_KEY is not configured in this environment.",
+      "family": "qwen",
+      "runner": "china",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token",
+        "token"
+      ],
+      "blockerType": "missing_runner",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "moonshot-kimi",
+      "status": "blocked",
+      "reason": "MOONSHOT_API_KEY is not configured in this environment.",
+      "family": "moonshot-kimi",
+      "runner": "china",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token",
+        "token"
+      ],
+      "blockerType": "missing_runner",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "glm",
+      "status": "blocked",
+      "reason": "ZHIPU_API_KEY is not configured in this environment.",
+      "family": "glm",
+      "runner": "china",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token",
+        "token"
+      ],
+      "blockerType": "missing_runner",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "volcengine-byteplus",
+      "status": "blocked",
+      "reason": "VOLCENGINE_API_KEY is not configured in this environment.",
+      "family": "volcengine-byteplus",
+      "runner": "china",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token",
+        "token"
+      ],
+      "blockerType": "missing_runner",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "vllm",
+      "status": "blocked",
+      "reason": "VLLM endpoint is not configured in this environment.",
+      "family": "vllm",
+      "runner": "local",
+      "backendKind": "http",
+      "authModes": [
+        "none",
+        "api-key",
+        "bearer-token"
+      ],
+      "blockerType": "missing_credentials",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "litellm",
+      "status": "blocked",
+      "reason": "LiteLLM endpoint is not configured in this environment.",
+      "family": "litellm",
+      "runner": "local",
+      "backendKind": "http",
+      "authModes": [
+        "none",
+        "api-key",
+        "bearer-token"
+      ],
+      "blockerType": "missing_credentials",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "openai-compatible",
+      "status": "blocked",
+      "reason": "OpenAI-compatible endpoint is not configured in this environment.",
+      "family": "openai-compatible",
+      "runner": "local",
+      "backendKind": "http",
+      "authModes": [
+        "none",
+        "api-key",
+        "bearer-token"
+      ],
+      "blockerType": "missing_credentials",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    }
+  ]
+}

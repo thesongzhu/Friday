@@ -7,8 +7,10 @@ import {
   REPORT_DIR,
   SOURCE_MATRIX_PATH,
   SOURCE_REPORT_PATH,
+  blockerTypeFromEnvironment,
   buildMarkdownReport,
   blockStatus,
+  contractStatus,
   hasEnv,
   loadSourceMatrix,
   writeJson,
@@ -29,8 +31,22 @@ const families = [
 
 const results = families.map(([target, envName]) =>
   hasEnv(envName)
-    ? blockStatus(target, `${envName} is present, but this machine is not running the dedicated China egress live harness yet.`)
-    : blockStatus(target, `${envName} is not configured in this environment.`),
+    ? blockStatus(target, `${envName} is present, but this machine is not running the dedicated China egress live harness yet.`, {
+        family: target,
+        runner: "china",
+        backendKind: "http",
+        authModes: ["api-key", "bearer-token", "token"],
+        blockerType: "missing_runner",
+        contract: contractStatus({}),
+      })
+    : blockStatus(target, `${envName} is not configured in this environment.`, {
+        family: target,
+        runner: "china",
+        backendKind: "http",
+        authModes: ["api-key", "bearer-token", "token"],
+        blockerType: blockerTypeFromEnvironment({ credentialEnv: [envName], runner: false }),
+        contract: contractStatus({}),
+      }),
 );
 
 const blockers = results;
