@@ -7,7 +7,6 @@ import {
   REPORT_DIR,
   SOURCE_MATRIX_PATH,
   SOURCE_REPORT_PATH,
-  blockerTypeFromEnvironment,
   buildMarkdownReport,
   blockStatus,
   contractStatus,
@@ -48,7 +47,8 @@ if (matrix.live?.ollamaLocal?.run?.status === "completed") {
       runner: "local",
       backendKind: "http",
       authModes: ["none", "api-key", "bearer-token"],
-      blockerType: "not_yet_executed",
+      blockerTypes: ["not_yet_executed"],
+      requiredRunner: "local-runner",
       contract: contractStatus({}),
     }),
   );
@@ -61,7 +61,9 @@ results.push(
         runner: "local",
         backendKind: "http",
         authModes: ["none", "api-key", "bearer-token"],
-        blockerType: "not_yet_executed",
+        blockerTypes: ["not_yet_executed"],
+        requiredEnv: ["VLLM_BASE_URL"],
+        requiredRunner: "local-runner",
         contract: contractStatus({}),
       })
     : blockStatus("vllm", "VLLM endpoint is not configured in this environment.", {
@@ -69,7 +71,9 @@ results.push(
         runner: "local",
         backendKind: "http",
         authModes: ["none", "api-key", "bearer-token"],
-        blockerType: "missing_credentials",
+        blockerTypes: ["missing_endpoint"],
+        requiredEnv: ["VLLM_BASE_URL"],
+        requiredRunner: "local-runner",
         contract: contractStatus({}),
       }),
 );
@@ -81,7 +85,9 @@ results.push(
         runner: "local",
         backendKind: "http",
         authModes: ["none", "api-key", "bearer-token"],
-        blockerType: "not_yet_executed",
+        blockerTypes: ["not_yet_executed"],
+        requiredEnv: ["LITELLM_BASE_URL"],
+        requiredRunner: "local-runner",
         contract: contractStatus({}),
       })
     : blockStatus("litellm", "LiteLLM endpoint is not configured in this environment.", {
@@ -89,7 +95,9 @@ results.push(
         runner: "local",
         backendKind: "http",
         authModes: ["none", "api-key", "bearer-token"],
-        blockerType: "missing_credentials",
+        blockerTypes: ["missing_endpoint"],
+        requiredEnv: ["LITELLM_BASE_URL"],
+        requiredRunner: "local-runner",
         contract: contractStatus({}),
       }),
 );
@@ -101,7 +109,9 @@ results.push(
         runner: "local",
         backendKind: "http",
         authModes: ["none", "api-key", "bearer-token"],
-        blockerType: "not_yet_executed",
+        blockerTypes: ["not_yet_executed"],
+        requiredEnv: ["OPENAI_COMPATIBLE_BASE_URL"],
+        requiredRunner: "local-runner",
         contract: contractStatus({}),
       })
     : blockStatus("openai-compatible", "OpenAI-compatible endpoint is not configured in this environment.", {
@@ -109,7 +119,9 @@ results.push(
         runner: "local",
         backendKind: "http",
         authModes: ["none", "api-key", "bearer-token"],
-        blockerType: "missing_credentials",
+        blockerTypes: ["missing_endpoint"],
+        requiredEnv: ["OPENAI_COMPATIBLE_BASE_URL"],
+        requiredRunner: "local-runner",
         contract: contractStatus({}),
       }),
 );

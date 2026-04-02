@@ -185,27 +185,30 @@ async function findFreePort() {
   });
 }
 
-function createLedger(paths) {
+export function createLedger(paths) {
   return {
     runId: paths.runId,
     startedAt: nowIso(),
     completedAt: null,
+    lastUpdatedAt: nowIso(),
     cwd: REPO_ROOT,
     mode: CLOSURE_MODE,
     commitSha: spawnSyncOutput("git", ["rev-parse", "HEAD"]).trim(),
     paths,
     entries: [],
+    activeStep: null,
     summary: { pass: 0, fail: 0, blocker: 0 },
     verdict: "NO-GO",
     readiness: null,
   };
 }
 
-function persistLedger(ledger) {
+export function persistLedger(ledger) {
   const resolved = resolveClosureVerdict(ledger.entries);
   ledger.summary = resolved.summary;
   ledger.verdict = resolved.verdict;
   ledger.readiness = resolveReadinessReport(ledger.entries, ledger.mode);
+  ledger.lastUpdatedAt = nowIso();
   writeJson(path.join(ledger.paths.root, "ledger.json"), ledger);
 }
 
@@ -417,15 +420,22 @@ function buildEntrySkeleton(id, stage, description) {
     startedAt: nowIso(),
     completedAt: null,
     durationMs: 0,
-    status: FRIDAY_CLOSURE_STATUSES.FAIL,
+    status: FRIDAY_CLOSURE_STATUSES.RUNNING,
     evidence: {},
     details: {},
   };
 }
 
-async function runStep(ledger, { id, stage, description }, fn) {
+export async function runStep(ledger, { id, stage, description }, fn) {
   const entry = buildEntrySkeleton(id, stage, description);
   const startedAtMs = Date.now();
+  ledger.activeStep = {
+    id,
+    stage,
+    description,
+    startedAt: entry.startedAt,
+  };
+  appendLedgerEntry(ledger, entry);
   try {
     const result = await fn(entry);
     entry.status = result?.status ?? FRIDAY_CLOSURE_STATUSES.PASS;
@@ -440,7 +450,10 @@ async function runStep(ledger, { id, stage, description }, fn) {
   } finally {
     entry.completedAt = nowIso();
     entry.durationMs = Date.now() - startedAtMs;
-    appendLedgerEntry(ledger, entry);
+    if (ledger.activeStep?.id === id) {
+      ledger.activeStep = null;
+    }
+    persistLedger(ledger);
   }
   return entry;
 }
@@ -2071,8 +2084,13 @@ async function runLocalStage(ledger) {
             },
           },
         );
-        deployAttempts.push(deploy.json);
+        deployAttempts.push({
+          status: deploy.status,
+          json: deploy.json,
+        });
       }
+      const deployProbeStatuses = deployAttempts.map((attempt) => attempt.status);
+      const unexpectedDeployProbeStatuses = deployProbeStatuses.filter((status) => status < 400 || status >= 500);
 
       const workflowIncidents = await apiFetch(baseUrl, token, "GET", "/v1/diagnosis/incidents");
       const workflowItems = workflowIncidents.json?.data?.items ?? workflowIncidents.json?.items ?? [];
@@ -2085,11 +2103,15 @@ async function runLocalStage(ledger) {
           details: {
             reason: "Repeated workflow deploy failures did not materialize enough workflow incidents with action plans to validate deny and approve flows.",
             actionCount: workflowActionItems.length,
+            deployProbeStatuses,
+            deployProbeExpectation: "Expected repeated 4xx template execute responses for a missing sessionId so the self-healing loop could materialize workflow incidents.",
           },
           evidence: {
             responsePath: writeResponseEvidence(ledger.paths, "local-self-healing", {
               policyBefore,
               policyUpdate: policyUpdate.json,
+              deployProbeExpectation: "Expected repeated 4xx template execute responses for a missing sessionId so the self-healing loop could materialize workflow incidents.",
+              deployProbeStatuses,
               deployAttempts,
               workflowIncidents: workflowIncidents.json,
             }),
@@ -2129,11 +2151,15 @@ async function runLocalStage(ledger) {
           status: FRIDAY_CLOSURE_STATUSES.BLOCKER,
           details: {
             reason: "Satellite degraded heartbeat did not materialize a config auto-fix action for execute and rollback validation.",
+            deployProbeStatuses,
+            deployProbeExpectation: "Expected repeated 4xx template execute responses for a missing sessionId so the self-healing loop could materialize workflow incidents.",
           },
           evidence: {
             responsePath: writeResponseEvidence(ledger.paths, "local-self-healing", {
               policyBefore,
               policyUpdate: policyUpdate.json,
+              deployProbeExpectation: "Expected repeated 4xx template execute responses for a missing sessionId so the self-healing loop could materialize workflow incidents.",
+              deployProbeStatuses,
               deployAttempts,
               workflowIncidents: workflowIncidents.json,
               deny: deny.json,
@@ -2161,6 +2187,8 @@ async function runLocalStage(ledger) {
       const responsePath = writeResponseEvidence(ledger.paths, "local-self-healing", {
         policyBefore,
         policyUpdate: policyUpdate.json,
+        deployProbeExpectation: "Expected repeated 4xx template execute responses for a missing sessionId so the self-healing loop could materialize workflow incidents.",
+        deployProbeStatuses,
         deployAttempts,
         workflowIncidents: workflowIncidents.json,
         approvedWorkflowActionDetail: approvedWorkflowActionDetail.json,
@@ -2187,6 +2215,9 @@ async function runLocalStage(ledger) {
       if (approve.status !== 200 || !approve.json.ok) {
         throw new Error(`Auto-fix approve failed: ${JSON.stringify(approve.json)}`);
       }
+      if (unexpectedDeployProbeStatuses.length > 0) {
+        throw new Error(`Workflow incident probes returned unexpected statuses: ${unexpectedDeployProbeStatuses.join(", ")}`);
+      }
       if (execute.status !== 200 || !execute.json.ok) {
         throw new Error(`Auto-fix execute failed: ${JSON.stringify(execute.json)}`);
       }
@@ -2200,6 +2231,8 @@ async function runLocalStage(ledger) {
           approvedActionId: approveActionId,
           executedActionId: configActionId,
           configSatelliteId: configSatellite.satelliteId,
+          deployProbeStatuses,
+          deployProbeExpectation: "Expected repeated 4xx template execute responses for a missing sessionId so the self-healing loop could materialize workflow incidents.",
         },
       };
     });

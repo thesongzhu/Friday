@@ -57,7 +57,7 @@ This document is the current architecture reference for steady-state Friday runt
 
 - Public route families `/v1/diagnosis/*`, `/v1/auto-fix/*`, and `/v1/uix/*` are part of the active steady-state product surface.
 - Self-healing is supervised by default: higher-risk fixes require explicit approval, and rollback/evidence are part of the public contract.
-- Auto-fix execution is active, but only a subset is hub-wired operational side effects today. `disable_skill` is hub-backed; `retry_node`, `switch_model_fallback`, `trim_payload`, `apply_config_patch`, `grant_permission`, and `pause_workflow` currently execute via deterministic directive-level executors/verifiers that produce verification evidence without claiming full runtime-side automation.
+- Auto-fix execution is active. `disable_skill`, `retry_node`, `switch_model_fallback`, `trim_payload`, and `pause_workflow` now execute through hub-wired executors/verifiers that produce runtime-side effects plus verification evidence. `apply_config_patch` and `grant_permission` remain approval-gated deterministic directive-level executors/verifiers and are not yet hub-wired operational side effects.
 - Failures must surface as incidents, diagnoses, actions, or evidence; do not hide self-healing failures behind silent fallback.
 - `/assistant` is the beginner-first web surface for plain-language intent resolution, guided wizards, issue inbox, fix approvals, and direct skill generation.
 - Expert autonomy is an opt-in layer above the supervised defaults. It may infer bounded context, run safe probes, and continue through cross-surface reasoning, but destructive or production-sensitive actions still require final approval.
@@ -166,7 +166,7 @@ This document is the current architecture reference for steady-state Friday runt
 - The self-learning context enrichment service is wired through hub bootstrap (`_learningContextRef`) and becomes available after self-learning runtime creation.
 - Persona settings affect wording, guidance, and clarification style only. They must not weaken approval gates, rollback rules, or destructive-action safeguards.
 - Guided wizard contexts in `/assistant` are persisted in SQLite (`uix_guided_contexts`) and can be resumed after service restart. Onboarding session progress is also persisted in SQLite (`uix_onboarding_sessions`) and restored on boot.
-- Learning feedback is not yet user-visible. Users cannot inspect or edit learned preference facts through any current UI surface.
+- Learned preference facts are now user-visible through `/v1/uix/learned-facts` and the current Home/Settings UI surfaces. Direct editing of learned preference facts is not yet part of the current UI surface.
 
 ## Runtime admin and security surfaces
 
