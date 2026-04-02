@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-02T01:26:37.164Z",
+  "generatedAt": "2026-04-02T03:30:31.706Z",
   "scope": "tier1-local",
   "sourceMatrixPath": "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json",
   "sourceReportPath": "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_2026-04-01.md",
@@ -32,6 +32,10 @@
       "target": "vllm",
       "status": "blocked",
       "reason": "VLLM endpoint is not configured in this environment.",
+      "blockerType": "missing_endpoint",
+      "blockerTypes": [
+        "missing_endpoint"
+      ],
       "family": "vllm",
       "runner": "local",
       "backendKind": "http",
@@ -40,7 +44,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "VLLM_BASE_URL"
+      ],
+      "requiredRunner": "local-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -54,6 +61,10 @@
       "target": "litellm",
       "status": "blocked",
       "reason": "LiteLLM endpoint is not configured in this environment.",
+      "blockerType": "missing_endpoint",
+      "blockerTypes": [
+        "missing_endpoint"
+      ],
       "family": "litellm",
       "runner": "local",
       "backendKind": "http",
@@ -62,7 +73,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "LITELLM_BASE_URL"
+      ],
+      "requiredRunner": "local-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -76,6 +90,10 @@
       "target": "openai-compatible",
       "status": "blocked",
       "reason": "OpenAI-compatible endpoint is not configured in this environment.",
+      "blockerType": "missing_endpoint",
+      "blockerTypes": [
+        "missing_endpoint"
+      ],
       "family": "openai-compatible",
       "runner": "local",
       "backendKind": "http",
@@ -84,7 +102,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "OPENAI_COMPATIBLE_BASE_URL"
+      ],
+      "requiredRunner": "local-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -100,6 +121,10 @@
       "target": "vllm",
       "status": "blocked",
       "reason": "VLLM endpoint is not configured in this environment.",
+      "blockerType": "missing_endpoint",
+      "blockerTypes": [
+        "missing_endpoint"
+      ],
       "family": "vllm",
       "runner": "local",
       "backendKind": "http",
@@ -108,7 +133,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "VLLM_BASE_URL"
+      ],
+      "requiredRunner": "local-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -122,6 +150,10 @@
       "target": "litellm",
       "status": "blocked",
       "reason": "LiteLLM endpoint is not configured in this environment.",
+      "blockerType": "missing_endpoint",
+      "blockerTypes": [
+        "missing_endpoint"
+      ],
       "family": "litellm",
       "runner": "local",
       "backendKind": "http",
@@ -130,7 +162,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "LITELLM_BASE_URL"
+      ],
+      "requiredRunner": "local-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -144,6 +179,10 @@
       "target": "openai-compatible",
       "status": "blocked",
       "reason": "OpenAI-compatible endpoint is not configured in this environment.",
+      "blockerType": "missing_endpoint",
+      "blockerTypes": [
+        "missing_endpoint"
+      ],
       "family": "openai-compatible",
       "runner": "local",
       "backendKind": "http",
@@ -152,7 +191,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "OPENAI_COMPATIBLE_BASE_URL"
+      ],
+      "requiredRunner": "local-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,

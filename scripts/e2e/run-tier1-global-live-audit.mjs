@@ -7,7 +7,7 @@ import {
   REPORT_DIR,
   SOURCE_MATRIX_PATH,
   SOURCE_REPORT_PATH,
-  blockerTypeFromEnvironment,
+  blockerTypesFromEnvironment,
   buildMarkdownReport,
   blockStatus,
   contractStatus,
@@ -50,7 +50,9 @@ if (matrix.live?.openaiHttp?.repeatRun1?.status === "completed") {
       runner: "global",
       backendKind: "http",
       authModes: ["api-key", "bearer-token"],
-      blockerType: blockerTypeFromEnvironment({ credentialEnv: ["OPENAI_API_KEY"] }),
+      blockerTypes: blockerTypesFromEnvironment({ credentialEnv: ["OPENAI_API_KEY"] }),
+      requiredEnv: ["OPENAI_API_KEY"],
+      requiredRunner: "global-runner",
       contract: contractStatus({}),
     }),
   );
@@ -80,7 +82,9 @@ if (matrix.live?.codexCli?.textCompletion?.text?.includes("CODEX_FRIDAY_OK")) {
       runner: "global",
       backendKind: "cli",
       authModes: ["external-session"],
-      blockerType: blockerTypeFromEnvironment({ binary: "codex", productSupport: true }),
+      blockerTypes: blockerTypesFromEnvironment({ binary: "codex", productSupport: true }),
+      requiredBinary: "codex",
+      requiredRunner: "global-runner",
       contract: contractStatus({}),
     }),
   );
@@ -110,7 +114,9 @@ if (matrix.live?.claudeCli?.textCompletion?.text?.includes("CLAUDE_FRIDAY_OK")) 
       runner: "global",
       backendKind: "cli",
       authModes: ["external-session"],
-      blockerType: blockerTypeFromEnvironment({ binary: "claude", productSupport: true }),
+      blockerTypes: blockerTypesFromEnvironment({ binary: "claude", productSupport: true }),
+      requiredBinary: "claude",
+      requiredRunner: "global-runner",
       contract: contractStatus({}),
     }),
   );
@@ -123,7 +129,9 @@ results.push(
         runner: "global",
         backendKind: "http",
         authModes: ["api-key", "oauth", "token"],
-        blockerType: "not_yet_executed",
+        blockerTypes: ["not_yet_executed"],
+        requiredEnv: ["ANTHROPIC_API_KEY", "FRIDAY_E2E_LIVE_ANTHROPIC"],
+        requiredRunner: "global-runner",
         contract: contractStatus({}),
       })
     : blockStatus("anthropic-http", "Anthropic live credentials are not configured in this environment.", {
@@ -131,7 +139,9 @@ results.push(
         runner: "global",
         backendKind: "http",
         authModes: ["api-key", "oauth", "token"],
-        blockerType: "missing_credentials",
+        blockerTypes: ["missing_credentials"],
+        requiredEnv: ["ANTHROPIC_API_KEY", "FRIDAY_E2E_LIVE_ANTHROPIC"],
+        requiredRunner: "global-runner",
         contract: contractStatus({}),
       }),
 );
@@ -143,7 +153,10 @@ results.push(
         runner: "global",
         backendKind: hasBinary("gemini") ? "cli" : "http",
         authModes: hasBinary("gemini") ? ["external-session"] : ["api-key"],
-        blockerType: "not_yet_executed",
+        blockerTypes: ["not_yet_executed"],
+        requiredEnv: ["GOOGLE_API_KEY"],
+        requiredBinary: hasBinary("gemini") ? "gemini" : undefined,
+        requiredRunner: "global-runner",
         contract: contractStatus({}),
       })
     : blockStatus("google-gemini", "Neither Gemini CLI nor Google live credentials are available in this environment.", {
@@ -151,7 +164,10 @@ results.push(
         runner: "global",
         backendKind: "http",
         authModes: ["api-key", "external-session"],
-        blockerType: blockerTypeFromEnvironment({ credentialEnv: ["GOOGLE_API_KEY"], binary: "gemini" }),
+        blockerTypes: blockerTypesFromEnvironment({ credentialEnv: ["GOOGLE_API_KEY"], binary: "gemini" }),
+        requiredEnv: ["GOOGLE_API_KEY"],
+        requiredBinary: "gemini",
+        requiredRunner: "global-runner",
         contract: contractStatus({}),
       }),
 );
@@ -171,7 +187,9 @@ for (const family of [
           runner: "global",
           backendKind: "http",
           authModes: ["api-key", "bearer-token"],
-          blockerType: "not_yet_executed",
+          blockerTypes: ["not_yet_executed"],
+          requiredEnv: [envName],
+          requiredRunner: "global-runner",
           contract: contractStatus({}),
         })
       : blockStatus(target, `${envName} is not configured in this environment.`, {
@@ -179,7 +197,9 @@ for (const family of [
           runner: "global",
           backendKind: "http",
           authModes: ["api-key", "bearer-token"],
-          blockerType: "missing_credentials",
+          blockerTypes: ["missing_credentials"],
+          requiredEnv: [envName],
+          requiredRunner: "global-runner",
           contract: contractStatus({}),
         }),
   );

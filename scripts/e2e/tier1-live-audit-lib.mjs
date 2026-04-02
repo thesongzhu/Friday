@@ -74,10 +74,18 @@ export function readSourceReport() {
 }
 
 export function blockStatus(target, reason, extra = {}) {
+  const blockerTypes = Array.isArray(extra.blockerTypes)
+    ? [...new Set(extra.blockerTypes.filter((value) => typeof value === "string" && value.trim().length > 0))]
+    : [];
+  const blockerType = typeof extra.blockerType === "string" && extra.blockerType.trim().length > 0
+    ? extra.blockerType
+    : blockerTypes[0];
   return {
     target,
     status: "blocked",
     reason,
+    ...(blockerType ? { blockerType } : {}),
+    ...(blockerTypes.length > 0 ? { blockerTypes } : {}),
     ...extra,
   };
 }
@@ -103,20 +111,27 @@ export function contractStatus(input) {
   };
 }
 
-export function blockerTypeFromEnvironment({ credentialEnv = [], binary = null, runner = true, productSupport = true }) {
+export function blockerTypesFromEnvironment({ credentialEnv = [], binary = null, runner = true, productSupport = true }) {
+  const blockerTypes = [];
   if (runner !== true) {
-    return "missing_runner";
+    blockerTypes.push("missing_runner");
   }
   if (productSupport !== true) {
-    return "product_boundary";
+    blockerTypes.push("unsupported_boundary");
   }
   if (binary && !hasBinary(binary)) {
-    return "missing_runner";
+    blockerTypes.push("missing_runner");
   }
   if (credentialEnv.length > 0 && !credentialEnv.some((name) => hasEnv(name))) {
-    return "missing_credentials";
+    blockerTypes.push("missing_credentials");
   }
-  return "not_yet_executed";
+  return blockerTypes.length > 0
+    ? [...new Set(blockerTypes)]
+    : ["not_yet_executed"];
+}
+
+export function blockerTypeFromEnvironment(input) {
+  return blockerTypesFromEnvironment(input)[0];
 }
 
 export function buildMarkdownReport({ title, generatedAt, sourceMatrixPath, sourceReportPath, summary, results, blockers }) {
@@ -138,7 +153,9 @@ export function buildMarkdownReport({ title, generatedAt, sourceMatrixPath, sour
     lines.push(
       `- ${result.target}: ${result.status}${result.summary ? ` — ${result.summary}` : ""}${result.reason ? ` — ${result.reason}` : ""}`,
     );
-    if (result.blockerType) {
+    if (Array.isArray(result.blockerTypes) && result.blockerTypes.length > 0) {
+      lines.push(`  - blockerTypes: ${result.blockerTypes.join(", ")}`);
+    } else if (result.blockerType) {
       lines.push(`  - blockerType: ${result.blockerType}`);
     }
   }
@@ -163,4 +180,21 @@ export function hasBinary(name) {
     encoding: "utf8",
   });
   return result.status === 0;
+}
+
+export function formatBlockedTargetActionItems(result) {
+  const items = [];
+  if (Array.isArray(result.requiredEnv) && result.requiredEnv.length > 0) {
+    items.push(`set ${result.requiredEnv.join(", ")}`);
+  }
+  if (typeof result.requiredBinary === "string" && result.requiredBinary.trim().length > 0) {
+    items.push(`install binary ${result.requiredBinary}`);
+  }
+  if (typeof result.requiredRunner === "string" && result.requiredRunner.trim().length > 0) {
+    items.push(`run on ${result.requiredRunner}`);
+  }
+  if (Array.isArray(result.blockerTypes) && result.blockerTypes.includes("not_yet_executed")) {
+    items.push("execute the dedicated live harness");
+  }
+  return items;
 }
