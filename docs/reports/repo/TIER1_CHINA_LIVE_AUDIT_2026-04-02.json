@@ -1,0 +1,186 @@
+{
+  "generatedAt": "2026-04-02T01:26:34.378Z",
+  "scope": "tier1-china",
+  "sourceMatrixPath": "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json",
+  "sourceReportPath": "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_2026-04-01.md",
+  "results": [
+    {
+      "target": "qwen",
+      "status": "blocked",
+      "reason": "QWEN_API_KEY is not configured in this environment.",
+      "family": "qwen",
+      "runner": "china",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token",
+        "token"
+      ],
+      "blockerType": "missing_runner",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "moonshot-kimi",
+      "status": "blocked",
+      "reason": "MOONSHOT_API_KEY is not configured in this environment.",
+      "family": "moonshot-kimi",
+      "runner": "china",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token",
+        "token"
+      ],
+      "blockerType": "missing_runner",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "glm",
+      "status": "blocked",
+      "reason": "ZHIPU_API_KEY is not configured in this environment.",
+      "family": "glm",
+      "runner": "china",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token",
+        "token"
+      ],
+      "blockerType": "missing_runner",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "volcengine-byteplus",
+      "status": "blocked",
+      "reason": "VOLCENGINE_API_KEY is not configured in this environment.",
+      "family": "volcengine-byteplus",
+      "runner": "china",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token",
+        "token"
+      ],
+      "blockerType": "missing_runner",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    }
+  ],
+  "blockers": [
+    {
+      "target": "qwen",
+      "status": "blocked",
+      "reason": "QWEN_API_KEY is not configured in this environment.",
+      "family": "qwen",
+      "runner": "china",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token",
+        "token"
+      ],
+      "blockerType": "missing_runner",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "moonshot-kimi",
+      "status": "blocked",
+      "reason": "MOONSHOT_API_KEY is not configured in this environment.",
+      "family": "moonshot-kimi",
+      "runner": "china",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token",
+        "token"
+      ],
+      "blockerType": "missing_runner",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "glm",
+      "status": "blocked",
+      "reason": "ZHIPU_API_KEY is not configured in this environment.",
+      "family": "glm",
+      "runner": "china",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token",
+        "token"
+      ],
+      "blockerType": "missing_runner",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    },
+    {
+      "target": "volcengine-byteplus",
+      "status": "blocked",
+      "reason": "VOLCENGINE_API_KEY is not configured in this environment.",
+      "family": "volcengine-byteplus",
+      "runner": "china",
+      "backendKind": "http",
+      "authModes": [
+        "api-key",
+        "bearer-token",
+        "token"
+      ],
+      "blockerType": "missing_runner",
+      "contract": {
+        "providerCreate": false,
+        "providerDoctor": false,
+        "routingExplain": false,
+        "liveRun": false,
+        "failureFallback": false,
+        "actualExecution": false
+      }
+    }
+  ]
+}
