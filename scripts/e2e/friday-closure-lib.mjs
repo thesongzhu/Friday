@@ -1,6 +1,7 @@
 import path from "node:path";
 
 export const FRIDAY_CLOSURE_STATUSES = Object.freeze({
+  RUNNING: "RUNNING",
   PASS: "PASS",
   FAIL: "FAIL",
   BLOCKER: "BLOCKER",

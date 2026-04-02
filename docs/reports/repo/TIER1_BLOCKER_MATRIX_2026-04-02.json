@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-02T01:26:58.241Z",
+  "generatedAt": "2026-04-02T03:30:31.733Z",
   "totals": {
     "blocked": 14
   },
@@ -8,6 +8,10 @@
       "target": "anthropic-http",
       "status": "blocked",
       "reason": "Anthropic live credentials are not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "anthropic",
       "runner": "global",
       "backendKind": "http",
@@ -16,7 +20,11 @@
         "oauth",
         "token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "ANTHROPIC_API_KEY",
+        "FRIDAY_E2E_LIVE_ANTHROPIC"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -30,6 +38,11 @@
       "target": "google-gemini",
       "status": "blocked",
       "reason": "Neither Gemini CLI nor Google live credentials are available in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "google",
       "runner": "global",
       "backendKind": "http",
@@ -37,7 +50,11 @@
         "api-key",
         "external-session"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "GOOGLE_API_KEY"
+      ],
+      "requiredBinary": "gemini",
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -51,6 +68,10 @@
       "target": "openrouter",
       "status": "blocked",
       "reason": "OPENROUTER_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "openrouter",
       "runner": "global",
       "backendKind": "http",
@@ -58,7 +79,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "OPENROUTER_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -72,6 +96,10 @@
       "target": "xai",
       "status": "blocked",
       "reason": "XAI_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "xai",
       "runner": "global",
       "backendKind": "http",
@@ -79,7 +107,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "XAI_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -93,6 +124,10 @@
       "target": "mistral",
       "status": "blocked",
       "reason": "MISTRAL_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "mistral",
       "runner": "global",
       "backendKind": "http",
@@ -100,7 +135,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "MISTRAL_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -114,6 +152,10 @@
       "target": "groq",
       "status": "blocked",
       "reason": "GROQ_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "groq",
       "runner": "global",
       "backendKind": "http",
@@ -121,7 +163,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "GROQ_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -135,6 +180,10 @@
       "target": "together",
       "status": "blocked",
       "reason": "TOGETHER_API_KEY is not configured in this environment.",
+      "blockerType": "missing_credentials",
+      "blockerTypes": [
+        "missing_credentials"
+      ],
       "family": "together",
       "runner": "global",
       "backendKind": "http",
@@ -142,7 +191,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "TOGETHER_API_KEY"
+      ],
+      "requiredRunner": "global-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -156,6 +208,11 @@
       "target": "qwen",
       "status": "blocked",
       "reason": "QWEN_API_KEY is not configured in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "qwen",
       "runner": "china",
       "backendKind": "http",
@@ -164,7 +221,10 @@
         "bearer-token",
         "token"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "QWEN_API_KEY"
+      ],
+      "requiredRunner": "china-egress-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -178,6 +238,11 @@
       "target": "moonshot-kimi",
       "status": "blocked",
       "reason": "MOONSHOT_API_KEY is not configured in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "moonshot-kimi",
       "runner": "china",
       "backendKind": "http",
@@ -186,7 +251,10 @@
         "bearer-token",
         "token"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "MOONSHOT_API_KEY"
+      ],
+      "requiredRunner": "china-egress-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -200,6 +268,11 @@
       "target": "glm",
       "status": "blocked",
       "reason": "ZHIPU_API_KEY is not configured in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "glm",
       "runner": "china",
       "backendKind": "http",
@@ -208,7 +281,10 @@
         "bearer-token",
         "token"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "ZHIPU_API_KEY"
+      ],
+      "requiredRunner": "china-egress-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -222,6 +298,11 @@
       "target": "volcengine-byteplus",
       "status": "blocked",
       "reason": "VOLCENGINE_API_KEY is not configured in this environment.",
+      "blockerType": "missing_runner",
+      "blockerTypes": [
+        "missing_runner",
+        "missing_credentials"
+      ],
       "family": "volcengine-byteplus",
       "runner": "china",
       "backendKind": "http",
@@ -230,7 +311,10 @@
         "bearer-token",
         "token"
       ],
-      "blockerType": "missing_runner",
+      "requiredEnv": [
+        "VOLCENGINE_API_KEY"
+      ],
+      "requiredRunner": "china-egress-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -244,6 +328,10 @@
       "target": "vllm",
       "status": "blocked",
       "reason": "VLLM endpoint is not configured in this environment.",
+      "blockerType": "missing_endpoint",
+      "blockerTypes": [
+        "missing_endpoint"
+      ],
       "family": "vllm",
       "runner": "local",
       "backendKind": "http",
@@ -252,7 +340,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "VLLM_BASE_URL"
+      ],
+      "requiredRunner": "local-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -266,6 +357,10 @@
       "target": "litellm",
       "status": "blocked",
       "reason": "LiteLLM endpoint is not configured in this environment.",
+      "blockerType": "missing_endpoint",
+      "blockerTypes": [
+        "missing_endpoint"
+      ],
       "family": "litellm",
       "runner": "local",
       "backendKind": "http",
@@ -274,7 +369,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "LITELLM_BASE_URL"
+      ],
+      "requiredRunner": "local-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,
@@ -288,6 +386,10 @@
       "target": "openai-compatible",
       "status": "blocked",
       "reason": "OpenAI-compatible endpoint is not configured in this environment.",
+      "blockerType": "missing_endpoint",
+      "blockerTypes": [
+        "missing_endpoint"
+      ],
       "family": "openai-compatible",
       "runner": "local",
       "backendKind": "http",
@@ -296,7 +398,10 @@
         "api-key",
         "bearer-token"
       ],
-      "blockerType": "missing_credentials",
+      "requiredEnv": [
+        "OPENAI_COMPATIBLE_BASE_URL"
+      ],
+      "requiredRunner": "local-runner",
       "contract": {
         "providerCreate": false,
         "providerDoctor": false,

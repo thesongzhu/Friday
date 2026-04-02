@@ -7,7 +7,7 @@ import {
   REPORT_DIR,
   SOURCE_MATRIX_PATH,
   SOURCE_REPORT_PATH,
-  blockerTypeFromEnvironment,
+  blockerTypesFromEnvironment,
   buildMarkdownReport,
   blockStatus,
   contractStatus,
@@ -36,7 +36,9 @@ const results = families.map(([target, envName]) =>
         runner: "china",
         backendKind: "http",
         authModes: ["api-key", "bearer-token", "token"],
-        blockerType: "missing_runner",
+        blockerTypes: ["missing_runner"],
+        requiredEnv: [envName],
+        requiredRunner: "china-egress-runner",
         contract: contractStatus({}),
       })
     : blockStatus(target, `${envName} is not configured in this environment.`, {
@@ -44,7 +46,9 @@ const results = families.map(([target, envName]) =>
         runner: "china",
         backendKind: "http",
         authModes: ["api-key", "bearer-token", "token"],
-        blockerType: blockerTypeFromEnvironment({ credentialEnv: [envName], runner: false }),
+        blockerTypes: blockerTypesFromEnvironment({ credentialEnv: [envName], runner: false }),
+        requiredEnv: [envName],
+        requiredRunner: "china-egress-runner",
         contract: contractStatus({}),
       }),
 );
