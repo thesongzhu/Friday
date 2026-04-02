@@ -105,7 +105,7 @@ jobs:
   verify:
     needs: public-preflight
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     outputs:
       tag_name: ${{ needs.public-preflight.outputs.tag_name }}
 
@@ -129,8 +129,8 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Release verify
-        run: npm run release:verify
+      - name: Final closeout
+        run: npm run closeout:final
 
   source-distribution:
     needs: verify

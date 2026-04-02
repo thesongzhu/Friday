@@ -8,6 +8,7 @@ import fs from "node:fs";
 import {
   closeWritableStream,
   createLedger,
+  markInterruptedClosureLedger,
   persistLedger,
   runStep,
   stopManagedChildProcess,
@@ -82,6 +83,60 @@ describe("run-friday-closure helpers", () => {
     expect(finalSnapshot.activeStep).toBeNull();
     expect(finalSnapshot.entries.at(-1)?.status).toBe(FRIDAY_CLOSURE_STATUSES.PASS);
     expect(finalSnapshot.entries.at(-1)?.completedAt).toBeTruthy();
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("marks a stale running ledger entry as interrupted", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-closure-stale-ledger-"));
+    const paths = {
+      runId: "stale-run",
+      root: dir,
+      state: join(dir, "state"),
+      skills: join(dir, "skills"),
+      artifacts: join(dir, "artifacts"),
+      logs: join(dir, "logs"),
+      exports: join(dir, "exports"),
+      responses: join(dir, "responses"),
+      transcripts: join(dir, "transcripts"),
+    };
+    for (const value of Object.values(paths)) {
+      if (typeof value === "string") {
+        fs.mkdirSync(value, { recursive: true });
+      }
+    }
+
+    const ledger = createLedger(paths);
+    ledger.activeStep = {
+      id: "local.preflight.install",
+      stage: "local.preflight",
+      description: "Install workspace dependencies with npm ci",
+      startedAt: new Date("2026-04-02T05:51:07.490Z").toISOString(),
+    };
+    ledger.entries.push({
+      id: "local.preflight.install",
+      stage: "local.preflight",
+      description: "Install workspace dependencies with npm ci",
+      startedAt: new Date("2026-04-02T05:51:07.490Z").toISOString(),
+      completedAt: null,
+      durationMs: 0,
+      status: FRIDAY_CLOSURE_STATUSES.RUNNING,
+      evidence: {},
+      details: {},
+    });
+    persistLedger(ledger);
+
+    markInterruptedClosureLedger({
+      pid: 424242,
+      ledgerPath: join(dir, "ledger.json"),
+    });
+
+    const snapshot = JSON.parse(readFileSync(join(dir, "ledger.json"), "utf8"));
+    expect(snapshot.activeStep).toBeNull();
+    expect(snapshot.completedAt).toBeTruthy();
+    expect(snapshot.entries.at(-1)?.status).toBe(FRIDAY_CLOSURE_STATUSES.FAIL);
+    expect(snapshot.entries.at(-1)?.details?.interrupted).toBe(true);
+    expect(snapshot.verdict).toBe("NO-GO");
 
     rmSync(dir, { recursive: true, force: true });
   });
