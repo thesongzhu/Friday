@@ -759,6 +759,9 @@ export function ObservabilityPage() {
                       ? `${record.selectedAfterLearning.providerId} / ${record.selectedAfterLearning.model}`
                       : "n/a"}
                   </p>
+                  {record.reasonText ? (
+                    <p className="mt-2 text-xs text-white/50">{record.reasonText}</p>
+                  ) : null}
                 </div>
               ))}
             </div>

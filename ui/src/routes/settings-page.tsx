@@ -352,7 +352,7 @@ export function SettingsPage() {
                     {routingExplain.learningAdjusted ? "adjusted" : routingExplain.learningSignalsPresent ? "signals present" : "configured"}
                   </StatusPill>
                 </div>
-                <p className="mt-3 text-sm text-white/70">{routingExplain.reason}</p>
+                <p className="mt-3 text-sm text-white/70">{routingExplain.reasonText}</p>
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <DiagnosticRow
                     label="Before learning"
@@ -379,6 +379,16 @@ export function SettingsPage() {
                     <p className="mt-2 text-xs text-white/50">
                       score {candidate.finalScore.toFixed(2)} = base {candidate.baseRankScore.toFixed(2)} + history {candidate.historyScore.toFixed(2)} + lesson {candidate.lessonScore.toFixed(2)} + pattern {candidate.patternScore.toFixed(2)} + pin {candidate.pinBonus.toFixed(2)} + penalty {candidate.routePenaltyScore.toFixed(2)}
                     </p>
+                    {candidate.historyStats ? (
+                      <p className="mt-2 text-xs text-white/45">
+                        history {candidate.historyStats.sampleCount} samples · success {(candidate.historyStats.successRate * 100).toFixed(0)}% · failure {(candidate.historyStats.failureRate * 100).toFixed(0)}%
+                      </p>
+                    ) : null}
+                    {(candidate.matchedLessonIds.length > 0 || candidate.matchedPatternIds.length > 0) ? (
+                      <p className="mt-2 text-xs text-white/45">
+                        matched lessons {candidate.matchedLessonIds.length} · matched patterns {candidate.matchedPatternIds.length}
+                      </p>
+                    ) : null}
                     {candidate.ineligibilityReasons.length > 0 ? (
                       <p className="mt-2 text-xs text-yellow-300">{candidate.ineligibilityReasons.join(", ")}</p>
                     ) : null}

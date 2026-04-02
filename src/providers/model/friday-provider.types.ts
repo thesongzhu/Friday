@@ -343,6 +343,11 @@ export interface FridayProviderRoutingExplainCandidate {
   routePenaltyScore: number;
   pinBonus: number;
   finalScore: number;
+  historyStats?: {
+    sampleCount: number;
+    successRate: number;
+    failureRate: number;
+  };
   matchedLessonIds: string[];
   matchedPatternIds: string[];
 }
@@ -389,6 +394,7 @@ export interface FridayProviderRoutingExplainReport {
   selectedAdjusted: boolean;
   reasonCode: FridayProviderRoutingReasonCode;
   reason: string;
+  reasonText: string;
   historyWindow: FridayProviderRoutingHistoryWindow;
 }
 

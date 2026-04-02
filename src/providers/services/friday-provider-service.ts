@@ -740,6 +740,15 @@ export function createFridayProviderService(
         routePenaltyScore: state.routePenaltyScore,
         pinBonus: state.pinBonus,
         finalScore: state.finalScore,
+        ...(state.history
+          ? {
+              historyStats: {
+                sampleCount: state.history.sampleCount,
+                successRate: successRate ?? 0,
+                failureRate: failureRate ?? 0,
+              },
+            }
+          : {}),
         matchedLessonIds: [...state.matchedLessonIds],
         matchedPatternIds: [...state.matchedPatternIds],
       } satisfies FridayProviderRoutingExplainCandidate;
@@ -1293,6 +1302,7 @@ export function createFridayProviderService(
         selectedAdjusted: traceBuilder.trace.selectedAdjusted,
         reasonCode: traceBuilder.trace.reasonCode,
         reason: traceBuilder.trace.reasonText,
+        reasonText: traceBuilder.trace.reasonText,
         historyWindow: traceBuilder.trace.historyWindow,
       };
     },
