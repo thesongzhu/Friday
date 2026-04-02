@@ -17,6 +17,7 @@ import {
   resolveClosureRoot,
   resolveClosureVerdict,
 } from "./friday-closure-lib.mjs";
+import { acquireWorkspaceRunLock, releaseWorkspaceRunLock } from "../quality/workspace-run-lock.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
@@ -210,6 +211,47 @@ export function persistLedger(ledger) {
   ledger.readiness = resolveReadinessReport(ledger.entries, ledger.mode);
   ledger.lastUpdatedAt = nowIso();
   writeJson(path.join(ledger.paths.root, "ledger.json"), ledger);
+}
+
+export function markInterruptedClosureLedger(lockPayload) {
+  const ledgerPath = typeof lockPayload?.ledgerPath === "string" ? lockPayload.ledgerPath : null;
+  if (!ledgerPath || !fs.existsSync(ledgerPath)) {
+    return;
+  }
+
+  let ledger = null;
+  try {
+    ledger = JSON.parse(fs.readFileSync(ledgerPath, "utf8"));
+  } catch {
+    return;
+  }
+
+  const interruptedAt = nowIso();
+  const entries = Array.isArray(ledger?.entries) ? ledger.entries : [];
+  const runningEntry = [...entries].reverse().find((entry) => entry?.status === FRIDAY_CLOSURE_STATUSES.RUNNING);
+  if (runningEntry) {
+    runningEntry.status = FRIDAY_CLOSURE_STATUSES.FAIL;
+    runningEntry.completedAt = interruptedAt;
+    runningEntry.durationMs = runningEntry.startedAt
+      ? Math.max(0, Date.parse(interruptedAt) - Date.parse(runningEntry.startedAt))
+      : runningEntry.durationMs ?? 0;
+    runningEntry.details = {
+      ...(runningEntry.details || {}),
+      interrupted: true,
+      error: `Closure process ${String(lockPayload?.pid ?? "unknown")} exited before completing the active step`,
+    };
+  }
+
+  ledger.entries = entries;
+  ledger.activeStep = null;
+  ledger.completedAt = ledger.completedAt || interruptedAt;
+  ledger.lastUpdatedAt = interruptedAt;
+  const resolved = resolveClosureVerdict(entries);
+  ledger.summary = resolved.summary;
+  ledger.verdict = resolved.verdict;
+  ledger.readiness = resolveReadinessReport(entries, ledger.mode ?? CLOSURE_MODE);
+
+  writeJson(ledgerPath, ledger);
 }
 
 function spawnSyncOutput(cmd, args, cwd = REPO_ROOT) {
@@ -993,34 +1035,59 @@ async function createPublishedClosureWorkflow(baseUrl, token, templateId, titleP
 
 async function runLocalStage(ledger) {
   const stage = "local";
+  const installCacheDir = path.join(ledger.paths.state, "npm-cache");
   const installEntry = !SKIP_INSTALL
     ? await runStep(ledger, {
       id: "local.preflight.install",
       stage: `${stage}.preflight`,
-      description: "Install workspace dependencies",
+      description: "Install workspace dependencies with npm ci using an isolated cache",
     }, async () => {
+      ensureDir(installCacheDir);
       const result = await runCommand({
         id: "local.preflight.install",
         stage: `${stage}.preflight`,
-        description: "npm install",
+        description: "npm ci --include=dev --cache <closure-cache>",
         command: "npm",
-        args: ["install"],
+        args: ["ci", "--include=dev", "--cache", installCacheDir],
         logPath: path.join(ledger.paths.logs, "local-preflight-install.log"),
         timeoutMs: 900_000,
       });
       if (result.code !== 0) {
-        throw new Error(`npm install failed with code ${String(result.code)}`);
+        throw new Error(`npm ci failed with code ${String(result.code)}`);
       }
+
+      const requiredArtifacts = [
+        "node_modules/.bin/tsc",
+        "node_modules/.bin/vite",
+        "node_modules/.bin/vitest",
+        "node_modules/typescript/package.json",
+        "node_modules/vite/package.json",
+        "node_modules/vite/bin/vite.js",
+        "node_modules/vitest/package.json",
+        "node_modules/vitest/suppress-warnings.cjs",
+        "node_modules/csstype/index.d.ts",
+      ];
+      const missingArtifacts = requiredArtifacts.filter((artifact) => !fs.existsSync(path.join(REPO_ROOT, artifact)));
+      if (missingArtifacts.length > 0) {
+        throw new Error(`npm ci produced an incomplete workspace install: missing ${missingArtifacts.join(", ")}`);
+      }
+
       return {
         evidence: {
           command: result.command,
           logPath: result.logPath,
         },
+        details: {
+          cacheDir: installCacheDir,
+        },
       };
     })
     : null;
+  if (installEntry && installEntry.status !== FRIDAY_CLOSURE_STATUSES.PASS) {
+    return;
+  }
 
-  await runStep(ledger, {
+  const buildEntry = await runStep(ledger, {
     id: "local.preflight.build",
     stage: `${stage}.preflight`,
     description: "Build Friday for CLI and HTTP operation",
@@ -1045,6 +1112,9 @@ async function runLocalStage(ledger) {
       details: installEntry ? { installCompleted: true } : {},
     };
   });
+  if (buildEntry.status !== FRIDAY_CLOSURE_STATUSES.PASS) {
+    return;
+  }
 
   makeScratchWorkflowSkill(path.join(ledger.paths.skills, "closure-workflow-template"));
 
@@ -2390,6 +2460,17 @@ async function main() {
     transcripts: path.join(root, "transcripts"),
   };
 
+  acquireWorkspaceRunLock({
+    pid: process.pid,
+    kind: "closure",
+    mode: CLOSURE_MODE,
+    runId,
+    startedAt: nowIso(),
+    ledgerPath: path.join(root, "ledger.json"),
+  }, {
+    onStaleLock: markInterruptedClosureLedger,
+  });
+
   Object.values(paths).forEach((value) => {
     if (typeof value === "string" && value.startsWith(root)) {
       ensureDir(value);
@@ -2400,23 +2481,27 @@ async function main() {
   persistLedger(ledger);
 
   try {
-    if (CLOSURE_MODE !== "cloud") {
-      await runLocalStage(ledger);
+    try {
+      if (CLOSURE_MODE !== "cloud") {
+        await runLocalStage(ledger);
+      }
+      if (CLOSURE_MODE !== "local") {
+        await runCloudStage(ledger);
+      }
+    } finally {
+      ledger.completedAt = nowIso();
+      persistLedger(ledger);
     }
-    if (CLOSURE_MODE !== "local") {
-      await runCloudStage(ledger);
+
+    const verdictPath = path.join(paths.root, "verdict.txt");
+    const readinessText = formatReadinessReport(ledger.readiness);
+    writeText(verdictPath, `${readinessText}\n`);
+    console.log(formatConsoleSummary(ledger.readiness, path.join(paths.root, "ledger.json")));
+    if (ledger.verdict !== "GO") {
+      process.exitCode = 1;
     }
   } finally {
-    ledger.completedAt = nowIso();
-    persistLedger(ledger);
-  }
-
-  const verdictPath = path.join(paths.root, "verdict.txt");
-  const readinessText = formatReadinessReport(ledger.readiness);
-  writeText(verdictPath, `${readinessText}\n`);
-  console.log(formatConsoleSummary(ledger.readiness, path.join(paths.root, "ledger.json")));
-  if (ledger.verdict !== "GO") {
-    process.exitCode = 1;
+    releaseWorkspaceRunLock({ runId });
   }
 }
 
