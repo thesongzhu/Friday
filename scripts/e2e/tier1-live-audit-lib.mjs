@@ -7,14 +7,26 @@ import { spawnSync } from "node:child_process";
 export const REPO_ROOT = process.cwd();
 export const DATE_STAMP = new Date().toISOString().slice(0, 10);
 export const REPORT_DIR = path.join(REPO_ROOT, "docs", "reports", "repo");
-export const SOURCE_MATRIX_PATH = path.join(
-  REPORT_DIR,
-  `SELF_EVOLUTION_LIVE_AUDIT_MATRIX_${DATE_STAMP}.json`,
-);
-export const SOURCE_REPORT_PATH = path.join(
-  REPORT_DIR,
-  `SELF_EVOLUTION_LIVE_AUDIT_${DATE_STAMP}.md`,
-);
+const SOURCE_MATRIX_BASENAME = "SELF_EVOLUTION_LIVE_AUDIT_MATRIX";
+const SOURCE_REPORT_BASENAME = "SELF_EVOLUTION_LIVE_AUDIT";
+
+function findLatestReportArtifact(prefix, extension) {
+  if (!fs.existsSync(REPORT_DIR)) {
+    return null;
+  }
+  const candidates = fs.readdirSync(REPORT_DIR)
+    .filter((entry) => entry.startsWith(`${prefix}_`) && entry.endsWith(extension))
+    .sort();
+  if (candidates.length === 0) {
+    return null;
+  }
+  return path.join(REPORT_DIR, candidates.at(-1));
+}
+
+export const SOURCE_MATRIX_PATH = findLatestReportArtifact(SOURCE_MATRIX_BASENAME, ".json")
+  ?? path.join(REPORT_DIR, `${SOURCE_MATRIX_BASENAME}_${DATE_STAMP}.json`);
+export const SOURCE_REPORT_PATH = findLatestReportArtifact(SOURCE_REPORT_BASENAME, ".md")
+  ?? path.join(REPORT_DIR, `${SOURCE_REPORT_BASENAME}_${DATE_STAMP}.md`);
 
 export function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -80,6 +92,33 @@ export function passStatus(target, summary, evidence = [], extra = {}) {
   };
 }
 
+export function contractStatus(input) {
+  return {
+    providerCreate: input.providerCreate === true,
+    providerDoctor: input.providerDoctor === true,
+    routingExplain: input.routingExplain === true,
+    liveRun: input.liveRun === true,
+    failureFallback: input.failureFallback === true,
+    actualExecution: input.actualExecution === true,
+  };
+}
+
+export function blockerTypeFromEnvironment({ credentialEnv = [], binary = null, runner = true, productSupport = true }) {
+  if (runner !== true) {
+    return "missing_runner";
+  }
+  if (productSupport !== true) {
+    return "product_boundary";
+  }
+  if (binary && !hasBinary(binary)) {
+    return "missing_runner";
+  }
+  if (credentialEnv.length > 0 && !credentialEnv.some((name) => hasEnv(name))) {
+    return "missing_credentials";
+  }
+  return "not_yet_executed";
+}
+
 export function buildMarkdownReport({ title, generatedAt, sourceMatrixPath, sourceReportPath, summary, results, blockers }) {
   const lines = [
     `# ${title}`,
@@ -99,6 +138,9 @@ export function buildMarkdownReport({ title, generatedAt, sourceMatrixPath, sour
     lines.push(
       `- ${result.target}: ${result.status}${result.summary ? ` — ${result.summary}` : ""}${result.reason ? ` — ${result.reason}` : ""}`,
     );
+    if (result.blockerType) {
+      lines.push(`  - blockerType: ${result.blockerType}`);
+    }
   }
   if (blockers.length > 0) {
     lines.push("", "## Blockers", "");
