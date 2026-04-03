@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
 import { createFridayApprovalWorkflowService } from "#learning";
@@ -12,6 +12,7 @@ describe("FridayApprovalWorkflowService", () => {
   let db: FridaySqliteLayer;
   let service: FridayApprovalWorkflowService;
   let idGen: () => string;
+  let actionRepo: ReturnType<typeof createFridayAutoFixActionRepository>;
   const NOW = "2025-06-15T10:00:00.000Z";
   const EXPIRES = "2025-06-16T10:00:00.000Z";
 
@@ -46,14 +47,10 @@ describe("FridayApprovalWorkflowService", () => {
     updatedAt: NOW,
   };
 
-  beforeEach(() => {
-    db = createTestDb();
-    idGen = createTestIdGenerator();
-
-    // Setup FK deps
+  function insertIncident(incidentId: string) {
     const incidentRepo = createFridayErrorIncidentRepository();
     incidentRepo.insert(db.writer, {
-      incidentId: "inc-001",
+      incidentId,
       userId: "test-user",
       ts: NOW,
       category: "tool",
@@ -65,8 +62,16 @@ describe("FridayApprovalWorkflowService", () => {
       createdAt: NOW,
       updatedAt: NOW,
     });
+  }
 
-    const actionRepo = createFridayAutoFixActionRepository();
+  beforeEach(() => {
+    db = createTestDb();
+    idGen = createTestIdGenerator();
+
+    // Setup FK deps
+    insertIncident("inc-001");
+
+    actionRepo = createFridayAutoFixActionRepository();
     actionRepo.insert(db.writer, baseAction);
 
     const approvalRepo = createFridayApprovalRequestRepository();
@@ -180,6 +185,46 @@ describe("FridayApprovalWorkflowService", () => {
     const actionRepo = createFridayAutoFixActionRepository();
     const action = actionRepo.getById(db.writer, "action-001");
     expect(action!.status).toBe("rejected");
+  });
+
+  it("expirePending rejects linked actions in one batch", () => {
+    const markRejectedByIdsSpy = vi.spyOn(actionRepo, "markRejectedByIds");
+    const markRejectedSpy = vi.spyOn(actionRepo, "markRejected");
+
+    service.createRequestForAction({
+      action: baseAction,
+      description: "Approve",
+      nowIso: NOW,
+      expiresAt: "2025-06-14T10:00:00.000Z",
+    });
+
+    insertIncident("inc-002");
+    actionRepo.insert(db.writer, {
+      ...baseAction,
+      actionId: "action-002",
+      incidentId: "inc-002",
+    });
+    service.createRequestForAction({
+      action: {
+        ...baseAction,
+        actionId: "action-002",
+        incidentId: "inc-002",
+      },
+      description: "Approve second",
+      nowIso: NOW,
+      expiresAt: "2025-06-14T10:00:00.000Z",
+    });
+
+    const expired = service.expirePending({ nowIso: NOW });
+
+    expect(expired).toHaveLength(2);
+    expect(markRejectedByIdsSpy).toHaveBeenCalledTimes(1);
+    expect(markRejectedByIdsSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      ["action-001", "action-002"],
+      NOW,
+    );
+    expect(markRejectedSpy).not.toHaveBeenCalled();
   });
 
   it("expirePending does not affect future requests", () => {

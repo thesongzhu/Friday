@@ -192,9 +192,11 @@ export function createFridayApprovalWorkflowService(
         const expired = deps.approvalRepo.expirePending(db, nowIso, limit);
 
         // Mark linked actions as rejected
-        for (const request of expired) {
-          deps.actionRepo.markRejected(db, request.actionId, nowIso);
-        }
+        deps.actionRepo.markRejectedByIds(
+          db,
+          expired.map((request) => request.actionId),
+          nowIso,
+        );
 
         return expired;
       });

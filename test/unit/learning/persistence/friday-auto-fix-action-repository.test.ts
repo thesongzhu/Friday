@@ -168,6 +168,36 @@ describe("FridayAutoFixActionRepository", () => {
     expect(result!.status).toBe("rejected");
   });
 
+  it("markRejectedByIds updates planned actions in one batch and skips non-planned rows", () => {
+    repo.insert(db.writer, baseAction);
+    insertIncident("inc-002");
+    repo.insert(db.writer, {
+      ...baseAction,
+      actionId: "action-002",
+      incidentId: "inc-002",
+    });
+    insertIncident("inc-003");
+    repo.insert(db.writer, {
+      ...baseAction,
+      actionId: "action-003",
+      incidentId: "inc-003",
+      status: "applied",
+      outcome: "success",
+      appliedAt: NOW,
+    });
+
+    const updatedIds = repo.markRejectedByIds(
+      db.writer,
+      ["action-002", "missing", "action-001", "action-003", "action-002"],
+      NOW,
+    );
+
+    expect(updatedIds).toEqual(["action-002", "action-001"]);
+    expect(repo.getById(db.writer, "action-001")?.status).toBe("rejected");
+    expect(repo.getById(db.writer, "action-002")?.status).toBe("rejected");
+    expect(repo.getById(db.writer, "action-003")?.status).toBe("applied");
+  });
+
   it("setRollbackPlan updates the rollback plan", () => {
     repo.insert(db.writer, baseAction);
     const rollbackPlan = {

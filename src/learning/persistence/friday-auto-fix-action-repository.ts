@@ -105,6 +105,11 @@ export interface FridayAutoFixActionRepository {
     actionId: string,
     nowIso: string,
   ): FridayAutoFixActionEntity | null;
+  markRejectedByIds(
+    db: Database.Database,
+    actionIds: string[],
+    nowIso: string,
+  ): string[];
 
   setPlan(
     db: Database.Database,
@@ -443,6 +448,31 @@ export function createFridayAutoFixActionRepository(): FridayAutoFixActionReposi
         .run(nowIso, actionId).changes;
       if (changes === 0) return null;
       return this.getById(db, actionId);
+    },
+
+    markRejectedByIds(db, actionIds, nowIso) {
+      if (actionIds.length === 0) {
+        return [];
+      }
+      const uniqueActionIds = [...new Set(actionIds)];
+      const placeholders = uniqueActionIds.map(() => "?").join(", ");
+      db
+        .prepare(
+          `UPDATE auto_fix_actions
+           SET status = 'rejected', updated_at = ?
+           WHERE status = 'planned' AND action_id IN (${placeholders})`,
+        )
+        .run(nowIso, ...uniqueActionIds);
+
+      const rows = db
+        .prepare(
+          `SELECT action_id
+           FROM auto_fix_actions
+           WHERE status = 'rejected' AND updated_at = ? AND action_id IN (${placeholders})`,
+        )
+        .all(nowIso, ...uniqueActionIds) as Array<{ action_id: string }>;
+      const updatedIds = new Set(rows.map((row) => row.action_id));
+      return uniqueActionIds.filter((actionId) => updatedIds.has(actionId));
     },
 
     setPlan(db, actionId, plan, nowIso) {
