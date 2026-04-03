@@ -407,6 +407,48 @@ describe("createFridayAgentLoopService", () => {
     expect(run?.run.verificationPassed).toBe(true);
   });
 
+  it("batch-loads failure counts when resuming cooldown runs", async () => {
+    const details = buildIncidentDetails({ riskTier: 0, fingerprint: "fp-cooldown" });
+    const { service, loopRepo } = createSubject(details);
+    const countFailuresByFingerprintsSpy = vi.spyOn(loopRepo, "countFailuresByFingerprints");
+    const countFailuresByFingerprintSpy = vi.spyOn(loopRepo, "countFailuresByFingerprint");
+
+    db!.withWriteTransaction((writer) => {
+      loopRepo.insertRun(writer, {
+        loopRunId: "cooldown-run-batch",
+        userId: "user-1",
+        incidentId: details.incident.incidentId,
+        actionId: details.action.action.actionId,
+        fingerprint: "fp-cooldown",
+        trigger: "incident_opened",
+        status: "cooldown",
+        riskTier: 0,
+        approvalRequired: false,
+        attemptNumber: 1,
+        verificationPassed: false,
+        rollbackAttempted: false,
+        rollbackSucceeded: false,
+        cooldownUntil: "2026-03-07T11:59:00.000Z",
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+    });
+
+    await service.resumeCooldownRuns({ nowIso: NOW });
+
+    expect(countFailuresByFingerprintsSpy).toHaveBeenCalledTimes(1);
+    expect(countFailuresByFingerprintsSpy).toHaveBeenCalledWith(expect.anything(), {
+      userId: "user-1",
+      fingerprints: ["fp-cooldown"],
+    });
+    expect(countFailuresByFingerprintSpy).toHaveBeenCalledTimes(1);
+    expect(countFailuresByFingerprintSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      "user-1",
+      "fp-cooldown",
+    );
+  });
+
   it("moves eligible cooldown runs back to paused when the policy is paused", async () => {
     const details = buildIncidentDetails({ riskTier: 0, fingerprint: "fp-paused" });
     const { service, loopRepo } = createSubject(details);

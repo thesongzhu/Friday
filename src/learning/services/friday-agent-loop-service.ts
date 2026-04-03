@@ -845,6 +845,26 @@ export function createFridayAgentLoopService(
           limit: input?.limit ?? 10,
         }),
       ).filter((run) => !run.cooldownUntil || run.cooldownUntil <= nowIso);
+      const failureCountsByFingerprint = new Map(
+        deps.db.withReadConnection((db) => {
+          const counts: Array<readonly [string, number]> = [];
+          const fingerprintsByUserId = new Map<string, string[]>();
+          for (const candidate of candidates) {
+            const existing = fingerprintsByUserId.get(candidate.userId);
+            if (existing) {
+              existing.push(candidate.fingerprint);
+            } else {
+              fingerprintsByUserId.set(candidate.userId, [candidate.fingerprint]);
+            }
+          }
+          for (const [userId, fingerprints] of fingerprintsByUserId) {
+            for (const entry of deps.loopRepo.countFailuresByFingerprints(db, { userId, fingerprints })) {
+              counts.push([`${userId}::${entry.fingerprint}`, entry.count] as const);
+            }
+          }
+          return counts;
+        }),
+      );
 
       const resumed: FridayAgentLoopRunDetails[] = [];
       for (const candidate of candidates) {
@@ -861,9 +881,7 @@ export function createFridayAgentLoopService(
           continue;
         }
 
-        const failureCount = deps.db.withReadConnection((db) =>
-          deps.loopRepo.countFailuresByFingerprint(db, candidate.userId, candidate.fingerprint),
-        );
+        const failureCount = failureCountsByFingerprint.get(`${candidate.userId}::${candidate.fingerprint}`) ?? 0;
         if (failureCount >= policy.maxAttemptsPerFingerprint) {
           const halted = updateRun(candidate.loopRunId, {
             status: "halted",

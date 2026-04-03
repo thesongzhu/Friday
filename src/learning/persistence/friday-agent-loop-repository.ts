@@ -72,6 +72,16 @@ export interface FridayAgentLoopRepository {
     userId: string,
     fingerprint: string,
   ): number;
+  countFailuresByFingerprints(
+    db: Database.Database,
+    input: {
+      userId: string;
+      fingerprints: string[];
+    },
+  ): Array<{
+    fingerprint: string;
+    count: number;
+  }>;
   updateRun(
     db: Database.Database,
     loopRunId: string,
@@ -324,6 +334,29 @@ export function createFridayAgentLoopRepository(): FridayAgentLoopRepository {
         )
         .get(userId, fingerprint) as { count: number };
       return row.count;
+    },
+
+    countFailuresByFingerprints(db, input) {
+      if (input.fingerprints.length === 0) {
+        return [];
+      }
+      const uniqueFingerprints = [...new Set(input.fingerprints)];
+      const placeholders = uniqueFingerprints.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT fingerprint, COUNT(*) as count
+           FROM friday_agent_loop_runs
+           WHERE user_id = ?
+             AND fingerprint IN (${placeholders})
+             AND status IN ('rolled_back', 'failed', 'halted', 'cooldown')
+           GROUP BY fingerprint`,
+        )
+        .all(input.userId, ...uniqueFingerprints) as Array<{ fingerprint: string; count: number }>;
+      const countsByFingerprint = new Map(rows.map((row) => [row.fingerprint, row.count] as const));
+      return uniqueFingerprints.map((fingerprint) => ({
+        fingerprint,
+        count: countsByFingerprint.get(fingerprint) ?? 0,
+      }));
     },
 
     updateRun(db, loopRunId, patch) {
