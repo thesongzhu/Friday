@@ -746,8 +746,8 @@ function WorkflowBuilderEditor() {
   const draftsQuery = useQuery({
     queryKey: ["workflow-builder", "drafts", requestedWorkflowId],
     queryFn: () => workflowBuilderApi.listDrafts(requestedWorkflowId!, { limit: 12 }),
-    enabled: Boolean(requestedWorkflowId),
-    refetchInterval: 15_000,
+    enabled: Boolean(requestedWorkflowId && !requestedDraftId),
+    refetchInterval: requestedWorkflowId && !requestedDraftId ? 30_000 : false,
   });
 
   const resolvedDraftId = requestedDraftId ?? draftsQuery.data?.items[0]?.draftId ?? null;

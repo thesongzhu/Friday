@@ -77,14 +77,14 @@ export function SettingsPage() {
     queryKey: systemKeys.session(),
     queryFn: () => systemApi.getSession(),
     retry: 0,
-    refetchInterval: 10_000,
+    refetchInterval: 30_000,
   });
 
   const { data: systemSummary } = useQuery({
     queryKey: systemKeys.summary(),
     queryFn: () => systemApi.getSummary(),
     retry: 0,
-    refetchInterval: 10_000,
+    refetchInterval: 30_000,
   });
 
   const {

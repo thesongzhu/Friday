@@ -148,7 +148,6 @@ export function SkillsPage() {
     queryKey: ["skills", "detail", selectedSkillId],
     queryFn: () => skillsApi.getSkill(selectedSkillId!),
     enabled: selectedSkillId !== null,
-    refetchInterval: 10_000,
   });
 
   const verifyMutation = useMutation({
@@ -170,7 +169,10 @@ export function SkillsPage() {
     onSuccess: (result) => {
       toast.success(`Installed ${result.skill.name}`);
       setSelectedSkillId(result.skill.skillId);
-      void queryClient.invalidateQueries({ queryKey: ["skills"] });
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["skills"] }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "detail", result.skill.skillId] }),
+      ]);
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Skill install failed");
@@ -182,7 +184,10 @@ export function SkillsPage() {
     onSuccess: (result) => {
       toast.success(result.updated ? `Updated ${result.skill.name}` : `${result.skill.name} is already current`);
       setSelectedSkillId(result.skill.skillId);
-      void queryClient.invalidateQueries({ queryKey: ["skills"] });
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["skills"] }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "detail", result.skill.skillId] }),
+      ]);
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Skill update failed");
