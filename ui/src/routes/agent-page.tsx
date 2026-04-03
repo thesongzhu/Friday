@@ -197,10 +197,16 @@ export function AgentPage() {
   });
 
   const { data: state, error: stateError } = useQuery({
+    queryKey: systemKeys.summary(),
+    queryFn: () => systemApi.getSummary(),
+    retry: 0,
+    refetchInterval: 10_000,
+  });
+
+  const { data: snapshot } = useQuery({
     queryKey: systemKeys.state(),
     queryFn: () => systemApi.getState(),
     retry: 0,
-    refetchInterval: 10_000,
   });
 
   const { data: approvalsResponse } = useQuery({
@@ -407,6 +413,7 @@ export function AgentPage() {
       }),
     onSuccess: (result) => {
       toast.success(result.message);
+      void queryClient.invalidateQueries({ queryKey: systemKeys.summary() });
       void queryClient.invalidateQueries({ queryKey: systemKeys.state() });
       void queryClient.invalidateQueries({ queryKey: systemKeys.approvals() });
       void queryClient.invalidateQueries({ queryKey: systemKeys.session() });
@@ -452,6 +459,7 @@ export function AgentPage() {
       toast.success("Trusted-device passkey cleared");
       void queryClient.invalidateQueries({ queryKey: systemKeys.remoteDevices() });
       void queryClient.invalidateQueries({ queryKey: systemKeys.remoteSessions() });
+      void queryClient.invalidateQueries({ queryKey: systemKeys.summary() });
       void queryClient.invalidateQueries({ queryKey: systemKeys.state() });
     },
     onError: (error) => {
@@ -464,6 +472,7 @@ export function AgentPage() {
     onSuccess: () => {
       toast.success("Remote session closed");
       void queryClient.invalidateQueries({ queryKey: systemKeys.remoteSessions() });
+      void queryClient.invalidateQueries({ queryKey: systemKeys.summary() });
       void queryClient.invalidateQueries({ queryKey: systemKeys.state() });
     },
     onError: (error) => {
@@ -515,6 +524,7 @@ export function AgentPage() {
       toast.success("Trusted remote session opened");
       void queryClient.invalidateQueries({ queryKey: systemKeys.remoteDevices() });
       void queryClient.invalidateQueries({ queryKey: systemKeys.remoteSessions() });
+      void queryClient.invalidateQueries({ queryKey: systemKeys.summary() });
       void queryClient.invalidateQueries({ queryKey: systemKeys.state() });
     },
     onError: (error) => {
@@ -864,7 +874,10 @@ export function AgentPage() {
                   </ActionButton>
                   <ActionButton
                     tone="secondary"
-                    onClick={() => queryClient.invalidateQueries({ queryKey: systemKeys.state() })}
+                    onClick={() => {
+                      void queryClient.invalidateQueries({ queryKey: systemKeys.summary() });
+                      void queryClient.invalidateQueries({ queryKey: systemKeys.state() });
+                    }}
                   >
                     Refresh Snapshot
                   </ActionButton>
@@ -981,10 +994,10 @@ export function AgentPage() {
         <ShellCard
           eyebrow="Notifications"
           title="Notification Queue"
-          aside={<StatusPill tone={state?.notifications.length ? "warning" : "neutral"}>{state?.notifications.length ?? 0} queued</StatusPill>}
+          aside={<StatusPill tone={snapshot?.notifications.length ? "warning" : "neutral"}>{snapshot?.notifications.length ?? 0} queued</StatusPill>}
         >
           <div className="space-y-3">
-            {state?.notifications.length ? state.notifications.slice(0, 4).map((notification) => (
+            {snapshot?.notifications.length ? snapshot.notifications.slice(0, 4).map((notification) => (
               <div key={notification.id} className="rounded-[24px] border border-white/10 bg-black/20 p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>

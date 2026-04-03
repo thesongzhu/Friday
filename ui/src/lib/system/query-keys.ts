@@ -5,6 +5,7 @@ export const systemKeys = {
   observabilityOverview: () => [...systemKeys.all, "observability-overview"] as const,
   assistantDiagnostics: () => [...systemKeys.all, "assistant-diagnostics"] as const,
   session: () => [...systemKeys.all, "session"] as const,
+  summary: () => [...systemKeys.all, "summary"] as const,
   state: () => [...systemKeys.all, "state"] as const,
   approvals: () => [...systemKeys.all, "approvals"] as const,
   events: () => [...systemKeys.all, "events"] as const,

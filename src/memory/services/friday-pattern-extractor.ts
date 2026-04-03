@@ -21,8 +21,10 @@ export interface CreateFridayPatternExtractorDeps {
 // ─── Public interface ───────────────────────────────────────────
 
 export interface FridayPatternExtractor {
-  /** Extract patterns from recent episodes for a user. */
-  extractPatterns(userId: string, limit?: number): Promise<FridayLearnedPattern[]>;
+  /** Recompute learned patterns from recent episodes for a user and persist them. */
+  refreshPatterns(userId: string, limit?: number): Promise<FridayLearnedPattern[]>;
+  /** Read previously learned patterns without recomputing them. */
+  listPatterns(userId: string, limit?: number): Promise<FridayLearnedPattern[]>;
 }
 
 // ─── Internal row types ─────────────────────────────────────────
@@ -55,11 +57,24 @@ export function createFridayPatternExtractor(
   deps: CreateFridayPatternExtractorDeps,
 ): FridayPatternExtractor {
   const { db } = deps;
-  const idGen = deps.idGenerator ?? defaultIdGenerator;
   const nowIso = deps.nowIso ?? (() => new Date().toISOString());
 
+  async function listPatterns(userId: string, limit = 50): Promise<FridayLearnedPattern[]> {
+    const stored = db.withReadConnection((conn) =>
+      conn
+        .prepare(
+          `SELECT * FROM friday_learned_patterns
+           WHERE user_id = ? ORDER BY confidence DESC LIMIT ?`,
+        )
+        .all(userId, limit) as PatternRow[],
+    );
+
+    return stored.map(rowToPattern);
+  }
+
   return {
-    async extractPatterns(userId, limit = 100) {
+    listPatterns,
+    async refreshPatterns(userId, limit = 100) {
       // 1. Fetch recent episodes
       const episodes = db.withReadConnection((conn) =>
         conn
@@ -71,7 +86,7 @@ export function createFridayPatternExtractor(
           .all(userId, limit) as EpisodeRow[],
       );
 
-      if (episodes.length === 0) return [];
+      if (episodes.length === 0) return listPatterns(userId);
 
       // 2. Extract three pattern types
       const toolSeqPatterns = extractToolSequencePatterns(episodes);
@@ -85,11 +100,10 @@ export function createFridayPatternExtractor(
         ...temporalPatterns,
         ...preferencePatterns,
       ];
-      if (allExtracted.length === 0) return [];
+      if (allExtracted.length === 0) return listPatterns(userId);
 
       // 3. Upsert into friday_learned_patterns
       const now = nowIso();
-      const results: FridayLearnedPattern[] = [];
 
       db.withWriteTransaction((conn) => {
         const upsert = conn.prepare(
@@ -116,32 +130,12 @@ export function createFridayPatternExtractor(
             now,
             now,
           );
-          results.push({
-            id,
-            userId,
-            kind: p.kind as FridayLearnedPattern["kind"],
-            description: p.description,
-            pattern: p.pattern,
-            confidence: p.confidence,
-            sampleCount: p.sampleCount,
-            lastUpdated: now,
-            createdAt: now,
-          });
         }
       });
 
       // 4. Also load any existing patterns not just extracted
       //    (e.g. previously extracted patterns still valid)
-      const stored = db.withReadConnection((conn) =>
-        conn
-          .prepare(
-            `SELECT * FROM friday_learned_patterns
-             WHERE user_id = ? ORDER BY confidence DESC LIMIT 50`,
-          )
-          .all(userId) as PatternRow[],
-      );
-
-      return stored.map(rowToPattern);
+      return listPatterns(userId);
     },
   };
 }
@@ -405,10 +399,6 @@ function buildPatternId(userId: string, kind: string, key: string): string {
     hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
   }
   return `pat_${kind}_${Math.abs(hash).toString(36)}`;
-}
-
-function defaultIdGenerator(): string {
-  return `pat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function rowToPattern(row: PatternRow): FridayLearnedPattern {

@@ -42,8 +42,10 @@ describe("FridayPatternExtractor", () => {
     const db = createTestDb();
     try {
       const extractor = createFridayPatternExtractor({ db });
-      const patterns = await extractor.extractPatterns("user-1", 10);
-      expect(patterns).toEqual([]);
+      const refreshed = await extractor.refreshPatterns("user-1", 10);
+      const listed = await extractor.listPatterns("user-1", 10);
+      expect(refreshed).toEqual([]);
+      expect(listed).toEqual([]);
     } finally {
       db.close();
     }
@@ -64,7 +66,7 @@ describe("FridayPatternExtractor", () => {
         });
       }
 
-      const patterns = await extractor.extractPatterns("user-1");
+      const patterns = await extractor.refreshPatterns("user-1");
       const seqPatterns = patterns.filter((p) => p.kind === "tool_sequence");
       expect(seqPatterns.length).toBeGreaterThanOrEqual(1);
 
@@ -98,7 +100,7 @@ describe("FridayPatternExtractor", () => {
         });
       }
 
-      const patterns = await extractor.extractPatterns("user-1");
+      const patterns = await extractor.refreshPatterns("user-1");
       const failPatterns = patterns.filter((p) => p.kind === "failure_mode");
       expect(failPatterns.length).toBeGreaterThanOrEqual(1);
 
@@ -130,7 +132,7 @@ describe("FridayPatternExtractor", () => {
         });
       }
 
-      const patterns = await extractor.extractPatterns("user-1");
+      const patterns = await extractor.refreshPatterns("user-1");
       const temporal = patterns.filter((p) => p.kind === "temporal");
       expect(temporal.length).toBeGreaterThanOrEqual(1);
 
@@ -157,7 +159,7 @@ describe("FridayPatternExtractor", () => {
         });
       }
 
-      const patterns = await extractor.extractPatterns("user-1");
+      const patterns = await extractor.refreshPatterns("user-1");
       const preference = patterns.find((pattern) => pattern.kind === "preference");
       expect(preference).toBeDefined();
       expect(preference!.description).toContain("Repeated successful execution preference");
@@ -191,8 +193,8 @@ describe("FridayPatternExtractor", () => {
         });
       }
 
-      const u1Patterns = await extractor.extractPatterns("user-1");
-      const u2Patterns = await extractor.extractPatterns("user-2");
+      const u1Patterns = await extractor.refreshPatterns("user-1");
+      const u2Patterns = await extractor.refreshPatterns("user-2");
 
       // Each user should have their own patterns
       expect(u1Patterns.every((p) => p.userId === "user-1")).toBe(true);
@@ -215,9 +217,38 @@ describe("FridayPatternExtractor", () => {
         toolSequence: ["read", "edit", "write"],
       });
 
-      const patterns = await extractor.extractPatterns("user-1");
+      const patterns = await extractor.refreshPatterns("user-1");
       // Tool sequence needs ≥2 episodes, temporal needs ≥5
       expect(patterns).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("lists stored patterns without recomputing them", async () => {
+    const db = createTestDb();
+    try {
+      const extractor = createFridayPatternExtractor({ db });
+
+      for (let i = 0; i < 2; i++) {
+        insertEpisode(db, {
+          id: `ep-list-${i}`,
+          userId: "user-1",
+          taskIntent: "review architecture risks",
+          outcome: "success",
+          toolSequence: ["read", "grep"],
+        });
+      }
+
+      const refreshed = await extractor.refreshPatterns("user-1");
+      db.withWriteTransaction((conn) => {
+        conn.prepare("DELETE FROM friday_episodes WHERE user_id = ?").run("user-1");
+      });
+
+      const listed = await extractor.listPatterns("user-1");
+
+      expect(refreshed.length).toBeGreaterThan(0);
+      expect(listed).toEqual(refreshed);
     } finally {
       db.close();
     }

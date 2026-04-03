@@ -31,6 +31,7 @@ import type {
   FridayGetDiagnosisIncidentResponse,
   FridayGetIncidentDiagnosisResponse,
   FridayGetSystemSessionResponse,
+  FridayGetSystemSummaryResponse,
   FridayGetSystemStateResponse,
   FridayGuidedWizardState,
   FridayIssueCard,
@@ -82,6 +83,7 @@ import type {
   FridaySystemRemoteDevice,
   FridaySystemRemoteSession,
   FridaySystemSession,
+  FridaySystemSummary,
   FridaySystemSnapshot,
   FridayUpdateSystemApprovalRequest,
   FridayUpdateSystemApprovalResponse,
@@ -155,6 +157,11 @@ export function createFridayOperatorClient(options: FridayOperatorClientOptions)
     async getState(): Promise<FridaySystemSnapshot> {
       const data = await transport.get<FridayGetSystemStateResponse>("/v1/system/state");
       return data.snapshot;
+    },
+
+    async getSummary(): Promise<FridaySystemSummary> {
+      const data = await transport.get<FridayGetSystemSummaryResponse>("/v1/system/summary");
+      return data.summary;
     },
 
     async executeIntent(

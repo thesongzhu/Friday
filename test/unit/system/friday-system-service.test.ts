@@ -314,11 +314,14 @@ describe("createFridaySystemService", () => {
     allocatedDbs.push(fixture.db);
 
     const session = await fixture.service.getSession();
+    const summary = await fixture.service.getSummary();
     const state = await fixture.service.getState();
     const events = fixture.service.listEvents();
 
     expect(session.mode).toBe("agent_os");
     expect(session.remoteMode).toBe("trusted_private_network");
+    expect(summary.workspaceRoot).toBe(WORKSPACE_ROOT);
+    expect(summary.health.status).toBe("degraded");
     expect(state.apps[0]?.name).toBe("Finder");
     expect(state.health.status).toBe("degraded");
     expect(events.map((event) => event.event)).toContain("system.session.started");
@@ -341,6 +344,8 @@ describe("createFridaySystemService", () => {
 
     await fixture.service.getSession();
     const callsAfterFirstSession = getStatus.mock.calls.length;
+    await fixture.service.getSummary();
+    const callsAfterSummary = getStatus.mock.calls.length;
     await fixture.service.getSession();
     const callsAfterSecondSession = getStatus.mock.calls.length;
     await fixture.service.getState();
@@ -349,9 +354,30 @@ describe("createFridaySystemService", () => {
     const callsAfterSessionPostRefresh = getStatus.mock.calls.length;
 
     expect(callsAfterFirstSession).toBe(callsAfterStartup + 1);
+    expect(callsAfterSummary).toBe(callsAfterFirstSession);
     expect(callsAfterSecondSession).toBe(callsAfterFirstSession);
     expect(callsAfterStateRefresh).toBeGreaterThan(callsAfterFirstSession);
     expect(callsAfterSessionPostRefresh).toBe(callsAfterStateRefresh);
+  });
+
+  it("returns lightweight summaries without capturing a desktop snapshot", async () => {
+    const bridge = createCompanionBridge();
+    const captureSnapshot = vi.fn(async () => bridge.captureSnapshot());
+    const fixture = await createServiceFixtureWithOptions({
+      companionBridge: {
+        ...bridge,
+        captureSnapshot,
+      },
+    });
+    allocatedDbs.push(fixture.db);
+
+    const summary = await fixture.service.getSummary();
+
+    expect(captureSnapshot).not.toHaveBeenCalled();
+    expect(summary.workspaceRoot).toBe(WORKSPACE_ROOT);
+    expect(summary.frontmostAppId).toBeUndefined();
+    expect(summary.remoteDevicesSummary.total).toBe(0);
+    expect(summary.remoteSessionsSummary.total).toBe(0);
   });
 
   it("starts in degraded mode when the companion socket is unavailable", async () => {

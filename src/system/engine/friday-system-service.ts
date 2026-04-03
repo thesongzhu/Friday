@@ -43,6 +43,7 @@ import type {
   FridaySystemRemoteSession,
   FridaySystemRemoteSessionStatus,
   FridaySystemSession,
+  FridaySystemSummary,
   FridaySystemSnapshot,
   FridaySystemWindowLayout,
   FridayTrustedDevicePlatform,
@@ -156,6 +157,7 @@ export type FridaySystemEventListener = (event: FridaySystemEvent) => void;
 
 export interface FridaySystemService {
   getSession(): Promise<FridaySystemSession>;
+  getSummary(): Promise<FridaySystemSummary>;
   getState(): Promise<FridaySystemSnapshot>;
   executeIntent(input: FridaySystemIntentInput): Promise<FridaySystemIntentResult>;
   listApprovalRules(filters?: FridaySystemApprovalRuleFilters): FridaySystemApprovalRule[];
@@ -502,8 +504,11 @@ export async function createFridaySystemService(
     lastPermissionFingerprint = permissionFingerprint;
   }
 
-  async function emitHealthIfChanged(reason?: string): Promise<void> {
-    const health = await readHealth();
+  async function emitHealthIfChanged(
+    reason?: string,
+    healthOverride?: FridaySystemHealth,
+  ): Promise<void> {
+    const health = healthOverride ?? await readHealth();
     const fingerprint = JSON.stringify({
       status: health.status,
       safeMode: health.safeMode,
@@ -706,48 +711,105 @@ export async function createFridaySystemService(
         : latest;
     }, undefined);
 
+    const summary = buildSystemSummary({
+      companion,
+      permissions,
+      health,
+      browser,
+      frontmostAppId: companionSnapshot.frontmostAppId,
+      frontmostWindowId: companionSnapshot.frontmostWindowId,
+      approvals,
+      remoteDevices,
+      remoteSessions,
+      latestSeenAt,
+    });
+
     return {
-      capturedAt: deps.nowIso(),
-      platform: companion.platform,
-      workspaceRoot: deps.workspaceRoot,
+      ...summary,
       apps: companionSnapshot.apps,
       windows: companionSnapshot.windows,
       notifications: companionSnapshot.notifications,
-      permissions,
       mountedRoots: [deps.workspaceRoot],
-      frontmostAppId: companionSnapshot.frontmostAppId,
-      frontmostWindowId: companionSnapshot.frontmostWindowId,
-      activeTask,
       clipboard: {
         available: deps.desktopSessionManager?.isConnected() ?? false,
       },
-      health,
-      companion,
-      ...(browser
+    };
+  }
+
+  function buildSystemSummary(input: {
+    companion: FridaySystemCompanionStatus;
+    permissions: FridaySystemPermissionGrant[];
+    health: FridaySystemHealth;
+    browser?: FridaySystemBrowserDiagnostics;
+    frontmostAppId?: string;
+    frontmostWindowId?: string;
+    approvals: FridaySystemApprovalRule[];
+    remoteDevices: FridaySystemRemoteDevice[];
+    remoteSessions: FridaySystemRemoteSession[];
+    latestSeenAt?: string;
+  }): FridaySystemSummary {
+    return {
+      capturedAt: deps.nowIso(),
+      platform: input.companion.platform,
+      workspaceRoot: deps.workspaceRoot,
+      permissions: input.permissions,
+      frontmostAppId: input.frontmostAppId,
+      frontmostWindowId: input.frontmostWindowId,
+      activeTask,
+      health: input.health,
+      companion: input.companion,
+      ...(input.browser
         ? {
           browser: {
-            ...browser,
-            browserTarget: browser.browserTarget ?? browser.targetBrowser,
+            ...input.browser,
+            browserTarget: input.browser.browserTarget ?? input.browser.targetBrowser,
           },
         }
         : {}),
       controlLease: normalizeActiveLease(),
       approvalsSummary: {
-        total: approvals.length,
-        highRiskAllowed: approvals.filter((item) =>
+        total: input.approvals.length,
+        highRiskAllowed: input.approvals.filter((item) =>
           (item.riskLevel === "high" || item.riskLevel === "critical") && item.decision === "allow"
         ).length,
       },
       remoteDevicesSummary: {
-        total: remoteDevices.length,
-        active: remoteDevices.filter((item) => item.status === "active").length,
+        total: input.remoteDevices.length,
+        active: input.remoteDevices.filter((item) => item.status === "active").length,
       },
       remoteSessionsSummary: {
-        total: remoteSessions.length,
-        active: remoteSessions.filter((item) => item.status === "active").length,
-        latestSeenAt,
+        total: input.remoteSessions.length,
+        active: input.remoteSessions.filter((item) => item.status === "active").length,
+        latestSeenAt: input.latestSeenAt,
       },
     };
+  }
+
+  async function buildSummary(): Promise<FridaySystemSummary> {
+    const { companion, permissions, health } = await readSessionCompanionSnapshot();
+    const approvals = deps.db.withReadConnection((db) => repository.listApprovalRules(db));
+    const remoteDevices = deps.db.withReadConnection((db) => repository.listRemoteDevices(db));
+    const remoteSessions = deps.db.withReadConnection((db) => repository.listRemoteSessions(db, { limit: 200 }));
+    const browser = deps.getBrowserDiagnostics?.();
+    const latestSeenAt = remoteSessions.reduce<string | undefined>((latest, session) => {
+      if (!latest) {
+        return session.lastSeenAt;
+      }
+      return new Date(session.lastSeenAt).getTime() > new Date(latest).getTime()
+        ? session.lastSeenAt
+        : latest;
+    }, undefined);
+
+    return buildSystemSummary({
+      companion,
+      permissions,
+      health,
+      browser,
+      approvals,
+      remoteDevices,
+      remoteSessions,
+      latestSeenAt,
+    });
   }
 
   function resolveProjectPath(rawPath: string | undefined): string {
@@ -1066,8 +1128,14 @@ export async function createFridaySystemService(
 
   const getState = async (): Promise<FridaySystemSnapshot> => {
     const snapshot = await buildSnapshot();
-    await emitHealthIfChanged("state_requested");
+    await emitHealthIfChanged("state_requested", snapshot.health);
     return snapshot;
+  };
+
+  const getSummary = async (): Promise<FridaySystemSummary> => {
+    const summary = await buildSummary();
+    await emitHealthIfChanged("summary_requested", summary.health);
+    return summary;
   };
 
   const listApprovalRules = (filters?: FridaySystemApprovalRuleFilters): FridaySystemApprovalRule[] =>
@@ -2271,6 +2339,7 @@ export async function createFridaySystemService(
 
   return {
     getSession,
+    getSummary,
     getState,
     executeIntent,
     listApprovalRules,

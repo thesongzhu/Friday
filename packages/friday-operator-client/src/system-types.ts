@@ -612,22 +612,14 @@ export interface FridaySystemBrowserDiagnostics {
   tabId?: string;
 }
 
-export interface FridaySystemSnapshot {
+export interface FridaySystemSummary {
   capturedAt: string;
   platform: FridayDesktopPlatform;
   workspaceRoot: string;
-  apps: FridaySystemAppRef[];
-  windows: FridaySystemWindowRef[];
-  notifications: FridaySystemNotificationRef[];
   permissions: FridaySystemPermissionGrant[];
-  mountedRoots: string[];
   frontmostAppId?: string;
   frontmostWindowId?: string;
   activeTask?: string;
-  clipboard?: {
-    available: boolean;
-    textPreview?: string;
-  };
   health: FridaySystemHealth;
   companion: FridaySystemCompanionStatus;
   browser?: FridaySystemBrowserDiagnostics;
@@ -644,6 +636,17 @@ export interface FridaySystemSnapshot {
     total: number;
     active: number;
     latestSeenAt?: string;
+  };
+}
+
+export interface FridaySystemSnapshot extends FridaySystemSummary {
+  apps: FridaySystemAppRef[];
+  windows: FridaySystemWindowRef[];
+  notifications: FridaySystemNotificationRef[];
+  mountedRoots: string[];
+  clipboard?: {
+    available: boolean;
+    textPreview?: string;
   };
 }
 
@@ -683,6 +686,10 @@ export interface FridayGetSystemSessionResponse {
 
 export interface FridayGetSystemStateResponse {
   snapshot: FridaySystemSnapshot;
+}
+
+export interface FridayGetSystemSummaryResponse {
+  summary: FridaySystemSummary;
 }
 
 export interface FridayExecuteSystemIntentRequest {

@@ -9,6 +9,9 @@ function makeDeps(overrides?: Partial<FridaySystemRoutesDeps>): FridaySystemRout
     session: {
       get: vi.fn().mockResolvedValue({ session: { id: "sess-1" } }),
     },
+    summary: {
+      get: vi.fn().mockResolvedValue({ summary: { capturedAt: "2026-03-06T00:00:00.000Z" } }),
+    },
     state: {
       get: vi.fn().mockResolvedValue({ snapshot: { capturedAt: "2026-03-06T00:00:00.000Z" } }),
     },
@@ -123,6 +126,17 @@ describe("createFridaySystemRoutes", () => {
       expect(route.method).toMatch(/^(GET|POST|PATCH|DELETE)$/);
       expect((route.auth as { public: boolean }).public).toBe(false);
     }
+  });
+
+  it("delegates summary reads through the summary dependency", async () => {
+    const deps = makeDeps();
+    const routes = createFridaySystemRoutes(deps);
+    const route = findRoute(routes, "system.summary.get");
+
+    const result = await route.handler(makeCtx());
+
+    expect(deps.summary.get).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ summary: { capturedAt: "2026-03-06T00:00:00.000Z" } });
   });
 
   it("validates action and idempotencyKey on intent execution", async () => {

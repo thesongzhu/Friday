@@ -14,6 +14,7 @@ import type {
   FridaySystemRemoteDevice,
   FridaySystemRemoteSession,
   FridaySystemSession,
+  FridaySystemSummary,
   FridaySystemSnapshot,
   FridaySystemWindowLayout,
   FridayTrustedDevicePlatform,
@@ -27,6 +28,10 @@ export interface FridayGetSystemSessionResponse {
 
 export interface FridayGetSystemStateResponse {
   snapshot: FridaySystemSnapshot;
+}
+
+export interface FridayGetSystemSummaryResponse {
+  summary: FridaySystemSummary;
 }
 
 export interface FridayExecuteSystemIntentRequest {

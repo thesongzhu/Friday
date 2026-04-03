@@ -13,6 +13,7 @@ import type {
   FridayExecuteSystemIntentRequest,
   FridayExecuteSystemIntentResponse,
   FridayGetSystemSessionResponse,
+  FridayGetSystemSummaryResponse,
   FridayGetSystemStateResponse,
   FridayHeartbeatSystemRemoteSessionRequest,
   FridayHeartbeatSystemRemoteSessionResponse,
@@ -48,6 +49,9 @@ const TRUSTED_DEVICE_PLATFORMS = new Set(["browser", "ios", "android"]);
 export interface FridaySystemRoutesDeps {
   session: {
     get(): Promise<FridayGetSystemSessionResponse>;
+  };
+  summary: {
+    get(): Promise<FridayGetSystemSummaryResponse>;
   };
   state: {
     get(): Promise<FridayGetSystemStateResponse>;
@@ -176,6 +180,15 @@ export function createFridaySystemRoutes(
       auth: { public: false, anyOfScopes: ["desktop.read"] },
       async handler() {
         return deps.session.get();
+      },
+    },
+    {
+      operationId: "system.summary.get",
+      method: "GET",
+      path: "/v1/system/summary",
+      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      async handler() {
+        return deps.summary.get();
       },
     },
     {

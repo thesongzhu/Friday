@@ -80,11 +80,22 @@ export function SettingsPage() {
     refetchInterval: 10_000,
   });
 
-  const { data: systemState } = useQuery({
+  const { data: systemSummary } = useQuery({
+    queryKey: systemKeys.summary(),
+    queryFn: () => systemApi.getSummary(),
+    retry: 0,
+    refetchInterval: 10_000,
+  });
+
+  const {
+    data: systemSnapshot,
+    refetch: refetchSystemSnapshot,
+    isFetching: isSystemSnapshotFetching,
+  } = useQuery({
     queryKey: systemKeys.state(),
     queryFn: () => systemApi.getState(),
     retry: 0,
-    refetchInterval: 10_000,
+    enabled: false,
   });
 
   const { data: persona } = useQuery({
@@ -535,12 +546,12 @@ export function SettingsPage() {
 
       <div className="space-y-4">
         <ShellCard eyebrow="Agent OS Session" title="Companion And Permissions">
-          {systemSession && systemState ? (
+          {systemSession && systemSummary ? (
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-2">
                 <DiagnosticTile icon={<Cpu className="h-4 w-4" />} label="Workspace Root" value={systemSession.workspaceRoot} mono />
                 <DiagnosticTile icon={<Wifi className="h-4 w-4" />} label="Cloud Planning" value={systemSession.cloudPlanningMode} />
-                <DiagnosticTile icon={<Shield className="h-4 w-4" />} label="Health" value={systemState.health.status} />
+                <DiagnosticTile icon={<Shield className="h-4 w-4" />} label="Health" value={systemSummary.health.status} />
                 <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label="Started" value={formatTimestamp(systemSession.startedAt)} />
               </div>
               <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
@@ -558,7 +569,7 @@ export function SettingsPage() {
                 <p className="mt-3 text-sm text-white/60">{summarizeHealthReasons(systemSession.health)}</p>
               </div>
               <div className="space-y-3">
-                {systemState.permissions.map((permission) => (
+                {systemSummary.permissions.map((permission) => (
                   <div key={permission.id} className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
@@ -569,7 +580,7 @@ export function SettingsPage() {
                     </div>
                   </div>
                 ))}
-                {systemState.permissions.length === 0 ? (
+                {systemSummary.permissions.length === 0 ? (
                   <p className="text-sm text-white/60">No desktop permission telemetry is currently available.</p>
                 ) : null}
               </div>
@@ -580,16 +591,37 @@ export function SettingsPage() {
         </ShellCard>
 
         <ShellCard eyebrow="Companion State" title="Desktop Surfaces">
-          {systemState ? (
+          {systemSummary ? (
             <div className="space-y-3">
-              <DiagnosticRow label="Frontmost App" value={systemState.frontmostAppId ?? "Unknown"} />
-              <DiagnosticRow label="Frontmost Window" value={systemState.frontmostWindowId ?? "Unknown"} />
-              <DiagnosticRow label="Last Snapshot" value={formatTimestamp(systemState.capturedAt)} />
-              <DiagnosticRow label="Active Lease" value={systemState.controlLease?.ownerId ?? "None"} />
-              <DiagnosticRow label="Permissions Updated" value={formatTimestamp(systemState.health.updatedAt)} />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-white/55">
+                  Idle polling now reads lightweight system summary data. Capture a full snapshot only when you need frontmost surfaces.
+                </p>
+                <ActionButton
+                  tone="secondary"
+                  onClick={() => void refetchSystemSnapshot()}
+                  disabled={isSystemSnapshotFetching}
+                >
+                  {isSystemSnapshotFetching ? "Refreshing..." : "Refresh Snapshot"}
+                </ActionButton>
+              </div>
+              <DiagnosticRow
+                label="Frontmost App"
+                value={systemSnapshot?.frontmostAppId ?? "Capture snapshot to inspect"}
+              />
+              <DiagnosticRow
+                label="Frontmost Window"
+                value={systemSnapshot?.frontmostWindowId ?? "Capture snapshot to inspect"}
+              />
+              <DiagnosticRow
+                label="Last Snapshot"
+                value={systemSnapshot ? formatTimestamp(systemSnapshot.capturedAt) : "No snapshot captured yet"}
+              />
+              <DiagnosticRow label="Active Lease" value={systemSummary.controlLease?.ownerId ?? "None"} />
+              <DiagnosticRow label="Permissions Updated" value={formatTimestamp(systemSummary.health.updatedAt)} />
             </div>
           ) : (
-            <p className="text-sm text-white/60">Waiting for a system snapshot.</p>
+            <p className="text-sm text-white/60">Waiting for system summary telemetry.</p>
           )}
         </ShellCard>
 

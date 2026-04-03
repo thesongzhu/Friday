@@ -1350,6 +1350,11 @@ export async function createFridayHub(
           session: await systemService!.getSession(),
         }),
       },
+      summary: {
+        get: async () => ({
+          summary: await systemService!.getSummary(),
+        }),
+      },
       state: {
         get: async () => ({
           snapshot: await systemService!.getState(),
@@ -2347,28 +2352,30 @@ export async function createFridayHub(
           return;
         }
         const episode = await worldModelEpisodeExtractor.extractFromRun(input.runId, userId);
-        if (episode) {
-          const trimmedResponse = input.response.trim();
-          const shouldSkipLowValueEpisode =
-            input.status === "completed"
-            && episode.steps.length === 0
-            && (trimmedResponse.length === 0 || !trimmedResponse.startsWith("ERROR:"));
-          if (shouldSkipLowValueEpisode) {
-            console.info(
-              `[friday][marker] world_model_episode_skipped_low_value runId=${input.runId} userId=${userId}`,
-            );
-            return;
-          }
-          await worldModelStateManager.updateFromEpisode(userId, episode);
-          console.info(
-            `[friday][marker] world_model_episode_extracted runId=${input.runId} userId=${userId} steps=${String(episode.steps.length)}`,
-          );
-          console.info(
-            `[friday][marker] world_model_snapshot_saved runId=${input.runId} userId=${userId}`,
-          );
+        if (!episode) {
+          return;
         }
-        // Pattern extraction — analyze episodes for recurring tool sequences, failures, and temporal patterns
-        const patterns = await worldModelPatternExtractor.extractPatterns(userId);
+        const trimmedResponse = input.response.trim();
+        const shouldSkipLowValueEpisode =
+          input.status === "completed"
+          && episode.steps.length === 0
+          && (trimmedResponse.length === 0 || !trimmedResponse.startsWith("ERROR:"));
+        if (shouldSkipLowValueEpisode) {
+          console.info(
+            `[friday][marker] world_model_episode_skipped_low_value runId=${input.runId} userId=${userId}`,
+          );
+          return;
+        }
+
+        await worldModelStateManager.updateFromEpisode(userId, episode);
+        console.info(
+          `[friday][marker] world_model_episode_extracted runId=${input.runId} userId=${userId} steps=${String(episode.steps.length)}`,
+        );
+        console.info(
+          `[friday][marker] world_model_snapshot_saved runId=${input.runId} userId=${userId}`,
+        );
+
+        const patterns = await worldModelPatternExtractor.refreshPatterns(userId);
         if (patterns.length > 0) {
           console.info(
             `[friday][marker] world_model_pattern_upserted runId=${input.runId} userId=${userId} count=${String(patterns.length)}`,
@@ -2436,7 +2443,7 @@ export async function createFridayHub(
       // ── Learned patterns injection ──
       // Load patterns discovered from past episodes so the agent can leverage them.
       try {
-        const patterns = await worldModelPatternExtractor.extractPatterns(input.userId, 50);
+        const patterns = await worldModelPatternExtractor.listPatterns(input.userId, 50);
         if (patterns.length > 0) {
           const demotionFacts = stateRuntime.sqlite.withReadConnection((db) =>
             db.prepare(
