@@ -249,4 +249,102 @@ describe("FridayAutoFixActionRepository", () => {
       executedCount: 2,
     });
   });
+
+  it("listRejectedByUser returns only rejected actions in reverse chronology", () => {
+    repo.insert(db.writer, baseAction);
+    repo.markRejected(db.writer, "action-001", NOW);
+
+    insertIncident("inc-002");
+    repo.insert(db.writer, {
+      ...baseAction,
+      actionId: "action-002",
+      incidentId: "inc-002",
+      status: "planned",
+      createdAt: "2025-06-15T09:00:00.000Z",
+      updatedAt: "2025-06-15T09:00:00.000Z",
+    });
+
+    insertIncident("inc-003");
+    repo.insert(db.writer, {
+      ...baseAction,
+      actionId: "action-003",
+      incidentId: "inc-003",
+      status: "rejected",
+      createdAt: "2025-06-15T11:00:00.000Z",
+      updatedAt: "2025-06-15T11:00:00.000Z",
+    });
+
+    const rejected = repo.listRejectedByUser(db.writer, {
+      userId: "test-user",
+      limit: 10,
+    });
+
+    expect(rejected.map((action) => action.actionId)).toEqual([
+      "action-003",
+      "action-001",
+    ]);
+  });
+
+  it("summarizeRecentHotspots aggregates rollback and rejection hotspots", () => {
+    repo.insert(db.writer, baseAction);
+    repo.markRejected(db.writer, "action-001", NOW);
+
+    insertIncident("inc-002");
+    repo.insert(db.writer, {
+      ...baseAction,
+      actionId: "action-002",
+      incidentId: "inc-002",
+      createdAt: "2025-06-15T09:00:00.000Z",
+      updatedAt: "2025-06-15T09:00:00.000Z",
+      plan: {
+        ...basePlan,
+        evidence: {
+          ...basePlan.evidence,
+          fingerprint: "sig-beta",
+        },
+      },
+    });
+    repo.markRolledBack(db.writer, "action-002", "2025-06-15T09:30:00.000Z");
+
+    insertIncident("inc-003");
+    repo.insert(db.writer, {
+      ...baseAction,
+      actionId: "action-003",
+      incidentId: "inc-003",
+      createdAt: "2025-06-15T08:00:00.000Z",
+      updatedAt: "2025-06-15T08:00:00.000Z",
+      plan: {
+        ...basePlan,
+        evidence: {
+          ...basePlan.evidence,
+          fingerprint: "sig-beta",
+        },
+      },
+    });
+
+    const hotspots = repo.summarizeRecentHotspots(db.writer, {
+      userId: "test-user",
+      recentLimit: 10,
+      hotspotLimit: 10,
+    });
+
+    expect(hotspots).toEqual([
+      {
+        fingerprint: "sig-abc",
+        rolledBackCount: 0,
+        appliedCount: 0,
+        rejectedCount: 1,
+        totalCount: 1,
+        lastSeenAt: NOW,
+      },
+      {
+        fingerprint: "sig-beta",
+        rolledBackCount: 1,
+        appliedCount: 0,
+        rejectedCount: 0,
+        totalCount: 2,
+        lastSeenAt: "2025-06-15T09:30:00.000Z",
+      },
+    ]);
+  });
 });

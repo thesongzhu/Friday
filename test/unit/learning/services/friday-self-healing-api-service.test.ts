@@ -74,6 +74,9 @@ describe("FridaySelfHealingApiService", () => {
     const actionRepo = createFridayAutoFixActionRepository();
     const approvalRepo = createFridayApprovalRequestRepository();
     const factRepo = createFridayPreferenceFactRepository();
+    const listRejectedByUserSpy = vi.spyOn(actionRepo, "listRejectedByUser");
+    const summarizeRecentHotspotsSpy = vi.spyOn(actionRepo, "summarizeRecentHotspots");
+    const listActionsByUserSpy = vi.spyOn(actionRepo, "listByUser");
     const listByUserPrefixesSpy = vi.spyOn(factRepo, "listByUserAndKeyPrefixes");
     const listByUserSpy = vi.spyOn(factRepo, "listByUser");
     const listByActionIdsSpy = vi.spyOn(approvalRepo, "listByActionIds");
@@ -239,6 +242,9 @@ describe("FridaySelfHealingApiService", () => {
 
     const overview = service.getLearningOverview({ userId: "test-user", limit: 10 });
 
+    expect(listRejectedByUserSpy).toHaveBeenCalledTimes(1);
+    expect(summarizeRecentHotspotsSpy).toHaveBeenCalledTimes(1);
+    expect(listActionsByUserSpy).not.toHaveBeenCalled();
     expect(listByUserPrefixesSpy).toHaveBeenCalledTimes(1);
     expect(listByUserSpy).not.toHaveBeenCalled();
     expect(listByActionIdsSpy).toHaveBeenCalledTimes(1);

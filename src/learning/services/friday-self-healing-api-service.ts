@@ -877,22 +877,18 @@ export function createFridaySelfHealingApiService(
       source: record.kind === "pin" ? "operator_pin" : "operator_penalty",
     }));
 
-    const actionRows = deps.db.withReadConnection((db) =>
-      deps.actionRepo.listByUser(db, {
+    const rejectedActions = deps.db.withReadConnection((db) =>
+      deps.actionRepo.listRejectedByUser(db, {
         userId: input.userId,
-        limit: 200,
+        limit,
       }),
     );
-    const rejectedActionIds = actionRows
-      .filter((action) => action.status === "rejected")
-      .map((action) => action.actionId);
+    const rejectedActionIds = rejectedActions.map((action) => action.actionId);
     const approvalsByActionId = new Map(
       deps.db.withReadConnection((db) => deps.approvalRepo.listByActionIds(db, rejectedActionIds))
         .map((approval) => [approval.actionId, approval] as const),
     );
-    const rejectedFixes = actionRows
-      .filter((action) => action.status === "rejected")
-      .slice(0, limit)
+    const rejectedFixes = rejectedActions
       .map((action): FridayRejectedFixRecord => {
         const approval = approvalsByActionId.get(action.actionId);
         return {
@@ -906,36 +902,13 @@ export function createFridaySelfHealingApiService(
         };
       });
 
-    const rollbackHotspotMap = new Map<string, FridayRollbackHotspotRecord>();
-    for (const action of actionRows) {
-      const fingerprint = action.plan.evidence.fingerprint;
-      const current = rollbackHotspotMap.get(fingerprint) ?? {
-        fingerprint,
-        rolledBackCount: 0,
-        appliedCount: 0,
-        rejectedCount: 0,
-        totalCount: 0,
-        lastSeenAt: action.updatedAt,
-      };
-      current.totalCount += 1;
-      if (action.status === "rolled_back") {
-        current.rolledBackCount += 1;
-      } else if (action.status === "applied") {
-        current.appliedCount += 1;
-      } else if (action.status === "rejected") {
-        current.rejectedCount += 1;
-      }
-      if (action.updatedAt > current.lastSeenAt) {
-        current.lastSeenAt = action.updatedAt;
-      }
-      rollbackHotspotMap.set(fingerprint, current);
-    }
-    const rollbackHotspots = [...rollbackHotspotMap.values()]
-      .filter((item) => item.rolledBackCount > 0 || item.rejectedCount > 0)
-      .sort((left, right) =>
-        (right.rolledBackCount + right.rejectedCount) - (left.rolledBackCount + left.rejectedCount)
-      )
-      .slice(0, limit);
+    const rollbackHotspots = deps.db.withReadConnection((db) =>
+      deps.actionRepo.summarizeRecentHotspots(db, {
+        userId: input.userId,
+        recentLimit: 200,
+        hotspotLimit: limit,
+      }),
+    );
 
     const recentDecisionDiffs = deps.db.withReadConnection((db) =>
       db.prepare(

@@ -45,6 +45,13 @@ export interface FridayAutoFixActionRepository {
       limit?: number;
     },
   ): FridayAutoFixActionEntity[];
+  listRejectedByUser(
+    db: Database.Database,
+    input: {
+      userId: string;
+      limit?: number;
+    },
+  ): FridayAutoFixActionEntity[];
   summarizeByFingerprint(
     db: Database.Database,
     input: {
@@ -59,6 +66,21 @@ export interface FridayAutoFixActionRepository {
     rejectedCount: number;
     executedCount: number;
   };
+  summarizeRecentHotspots(
+    db: Database.Database,
+    input: {
+      userId: string;
+      recentLimit?: number;
+      hotspotLimit?: number;
+    },
+  ): Array<{
+    fingerprint: string;
+    rolledBackCount: number;
+    appliedCount: number;
+    rejectedCount: number;
+    totalCount: number;
+    lastSeenAt: string;
+  }>;
 
   listPlanned(
     db: Database.Database,
@@ -261,6 +283,18 @@ export function createFridayAutoFixActionRepository(): FridayAutoFixActionReposi
       return rows.map(rowToEntity);
     },
 
+    listRejectedByUser(db, input) {
+      const rows = db
+        .prepare(
+          `SELECT * FROM auto_fix_actions
+           WHERE user_id = ? AND status = 'rejected'
+           ORDER BY created_at DESC
+           LIMIT ?`,
+        )
+        .all(input.userId, input.limit ?? 50) as FridayAutoFixActionRow[];
+      return rows.map(rowToEntity);
+    },
+
     summarizeByFingerprint(db, input) {
       let sql = `SELECT
                    COUNT(*) as sample_count,
@@ -300,6 +334,53 @@ export function createFridayAutoFixActionRepository(): FridayAutoFixActionReposi
         rejectedCount: row?.rejected_count ?? 0,
         executedCount: row?.executed_count ?? 0,
       };
+    },
+
+    summarizeRecentHotspots(db, input) {
+      const rows = db
+        .prepare(
+          `SELECT
+             json_extract(plan_json, '$.evidence.fingerprint') as fingerprint,
+             COALESCE(SUM(CASE WHEN status = 'rolled_back' THEN 1 ELSE 0 END), 0) as rolled_back_count,
+             COALESCE(SUM(CASE WHEN status = 'applied' THEN 1 ELSE 0 END), 0) as applied_count,
+             COALESCE(SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END), 0) as rejected_count,
+             COUNT(*) as total_count,
+             MAX(updated_at) as last_seen_at
+           FROM (
+             SELECT *
+             FROM auto_fix_actions
+             WHERE user_id = ?
+             ORDER BY created_at DESC
+             LIMIT ?
+           )
+           GROUP BY fingerprint
+           HAVING rolled_back_count > 0 OR rejected_count > 0
+           ORDER BY (rolled_back_count + rejected_count) DESC, last_seen_at DESC
+           LIMIT ?`,
+        )
+        .all(
+          input.userId,
+          input.recentLimit ?? 200,
+          input.hotspotLimit ?? 20,
+        ) as Array<{
+          fingerprint: string | null;
+          rolled_back_count: number;
+          applied_count: number;
+          rejected_count: number;
+          total_count: number;
+          last_seen_at: string;
+        }>;
+
+      return rows
+        .filter((row): row is typeof row & { fingerprint: string } => typeof row.fingerprint === "string" && row.fingerprint.length > 0)
+        .map((row) => ({
+          fingerprint: row.fingerprint,
+          rolledBackCount: row.rolled_back_count,
+          appliedCount: row.applied_count,
+          rejectedCount: row.rejected_count,
+          totalCount: row.total_count,
+          lastSeenAt: row.last_seen_at,
+        }));
     },
 
     listPlanned(db, input) {
