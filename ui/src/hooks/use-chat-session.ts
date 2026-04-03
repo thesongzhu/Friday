@@ -27,11 +27,54 @@ export interface UseChatSessionResult {
 
 const SESSION_KEY_STORAGE = "friday-chat-session-key";
 const HISTORY_STORAGE = "friday-chat-history";
+const CHAT_SESSION_CHANNEL = "chat";
+const CHAT_SESSION_ACCOUNT = "default";
+const SESSION_KEY_SEGMENT_PATTERN = /^[a-z0-9._-]+$/;
+
+function normalizeSessionKeySegment(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function createChatConversationId(): string {
+  return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function buildChatSessionKey(chatId = createChatConversationId()): string {
+  const normalizedChatId = normalizeSessionKeySegment(chatId);
+  return `${CHAT_SESSION_CHANNEL}:${CHAT_SESSION_ACCOUNT}:${normalizedChatId}`;
+}
+
+function isCanonicalConversationSessionKey(raw: string): boolean {
+  const segments = raw.split(":");
+  return segments.length === 3 && segments.every((segment) =>
+    segment.length > 0 && SESSION_KEY_SEGMENT_PATTERN.test(segment)
+  );
+}
+
+export function coercePersistedChatSessionKey(raw: string | null): string {
+  if (!raw) {
+    return buildChatSessionKey();
+  }
+
+  if (isCanonicalConversationSessionKey(raw)) {
+    return raw;
+  }
+
+  const meaningfulSegments = raw
+    .split(":")
+    .map((segment) => normalizeSessionKeySegment(segment))
+    .filter((segment) => segment.length > 0);
+
+  const candidateChatId = meaningfulSegments.at(-1);
+  return buildChatSessionKey(candidateChatId);
+}
 
 function getOrCreateSessionKey(): string {
-  const existing = localStorage.getItem(SESSION_KEY_STORAGE);
-  if (existing) return existing;
-  const key = `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const key = coercePersistedChatSessionKey(localStorage.getItem(SESSION_KEY_STORAGE));
   localStorage.setItem(SESSION_KEY_STORAGE, key);
   return key;
 }
