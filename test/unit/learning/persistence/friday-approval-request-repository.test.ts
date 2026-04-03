@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
 import { createFridayApprovalRequestRepository } from "#learning";
@@ -178,6 +178,29 @@ describe("FridayApprovalRequestRepository", () => {
     const expired = repo.expirePending(db.writer, NOW);
     expect(expired).toHaveLength(1);
     expect(expired[0]!.status).toBe("expired");
+  });
+
+  it("expirePending batches the updated row lookup", () => {
+    repo.insert(db.writer, {
+      ...baseRequest,
+      requestId: "req-001",
+      expiresAt: "2025-06-14T10:00:00.000Z",
+    });
+    repo.insert(db.writer, {
+      ...baseRequest,
+      requestId: "req-002",
+      expiresAt: "2025-06-14T11:00:00.000Z",
+    });
+
+    const listByIdsSpy = vi.spyOn(repo, "listByIds");
+    const getByIdSpy = vi.spyOn(repo, "getById");
+
+    const expired = repo.expirePending(db.writer, NOW);
+
+    expect(listByIdsSpy).toHaveBeenCalledTimes(1);
+    expect(getByIdSpy).not.toHaveBeenCalled();
+    expect(expired.map((request) => request.requestId)).toEqual(["req-001", "req-002"]);
+    expect(expired.every((request) => request.status === "expired")).toBe(true);
   });
 
   it("expirePending does not expire non-expired requests", () => {

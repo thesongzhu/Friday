@@ -21,6 +21,10 @@ export interface FridayApprovalRequestRepository {
     db: Database.Database,
     actionId: string,
   ): FridayApprovalRequestEntity | null;
+  listByIds(
+    db: Database.Database,
+    requestIds: string[],
+  ): FridayApprovalRequestEntity[];
   listByActionIds(
     db: Database.Database,
     actionIds: string[],
@@ -117,6 +121,24 @@ export function createFridayApprovalRequestRepository(): FridayApprovalRequestRe
         .prepare("SELECT * FROM approval_requests WHERE action_id = ? ORDER BY created_at DESC LIMIT 1")
         .get(actionId) as FridayApprovalRequestRow | undefined;
       return row ? rowToEntity(row) : null;
+    },
+
+    listByIds(db, requestIds) {
+      if (requestIds.length === 0) {
+        return [];
+      }
+      const uniqueRequestIds = [...new Set(requestIds)];
+      const placeholders = uniqueRequestIds.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT * FROM approval_requests
+           WHERE request_id IN (${placeholders})`,
+        )
+        .all(...uniqueRequestIds) as FridayApprovalRequestRow[];
+      const requestsById = new Map(rows.map((row) => [row.request_id, rowToEntity(row)] as const));
+      return uniqueRequestIds
+        .map((requestId) => requestsById.get(requestId))
+        .filter((request): request is FridayApprovalRequestEntity => request != null);
     },
 
     listByActionIds(db, actionIds) {
@@ -218,9 +240,7 @@ export function createFridayApprovalRequestRepository(): FridayApprovalRequestRe
          WHERE request_id IN (${placeholders}) AND status = 'pending'`,
       ).run(nowIso, ...ids);
 
-      return ids
-        .map((id) => this.getById(db, id))
-        .filter((e): e is FridayApprovalRequestEntity => e !== null);
+      return this.listByIds(db, ids);
     },
   };
 }
