@@ -1545,8 +1545,8 @@ export async function createFridayHub(
     const providerCount = await providerService.listProviders()
       .then((providers) => providers.length)
       .catch(() => 0);
-    const systemSnapshot = systemService
-      ? await systemService.getState().catch(() => undefined)
+    const systemSummary = systemService
+      ? await systemService.getSummary().catch(() => undefined)
       : undefined;
     const browserDiagnostics = browserManager?.getDiagnostics();
 
@@ -1573,10 +1573,10 @@ export async function createFridayHub(
         enabled: !!systemService,
       },
       desktop: {
-        connected: systemSnapshot?.health.desktopConnected ?? false,
+        connected: systemSummary?.health.desktopConnected ?? false,
       },
       companion: {
-        connected: systemSnapshot?.health.companionConnected ?? false,
+        connected: systemSummary?.health.companionConnected ?? false,
       },
     };
   };
