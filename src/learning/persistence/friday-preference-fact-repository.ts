@@ -19,6 +19,14 @@ export interface FridayPreferenceFactRepository {
     minConfidence?: number,
     limit?: number,
   ): FridayPreferenceFactEntity[];
+  listByUserAndKeys(
+    db: Database.Database,
+    input: {
+      userId: string;
+      keys: string[];
+      minConfidence?: number;
+    },
+  ): FridayPreferenceFactEntity[];
   listByUserAndKeyPrefixes(
     db: Database.Database,
     input: {
@@ -103,6 +111,24 @@ export function createFridayPreferenceFactRepository(): FridayPreferenceFactRepo
         )
         .all(userId, minConfidence, limit) as FridayPreferenceFactRow[];
       return rows.map(rowToEntity);
+    },
+
+    listByUserAndKeys(db, input) {
+      if (input.keys.length === 0) {
+        return [];
+      }
+      const uniqueKeys = [...new Set(input.keys)];
+      const placeholders = uniqueKeys.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT * FROM preference_facts
+           WHERE user_id = ? AND confidence >= ? AND key IN (${placeholders})`,
+        )
+        .all(input.userId, input.minConfidence ?? 0, ...uniqueKeys) as FridayPreferenceFactRow[];
+      const factsByKey = new Map(rows.map((row) => [row.key, rowToEntity(row)] as const));
+      return uniqueKeys
+        .map((key) => factsByKey.get(key))
+        .filter((fact): fact is FridayPreferenceFactEntity => fact != null);
     },
 
     listByUserAndKeyPrefixes(db, input) {

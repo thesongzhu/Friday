@@ -202,6 +202,52 @@ describe("FridayPreferenceFactRepository", () => {
     ]);
   });
 
+  it("listByUserAndKeys returns only the requested keys in input order", () => {
+    repo.upsert(db.writer, {
+      factId: "fact-route",
+      userId: "test-user",
+      key: "route_penalty:triage",
+      value: { providerId: "openai" },
+      confidence: 0.8,
+      evidenceCountDelta: 1,
+      lastConfirmedAt: NOW,
+      sourceEventId: "evt-route",
+      nowIso: NOW,
+    });
+    repo.upsert(db.writer, {
+      factId: "fact-pattern",
+      userId: "test-user",
+      key: "pattern_demotion:pattern-1",
+      value: { factor: 0.2 },
+      confidence: 0.7,
+      evidenceCountDelta: 1,
+      lastConfirmedAt: NOW,
+      sourceEventId: "evt-pattern",
+      nowIso: NOW,
+    });
+    repo.upsert(db.writer, {
+      factId: "fact-pref",
+      userId: "test-user",
+      key: "pref:language",
+      value: "TypeScript",
+      confidence: 0.95,
+      evidenceCountDelta: 1,
+      lastConfirmedAt: NOW,
+      sourceEventId: "evt-pref",
+      nowIso: NOW,
+    });
+
+    const matching = repo.listByUserAndKeys(db.writer, {
+      userId: "test-user",
+      keys: ["pattern_demotion:pattern-1", "route_penalty:triage"],
+    });
+
+    expect(matching.map((fact) => fact.key)).toEqual([
+      "pattern_demotion:pattern-1",
+      "route_penalty:triage",
+    ]);
+  });
+
   it("deleteByUserAndKey removes fact and returns true", () => {
     repo.upsert(db.writer, {
       factId: "fact-001",

@@ -2336,6 +2336,7 @@ export async function createFridayHub(
   const workspaceContextEngine = createFridayWorkspaceContextEngine({
     workspaceDir: workspaceRoot,
   });
+  const preferenceFactRepository = createFridayPreferenceFactRepository();
 
   const agentContextEngine = {
     ...workspaceContextEngine,
@@ -2423,8 +2424,9 @@ export async function createFridayHub(
     // ── World model context injection (C4) ──
     // Load recent interactions so the agent has access to learned knowledge.
     if (input.userId) {
+      const userId = input.userId;
       try {
-        const recentEpisodes = await worldModelStateManager.getRecentEpisodes(input.userId, 5);
+        const recentEpisodes = await worldModelStateManager.getRecentEpisodes(userId, 5);
         if (recentEpisodes.length > 0) {
           const lines = recentEpisodes.map(
             (ep) => `- ${ep.taskIntent} → ${ep.outcome}`,
@@ -2443,17 +2445,17 @@ export async function createFridayHub(
       // ── Learned patterns injection ──
       // Load patterns discovered from past episodes so the agent can leverage them.
       try {
-        const patterns = await worldModelPatternExtractor.listPatterns(input.userId, 50);
+        const patterns = await worldModelPatternExtractor.listPatterns(userId, 50);
         if (patterns.length > 0) {
+          const demotionKeys = patterns.map((pattern) => `pattern_demotion:${pattern.id}`);
           const demotionFacts = stateRuntime.sqlite.withReadConnection((db) =>
-            db.prepare(
-              `SELECT key, value_json
-               FROM preference_facts
-               WHERE user_id = ?
-                 AND key LIKE 'pattern_demotion:%'
-               ORDER BY updated_at DESC
-               LIMIT 200`,
-            ).all(input.userId) as Array<{ key: string; value_json: string }>,
+            preferenceFactRepository.listByUserAndKeys(db, {
+              userId,
+              keys: demotionKeys,
+            }).map((fact) => ({
+              key: fact.key,
+              value_json: JSON.stringify(fact.value),
+            })),
           );
           const effectivePatterns = patterns
             .map((pattern) => {
@@ -3333,7 +3335,7 @@ export async function createFridayHub(
     lessonRepo: createFridayLearnedLessonRepository(),
     actionRepo: createFridayAutoFixActionRepository(),
     approvalRepo: createFridayApprovalRequestRepository(),
-    factRepo: createFridayPreferenceFactRepository(),
+    factRepo: preferenceFactRepository,
     diagnosisService: selfLearningRuntime.diagnosis,
     planService: selfLearningRuntime.autoFixPlan,
     riskService: selfLearningRuntime.autoFixRisk,
