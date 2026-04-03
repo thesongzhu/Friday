@@ -33,6 +33,7 @@ interface MemoryItemRow {
 export interface FridayMemoryItemRepository {
   insert(db: Database.Database, item: FridayMemoryItem): void;
   getById(db: Database.Database, id: string): FridayMemoryItem | null;
+  listByIds(db: Database.Database, ids: string[]): FridayMemoryItem[];
   list(
     db: Database.Database,
     input?: {
@@ -165,6 +166,19 @@ export function createFridayMemoryItemRepository(): FridayMemoryItemRepository {
         | MemoryItemRow
         | undefined;
       return row ? rowToItem(row) : null;
+    },
+
+    listByIds(db, ids) {
+      if (ids.length === 0) return [];
+      const uniqueIds = [...new Set(ids)];
+      const placeholders = uniqueIds.map(() => "?").join(", ");
+      const rows = db
+        .prepare(`SELECT * FROM memory_items WHERE id IN (${placeholders})`)
+        .all(...uniqueIds) as MemoryItemRow[];
+      const itemsById = new Map(rows.map((row) => [row.id, rowToItem(row)] as const));
+      return uniqueIds
+        .map((id) => itemsById.get(id))
+        .filter((item): item is FridayMemoryItem => item != null);
     },
 
     list(db, input) {

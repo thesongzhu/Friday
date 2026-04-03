@@ -202,22 +202,38 @@ export function createFridayMemoryService(
 
       // Enforce tagsAll on semantic-only hits before merge (Fix #1)
       // FTS path already handles tagsAll filtering, but semantic hits need post-filtering
+      const semanticCandidateItems = deps.db.withReadConnection((db) =>
+        itemRepo.listByIds(db, semanticHits.map((hit) => hit.itemId)),
+      );
+      const semanticCandidateMap = new Map(
+        semanticCandidateItems.map((item) => [item.id, item] as const),
+      );
       let filteredSemanticHits = semanticHits;
       if (options?.tagsAll && options.tagsAll.length > 0) {
         const requiredTags = options.tagsAll;
         filteredSemanticHits = semanticHits.filter((hit) => {
-          const item = deps.db.withReadConnection((db) => itemRepo.getById(db, hit.itemId));
+          const item = semanticCandidateMap.get(hit.itemId);
           if (!item) return false;
           return requiredTags.every((tag) => item.tags.includes(tag));
         });
       }
 
+      const candidateIds = new Set<string>([
+        ...ftsHits.map((hit) => hit.itemId),
+        ...filteredSemanticHits.map((hit) => hit.itemId),
+      ]);
+      const mergedCandidateItems = deps.db.withReadConnection((db) =>
+        itemRepo.listByIds(db, [...candidateIds]),
+      );
+      const mergedCandidateMap = new Map(
+        mergedCandidateItems.map((item) => [item.id, item] as const),
+      );
+
       // Merge results
       const results: FridayMemorySearchResult[] = mergeHybridResults({
         ftsHits,
         semanticHits: filteredSemanticHits,
-        resolveItem: (itemId) =>
-          deps.db.withReadConnection((db) => itemRepo.getById(db, itemId)),
+        resolveItem: (itemId) => mergedCandidateMap.get(itemId) ?? null,
         weights: options?.weights,
         limit,
         minScore: options?.minScore,

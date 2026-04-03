@@ -55,6 +55,18 @@ describe("FridayMemoryItemRepository", () => {
     expect(found).toBeNull();
   });
 
+  it("listByIds preserves requested order, de-duplicates IDs, and skips missing items", () => {
+    db.writer.transaction(() => {
+      repo.insert(db.writer, makeItem({ id: "i1", key: "k1", content: "first" }));
+      repo.insert(db.writer, makeItem({ id: "i2", key: "k2", content: "second" }));
+      repo.insert(db.writer, makeItem({ id: "i3", key: "k3", content: "third" }));
+    })();
+
+    const items = repo.listByIds(db.writer, ["i3", "missing", "i1", "i3", "i2"]);
+
+    expect(items.map((item) => item.id)).toEqual(["i3", "i1", "i2"]);
+  });
+
   it("deletes an item by ID", () => {
     const item = makeItem();
     db.writer.transaction(() => repo.insert(db.writer, item))();
