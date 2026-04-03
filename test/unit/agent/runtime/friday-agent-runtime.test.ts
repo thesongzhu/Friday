@@ -4828,6 +4828,50 @@ describe("FridayAgentRuntime", () => {
     expect(capturedSystemPrompt).toBe("You are a test agent.");
   });
 
+  it("reuses learned preferences for communication prompt enrichment", async () => {
+    let capturedSystemPrompt = "";
+
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedSystemPrompt = params.systemPrompt;
+        yield { type: "text_delta", text: "ok" };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 2 };
+      },
+    };
+
+    const learningContextBuilder = vi.fn().mockReturnValue({
+      preferences: { language: "Chinese" },
+    });
+    const communicationPromptBuilder = vi
+      .fn()
+      .mockReturnValue("<communication-policy>Use concise Chinese.</communication-policy>");
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      learningContextBuilder,
+      communicationPromptBuilder,
+    });
+
+    await runtime.executeRun({ task: "Hello", principalId: "user-123" });
+
+    expect(learningContextBuilder).toHaveBeenCalledTimes(1);
+    expect(communicationPromptBuilder).toHaveBeenCalledWith({
+      userId: "user-123",
+      nowIso: NOW,
+      learnedPreferences: { language: "Chinese" },
+    });
+    expect(capturedSystemPrompt).toContain("<user-preferences>");
+    expect(capturedSystemPrompt).toContain("<communication-policy>");
+  });
+
   it("calls contextEngine.afterTurn for terminal runs without changing the result", async () => {
     const llmClient = createMockLlmClient([
       [

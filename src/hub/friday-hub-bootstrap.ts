@@ -2661,7 +2661,7 @@ export async function createFridayHub(
           principalId: input.userId,
           category: "communication",
         }));
-      const learnedPreferences = _learningContextRef?.buildContext(input).preferences ?? {};
+      const learnedPreferences = input.learnedPreferences ?? _learningContextRef?.buildContext(input).preferences ?? {};
       const persona = resolveFridayCommunicationPersona({
         explicitPreferences,
         learnedPreferences,

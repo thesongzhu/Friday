@@ -320,7 +320,11 @@ export interface CreateFridayAgentRuntimeDeps {
   /** Optional callback that returns learned user preferences to inject into the system prompt. */
   learningContextBuilder?: (input: { userId: string; nowIso: string }) => { preferences: Record<string, unknown> };
   /** Optional callback that returns a communication persona prompt fragment for the current user. */
-  communicationPromptBuilder?: (input: { userId: string; nowIso: string }) => string | null;
+  communicationPromptBuilder?: (input: {
+    userId: string;
+    nowIso: string;
+    learnedPreferences?: Record<string, unknown>;
+  }) => string | null;
   /** Optional deterministic delegation hook for top-level coordinator runs. */
   delegationHandler?: (input: FridayAgentDelegationRequest) =>
     Promise<FridayAgentDelegationResult | null>;

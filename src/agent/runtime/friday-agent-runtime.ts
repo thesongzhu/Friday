@@ -1303,7 +1303,11 @@ export function createFridayAgentRuntime(
         }
         if (communicationPromptBuilder && principalId) {
           try {
-            const fragment = communicationPromptBuilder({ userId: principalId, nowIso: nowIso() });
+            const fragment = communicationPromptBuilder({
+              userId: principalId,
+              nowIso: nowIso(),
+              learnedPreferences,
+            });
             if (fragment && fragment.trim().length > 0) {
               const trimmedFragment = fragment.trim();
               communicationPolicyChars = trimmedFragment.length;
