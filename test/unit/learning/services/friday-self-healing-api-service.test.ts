@@ -750,4 +750,172 @@ describe("FridaySelfHealingApiService", () => {
       }),
     ]);
   });
+
+  it("batches planned action lookups when emitting process results", () => {
+    const db = createTestDb();
+    allocatedDbs.push(db);
+    const idGenerator = createTestIdGenerator();
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    const lessonRepo = createFridayLearnedLessonRepository();
+    const actionRepo = createFridayAutoFixActionRepository();
+    const approvalRepo = createFridayApprovalRequestRepository();
+    const factRepo = createFridayPreferenceFactRepository();
+    const listByIncidentIdsSpy = vi.spyOn(actionRepo, "listByIncidentIds");
+    const listActionsByUserSpy = vi.spyOn(actionRepo, "listByUser");
+    const listApprovalActionIdsSpy = vi.spyOn(approvalRepo, "listByActionIds");
+    const getApprovalByActionIdSpy = vi.spyOn(approvalRepo, "getByActionId");
+    const listIncidentIdsSpy = vi.spyOn(incidentRepo, "listByIds");
+    const listDiagnosisIdsSpy = vi.spyOn(diagnosisRepo, "listByIds");
+    const listLessonFingerprintsSpy = vi.spyOn(lessonRepo, "listByFingerprints");
+    const service = createFridaySelfHealingApiService({
+      db,
+      idGenerator,
+      nowIso: () => "2026-04-03T11:00:00.000Z",
+      incidentRepo,
+      diagnosisRepo,
+      lessonRepo,
+      actionRepo,
+      approvalRepo,
+      factRepo,
+      diagnosisService: {} as never,
+      planService: {} as never,
+      riskService: {
+        assess: () => ({
+          riskTier: 2,
+          reasons: ["emit-process-batch"],
+          requiresApproval: true,
+          autoApplyAllowed: false,
+        }),
+      } as never,
+      executionService: {} as never,
+      rollbackService: {} as never,
+      approvalService: {} as never,
+      autoFixDispatcher: {} as never,
+      metricsService: {} as never,
+      pipeline: {} as never,
+    });
+
+    const lessons = db.withWriteTransaction((writerDb) =>
+      [1, 2].map((index) =>
+        lessonRepo.upsertByFingerprint(writerDb, {
+          id: `emit-lesson-${index}`,
+          fingerprint: `emit:fingerprint:${index}`,
+          title: `Emit lesson ${index}`,
+          cause: `Emit cause ${index}`,
+          fix: `Emit fix ${index}`,
+          nowIso: `2026-04-03T10:0${index}:00.000Z`,
+        }),
+      ),
+    );
+
+    const incidents = [1, 2].map((index) => ({
+      incidentId: `emit-incident-${index}`,
+      userId: "test-user",
+      ts: `2026-04-03T09:0${index}:00.000Z`,
+      category: "workflow" as const,
+      severity: index === 1 ? "high" as const : "medium" as const,
+      signature: `emit:fingerprint:${index}`,
+      context: { index },
+      autoFixEligible: true,
+      status: "open" as const,
+      createdAt: `2026-04-03T09:0${index}:00.000Z`,
+      updatedAt: `2026-04-03T09:0${index}:00.000Z`,
+    }));
+    const diagnoses = [1, 2].map((index) => ({
+      id: `emit-diagnosis-${index}`,
+      incidentId: `emit-incident-${index}`,
+      errorFingerprint: `emit:fingerprint:${index}`,
+      confidence: 0.9,
+      diagnosis: {
+        summary: `Emit summary ${index}`,
+        rootCause: `Emit root cause ${index}`,
+      },
+      createdAt: `2026-04-03T09:1${index}:00.000Z`,
+      updatedAt: `2026-04-03T09:1${index}:00.000Z`,
+    }));
+
+    db.withWriteTransaction((writerDb) => {
+      for (const incident of incidents) {
+        incidentRepo.insert(writerDb, incident);
+      }
+      for (const diagnosis of diagnoses) {
+        diagnosisRepo.insert(writerDb, diagnosis);
+      }
+
+      for (const index of [1, 2]) {
+        for (const actionIndex of [1, 2]) {
+          const actionId = `emit-action-${index}-${actionIndex}`;
+          actionRepo.insert(writerDb, {
+            actionId,
+            incidentId: `emit-incident-${index}`,
+            userId: "test-user",
+            riskTier: 2,
+            plan: {
+              title: `Emit action ${index}-${actionIndex}`,
+              summary: "Emit remediation action",
+              steps: [],
+              evidence: {
+                fingerprint: `emit:fingerprint:${index}`,
+                matchedLessonIds: [`emit-lesson-${index}`],
+                diagnosisId: `emit-diagnosis-${index}`,
+                recurrenceCount: 2,
+              },
+            },
+            status: actionIndex === 1 ? "planned" : "rejected",
+            outcome: null,
+            createdAt: `2026-04-03T09:2${index}${actionIndex}:00.000Z`,
+            updatedAt: `2026-04-03T09:2${index}${actionIndex}:00.000Z`,
+          });
+          approvalRepo.insert(writerDb, {
+            requestId: `emit-approval-${index}-${actionIndex}`,
+            actionId,
+            userId: "test-user",
+            description: `Emit approval ${index}-${actionIndex}`,
+            riskTier: 2,
+            plan: {
+              title: `Emit action ${index}-${actionIndex}`,
+              summary: "Emit remediation action",
+              steps: [],
+              evidence: {
+                fingerprint: `emit:fingerprint:${index}`,
+                matchedLessonIds: [`emit-lesson-${index}`],
+                diagnosisId: `emit-diagnosis-${index}`,
+                recurrenceCount: 2,
+              },
+            },
+            requestedAt: `2026-04-03T09:3${index}${actionIndex}:00.000Z`,
+            expiresAt: `2026-04-03T10:3${index}${actionIndex}:00.000Z`,
+            status: actionIndex === 1 ? "pending" : "rejected",
+            responseReason: actionIndex === 2 ? "Already covered by a better plan" : undefined,
+            createdAt: `2026-04-03T09:3${index}${actionIndex}:00.000Z`,
+            updatedAt: `2026-04-03T09:3${index}${actionIndex}:00.000Z`,
+          });
+        }
+      }
+    });
+
+    const results = [
+      {
+        eventId: "result-1",
+        inserted: true,
+        extractedSignals: [],
+        factsUpdated: [],
+        incidentsCreated: incidents,
+        diagnosisCreated: diagnoses,
+        lessonsUpdated: lessons,
+        lifecycleState: "steady_state",
+      },
+    ] as Parameters<typeof service.emitProcessResults>[0];
+
+    service.emitProcessResults(results, "corr-emit");
+
+    expect(listByIncidentIdsSpy).toHaveBeenCalledTimes(1);
+    expect(listActionsByUserSpy).not.toHaveBeenCalled();
+    expect(listApprovalActionIdsSpy).toHaveBeenCalledTimes(1);
+    expect(getApprovalByActionIdSpy).not.toHaveBeenCalled();
+    expect(listIncidentIdsSpy).not.toHaveBeenCalled();
+    expect(listDiagnosisIdsSpy).not.toHaveBeenCalled();
+    expect(listLessonFingerprintsSpy).not.toHaveBeenCalled();
+  });
 });

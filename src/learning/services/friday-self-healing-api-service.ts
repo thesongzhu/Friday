@@ -1526,16 +1526,32 @@ export function createFridaySelfHealingApiService(
           );
         }
 
+        const incidentIds = result.incidentsCreated.map((createdIncident) => createdIncident.incidentId);
+        const plannedActions = deps.db.withReadConnection((db) =>
+          deps.actionRepo.listByIncidentIds(db, {
+            incidentIds,
+            limitPerIncident: 5,
+          }),
+        );
+        const actionDetails = buildActionDetailsLookups(
+          plannedActions,
+          {
+            incidentsById: new Map(
+              result.incidentsCreated.map((createdIncident) => [createdIncident.incidentId, createdIncident] as const),
+            ),
+            diagnosesById: new Map(result.diagnosisCreated.map((diagnosis) => [diagnosis.id, diagnosis] as const)),
+            lessonsByFingerprint: new Map(result.lessonsUpdated.map((lesson) => [lesson.fingerprint, lesson] as const)),
+          },
+        );
+        const actionsByIncidentId = new Map<string, FridayAutoFixActionEntity[]>();
+        for (const action of plannedActions) {
+          const bucket = actionsByIncidentId.get(action.incidentId) ?? [];
+          bucket.push(action);
+          actionsByIncidentId.set(action.incidentId, bucket);
+        }
         for (const incident of result.incidentsCreated) {
-          const plannedActions = deps.db.withReadConnection((db) =>
-            deps.actionRepo.listByUser(db, {
-              userId: incident.userId,
-              incidentId: incident.incidentId,
-              limit: 5,
-            }),
-          );
-          for (const action of plannedActions) {
-            const details = buildActionDetails(action);
+          for (const action of actionsByIncidentId.get(incident.incidentId) ?? []) {
+            const details = buildActionDetails(action, actionDetails);
             emitActionEvent("autofix.action.planned", details, correlationId);
             if (details.approval?.status === "pending") {
               emitActionEvent("autofix.action.pending_approval", details, details.approval.requestId);

@@ -20,6 +20,14 @@ export interface FridayAutoFixActionRepository {
     db: Database.Database,
     actionIds: string[],
   ): FridayAutoFixActionEntity[];
+  listByIncidentIds(
+    db: Database.Database,
+    input: {
+      incidentIds: string[];
+      status?: FridayAutoFixActionEntity["status"];
+      limitPerIncident?: number;
+    },
+  ): FridayAutoFixActionEntity[];
   listLatestByIncidentIds(
     db: Database.Database,
     input: {
@@ -158,6 +166,36 @@ export function createFridayAutoFixActionRepository(): FridayAutoFixActionReposi
       return uniqueActionIds
         .map((actionId) => actionsById.get(actionId))
         .filter((action): action is FridayAutoFixActionEntity => action != null);
+    },
+
+    listByIncidentIds(db, input) {
+      if (input.incidentIds.length === 0) {
+        return [];
+      }
+      const uniqueIncidentIds = [...new Set(input.incidentIds)];
+      const placeholders = uniqueIncidentIds.map(() => "?").join(", ");
+      let sql = `SELECT * FROM auto_fix_actions WHERE incident_id IN (${placeholders})`;
+      const params: unknown[] = [...uniqueIncidentIds];
+      if (input.status) {
+        sql += " AND status = ?";
+        params.push(input.status);
+      }
+      sql += " ORDER BY created_at DESC";
+      const rows = db.prepare(sql).all(...params) as FridayAutoFixActionRow[];
+      if (!input.limitPerIncident || input.limitPerIncident <= 0) {
+        return rows.map(rowToEntity);
+      }
+      const countsByIncidentId = new Map<string, number>();
+      const selected: FridayAutoFixActionEntity[] = [];
+      for (const row of rows) {
+        const nextCount = (countsByIncidentId.get(row.incident_id) ?? 0) + 1;
+        if (nextCount > input.limitPerIncident) {
+          continue;
+        }
+        countsByIncidentId.set(row.incident_id, nextCount);
+        selected.push(rowToEntity(row));
+      }
+      return selected;
     },
 
     listLatestByIncidentIds(db, input) {
