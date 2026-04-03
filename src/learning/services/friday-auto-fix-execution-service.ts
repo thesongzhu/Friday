@@ -369,17 +369,12 @@ export function createFridayAutoFixExecutionService(
         if (deps.lessonExtractionService) {
           try {
             const incident = deps.db.withReadConnection((db) =>
-              deps.incidentRepo.listByUser(db, {
-                userId: action.userId,
-                status: "mitigated",
-              }).find((inc) => inc.incidentId === action.incidentId),
+              deps.incidentRepo.getById(db, action.incidentId),
             );
-            const diagnosis = deps.db.withReadConnection((db) =>
-              deps.diagnosisRepo.listByFingerprint(
-                db,
-                action.plan.evidence.fingerprint,
-              ).find((d) => d.id === action.plan.evidence.diagnosisId),
-            );
+            const diagnosisId = action.plan.evidence.diagnosisId;
+            const diagnosis = diagnosisId
+              ? deps.db.withReadConnection((db) => deps.diagnosisRepo.getById(db, diagnosisId))
+              : null;
 
             if (incident && diagnosis) {
               deps.lessonExtractionService.extractFromSuccess({

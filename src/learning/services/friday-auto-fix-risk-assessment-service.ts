@@ -115,23 +115,24 @@ export function createFridayAutoFixRiskAssessmentService(
         }
       }
 
-      const recentActions = deps.db.withReadConnection((db) =>
-        deps.actionRepo.listByUser(db, {
+      const recentActionSummary = deps.db.withReadConnection((db) =>
+        deps.actionRepo.summarizeByFingerprint(db, {
           userId: incident.userId,
+          fingerprint: incident.signature,
           limit: 200,
         }),
-      ).filter((action) => action.plan.evidence.fingerprint === incident.signature);
+      );
 
-      const executedRecent = recentActions.filter((action) => action.status === "applied" || action.status === "rolled_back");
-      const successCount = recentActions.filter((action) =>
-        action.status === "applied" && action.outcome === "success"
-      ).length;
-      const rollbackCount = recentActions.filter((action) => action.status === "rolled_back").length;
-      const rejectedCount = recentActions.filter((action) => action.status === "rejected").length;
-      const sampleCount = recentActions.length;
+      const sampleCount = recentActionSummary.sampleCount;
+      const successCount = recentActionSummary.successCount;
+      const rollbackCount = recentActionSummary.rollbackCount;
+      const rejectedCount = recentActionSummary.rejectedCount;
       const historySuccessRate = sampleCount > 0 ? successCount / sampleCount : undefined;
       const routeFailureRate = sampleCount > 0 ? (rollbackCount + rejectedCount) / sampleCount : undefined;
-      const rollbackFrequency = executedRecent.length > 0 ? rollbackCount / executedRecent.length : undefined;
+      const rollbackFrequency =
+        recentActionSummary.executedCount > 0
+          ? rollbackCount / recentActionSummary.executedCount
+          : undefined;
       const humanRejectionRate = sampleCount > 0 ? rejectedCount / sampleCount : undefined;
 
       let policyBudgetState: FridayUtilityInput["policyBudgetState"] = "open";

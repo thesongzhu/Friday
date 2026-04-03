@@ -45,6 +45,20 @@ export interface FridayAutoFixActionRepository {
       limit?: number;
     },
   ): FridayAutoFixActionEntity[];
+  summarizeByFingerprint(
+    db: Database.Database,
+    input: {
+      userId: string;
+      fingerprint: string;
+      limit?: number;
+    },
+  ): {
+    sampleCount: number;
+    successCount: number;
+    rollbackCount: number;
+    rejectedCount: number;
+    executedCount: number;
+  };
 
   listPlanned(
     db: Database.Database,
@@ -245,6 +259,47 @@ export function createFridayAutoFixActionRepository(): FridayAutoFixActionReposi
 
       const rows = db.prepare(sql).all(...params) as FridayAutoFixActionRow[];
       return rows.map(rowToEntity);
+    },
+
+    summarizeByFingerprint(db, input) {
+      let sql = `SELECT
+                   COUNT(*) as sample_count,
+                   COALESCE(SUM(CASE WHEN status = 'applied' AND outcome = 'success' THEN 1 ELSE 0 END), 0) as success_count,
+                   COALESCE(SUM(CASE WHEN status = 'rolled_back' THEN 1 ELSE 0 END), 0) as rollback_count,
+                   COALESCE(SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END), 0) as rejected_count,
+                   COALESCE(SUM(CASE WHEN status IN ('applied', 'rolled_back') THEN 1 ELSE 0 END), 0) as executed_count
+                 FROM (
+                   SELECT status, outcome
+                   FROM auto_fix_actions
+                   WHERE user_id = ?
+                     AND json_extract(plan_json, '$.evidence.fingerprint') = ?
+                   ORDER BY created_at DESC`;
+      const params: unknown[] = [input.userId, input.fingerprint];
+
+      if (input.limit) {
+        sql += " LIMIT ?";
+        params.push(input.limit);
+      }
+
+      sql += ")";
+
+      const row = db.prepare(sql).get(...params) as
+        | {
+            sample_count: number;
+            success_count: number;
+            rollback_count: number;
+            rejected_count: number;
+            executed_count: number;
+          }
+        | undefined;
+
+      return {
+        sampleCount: row?.sample_count ?? 0,
+        successCount: row?.success_count ?? 0,
+        rollbackCount: row?.rollback_count ?? 0,
+        rejectedCount: row?.rejected_count ?? 0,
+        executedCount: row?.executed_count ?? 0,
+      };
     },
 
     listPlanned(db, input) {

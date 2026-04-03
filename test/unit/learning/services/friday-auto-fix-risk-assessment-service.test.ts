@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
 import { createFridayAutoFixRiskAssessmentService } from "#learning";
@@ -151,6 +151,20 @@ describe("FridayAutoFixRiskAssessmentService", () => {
       nowIso: NOW,
     });
     expect(result.reasons.length).toBeGreaterThan(0);
+  });
+
+  it("uses fingerprint summary instead of materializing recent actions", () => {
+    const summarizeSpy = vi.spyOn(actionRepo, "summarizeByFingerprint");
+    const listByUserSpy = vi.spyOn(actionRepo, "listByUser");
+
+    service.assess({
+      incident: baseIncident,
+      plan: makePlan("retry_node"),
+      nowIso: NOW,
+    });
+
+    expect(summarizeSpy).toHaveBeenCalledTimes(1);
+    expect(listByUserSpy).not.toHaveBeenCalled();
   });
 
   it("uses the highest tier when plan has mixed step kinds", () => {

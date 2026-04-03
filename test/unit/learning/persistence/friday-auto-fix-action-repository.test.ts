@@ -209,4 +209,44 @@ describe("FridayAutoFixActionRepository", () => {
     const result = repo.getById(db.writer, "action-001");
     expect(result!.rollbackPlan).toEqual(actionWithRollback.rollbackPlan);
   });
+
+  it("summarizeByFingerprint aggregates recent action outcomes without materializing rows", () => {
+    repo.insert(db.writer, baseAction);
+    repo.markApplied(db.writer, "action-001", "success", NOW);
+
+    insertIncident("inc-002");
+    repo.insert(db.writer, {
+      ...baseAction,
+      actionId: "action-002",
+      incidentId: "inc-002",
+      status: "planned",
+      createdAt: "2025-06-15T09:00:00.000Z",
+      updatedAt: "2025-06-15T09:00:00.000Z",
+    });
+    repo.markRolledBack(db.writer, "action-002", "2025-06-15T09:30:00.000Z");
+
+    insertIncident("inc-003");
+    repo.insert(db.writer, {
+      ...baseAction,
+      actionId: "action-003",
+      incidentId: "inc-003",
+      status: "rejected",
+      createdAt: "2025-06-15T08:00:00.000Z",
+      updatedAt: "2025-06-15T08:00:00.000Z",
+    });
+
+    const summary = repo.summarizeByFingerprint(db.writer, {
+      userId: "test-user",
+      fingerprint: "sig-abc",
+      limit: 10,
+    });
+
+    expect(summary).toEqual({
+      sampleCount: 3,
+      successCount: 1,
+      rollbackCount: 1,
+      rejectedCount: 1,
+      executedCount: 2,
+    });
+  });
 });

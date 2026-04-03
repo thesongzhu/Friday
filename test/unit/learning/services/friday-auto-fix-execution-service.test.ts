@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
 import { createFridayAutoFixExecutionService } from "#learning";
@@ -430,6 +430,46 @@ describe("FridayAutoFixExecutionService", () => {
 
     const incident = incidentRepo.getById(db.writer, "inc-001");
     expect(incident?.status).toBe("resolved");
+  });
+
+  it("uses direct id lookups for lesson extraction instead of list-and-find scans", async () => {
+    const actionRepo = createFridayAutoFixActionRepository();
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+
+    const incidentGetByIdSpy = vi.spyOn(incidentRepo, "getById");
+    const incidentListByUserSpy = vi.spyOn(incidentRepo, "listByUser");
+    const diagnosisGetByIdSpy = vi.spyOn(diagnosisRepo, "getById");
+    const diagnosisListByFingerprintSpy = vi.spyOn(diagnosisRepo, "listByFingerprint");
+    const lessonRepo = createFridayLearnedLessonRepository();
+    const lessonService = createFridayAutoFixLessonExtractionService({
+      db,
+      lessonRepo,
+      incidentRepo,
+      diagnosisRepo,
+      idGenerator: () => "lesson-lookup-test",
+    });
+    const lessonAwareService = createFridayAutoFixExecutionService({
+      db,
+      actionRepo,
+      incidentRepo,
+      diagnosisRepo,
+      lessonExtractionService: lessonService,
+      rollbackService: createFridayAutoFixRollbackService({
+        db,
+        actionRepo,
+        nowIso: () => NOW,
+      }),
+      nowIso: () => NOW,
+    });
+
+    const result = await lessonAwareService.execute("action-001");
+
+    expect(result.success).toBe(true);
+    expect(incidentGetByIdSpy).toHaveBeenCalled();
+    expect(incidentListByUserSpy).not.toHaveBeenCalled();
+    expect(diagnosisGetByIdSpy).toHaveBeenCalled();
+    expect(diagnosisListByFingerprintSpy).not.toHaveBeenCalled();
   });
 
   it("throws for nonexistent action", async () => {
