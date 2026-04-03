@@ -1062,4 +1062,193 @@ describe("FridaySelfHealingApiService", () => {
       demotionReason: "Too noisy",
     });
   });
+
+  it("uses latest-by-incident lookup when loading a single incident detail", () => {
+    const db = createTestDb();
+    allocatedDbs.push(db);
+    const idGenerator = createTestIdGenerator();
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    const lessonRepo = createFridayLearnedLessonRepository();
+    const actionRepo = createFridayAutoFixActionRepository();
+    const approvalRepo = createFridayApprovalRequestRepository();
+    const factRepo = createFridayPreferenceFactRepository();
+    const listLatestByIncidentIdsSpy = vi.spyOn(actionRepo, "listLatestByIncidentIds");
+    const listActionsByUserSpy = vi.spyOn(actionRepo, "listByUser");
+    const service = createFridaySelfHealingApiService({
+      db,
+      idGenerator,
+      nowIso: () => "2026-04-03T12:00:00.000Z",
+      incidentRepo,
+      diagnosisRepo,
+      lessonRepo,
+      actionRepo,
+      approvalRepo,
+      factRepo,
+      diagnosisService: {} as never,
+      planService: {} as never,
+      riskService: {
+        assess: () => ({
+          riskTier: 1,
+          reasons: ["single-incident"],
+          requiresApproval: false,
+          autoApplyAllowed: true,
+        }),
+      } as never,
+      executionService: {} as never,
+      rollbackService: {} as never,
+      approvalService: {} as never,
+      autoFixDispatcher: {} as never,
+      metricsService: {} as never,
+      pipeline: {} as never,
+    });
+
+    db.withWriteTransaction((writerDb) => {
+      incidentRepo.insert(writerDb, {
+        incidentId: "incident-single-1",
+        userId: "test-user",
+        ts: "2026-04-03T10:00:00.000Z",
+        category: "tool",
+        severity: "medium",
+        signature: "single:fingerprint:1",
+        context: {},
+        autoFixEligible: true,
+        status: "open",
+        createdAt: "2026-04-03T10:00:00.000Z",
+        updatedAt: "2026-04-03T10:00:00.000Z",
+      });
+      actionRepo.insert(writerDb, {
+        actionId: "single-action-1",
+        incidentId: "incident-single-1",
+        userId: "test-user",
+        riskTier: 1,
+        plan: {
+          title: "Single incident fix",
+          summary: "Test direct incident lookup",
+          steps: [],
+          evidence: {
+            fingerprint: "single:fingerprint:1",
+            matchedLessonIds: [],
+            diagnosisId: "diag-single-1",
+            recurrenceCount: 1,
+          },
+        },
+        status: "planned",
+        outcome: null,
+        createdAt: "2026-04-03T10:05:00.000Z",
+        updatedAt: "2026-04-03T10:05:00.000Z",
+      });
+    });
+
+    const details = service.getIncident({ incidentId: "incident-single-1" });
+
+    expect(listLatestByIncidentIdsSpy).toHaveBeenCalledTimes(1);
+    expect(listActionsByUserSpy).not.toHaveBeenCalled();
+    expect(details).toMatchObject({
+      incident: { incidentId: "incident-single-1" },
+      action: { action: { actionId: "single-action-1" } },
+    });
+  });
+
+  it("uses incident-id batch lookup when rejecting planned actions during manual resolution", () => {
+    const db = createTestDb();
+    allocatedDbs.push(db);
+    const idGenerator = createTestIdGenerator();
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    const lessonRepo = createFridayLearnedLessonRepository();
+    const actionRepo = createFridayAutoFixActionRepository();
+    const approvalRepo = createFridayApprovalRequestRepository();
+    const factRepo = createFridayPreferenceFactRepository();
+    const listByIncidentIdsSpy = vi.spyOn(actionRepo, "listByIncidentIds");
+    const listActionsByUserSpy = vi.spyOn(actionRepo, "listByUser");
+    const service = createFridaySelfHealingApiService({
+      db,
+      idGenerator,
+      nowIso: () => "2026-04-03T12:00:00.000Z",
+      incidentRepo,
+      diagnosisRepo,
+      lessonRepo,
+      actionRepo,
+      approvalRepo,
+      factRepo,
+      diagnosisService: {} as never,
+      planService: {} as never,
+      riskService: {
+        assess: () => ({
+          riskTier: 1,
+          reasons: ["manual-resolution"],
+          requiresApproval: false,
+          autoApplyAllowed: true,
+        }),
+      } as never,
+      executionService: {} as never,
+      rollbackService: {} as never,
+      approvalService: {} as never,
+      autoFixDispatcher: {} as never,
+      metricsService: {} as never,
+      pipeline: {
+        processEvent: () => ({
+          eventId: "evt-manual-resolution",
+          inserted: true,
+          extractedSignals: [],
+          factsUpdated: [],
+          incidentsCreated: [],
+          diagnosisCreated: [],
+          lessonsUpdated: [],
+          lifecycleState: "steady_state",
+        }),
+      } as never,
+    });
+
+    db.withWriteTransaction((writerDb) => {
+      incidentRepo.insert(writerDb, {
+        incidentId: "incident-resolve-1",
+        userId: "test-user",
+        ts: "2026-04-03T09:00:00.000Z",
+        category: "tool",
+        severity: "medium",
+        signature: "resolve:fingerprint:1",
+        context: {},
+        autoFixEligible: true,
+        status: "open",
+        createdAt: "2026-04-03T09:00:00.000Z",
+        updatedAt: "2026-04-03T09:00:00.000Z",
+      });
+      actionRepo.insert(writerDb, {
+        actionId: "resolve-action-1",
+        incidentId: "incident-resolve-1",
+        userId: "test-user",
+        riskTier: 1,
+        plan: {
+          title: "Resolve action",
+          summary: "Pending remediation",
+          steps: [],
+          evidence: {
+            fingerprint: "resolve:fingerprint:1",
+            matchedLessonIds: [],
+            diagnosisId: "diag-resolve-1",
+            recurrenceCount: 1,
+          },
+        },
+        status: "planned",
+        outcome: null,
+        createdAt: "2026-04-03T09:05:00.000Z",
+        updatedAt: "2026-04-03T09:05:00.000Z",
+      });
+    });
+
+    const details = service.manualResolveIncident({
+      incidentId: "incident-resolve-1",
+      resolvedBy: "operator",
+      fix: "Applied manual workaround",
+    });
+
+    expect(listByIncidentIdsSpy).toHaveBeenCalledTimes(1);
+    expect(listActionsByUserSpy).not.toHaveBeenCalled();
+    expect(details.incident).toMatchObject({
+      incidentId: "incident-resolve-1",
+      status: "resolved",
+    });
+  });
 });

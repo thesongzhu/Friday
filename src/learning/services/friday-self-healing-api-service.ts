@@ -640,10 +640,9 @@ export function createFridaySelfHealingApiService(
     const action =
       lookups?.actionsByIncidentId?.get(incident.incidentId)
       ?? deps.db.withReadConnection((db) =>
-        deps.actionRepo.listByUser(db, {
+        deps.actionRepo.listLatestByIncidentIds(db, {
           userId: incident.userId,
-          incidentId: incident.incidentId,
-          limit: 1,
+          incidentIds: [incident.incidentId],
         })[0] ?? null,
       );
 
@@ -1262,12 +1261,10 @@ export function createFridaySelfHealingApiService(
       );
 
       const rejectedActionIds = deps.db.withWriteTransaction((db) => {
-        const actions = deps.actionRepo.listByUser(db, {
-          userId: incident.userId,
-          incidentId: incident.incidentId,
-          limit: 100,
+        const plannedActions = deps.actionRepo.listByIncidentIds(db, {
+          incidentIds: [incident.incidentId],
+          status: "planned",
         });
-        const plannedActions = actions.filter((action) => action.status === "planned");
         for (const action of plannedActions) {
           deps.actionRepo.markRejected(db, action.actionId, nowIso);
         }
