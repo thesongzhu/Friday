@@ -99,6 +99,7 @@ import type {
 } from "#agent";
 import { buildFridayEvidenceBlocks } from "#agent";
 import { createFridayOrchestrationEngine } from "#engine";
+import { createFridayImmediateRunPersistence } from "#engine";
 import type { FridayEngineRunResult } from "#engine";
 import type { CreateFridayEngineTurnPreparerDeps } from "#engine";
 import type { CreateFridayEngineRunExecutorDeps } from "#engine";
@@ -1710,72 +1711,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   };
 
   const persistImmediateRunResult = agentRepo && agentRunEventRepo
-    ? (input: {
-      runId: string;
-      task: string;
-      sessionKey?: string;
-      providerId?: string;
-      model?: string;
-      constraints?: { readOnly?: boolean };
-      responseText: string;
-    }) => {
-      const existingRun = deps.db.withReadConnection((reader) => agentRepo.getById(reader, input.runId));
-      if (existingRun) {
-        return;
-      }
-
-      const now = deps.nowIso();
-      const sessionKey = input.sessionKey ?? `agent:run:${input.runId}`;
-
-      deps.db.withWriteTransaction((writer) => {
-        agentRepo.create(writer, {
-          id: input.runId,
-          task: input.task,
-          sessionKey,
-          providerId: input.providerId,
-          model: input.model,
-          maxAttempts: 1,
-          nowIso: now,
-          constraints: input.constraints,
-        });
-        agentRepo.update(writer, {
-          id: input.runId,
-          status: "completed",
-          startedAt: now,
-          completedAt: now,
-          durationMs: 0,
-          responseText: input.responseText,
-          summary: input.responseText,
-        });
-        agentRunEventRepo.append(writer, {
-          eventId: deps.idGenerator(),
-          runId: input.runId,
-          seq: 1,
-          eventName: "agent.run.text_delta",
-          payload: {
-            runId: input.runId,
-            delta: input.responseText,
-          },
-          emittedAt: now,
-          createdAt: now,
-        });
-        agentRunEventRepo.append(writer, {
-          eventId: deps.idGenerator(),
-          runId: input.runId,
-          seq: 2,
-          eventName: "agent.run.completed",
-          payload: {
-            runId: input.runId,
-            durationMs: 0,
-            toolCallCount: 0,
-            testsPassed: true,
-            artifacts: [],
-          },
-          emittedAt: now,
-          createdAt: now,
-        });
-      });
-    }
+    ? createFridayImmediateRunPersistence({
+      db: deps.db,
+      repo: agentRepo,
+      runEventRepository: agentRunEventRepo,
+      idGenerator: deps.idGenerator,
+      nowIso: deps.nowIso,
+    })
     : undefined;
 
   const orchestrationEngine = deps.agentRuntime

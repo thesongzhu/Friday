@@ -1,5 +1,14 @@
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
+  FridayAgentRunExecutionResponse,
+  FridayCancelAgentRunResponse,
+  FridayGetAgentRunResponse,
+  FridayListAgentRunsQuery,
+  FridayListAgentRunsResponse,
+  FridayStartAgentRunRequest,
+  FridayStartAgentRunResponse,
+} from "../../model/friday-api-agent.types.js";
+import type {
   FridayAgentAutomationSchedule,
   FridayAgentAutomationService,
   FridayAgentAutomationSessionTarget,
@@ -76,6 +85,24 @@ export interface FridayAgentRoutesDeps {
   automationService: FridayAgentAutomationService;
 }
 
+function toFridayAgentRunExecutionResponse(
+  result: FridayAgentRuntimeResult,
+): FridayAgentRunExecutionResponse {
+  return {
+    runId: result.runId,
+    status: result.status,
+    response: result.response,
+    toolCallCount: result.toolCallCount,
+    durationMs: result.durationMs,
+    usageInput: result.usageInput,
+    usageOutput: result.usageOutput,
+    ...(result.images ? { images: result.images } : {}),
+    ...(result.finalResponse ? { finalResponse: result.finalResponse } : {}),
+    ...(result.contextCostSummary ? { contextCostSummary: result.contextCostSummary } : {}),
+    ...(result.taskProfile ? { taskProfile: result.taskProfile } : {}),
+  };
+}
+
 // ─── SSE response type ───
 
 /** Describes the raw Node `ServerResponse` shape needed for SSE streaming. */
@@ -136,7 +163,7 @@ export function createFridayAgentRoutes(
       auth: { public: false, anyOfScopes: [...AGENT_RUN_SCOPES] },
       rateLimitPolicyId: "agent.run",
       async handler(ctx) {
-        const body = ctx.body as Record<string, unknown> | null;
+        const body = ctx.body as FridayStartAgentRunRequest | null;
         if (!body || typeof body.task !== "string" || body.task.trim() === "") {
           throw new FridayDomainError(
             "VALIDATION_ERROR",
@@ -286,7 +313,11 @@ export function createFridayAgentRoutes(
           executionContext,
           ...principalInput,
         });
-        return result;
+        const response: FridayStartAgentRunResponse = {
+          ...toFridayAgentRunExecutionResponse(result),
+          eventStreamAvailable: true,
+        };
+        return response;
       },
     },
 
@@ -297,7 +328,7 @@ export function createFridayAgentRoutes(
       path: "/v1/agent/runs",
       auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
       async handler(ctx) {
-        const query = ctx.query as Record<string, string | undefined>;
+        const query = ctx.query as FridayListAgentRunsQuery;
 
         let limit: number | undefined;
         if (query.limit !== undefined) {
@@ -315,7 +346,8 @@ export function createFridayAgentRoutes(
         const status = query.status as FridayAgentRunStatus | undefined;
 
         const items = deps.listRuns({ status, limit, cursor: query.cursor });
-        return { items };
+        const response: FridayListAgentRunsResponse = { items };
+        return response;
       },
     },
 
@@ -335,7 +367,8 @@ export function createFridayAgentRoutes(
             { httpStatus: 404 },
           );
         }
-        return { run };
+        const response: FridayGetAgentRunResponse = { run };
+        return response;
       },
     },
 
@@ -363,7 +396,8 @@ export function createFridayAgentRoutes(
           );
         }
         deps.cancelRun(runId);
-        return { cancelled: true, runId };
+        const response: FridayCancelAgentRunResponse = { cancelled: true, runId };
+        return response;
       },
     },
 

@@ -144,7 +144,8 @@ import { dispatchDeterministic } from "../sessions/services/friday-deterministic
 import type { FridayDeterministicDispatchDeps } from "../sessions/services/friday-deterministic-dispatch.js";
 import { dispatchManagedAsync } from "../sessions/services/friday-managed-async-dispatch.js";
 import type { FridayManagedAsyncDispatchDeps } from "../sessions/services/friday-managed-async-dispatch.js";
-import { createFridayOrchestrationEngine } from "#engine";
+import { createFridayChannelEntryAdapter, createFridayOrchestrationEngine } from "#engine";
+import { createFridayImmediateRunPersistence } from "#engine";
 import type { CreateFridayEngineRunExecutorDeps, CreateFridayEngineTurnPreparerDeps } from "#engine";
 import type { FridayImageAnalysisFn } from "#agent";
 import type {
@@ -4757,6 +4758,13 @@ export async function createFridayHub(
       const managedAsyncDispatchDeps: FridayManagedAsyncDispatchDeps = {
         workflowExecutionService: workflowRuntime.execution,
       };
+      const persistImmediateRunResult = createFridayImmediateRunPersistence({
+        db: stateRuntime!.sqlite,
+        repo: agentRunRepo,
+        runEventRepository: agentRunEventRepository,
+        idGenerator,
+        nowIso,
+      });
 
       // ── Channel Orchestration Engine (Initiative A-WIRE) ──
       const channelEngineSessionDeps = {
@@ -4783,6 +4791,7 @@ export async function createFridayHub(
           sessionDeps: channelEngineSessionDeps,
           planningGate: agentPlanningGate,
           nowIso,
+          persistImmediateRunResult,
           dispatchDeterministic,
           dispatchManagedAsync,
           finalizeFocus: finalizeFridayConversationFocus as CreateFridayEngineRunExecutorDeps["finalizeFocus"],
@@ -4791,7 +4800,6 @@ export async function createFridayHub(
           resolveIdempotencyKey: resolveAgentMirrorIdempotencyKey,
         },
       });
-
       if (channelsConfig.enabled && channelRegistry.list().length > 0) {
         const channelMessageHandler = (msg: FridayChannelMessage) => {
           const text = sanitizeChannelInput(msg.text);
@@ -4888,6 +4896,26 @@ export async function createFridayHub(
 
           void (async () => {
             const runId = idGenerator();
+            const channelEntryAdapter = createFridayChannelEntryAdapter({
+              engine: channelOrchestrationEngine,
+              idGenerator: () => runId,
+              resolveSessionKey: (inboundMessage) => resolveFridayChannelSessionKey({
+                channelKind: inboundMessage.channelKind,
+                chatId: inboundMessage.chatId,
+                senderId: inboundMessage.senderId,
+                senderName: inboundMessage.senderName,
+                text: inboundMessage.text,
+                id: inboundMessage.id,
+                timestamp: inboundMessage.timestamp ?? Date.now(),
+                chatType: inboundMessage.chatType,
+                replyTo: inboundMessage.replyToMessageId,
+                timezone: inboundMessage.timezone,
+                images: inboundMessage.images,
+              }, {
+                crossChannelIdentityEnabled,
+                identityMap: crossChannelIdentityMap,
+              }),
+            });
             const slowTaskNotifier = createFridayChannelSlowTaskNotifier({
               eventEmitter: agentEventEmitter,
               channelRegistry,
@@ -4924,20 +4952,18 @@ export async function createFridayHub(
               // evidence blocks, deterministic dispatch, planning gate,
               // agent runtime execution, and focus finalization.
               // Alignment invariant: the engine injects historyMessages, into executeRun() internally.
-              const engineResult = await channelOrchestrationEngine.executeRun({
-                task: text,
-                runId,
-                sessionKey,
+              const engineResult = await channelEntryAdapter.handleMessage({
+                id: msg.id,
+                channelKind: msg.channelKind,
+                senderId: msg.senderId,
+                senderName: msg.senderName,
+                chatId: msg.chatId,
+                chatType: msg.chatType,
+                text,
+                occurredAt: new Date(msg.timestamp).toISOString(),
                 replyToMessageId: msg.replyTo,
                 timezone: msg.timezone,
-                principalId: msg.senderId,
                 images: msg.images,
-                taskAlreadyInHistory: true, // hub persists user message above
-                idempotencyPrefix: `channel-${msg.channelKind}`,
-                executionContext: {
-                  surface: "channel",
-                  interactive: true,
-                },
               });
               const result = {
                 runId: engineResult.runId,

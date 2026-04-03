@@ -25,13 +25,6 @@ interface StartRunInput {
   taskProfile?: AgentTaskProfileInput;
 }
 
-interface StartRunResponse {
-  runId: string;
-  status: AgentRunStatus;
-  response?: string;
-  finalResponse?: string;
-}
-
 interface GetRunResponse {
   run: AgentRunRecord;
 }
@@ -69,7 +62,7 @@ interface ListSubagentsResponse {
 // ─── Agent API ───
 
 export const agentApi = {
-  async startRun(input: StartRunInput): Promise<StartRunResponse> {
+  async startRun(input: StartRunInput): Promise<AgentRuntimeResult> {
     const payload = {
       task: input.task,
       model: input.model,
@@ -80,7 +73,7 @@ export const agentApi = {
       executionContext: input.executionContext,
       taskProfile: input.taskProfile,
     };
-    return apiClient.post<typeof payload, StartRunResponse>("/v1/agent/runs", payload);
+    return apiClient.post<typeof payload, AgentRuntimeResult>("/v1/agent/runs", payload);
   },
 
   async listRuns(query?: { status?: AgentRunStatus; limit?: number }): Promise<AgentRunRecord[]> {

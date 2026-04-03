@@ -15,6 +15,7 @@ export interface ChatMessage {
 
 export interface UseChatSessionResult {
   messages: ChatMessage[];
+  sessionKey: string;
   currentRunId: string | null;
   runEvents: UseAgentRunEventsResult;
   sendMessage: (text: string) => Promise<void>;
@@ -120,8 +121,9 @@ function saveHistory(messages: ChatMessage[]) {
 
 export function useChatSession(): UseChatSessionResult {
   const [messages, setMessages] = useState<ChatMessage[]>(loadHistory);
+  const [sessionKey, setSessionKey] = useState<string>(() => getOrCreateSessionKey());
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
-  const sessionKeyRef = useRef(getOrCreateSessionKey());
+  const sessionKeyRef = useRef(sessionKey);
   const outputTextRef = useRef("");
 
   const runEvents = useAgentRunEvents(currentRunId, {
@@ -203,6 +205,10 @@ export function useChatSession(): UseChatSessionResult {
         return;
       }
 
+      if (result.eventStreamAvailable === false) {
+        throw new Error("Run started without event stream support");
+      }
+
       // Add placeholder assistant message
       const assistantMsg: ChatMessage = {
         id: `msg-${Date.now().toString(36)}-reply`,
@@ -241,14 +247,18 @@ export function useChatSession(): UseChatSessionResult {
     setMessages([]);
     localStorage.removeItem(HISTORY_STORAGE);
     localStorage.removeItem(SESSION_KEY_STORAGE);
-    sessionKeyRef.current = getOrCreateSessionKey();
+    const nextSessionKey = getOrCreateSessionKey();
+    sessionKeyRef.current = nextSessionKey;
+    setSessionKey(nextSessionKey);
   }, []);
 
   const startNewConversation = useCallback(() => {
     // Generate a fresh session key so the agent starts a new context,
     // but keep previous messages visible as a read-only log.
     localStorage.removeItem(SESSION_KEY_STORAGE);
-    sessionKeyRef.current = getOrCreateSessionKey();
+    const nextSessionKey = getOrCreateSessionKey();
+    sessionKeyRef.current = nextSessionKey;
+    setSessionKey(nextSessionKey);
     // Add a visual separator message
     const separator: ChatMessage = {
       id: `sep-${Date.now().toString(36)}`,
@@ -266,6 +276,7 @@ export function useChatSession(): UseChatSessionResult {
 
   return {
     messages,
+    sessionKey,
     currentRunId,
     runEvents,
     sendMessage,
