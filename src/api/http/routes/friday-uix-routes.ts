@@ -25,6 +25,7 @@ export interface FridayUixRoutesDeps {
   service: FridayUixSurfaceService;
   /** Optional: expose learned preference facts to users for transparency. */
   listLearnedFacts?: (input: { userId: string }) => Array<{ key: string; value: unknown; confidence: number; evidenceCount: number; lastConfirmedAt: string }>;
+  countLearnedFacts?: (input: { userId: string }) => number;
   /** Optional: emit learning events when preferences are written via the API,
    *  so the preference-extraction pipeline can produce learned facts. */
   collectLearningEvents?: (events: Array<{ eventId: string; ts: string; userId: string; kind: "user_correction"; payload: Record<string, unknown> }>) => void;
@@ -387,11 +388,16 @@ export function createFridayUixRoutes(
       auth: { public: false, anyOfScopes: ["agent.run"] },
       async handler(ctx) {
         const userId = requireUserId(ctx.principal);
-        if (!deps.listLearnedFacts) {
-          return { items: [] };
+        const query = (ctx.query && typeof ctx.query === "object" && !Array.isArray(ctx.query))
+          ? ctx.query as Record<string, unknown>
+          : {};
+        const countOnly = query.countOnly === "1" || query.countOnly === "true";
+        const totalCount = deps.countLearnedFacts?.({ userId });
+        if (countOnly) {
+          return { items: [], totalCount: totalCount ?? deps.listLearnedFacts?.({ userId }).length ?? 0 };
         }
-        const items = deps.listLearnedFacts({ userId });
-        return { items };
+        const items = deps.listLearnedFacts?.({ userId }) ?? [];
+        return { items, totalCount: totalCount ?? items.length };
       },
     },
   ];

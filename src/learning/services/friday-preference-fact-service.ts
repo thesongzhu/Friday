@@ -21,6 +21,11 @@ export interface FridayPreferenceFactService {
     limit: number;
   }): FridayPreferenceFactEntity[];
 
+  countActiveFacts(input: {
+    userId: string;
+    minConfidence: number;
+  }): number;
+
   deleteFact(input: { userId: string; key: string }): boolean;
 
   runDecay(input: {
@@ -140,6 +145,16 @@ export function createFridayPreferenceFactService(
           input.userId,
           input.minConfidence,
           input.limit,
+        ),
+      );
+    },
+
+    countActiveFacts(input) {
+      return deps.db.withReadConnection((db) =>
+        deps.factRepo.countByUser(
+          db,
+          input.userId,
+          input.minConfidence,
         ),
       );
     },

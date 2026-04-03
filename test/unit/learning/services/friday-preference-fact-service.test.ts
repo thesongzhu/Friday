@@ -169,6 +169,28 @@ describe("FridayPreferenceFactService", () => {
     expect(active[0]!.key).toBe("pref:a");
   });
 
+  it("countActiveFacts returns the matching fact count", () => {
+    service.applySignals({
+      event: makeEvent(),
+      signals: [makeSignal({ key: "pref:a", confidence: 0.90 })],
+      nowIso: NOW,
+    });
+    service.applySignals({
+      event: makeEvent({ eventId: "evt-002" }),
+      signals: [makeSignal({ key: "pref:b", confidence: 0.30, sourceEventId: "evt-002" })],
+      nowIso: NOW,
+    });
+
+    expect(service.countActiveFacts({
+      userId: "test-user",
+      minConfidence: 0.60,
+    })).toBe(1);
+    expect(service.countActiveFacts({
+      userId: "test-user",
+      minConfidence: 0,
+    })).toBe(2);
+  });
+
   it("deleteFact removes a fact", () => {
     service.applySignals({
       event: makeEvent(),

@@ -20,6 +20,12 @@ export interface FridayPreferenceFactRepository {
     limit?: number,
   ): FridayPreferenceFactEntity[];
 
+  countByUser(
+    db: Database.Database,
+    userId: string,
+    minConfidence?: number,
+  ): number;
+
   upsert(
     db: Database.Database,
     input: {
@@ -88,6 +94,16 @@ export function createFridayPreferenceFactRepository(): FridayPreferenceFactRepo
         )
         .all(userId, minConfidence, limit) as FridayPreferenceFactRow[];
       return rows.map(rowToEntity);
+    },
+
+    countByUser(db, userId, minConfidence = 0) {
+      const row = db
+        .prepare(
+          `SELECT COUNT(*) as count FROM preference_facts
+           WHERE user_id = ? AND confidence >= ?`,
+        )
+        .get(userId, minConfidence) as { count: number } | undefined;
+      return row?.count ?? 0;
     },
 
     upsert(db, input) {

@@ -86,8 +86,8 @@ export function HomePage() {
   const learnedFactsQuery = useQuery({
     queryKey: ["home", "learned-facts-count"],
     queryFn: async () => {
-      const data = await apiClient.get<{ items: Array<{ key: string }> }>("/v1/uix/learned-facts");
-      return data.items.length;
+      const data = await apiClient.get<{ totalCount: number }>("/v1/uix/learned-facts?countOnly=1");
+      return data.totalCount;
     },
     retry: 0,
     refetchInterval: 60_000,
