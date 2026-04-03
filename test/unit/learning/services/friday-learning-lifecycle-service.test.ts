@@ -18,6 +18,7 @@ describe("FridayLearningLifecycleService", () => {
     const db = createTestDb();
     allocatedDbs.push(db);
     const factRepo = createFridayPreferenceFactRepository();
+    const summarizeByUserConfidenceSpy = vi.spyOn(factRepo, "summarizeByUserConfidence");
     const countByUserSpy = vi.spyOn(factRepo, "countByUser");
     const listByUserSpy = vi.spyOn(factRepo, "listByUser");
     const service = createFridayLearningLifecycleService({
@@ -44,14 +45,16 @@ describe("FridayLearningLifecycleService", () => {
     });
 
     expect(service.getState("test-user")).toBe("warmup");
-    expect(countByUserSpy).toHaveBeenCalled();
+    expect(summarizeByUserConfidenceSpy).toHaveBeenCalledTimes(2);
+    expect(countByUserSpy).not.toHaveBeenCalled();
     expect(listByUserSpy).not.toHaveBeenCalled();
   });
 
-  it("short-circuits on steady_state without querying total facts", () => {
+  it("short-circuits on steady_state from the aggregate summary without extra count queries", () => {
     const db = createTestDb();
     allocatedDbs.push(db);
     const factRepo = createFridayPreferenceFactRepository();
+    const summarizeByUserConfidenceSpy = vi.spyOn(factRepo, "summarizeByUserConfidence");
     const countByUserSpy = vi.spyOn(factRepo, "countByUser");
     const service = createFridayLearningLifecycleService({
       db,
@@ -75,7 +78,11 @@ describe("FridayLearningLifecycleService", () => {
     });
 
     expect(service.getState("test-user")).toBe("steady_state");
-    expect(countByUserSpy).toHaveBeenCalledTimes(1);
-    expect(countByUserSpy).toHaveBeenNthCalledWith(1, db.writer, "test-user", 0.7);
+    expect(summarizeByUserConfidenceSpy).toHaveBeenCalledTimes(1);
+    expect(summarizeByUserConfidenceSpy).toHaveBeenNthCalledWith(1, db.writer, {
+      userId: "test-user",
+      threshold: 0.7,
+    });
+    expect(countByUserSpy).not.toHaveBeenCalled();
   });
 });

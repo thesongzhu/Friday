@@ -420,6 +420,23 @@ function readObject(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function readRouteDecisionTrace(value: unknown): FridayProviderRoutingDecisionTrace | null {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return null;
+  }
+  const parsed = safeJsonParse<unknown>(value);
+  if (parsed != null && typeof parsed === "object") {
+    return parsed as FridayProviderRoutingDecisionTrace;
+  }
+  if (typeof parsed === "string") {
+    const nested = safeJsonParse<unknown>(parsed);
+    if (nested != null && typeof nested === "object") {
+      return nested as FridayProviderRoutingDecisionTrace;
+    }
+  }
+  return null;
+}
+
 function normalizeLearningKeySegment(value: string): string {
   return value
     .toLowerCase()
@@ -915,31 +932,36 @@ export function createFridaySelfHealingApiService(
 
     const recentDecisionDiffs = deps.db.withReadConnection((db) =>
       db.prepare(
-        `SELECT id, created_at, provider_id, model, task_profile_json, actual_execution_json
+        `SELECT
+           id,
+           created_at,
+           json_extract(task_profile_json, '$.id') as task_profile_id,
+           json_extract(actual_execution_json, '$.requestedProviderId') as requested_provider_id,
+           json_extract(actual_execution_json, '$.requestedModel') as requested_model,
+           json_extract(actual_execution_json, '$.actualProviderId') as actual_provider_id,
+           json_extract(actual_execution_json, '$.actualModel') as actual_model,
+           json_extract(actual_execution_json, '$.routeDecisionTrace') as route_decision_trace_json
          FROM friday_agent_runs
          WHERE actual_execution_json IS NOT NULL
+           AND json_type(actual_execution_json, '$.routeDecisionTrace') IS NOT NULL
          ORDER BY created_at DESC
          LIMIT ?`,
       ).all(limit * 5) as Array<{
         id: string;
         created_at: string;
-        provider_id: string | null;
-        model: string | null;
-        task_profile_json: string | null;
-        actual_execution_json: string | null;
+        task_profile_id: string | null;
+        requested_provider_id: string | null;
+        requested_model: string | null;
+        actual_provider_id: string | null;
+        actual_model: string | null;
+        route_decision_trace_json: string | null;
       }>,
     )
       .map((row): FridayRouteDecisionDiffRecord | null => {
-        const actualExecution = safeJsonParse<Record<string, unknown>>(row.actual_execution_json);
-        const routeDecisionTrace = safeJsonParse<FridayProviderRoutingDecisionTrace>(
-          typeof actualExecution?.routeDecisionTrace === "string"
-            ? actualExecution.routeDecisionTrace
-            : JSON.stringify(actualExecution?.routeDecisionTrace ?? null),
-        );
+        const routeDecisionTrace = readRouteDecisionTrace(row.route_decision_trace_json);
         if (!routeDecisionTrace || typeof routeDecisionTrace !== "object") {
           return null;
         }
-        const taskProfile = safeJsonParse<Record<string, unknown>>(row.task_profile_json);
         const selectedBeforeLearning = routeDecisionTrace.selectedBeforeLearning;
         const selectedAfterLearning = routeDecisionTrace.selectedAfterLearning;
         const matchedLessonIds = Array.from(
@@ -955,18 +977,18 @@ export function createFridaySelfHealingApiService(
         return {
           runId: row.id,
           createdAt: row.created_at,
-          ...(typeof taskProfile?.id === "string" ? { taskProfileId: taskProfile.id } : {}),
-          ...(typeof actualExecution?.requestedProviderId === "string"
-            ? { requestedProviderId: actualExecution.requestedProviderId }
+          ...(typeof row.task_profile_id === "string" ? { taskProfileId: row.task_profile_id } : {}),
+          ...(typeof row.requested_provider_id === "string"
+            ? { requestedProviderId: row.requested_provider_id }
             : {}),
-          ...(typeof actualExecution?.requestedModel === "string"
-            ? { requestedModel: actualExecution.requestedModel }
+          ...(typeof row.requested_model === "string"
+            ? { requestedModel: row.requested_model }
             : {}),
-          ...(typeof actualExecution?.actualProviderId === "string"
-            ? { actualProviderId: actualExecution.actualProviderId }
+          ...(typeof row.actual_provider_id === "string"
+            ? { actualProviderId: row.actual_provider_id }
             : {}),
-          ...(typeof actualExecution?.actualModel === "string"
-            ? { actualModel: actualExecution.actualModel }
+          ...(typeof row.actual_model === "string"
+            ? { actualModel: row.actual_model }
             : {}),
           ...(typeof routeDecisionTrace.reasonCode === "string" ? { reasonCode: routeDecisionTrace.reasonCode } : {}),
           ...(typeof routeDecisionTrace.reasonText === "string" ? { reasonText: routeDecisionTrace.reasonText } : {}),

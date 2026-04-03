@@ -51,6 +51,16 @@ export interface FridayPreferenceFactRepository {
     userId: string,
     minConfidence?: number,
   ): number;
+  summarizeByUserConfidence(
+    db: Database.Database,
+    input: {
+      userId: string;
+      threshold: number;
+    },
+  ): {
+    totalCount: number;
+    thresholdCount: number;
+  };
 
   upsert(
     db: Database.Database,
@@ -187,6 +197,24 @@ export function createFridayPreferenceFactRepository(): FridayPreferenceFactRepo
         )
         .get(userId, minConfidence) as { count: number } | undefined;
       return row?.count ?? 0;
+    },
+
+    summarizeByUserConfidence(db, input) {
+      const row = db
+        .prepare(
+          `SELECT
+             COUNT(*) as total_count,
+             SUM(CASE WHEN confidence >= ? THEN 1 ELSE 0 END) as threshold_count
+           FROM preference_facts
+           WHERE user_id = ?`,
+        )
+        .get(input.threshold, input.userId) as
+        | { total_count: number; threshold_count: number | null }
+        | undefined;
+      return {
+        totalCount: row?.total_count ?? 0,
+        thresholdCount: row?.threshold_count ?? 0,
+      };
     },
 
     upsert(db, input) {

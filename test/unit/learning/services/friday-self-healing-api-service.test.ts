@@ -292,6 +292,111 @@ describe("FridaySelfHealingApiService", () => {
     });
   });
 
+  it("keeps older traced route decisions when newer runs without route traces exceed the fetch buffer", () => {
+    const db = createTestDb();
+    allocatedDbs.push(db);
+    const idGenerator = createTestIdGenerator();
+    const service = createFridaySelfHealingApiService({
+      db,
+      idGenerator,
+      nowIso: () => "2026-04-03T12:00:00.000Z",
+      incidentRepo: createFridayErrorIncidentRepository(),
+      diagnosisRepo: createFridayDiagnosisRecordRepository(),
+      lessonRepo: createFridayLearnedLessonRepository(),
+      actionRepo: createFridayAutoFixActionRepository(),
+      approvalRepo: createFridayApprovalRequestRepository(),
+      factRepo: createFridayPreferenceFactRepository(),
+      diagnosisService: {} as never,
+      planService: {} as never,
+      riskService: {} as never,
+      executionService: {} as never,
+      rollbackService: {} as never,
+      approvalService: {} as never,
+      autoFixDispatcher: {} as never,
+      metricsService: {} as never,
+      pipeline: {} as never,
+    });
+
+    db.withWriteTransaction((writerDb) => {
+      const insertRun = writerDb.prepare(
+        `INSERT INTO friday_agent_runs (
+          id, task, status, session_key, provider_id, model, attempt, max_attempts, created_at,
+          completed_at, task_profile_json, actual_execution_json
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, 3, ?, ?, ?, ?)`,
+      );
+
+      insertRun.run(
+        "run-traced",
+        "review the architecture",
+        "completed",
+        "sess-traced",
+        "prov-traced",
+        "gpt-4o",
+        "2026-04-03T08:00:00.000Z",
+        "2026-04-03T08:00:00.000Z",
+        JSON.stringify({ id: "review" }),
+        JSON.stringify({
+          requestedProviderId: "prov-requested",
+          requestedModel: "gpt-4o",
+          actualProviderId: "prov-traced",
+          actualModel: "gpt-4o",
+          routeDecisionTrace: {
+            learningAdjusted: true,
+            learningSignalsPresent: true,
+            reasonCode: "history_bias",
+            reasonText: "Historical route outcomes influenced candidate scoring.",
+            candidateScores: [
+              {
+                providerId: "prov-traced",
+                providerKind: "openai",
+                model: "gpt-4o",
+                backendKind: "http",
+                eligible: true,
+                ineligibilityReasons: [],
+                matchedLessonIds: ["lesson-1"],
+                matchedPatternIds: ["pattern-1"],
+              },
+            ],
+          },
+        }),
+      );
+
+      for (let index = 0; index < 6; index += 1) {
+        insertRun.run(
+          `run-no-trace-${index}`,
+          "summarize inbox",
+          "completed",
+          `sess-no-trace-${index}`,
+          "prov-noise",
+          "gpt-4o-mini",
+          `2026-04-03T09:0${index}:00.000Z`,
+          `2026-04-03T09:0${index}:00.000Z`,
+          JSON.stringify({ id: "ops" }),
+          JSON.stringify({
+            requestedProviderId: "prov-noise",
+            requestedModel: "gpt-4o-mini",
+            actualProviderId: "prov-noise",
+            actualModel: "gpt-4o-mini",
+          }),
+        );
+      }
+    });
+
+    const overview = service.getLearningOverview({ userId: "test-user", limit: 1 });
+
+    expect(overview.recentDecisionDiffs).toEqual([
+      expect.objectContaining({
+        runId: "run-traced",
+        taskProfileId: "review",
+        requestedProviderId: "prov-requested",
+        actualProviderId: "prov-traced",
+        matchedLessonIds: ["lesson-1"],
+        matchedPatternIds: ["pattern-1"],
+      }),
+    ]);
+    expect(overview.coverage.recentDecisionDiffs).toBe(1);
+  });
+
   it("batches action and incident lookups when building issue cards", () => {
     const db = createTestDb();
     allocatedDbs.push(db);

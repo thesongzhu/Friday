@@ -30,19 +30,16 @@ export function createFridayLearningLifecycleService(
   return {
     getState(userId) {
       return deps.db.withReadConnection((db) => {
-        const highConfidenceFactCount = deps.factRepo.countByUser(
-          db,
+        const factSummary = deps.factRepo.summarizeByUserConfidence(db, {
           userId,
-          steadyStateThreshold,
-        );
+          threshold: steadyStateThreshold,
+        });
 
-        if (highConfidenceFactCount >= steadyStateFactCount) {
+        if (factSummary.thresholdCount >= steadyStateFactCount) {
           return "steady_state";
         }
 
-        const totalFactCount = deps.factRepo.countByUser(db, userId, 0);
-
-        if (totalFactCount >= warmupFactCount) {
+        if (factSummary.totalCount >= warmupFactCount) {
           return "warmup";
         }
 

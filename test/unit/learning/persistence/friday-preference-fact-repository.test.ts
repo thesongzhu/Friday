@@ -200,6 +200,41 @@ describe("FridayPreferenceFactRepository", () => {
     expect(matching.map((fact) => fact.key)).toEqual(["pref:language"]);
   });
 
+  it("summarizeByUserConfidence returns total and threshold counts in one query result", () => {
+    repo.upsert(db.writer, {
+      factId: "fact-summary-1",
+      userId: "test-user",
+      key: "pref:language",
+      value: "TypeScript",
+      confidence: 0.92,
+      evidenceCountDelta: 3,
+      lastConfirmedAt: NOW,
+      sourceEventId: "evt-summary-1",
+      nowIso: NOW,
+    });
+    repo.upsert(db.writer, {
+      factId: "fact-summary-2",
+      userId: "test-user",
+      key: "pref:editor",
+      value: "vim",
+      confidence: 0.45,
+      evidenceCountDelta: 2,
+      lastConfirmedAt: NOW,
+      sourceEventId: "evt-summary-2",
+      nowIso: NOW,
+    });
+
+    const summary = repo.summarizeByUserConfidence(db.writer, {
+      userId: "test-user",
+      threshold: 0.7,
+    });
+
+    expect(summary).toEqual({
+      totalCount: 2,
+      thresholdCount: 1,
+    });
+  });
+
   it("listByUserAndKeyPrefixes returns only matching prefixed facts", () => {
     repo.upsert(db.writer, {
       factId: "fact-route",
