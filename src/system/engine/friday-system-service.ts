@@ -693,9 +693,9 @@ export async function createFridaySystemService(
       };
     const permissions = await readPermissions(companion.permissions);
     await emitCompanionEventsIfChanged(companion, permissions);
-    const approvalsSummary = deps.db.withReadConnection((db) => repository.summarizeApprovalRules(db));
-    const remoteDevicesSummary = deps.db.withReadConnection((db) => repository.summarizeRemoteDevices(db));
-    const remoteSessionsSummary = deps.db.withReadConnection((db) => repository.summarizeRemoteSessions(db));
+    const dashboardSummary = deps.db.withReadConnection((db) =>
+      repository.summarizeSystemDashboard(db),
+    );
     const health = await readHealth(companion, permissions);
     cachedSessionCompanion = companion;
     cachedSessionPermissions = [...permissions];
@@ -710,9 +710,9 @@ export async function createFridaySystemService(
       browser,
       frontmostAppId: companionSnapshot.frontmostAppId,
       frontmostWindowId: companionSnapshot.frontmostWindowId,
-      approvalsSummary,
-      remoteDevicesSummary,
-      remoteSessionsSummary,
+      approvalsSummary: dashboardSummary.approvals,
+      remoteDevicesSummary: dashboardSummary.remoteDevices,
+      remoteSessionsSummary: dashboardSummary.remoteSessions,
     });
 
     return {
@@ -765,9 +765,9 @@ export async function createFridaySystemService(
 
   async function buildSummary(): Promise<FridaySystemSummary> {
     const { companion, permissions, health } = await readSessionCompanionSnapshot();
-    const approvalsSummary = deps.db.withReadConnection((db) => repository.summarizeApprovalRules(db));
-    const remoteDevicesSummary = deps.db.withReadConnection((db) => repository.summarizeRemoteDevices(db));
-    const remoteSessionsSummary = deps.db.withReadConnection((db) => repository.summarizeRemoteSessions(db));
+    const dashboardSummary = deps.db.withReadConnection((db) =>
+      repository.summarizeSystemDashboard(db),
+    );
     const browser = deps.getBrowserDiagnostics?.();
 
     return buildSystemSummary({
@@ -775,9 +775,9 @@ export async function createFridaySystemService(
       permissions,
       health,
       browser,
-      approvalsSummary,
-      remoteDevicesSummary,
-      remoteSessionsSummary,
+      approvalsSummary: dashboardSummary.approvals,
+      remoteDevicesSummary: dashboardSummary.remoteDevices,
+      remoteSessionsSummary: dashboardSummary.remoteSessions,
     });
   }
 

@@ -45,6 +45,12 @@ export interface FridaySystemRemoteSessionsSummary {
   latestSeenAt?: string;
 }
 
+export interface FridaySystemDashboardSummary {
+  approvals: FridaySystemApprovalRulesSummary;
+  remoteDevices: FridaySystemRemoteDevicesSummary;
+  remoteSessions: FridaySystemRemoteSessionsSummary;
+}
+
 export interface FridaySystemRepository {
   listApprovalRules(
     db: Database.Database,
@@ -62,6 +68,7 @@ export interface FridaySystemRepository {
     patch: Partial<FridaySystemApprovalRule>,
   ): FridaySystemApprovalRule | null;
   summarizeApprovalRules(db: Database.Database): FridaySystemApprovalRulesSummary;
+  summarizeSystemDashboard(db: Database.Database): FridaySystemDashboardSummary;
 
   listRemoteDevices(db: Database.Database): FridaySystemRemoteDevice[];
   summarizeRemoteDevices(db: Database.Database): FridaySystemRemoteDevicesSummary;
@@ -419,6 +426,45 @@ export function createFridaySystemRepository(): FridaySystemRepository {
       return {
         total: row?.total ?? 0,
         highRiskAllowed: row?.high_risk_allowed ?? 0,
+      };
+    },
+
+    summarizeSystemDashboard(db) {
+      const row = db.prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM friday_system_approval_rules) AS approval_total,
+           (SELECT COUNT(*)
+            FROM friday_system_approval_rules
+            WHERE decision = 'allow' AND risk_level IN ('high', 'critical')) AS approval_high_risk_allowed,
+           (SELECT COUNT(*) FROM friday_system_remote_devices) AS remote_device_total,
+           (SELECT COUNT(*) FROM friday_system_remote_devices WHERE status = 'active') AS remote_device_active,
+           (SELECT COUNT(*) FROM friday_system_remote_sessions) AS remote_session_total,
+           (SELECT COUNT(*) FROM friday_system_remote_sessions WHERE status = 'active') AS remote_session_active,
+           (SELECT MAX(last_seen_at) FROM friday_system_remote_sessions) AS remote_session_latest_seen_at`,
+      ).get() as {
+        approval_total?: number;
+        approval_high_risk_allowed?: number;
+        remote_device_total?: number;
+        remote_device_active?: number;
+        remote_session_total?: number;
+        remote_session_active?: number;
+        remote_session_latest_seen_at?: string | null;
+      } | undefined;
+
+      return {
+        approvals: {
+          total: row?.approval_total ?? 0,
+          highRiskAllowed: row?.approval_high_risk_allowed ?? 0,
+        },
+        remoteDevices: {
+          total: row?.remote_device_total ?? 0,
+          active: row?.remote_device_active ?? 0,
+        },
+        remoteSessions: {
+          total: row?.remote_session_total ?? 0,
+          active: row?.remote_session_active ?? 0,
+          latestSeenAt: row?.remote_session_latest_seen_at ?? undefined,
+        },
       };
     },
 

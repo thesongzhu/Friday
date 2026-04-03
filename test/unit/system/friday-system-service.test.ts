@@ -380,6 +380,23 @@ describe("createFridaySystemService", () => {
     expect(summary.remoteSessionsSummary.total).toBe(0);
   });
 
+  it("uses a single dashboard aggregate read for summary and snapshot metadata", async () => {
+    const fixture = await createServiceFixture();
+    allocatedDbs.push(fixture.db);
+    const withReadConnectionSpy = vi.spyOn(fixture.db, "withReadConnection");
+
+    const readsBeforeSummary = withReadConnectionSpy.mock.calls.length;
+    await fixture.service.getSummary();
+    const readsAfterSummary = withReadConnectionSpy.mock.calls.length;
+
+    const readsBeforeState = withReadConnectionSpy.mock.calls.length;
+    await fixture.service.getState();
+    const readsAfterState = withReadConnectionSpy.mock.calls.length;
+
+    expect(readsAfterSummary - readsBeforeSummary).toBe(1);
+    expect(readsAfterState - readsBeforeState).toBe(1);
+  });
+
   it("counts approvals and remote sessions beyond legacy list limits", async () => {
     const fixture = await createServiceFixture();
     allocatedDbs.push(fixture.db);
