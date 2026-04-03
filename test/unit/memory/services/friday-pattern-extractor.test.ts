@@ -253,4 +253,37 @@ describe("FridayPatternExtractor", () => {
       db.close();
     }
   });
+
+  it("does not rewrite unchanged patterns on repeated refreshes", async () => {
+    const db = createTestDb();
+    let currentNow = "2026-04-03T10:00:00.000Z";
+    try {
+      const extractor = createFridayPatternExtractor({
+        db,
+        nowIso: () => currentNow,
+      });
+
+      for (let i = 0; i < 2; i++) {
+        insertEpisode(db, {
+          id: `ep-stable-${i}`,
+          userId: "user-1",
+          taskIntent: "review architecture risks",
+          outcome: "success",
+          toolSequence: ["read", "grep"],
+        });
+      }
+
+      const firstRefresh = await extractor.refreshPatterns("user-1");
+      expect(firstRefresh.length).toBeGreaterThan(0);
+      const firstUpdatedAt = firstRefresh[0]!.lastUpdated;
+
+      currentNow = "2026-04-03T11:00:00.000Z";
+      const secondRefresh = await extractor.refreshPatterns("user-1");
+
+      expect(secondRefresh.length).toBeGreaterThan(0);
+      expect(secondRefresh[0]!.lastUpdated).toBe(firstUpdatedAt);
+    } finally {
+      db.close();
+    }
+  });
 });

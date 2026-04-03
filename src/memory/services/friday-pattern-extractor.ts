@@ -51,6 +51,15 @@ interface PatternRow {
   created_at: string;
 }
 
+interface PersistedPatternCandidate {
+  id: string;
+  kind: string;
+  description: string;
+  patternJson: string;
+  confidence: number;
+  sampleCount: number;
+}
+
 // ─── Factory ────────────────────────────────────────────────────
 
 export function createFridayPatternExtractor(
@@ -102,6 +111,27 @@ export function createFridayPatternExtractor(
       ];
       if (allExtracted.length === 0) return listPatterns(userId);
 
+      const persistedCandidates = allExtracted.map((pattern) => ({
+        id: buildPatternId(userId, pattern.kind, pattern.key),
+        kind: pattern.kind,
+        description: pattern.description,
+        patternJson: JSON.stringify(pattern.pattern),
+        confidence: pattern.confidence,
+        sampleCount: pattern.sampleCount,
+      }));
+      const existingById = loadPatternRowsByIds(db, userId, persistedCandidates.map((pattern) => pattern.id));
+      const changedPatterns = persistedCandidates.filter((pattern) => {
+        const existing = existingById.get(pattern.id);
+        if (!existing) return true;
+        return existing.description !== pattern.description
+          || existing.pattern_json !== pattern.patternJson
+          || existing.confidence !== pattern.confidence
+          || existing.sample_count !== pattern.sampleCount;
+      });
+      if (changedPatterns.length === 0) {
+        return listPatterns(userId);
+      }
+
       // 3. Upsert into friday_learned_patterns
       const now = nowIso();
 
@@ -117,16 +147,15 @@ export function createFridayPatternExtractor(
              last_updated = excluded.last_updated`,
         );
 
-        for (const p of allExtracted) {
-          const id = buildPatternId(userId, p.kind, p.key);
+        for (const pattern of changedPatterns) {
           upsert.run(
-            id,
+            pattern.id,
             userId,
-            p.kind,
-            p.description,
-            JSON.stringify(p.pattern),
-            p.confidence,
-            p.sampleCount,
+            pattern.kind,
+            pattern.description,
+            pattern.patternJson,
+            pattern.confidence,
+            pattern.sampleCount,
             now,
             now,
           );
@@ -399,6 +428,27 @@ function buildPatternId(userId: string, kind: string, key: string): string {
     hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
   }
   return `pat_${kind}_${Math.abs(hash).toString(36)}`;
+}
+
+function loadPatternRowsByIds(
+  db: FridaySqliteLayer,
+  userId: string,
+  ids: string[],
+): Map<string, PatternRow> {
+  if (ids.length === 0) {
+    return new Map();
+  }
+  const uniqueIds = [...new Set(ids)];
+  const placeholders = uniqueIds.map(() => "?").join(", ");
+  const rows = db.withReadConnection((conn) =>
+    conn
+      .prepare(
+        `SELECT * FROM friday_learned_patterns
+         WHERE user_id = ? AND id IN (${placeholders})`,
+      )
+      .all(userId, ...uniqueIds) as PatternRow[],
+  );
+  return new Map(rows.map((row) => [row.id, row] as const));
 }
 
 function rowToPattern(row: PatternRow): FridayLearnedPattern {
