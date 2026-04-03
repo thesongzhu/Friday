@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, ChartNoAxesCombined, ChevronDown, Command, Home, MessageCircle, MonitorCog, Package, ShieldCheck, ShoppingBag, Wand2, Waypoints } from "lucide-react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
@@ -24,7 +24,9 @@ export function AppShell() {
   const location = useLocation();
   const { user, logout } = useAuth();
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const shouldTrackAssistantChrome = showAdvanced || location.pathname.startsWith("/assistant");
+  const isAssistantRoute = location.pathname.startsWith("/assistant");
+  const shouldPollAssistantChrome = showAdvanced || isAssistantRoute;
+  const shouldStreamAssistantEvents = isAssistantRoute;
 
   const { data: health } = useQuery({
     queryKey: systemKeys.health(),
@@ -45,13 +47,13 @@ export function AppShell() {
       const response = await systemApi.listAutoFixActions({ status: "planned", limit: 50 });
       return response.items.filter((item) => item.summary.requiresApproval);
     },
-    enabled: shouldTrackAssistantChrome,
-    refetchInterval: shouldTrackAssistantChrome ? 15_000 : false,
+    enabled: shouldPollAssistantChrome,
+    refetchInterval: isAssistantRoute ? 15_000 : shouldPollAssistantChrome ? 30_000 : false,
   });
   const pendingApprovalCount = pendingApprovals?.length ?? 0;
 
-  const { events: systemEvents } = useSystemEvents(shouldTrackAssistantChrome);
-  const lastSeenEventCount = useState({ current: 0 })[0];
+  const { events: systemEvents } = useSystemEvents(shouldStreamAssistantEvents);
+  const lastSeenEventCount = useRef(0);
   useEffect(() => {
     const newEvents = systemEvents.slice(lastSeenEventCount.current);
     lastSeenEventCount.current = systemEvents.length;
@@ -60,7 +62,7 @@ export function AppShell() {
         toast.info("New auto-fix requires approval", { description: "Check the Assistant page to review and approve." });
       }
     }
-  }, [systemEvents, lastSeenEventCount]);
+  }, [systemEvents]);
   const pageTitle = resolvePageTitle(location.pathname);
   const systemHealth = systemSession?.health;
   const isSimplifiedView = location.pathname === "/home" || location.pathname.startsWith("/flow/") || location.pathname === "/chat";

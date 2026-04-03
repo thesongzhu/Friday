@@ -103,6 +103,11 @@ const ASSISTANT_ACTIVE_RUN_REFETCH_MS = 5_000;
 const ASSISTANT_IDLE_RUN_REFETCH_MS = 20_000;
 const ASSISTANT_ACTIVE_DIAGNOSTICS_REFETCH_MS = 10_000;
 const ASSISTANT_IDLE_DIAGNOSTICS_REFETCH_MS = 30_000;
+const ASSISTANT_ACTIVE_SIGNAL_REFETCH_MS = 20_000;
+const ASSISTANT_IDLE_SIGNAL_REFETCH_MS = 60_000;
+const ASSISTANT_ACTIVE_ALERTS_REFETCH_MS = 15_000;
+const ASSISTANT_IDLE_ALERTS_REFETCH_MS = 45_000;
+const ASSISTANT_AUTOMATIONS_REFETCH_MS = 30_000;
 
 function isAssistantActiveRunStatus(status: string): status is (typeof ACTIVE_ASSISTANT_RUN_STATUSES)[number] {
   return ACTIVE_ASSISTANT_RUN_STATUSES.includes(status as (typeof ACTIVE_ASSISTANT_RUN_STATUSES)[number]);
@@ -566,7 +571,12 @@ export function AssistantPage() {
   const issuesQuery = useQuery({
     queryKey: ["assistant-shell", "issues"],
     queryFn: () => systemApi.listAssistantIssues(12),
-    refetchInterval: 20_000,
+    refetchInterval: (query) => {
+      const issues = query.state.data as FridayIssueCard[] | undefined;
+      return (issues?.length ?? 0) > 0
+        ? ASSISTANT_ACTIVE_SIGNAL_REFETCH_MS
+        : ASSISTANT_IDLE_SIGNAL_REFETCH_MS;
+    },
   });
 
   const incidentsQuery = useQuery({
@@ -594,7 +604,7 @@ export function AssistantPage() {
     queryKey: systemKeys.learningOverview(6),
     queryFn: () => learningApi.getOverview(6),
     retry: 0,
-    refetchInterval: 20_000,
+    refetchInterval: ASSISTANT_IDLE_SIGNAL_REFETCH_MS,
   });
 
   const loopPolicyQuery = useQuery({
@@ -607,7 +617,7 @@ export function AssistantPage() {
   const expertModeQuery = useQuery({
     queryKey: ["assistant-shell", "expert-mode"],
     queryFn: () => systemApi.getAgentLoopExpertMode(),
-    refetchInterval: 20_000,
+    refetchInterval: ASSISTANT_IDLE_SIGNAL_REFETCH_MS,
   });
 
   const loopRunsQuery = useQuery({
@@ -655,7 +665,7 @@ export function AssistantPage() {
   const automationsQuery = useQuery({
     queryKey: ["assistant-shell", "automations"],
     queryFn: () => automationsApi.list({ limit: 20 }),
-    refetchInterval: 15_000,
+    refetchInterval: ASSISTANT_AUTOMATIONS_REFETCH_MS,
   });
 
   const catalogQuery = useQuery({
@@ -696,7 +706,12 @@ export function AssistantPage() {
   const alertsQuery = useQuery({
     queryKey: ["assistant-shell", "observability-alerts"],
     queryFn: () => systemApi.listObservabilityAlerts({ status: "firing", limit: 4 }),
-    refetchInterval: 15_000,
+    refetchInterval: (query) => {
+      const response = query.state.data as { items?: FridayObservabilityAlertSummary[] } | undefined;
+      return (response?.items?.length ?? 0) > 0
+        ? ASSISTANT_ACTIVE_ALERTS_REFETCH_MS
+        : ASSISTANT_IDLE_ALERTS_REFETCH_MS;
+    },
   });
 
   const marketplaceAssetsQuery = useQuery({

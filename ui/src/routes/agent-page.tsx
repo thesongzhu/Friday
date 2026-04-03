@@ -3,6 +3,7 @@ import {
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,6 +26,7 @@ import {
 import { toast } from "sonner";
 import { agentApi } from "@/lib/api/agent";
 import { skillsApi } from "@/lib/api/skills";
+import type { AgentRunRecord } from "@/lib/api/types";
 import { authStorage } from "@/lib/storage/auth-storage";
 import { systemApi } from "@/lib/api/system";
 import type {
@@ -72,6 +74,8 @@ const ACTIVE_RUN_STATUSES = [
   "testing",
   "fixing",
 ] as const;
+const COMMAND_CENTER_ACTIVE_RUN_REFETCH_MS = 5_000;
+const COMMAND_CENTER_IDLE_RUN_REFETCH_MS = 20_000;
 
 function formatTimestamp(value?: string): string {
   if (!value) return "Never";
@@ -132,6 +136,34 @@ function getBlockedApprovalEvents(events: FridaySystemEvent[]): FridaySystemEven
   );
 }
 
+function useSectionActivation<T extends HTMLElement>(options?: { rootMargin?: string }) {
+  const ref = useRef<T | null>(null);
+  const [active, setActive] = useState(false);
+
+  useEffect(() => {
+    if (active) {
+      return;
+    }
+    const node = ref.current;
+    if (!node || typeof IntersectionObserver === "undefined") {
+      setActive(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setActive(true);
+        }
+      },
+      { rootMargin: options?.rootMargin ?? "240px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [active, options?.rootMargin]);
+
+  return { ref, active };
+}
+
 function scoreStarterSkill(input: {
   skillId: string;
   task: string;
@@ -184,10 +216,13 @@ export function AgentPage() {
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   const [remoteLabel, setRemoteLabel] = useState("");
   const [remoteFingerprint, setRemoteFingerprint] = useState("");
+  const [snapshotRequested, setSnapshotRequested] = useState(false);
   const passkeysSupported = typeof PublicKeyCredential !== "undefined";
   const operatorUserId = authStorage.getUser()?.id?.trim() || "anonymous";
   const commandCenterSessionKey = `ui:command-center:${operatorUserId}`;
   const runIdFromUrl = searchParams.get("runId");
+  const notificationsSection = useSectionActivation<HTMLDivElement>({ rootMargin: "600px 0px" });
+  const notificationsEnabled = notificationsSection.active || snapshotRequested;
 
   const { data: session, error: sessionError } = useQuery({
     queryKey: systemKeys.session(),
@@ -203,10 +238,16 @@ export function AgentPage() {
     refetchInterval: 10_000,
   });
 
-  const { data: snapshot } = useQuery({
+  const {
+    data: snapshot,
+    refetch: refetchSnapshot,
+    isFetching: snapshotFetching,
+  } = useQuery({
     queryKey: systemKeys.state(),
     queryFn: () => systemApi.getState(),
     retry: 0,
+    enabled: notificationsEnabled,
+    refetchInterval: notificationsEnabled ? 20_000 : false,
   });
 
   const { data: approvalsResponse } = useQuery({
@@ -233,14 +274,24 @@ export function AgentPage() {
   const { data: runs = [], refetch: refetchRuns } = useQuery({
     queryKey: ["agent-os", "runs"],
     queryFn: () => agentApi.listRuns({ limit: 8 }),
-    refetchInterval: 5_000,
+    refetchInterval: (query) => {
+      const nextRuns = query.state.data as AgentRunRecord[] | undefined;
+      return (nextRuns ?? []).some((run) => isActiveRunStatus(run.status))
+        ? COMMAND_CENTER_ACTIVE_RUN_REFETCH_MS
+        : COMMAND_CENTER_IDLE_RUN_REFETCH_MS;
+    },
   });
 
   const { data: currentRun } = useQuery({
     queryKey: ["agent-os", "runs", currentRunId],
     queryFn: () => agentApi.getRun(currentRunId!),
     enabled: currentRunId !== null,
-    refetchInterval: 5_000,
+    refetchInterval: (query) => {
+      const run = query.state.data as AgentRunRecord | undefined;
+      return run && isActiveRunStatus(run.status)
+        ? COMMAND_CENTER_ACTIVE_RUN_REFETCH_MS
+        : false;
+    },
   });
 
   const { data: starterSkills = [] } = useQuery({
@@ -250,7 +301,7 @@ export function AgentPage() {
       return skills.filter((skill) => skill.starter);
     },
     retry: 0,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
 
   const systemEvents = useSystemEvents(Boolean(session));
@@ -875,11 +926,12 @@ export function AgentPage() {
                   <ActionButton
                     tone="secondary"
                     onClick={() => {
+                      setSnapshotRequested(true);
                       void queryClient.invalidateQueries({ queryKey: systemKeys.summary() });
-                      void queryClient.invalidateQueries({ queryKey: systemKeys.state() });
+                      void refetchSnapshot();
                     }}
                   >
-                    Refresh Snapshot
+                    {snapshotFetching ? "Refreshing..." : "Refresh Snapshot"}
                   </ActionButton>
                 </div>
               </div>
@@ -991,69 +1043,75 @@ export function AgentPage() {
           ) : null}
         </ShellCard>
 
-        <ShellCard
-          eyebrow="Notifications"
-          title="Notification Queue"
-          aside={<StatusPill tone={snapshot?.notifications.length ? "warning" : "neutral"}>{snapshot?.notifications.length ?? 0} queued</StatusPill>}
-        >
-          <div className="space-y-3">
-            {snapshot?.notifications.length ? snapshot.notifications.slice(0, 4).map((notification) => (
-              <div key={notification.id} className="rounded-[24px] border border-white/10 bg-black/20 p-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="font-medium text-white">{notification.title}</p>
-                    <p className="mt-1 text-sm text-white/60">{notification.body ?? "No body provided."}</p>
-                    <p className="mt-2 text-xs text-white/40">
-                      {notification.sourceApp ?? "Unknown source"} · {formatRelative(notification.receivedAt)}
-                    </p>
+        <div ref={notificationsSection.ref}>
+          <ShellCard
+            eyebrow="Notifications"
+            title="Notification Queue"
+            aside={<StatusPill tone={snapshot?.notifications.length ? "warning" : "neutral"}>{snapshot?.notifications.length ?? 0} queued</StatusPill>}
+          >
+            <div className="space-y-3">
+              {!notificationsEnabled ? (
+                <p className="text-sm text-white/50">
+                  Notification snapshot will load when this section comes into view.
+                </p>
+              ) : snapshot?.notifications.length ? snapshot.notifications.slice(0, 4).map((notification) => (
+                <div key={notification.id} className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="font-medium text-white">{notification.title}</p>
+                      <p className="mt-1 text-sm text-white/60">{notification.body ?? "No body provided."}</p>
+                      <p className="mt-2 text-xs text-white/40">
+                        {notification.sourceApp ?? "Unknown source"} · {formatRelative(notification.receivedAt)}
+                      </p>
+                    </div>
+                    <StatusPill tone={notification.read ? "neutral" : "warning"}>
+                      {notification.read ? "read" : "unread"}
+                    </StatusPill>
                   </div>
-                  <StatusPill tone={notification.read ? "neutral" : "warning"}>
-                    {notification.read ? "read" : "unread"}
-                  </StatusPill>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <ActionButton
+                      tone="secondary"
+                      onClick={() => systemIntentMutation.mutate({
+                        action: "notification_act",
+                        reason: "notification_open",
+                        notificationId: notification.id,
+                        notificationAction: "open",
+                      })}
+                    >
+                      Open
+                    </ActionButton>
+                    <ActionButton
+                      tone="secondary"
+                      onClick={() => systemIntentMutation.mutate({
+                        action: "notification_act",
+                        reason: "notification_mark_read",
+                        notificationId: notification.id,
+                        notificationAction: "mark_read",
+                      })}
+                    >
+                      Mark Read
+                    </ActionButton>
+                    <ActionButton
+                      tone="danger"
+                      onClick={() => systemIntentMutation.mutate({
+                        action: "notification_act",
+                        reason: "notification_dismiss",
+                        notificationId: notification.id,
+                        notificationAction: "dismiss",
+                      })}
+                    >
+                      Dismiss
+                    </ActionButton>
+                  </div>
                 </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <ActionButton
-                    tone="secondary"
-                    onClick={() => systemIntentMutation.mutate({
-                      action: "notification_act",
-                      reason: "notification_open",
-                      notificationId: notification.id,
-                      notificationAction: "open",
-                    })}
-                  >
-                    Open
-                  </ActionButton>
-                  <ActionButton
-                    tone="secondary"
-                    onClick={() => systemIntentMutation.mutate({
-                      action: "notification_act",
-                      reason: "notification_mark_read",
-                      notificationId: notification.id,
-                      notificationAction: "mark_read",
-                    })}
-                  >
-                    Mark Read
-                  </ActionButton>
-                  <ActionButton
-                    tone="danger"
-                    onClick={() => systemIntentMutation.mutate({
-                      action: "notification_act",
-                      reason: "notification_dismiss",
-                      notificationId: notification.id,
-                      notificationAction: "dismiss",
-                    })}
-                  >
-                    Dismiss
-                  </ActionButton>
-                </div>
-              </div>
-            )) : (
-              <p className="text-sm text-white/50">
-                No notifications are currently surfaced by the companion.
-              </p>
-            )}
-          </div>
-        </ShellCard>
+              )) : (
+                <p className="text-sm text-white/50">
+                  No notifications are currently surfaced by the companion.
+                </p>
+              )}
+            </div>
+          </ShellCard>
+        </div>
 
         <ShellCard
           eyebrow="Trusted Devices"
