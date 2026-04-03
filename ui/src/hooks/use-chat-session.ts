@@ -30,6 +30,7 @@ const HISTORY_STORAGE = "friday-chat-history";
 const CHAT_SESSION_CHANNEL = "chat";
 const CHAT_SESSION_ACCOUNT = "default";
 const SESSION_KEY_SEGMENT_PATTERN = /^[a-z0-9._-]+$/;
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled", "failed_tests"]);
 
 function normalizeSessionKeySegment(raw: string): string {
   return raw
@@ -71,6 +72,22 @@ export function coercePersistedChatSessionKey(raw: string | null): string {
 
   const candidateChatId = meaningfulSegments.at(-1);
   return buildChatSessionKey(candidateChatId);
+}
+
+export function isTerminalChatRunStatus(status: string | null | undefined): boolean {
+  return typeof status === "string" && TERMINAL_RUN_STATUSES.has(status);
+}
+
+export function resolveImmediateChatResponse(input: {
+  status?: string;
+  response?: string;
+  finalResponse?: string;
+}): string | null {
+  if (!isTerminalChatRunStatus(input.status)) {
+    return null;
+  }
+  const text = input.finalResponse ?? input.response;
+  return typeof text === "string" && text.trim().length > 0 ? text : null;
 }
 
 function getOrCreateSessionKey(): string {
@@ -158,7 +175,7 @@ export function useChatSession(): UseChatSessionResult {
 
     try {
       // Start a new agent run
-      const { runId } = await agentApi.startRun({
+      const result = await agentApi.startRun({
         task: trimmed,
         sessionKey: sessionKeyRef.current,
         executionContext: {
@@ -167,12 +184,31 @@ export function useChatSession(): UseChatSessionResult {
         },
       });
 
+      const immediateResponse = resolveImmediateChatResponse(result);
+      if (immediateResponse) {
+        const assistantMsg: ChatMessage = {
+          id: `msg-${Date.now().toString(36)}-reply`,
+          role: "assistant",
+          content: immediateResponse,
+          runId: result.runId,
+          timestamp: new Date().toISOString(),
+          status: result.status === "completed" ? "done" : "error",
+        };
+
+        setMessages((prev) => {
+          const updated = [...prev, assistantMsg];
+          saveHistory(updated);
+          return updated;
+        });
+        return;
+      }
+
       // Add placeholder assistant message
       const assistantMsg: ChatMessage = {
         id: `msg-${Date.now().toString(36)}-reply`,
         role: "assistant",
         content: "",
-        runId,
+        runId: result.runId,
         timestamp: new Date().toISOString(),
         status: "streaming",
       };
@@ -183,7 +219,7 @@ export function useChatSession(): UseChatSessionResult {
         return updated;
       });
 
-      setCurrentRunId(runId);
+      setCurrentRunId(result.runId);
     } catch (err) {
       // Add error message
       const errMsg: ChatMessage = {

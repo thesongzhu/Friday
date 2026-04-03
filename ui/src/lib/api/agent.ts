@@ -28,6 +28,8 @@ interface StartRunInput {
 interface StartRunResponse {
   runId: string;
   status: AgentRunStatus;
+  response?: string;
+  finalResponse?: string;
 }
 
 interface GetRunResponse {
