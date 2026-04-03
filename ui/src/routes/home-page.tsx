@@ -1,11 +1,10 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, ChevronRight, Loader2, Sparkles } from "lucide-react";
+import { ArrowRight, ChevronRight, Sparkles } from "lucide-react";
 import { agentApi } from "@/lib/api/agent";
 import { apiClient } from "@/lib/api/client";
 import { providerUsageApi } from "@/lib/api/provider-usage";
-import { systemApi } from "@/lib/api/system";
 import { GoalCard } from "@/components/guided/goal-card";
 import { OneClickAction } from "@/components/guided/one-click-action";
 import { JourneyTracker } from "@/components/guided/journey-tracker";
@@ -14,6 +13,17 @@ import { useUserProfile } from "@/hooks/use-user-profile";
 import { getGoalCategoriesForProfile } from "@/lib/guided/goal-categories";
 import { buildGuidedFlowJourneyPhases, buildGuidedFlowCurrentPhaseIndex } from "@/lib/guided/flow-adapters";
 import type { FridayGoalCategory } from "@/lib/guided/goal-categories";
+
+const HOME_ACTIVE_RUN_REFETCH_MS = 10_000;
+const HOME_IDLE_RUN_REFETCH_MS = 30_000;
+
+function isHomeActiveRunStatus(status: string): boolean {
+  return status === "pending"
+    || status === "executing"
+    || status === "planning"
+    || status === "awaiting_plan_approval"
+    || status === "awaiting_clarification";
+}
 
 function greetingForTimeOfDay(): string {
   const hour = new Date().getHours();
@@ -67,13 +77,12 @@ export function HomePage() {
   const recentRunsQuery = useQuery({
     queryKey: ["home", "recent-runs"],
     queryFn: () => agentApi.listRuns({ limit: 3 }),
-    refetchInterval: 10_000,
-  });
-
-  const alertsQuery = useQuery({
-    queryKey: ["home", "alerts"],
-    queryFn: () => systemApi.listObservabilityAlerts({ status: "firing", limit: 2 }),
-    refetchInterval: 15_000,
+    refetchInterval: (query) => {
+      const runs = query.state.data as Array<{ status: string }> | undefined;
+      return (runs ?? []).some((run) => isHomeActiveRunStatus(run.status))
+        ? HOME_ACTIVE_RUN_REFETCH_MS
+        : HOME_IDLE_RUN_REFETCH_MS;
+    },
   });
 
   const budgetQuery = useQuery({
@@ -95,12 +104,7 @@ export function HomePage() {
 
   const recentRuns = recentRunsQuery.data ?? [];
   const activeRun = recentRuns.find(
-    (run) =>
-      run.status === "pending" ||
-      run.status === "executing" ||
-      run.status === "planning" ||
-      run.status === "awaiting_plan_approval" ||
-      run.status === "awaiting_clarification",
+    (run) => isHomeActiveRunStatus(run.status),
   );
 
   function handleGoalClick(category: FridayGoalCategory) {

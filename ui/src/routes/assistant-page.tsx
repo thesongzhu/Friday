@@ -44,7 +44,7 @@ import type {
   FridayObservabilityOverview,
   FridaySystemIntentAction,
   FridaySystemSession,
-  FridaySystemSnapshot,
+  FridaySystemSummary,
   FridayWorkflowOverview,
 } from "@/lib/api/system-types";
 import type {
@@ -99,8 +99,17 @@ const ACTIVE_ASSISTANT_RUN_STATUSES = [
   "fixing",
 ] as const;
 
+const ASSISTANT_ACTIVE_RUN_REFETCH_MS = 5_000;
+const ASSISTANT_IDLE_RUN_REFETCH_MS = 20_000;
+const ASSISTANT_ACTIVE_DIAGNOSTICS_REFETCH_MS = 10_000;
+const ASSISTANT_IDLE_DIAGNOSTICS_REFETCH_MS = 30_000;
+
 function isAssistantActiveRunStatus(status: string): status is (typeof ACTIVE_ASSISTANT_RUN_STATUSES)[number] {
   return ACTIVE_ASSISTANT_RUN_STATUSES.includes(status as (typeof ACTIVE_ASSISTANT_RUN_STATUSES)[number]);
+}
+
+function hasActiveAssistantRun(runs: AgentRunRecord[] | undefined): boolean {
+  return (runs ?? []).some((run) => isAssistantActiveRunStatus(run.status));
 }
 const QUICK_INTENTS = [
   "Help me figure out what I should do next.",
@@ -533,12 +542,12 @@ export function AssistantPage() {
     refetchInterval: 20_000,
   });
 
-  const stateQuery = useQuery({
-    queryKey: systemKeys.state(),
-    queryFn: () => systemApi.getState(),
+  const summaryQuery = useQuery({
+    queryKey: systemKeys.summary(),
+    queryFn: () => systemApi.getSummary(),
     enabled: actionCardsEnabled,
     retry: 0,
-    refetchInterval: false,
+    refetchInterval: actionCardsEnabled ? 20_000 : false,
   });
 
   const observabilityQuery = useQuery({
@@ -611,13 +620,12 @@ export function AssistantPage() {
   const agentRunsQuery = useQuery({
     queryKey: ["assistant-shell", "agent-runs"],
     queryFn: () => agentApi.listRuns({ limit: 8 }),
-    refetchInterval: 5_000,
-  });
-
-  const diagnosticsQuery = useQuery({
-    queryKey: systemKeys.assistantDiagnostics(),
-    queryFn: () => assistantDiagnosticsApi.get(),
-    refetchInterval: 10_000,
+    refetchInterval: (query) => {
+      const runs = query.state.data as AgentRunRecord[] | undefined;
+      return hasActiveAssistantRun(runs)
+        ? ASSISTANT_ACTIVE_RUN_REFETCH_MS
+        : ASSISTANT_IDLE_RUN_REFETCH_MS;
+    },
   });
 
   const workflowsQuery = useQuery({
@@ -728,7 +736,7 @@ export function AssistantPage() {
     onSuccess: (result) => {
       toast.success(result.message);
       void queryClient.invalidateQueries({ queryKey: systemKeys.session() });
-      void queryClient.invalidateQueries({ queryKey: systemKeys.state() });
+      void queryClient.invalidateQueries({ queryKey: systemKeys.summary() });
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "System action failed");
@@ -1030,6 +1038,14 @@ export function AssistantPage() {
       ) ?? null,
     [agentRunsQuery.data],
   );
+  const hasAssistantRunInFlight = activeAssistantRun !== null;
+  const diagnosticsQuery = useQuery({
+    queryKey: systemKeys.assistantDiagnostics(),
+    queryFn: () => assistantDiagnosticsApi.get(),
+    refetchInterval: hasAssistantRunInFlight
+      ? ASSISTANT_ACTIVE_DIAGNOSTICS_REFETCH_MS
+      : ASSISTANT_IDLE_DIAGNOSTICS_REFETCH_MS,
+  });
   const latestAssistantRun = (agentRunsQuery.data ?? [])[0] ?? null;
   const displayedAssistantRun = activeAssistantRun ?? latestAssistantRun;
   const latestOutcomeReceipt = useMemo(
@@ -1343,7 +1359,7 @@ export function AssistantPage() {
                   degradedSatellites={degradedSatellites}
                   pairingRequests={pairingRequests}
                   session={sessionQuery.data}
-                  snapshot={stateQuery.data}
+                  summary={summaryQuery.data}
                   observability={observabilityQuery.data}
                   activeAlerts={activeAlerts}
                   onDeploy={(workflowId, draftId, runNow, includeExport) =>
@@ -2185,7 +2201,7 @@ function ActionCardsSection(props: {
   degradedSatellites: FridayFleetSatelliteCard[];
   pairingRequests: FridayPendingSatellitePairingRequest[];
   session?: FridaySystemSession;
-  snapshot?: FridaySystemSnapshot;
+  summary?: FridaySystemSummary;
   observability?: FridayObservabilityOverview;
   activeAlerts: FridayObservabilityAlertSummary[];
   onDeploy: (workflowId: string, draftId: string, runNow?: boolean, includeExport?: boolean) => void;
@@ -2251,7 +2267,7 @@ function ActionCardsSection(props: {
         />
         <SystemActionCard
           session={props.session}
-          snapshot={props.snapshot}
+          summary={props.summary}
           observability={props.observability}
           activeAlerts={props.activeAlerts}
           onSystemIntent={props.onSystemIntent}
@@ -2765,7 +2781,7 @@ function FleetActionCard(props: {
 
 function SystemActionCard(props: {
   session?: FridaySystemSession;
-  snapshot?: FridaySystemSnapshot;
+  summary?: FridaySystemSummary;
   observability?: FridayObservabilityOverview;
   activeAlerts: FridayObservabilityAlertSummary[];
   onSystemIntent: (action: FridaySystemIntentAction, layout?: "single_focus" | "dual_pane" | "triad", reason?: string) => void;
@@ -2783,8 +2799,16 @@ function SystemActionCard(props: {
         <StatusPill tone={mapTone(props.session?.health.status)}>{props.session?.health.status ?? "loading"}</StatusPill>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <MetricStat label="Desktop apps" value={String(props.snapshot?.apps.length ?? 0)} />
-        <MetricStat label="Open windows" value={String(props.snapshot?.windows.length ?? 0)} />
+        <MetricStat
+          label="Control lease"
+          value={props.summary?.controlLease ? props.summary.controlLease.ownerKind : "none"}
+          tone={props.summary?.controlLease ? "warning" : "neutral"}
+        />
+        <MetricStat
+          label="Remote sessions"
+          value={String(props.summary?.remoteSessionsSummary.active ?? 0)}
+          tone={props.summary?.remoteSessionsSummary.active ? "warning" : "neutral"}
+        />
         <MetricStat
           label="Alerts"
           value={String(props.observability?.alerts.activeAlerts ?? 0)}
@@ -3356,7 +3380,7 @@ async function invalidateAssistantShell(queryClient: ReturnType<typeof useQueryC
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: ["assistant-shell"] }),
     queryClient.invalidateQueries({ queryKey: systemKeys.session() }),
-    queryClient.invalidateQueries({ queryKey: systemKeys.state() }),
+    queryClient.invalidateQueries({ queryKey: systemKeys.summary() }),
     queryClient.invalidateQueries({ queryKey: systemKeys.observabilityOverview() }),
     queryClient.invalidateQueries({ queryKey: systemKeys.assistantDiagnostics() }),
     queryClient.invalidateQueries({ queryKey: systemKeys.learningOverview(6) }),

@@ -9,6 +9,7 @@ import { workflowRunsApi } from "@/lib/api/workflow-runs";
 import { workflowsApi } from "@/lib/api/workflows";
 import { buildObservabilityHref } from "@/lib/observability/view-models";
 import { systemApi } from "@/lib/api/system";
+import type { FridayWorkflowOverview } from "@/lib/api/system-types";
 import { systemKeys } from "@/lib/system/query-keys";
 import {
   buildWorkflowBuilderHref,
@@ -43,6 +44,18 @@ function focusLabel(focus: FridayWorkflowFocus): string {
   if (focus === "export") return "Export focus";
   if (focus === "history") return "History focus";
   return "Workflow detail";
+}
+
+const WORKFLOW_ACTIVE_REFETCH_MS = 10_000;
+const WORKFLOW_IDLE_REFETCH_MS = 30_000;
+
+function shouldUseActiveWorkflowPolling(overview?: FridayWorkflowOverview): boolean {
+  if (!overview) return true;
+  return overview.latestDraft !== undefined
+    || overview.latestRun?.status === "running"
+    || overview.latestRun?.status === "queued"
+    || overview.latestRun?.status === "paused"
+    || overview.latestRun?.status === "failed";
 }
 
 export function WorkflowsPage() {
@@ -84,7 +97,10 @@ export function WorkflowsPage() {
     queryKey: selectedWorkflowId ? systemKeys.workflowOverview(selectedWorkflowId) : ["system", "workflow-overview", "empty"],
     queryFn: () => systemApi.getWorkflowOverview(selectedWorkflowId!),
     enabled: selectedWorkflowId !== null,
-    refetchInterval: 10_000,
+    refetchInterval: (query) =>
+      shouldUseActiveWorkflowPolling(query.state.data as FridayWorkflowOverview | undefined)
+        ? WORKFLOW_ACTIVE_REFETCH_MS
+        : WORKFLOW_IDLE_REFETCH_MS,
   });
 
   const visualizationQuery = useQuery({
@@ -101,7 +117,9 @@ export function WorkflowsPage() {
         timelineLimit: 16,
       }),
     enabled: selectedWorkflowId !== null && overviewQuery.data !== undefined,
-    refetchInterval: 10_000,
+    refetchInterval: shouldUseActiveWorkflowPolling(overviewQuery.data)
+      ? WORKFLOW_ACTIVE_REFETCH_MS
+      : WORKFLOW_IDLE_REFETCH_MS,
   });
 
   const deployMutation = useMutation({

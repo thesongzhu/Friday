@@ -7,6 +7,11 @@ import { ShellCard, StatusPill } from "@/components/core/primitives";
 import { HelpTooltip } from "@/components/core/help-tooltip";
 import { fleetApi } from "@/lib/api/fleet";
 import { systemApi } from "@/lib/api/system";
+import type {
+  FridayFleetOverviewResponse,
+  FridayFleetSatelliteCard,
+  FridayFleetSatelliteDetailResponse,
+} from "@/lib/api/types";
 import {
   buildFleetHref,
   buildFleetRecoverySteps,
@@ -30,6 +35,45 @@ function toneForLoopRun(record: {
     return "danger";
   }
   return "neutral";
+}
+
+const FLEET_ACTIVE_REFETCH_MS = 15_000;
+const FLEET_IDLE_REFETCH_MS = 45_000;
+
+function shouldUseActiveFleetOverviewPolling(overview?: FridayFleetOverviewResponse): boolean {
+  if (!overview) return true;
+  return overview.totals.degraded > 0
+    || overview.totals.offline > 0
+    || overview.totals.pending > 0
+    || overview.queue.queued + overview.queue.leased + overview.queue.failed + overview.queue.deadLetter > 0
+    || overview.workflows.activeRuns > 0;
+}
+
+function shouldUseActiveFleetSatellitePolling(satellites: FridayFleetSatelliteCard[] | undefined): boolean {
+  if (!satellites || satellites.length === 0) return false;
+  return satellites.some((satellite) =>
+    satellite.healthState === "degraded"
+      || satellite.healthState === "critical"
+      || satellite.pairingStatus !== "paired"
+      || (satellite.queueDepth ?? 0) > 0
+      || (satellite.activeRuns ?? 0) > 0
+      || satellite.alerts.length > 0,
+  );
+}
+
+function shouldUseActiveFleetDetailPolling(detail?: FridayFleetSatelliteDetailResponse): boolean {
+  if (!detail) return true;
+  return detail.healthBreakdown.state !== "healthy"
+    || detail.queue.queued + detail.queue.leased + detail.queue.failed + detail.queue.deadLetter > 0
+    || detail.workflowLoad.runningNodes + detail.workflowLoad.queuedNodes + detail.workflowLoad.retryingNodes + detail.workflowLoad.blockedOfflineNodes > 0;
+}
+
+function shouldUseActiveFleetLoopPolling(records: Array<{ run: { status: string; verificationPassed?: boolean } }> | undefined): boolean {
+  if (!records || records.length === 0) return false;
+  return records.some((record) =>
+    record.run.status !== "verified" && record.run.status !== "completed"
+      || record.run.verificationPassed === false,
+  );
 }
 
 function FleetMetricCard(props: {
@@ -66,20 +110,31 @@ export function FleetPage() {
   const overviewQuery = useQuery({
     queryKey: ["fleet", "overview"],
     queryFn: () => fleetApi.getOverview(),
-    refetchInterval: 15_000,
+    refetchInterval: (query) =>
+      shouldUseActiveFleetOverviewPolling(query.state.data as FridayFleetOverviewResponse | undefined)
+        ? FLEET_ACTIVE_REFETCH_MS
+        : FLEET_IDLE_REFETCH_MS,
   });
 
   const satellitesQuery = useQuery({
     queryKey: ["fleet", "satellites"],
     queryFn: () => fleetApi.listSatellites({ limit: 50 }),
-    refetchInterval: 15_000,
+    refetchInterval: (query) =>
+      shouldUseActiveFleetSatellitePolling(
+        (query.state.data as { items?: FridayFleetSatelliteCard[] } | undefined)?.items,
+      )
+        ? FLEET_ACTIVE_REFETCH_MS
+        : FLEET_IDLE_REFETCH_MS,
   });
 
   const satellites = satellitesQuery.data?.items ?? [];
   const loopRunsQuery = useQuery({
     queryKey: ["fleet", "loop-runs"],
     queryFn: () => systemApi.listAgentLoopRuns({ limit: 12 }),
-    refetchInterval: 15_000,
+    refetchInterval: (query) =>
+      shouldUseActiveFleetLoopPolling(query.state.data as Array<{ run: { status: string; verificationPassed?: boolean } }> | undefined)
+        ? FLEET_ACTIVE_REFETCH_MS
+        : FLEET_IDLE_REFETCH_MS,
   });
 
   useEffect(() => {
@@ -108,7 +163,10 @@ export function FleetPage() {
     queryKey: ["fleet", "detail", selectedSatelliteId],
     queryFn: () => fleetApi.getSatellite(selectedSatelliteId!),
     enabled: selectedSatelliteId !== null,
-    refetchInterval: 15_000,
+    refetchInterval: (query) =>
+      shouldUseActiveFleetDetailPolling(query.state.data as FridayFleetSatelliteDetailResponse | undefined)
+        ? FLEET_ACTIVE_REFETCH_MS
+        : FLEET_IDLE_REFETCH_MS,
   });
   const remediationMutation = useMutation({
     mutationFn: async (input: { satelliteId: string; actionId: string }) =>
