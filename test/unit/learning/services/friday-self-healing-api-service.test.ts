@@ -920,4 +920,140 @@ describe("FridaySelfHealingApiService", () => {
     expect(listDiagnosisIdsSpy).not.toHaveBeenCalled();
     expect(listLessonFingerprintsSpy).not.toHaveBeenCalled();
   });
+
+  it("uses direct lesson lookup instead of rebuilding the full overview", () => {
+    const db = createTestDb();
+    allocatedDbs.push(db);
+    const idGenerator = createTestIdGenerator();
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    const lessonRepo = createFridayLearnedLessonRepository();
+    const actionRepo = createFridayAutoFixActionRepository();
+    const approvalRepo = createFridayApprovalRequestRepository();
+    const factRepo = createFridayPreferenceFactRepository();
+    const getLessonByIdSpy = vi.spyOn(lessonRepo, "getById");
+    const listRecentLessonsSpy = vi.spyOn(lessonRepo, "listRecent");
+    const listPrefixedFactsSpy = vi.spyOn(factRepo, "listByUserAndKeyPrefixes");
+    const service = createFridaySelfHealingApiService({
+      db,
+      idGenerator,
+      nowIso: () => "2026-04-03T12:00:00.000Z",
+      incidentRepo,
+      diagnosisRepo,
+      lessonRepo,
+      actionRepo,
+      approvalRepo,
+      factRepo,
+      diagnosisService: {} as never,
+      planService: {} as never,
+      riskService: {} as never,
+      executionService: {} as never,
+      rollbackService: {} as never,
+      approvalService: {} as never,
+      autoFixDispatcher: {} as never,
+      metricsService: {} as never,
+      pipeline: {} as never,
+    });
+
+    db.withWriteTransaction((writerDb) => {
+      lessonRepo.upsertByFingerprint(writerDb, {
+        id: "lesson-direct-1",
+        fingerprint: "direct:fingerprint:1",
+        title: "Direct lesson",
+        cause: "Cause",
+        fix: "Fix",
+        nowIso: "2026-04-03T10:00:00.000Z",
+      });
+    });
+
+    const result = service.setLessonEnabled({
+      userId: "test-user",
+      lessonId: "lesson-direct-1",
+      enabled: false,
+      reason: "Operator disabled it",
+    });
+
+    expect(getLessonByIdSpy).toHaveBeenCalledTimes(1);
+    expect(listRecentLessonsSpy).not.toHaveBeenCalled();
+    expect(listPrefixedFactsSpy).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      lesson: { id: "lesson-direct-1" },
+      disabled: true,
+      disabledReason: "Operator disabled it",
+    });
+  });
+
+  it("uses direct pattern lookup instead of rebuilding the full overview", () => {
+    const db = createTestDb();
+    allocatedDbs.push(db);
+    const idGenerator = createTestIdGenerator();
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    const lessonRepo = createFridayLearnedLessonRepository();
+    const actionRepo = createFridayAutoFixActionRepository();
+    const approvalRepo = createFridayApprovalRequestRepository();
+    const factRepo = createFridayPreferenceFactRepository();
+    const listRecentLessonsSpy = vi.spyOn(lessonRepo, "listRecent");
+    const listActionsByUserSpy = vi.spyOn(actionRepo, "listByUser");
+    const listIncidentsByUserSpy = vi.spyOn(incidentRepo, "listByUser");
+    const listPrefixedFactsSpy = vi.spyOn(factRepo, "listByUserAndKeyPrefixes");
+    const service = createFridaySelfHealingApiService({
+      db,
+      idGenerator,
+      nowIso: () => "2026-04-03T12:00:00.000Z",
+      incidentRepo,
+      diagnosisRepo,
+      lessonRepo,
+      actionRepo,
+      approvalRepo,
+      factRepo,
+      diagnosisService: {} as never,
+      planService: {} as never,
+      riskService: {} as never,
+      executionService: {} as never,
+      rollbackService: {} as never,
+      approvalService: {} as never,
+      autoFixDispatcher: {} as never,
+      metricsService: {} as never,
+      pipeline: {} as never,
+    });
+
+    db.withWriteTransaction((writerDb) => {
+      writerDb
+        .prepare(
+          `INSERT INTO friday_learned_patterns
+             (id, user_id, kind, description, pattern_json, confidence, sample_count, last_updated, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "pattern-direct-1",
+          "test-user",
+          "tool_sequence",
+          "Repeated trimming before retries",
+          JSON.stringify({ tool: "trim_context" }),
+          0.72,
+          4,
+          "2026-04-03T09:00:00.000Z",
+          "2026-04-02T09:00:00.000Z",
+        );
+    });
+
+    const result = service.demotePattern({
+      userId: "test-user",
+      patternId: "pattern-direct-1",
+      factor: 0.3,
+      reason: "Too noisy",
+    });
+
+    expect(listRecentLessonsSpy).not.toHaveBeenCalled();
+    expect(listActionsByUserSpy).not.toHaveBeenCalled();
+    expect(listIncidentsByUserSpy).not.toHaveBeenCalled();
+    expect(listPrefixedFactsSpy).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      patternId: "pattern-direct-1",
+      demoted: true,
+      demotionFactor: 0.3,
+      demotionReason: "Too noisy",
+    });
+  });
 });

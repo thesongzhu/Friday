@@ -7,6 +7,10 @@ import type {
 } from "../model/friday-learning.types.js";
 
 export interface FridayLearnedLessonRepository {
+  getById(
+    db: Database.Database,
+    lessonId: string,
+  ): FridayLearnedLessonEntity | null;
   upsertByFingerprint(
     db: Database.Database,
     input: {
@@ -56,6 +60,13 @@ function rowToEntity(row: FridayLearnedLessonRow): FridayLearnedLessonEntity {
 
 export function createFridayLearnedLessonRepository(): FridayLearnedLessonRepository {
   return {
+    getById(db, lessonId) {
+      const row = db
+        .prepare("SELECT * FROM learned_lessons WHERE id = ?")
+        .get(lessonId) as FridayLearnedLessonRow | undefined;
+      return row ? rowToEntity(row) : null;
+    },
+
     upsertByFingerprint(db, input) {
       const existing = db
         .prepare("SELECT * FROM learned_lessons WHERE fingerprint = ?")

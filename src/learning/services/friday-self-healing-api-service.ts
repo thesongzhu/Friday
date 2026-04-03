@@ -1076,6 +1076,57 @@ export function createFridaySelfHealingApiService(
     };
   };
 
+  const getPatternRecordById = (input: {
+    userId: string;
+    patternId: string;
+  }): FridayLearningPatternRecord | null => {
+    const row = deps.db.withReadConnection((db) =>
+      db.prepare(
+        `SELECT id, user_id, kind, description, pattern_json, confidence, sample_count, last_updated, created_at
+         FROM friday_learned_patterns
+         WHERE user_id = ? AND id = ?
+         LIMIT 1`,
+      ).get(input.userId, input.patternId) as
+        | {
+            id: string;
+            user_id: string;
+            kind: string;
+            description: string;
+            pattern_json: string;
+            confidence: number;
+            sample_count: number;
+            last_updated: string;
+            created_at: string;
+          }
+        | undefined,
+    );
+    if (!row) {
+      return null;
+    }
+    const demotionFact = deps.db.withReadConnection((db) =>
+      deps.factRepo.getByUserAndKey(db, input.userId, `pattern_demotion:${input.patternId}`),
+    );
+    const demotionValue = readObject(demotionFact?.value);
+    const factor =
+      typeof demotionValue?.factor === "number" && Number.isFinite(demotionValue.factor)
+        ? Math.max(0, Math.min(1, demotionValue.factor))
+        : undefined;
+    return {
+      patternId: row.id,
+      userId: row.user_id,
+      kind: row.kind,
+      description: row.description,
+      pattern: safeJsonParse<Record<string, unknown>>(row.pattern_json) ?? {},
+      confidence: row.confidence,
+      sampleCount: row.sample_count,
+      lastUpdated: row.last_updated,
+      createdAt: row.created_at,
+      demoted: demotionFact != null,
+      ...(factor !== undefined ? { demotionFactor: factor } : {}),
+      ...(typeof demotionValue?.reason === "string" ? { demotionReason: demotionValue.reason } : {}),
+    };
+  };
+
   return {
     listIncidents(input) {
       const incidents = deps.db.withReadConnection((db) =>
@@ -1315,8 +1366,22 @@ export function createFridaySelfHealingApiService(
     },
 
     setLessonEnabled(input) {
-      const overview = buildLearningOverview({ userId: input.userId, limit: 500 });
-      const lessonRecord = overview.lessons.find((item) => item.lesson.id === input.lessonId);
+      const lesson = deps.db.withReadConnection((db) =>
+        deps.lessonRepo.getById(db, input.lessonId),
+      );
+      const existingDisabledFact = deps.db.withReadConnection((db) =>
+        deps.factRepo.getByUserAndKey(db, input.userId, `lesson_disabled:${input.lessonId}`),
+      );
+      const existingDisabledValue = readObject(existingDisabledFact?.value);
+      const lessonRecord = lesson
+        ? ({
+            lesson,
+            disabled: existingDisabledFact != null,
+            ...(existingDisabledFact && typeof existingDisabledValue?.reason === "string"
+              ? { disabledReason: existingDisabledValue.reason }
+              : {}),
+          } satisfies FridayLearningLessonRecord)
+        : null;
       if (!lessonRecord) {
         throw new FridayDomainError("DIAGNOSIS_LESSON_NOT_FOUND", `Lesson ${input.lessonId} not found`, {
           httpStatus: 404,
@@ -1351,8 +1416,10 @@ export function createFridaySelfHealingApiService(
     },
 
     demotePattern(input) {
-      const overview = buildLearningOverview({ userId: input.userId, limit: 500 });
-      const patternRecord = overview.patterns.find((item) => item.patternId === input.patternId);
+      const patternRecord = getPatternRecordById({
+        userId: input.userId,
+        patternId: input.patternId,
+      });
       if (!patternRecord) {
         throw new FridayDomainError("DIAGNOSIS_PATTERN_NOT_FOUND", `Pattern ${input.patternId} not found`, {
           httpStatus: 404,
