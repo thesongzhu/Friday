@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
 import { createFridayErrorIncidentRepository } from "#learning";
@@ -12,13 +12,14 @@ describe("FridayLearningPatternRecognitionService", () => {
   let db: FridaySqliteLayer;
   let service: FridayLearningPatternRecognitionService;
   let idGen: () => string;
+  let factRepo: ReturnType<typeof createFridayPreferenceFactRepository>;
   const NOW = "2025-06-15T10:00:00.000Z";
 
   beforeEach(() => {
     db = createTestDb();
     idGen = createTestIdGenerator();
     const incidentRepo = createFridayErrorIncidentRepository();
-    const factRepo = createFridayPreferenceFactRepository();
+    factRepo = createFridayPreferenceFactRepository();
     service = createFridayLearningPatternRecognitionService({
       db,
       incidentRepo,
@@ -164,7 +165,8 @@ describe("FridayLearningPatternRecognitionService", () => {
   });
 
   it("detects stable preference keys (evidence >= 4, confidence >= 0.75)", () => {
-    const factRepo = createFridayPreferenceFactRepository();
+    const listByUserSpy = vi.spyOn(factRepo, "listByUser");
+    const listByUserWithThresholdsSpy = vi.spyOn(factRepo, "listByUserWithThresholds");
 
     db.withWriteTransaction((writer) => {
       factRepo.upsert(writer, {
@@ -189,6 +191,8 @@ describe("FridayLearningPatternRecognitionService", () => {
     const stable = patterns.filter(
       (p) => p.kind === "stable_preference_key",
     );
+    expect(listByUserWithThresholdsSpy).toHaveBeenCalledTimes(1);
+    expect(listByUserSpy).not.toHaveBeenCalled();
     expect(stable).toHaveLength(1);
     expect(stable[0]!.key).toBe("pref:theme");
   });

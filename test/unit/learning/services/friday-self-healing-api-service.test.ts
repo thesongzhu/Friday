@@ -1073,6 +1073,8 @@ describe("FridaySelfHealingApiService", () => {
     const actionRepo = createFridayAutoFixActionRepository();
     const approvalRepo = createFridayApprovalRequestRepository();
     const factRepo = createFridayPreferenceFactRepository();
+    const countRecentBySignaturesSpy = vi.spyOn(incidentRepo, "countRecentBySignatures");
+    const findRecentBySignatureSpy = vi.spyOn(incidentRepo, "findRecentBySignature");
     const listLatestByIncidentIdsSpy = vi.spyOn(actionRepo, "listLatestByIncidentIds");
     const listActionsByUserSpy = vi.spyOn(actionRepo, "listByUser");
     const service = createFridaySelfHealingApiService({
@@ -1142,6 +1144,8 @@ describe("FridaySelfHealingApiService", () => {
 
     const details = service.getIncident({ incidentId: "incident-single-1" });
 
+    expect(countRecentBySignaturesSpy).toHaveBeenCalledTimes(1);
+    expect(findRecentBySignatureSpy).not.toHaveBeenCalled();
     expect(listLatestByIncidentIdsSpy).toHaveBeenCalledTimes(1);
     expect(listActionsByUserSpy).not.toHaveBeenCalled();
     expect(details).toMatchObject({

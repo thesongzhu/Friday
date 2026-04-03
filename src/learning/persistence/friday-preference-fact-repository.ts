@@ -19,6 +19,15 @@ export interface FridayPreferenceFactRepository {
     minConfidence?: number,
     limit?: number,
   ): FridayPreferenceFactEntity[];
+  listByUserWithThresholds(
+    db: Database.Database,
+    input: {
+      userId: string;
+      minConfidence?: number;
+      minEvidenceCount?: number;
+      limit?: number;
+    },
+  ): FridayPreferenceFactEntity[];
   listByUserAndKeys(
     db: Database.Database,
     input: {
@@ -102,14 +111,27 @@ export function createFridayPreferenceFactRepository(): FridayPreferenceFactRepo
     },
 
     listByUser(db, userId, minConfidence = 0, limit = 100) {
+      return this.listByUserWithThresholds(db, {
+        userId,
+        minConfidence,
+        limit,
+      });
+    },
+
+    listByUserWithThresholds(db, input) {
       const rows = db
         .prepare(
           `SELECT * FROM preference_facts
-           WHERE user_id = ? AND confidence >= ?
+           WHERE user_id = ? AND confidence >= ? AND evidence_count >= ?
            ORDER BY confidence DESC
            LIMIT ?`,
         )
-        .all(userId, minConfidence, limit) as FridayPreferenceFactRow[];
+        .all(
+          input.userId,
+          input.minConfidence ?? 0,
+          input.minEvidenceCount ?? 0,
+          input.limit ?? 100,
+        ) as FridayPreferenceFactRow[];
       return rows.map(rowToEntity);
     },
 

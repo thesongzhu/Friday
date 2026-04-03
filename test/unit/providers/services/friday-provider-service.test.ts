@@ -1493,6 +1493,134 @@ describe("FridayProviderService", () => {
       }
     });
 
+    it("preserves task-profile route history even when newer runs from other profiles exceed the old global sample cap", async () => {
+      process.env.OPENAI_KEY = "test-openai-key";
+      process.env.ANTHROPIC_KEY = "test-anthropic-key";
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-responses",
+          apiKey: "$OPENAI_KEY",
+          supportedModels: ["gpt-4o-mini"],
+          defaultModel: "gpt-4o-mini",
+          validateOnSave: false,
+        });
+        await service.createProvider({
+          kind: "anthropic",
+          name: "Claude",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "api-key",
+          api: "anthropic-messages",
+          apiKey: "$ANTHROPIC_KEY",
+          supportedModels: ["claude-sonnet-4-20250514"],
+          defaultModel: "claude-sonnet-4-20250514",
+          validateOnSave: false,
+        });
+
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: ["test-id-0002"],
+        });
+
+        db.withWriteTransaction((conn) => {
+          const insertRun = conn.prepare(
+            `INSERT INTO friday_agent_runs (
+              id, task, status, session_key, provider_id, model, attempt, max_attempts, created_at,
+              completed_at, task_profile_json, actual_execution_json
+            ) VALUES (?, ?, ?, ?, ?, ?, 1, 3, ?, ?, ?, ?)`,
+          );
+
+          insertRun.run(
+            "hist-target-001",
+            "review the architecture",
+            "completed",
+            "target-sess-001",
+            "test-id-0002",
+            "claude-sonnet-4-20250514",
+            "2026-02-17T08:00:00.000Z",
+            "2026-02-17T08:00:00.000Z",
+            JSON.stringify({ id: "review", label: "Review", description: "Review", reasoningEffort: "high", temperature: 0.1 }),
+            JSON.stringify({
+              actualProviderId: "test-id-0002",
+              actualModel: "claude-sonnet-4-20250514",
+              backendKind: "http",
+            }),
+          );
+          insertRun.run(
+            "hist-target-002",
+            "review the architecture",
+            "completed",
+            "target-sess-002",
+            "test-id-0002",
+            "claude-sonnet-4-20250514",
+            "2026-02-17T08:01:00.000Z",
+            "2026-02-17T08:01:00.000Z",
+            JSON.stringify({ id: "review", label: "Review", description: "Review", reasoningEffort: "high", temperature: 0.1 }),
+            JSON.stringify({
+              actualProviderId: "test-id-0002",
+              actualModel: "claude-sonnet-4-20250514",
+              backendKind: "http",
+            }),
+          );
+          insertRun.run(
+            "hist-target-003",
+            "review the architecture",
+            "failed",
+            "target-sess-003",
+            "test-id-0001",
+            "gpt-4o-mini",
+            "2026-02-17T08:02:00.000Z",
+            "2026-02-17T08:02:00.000Z",
+            JSON.stringify({ id: "review", label: "Review", description: "Review", reasoningEffort: "high", temperature: 0.1 }),
+            JSON.stringify({
+              actualProviderId: "test-id-0001",
+              actualModel: "gpt-4o-mini",
+              backendKind: "http",
+            }),
+          );
+
+          for (let i = 0; i < 300; i += 1) {
+            const minute = String(i % 60).padStart(2, "0");
+            insertRun.run(
+              `hist-noise-${i}`,
+              "summarize inbox",
+              "completed",
+              `noise-sess-${i}`,
+              "test-id-0001",
+              "gpt-4o-mini",
+              `2026-02-17T10:${minute}:00.000Z`,
+              `2026-02-17T10:${minute}:00.000Z`,
+              JSON.stringify({ id: "ops", label: "Ops", description: "Ops", reasoningEffort: "low", temperature: 0.2 }),
+              JSON.stringify({
+                actualProviderId: "test-id-0001",
+                actualModel: "gpt-4o-mini",
+                backendKind: "http",
+              }),
+            );
+          }
+        });
+
+        const { route, routingDecision } = await service.runWithFallback({
+          routingContext: {
+            estimatedInputTokens: 1800,
+            complexity: "medium",
+            taskProfileId: "review",
+          },
+          run: async (candidate) => candidate.provider.id,
+        });
+
+        expect(route.provider.id).toBe("test-id-0002");
+        expect(routingDecision.learningAdjusted).toBe(true);
+        expect(routingDecision.reason).toContain("Historical route outcomes influenced candidate scoring.");
+      } finally {
+        delete process.env.OPENAI_KEY;
+        delete process.env.ANTHROPIC_KEY;
+      }
+    });
+
     it("penalizes routes that operators explicitly rejected for the same task profile", async () => {
       process.env.OPENAI_KEY = "test-openai-key";
       process.env.ANTHROPIC_KEY = "test-anthropic-key";
@@ -1543,6 +1671,89 @@ describe("FridayProviderService", () => {
             NOW,
             NOW,
           );
+        });
+
+        const { route, routingDecision } = await service.runWithFallback({
+          tenantContext: {
+            hubId: "test-hub",
+            userId: "test-user",
+          },
+          routingContext: {
+            estimatedInputTokens: 900,
+            complexity: "medium",
+            taskProfileId: "review",
+          },
+          run: async (candidate) => candidate.provider.id,
+        });
+
+        expect(route.provider.id).toBe("test-id-0002");
+        expect(routingDecision.learningAdjusted).toBe(true);
+        expect(routingDecision.reason).toContain("Operator route penalties influenced candidate scoring.");
+      } finally {
+        delete process.env.OPENAI_KEY;
+        delete process.env.ANTHROPIC_KEY;
+      }
+    });
+
+    it("still applies the matching route penalty when unrelated newer preference facts exceed the old 200-row scan cap", async () => {
+      process.env.OPENAI_KEY = "test-openai-key";
+      process.env.ANTHROPIC_KEY = "test-anthropic-key";
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$OPENAI_KEY",
+          supportedModels: ["gpt-4o-mini"],
+          defaultModel: "gpt-4o-mini",
+          validateOnSave: false,
+        });
+        await service.createProvider({
+          kind: "anthropic",
+          name: "Anthropic",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "api-key",
+          api: "anthropic-messages",
+          apiKey: "$ANTHROPIC_KEY",
+          supportedModels: ["claude-sonnet-4-20250514"],
+          defaultModel: "claude-sonnet-4-20250514",
+          validateOnSave: false,
+        });
+
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: ["test-id-0002"],
+        });
+
+        const factRepo = createFridayPreferenceFactRepository();
+        db.withWriteTransaction((conn) => {
+          factRepo.upsert(conn, {
+            factId: "fact-targeted-penalty",
+            userId: "test-user",
+            key: "route_penalty:review:test_id_0001:http:gpt_4o_mini",
+            value: { reasonCode: "too_risky" },
+            confidence: 0.95,
+            evidenceCountDelta: 1,
+            lastConfirmedAt: "2026-02-17T09:00:00.000Z",
+            sourceEventId: "evt-targeted",
+            nowIso: "2026-02-17T09:00:00.000Z",
+          });
+
+          for (let i = 0; i < 220; i += 1) {
+            factRepo.upsert(conn, {
+              factId: `fact-noise-${i}`,
+              userId: "test-user",
+              key: `route_penalty:noise_${i}:provider_${i}:http:model_${i}`,
+              value: { reasonCode: "noise" },
+              confidence: 0.2,
+              evidenceCountDelta: 1,
+              lastConfirmedAt: `2026-02-17T10:${String(i % 60).padStart(2, "0")}:00.000Z`,
+              sourceEventId: `evt-noise-${i}`,
+              nowIso: `2026-02-17T10:${String(i % 60).padStart(2, "0")}:00.000Z`,
+            });
+          }
         });
 
         const { route, routingDecision } = await service.runWithFallback({

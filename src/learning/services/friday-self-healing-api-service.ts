@@ -635,7 +635,11 @@ export function createFridaySelfHealingApiService(
     const recurrenceCount =
       lookups?.recurrenceCountBySignature?.get(incident.signature)
       ?? deps.db.withReadConnection((db) =>
-        deps.incidentRepo.findRecentBySignature(db, incident.userId, incident.signature, 50).length,
+        deps.incidentRepo.countRecentBySignatures(db, {
+          userId: incident.userId,
+          signatures: [incident.signature],
+          limitPerSignature: 50,
+        })[0]?.count ?? 0,
       );
     const action =
       lookups?.actionsByIncidentId?.get(incident.incidentId)

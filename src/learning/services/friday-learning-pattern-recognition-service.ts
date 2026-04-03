@@ -168,35 +168,38 @@ export function createFridayLearningPatternRecognitionService(
         }
 
         // 3. Stable preference keys (evidence_count >= 4, confidence >= 0.75, no contradictions in 30 days)
-        const facts = deps.factRepo.listByUser(db, userId, 0.75, 100);
+        const facts = deps.factRepo.listByUserWithThresholds(db, {
+          userId,
+          minConfidence: 0.75,
+          minEvidenceCount: 4,
+          limit: 100,
+        });
         if (facts.length > 0) {
           for (const fact of facts) {
-            if (fact.evidenceCount >= 4) {
-              // Compare using the normalized key (strip pref: prefix)
-              const factBareKey = fact.key.replace(/^pref:/, "");
-              const hasContradiction = correctedNormalizedKeys.has(factBareKey);
+            // Compare using the normalized key (strip pref: prefix)
+            const factBareKey = fact.key.replace(/^pref:/, "");
+            const hasContradiction = correctedNormalizedKeys.has(factBareKey);
 
-              if (!hasContradiction) {
-                patterns.push({
-                  patternId: deps.idGenerator(),
-                  userId,
-                  kind: "stable_preference_key",
-                  key: fact.key,
-                  strength: computeStrength(
-                    fact.evidenceCount,
-                    1.0,
-                    fact.confidence,
-                  ),
-                  occurrences: fact.evidenceCount,
-                  windowStart: fact.createdAt,
-                  windowEnd: nowIso,
-                  evidence: {
-                    factId: fact.factId,
-                    confidence: fact.confidence,
-                    evidenceCount: fact.evidenceCount,
-                  } satisfies JsonObject,
-                });
-              }
+            if (!hasContradiction) {
+              patterns.push({
+                patternId: deps.idGenerator(),
+                userId,
+                kind: "stable_preference_key",
+                key: fact.key,
+                strength: computeStrength(
+                  fact.evidenceCount,
+                  1.0,
+                  fact.confidence,
+                ),
+                occurrences: fact.evidenceCount,
+                windowStart: fact.createdAt,
+                windowEnd: nowIso,
+                evidence: {
+                  factId: fact.factId,
+                  confidence: fact.confidence,
+                  evidenceCount: fact.evidenceCount,
+                } satisfies JsonObject,
+              });
             }
           }
         }

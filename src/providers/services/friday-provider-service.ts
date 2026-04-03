@@ -121,7 +121,6 @@ function explainPinnedProviderNoCandidates(
 interface FridayHistoricalRunRouteRow {
   status: string;
   actual_execution_json: string | null;
-  task_profile_json: string | null;
 }
 
 interface FridayHistoricalRouteStats {
@@ -376,23 +375,19 @@ export function createFridayProviderService(
 
     const rows = deps.db.withReadConnection((db) =>
       db.prepare(
-        `SELECT status, actual_execution_json, task_profile_json
+        `SELECT status, actual_execution_json
          FROM friday_agent_runs
          WHERE status IN ('completed', 'failed')
            AND actual_execution_json IS NOT NULL
+           AND json_extract(task_profile_json, '$.id') = ?
          ORDER BY created_at DESC
          LIMIT ?`,
-      ).all(ROUTE_HISTORY_SAMPLE_LIMIT) as FridayHistoricalRunRouteRow[],
+      ).all(input.taskProfileId, ROUTE_HISTORY_SAMPLE_LIMIT) as FridayHistoricalRunRouteRow[],
     );
 
     const stats = new Map<string, FridayHistoricalRouteStats>();
 
     for (const row of rows) {
-      const taskProfile = safeJsonParse<Record<string, unknown>>(row.task_profile_json);
-      if (taskProfile?.id !== input.taskProfileId) {
-        continue;
-      }
-
       const actualExecution = safeJsonParse<Record<string, unknown>>(row.actual_execution_json);
       const actualProviderId = typeof actualExecution?.actualProviderId === "string"
         ? actualExecution.actualProviderId
@@ -443,23 +438,44 @@ export function createFridayProviderService(
     if (!input.userId) {
       return { penalties, pinnedRoute };
     }
+    const userId = input.userId;
+
+    const preferenceKeys = new Set<string>([
+      buildRoutePinKey(input.taskProfileId),
+      buildRoutePinKey(),
+    ]);
+    for (const candidate of input.candidates) {
+      const backendKind = candidate.provider.config.backendKind ?? "http";
+      preferenceKeys.add(buildRoutePenaltyKey({
+        taskProfileId: input.taskProfileId,
+        providerId: candidate.provider.id,
+        model: candidate.model,
+        backendKind,
+      }));
+      preferenceKeys.add(buildRoutePenaltyKey({
+        providerId: candidate.provider.id,
+        model: candidate.model,
+        backendKind,
+      }));
+    }
 
     const preferenceRows = deps.db.withReadConnection((db) =>
-      db.prepare(
-        `SELECT key, confidence, value_json
-         FROM preference_facts
-         WHERE user_id = ?
-           AND (key LIKE 'route_penalty:%' OR key LIKE 'route_pin:%')
-         ORDER BY updated_at DESC
-         LIMIT 200`,
-      ).all(input.userId) as Array<{ key: string; confidence: number; value_json: string }>,
+      preferenceFactRepo.listByUserAndKeys(db, {
+        userId,
+        keys: [...preferenceKeys],
+      }),
+    );
+    const preferenceByKey = new Map(
+      preferenceRows.map((row) => [row.key, row] as const),
     );
 
-    const directPin = preferenceRows.find((row) => row.key === buildRoutePinKey(input.taskProfileId));
-    const globalPin = preferenceRows.find((row) => row.key === buildRoutePinKey());
+    const directPin = preferenceByKey.get(buildRoutePinKey(input.taskProfileId));
+    const globalPin = preferenceByKey.get(buildRoutePinKey());
     const resolvedPin = directPin ?? globalPin;
     if (resolvedPin) {
-      const pinValue = safeJsonParse<Record<string, unknown>>(resolvedPin.value_json);
+      const pinValue = typeof resolvedPin.value === "object" && resolvedPin.value !== null
+        ? resolvedPin.value as Record<string, unknown>
+        : null;
       if (
         typeof pinValue?.providerId === "string"
         && typeof pinValue?.model === "string"
@@ -486,8 +502,8 @@ export function createFridayProviderService(
         model: candidate.model,
         backendKind,
       });
-      const directPenalty = preferenceRows.find((row) => row.key === directKey)?.confidence ?? 0;
-      const globalPenalty = preferenceRows.find((row) => row.key === globalKey)?.confidence ?? 0;
+      const directPenalty = preferenceByKey.get(directKey)?.confidence ?? 0;
+      const globalPenalty = preferenceByKey.get(globalKey)?.confidence ?? 0;
       const penalty = Math.max(directPenalty, globalPenalty * 0.75);
       if (penalty > 0) {
         penalties.set(buildRouteHistoryKey(candidate.provider.id, candidate.model, backendKind), penalty);

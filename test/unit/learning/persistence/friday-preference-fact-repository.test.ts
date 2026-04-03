@@ -156,6 +156,50 @@ describe("FridayPreferenceFactRepository", () => {
     expect(limited).toHaveLength(3);
   });
 
+  it("listByUserWithThresholds filters by confidence and evidence count", () => {
+    repo.upsert(db.writer, {
+      factId: "fact-low-evidence",
+      userId: "test-user",
+      key: "pref:editor",
+      value: "vim",
+      confidence: 0.95,
+      evidenceCountDelta: 2,
+      lastConfirmedAt: NOW,
+      sourceEventId: "evt-low-evidence",
+      nowIso: NOW,
+    });
+    repo.upsert(db.writer, {
+      factId: "fact-low-confidence",
+      userId: "test-user",
+      key: "pref:theme",
+      value: "dark",
+      confidence: 0.7,
+      evidenceCountDelta: 5,
+      lastConfirmedAt: NOW,
+      sourceEventId: "evt-low-confidence",
+      nowIso: NOW,
+    });
+    repo.upsert(db.writer, {
+      factId: "fact-strong",
+      userId: "test-user",
+      key: "pref:language",
+      value: "TypeScript",
+      confidence: 0.92,
+      evidenceCountDelta: 5,
+      lastConfirmedAt: NOW,
+      sourceEventId: "evt-strong",
+      nowIso: NOW,
+    });
+
+    const matching = repo.listByUserWithThresholds(db.writer, {
+      userId: "test-user",
+      minConfidence: 0.75,
+      minEvidenceCount: 4,
+    });
+
+    expect(matching.map((fact) => fact.key)).toEqual(["pref:language"]);
+  });
+
   it("listByUserAndKeyPrefixes returns only matching prefixed facts", () => {
     repo.upsert(db.writer, {
       factId: "fact-route",

@@ -70,13 +70,12 @@ export function createFridayErrorDiagnosisService(
       : [];
 
     // 2. Recurrence count: recent incidents with same signature
-    const recentIncidents = deps.incidentRepo.findRecentBySignature(
-      db,
-      incident.userId,
-      fingerprint,
-      50,
-    );
-    const recurrenceCount = recentIncidents.length;
+    const recurrenceCount =
+      deps.incidentRepo.countRecentBySignatures(db, {
+        userId: incident.userId,
+        signatures: [fingerprint],
+        limitPerSignature: 50,
+      })[0]?.count ?? 0;
 
     // 3. Historical diagnoses for confidence boost
     const historicalDiagnoses = deps.diagnosisRepo.listByFingerprint(

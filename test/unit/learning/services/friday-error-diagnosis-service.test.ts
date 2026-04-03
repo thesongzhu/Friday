@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
 import { createFridayErrorDiagnosisService } from "#learning";
@@ -13,6 +13,7 @@ describe("FridayErrorDiagnosisService", () => {
   let db: FridaySqliteLayer;
   let service: FridayErrorDiagnosisService;
   let idGen: () => string;
+  let incidentRepo: ReturnType<typeof createFridayErrorIncidentRepository>;
   const NOW = "2025-06-15T10:00:00.000Z";
 
   const baseIncident: FridayErrorIncidentEntity = {
@@ -33,7 +34,7 @@ describe("FridayErrorDiagnosisService", () => {
     db = createTestDb();
     idGen = createTestIdGenerator();
 
-    const incidentRepo = createFridayErrorIncidentRepository();
+    incidentRepo = createFridayErrorIncidentRepository();
     const diagnosisRepo = createFridayDiagnosisRecordRepository();
     const lessonRepo = createFridayLearnedLessonRepository();
     const factRepo = createFridayPreferenceFactRepository();
@@ -56,8 +57,12 @@ describe("FridayErrorDiagnosisService", () => {
   });
 
   it("produces a diagnosis for a simple incident", () => {
+    const countRecentBySignaturesSpy = vi.spyOn(incidentRepo, "countRecentBySignatures");
+    const findRecentBySignatureSpy = vi.spyOn(incidentRepo, "findRecentBySignature");
     const result = service.diagnose({ incident: baseIncident, nowIso: NOW });
 
+    expect(countRecentBySignaturesSpy).toHaveBeenCalledTimes(1);
+    expect(findRecentBySignatureSpy).not.toHaveBeenCalled();
     expect(result.diagnosis).toBeDefined();
     expect(result.diagnosis.errorFingerprint).toBe("sig-tool-timeout");
     expect(result.diagnosis.confidence).toBeGreaterThan(0);
