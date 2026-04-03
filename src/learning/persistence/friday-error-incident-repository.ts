@@ -38,6 +38,17 @@ export interface FridayErrorIncidentRepository {
     signature: string,
     limit?: number,
   ): FridayErrorIncidentEntity[];
+  countRecentBySignatures(
+    db: Database.Database,
+    input: {
+      userId: string;
+      signatures: string[];
+      limitPerSignature?: number;
+    },
+  ): Array<{
+    signature: string;
+    count: number;
+  }>;
 
   setAutoFixEligibility(
     db: Database.Database,
@@ -161,6 +172,28 @@ export function createFridayErrorIncidentRepository(): FridayErrorIncidentReposi
         )
         .all(userId, signature, limit) as FridayErrorIncidentRow[];
       return rows.map(rowToEntity);
+    },
+
+    countRecentBySignatures(db, input) {
+      if (input.signatures.length === 0) {
+        return [];
+      }
+      const uniqueSignatures = [...new Set(input.signatures)];
+      const placeholders = uniqueSignatures.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT signature, COUNT(*) as count
+           FROM error_incidents
+           WHERE user_id = ? AND signature IN (${placeholders})
+           GROUP BY signature`,
+        )
+        .all(input.userId, ...uniqueSignatures) as Array<{ signature: string; count: number }>;
+      const countBySignature = new Map(rows.map((row) => [row.signature, row.count] as const));
+      const cap = input.limitPerSignature ?? Number.POSITIVE_INFINITY;
+      return uniqueSignatures.map((signature) => ({
+        signature,
+        count: Math.min(countBySignature.get(signature) ?? 0, cap),
+      }));
     },
 
     setAutoFixEligibility(db, incidentId, eligible, nowIso) {

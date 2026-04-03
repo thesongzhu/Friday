@@ -15,6 +15,10 @@ export interface FridayDiagnosisRecordRepository {
     db: Database.Database,
     diagnosisIds: string[],
   ): FridayDiagnosisRecordEntity[];
+  listLatestByIncidentIds(
+    db: Database.Database,
+    incidentIds: string[],
+  ): FridayDiagnosisRecordEntity[];
 
   insert(
     db: Database.Database,
@@ -91,6 +95,30 @@ export function createFridayDiagnosisRecordRepository(): FridayDiagnosisRecordRe
       const diagnosesById = new Map(rows.map((row) => [row.id, rowToEntity(row)] as const));
       return uniqueDiagnosisIds
         .map((diagnosisId) => diagnosesById.get(diagnosisId))
+        .filter((diagnosis): diagnosis is FridayDiagnosisRecordEntity => diagnosis != null);
+    },
+
+    listLatestByIncidentIds(db, incidentIds) {
+      if (incidentIds.length === 0) {
+        return [];
+      }
+      const uniqueIncidentIds = [...new Set(incidentIds)];
+      const placeholders = uniqueIncidentIds.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT * FROM diagnosis_records
+           WHERE incident_id IN (${placeholders})
+           ORDER BY created_at DESC`,
+        )
+        .all(...uniqueIncidentIds) as FridayDiagnosisRecordRow[];
+      const latestByIncidentId = new Map<string, FridayDiagnosisRecordEntity>();
+      for (const row of rows) {
+        if (row.incident_id && !latestByIncidentId.has(row.incident_id)) {
+          latestByIncidentId.set(row.incident_id, rowToEntity(row));
+        }
+      }
+      return uniqueIncidentIds
+        .map((incidentId) => latestByIncidentId.get(incidentId))
         .filter((diagnosis): diagnosis is FridayDiagnosisRecordEntity => diagnosis != null);
     },
 

@@ -20,6 +20,13 @@ export interface FridayAutoFixActionRepository {
     db: Database.Database,
     actionIds: string[],
   ): FridayAutoFixActionEntity[];
+  listLatestByIncidentIds(
+    db: Database.Database,
+    input: {
+      userId: string;
+      incidentIds: string[];
+    },
+  ): FridayAutoFixActionEntity[];
 
   listByUser(
     db: Database.Database,
@@ -150,6 +157,30 @@ export function createFridayAutoFixActionRepository(): FridayAutoFixActionReposi
       const actionsById = new Map(rows.map((row) => [row.action_id, rowToEntity(row)] as const));
       return uniqueActionIds
         .map((actionId) => actionsById.get(actionId))
+        .filter((action): action is FridayAutoFixActionEntity => action != null);
+    },
+
+    listLatestByIncidentIds(db, input) {
+      if (input.incidentIds.length === 0) {
+        return [];
+      }
+      const uniqueIncidentIds = [...new Set(input.incidentIds)];
+      const placeholders = uniqueIncidentIds.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT * FROM auto_fix_actions
+           WHERE user_id = ? AND incident_id IN (${placeholders})
+           ORDER BY created_at DESC`,
+        )
+        .all(input.userId, ...uniqueIncidentIds) as FridayAutoFixActionRow[];
+      const latestByIncidentId = new Map<string, FridayAutoFixActionEntity>();
+      for (const row of rows) {
+        if (!latestByIncidentId.has(row.incident_id)) {
+          latestByIncidentId.set(row.incident_id, rowToEntity(row));
+        }
+      }
+      return uniqueIncidentIds
+        .map((incidentId) => latestByIncidentId.get(incidentId))
         .filter((action): action is FridayAutoFixActionEntity => action != null);
     },
 
