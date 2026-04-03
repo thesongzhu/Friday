@@ -731,19 +731,16 @@ function WorkflowBuilderEditor() {
   const templatesQuery = useQuery({
     queryKey: ["workflow-builder", "templates"],
     queryFn: () => workflowBuilderApi.listTemplates(),
-    refetchInterval: 30_000,
   });
 
   const workflowsQuery = useQuery({
     queryKey: ["workflow-builder", "workflows"],
     queryFn: () => workflowsApi.list({ limit: 50 }),
-    refetchInterval: 30_000,
   });
 
   const skillsQuery = useQuery({
     queryKey: ["workflow-builder", "skills"],
     queryFn: () => skillsApi.listSkills(),
-    refetchInterval: 60_000,
   });
 
   const draftsQuery = useQuery({

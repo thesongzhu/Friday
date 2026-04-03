@@ -88,19 +88,16 @@ export function SkillsPage() {
   const skillsQuery = useQuery({
     queryKey: ["skills", "list"],
     queryFn: () => skillsApi.listSkills(),
-    refetchInterval: 15_000,
   });
 
   const catalogQuery = useQuery({
     queryKey: ["skills", "catalog"],
     queryFn: () => skillsApi.listCatalog({ limit: 50 }),
-    refetchInterval: 30_000,
   });
 
   const sourcesQuery = useQuery({
     queryKey: ["skills", "sources"],
     queryFn: () => skillsApi.listSources(),
-    refetchInterval: 30_000,
   });
 
   const skills = skillsQuery.data ?? [];

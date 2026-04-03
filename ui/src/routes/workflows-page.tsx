@@ -55,7 +55,6 @@ export function WorkflowsPage() {
   const workflowsQuery = useQuery({
     queryKey: ["workflows", "list"],
     queryFn: () => workflowsApi.list({ limit: 50 }),
-    refetchInterval: 15_000,
   });
 
   const workflows = workflowsQuery.data?.items ?? [];

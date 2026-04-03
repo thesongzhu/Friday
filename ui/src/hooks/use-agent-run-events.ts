@@ -78,6 +78,10 @@ function isTerminalStatus(value: string | null | undefined): value is "completed
 // ─── Backoff delays ───
 
 const BACKOFF_MS = [500, 1000, 2000, 5000];
+const MAX_STREAM_EVENTS = 400;
+const MAX_TOOL_CALLS = 200;
+const MAX_SUBAGENTS = 100;
+const MAX_SEEN_SEQUENCES = 1024;
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -89,6 +93,31 @@ function readBrowserTargetUrl(params: Record<string, unknown> | undefined): stri
   if (!params) return undefined;
   const url = params.url;
   return typeof url === "string" && url.trim().length > 0 ? url.trim() : undefined;
+}
+
+export function appendBoundedItems<T>(previous: T[], item: T, limit: number): T[] {
+  const next = [...previous, item];
+  return next.length > limit ? next.slice(-limit) : next;
+}
+
+export function rememberSeenSequence(
+  seq: number,
+  seen: Set<number>,
+  order: number[],
+  limit = MAX_SEEN_SEQUENCES,
+): boolean {
+  if (seen.has(seq)) {
+    return false;
+  }
+  seen.add(seq);
+  order.push(seq);
+  if (order.length > limit) {
+    const oldest = order.shift();
+    if (typeof oldest === "number") {
+      seen.delete(oldest);
+    }
+  }
+  return true;
 }
 
 // ─── Hook ───
@@ -118,6 +147,7 @@ export function useAgentRunEvents(
   const retryCountRef = React.useRef(0);
   const terminalRef = React.useRef(false);
   const seenSeqRef = React.useRef<Set<number>>(new Set());
+  const seenSeqOrderRef = React.useRef<number[]>([]);
   const lastSeqRef = React.useRef(0);
   const onTerminalRef = React.useRef(onTerminal);
   onTerminalRef.current = onTerminal;
@@ -212,14 +242,13 @@ export function useAgentRunEvents(
           }
 
           if (typeof parsed.seq === "number") {
-            if (seenSeqRef.current.has(parsed.seq)) {
+            if (!rememberSeenSequence(parsed.seq, seenSeqRef.current, seenSeqOrderRef.current)) {
               continue;
             }
-            seenSeqRef.current.add(parsed.seq);
             lastSeqRef.current = Math.max(lastSeqRef.current, parsed.seq);
           }
 
-          setEvents((prev) => [...prev, parsed]);
+          setEvents((prev) => appendBoundedItems(prev, parsed, MAX_STREAM_EVENTS));
 
           const eventType = parsed.type;
           const eventTime = parsed.emittedAt ?? parsed.timestamp ?? new Date().toISOString();
@@ -294,17 +323,14 @@ export function useAgentRunEvents(
               if (prev.some((tc) => tc.id === parsed.toolCallId)) {
                 return prev;
               }
-              return [
-                ...prev,
-                {
-                  id: parsed.toolCallId!,
-                  toolName: parsed.toolName ?? "unknown",
-                  startedAt: eventTime,
-                  params,
-                  targetUrl: readBrowserTargetUrl(params),
-                  status: "running",
-                },
-              ];
+              return appendBoundedItems(prev, {
+                id: parsed.toolCallId!,
+                toolName: parsed.toolName ?? "unknown",
+                startedAt: eventTime,
+                params,
+                targetUrl: readBrowserTargetUrl(params),
+                status: "running",
+              }, MAX_TOOL_CALLS);
             });
           }
 
@@ -332,7 +358,7 @@ export function useAgentRunEvents(
               };
 
               if (!existing) {
-                return [...prev, nextTool];
+                return appendBoundedItems(prev, nextTool, MAX_TOOL_CALLS);
               }
 
               return prev.map((tc) => (tc.id === parsed.toolCallId ? nextTool : tc));
@@ -345,15 +371,12 @@ export function useAgentRunEvents(
               if (prev.some((sa) => sa.id === parsed.subagentId)) {
                 return prev;
               }
-              return [
-                ...prev,
-                {
-                  id: parsed.subagentId!,
-                  task: parsed.subagentTask ?? ((parsed as { task?: string }).task ?? ""),
-                  status: "running",
-                  startedAt: eventTime,
-                },
-              ];
+              return appendBoundedItems(prev, {
+                id: parsed.subagentId!,
+                task: parsed.subagentTask ?? ((parsed as { task?: string }).task ?? ""),
+                status: "running",
+                startedAt: eventTime,
+              }, MAX_SUBAGENTS);
             });
             setProgress((prev) => ({
               ...prev,
@@ -434,6 +457,7 @@ export function useAgentRunEvents(
     setStatus(null);
     setErrorMessage(undefined);
     seenSeqRef.current = new Set();
+    seenSeqOrderRef.current = [];
     lastSeqRef.current = 0;
 
     connect();

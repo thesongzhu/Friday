@@ -15,6 +15,19 @@ export interface UseSystemEventsResult {
 }
 
 const BACKOFF_MS = [500, 1000, 2000, 5000];
+const MAX_SYSTEM_EVENTS = 200;
+
+export function appendSystemEventWindow(
+  previous: FridaySystemEvent[],
+  event: FridaySystemEvent,
+  limit = MAX_SYSTEM_EVENTS,
+): FridaySystemEvent[] {
+  if (previous.some((item) => item.id === event.id)) {
+    return previous;
+  }
+  const next = [...previous, event];
+  return next.length > limit ? next.slice(-limit) : next;
+}
 
 export function useSystemEvents(enabled = true): UseSystemEventsResult {
   const [events, setEvents] = React.useState<FridaySystemEvent[]>([]);
@@ -56,12 +69,9 @@ export function useSystemEvents(enabled = true): UseSystemEventsResult {
             setErrorMessage(message);
           },
           onEvent: (parsed) => {
+            afterSeqRef.current = parsed.seq;
             setEvents((previous) => {
-              if (previous.some((item) => item.id === parsed.id)) {
-                return previous;
-              }
-              afterSeqRef.current = parsed.seq;
-              return [...previous, parsed];
+              return appendSystemEventWindow(previous, parsed);
             });
           },
         });

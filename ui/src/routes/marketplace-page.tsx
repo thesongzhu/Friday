@@ -103,19 +103,16 @@ export function MarketplacePage() {
   const assetsQuery = useQuery({
     queryKey: ["marketplace", "assets"],
     queryFn: () => marketplaceApi.listAssets(),
-    refetchInterval: 30_000,
   });
 
   const creatorsQuery = useQuery({
     queryKey: ["marketplace", "creators"],
     queryFn: () => marketplaceApi.listCreators(),
-    refetchInterval: 30_000,
   });
 
   const requestsQuery = useQuery({
     queryKey: ["marketplace", "requests"],
     queryFn: () => marketplaceApi.listRequests(),
-    refetchInterval: 30_000,
   });
 
   const assets = assetsQuery.data ?? [];
