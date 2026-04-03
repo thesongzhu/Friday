@@ -83,6 +83,37 @@ describe("FridayEpisodeExtractor", () => {
     });
   }
 
+  function seedToolEndOnlyEvents(
+    runId: string,
+    tools: Array<{ name: string; durationMs?: number; isError?: boolean }>,
+  ) {
+    db.withWriteTransaction((conn) => {
+      let seq = 0;
+      for (const tool of tools) {
+        const now = new Date().toISOString();
+        conn
+          .prepare(
+            `INSERT INTO friday_agent_run_events
+               (event_id, run_id, event_name, payload_json, seq, emitted_at, created_at)
+             VALUES (?, ?, 'agent.run.tool_end', ?, ?, ?, ?)`,
+          )
+          .run(
+            idGen(),
+            runId,
+            JSON.stringify({
+              toolCallId: `call-end-only-${seq}`,
+              toolName: tool.name,
+              durationMs: tool.durationMs ?? 100,
+              isError: tool.isError ?? false,
+            }),
+            seq++,
+            now,
+            now,
+          );
+      }
+    });
+  }
+
   it("extracts a minimal failure episode when run has no tool events", async () => {
     seedRun("run-empty", "do nothing", "failed", 1000, "ERROR: no tool was available");
 
@@ -165,6 +196,22 @@ describe("FridayEpisodeExtractor", () => {
     expect(episode!.steps[2].category).toBe("write");
   });
 
+  it("extracts steps from tool_end events without requiring matching tool_start rows", async () => {
+    const runId = "run-end-only";
+    seedRun(runId, "inspect current state", "completed", 800);
+    seedToolEndOnlyEvents(runId, [
+      { name: "system", durationMs: 180 },
+      { name: "read", durationMs: 90 },
+    ]);
+
+    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
+    const episode = await extractor.extractFromRun(runId, "user-1");
+
+    expect(episode).not.toBeNull();
+    expect(episode!.toolSequence).toEqual(["system", "read"]);
+    expect(episode!.steps.map((step) => step.category)).toEqual(["query", "read"]);
+  });
+
   it("marks failed runs as failure outcome", async () => {
     const runId = "run-fail";
     seedRun(runId, "deploy server", "failed", 500);
@@ -192,6 +239,40 @@ describe("FridayEpisodeExtractor", () => {
       conn.prepare("SELECT * FROM friday_episodes WHERE run_id = ?").all(runId),
     );
     expect(rows).toHaveLength(1);
+  });
+
+  it("extracts context files from current context cost summary components", async () => {
+    const runId = "run-context-components";
+    db.withWriteTransaction((conn) => {
+      conn
+        .prepare(
+          `INSERT INTO friday_agent_runs
+             (id, session_key, task, status, response_text,
+              duration_ms, usage_input, usage_output, created_at, context_cost_summary_json)
+           VALUES (?, 'sess-1', ?, ?, ?, ?, 0, 0, datetime('now'), ?)`,
+        )
+        .run(
+          runId,
+          "summarize workspace",
+          "completed",
+          null,
+          1200,
+          JSON.stringify({
+            totalEstimatedChars: 1234,
+            components: [
+              { kind: "workspace_context", name: "AGENTS.md", estimatedChars: 120 },
+              { kind: "workspace_context", name: "MEMORY.md", estimatedChars: 80 },
+            ],
+          }),
+        );
+    });
+    seedToolEndOnlyEvents(runId, [{ name: "read" }]);
+
+    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
+    const episode = await extractor.extractFromRun(runId, "user-1");
+
+    expect(episode).not.toBeNull();
+    expect(episode!.contextFiles).toEqual(["AGENTS.md", "MEMORY.md"]);
   });
 
   it("classifies tool categories correctly", async () => {

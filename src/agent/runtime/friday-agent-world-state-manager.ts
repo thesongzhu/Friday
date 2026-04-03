@@ -83,12 +83,7 @@ export function createFridayWorldStateManager(
     async loadState(userId) {
       // Try loading latest snapshot
       const row = db.withReadConnection((conn) =>
-        conn
-          .prepare(
-            `SELECT state_json FROM friday_world_state_snapshots
-             WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
-          )
-          .get(userId) as WorldStateSnapshotRow | undefined,
+        loadLatestSnapshotRow(conn, userId),
       );
 
       if (row) {
@@ -163,25 +158,23 @@ export function createFridayWorldStateManager(
           mentionCount: row.mention_count,
         }));
 
-        // Load recent steps within same transaction
-        const stepRows = conn
-          .prepare(
-            `SELECT steps_json FROM friday_episodes
-             WHERE user_id = ? ORDER BY created_at DESC LIMIT 5`,
-          )
-          .all(userId) as Array<{ steps_json: string }>;
-
-        const allSteps: FridayEpisodeStep[] = [];
-        for (const row of stepRows) {
-          const steps = safeJsonParse<FridayEpisodeStep[]>(row.steps_json) ?? [];
-          allSteps.push(...steps);
-          if (allSteps.length >= 20) break;
-        }
+        const previousState = parseWorldState(loadLatestSnapshotRow(conn, userId));
+        const currentSteps = episode.steps.slice(0, 20);
+        const carriedRecentActions = Array.isArray(previousState?.recentActions)
+          ? previousState.recentActions
+          : [];
+        const fallbackRecentActions = carriedRecentActions.length === 0 && currentSteps.length < 20
+          ? loadRecentStepsFromConnection(conn, userId, 20 - currentSteps.length, episode.runId)
+          : [];
 
         const state: FridayWorldState = {
           userId,
           entities,
-          recentActions: allSteps.slice(0, 20),
+          recentActions: [
+            ...currentSteps,
+            ...carriedRecentActions,
+            ...fallbackRecentActions,
+          ].slice(0, 20),
           activeGoals: [],
           preferences: {},
           environmentFacts: {},
@@ -276,27 +269,73 @@ function loadEntities(
   }));
 }
 
+function loadLatestSnapshotRow(
+  conn: Database.Database,
+  userId: string,
+): WorldStateSnapshotRow | undefined {
+  return conn
+    .prepare(
+      `SELECT state_json FROM friday_world_state_snapshots
+       WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(userId) as WorldStateSnapshotRow | undefined;
+}
+
+function parseWorldState(
+  row: WorldStateSnapshotRow | undefined,
+): FridayWorldState | null {
+  if (!row) return null;
+  return safeJsonParse<FridayWorldState>(row.state_json) ?? null;
+}
+
 function loadRecentSteps(
   db: FridaySqliteLayer,
   userId: string,
   limit: number,
 ): FridayEpisodeStep[] {
   const rows = db.withReadConnection((conn) =>
-    conn
-      .prepare(
-        `SELECT steps_json FROM friday_episodes
-         WHERE user_id = ? ORDER BY created_at DESC LIMIT 5`,
-      )
-      .all(userId) as Array<{ steps_json: string }>,
+    loadRecentStepRows(conn, userId),
   );
 
+  return flattenRecentSteps(rows, limit);
+}
+
+function loadRecentStepsFromConnection(
+  conn: Database.Database,
+  userId: string,
+  limit: number,
+  excludeRunId?: string,
+): FridayEpisodeStep[] {
+  if (limit <= 0) return [];
+  return flattenRecentSteps(loadRecentStepRows(conn, userId, excludeRunId), limit);
+}
+
+function loadRecentStepRows(
+  conn: Database.Database,
+  userId: string,
+  excludeRunId?: string,
+): Array<{ steps_json: string }> {
+  const params: unknown[] = [userId];
+  let sql = `SELECT steps_json FROM friday_episodes
+             WHERE user_id = ?`;
+  if (excludeRunId) {
+    sql += " AND run_id != ?";
+    params.push(excludeRunId);
+  }
+  sql += " ORDER BY created_at DESC LIMIT 5";
+  return conn.prepare(sql).all(...params) as Array<{ steps_json: string }>;
+}
+
+function flattenRecentSteps(
+  rows: Array<{ steps_json: string }>,
+  limit: number,
+): FridayEpisodeStep[] {
   const allSteps: FridayEpisodeStep[] = [];
   for (const row of rows) {
     const steps = safeJsonParse<FridayEpisodeStep[]>(row.steps_json) ?? [];
     allSteps.push(...steps);
     if (allSteps.length >= limit) break;
   }
-
   return allSteps.slice(0, limit);
 }
 

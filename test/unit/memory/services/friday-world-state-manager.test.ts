@@ -164,6 +164,39 @@ describe("FridayWorldStateManager", () => {
     expect(count).toBeGreaterThanOrEqual(1);
   });
 
+  it("updateFromEpisode prepends current steps to snapshot recentActions instead of rebuilding them from episodes", async () => {
+    const mgr = createFridayWorldStateManager({ db, idGenerator: idGen, nowIso });
+
+    await mgr.saveSnapshot({
+      userId: "user-1",
+      entities: [],
+      recentActions: [
+        { seq: 99, action: "browser", category: "navigate", observation: "page", durationMs: 50 },
+        { seq: 100, action: "read", category: "read", observation: "text", durationMs: 25 },
+      ],
+      activeGoals: ["ship-v1"],
+      preferences: {},
+      environmentFacts: {},
+      lastUpdated: nowIso(),
+    });
+
+    await mgr.updateFromEpisode("user-1", makeEpisode({
+      runId: "run-2",
+      steps: [
+        { seq: 0, action: "system", category: "query", observation: "snapshot", durationMs: 80 },
+        { seq: 1, action: "exec", category: "mutate", observation: "text", durationMs: 120 },
+      ],
+    }));
+
+    const state = await mgr.loadState("user-1");
+    expect(state.recentActions).toEqual([
+      { seq: 0, action: "system", category: "query", observation: "snapshot", durationMs: 80 },
+      { seq: 1, action: "exec", category: "mutate", observation: "text", durationMs: 120 },
+      { seq: 99, action: "browser", category: "navigate", observation: "page", durationMs: 50 },
+      { seq: 100, action: "read", category: "read", observation: "text", durationMs: 25 },
+    ]);
+  });
+
   it("updateFromEpisode prunes stale entities older than 90 days with low mention count", async () => {
     const mgr = createFridayWorldStateManager({ db, idGenerator: idGen, nowIso });
 

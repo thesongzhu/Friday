@@ -2,8 +2,8 @@
  * Episode Extractor — converts raw agent run events into structured
  * FridayEpisode records for world model readiness.
  *
- * Extracts tool_start/tool_end event pairs from the durable event log
- * and compresses them into ordered FridayEpisodeStep sequences.
+ * Extracts tool_end events from the durable event log and compresses
+ * them into ordered FridayEpisodeStep sequences.
  * Only non-sensitive summaries are captured (tool name, category,
  * output shape — never raw arguments or result content).
  */
@@ -36,7 +36,6 @@ export interface FridayEpisodeExtractor {
 // ─── Raw row types ──────────────────────────────────────────────
 
 interface RunEventRow {
-  event_name: string;
   payload_json: string;
   seq: number;
 }
@@ -77,15 +76,15 @@ export function createFridayEpisodeExtractor(
       const events = db.withReadConnection((conn) =>
         conn
           .prepare(
-            `SELECT event_name, payload_json, seq
+            `SELECT payload_json, seq
              FROM friday_agent_run_events
-             WHERE run_id = ? AND event_name IN ('agent.run.tool_start', 'agent.run.tool_end')
+             WHERE run_id = ? AND event_name = 'agent.run.tool_end'
              ORDER BY seq`,
           )
           .all(runId) as RunEventRow[],
       );
 
-      // 3. Pair tool_start → tool_end into steps
+      // 3. Convert tool_end events directly into steps
       const steps = events.length > 0 ? buildSteps(events) : [];
 
       const trimmedResponse = run.response_text?.trim() ?? "";
@@ -149,40 +148,25 @@ export function createFridayEpisodeExtractor(
 
 function buildSteps(events: RunEventRow[]): FridayEpisodeStep[] {
   const steps: FridayEpisodeStep[] = [];
-  const pending = new Map<string, { toolName: string; seq: number }>();
-
-  let stepSeq = 0;
-
-  for (const evt of events) {
+  for (let stepSeq = 0; stepSeq < events.length; stepSeq += 1) {
+    const evt = events[stepSeq]!;
     const payload = safeJsonParse<Record<string, unknown>>(evt.payload_json) ?? {};
+    const toolName = (payload.toolName as string) ?? "unknown";
+    const durationMs = (payload.durationMs as number) ?? 0;
+    const isError = (payload.isError as boolean) ?? false;
 
-    if (evt.event_name === "agent.run.tool_start") {
-      const toolCallId = payload.toolCallId as string | undefined;
-      const toolName = payload.toolName as string | undefined;
-      if (toolCallId && toolName) {
-        pending.set(toolCallId, { toolName, seq: evt.seq });
-      }
-    } else if (evt.event_name === "agent.run.tool_end") {
-      const toolCallId = payload.toolCallId as string | undefined;
-      const toolName = (payload.toolName as string) ?? "unknown";
-      const durationMs = (payload.durationMs as number) ?? 0;
-      const isError = (payload.isError as boolean) ?? false;
+    // Get tool call summary if available
+    const summary = payload.toolCallSummary as Record<string, unknown> | undefined;
+    const category = (summary?.toolCategory as FridayEpisodeStepCategory) ?? classifyTool(toolName);
+    const outputShape = (summary?.outputShape as string) ?? "text";
 
-      // Get tool call summary if available
-      const summary = payload.toolCallSummary as Record<string, unknown> | undefined;
-      const category = (summary?.toolCategory as FridayEpisodeStepCategory) ?? classifyTool(toolName);
-      const outputShape = (summary?.outputShape as string) ?? "text";
-
-      if (toolCallId) pending.delete(toolCallId);
-
-      steps.push({
-        seq: stepSeq++,
-        action: toolName,
-        category,
-        observation: isError ? `error:${outputShape}` : outputShape,
-        durationMs,
-      });
-    }
+    steps.push({
+      seq: stepSeq,
+      action: toolName,
+      category,
+      observation: isError ? `error:${outputShape}` : outputShape,
+      durationMs,
+    });
   }
 
   return steps;
@@ -198,11 +182,13 @@ function extractContextFiles(contextCostSummaryJson: string | null): string[] {
   if (!contextCostSummaryJson) return [];
   const summary = safeJsonParse<Record<string, unknown>>(contextCostSummaryJson);
   if (!summary) return [];
-  // Extract file names from context cost summary blocks
-  const blocks = summary.blocks as Array<Record<string, unknown>> | undefined;
-  if (!Array.isArray(blocks)) return [];
-  return blocks
-    .map((b) => b.name as string | undefined)
+  const components = Array.isArray(summary.components)
+    ? summary.components as Array<Record<string, unknown>>
+    : Array.isArray(summary.blocks)
+      ? summary.blocks as Array<Record<string, unknown>>
+      : [];
+  return components
+    .map((entry) => entry.name as string | undefined)
     .filter((n): n is string => typeof n === "string");
 }
 
