@@ -21,6 +21,10 @@ export interface FridayApprovalRequestRepository {
     db: Database.Database,
     actionId: string,
   ): FridayApprovalRequestEntity | null;
+  listByActionIds(
+    db: Database.Database,
+    actionIds: string[],
+  ): FridayApprovalRequestEntity[];
 
   listPending(
     db: Database.Database,
@@ -113,6 +117,30 @@ export function createFridayApprovalRequestRepository(): FridayApprovalRequestRe
         .prepare("SELECT * FROM approval_requests WHERE action_id = ? ORDER BY created_at DESC LIMIT 1")
         .get(actionId) as FridayApprovalRequestRow | undefined;
       return row ? rowToEntity(row) : null;
+    },
+
+    listByActionIds(db, actionIds) {
+      if (actionIds.length === 0) {
+        return [];
+      }
+      const uniqueActionIds = [...new Set(actionIds)];
+      const placeholders = uniqueActionIds.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT * FROM approval_requests
+           WHERE action_id IN (${placeholders})
+           ORDER BY created_at DESC`,
+        )
+        .all(...uniqueActionIds) as FridayApprovalRequestRow[];
+      const latestByActionId = new Map<string, FridayApprovalRequestEntity>();
+      for (const row of rows) {
+        if (!latestByActionId.has(row.action_id)) {
+          latestByActionId.set(row.action_id, rowToEntity(row));
+        }
+      }
+      return uniqueActionIds
+        .map((actionId) => latestByActionId.get(actionId))
+        .filter((request): request is FridayApprovalRequestEntity => request != null);
     },
 
     listPending(db, input) {

@@ -29,6 +29,22 @@ export interface FridaySystemApprovalRuleFilters {
   cursor?: string;
 }
 
+export interface FridaySystemApprovalRulesSummary {
+  total: number;
+  highRiskAllowed: number;
+}
+
+export interface FridaySystemRemoteDevicesSummary {
+  total: number;
+  active: number;
+}
+
+export interface FridaySystemRemoteSessionsSummary {
+  total: number;
+  active: number;
+  latestSeenAt?: string;
+}
+
 export interface FridaySystemRepository {
   listApprovalRules(
     db: Database.Database,
@@ -45,8 +61,10 @@ export interface FridaySystemRepository {
     id: string,
     patch: Partial<FridaySystemApprovalRule>,
   ): FridaySystemApprovalRule | null;
+  summarizeApprovalRules(db: Database.Database): FridaySystemApprovalRulesSummary;
 
   listRemoteDevices(db: Database.Database): FridaySystemRemoteDevice[];
+  summarizeRemoteDevices(db: Database.Database): FridaySystemRemoteDevicesSummary;
   findRemoteDeviceById(db: Database.Database, id: string): FridaySystemRemoteDevice | null;
   findRemoteDeviceByFingerprint(db: Database.Database, fingerprint: string): FridaySystemRemoteDevice | null;
   insertRemoteDevice(db: Database.Database, device: FridaySystemRemoteDevice): FridaySystemRemoteDevice;
@@ -114,6 +132,7 @@ export interface FridaySystemRepository {
     db: Database.Database,
     input?: { deviceId?: string; status?: string; limit?: number },
   ): FridaySystemRemoteSession[];
+  summarizeRemoteSessions(db: Database.Database): FridaySystemRemoteSessionsSummary;
   findRemoteSessionById(db: Database.Database, id: string): FridaySystemRemoteSession | null;
   insertRemoteSession(db: Database.Database, session: FridaySystemRemoteSession): FridaySystemRemoteSession;
   touchRemoteSession(db: Database.Database, id: string, lastSeenAt: string): FridaySystemRemoteSession | null;
@@ -387,11 +406,40 @@ export function createFridaySystemRepository(): FridaySystemRepository {
       return this.findApprovalRuleById(db, id);
     },
 
+    summarizeApprovalRules(db) {
+      const row = db.prepare(
+        `SELECT
+           COUNT(*) AS total,
+           COALESCE(SUM(CASE
+             WHEN decision = 'allow' AND risk_level IN ('high', 'critical') THEN 1
+             ELSE 0
+           END), 0) AS high_risk_allowed
+         FROM friday_system_approval_rules`,
+      ).get() as { total: number; high_risk_allowed: number } | undefined;
+      return {
+        total: row?.total ?? 0,
+        highRiskAllowed: row?.high_risk_allowed ?? 0,
+      };
+    },
+
     listRemoteDevices(db) {
       const rows = db.prepare(
         "SELECT * FROM friday_system_remote_devices ORDER BY registered_at DESC",
       ).all() as FridaySystemRemoteDeviceRecord[];
       return rows.map(remoteDeviceRowToEntity);
+    },
+
+    summarizeRemoteDevices(db) {
+      const row = db.prepare(
+        `SELECT
+           COUNT(*) AS total,
+           COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS active
+         FROM friday_system_remote_devices`,
+      ).get() as { total: number; active: number } | undefined;
+      return {
+        total: row?.total ?? 0,
+        active: row?.active ?? 0,
+      };
     },
 
     findRemoteDeviceById(db, id) {
@@ -680,6 +728,21 @@ export function createFridaySystemRepository(): FridaySystemRepository {
          LIMIT ?`,
       ).all(...params) as FridaySystemRemoteSessionRecord[];
       return rows.map(remoteSessionRowToEntity);
+    },
+
+    summarizeRemoteSessions(db) {
+      const row = db.prepare(
+        `SELECT
+           COUNT(*) AS total,
+           COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS active,
+           MAX(last_seen_at) AS latest_seen_at
+         FROM friday_system_remote_sessions`,
+      ).get() as { total: number; active: number; latest_seen_at?: string | null } | undefined;
+      return {
+        total: row?.total ?? 0,
+        active: row?.active ?? 0,
+        latestSeenAt: row?.latest_seen_at ?? undefined,
+      };
     },
 
     findRemoteSessionById(db, id) {

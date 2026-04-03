@@ -693,23 +693,15 @@ export async function createFridaySystemService(
       };
     const permissions = await readPermissions(companion.permissions);
     await emitCompanionEventsIfChanged(companion, permissions);
-    const approvals = deps.db.withReadConnection((db) => repository.listApprovalRules(db));
-    const remoteDevices = deps.db.withReadConnection((db) => repository.listRemoteDevices(db));
-    const remoteSessions = deps.db.withReadConnection((db) => repository.listRemoteSessions(db, { limit: 200 }));
+    const approvalsSummary = deps.db.withReadConnection((db) => repository.summarizeApprovalRules(db));
+    const remoteDevicesSummary = deps.db.withReadConnection((db) => repository.summarizeRemoteDevices(db));
+    const remoteSessionsSummary = deps.db.withReadConnection((db) => repository.summarizeRemoteSessions(db));
     const health = await readHealth(companion, permissions);
     cachedSessionCompanion = companion;
     cachedSessionPermissions = [...permissions];
     cachedSessionHealth = health;
     cachedSessionSnapshotAt = Date.now();
     const browser = deps.getBrowserDiagnostics?.();
-    const latestSeenAt = remoteSessions.reduce<string | undefined>((latest, session) => {
-      if (!latest) {
-        return session.lastSeenAt;
-      }
-      return new Date(session.lastSeenAt).getTime() > new Date(latest).getTime()
-        ? session.lastSeenAt
-        : latest;
-    }, undefined);
 
     const summary = buildSystemSummary({
       companion,
@@ -718,10 +710,9 @@ export async function createFridaySystemService(
       browser,
       frontmostAppId: companionSnapshot.frontmostAppId,
       frontmostWindowId: companionSnapshot.frontmostWindowId,
-      approvals,
-      remoteDevices,
-      remoteSessions,
-      latestSeenAt,
+      approvalsSummary,
+      remoteDevicesSummary,
+      remoteSessionsSummary,
     });
 
     return {
@@ -743,10 +734,9 @@ export async function createFridaySystemService(
     browser?: FridaySystemBrowserDiagnostics;
     frontmostAppId?: string;
     frontmostWindowId?: string;
-    approvals: FridaySystemApprovalRule[];
-    remoteDevices: FridaySystemRemoteDevice[];
-    remoteSessions: FridaySystemRemoteSession[];
-    latestSeenAt?: string;
+    approvalsSummary: FridaySystemSummary["approvalsSummary"];
+    remoteDevicesSummary: FridaySystemSummary["remoteDevicesSummary"];
+    remoteSessionsSummary: FridaySystemSummary["remoteSessionsSummary"];
   }): FridaySystemSummary {
     return {
       capturedAt: deps.nowIso(),
@@ -767,48 +757,27 @@ export async function createFridaySystemService(
         }
         : {}),
       controlLease: normalizeActiveLease(),
-      approvalsSummary: {
-        total: input.approvals.length,
-        highRiskAllowed: input.approvals.filter((item) =>
-          (item.riskLevel === "high" || item.riskLevel === "critical") && item.decision === "allow"
-        ).length,
-      },
-      remoteDevicesSummary: {
-        total: input.remoteDevices.length,
-        active: input.remoteDevices.filter((item) => item.status === "active").length,
-      },
-      remoteSessionsSummary: {
-        total: input.remoteSessions.length,
-        active: input.remoteSessions.filter((item) => item.status === "active").length,
-        latestSeenAt: input.latestSeenAt,
-      },
+      approvalsSummary: input.approvalsSummary,
+      remoteDevicesSummary: input.remoteDevicesSummary,
+      remoteSessionsSummary: input.remoteSessionsSummary,
     };
   }
 
   async function buildSummary(): Promise<FridaySystemSummary> {
     const { companion, permissions, health } = await readSessionCompanionSnapshot();
-    const approvals = deps.db.withReadConnection((db) => repository.listApprovalRules(db));
-    const remoteDevices = deps.db.withReadConnection((db) => repository.listRemoteDevices(db));
-    const remoteSessions = deps.db.withReadConnection((db) => repository.listRemoteSessions(db, { limit: 200 }));
+    const approvalsSummary = deps.db.withReadConnection((db) => repository.summarizeApprovalRules(db));
+    const remoteDevicesSummary = deps.db.withReadConnection((db) => repository.summarizeRemoteDevices(db));
+    const remoteSessionsSummary = deps.db.withReadConnection((db) => repository.summarizeRemoteSessions(db));
     const browser = deps.getBrowserDiagnostics?.();
-    const latestSeenAt = remoteSessions.reduce<string | undefined>((latest, session) => {
-      if (!latest) {
-        return session.lastSeenAt;
-      }
-      return new Date(session.lastSeenAt).getTime() > new Date(latest).getTime()
-        ? session.lastSeenAt
-        : latest;
-    }, undefined);
 
     return buildSystemSummary({
       companion,
       permissions,
       health,
       browser,
-      approvals,
-      remoteDevices,
-      remoteSessions,
-      latestSeenAt,
+      approvalsSummary,
+      remoteDevicesSummary,
+      remoteSessionsSummary,
     });
   }
 

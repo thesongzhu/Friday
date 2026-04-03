@@ -380,6 +380,104 @@ describe("createFridaySystemService", () => {
     expect(summary.remoteSessionsSummary.total).toBe(0);
   });
 
+  it("counts approvals and remote sessions beyond legacy list limits", async () => {
+    const fixture = await createServiceFixture();
+    allocatedDbs.push(fixture.db);
+
+    fixture.db.withWriteTransaction((db) => {
+      const insertApproval = db.prepare(
+        `INSERT INTO friday_system_approval_rules (
+          id, app_identifier, action, risk_level, decision, rationale,
+          created_at, updated_at, last_used_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (let i = 0; i < 125; i += 1) {
+        const timestamp = new Date(Date.parse("2026-03-06T12:00:00.000Z") + i * 1000).toISOString();
+        insertApproval.run(
+          `approval-${i}`,
+          null,
+          "open",
+          i < 110 ? "high" : "low",
+          i < 110 ? "allow" : "prompt",
+          null,
+          timestamp,
+          timestamp,
+          null,
+        );
+      }
+
+      const insertDevice = db.prepare(
+        `INSERT INTO friday_system_remote_devices (
+          id, label, fingerprint, platform, credential_id, trust_scope, status,
+          registered_at, last_seen_at, revoked_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      insertDevice.run(
+        "device-1",
+        "Primary browser",
+        "fingerprint-1",
+        "browser",
+        null,
+        "trusted_private_network",
+        "active",
+        "2026-03-06T12:00:00.000Z",
+        "2026-03-06T12:00:00.000Z",
+        null,
+      );
+      insertDevice.run(
+        "device-2",
+        "Backup browser",
+        "fingerprint-2",
+        "browser",
+        null,
+        "trusted_private_network",
+        "active",
+        "2026-03-06T12:00:01.000Z",
+        "2026-03-06T12:00:01.000Z",
+        null,
+      );
+
+      const insertSession = db.prepare(
+        `INSERT INTO friday_system_remote_sessions (
+          id, device_id, status, connected_at, last_seen_at, closed_at, closed_reason, ip_address, user_agent
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      const connectedBase = Date.parse("2026-03-06T12:00:00.000Z");
+      for (let i = 0; i < 250; i += 1) {
+        const connectedAt = new Date(connectedBase + i * 1000).toISOString();
+        const lastSeenAt = i === 0
+          ? "2026-04-01T00:00:00.000Z"
+          : new Date(connectedBase + i * 1000).toISOString();
+        const active = i % 5 !== 0;
+        insertSession.run(
+          `session-${i}`,
+          i % 2 === 0 ? "device-1" : "device-2",
+          active ? "active" : "closed",
+          connectedAt,
+          lastSeenAt,
+          active ? null : lastSeenAt,
+          active ? null : "closed_by_test",
+          "127.0.0.1",
+          "Vitest",
+        );
+      }
+    });
+
+    const summary = await fixture.service.getSummary();
+    const state = await fixture.service.getState();
+
+    expect(summary.approvalsSummary.total).toBe(125);
+    expect(summary.approvalsSummary.highRiskAllowed).toBe(110);
+    expect(summary.remoteDevicesSummary.total).toBe(2);
+    expect(summary.remoteDevicesSummary.active).toBe(2);
+    expect(summary.remoteSessionsSummary.total).toBe(250);
+    expect(summary.remoteSessionsSummary.active).toBe(200);
+    expect(summary.remoteSessionsSummary.latestSeenAt).toBe("2026-04-01T00:00:00.000Z");
+    expect(state.approvalsSummary.total).toBe(125);
+    expect(state.remoteSessionsSummary.total).toBe(250);
+    expect(state.remoteSessionsSummary.latestSeenAt).toBe("2026-04-01T00:00:00.000Z");
+  });
+
   it("starts in degraded mode when the companion socket is unavailable", async () => {
     const warn = vi.fn();
     const fixture = await createServiceFixtureWithOptions({

@@ -604,10 +604,12 @@ export function createFridaySelfHealingApiService(
     const lessonRows = deps.db.withReadConnection((db) =>
       deps.lessonRepo.listRecent(db, limit),
     );
-    const lessonDisableFacts = deps.db.withReadConnection((db) =>
+    const preferenceFacts = deps.db.withReadConnection((db) =>
       deps.factRepo.listByUser(db, input.userId, 0, 500),
-    )
-      .filter((fact) => fact.key.startsWith("lesson_disabled:"));
+    );
+    const lessonDisableFacts = preferenceFacts.filter((fact) =>
+      fact.key.startsWith("lesson_disabled:"),
+    );
 
     const lessons = lessonRows.map((lesson) => {
       const disabledFact = lessonDisableFacts.find((fact) => fact.key === `lesson_disabled:${lesson.id}`);
@@ -621,9 +623,11 @@ export function createFridaySelfHealingApiService(
       };
     });
 
-    const demotionFacts = deps.db.withReadConnection((db) =>
-      deps.factRepo.listByUser(db, input.userId, 0, 500),
-    ).filter((fact) => fact.key.startsWith("pattern_demotion:"));
+    const demotionFactsByKey = new Map(
+      preferenceFacts
+        .filter((fact) => fact.key.startsWith("pattern_demotion:"))
+        .map((fact) => [fact.key, fact] as const),
+    );
 
     const patternRows = deps.db.withReadConnection((db) =>
       db.prepare(
@@ -646,7 +650,7 @@ export function createFridaySelfHealingApiService(
     );
 
     const patterns = patternRows.map((row) => {
-      const demotionFact = demotionFacts.find((fact) => fact.key === `pattern_demotion:${row.id}`);
+      const demotionFact = demotionFactsByKey.get(`pattern_demotion:${row.id}`);
       const demotionValue = readObject(demotionFact?.value);
       const factor =
         typeof demotionValue?.factor === "number" && Number.isFinite(demotionValue.factor)
@@ -668,9 +672,7 @@ export function createFridaySelfHealingApiService(
       };
     });
 
-    const routeAdjustments = deps.db.withReadConnection((db) =>
-      deps.factRepo.listByUser(db, input.userId, 0, 500),
-    )
+    const routeAdjustments = preferenceFacts
       .filter((fact) => fact.key.startsWith("route_penalty:") || fact.key.startsWith("route_pin:"))
       .slice(0, limit)
       .map((fact): FridayLearningRouteAdjustmentRecord => {
@@ -703,13 +705,18 @@ export function createFridaySelfHealingApiService(
         limit: 200,
       }),
     );
+    const rejectedActionIds = actionRows
+      .filter((action) => action.status === "rejected")
+      .map((action) => action.actionId);
+    const approvalsByActionId = new Map(
+      deps.db.withReadConnection((db) => deps.approvalRepo.listByActionIds(db, rejectedActionIds))
+        .map((approval) => [approval.actionId, approval] as const),
+    );
     const rejectedFixes = actionRows
       .filter((action) => action.status === "rejected")
       .slice(0, limit)
       .map((action): FridayRejectedFixRecord => {
-        const approval = deps.db.withReadConnection((db) =>
-          deps.approvalRepo.getByActionId(db, action.actionId),
-        );
+        const approval = approvalsByActionId.get(action.actionId);
         return {
           actionId: action.actionId,
           incidentId: action.incidentId,
