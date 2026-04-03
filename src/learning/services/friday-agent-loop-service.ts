@@ -339,6 +339,31 @@ export function createFridayAgentLoopService(
     action: run.actionId ? deps.selfHealing.getAction({ actionId: run.actionId }) : null,
   });
 
+  const buildRunDetailsList = (runs: FridayAgentLoopRunEntity[]): FridayAgentLoopRunDetails[] => {
+    const incidentsById = new Map(
+      deps.selfHealing
+        .listIncidentDetailsByIds({
+          incidentIds: runs.map((run) => run.incidentId),
+        })
+        .map((incident) => [incident.incident.incidentId, incident] as const),
+    );
+    const actionIds = runs.flatMap((run) => (run.actionId ? [run.actionId] : []));
+    const actionsById = new Map(
+      deps.selfHealing
+        .listActionDetailsByIds({
+          actionIds,
+        })
+        .map((action) => [action.action.actionId, action] as const),
+    );
+    return runs.map((run) => ({
+      run,
+      incident: incidentsById.get(run.incidentId) ?? deps.selfHealing.getIncident({ incidentId: run.incidentId }),
+      action: run.actionId
+        ? actionsById.get(run.actionId) ?? deps.selfHealing.getAction({ actionId: run.actionId })
+        : null,
+    }));
+  };
+
   const emitLoopEvent = async (
     event: string,
     run: FridayAgentLoopRunEntity,
@@ -732,12 +757,12 @@ export function createFridayAgentLoopService(
 
     listRuns(input) {
       const runs = deps.db.withReadConnection((db) => deps.loopRepo.listRuns(db, input));
-      return runs.map(buildRunDetails);
+      return buildRunDetailsList(runs);
     },
 
     listExpertRuns(input) {
       const runs = deps.db.withReadConnection((db) => deps.loopRepo.listRuns(db, input));
-      return runs.filter((run) => run.expertModeEnabled).map(buildRunDetails);
+      return buildRunDetailsList(runs.filter((run) => run.expertModeEnabled));
     },
 
     getRun(input) {

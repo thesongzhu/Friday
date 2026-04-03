@@ -249,6 +249,9 @@ export interface FridaySelfHealingApiService {
     status?: FridayErrorIncidentEntity["status"];
     limit?: number;
   }): FridayIncidentDiagnosisDetails[];
+  listIncidentDetailsByIds(input: {
+    incidentIds: string[];
+  }): FridayIncidentDiagnosisDetails[];
   getIncident(input: {
     incidentId: string;
   }): FridayIncidentDiagnosisDetails | null;
@@ -260,6 +263,9 @@ export interface FridaySelfHealingApiService {
     status?: FridayAutoFixActionEntity["status"];
     incidentId?: string;
     limit?: number;
+  }): FridaySelfHealingActionDetails[];
+  listActionDetailsByIds(input: {
+    actionIds: string[];
   }): FridaySelfHealingActionDetails[];
   getAction(input: {
     actionId: string;
@@ -421,6 +427,17 @@ function normalizeLearningKeySegment(value: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+function groupBy<T, K>(items: T[], keyFor: (item: T) => K): Map<K, T[]> {
+  const grouped = new Map<K, T[]>();
+  for (const item of items) {
+    const key = keyFor(item);
+    const bucket = grouped.get(key) ?? [];
+    bucket.push(item);
+    grouped.set(key, bucket);
+  }
+  return grouped;
+}
+
 export function createFridaySelfHealingApiService(
   deps: CreateFridaySelfHealingApiServiceDeps,
 ): FridaySelfHealingApiService {
@@ -496,6 +513,14 @@ export function createFridaySelfHealingApiService(
       approvalsByActionId,
       lessonsByFingerprint,
     };
+  };
+
+  const buildActionDetailsList = (
+    actions: FridayAutoFixActionEntity[],
+    seedLookups?: FridayActionDetailsLookups,
+  ): FridaySelfHealingActionDetails[] => {
+    const lookups = buildActionDetailsLookups(actions, seedLookups);
+    return actions.map((action) => buildActionDetails(action, lookups));
   };
 
   const buildActionDetails = (
@@ -630,6 +655,65 @@ export function createFridaySelfHealingApiService(
       recurrenceCount,
       autoFixEligible: incident.autoFixEligible,
     };
+  };
+
+  const buildIncidentDetailsList = (
+    incidents: FridayErrorIncidentEntity[],
+  ): FridayIncidentDiagnosisDetails[] => {
+    const diagnosesByIncidentId = new Map(
+      deps.db.withReadConnection((db) =>
+        deps.diagnosisRepo.listLatestByIncidentIds(
+          db,
+          incidents.map((incident) => incident.incidentId),
+        ),
+      ).map((diagnosis) => [diagnosis.incidentId!, diagnosis] as const),
+    );
+    const lessonsByFingerprint = new Map(
+      deps.db.withReadConnection((db) =>
+        deps.lessonRepo.listByFingerprints(
+          db,
+          incidents.map((incident) => incident.signature),
+        ),
+      ).map((lesson) => [lesson.fingerprint, lesson] as const),
+    );
+    const recurrenceCountBySignature = new Map<string, number>();
+    const actionsByIncidentId = new Map<string, FridayAutoFixActionEntity>();
+    for (const [userId, userIncidents] of groupBy(incidents, (incident) => incident.userId)) {
+      for (const record of deps.db.withReadConnection((db) =>
+        deps.incidentRepo.countRecentBySignatures(db, {
+          userId,
+          signatures: userIncidents.map((incident) => incident.signature),
+          limitPerSignature: 50,
+        }),
+      )) {
+        recurrenceCountBySignature.set(record.signature, record.count);
+      }
+      for (const action of deps.db.withReadConnection((db) =>
+        deps.actionRepo.listLatestByIncidentIds(db, {
+          userId,
+          incidentIds: userIncidents.map((incident) => incident.incidentId),
+        }),
+      )) {
+        actionsByIncidentId.set(action.incidentId, action);
+      }
+    }
+    const actionDetails = buildActionDetailsLookups(
+      [...actionsByIncidentId.values()],
+      {
+        incidentsById: new Map(incidents.map((incident) => [incident.incidentId, incident] as const)),
+        diagnosesById: new Map([...diagnosesByIncidentId.values()].map((diagnosis) => [diagnosis.id, diagnosis] as const)),
+        lessonsByFingerprint,
+      },
+    );
+    return incidents.map((incident) =>
+      buildIncidentDetails(incident, {
+        diagnosesByIncidentId,
+        lessonsByFingerprint,
+        recurrenceCountBySignature,
+        actionsByIncidentId,
+        actionDetails,
+      }),
+    );
   };
 
   const emitActionEvent = (
@@ -993,56 +1077,14 @@ export function createFridaySelfHealingApiService(
           limit: input.limit,
         }),
       );
-      const diagnosesByIncidentId = new Map(
-        deps.db.withReadConnection((db) =>
-          deps.diagnosisRepo.listLatestByIncidentIds(
-            db,
-            incidents.map((incident) => incident.incidentId),
-          ),
-        ).map((diagnosis) => [diagnosis.incidentId!, diagnosis] as const),
+      return buildIncidentDetailsList(incidents);
+    },
+
+    listIncidentDetailsByIds(input) {
+      const incidents = deps.db.withReadConnection((db) =>
+        deps.incidentRepo.listByIds(db, input.incidentIds),
       );
-      const lessonsByFingerprint = new Map(
-        deps.db.withReadConnection((db) =>
-          deps.lessonRepo.listByFingerprints(
-            db,
-            incidents.map((incident) => incident.signature),
-          ),
-        ).map((lesson) => [lesson.fingerprint, lesson] as const),
-      );
-      const recurrenceCountBySignature = new Map(
-        deps.db.withReadConnection((db) =>
-          deps.incidentRepo.countRecentBySignatures(db, {
-            userId: input.userId,
-            signatures: incidents.map((incident) => incident.signature),
-            limitPerSignature: 50,
-          }),
-        ).map((record) => [record.signature, record.count] as const),
-      );
-      const actionsByIncidentId = new Map(
-        deps.db.withReadConnection((db) =>
-          deps.actionRepo.listLatestByIncidentIds(db, {
-            userId: input.userId,
-            incidentIds: incidents.map((incident) => incident.incidentId),
-          }),
-        ).map((action) => [action.incidentId, action] as const),
-      );
-      const actionDetails = buildActionDetailsLookups(
-        [...actionsByIncidentId.values()],
-        {
-          incidentsById: new Map(incidents.map((incident) => [incident.incidentId, incident] as const)),
-          diagnosesById: new Map([...diagnosesByIncidentId.values()].map((diagnosis) => [diagnosis.id, diagnosis] as const)),
-          lessonsByFingerprint,
-        },
-      );
-      return incidents.map((incident) =>
-        buildIncidentDetails(incident, {
-          diagnosesByIncidentId,
-          lessonsByFingerprint,
-          recurrenceCountBySignature,
-          actionsByIncidentId,
-          actionDetails,
-        }),
-      );
+      return buildIncidentDetailsList(incidents);
     },
 
     getIncident(input) {
@@ -1068,8 +1110,14 @@ export function createFridaySelfHealingApiService(
           limit: input.limit,
         }),
       );
-      const actionDetails = buildActionDetailsLookups(actions);
-      return actions.map((action) => buildActionDetails(action, actionDetails));
+      return buildActionDetailsList(actions);
+    },
+
+    listActionDetailsByIds(input) {
+      const actions = deps.db.withReadConnection((db) =>
+        deps.actionRepo.listByIds(db, input.actionIds),
+      );
+      return buildActionDetailsList(actions);
     },
 
     getAction(input) {

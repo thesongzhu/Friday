@@ -170,6 +170,16 @@ describe("createFridayAgentLoopService", () => {
     const observability = {
       recordAgentLoopEvent: vi.fn(async () => undefined),
     };
+    const selfHealing = {
+      listIncidentDetailsByIds: vi.fn(({ incidentIds }: { incidentIds: string[] }) =>
+        incidentIds.includes(details.incident.incidentId) ? [details] : []
+      ),
+      listActionDetailsByIds: vi.fn(({ actionIds }: { actionIds: string[] }) =>
+        actionIds.includes(details.action.action.actionId) ? [details.action] : []
+      ),
+      getIncident: vi.fn(({ incidentId }: { incidentId: string }) => incidentId === details.incident.incidentId ? details : null),
+      getAction: vi.fn(({ actionId }: { actionId: string }) => actionId === details.action.action.actionId ? details.action : null),
+    };
 
     const service = createFridayAgentLoopService({
       db,
@@ -198,17 +208,14 @@ describe("createFridayAgentLoopService", () => {
           ...executionResult,
         })),
       } as never,
-      selfHealing: {
-        getIncident: vi.fn(({ incidentId }: { incidentId: string }) => incidentId === details.incident.incidentId ? details : null),
-        getAction: vi.fn(({ actionId }: { actionId: string }) => actionId === details.action.action.actionId ? details.action : null),
-      } as never,
+      selfHealing: selfHealing as never,
       observability: observability as never,
       publishEvent: {
         publish: vi.fn(),
       },
     });
 
-    return { service, loopRepo, observability };
+    return { service, loopRepo, observability, selfHealing };
   }
 
   it("auto-executes low-risk fixes and verifies the run", async () => {
@@ -224,6 +231,68 @@ describe("createFridayAgentLoopService", () => {
 
     expect(run?.run.status).toBe("verified");
     expect(run?.run.verificationPassed).toBe(true);
+  });
+
+  it("batches self-healing lookups when listing runs", () => {
+    const details = buildIncidentDetails({ riskTier: 2, approvalPending: true });
+    const { service, loopRepo, selfHealing } = createSubject(details);
+
+    db!.withWriteTransaction((writer) => {
+      loopRepo.insertRun(writer, {
+        loopRunId: "run-1",
+        userId: "user-1",
+        incidentId: "incident-1",
+        actionId: "action-1",
+        fingerprint: "fp-1",
+        trigger: "incident_opened",
+        status: "awaiting_approval",
+        riskTier: 2,
+        approvalRequired: true,
+        attemptNumber: 1,
+        rollbackAttempted: false,
+        rollbackSucceeded: false,
+        expertModeEnabled: false,
+        requiresFinalApproval: false,
+        assumptions: [],
+        unknowns: [],
+        hypotheses: [],
+        probeSteps: [],
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+      loopRepo.insertRun(writer, {
+        loopRunId: "run-2",
+        userId: "user-1",
+        incidentId: "incident-1",
+        actionId: "action-1",
+        fingerprint: "fp-1",
+        trigger: "approval_granted",
+        status: "running",
+        riskTier: 2,
+        approvalRequired: true,
+        attemptNumber: 2,
+        rollbackAttempted: false,
+        rollbackSucceeded: false,
+        expertModeEnabled: true,
+        requiresFinalApproval: false,
+        assumptions: [],
+        unknowns: [],
+        hypotheses: [],
+        probeSteps: [],
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+    });
+
+    const runs = service.listRuns({ userId: "user-1", limit: 10 });
+
+    expect(selfHealing.listIncidentDetailsByIds).toHaveBeenCalledTimes(1);
+    expect(selfHealing.listActionDetailsByIds).toHaveBeenCalledTimes(1);
+    expect(selfHealing.getIncident).not.toHaveBeenCalled();
+    expect(selfHealing.getAction).not.toHaveBeenCalled();
+    expect(runs).toHaveLength(2);
+    expect(runs[0]?.incident?.incident.incidentId).toBe("incident-1");
+    expect(runs[0]?.action?.action.actionId).toBe("action-1");
   });
 
   it("waits for approval on high-risk fixes", async () => {
