@@ -83,6 +83,7 @@ import {
 } from "@/lib/marketplace/view-models";
 import { buildObservabilityHref } from "@/lib/observability/view-models";
 import { buildSkillGeneratorHref, buildSkillHref } from "@/lib/skills/view-models";
+import { systemKeys } from "@/lib/system/query-keys";
 import { buildWorkflowBuilderHref, buildWorkflowHref } from "@/lib/workflows/view-models";
 
 const OPERATOR_ID = "assistant-shell";
@@ -374,12 +375,32 @@ function formatEstimatedChars(value?: number): string {
 
 function summarizeContextCostComponent(
   run: Pick<AgentRunRecord, "contextCostSummary"> | Pick<AssistantDiagnostics["recentRuns"][number], "contextCostSummary"> | null | undefined,
-  kind: "workspace_context" | "starter_skills" | "mcp" | "subagents",
+  kind:
+    | "conversation_input"
+    | "system_prompt"
+    | "tool_schema"
+    | "workspace_context"
+    | "starter_skills"
+    | "mcp"
+    | "subagents"
+    | "learned_preferences"
+    | "communication_policy"
+    | "disabled_tools",
 ): string {
   const component = run?.contextCostSummary?.components.find((entry) => entry.kind === kind);
   if (!component) return "0";
   const countLabel = typeof component.count === "number" ? `${component.count} / ` : "";
   return `${countLabel}${formatEstimatedChars(component.estimatedChars)} chars`;
+}
+
+function summarizeContextUsageDelta(
+  run: Pick<AgentRunRecord, "contextCostSummary"> | Pick<AssistantDiagnostics["recentRuns"][number], "contextCostSummary"> | null | undefined,
+): string {
+  const delta = run?.contextCostSummary?.actualUsage?.deltaInputTokens;
+  if (typeof delta !== "number" || !Number.isFinite(delta)) {
+    return "n/a";
+  }
+  return `${delta >= 0 ? "+" : ""}${delta}`;
 }
 
 function summarizeMcpServerStates(states: AssistantDiagnostics["mcpServerStates"]) {
@@ -457,6 +478,34 @@ function buildAutomationsPrefillHref(receipt: FridayAssistantOutcomeReceipt): st
   return `/automations?${params.toString()}`;
 }
 
+function useSectionActivation<T extends HTMLElement>(options?: { rootMargin?: string }) {
+  const ref = useRef<T | null>(null);
+  const [active, setActive] = useState(false);
+
+  useEffect(() => {
+    if (active) {
+      return;
+    }
+    const node = ref.current;
+    if (!node || typeof IntersectionObserver === "undefined") {
+      setActive(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setActive(true);
+        }
+      },
+      { rootMargin: options?.rootMargin ?? "240px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [active, options?.rootMargin]);
+
+  return { ref, active };
+}
+
 export function AssistantPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -469,23 +518,35 @@ export function AssistantPage() {
   );
   const [selectedTaskProfileId, setSelectedTaskProfileId] = useState<AgentTaskProfileId>("default");
   const setupStarterApplied = useRef(false);
+  const actionCardsSection = useSectionActivation<HTMLDivElement>({ rootMargin: "1200px 0px" });
+  const issueInboxSection = useSectionActivation<HTMLDivElement>();
+  const outcomeFeedSection = useSectionActivation<HTMLDivElement>();
+  const actionCardsEnabled = actionCardsSection.active;
+  const issueInboxEnabled = issueInboxSection.active;
+  const outcomeFeedEnabled = outcomeFeedSection.active;
+  const workflowDataEnabled = actionCardsEnabled || outcomeFeedEnabled;
 
   const sessionQuery = useQuery({
-    queryKey: ["assistant-shell", "session"],
+    queryKey: systemKeys.session(),
     queryFn: () => systemApi.getSession(),
-    refetchInterval: 10_000,
+    retry: 0,
+    refetchInterval: 20_000,
   });
 
   const stateQuery = useQuery({
-    queryKey: ["assistant-shell", "state"],
+    queryKey: systemKeys.state(),
     queryFn: () => systemApi.getState(),
-    refetchInterval: 10_000,
+    enabled: actionCardsEnabled,
+    retry: 0,
+    refetchInterval: false,
   });
 
   const observabilityQuery = useQuery({
-    queryKey: ["assistant-shell", "observability-overview"],
+    queryKey: systemKeys.observabilityOverview(),
     queryFn: () => systemApi.getObservabilityOverview(),
-    refetchInterval: 20_000,
+    enabled: actionCardsEnabled || outcomeFeedEnabled,
+    retry: 0,
+    refetchInterval: actionCardsEnabled || outcomeFeedEnabled ? 20_000 : false,
   });
 
   const templatesQuery = useQuery({
@@ -502,31 +563,36 @@ export function AssistantPage() {
   const incidentsQuery = useQuery({
     queryKey: ["assistant-shell", "incidents"],
     queryFn: () => systemApi.listDiagnosisIncidents({ limit: 8 }),
-    refetchInterval: 20_000,
+    enabled: issueInboxEnabled,
+    refetchInterval: issueInboxEnabled ? 20_000 : false,
   });
 
   const autoFixQuery = useQuery({
     queryKey: ["assistant-shell", "auto-fix"],
     queryFn: () => systemApi.listAutoFixActions({ limit: 8 }),
-    refetchInterval: 20_000,
+    enabled: issueInboxEnabled,
+    refetchInterval: issueInboxEnabled ? 20_000 : false,
   });
 
   const metricsQuery = useQuery({
     queryKey: ["assistant-shell", "auto-fix-metrics"],
     queryFn: () => systemApi.getAutoFixMetrics(),
-    refetchInterval: 30_000,
+    enabled: outcomeFeedEnabled,
+    refetchInterval: outcomeFeedEnabled ? 30_000 : false,
   });
 
   const learningOverviewQuery = useQuery({
-    queryKey: ["assistant-shell", "learning-overview"],
+    queryKey: systemKeys.learningOverview(6),
     queryFn: () => learningApi.getOverview(6),
+    retry: 0,
     refetchInterval: 20_000,
   });
 
   const loopPolicyQuery = useQuery({
     queryKey: ["assistant-shell", "loop-policy"],
     queryFn: () => systemApi.getAgentLoopPolicy(),
-    refetchInterval: 20_000,
+    enabled: outcomeFeedEnabled,
+    refetchInterval: outcomeFeedEnabled ? 20_000 : false,
   });
 
   const expertModeQuery = useQuery({
@@ -538,7 +604,8 @@ export function AssistantPage() {
   const loopRunsQuery = useQuery({
     queryKey: ["assistant-shell", "loop-runs"],
     queryFn: () => systemApi.listAgentLoopRuns({ limit: 8 }),
-    refetchInterval: 20_000,
+    enabled: outcomeFeedEnabled,
+    refetchInterval: outcomeFeedEnabled ? 20_000 : false,
   });
 
   const agentRunsQuery = useQuery({
@@ -548,7 +615,7 @@ export function AssistantPage() {
   });
 
   const diagnosticsQuery = useQuery({
-    queryKey: ["assistant-shell", "diagnostics"],
+    queryKey: systemKeys.assistantDiagnostics(),
     queryFn: () => assistantDiagnosticsApi.get(),
     refetchInterval: 10_000,
   });
@@ -556,7 +623,8 @@ export function AssistantPage() {
   const workflowsQuery = useQuery({
     queryKey: ["assistant-shell", "workflows"],
     queryFn: () => workflowsApi.list({ limit: 6 }),
-    refetchInterval: 20_000,
+    enabled: workflowDataEnabled,
+    refetchInterval: workflowDataEnabled ? 20_000 : false,
   });
 
   const workflowSeeds = workflowsQuery.data?.items.slice(0, 3) ?? [];
@@ -564,6 +632,7 @@ export function AssistantPage() {
     queries: workflowSeeds.map((workflow) => ({
       queryKey: ["assistant-shell", "workflow-overview", workflow.id],
       queryFn: () => systemApi.getWorkflowOverview(workflow.id, { recentRunLimit: 4 }),
+      enabled: workflowDataEnabled,
       staleTime: 20_000,
     })),
   });
@@ -571,7 +640,8 @@ export function AssistantPage() {
   const skillsQuery = useQuery({
     queryKey: ["assistant-shell", "skills"],
     queryFn: () => skillsApi.listSkills(),
-    refetchInterval: 20_000,
+    enabled: actionCardsEnabled,
+    refetchInterval: actionCardsEnabled ? 20_000 : false,
   });
 
   const automationsQuery = useQuery({
@@ -583,31 +653,36 @@ export function AssistantPage() {
   const catalogQuery = useQuery({
     queryKey: ["assistant-shell", "skill-catalog"],
     queryFn: () => skillsApi.listCatalog({ limit: 6 }),
-    refetchInterval: 30_000,
+    enabled: actionCardsEnabled,
+    refetchInterval: actionCardsEnabled ? 30_000 : false,
   });
 
   const sourcesQuery = useQuery({
     queryKey: ["assistant-shell", "skill-sources"],
     queryFn: () => skillsApi.listSources(),
-    refetchInterval: 30_000,
+    enabled: actionCardsEnabled,
+    refetchInterval: actionCardsEnabled ? 30_000 : false,
   });
 
   const fleetOverviewQuery = useQuery({
     queryKey: ["assistant-shell", "fleet-overview"],
     queryFn: () => fleetApi.getOverview(),
-    refetchInterval: 15_000,
+    enabled: actionCardsEnabled,
+    refetchInterval: actionCardsEnabled ? 15_000 : false,
   });
 
   const satellitesQuery = useQuery({
     queryKey: ["assistant-shell", "satellites"],
     queryFn: () => fleetApi.listSatellites({ limit: 6 }),
-    refetchInterval: 15_000,
+    enabled: actionCardsEnabled,
+    refetchInterval: actionCardsEnabled ? 15_000 : false,
   });
 
   const pairingRequestsQuery = useQuery({
     queryKey: ["assistant-shell", "satellite-pairing-requests"],
     queryFn: () => fleetApi.listPairingRequests(),
-    refetchInterval: 15_000,
+    enabled: actionCardsEnabled,
+    refetchInterval: actionCardsEnabled ? 15_000 : false,
   });
 
   const alertsQuery = useQuery({
@@ -619,19 +694,22 @@ export function AssistantPage() {
   const marketplaceAssetsQuery = useQuery({
     queryKey: ["assistant-shell", "marketplace-assets"],
     queryFn: () => marketplaceApi.listAssets(),
-    refetchInterval: 30_000,
+    enabled: actionCardsEnabled,
+    refetchInterval: actionCardsEnabled ? 30_000 : false,
   });
 
   const marketplaceCreatorsQuery = useQuery({
     queryKey: ["assistant-shell", "marketplace-creators"],
     queryFn: () => marketplaceApi.listCreators(),
-    refetchInterval: 30_000,
+    enabled: actionCardsEnabled,
+    refetchInterval: actionCardsEnabled ? 30_000 : false,
   });
 
   const marketplaceRequestsQuery = useQuery({
     queryKey: ["assistant-shell", "marketplace-requests"],
     queryFn: () => marketplaceApi.listRequests(),
-    refetchInterval: 30_000,
+    enabled: actionCardsEnabled,
+    refetchInterval: actionCardsEnabled ? 30_000 : false,
   });
 
   const systemIntentMutation = useMutation({
@@ -649,8 +727,8 @@ export function AssistantPage() {
       }),
     onSuccess: (result) => {
       toast.success(result.message);
-      void queryClient.invalidateQueries({ queryKey: ["assistant-shell", "session"] });
-      void queryClient.invalidateQueries({ queryKey: ["assistant-shell", "state"] });
+      void queryClient.invalidateQueries({ queryKey: systemKeys.session() });
+      void queryClient.invalidateQueries({ queryKey: systemKeys.state() });
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "System action failed");
@@ -1248,55 +1326,101 @@ export function AssistantPage() {
               templatePending={executeTemplateMutation.isPending}
             />
 
-            <ActionCardsSection
-              workflowCards={workflowActionCards}
-              workflowOverviews={workflowOverviews}
-              installedSkills={installedSkills}
-              catalogItems={catalogItems}
-              marketplaceCards={marketplaceCards}
-              marketplaceCreators={marketplaceCreators}
-              marketplaceRequests={marketplaceRequests}
-              marketplaceGoalSeed={goal.trim() || intentResult?.objective}
-              marketplaceIntentResult={intentResult}
-              sources={sources}
-              fleetOverview={fleetOverviewQuery.data}
-              degradedSatellites={degradedSatellites}
-              pairingRequests={pairingRequests}
-              session={sessionQuery.data}
-              snapshot={stateQuery.data}
-              observability={observabilityQuery.data}
-              activeAlerts={activeAlerts}
-              onDeploy={(workflowId, draftId, runNow, includeExport) =>
-                deployDraftMutation.mutate({ workflowId, draftId, runNow, includeExport })}
-              onInstallSkill={(skillId, sourceId) =>
-                installSkillMutation.mutate({ skillId, sourceId })}
-              onUpdateSkill={(skillId) => updateSkillMutation.mutate(skillId)}
-              onVerifySkill={(skillId) => verifySkillMutation.mutate(skillId)}
-              onSupportMarketplaceAsset={(assetId) => supportMarketplaceAssetMutation.mutate(assetId)}
-              onToggleSource={(sourceId, enabled) => toggleSourceMutation.mutate({ sourceId, enabled })}
-              onSystemIntent={(action, layout, reason) =>
-                systemIntentMutation.mutate({ action, layout, reason })}
-              onApprovePairing={(satelliteId) => approvePairingMutation.mutate(satelliteId)}
-              onRejectPairing={(satelliteId) =>
-                rejectPairingMutation.mutate({
-                  satelliteId,
-                  reason: "Rejected from assistant fleet action card.",
-                })}
-              onAcknowledgeAlert={(alertId) =>
-                acknowledgeAlertMutation.mutate({
-                  alertId,
-                  note: "Acknowledged from assistant observability card.",
-                })}
-              deployPending={deployDraftMutation.isPending}
-              installPending={installSkillMutation.isPending}
-              updatePending={updateSkillMutation.isPending}
-              verifyPending={verifySkillMutation.isPending}
-              supportPending={supportMarketplaceAssetMutation.isPending}
-              toggleSourcePending={toggleSourceMutation.isPending}
-              systemIntentPending={systemIntentMutation.isPending}
-              pairingPending={approvePairingMutation.isPending || rejectPairingMutation.isPending}
-              alertPending={acknowledgeAlertMutation.isPending}
-            />
+            <div ref={actionCardsSection.ref}>
+              {actionCardsEnabled ? (
+                <ActionCardsSection
+                  workflowCards={workflowActionCards}
+                  workflowOverviews={workflowOverviews}
+                  installedSkills={installedSkills}
+                  catalogItems={catalogItems}
+                  marketplaceCards={marketplaceCards}
+                  marketplaceCreators={marketplaceCreators}
+                  marketplaceRequests={marketplaceRequests}
+                  marketplaceGoalSeed={goal.trim() || intentResult?.objective}
+                  marketplaceIntentResult={intentResult}
+                  sources={sources}
+                  fleetOverview={fleetOverviewQuery.data}
+                  degradedSatellites={degradedSatellites}
+                  pairingRequests={pairingRequests}
+                  session={sessionQuery.data}
+                  snapshot={stateQuery.data}
+                  observability={observabilityQuery.data}
+                  activeAlerts={activeAlerts}
+                  onDeploy={(workflowId, draftId, runNow, includeExport) =>
+                    deployDraftMutation.mutate({ workflowId, draftId, runNow, includeExport })}
+                  onInstallSkill={(skillId, sourceId) =>
+                    installSkillMutation.mutate({ skillId, sourceId })}
+                  onUpdateSkill={(skillId) => updateSkillMutation.mutate(skillId)}
+                  onVerifySkill={(skillId) => verifySkillMutation.mutate(skillId)}
+                  onSupportMarketplaceAsset={(assetId) => supportMarketplaceAssetMutation.mutate(assetId)}
+                  onToggleSource={(sourceId, enabled) => toggleSourceMutation.mutate({ sourceId, enabled })}
+                  onSystemIntent={(action, layout, reason) =>
+                    systemIntentMutation.mutate({ action, layout, reason })}
+                  onApprovePairing={(satelliteId) => approvePairingMutation.mutate(satelliteId)}
+                  onRejectPairing={(satelliteId) =>
+                    rejectPairingMutation.mutate({
+                      satelliteId,
+                      reason: "Rejected from assistant fleet action card.",
+                    })}
+                  onAcknowledgeAlert={(alertId) =>
+                    acknowledgeAlertMutation.mutate({
+                      alertId,
+                      note: "Acknowledged from assistant observability card.",
+                    })}
+                  deployPending={deployDraftMutation.isPending}
+                  installPending={installSkillMutation.isPending}
+                  updatePending={updateSkillMutation.isPending}
+                  verifyPending={verifySkillMutation.isPending}
+                  supportPending={supportMarketplaceAssetMutation.isPending}
+                  toggleSourcePending={toggleSourceMutation.isPending}
+                  systemIntentPending={systemIntentMutation.isPending}
+                  pairingPending={approvePairingMutation.isPending || rejectPairingMutation.isPending}
+                  alertPending={acknowledgeAlertMutation.isPending}
+                />
+              ) : (
+                <DeferredAssistantSection
+                  eyebrow="Action cards"
+                  title="Workflow, skills, marketplace, fleet, and system controls load on demand"
+                  description="Friday delays these multi-surface queries until you scroll here so the assistant shell does not prefetch every operator surface on first paint."
+                >
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Link
+                      className="inline-flex items-center justify-center rounded-2xl bg-[var(--accent-strong)] px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-[var(--accent-soft)]"
+                      data-testid="assistant-marketplace-request-skill"
+                      to={buildAssistantMarketplaceRequestHref({
+                        requestKind: "skill",
+                        goalSeed: goal.trim() || intentResult?.objective,
+                        intentResult,
+                      })}
+                    >
+                      Post skill request
+                    </Link>
+                    <Link
+                      className="inline-flex items-center justify-center rounded-2xl bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/[0.14]"
+                      data-testid="assistant-marketplace-request-workflow"
+                      to={buildAssistantMarketplaceRequestHref({
+                        requestKind: "workflow",
+                        goalSeed: goal.trim() || intentResult?.objective,
+                        intentResult,
+                      })}
+                    >
+                      Post workflow request
+                    </Link>
+                    <Link
+                      className="inline-flex items-center justify-center rounded-2xl bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/[0.14]"
+                      data-testid="assistant-marketplace-request-agent"
+                      to={buildAssistantMarketplaceRequestHref({
+                        requestKind: "agent",
+                        goalSeed: goal.trim() || intentResult?.objective,
+                        intentResult,
+                      })}
+                    >
+                      Post agent request
+                    </Link>
+                  </div>
+                </DeferredAssistantSection>
+              )}
+            </div>
           </div>
 
           <div className="space-y-6">
@@ -1326,32 +1450,52 @@ export function AssistantPage() {
 
             <RecoveryCommandCenterSection paths={recoveryPaths} />
 
-            <IssueInboxSection
-              issues={issues}
-              incidents={incidents}
-              autoFixActions={autoFixActions}
-              onApproveFix={(actionId) => approveFixMutation.mutate(actionId)}
-              onExecuteFix={(actionId) => executeFixMutation.mutate(actionId)}
-              onDenyFix={(actionId) => denyFixMutation.mutate(actionId)}
-              onRollbackFix={(actionId) => rollbackFixMutation.mutate(actionId)}
-              approvePending={approveFixMutation.isPending}
-              executePending={executeFixMutation.isPending}
-              denyPending={denyFixMutation.isPending}
-              rollbackPending={rollbackFixMutation.isPending}
-            />
+            <div ref={issueInboxSection.ref}>
+              {issueInboxEnabled ? (
+                <IssueInboxSection
+                  issues={issues}
+                  incidents={incidents}
+                  autoFixActions={autoFixActions}
+                  onApproveFix={(actionId) => approveFixMutation.mutate(actionId)}
+                  onExecuteFix={(actionId) => executeFixMutation.mutate(actionId)}
+                  onDenyFix={(actionId) => denyFixMutation.mutate(actionId)}
+                  onRollbackFix={(actionId) => rollbackFixMutation.mutate(actionId)}
+                  approvePending={approveFixMutation.isPending}
+                  executePending={executeFixMutation.isPending}
+                  denyPending={denyFixMutation.isPending}
+                  rollbackPending={rollbackFixMutation.isPending}
+                />
+              ) : (
+                <DeferredAssistantSection
+                  eyebrow="Issue inbox"
+                  title="Detailed incidents and auto-fix evidence load when needed"
+                  description="Friday keeps the high-signal issue list above, then fetches incident history and fix-plan detail only once you reach the inbox."
+                />
+              )}
+            </div>
 
-            <OutcomeFeedSection
-              loopRuns={loopRuns}
-              workflowOverviews={workflowOverviews}
-              observability={observabilityQuery.data}
-              metricsSummary={metricsQuery.data}
-              loopPolicy={loopPolicyQuery.data}
-              expertModeEnabled={expertModeQuery.data?.enabled ?? false}
-              onToggleExpertMode={(enabled) => toggleExpertModeMutation.mutate(enabled)}
-              onPauseLoop={(loopRunId) => pauseLoopMutation.mutate(loopRunId)}
-              togglePending={toggleExpertModeMutation.isPending}
-              pausePending={pauseLoopMutation.isPending}
-            />
+            <div ref={outcomeFeedSection.ref}>
+              {outcomeFeedEnabled ? (
+                <OutcomeFeedSection
+                  loopRuns={loopRuns}
+                  workflowOverviews={workflowOverviews}
+                  observability={observabilityQuery.data}
+                  metricsSummary={metricsQuery.data}
+                  loopPolicy={loopPolicyQuery.data}
+                  expertModeEnabled={expertModeQuery.data?.enabled ?? false}
+                  onToggleExpertMode={(enabled) => toggleExpertModeMutation.mutate(enabled)}
+                  onPauseLoop={(loopRunId) => pauseLoopMutation.mutate(loopRunId)}
+                  togglePending={toggleExpertModeMutation.isPending}
+                  pausePending={pauseLoopMutation.isPending}
+                />
+              ) : (
+                <DeferredAssistantSection
+                  eyebrow="Outcome feed"
+                  title="Loop runs, rollback metrics, and workflow outcomes load below the fold"
+                  description="Friday defers long-tail telemetry until you reach this section instead of polling it on every assistant page load."
+                />
+              )}
+            </div>
           </div>
         </div>
       </ShellCard>
@@ -1531,10 +1675,16 @@ function AssistantRunPulseCard(props: {
         </label>
         <div className="grid gap-2 text-xs text-white/55">
           <p className="font-medium uppercase tracking-[0.18em] text-white/40">Context cost</p>
+          <p>Conversation: {summarizeContextCostComponent(run, "conversation_input")}</p>
+          <p>System prompt: {summarizeContextCostComponent(run, "system_prompt")}</p>
+          <p>Tool schema: {summarizeContextCostComponent(run, "tool_schema")}</p>
           <p>Workspace: {summarizeContextCostComponent(run, "workspace_context")}</p>
           <p>Skills: {summarizeContextCostComponent(run, "starter_skills")}</p>
           <p>MCP: {summarizeContextCostComponent(run, "mcp")}</p>
           <p>Subagents: {summarizeContextCostComponent(run, "subagents")}</p>
+          <p>Estimated input: {run.contextCostSummary?.totalEstimatedInputTokens ?? "n/a"} tokens</p>
+          <p>Actual input: {run.contextCostSummary?.actualUsage?.inputTokens ?? "n/a"} tokens</p>
+          <p>Delta vs estimate: {summarizeContextUsageDelta(run)} tokens</p>
         </div>
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -3188,9 +3338,28 @@ function EmptyAssistantState(props: {
   );
 }
 
+function DeferredAssistantSection(props: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  children?: ReactNode;
+}) {
+  return (
+    <ShellCard eyebrow={props.eyebrow} title={props.title}>
+      <p className="text-sm text-white/60">{props.description}</p>
+      {props.children}
+    </ShellCard>
+  );
+}
+
 async function invalidateAssistantShell(queryClient: ReturnType<typeof useQueryClient>) {
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: ["assistant-shell"] }),
+    queryClient.invalidateQueries({ queryKey: systemKeys.session() }),
+    queryClient.invalidateQueries({ queryKey: systemKeys.state() }),
+    queryClient.invalidateQueries({ queryKey: systemKeys.observabilityOverview() }),
+    queryClient.invalidateQueries({ queryKey: systemKeys.assistantDiagnostics() }),
+    queryClient.invalidateQueries({ queryKey: systemKeys.learningOverview(6) }),
     queryClient.invalidateQueries({ queryKey: ["agent-os", "runs"] }),
   ]);
 }

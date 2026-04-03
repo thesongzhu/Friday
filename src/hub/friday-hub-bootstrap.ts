@@ -2348,6 +2348,17 @@ export async function createFridayHub(
         }
         const episode = await worldModelEpisodeExtractor.extractFromRun(input.runId, userId);
         if (episode) {
+          const trimmedResponse = input.response.trim();
+          const shouldSkipLowValueEpisode =
+            input.status === "completed"
+            && episode.steps.length === 0
+            && (trimmedResponse.length === 0 || !trimmedResponse.startsWith("ERROR:"));
+          if (shouldSkipLowValueEpisode) {
+            console.info(
+              `[friday][marker] world_model_episode_skipped_low_value runId=${input.runId} userId=${userId}`,
+            );
+            return;
+          }
           await worldModelStateManager.updateFromEpisode(userId, episode);
           console.info(
             `[friday][marker] world_model_episode_extracted runId=${input.runId} userId=${userId} steps=${String(episode.steps.length)}`,

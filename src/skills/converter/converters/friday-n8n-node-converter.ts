@@ -9,7 +9,7 @@
  *   - Complex n8n credential UX mapped to env/input secrets.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { FridayDomainError } from "#errors";
 
@@ -71,8 +71,7 @@ export function createFridayN8nNodeConverter(): FridaySkillConverter {
       let parsed: unknown;
       try {
         parsed = JSON.parse(content);
-      } catch (err) {
-      console.warn("[friday][n8n-node-converter] operation failed:", err instanceof Error ? err.message : String(err));
+      } catch {
         return null;
       }
 
@@ -106,7 +105,7 @@ export function createFridayN8nNodeConverter(): FridaySkillConverter {
       source: FridaySkillConversionSource,
       ctx: FridaySkillConverterContext,
     ): Promise<FridaySkillConverterResult> {
-      const content = resolveSourceContent(source);
+      const content = resolveSourceContent(source, true);
       if (!content) {
         throw new FridayDomainError("VALIDATION_ERROR", "N8nNodeConverter requires a source URI pointing to a JSON file or contentBase64", { httpStatus: 400 });
       }
@@ -199,12 +198,14 @@ export function createFridayN8nNodeConverter(): FridaySkillConverter {
 
 // ─── Helpers ───
 
-function resolveSourceContent(source: FridaySkillConversionSource): string | null {
+function resolveSourceContent(source: FridaySkillConversionSource, logFailures = false): string | null {
   if (source.contentBase64) {
     try {
       return Buffer.from(source.contentBase64, "base64").toString("utf-8");
     } catch (err) {
-      console.warn("[friday][n8n-node-converter] operation failed:", err instanceof Error ? err.message : String(err));
+      if (logFailures) {
+        console.warn("[friday][n8n-node-converter] operation failed:", err instanceof Error ? err.message : String(err));
+      }
       return null;
     }
   }
@@ -215,15 +216,25 @@ function resolveSourceContent(source: FridaySkillConversionSource): string | nul
 
   // If URI is a directory, look for common n8n node file names
   if (existsSync(source.uri)) {
-    const content = tryReadAsFile(source.uri);
-    if (content !== null) {
-      return content;
+    try {
+      const stat = statSync(source.uri);
+      if (stat.isFile()) {
+        return tryReadAsFile(source.uri, logFailures);
+      }
+      if (!stat.isDirectory()) {
+        return null;
+      }
+    } catch (err) {
+      if (logFailures) {
+        console.warn("[friday][n8n-node-converter] operation failed:", err instanceof Error ? err.message : String(err));
+      }
+      return null;
     }
 
     // Try common n8n node file patterns
     for (const candidate of ["node.json", "n8n-node.json", "descriptor.json"]) {
       const filePath = join(source.uri, candidate);
-      const fileContent = tryReadAsFile(filePath);
+      const fileContent = tryReadAsFile(filePath, logFailures);
       if (fileContent !== null) {
         return fileContent;
       }
@@ -233,15 +244,20 @@ function resolveSourceContent(source: FridaySkillConversionSource): string | nul
   return null;
 }
 
-function tryReadAsFile(filePath: string): string | null {
+function tryReadAsFile(filePath: string, logFailures = false): string | null {
   try {
     if (!existsSync(filePath)) {
       return null;
     }
-    const stat = readFileSync(filePath, "utf-8");
-    return stat;
+    const stat = statSync(filePath);
+    if (!stat.isFile()) {
+      return null;
+    }
+    return readFileSync(filePath, "utf-8");
   } catch (err) {
+    if (logFailures) {
       console.warn("[friday][n8n-node-converter] operation failed:", err instanceof Error ? err.message : String(err));
+    }
     return null;
   }
 }

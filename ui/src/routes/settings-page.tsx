@@ -16,6 +16,7 @@ import { providersApi } from "@/lib/api/providers";
 import { securityApi } from "@/lib/api/security";
 import { systemApi } from "@/lib/api/system";
 import { apiClient } from "@/lib/api/client";
+import { useAuth } from "@/hooks/use-auth";
 import { ShellCard, StatusPill, ActionButton } from "@/components/core/primitives";
 import { systemKeys } from "@/lib/system/query-keys";
 import { summarizeHealthReasons } from "@/lib/system/view-models";
@@ -59,16 +60,12 @@ function applyDraftToPreferencePayload(draft: {
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState(() => buildPersonaDraft());
+  const { user, scopes } = useAuth();
 
   const { data: health } = useQuery({
-    queryKey: ["settings", "health"],
+    queryKey: systemKeys.health(),
     queryFn: () => healthApi.getHealth(),
     refetchInterval: 30_000,
-  });
-
-  const { data: me } = useQuery({
-    queryKey: ["settings", "me"],
-    queryFn: () => healthApi.getMe(),
   });
 
   const { data: providers = [] } = useQuery({
@@ -136,7 +133,7 @@ export function SettingsPage() {
   });
 
   const { data: learningOverview } = useQuery({
-    queryKey: ["settings", "learning-overview"],
+    queryKey: systemKeys.learningOverview(12),
     queryFn: () => learningApi.getOverview(12),
     retry: 0,
   });
@@ -168,7 +165,7 @@ export function SettingsPage() {
       toast.success("Route pinned");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["settings", "routing-explain"] }),
-        queryClient.invalidateQueries({ queryKey: ["settings", "learning-overview"] }),
+        queryClient.invalidateQueries({ queryKey: systemKeys.learningOverview(12) }),
       ]);
     },
     onError: (error) => {
@@ -183,7 +180,7 @@ export function SettingsPage() {
       toast.success("Route penalty cleared");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["settings", "routing-explain"] }),
-        queryClient.invalidateQueries({ queryKey: ["settings", "learning-overview"] }),
+        queryClient.invalidateQueries({ queryKey: systemKeys.learningOverview(12) }),
       ]);
     },
     onError: (error) => {
@@ -200,7 +197,7 @@ export function SettingsPage() {
       }),
     onSuccess: async () => {
       toast.success("Lesson updated");
-      await queryClient.invalidateQueries({ queryKey: ["settings", "learning-overview"] });
+      await queryClient.invalidateQueries({ queryKey: systemKeys.learningOverview(12) });
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Could not update lesson");
@@ -216,7 +213,7 @@ export function SettingsPage() {
       }),
     onSuccess: async () => {
       toast.success("Pattern demoted");
-      await queryClient.invalidateQueries({ queryKey: ["settings", "learning-overview"] });
+      await queryClient.invalidateQueries({ queryKey: systemKeys.learningOverview(12) });
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Could not demote pattern");
@@ -290,20 +287,20 @@ export function SettingsPage() {
         </ShellCard>
 
         <ShellCard eyebrow="Identity" title="Operator Access">
-          {me ? (
+          {user ? (
             <div className="space-y-3 text-sm text-white/70">
               <div className="flex items-center justify-between gap-4">
                 <span>User</span>
-                <span className="font-medium text-white">{me.user.displayName}</span>
+                <span className="font-medium text-white">{user.displayName}</span>
               </div>
               <div className="flex items-center justify-between gap-4">
                 <span>Role</span>
-                <StatusPill>{me.user.role}</StatusPill>
+                <StatusPill>{user.role}</StatusPill>
               </div>
               <div>
                 <p className="mb-2 text-white/50">Scopes</p>
                 <div className="flex flex-wrap gap-2">
-                  {me.scopes.map((scope) => (
+                  {(scopes ?? []).map((scope) => (
                     <StatusPill key={scope}>{scope}</StatusPill>
                   ))}
                 </div>

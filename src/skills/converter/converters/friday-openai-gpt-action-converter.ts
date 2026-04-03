@@ -10,7 +10,7 @@
  *   - Auth mapping: API key → secret, Bearer → secret, OAuth2 → warning
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import YAML from "yaml";
 import { FridayDomainError } from "#errors";
@@ -152,12 +152,12 @@ export function createFridayOpenAiGptActionConverter(
       source: FridaySkillConversionSource,
       ctx: FridaySkillConverterContext,
     ): Promise<FridaySkillConverterResult> {
-      const content = resolveSourceContent(source);
+      const content = resolveSourceContent(source, true);
       if (!content) {
         throw new FridayDomainError("VALIDATION_ERROR", "OpenAiGptActionConverter requires a source URI pointing to an OpenAPI JSON/YAML file or contentBase64", { httpStatus: 400 });
       }
 
-      const parsed = parseJsonOrYaml(content);
+      const parsed = parseJsonOrYaml(content, { logFailures: true });
       if (parsed === null) {
         throw new FridayDomainError("PARSE_ERROR", "OpenAiGptActionConverter: source is not valid JSON or YAML", { httpStatus: 422 });
       }
@@ -241,12 +241,14 @@ interface AuthInfo {
 
 // ─── Source resolution ───
 
-function resolveSourceContent(source: FridaySkillConversionSource): string | null {
+function resolveSourceContent(source: FridaySkillConversionSource, logFailures = false): string | null {
   if (source.contentBase64) {
     try {
       return Buffer.from(source.contentBase64, "base64").toString("utf-8");
     } catch (err) {
-    console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
+      if (logFailures) {
+        console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
+      }
       return null;
     }
   }
@@ -258,10 +260,27 @@ function resolveSourceContent(source: FridaySkillConversionSource): string | nul
   // Try reading directly as a file
   if (existsSync(source.uri)) {
     try {
-      return readFileSync(source.uri, "utf-8");
+      const stat = statSync(source.uri);
+      if (stat.isFile()) {
+        return readFileSync(source.uri, "utf-8");
+      }
     } catch (err) {
-    console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
-      // Not a file, try directory
+      if (logFailures) {
+        console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
+      }
+      return null;
+    }
+
+    try {
+      const stat = statSync(source.uri);
+      if (!stat.isDirectory()) {
+        return null;
+      }
+    } catch (err) {
+      if (logFailures) {
+        console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
+      }
+      return null;
     }
 
     // Try common OpenAPI file names in directory
@@ -275,7 +294,9 @@ function resolveSourceContent(source: FridaySkillConversionSource): string | nul
         try {
           return readFileSync(filePath, "utf-8");
         } catch (err) {
-    console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
+          if (logFailures) {
+            console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
+          }
           continue;
         }
       }
@@ -287,13 +308,14 @@ function resolveSourceContent(source: FridaySkillConversionSource): string | nul
 
 // ─── Parsing ───
 
-function parseJsonOrYaml(content: string): unknown | null {
+function parseJsonOrYaml(content: string, options?: { logFailures?: boolean }): unknown | null {
   // Try JSON first
   try {
     return JSON.parse(content);
   } catch (err) {
-    console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
-    // Not JSON, try YAML
+    if (options?.logFailures) {
+      console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
+    }
   }
 
   try {
@@ -302,8 +324,9 @@ function parseJsonOrYaml(content: string): unknown | null {
       return result;
     }
   } catch (err) {
-    console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
-    // Not YAML either
+    if (options?.logFailures) {
+      console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
+    }
   }
 
   return null;
@@ -372,9 +395,8 @@ function extractServerHosts(spec: OpenApiSpec): string[] {
       if (url.hostname && !hosts.includes(url.hostname)) {
         hosts.push(url.hostname);
       }
-    } catch (err) {
-    console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
-      // Not a valid URL, skip
+    } catch {
+      // Ignore invalid URL candidates during detection/conversion.
     }
   }
 

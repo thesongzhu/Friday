@@ -22,16 +22,17 @@ describe("FridayEpisodeExtractor", () => {
     task: string,
     status: string,
     durationMs = 1000,
+    responseText?: string,
   ) {
     db.withWriteTransaction((conn) => {
       conn
         .prepare(
           `INSERT INTO friday_agent_runs
-             (id, session_key, task, status,
+             (id, session_key, task, status, response_text,
               duration_ms, usage_input, usage_output, created_at)
-           VALUES (?, 'sess-1', ?, ?, ?, 0, 0, datetime('now'))`,
+           VALUES (?, 'sess-1', ?, ?, ?, ?, 0, 0, datetime('now'))`,
         )
-        .run(runId, task, status, durationMs);
+        .run(runId, task, status, responseText ?? null, durationMs);
     });
   }
 
@@ -82,8 +83,8 @@ describe("FridayEpisodeExtractor", () => {
     });
   }
 
-  it("extracts a minimal episode when run has no tool events", async () => {
-    seedRun("run-empty", "do nothing", "completed");
+  it("extracts a minimal failure episode when run has no tool events", async () => {
+    seedRun("run-empty", "do nothing", "failed", 1000, "ERROR: no tool was available");
 
     const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
     const episode = await extractor.extractFromRun("run-empty", "user-1");
@@ -92,7 +93,7 @@ describe("FridayEpisodeExtractor", () => {
     expect(episode!.runId).toBe("run-empty");
     expect(episode!.steps).toEqual([]);
     expect(episode!.toolSequence).toEqual([]);
-    expect(episode!.outcome).toBe("success");
+    expect(episode!.outcome).toBe("failure");
   });
 
   it("returns null when run ID does not exist at all", async () => {
@@ -100,6 +101,34 @@ describe("FridayEpisodeExtractor", () => {
     const episode = await extractor.extractFromRun("nonexistent-run", "user-1");
 
     // No events and no run record → null (returns null on empty events)
+    expect(episode).toBeNull();
+  });
+
+  it("skips trivial completed runs with no tool activity and a one-line response", async () => {
+    seedRun("run-trivial", "say ok", "completed", 100, "OK");
+
+    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
+    const episode = await extractor.extractFromRun("run-trivial", "user-1");
+
+    expect(episode).toBeNull();
+    const rows = db.withReadConnection((conn) =>
+      conn.prepare("SELECT * FROM friday_episodes WHERE run_id = ?").all("run-trivial"),
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it("skips longer completed chat-only runs without tool activity", async () => {
+    seedRun(
+      "run-chat-only",
+      "explain the deployment policy",
+      "completed",
+      400,
+      "The deployment policy requires staging verification before production rollout.",
+    );
+
+    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
+    const episode = await extractor.extractFromRun("run-chat-only", "user-1");
+
     expect(episode).toBeNull();
   });
 

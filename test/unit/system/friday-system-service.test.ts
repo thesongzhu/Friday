@@ -326,6 +326,34 @@ describe("createFridaySystemService", () => {
     expect(events.map((event) => event.event)).toContain("system.companion.connected");
   });
 
+  it("reuses cached companion status for repeated session reads until state refreshes it", async () => {
+    const bridge = createCompanionBridge();
+    const getStatus = vi.fn(async () => bridge.getStatus());
+    const fixture = await createServiceFixtureWithOptions({
+      companionBridge: {
+        ...bridge,
+        getStatus,
+      },
+    });
+    allocatedDbs.push(fixture.db);
+
+    const callsAfterStartup = getStatus.mock.calls.length;
+
+    await fixture.service.getSession();
+    const callsAfterFirstSession = getStatus.mock.calls.length;
+    await fixture.service.getSession();
+    const callsAfterSecondSession = getStatus.mock.calls.length;
+    await fixture.service.getState();
+    const callsAfterStateRefresh = getStatus.mock.calls.length;
+    await fixture.service.getSession();
+    const callsAfterSessionPostRefresh = getStatus.mock.calls.length;
+
+    expect(callsAfterFirstSession).toBe(callsAfterStartup + 1);
+    expect(callsAfterSecondSession).toBe(callsAfterFirstSession);
+    expect(callsAfterStateRefresh).toBeGreaterThan(callsAfterFirstSession);
+    expect(callsAfterSessionPostRefresh).toBe(callsAfterStateRefresh);
+  });
+
   it("starts in degraded mode when the companion socket is unavailable", async () => {
     const warn = vi.fn();
     const fixture = await createServiceFixtureWithOptions({

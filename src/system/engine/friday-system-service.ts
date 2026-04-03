@@ -67,6 +67,7 @@ const MAX_FILE_SEARCH_RESULTS = 50;
 const DEFAULT_COMPANION_HEARTBEAT_STALE_MS = 30_000;
 const DEFAULT_REMOTE_AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_REMOTE_ASSERTION_TTL_MS = 2 * 60 * 1000;
+const SESSION_COMPANION_CACHE_TTL_MS = 30_000;
 type FridayWarnSink = (message: string) => void;
 const warnedCompanionMessagesBySink = new WeakMap<FridayWarnSink, Set<string>>();
 
@@ -396,6 +397,17 @@ export async function createFridaySystemService(
   let lastPermissionFingerprint = "";
   let reconnectTimer: NodeJS.Timeout | null = null;
   let reconnectInFlight: Promise<void> | null = null;
+  let cachedSessionCompanion: FridaySystemCompanionStatus | null = null;
+  let cachedSessionPermissions: FridaySystemPermissionGrant[] | null = null;
+  let cachedSessionHealth: FridaySystemHealth | null = null;
+  let cachedSessionSnapshotAt = 0;
+
+  function invalidateSessionCompanionCache(): void {
+    cachedSessionCompanion = null;
+    cachedSessionPermissions = null;
+    cachedSessionHealth = null;
+    cachedSessionSnapshotAt = 0;
+  }
 
   async function emitEvent(
     event: FridaySystemEventName,
@@ -529,6 +541,7 @@ export async function createFridaySystemService(
       try {
         await deps.companionBridge.connect();
         clearCompanionReconnectTimer();
+        invalidateSessionCompanionCache();
         await emitHealthIfChanged("companion_reconnected");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -633,6 +646,37 @@ export async function createFridaySystemService(
     };
   }
 
+  async function readSessionCompanionSnapshot(forceRefresh = false): Promise<{
+    companion: FridaySystemCompanionStatus;
+    permissions: FridaySystemPermissionGrant[];
+    health: FridaySystemHealth;
+  }> {
+    const nowMs = Date.now();
+    if (
+      !forceRefresh
+      && cachedSessionCompanion
+      && cachedSessionPermissions
+      && cachedSessionHealth
+      && nowMs - cachedSessionSnapshotAt < SESSION_COMPANION_CACHE_TTL_MS
+    ) {
+      return {
+        companion: cachedSessionCompanion,
+        permissions: cachedSessionPermissions,
+        health: cachedSessionHealth,
+      };
+    }
+
+    const companion = await deps.companionBridge.getStatus();
+    const permissions = await readPermissions(companion.permissions);
+    await emitCompanionEventsIfChanged(companion, permissions);
+    const health = await readHealth(companion, permissions);
+    cachedSessionCompanion = companion;
+    cachedSessionPermissions = [...permissions];
+    cachedSessionHealth = health;
+    cachedSessionSnapshotAt = nowMs;
+    return { companion, permissions, health };
+  }
+
   async function buildSnapshot(): Promise<FridaySystemSnapshot> {
     const companion = await deps.companionBridge.getStatus();
     const companionSnapshot = companion.connected
@@ -648,6 +692,10 @@ export async function createFridaySystemService(
     const remoteDevices = deps.db.withReadConnection((db) => repository.listRemoteDevices(db));
     const remoteSessions = deps.db.withReadConnection((db) => repository.listRemoteSessions(db, { limit: 200 }));
     const health = await readHealth(companion, permissions);
+    cachedSessionCompanion = companion;
+    cachedSessionPermissions = [...permissions];
+    cachedSessionHealth = health;
+    cachedSessionSnapshotAt = Date.now();
     const browser = deps.getBrowserDiagnostics?.();
     const latestSeenAt = remoteSessions.reduce<string | undefined>((latest, session) => {
       if (!latest) {
@@ -1003,10 +1051,7 @@ export async function createFridaySystemService(
   await emitHealthIfChanged("service_started");
 
   const getSession = async (): Promise<FridaySystemSession> => {
-    const companion = await deps.companionBridge.getStatus();
-    const permissions = await readPermissions(companion.permissions);
-    await emitCompanionEventsIfChanged(companion, permissions);
-    const health = await readHealth(companion, permissions);
+    const { companion, health } = await readSessionCompanionSnapshot();
     return {
       id: sessionId,
       mode,

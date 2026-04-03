@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createFridaySkillConverterRegistry } from "#skills/converter";
 import type {
   FridaySkillConverter,
@@ -175,5 +175,42 @@ describe("FridaySkillConverterRegistry", () => {
     const result = await registry.detect(source);
     expect(result).not.toBeNull();
     expect(result!.converterId).toBe("native");
+  });
+
+  it("short-circuits after a strong heuristic match instead of fanning out through every converter", async () => {
+    const registry = createFridaySkillConverterRegistry();
+    const openApiDetect = vi.fn(async () => ({
+      converterId: "openai-gpt-action",
+      format: "openai-gpt-action" as const,
+      confidence: 0.95,
+      reasons: ["matched openapi filename"],
+    }));
+    const fallbackDetect = vi.fn(async () => ({
+      converterId: "n8n-node",
+      format: "n8n-node" as const,
+      confidence: 0.4,
+      reasons: ["fallback"],
+    }));
+
+    registry.register({
+      id: "n8n-node",
+      displayName: "n8n",
+      priority: 40,
+      detect: fallbackDetect,
+      convert: async () => ({ converterId: "n8n-node", detectedFormat: "n8n-node", drafts: [] }),
+    });
+    registry.register({
+      id: "openai-gpt-action",
+      displayName: "OpenAPI",
+      priority: 10,
+      detect: openApiDetect,
+      convert: async () => ({ converterId: "openai-gpt-action", detectedFormat: "openai-gpt-action", drafts: [] }),
+    });
+
+    const result = await registry.detect({ uri: "/tmp/specs/openapi.yaml" });
+
+    expect(result?.converterId).toBe("openai-gpt-action");
+    expect(openApiDetect).toHaveBeenCalledTimes(1);
+    expect(fallbackDetect).not.toHaveBeenCalled();
   });
 });

@@ -120,16 +120,37 @@ export interface FridayAgentSystemPromptContext {
   conversationContext?: FridayAgentConversationContext;
 }
 
+export type FridayAgentContextCostComponentKind =
+  | "conversation_input"
+  | "system_prompt"
+  | "tool_schema"
+  | "workspace_context"
+  | "starter_skills"
+  | "mcp"
+  | "subagents"
+  | "learned_preferences"
+  | "communication_policy"
+  | "disabled_tools";
+
 export interface FridayAgentContextCostComponent {
-  kind: "workspace_context" | "starter_skills" | "mcp" | "subagents";
+  kind: FridayAgentContextCostComponentKind;
   estimatedChars: number;
   count?: number;
   metadata?: Record<string, unknown>;
+  includedInTotal?: boolean;
+}
+
+export interface FridayAgentContextCostActualUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  deltaInputTokens?: number;
 }
 
 export interface FridayAgentContextCostSummary {
   totalEstimatedChars: number;
+  totalEstimatedInputTokens?: number;
   components: FridayAgentContextCostComponent[];
+  actualUsage?: FridayAgentContextCostActualUsage;
 }
 
 export interface FridayAgentSystemPromptBuildResult {

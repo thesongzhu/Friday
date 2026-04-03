@@ -48,6 +48,8 @@ import type {
 import type {
   CreateFridayAgentRuntimeDeps,
   FridayAgentConversationContext,
+  FridayAgentContextCostComponent,
+  FridayAgentContextCostSummary,
   FridayAgentExecutionContext,
   FridayAgentRuntime,
   FridayAgentRuntimeResult,
@@ -130,6 +132,122 @@ function buildReplyAnchorFallbackResponse(params: {
 function hasExplicitResearchIntent(task: string): boolean {
   return /\b(search|research|look up|lookup|find sources|find source|latest|news|browse|google|compare|price|current|today|now|check online)\b/i.test(task)
     || /(搜索|搜一下|查一下|查一查|上网查|最新|新闻|帮我找资料|对比|价格|多少钱|现在|当前|查查)/.test(task);
+}
+
+function estimateSerializedContentChars(content: FridayAgentMessage["content"]): number {
+  if (typeof content === "string") {
+    return content.length;
+  }
+  return JSON.stringify(content).length;
+}
+
+function estimateConversationInputChars(messages: FridayAgentMessage[]): number {
+  return messages.reduce((sum, message) => sum + estimateSerializedContentChars(message.content), 0);
+}
+
+function estimateToolSchemaChars(tools: FridayAgentToolDefinition[]): number {
+  return JSON.stringify(
+    tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    })),
+  ).length;
+}
+
+function upsertContextCostComponent(
+  components: FridayAgentContextCostComponent[],
+  component: FridayAgentContextCostComponent,
+): void {
+  const existingIndex = components.findIndex((entry) => entry.kind === component.kind);
+  if (existingIndex >= 0) {
+    components[existingIndex] = component;
+  } else {
+    components.push(component);
+  }
+}
+
+function buildRuntimeContextCostSummary(input: {
+  baseSummary?: FridayAgentContextCostSummary;
+  conversationInputChars: number;
+  systemPromptChars: number;
+  toolSchemaChars: number;
+  toolCount: number;
+  learnedPreferenceCount: number;
+  learnedPreferenceChars: number;
+  communicationPolicyChars: number;
+  disabledToolCount: number;
+  disabledToolChars: number;
+}): FridayAgentContextCostSummary {
+  const components = (input.baseSummary?.components ?? []).map((component) => ({
+    ...component,
+    includedInTotal: false,
+  }));
+  upsertContextCostComponent(components, {
+    kind: "conversation_input",
+    estimatedChars: input.conversationInputChars,
+  });
+  upsertContextCostComponent(components, {
+    kind: "system_prompt",
+    estimatedChars: input.systemPromptChars,
+  });
+  upsertContextCostComponent(components, {
+    kind: "tool_schema",
+    estimatedChars: input.toolSchemaChars,
+    count: input.toolCount,
+  });
+  if (input.learnedPreferenceCount > 0 && input.learnedPreferenceChars > 0) {
+    upsertContextCostComponent(components, {
+      kind: "learned_preferences",
+      estimatedChars: input.learnedPreferenceChars,
+      count: input.learnedPreferenceCount,
+      includedInTotal: false,
+    });
+  }
+  if (input.communicationPolicyChars > 0) {
+    upsertContextCostComponent(components, {
+      kind: "communication_policy",
+      estimatedChars: input.communicationPolicyChars,
+      includedInTotal: false,
+    });
+  }
+  if (input.disabledToolCount > 0) {
+    upsertContextCostComponent(components, {
+      kind: "disabled_tools",
+      estimatedChars: input.disabledToolChars,
+      count: input.disabledToolCount,
+      includedInTotal: false,
+    });
+  }
+
+  const totalEstimatedChars = components.reduce((sum, component) =>
+    component.includedInTotal === false ? sum : sum + component.estimatedChars, 0);
+  return {
+    totalEstimatedChars,
+    totalEstimatedInputTokens: Math.max(1, Math.ceil(totalEstimatedChars / 4)),
+    components,
+    actualUsage: input.baseSummary?.actualUsage,
+  };
+}
+
+function attachActualUsageToContextCostSummary(
+  summary: FridayAgentContextCostSummary | undefined,
+  inputTokens: number,
+  outputTokens: number,
+): FridayAgentContextCostSummary | undefined {
+  if (!summary) {
+    return undefined;
+  }
+  return {
+    ...summary,
+    actualUsage: {
+      inputTokens: inputTokens > 0 ? inputTokens : undefined,
+      outputTokens: outputTokens > 0 ? outputTokens : undefined,
+      deltaInputTokens: inputTokens > 0 && summary.totalEstimatedInputTokens !== undefined
+        ? inputTokens - summary.totalEstimatedInputTokens
+        : undefined,
+    },
+  };
 }
 
 // ─── Factory ───
@@ -383,6 +501,8 @@ export function createFridayAgentRuntime(
           durationMs: input.durationMs,
           usageInput: input.usageInput,
           usageOutput: input.usageOutput,
+          ...(input.contextCostSummary ? { contextCostSummary: input.contextCostSummary } : {}),
+          ...(input.taskProfile ? { taskProfile: input.taskProfile } : {}),
           ...(input.images ? { images: input.images } : {}),
           ...(input.finalResponse ? { finalResponse: input.finalResponse } : {}),
         };
@@ -553,27 +673,36 @@ export function createFridayAgentRuntime(
       let latestRoutingDecisionReason: string | undefined;
       let latestLearningAdjusted = false;
       let latestRouteDecisionTrace: FridayAgentActualExecution["routeDecisionTrace"] | undefined;
+      let currentSystemPromptChars = 0;
+      let currentToolSchemaChars = 0;
 
       const estimateRoutingContext = (): NonNullable<FridayAgentLlmStreamParams["routingContext"]> => {
         const estimatedChars =
-          params.task.length
-          + messages.reduce((sum, message) => {
-            if (typeof message.content === "string") {
-              return sum + message.content.length;
-            }
-            return sum + JSON.stringify(message.content).length;
-          }, 0);
+          estimateConversationInputChars(messages)
+          + currentSystemPromptChars
+          + currentToolSchemaChars;
+        const estimatedInputTokens = Math.max(1, Math.ceil(estimatedChars / 4));
         const complexity = resolvedTaskProfile.id === "planning" || resolvedTaskProfile.id === "review"
           ? "complex"
-          : estimatedChars < 1200
+          : estimatedInputTokens < 300
             ? "simple"
-            : "medium";
+            : estimatedInputTokens < 1200
+              ? "medium"
+              : "complex";
         return {
-          estimatedInputTokens: Math.max(1, Math.ceil(estimatedChars / 4)),
+          estimatedInputTokens,
           complexity,
           requiresNativeTools: true,
           taskProfileId: resolvedTaskProfile.id,
         };
+      };
+
+      const refreshContextCostSummaryUsage = (): void => {
+        latestContextCostSummary = attachActualUsageToContextCostSummary(
+          latestContextCostSummary,
+          totalInputTokens,
+          totalOutputTokens,
+        );
       };
 
       const summarizeBlockedTools = (): FridayAgentActualExecution["blockedTools"] => {
@@ -1006,6 +1135,8 @@ export function createFridayAgentRuntime(
             latestCostUsd = childRunRecord?.costUsd;
             totalInputTokens = childRunRecord?.usageInput ?? delegated.outcome.usageInput;
             totalOutputTokens = childRunRecord?.usageOutput ?? delegated.outcome.usageOutput;
+            latestContextCostSummary = childRunRecord?.contextCostSummary ?? latestContextCostSummary;
+            refreshContextCostSummaryUsage();
             responseText = childRunRecord?.responseText ?? delegated.outcome.response;
             replayDelegatedToolEvents({
               parentRunId: runId,
@@ -1157,20 +1288,26 @@ export function createFridayAgentRuntime(
         // ─── Enrich system prompt with learned user preferences ───
         let effectiveSystemPrompt = baseSystemPrompt;
         const prefEntries = Object.entries(learnedPreferences);
+        let learnedPreferenceChars = 0;
+        let communicationPolicyChars = 0;
         if (prefEntries.length > 0) {
           const prefLines = prefEntries.map(([k, v]) => `- ${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`);
-          effectiveSystemPrompt +=
+          const preferenceFragment =
             "\n\n<user-preferences>\n" +
             "The following preferences were learned from past interactions. " +
             "Respect these when generating responses:\n" +
             prefLines.join("\n") +
             "\n</user-preferences>";
+          learnedPreferenceChars = preferenceFragment.length;
+          effectiveSystemPrompt += preferenceFragment;
         }
         if (communicationPromptBuilder && principalId) {
           try {
             const fragment = communicationPromptBuilder({ userId: principalId, nowIso: nowIso() });
             if (fragment && fragment.trim().length > 0) {
-              effectiveSystemPrompt += `\n\n${fragment.trim()}`;
+              const trimmedFragment = fragment.trim();
+              communicationPolicyChars = trimmedFragment.length;
+              effectiveSystemPrompt += `\n\n${trimmedFragment}`;
             }
           } catch (err) {
             // Non-fatal: persona enrichment failure should not kill the run
@@ -1179,12 +1316,30 @@ export function createFridayAgentRuntime(
         }
 
         // ── Disclose disabled tools so the LLM does not waste turns calling them ──
+        let disabledToolChars = 0;
         if (disabledToolNames.size > 0) {
-          effectiveSystemPrompt +=
-            "\n\nNote: The following tools are disabled for this run and will fail if called: " +
+          const disabledToolNotice =
+            "Note: The following tools are disabled for this run and will fail if called: " +
             [...disabledToolNames].join(", ") +
             ". Do not attempt to use them.";
+          disabledToolChars = disabledToolNotice.length;
+          effectiveSystemPrompt += `\n\n${disabledToolNotice}`;
         }
+        currentSystemPromptChars = effectiveSystemPrompt.length;
+        currentToolSchemaChars = estimateToolSchemaChars(tools);
+        latestContextCostSummary = buildRuntimeContextCostSummary({
+          baseSummary: latestContextCostSummary,
+          conversationInputChars: estimateConversationInputChars(messages),
+          systemPromptChars: currentSystemPromptChars,
+          toolSchemaChars: currentToolSchemaChars,
+          toolCount: tools.length,
+          learnedPreferenceCount: prefEntries.length,
+          learnedPreferenceChars,
+          communicationPolicyChars,
+          disabledToolCount: disabledToolNames.size,
+          disabledToolChars,
+        });
+        refreshContextCostSummaryUsage();
 
         let iterations = 0;
         let evidenceEnforcementRetries = 0;
@@ -1308,6 +1463,7 @@ export function createFridayAgentRuntime(
 
           totalInputTokens += inputTokens;
           totalOutputTokens += outputTokens;
+          refreshContextCostSummaryUsage();
           latestFallbackAttempts = turnMeta?.attempts ? [...turnMeta.attempts] : [];
           latestBackendKind = turnMeta?.backendKind ?? latestBackendKind;
           latestActualProviderKind = turnMeta?.actualProviderKind ?? latestActualProviderKind;

@@ -9,6 +9,7 @@ import { providersApi } from "@/lib/api/providers";
 import { setupApi } from "@/lib/api/setup";
 import { skillsApi } from "@/lib/api/skills";
 import { systemApi } from "@/lib/api/system";
+import { systemKeys } from "@/lib/system/query-keys";
 import {
   FRIDAY_ASSISTANT_STARTER_TASKS,
   getAssistantStarterTask,
@@ -157,7 +158,7 @@ export function SetupPage() {
   });
 
   const { data: supportedHealth } = useQuery({
-    queryKey: ["setup", "health-capabilities"],
+    queryKey: systemKeys.health(),
     queryFn: () => healthApi.getHealth(),
     retry: 0,
   });

@@ -4360,6 +4360,51 @@ describe("FridayAgentRuntime", () => {
     expect(run?.actualExecution?.totalCostUsd).toBe(0.005);
   });
 
+  it("records fixed prompt costs and actual token usage in the context cost summary", async () => {
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "Done" },
+        {
+          type: "message_end",
+          stopReason: "end_turn",
+          inputTokens: 12,
+          outputTokens: 6,
+        },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createEchoTool()],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({ task: "Say hello" });
+    const repo = createFridayAgentRunRepository();
+    const run = db.withReadConnection((reader) => repo.getById(reader, result.runId));
+
+    expect(result.contextCostSummary).toBeDefined();
+    expect(run?.contextCostSummary).toBeDefined();
+    expect(run?.contextCostSummary?.components.some((component) => component.kind === "conversation_input")).toBe(true);
+    expect(run?.contextCostSummary?.components.some((component) => component.kind === "system_prompt")).toBe(true);
+    expect(run?.contextCostSummary?.components.some((component) => component.kind === "tool_schema")).toBe(true);
+    expect(run?.contextCostSummary?.totalEstimatedInputTokens).toBeGreaterThan(0);
+    expect(run?.contextCostSummary?.actualUsage).toMatchObject({
+      inputTokens: 12,
+      outputTokens: 6,
+    });
+    expect(run?.contextCostSummary?.actualUsage?.deltaInputTokens).toBe(
+      12 - (run?.contextCostSummary?.totalEstimatedInputTokens ?? 0),
+    );
+    expect(result.contextCostSummary?.totalEstimatedInputTokens).toBe(run?.contextCostSummary?.totalEstimatedInputTokens);
+  });
+
   it("treats taskProfile.model as the requested model when no explicit model override is provided", async () => {
     const llmClient = createMockLlmClient([
       [

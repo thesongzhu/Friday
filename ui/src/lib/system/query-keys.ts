@@ -1,5 +1,9 @@
 export const systemKeys = {
   all: ["system"] as const,
+  health: () => [...systemKeys.all, "health"] as const,
+  learningOverview: (limit: number) => [...systemKeys.all, "learning-overview", limit] as const,
+  observabilityOverview: () => [...systemKeys.all, "observability-overview"] as const,
+  assistantDiagnostics: () => [...systemKeys.all, "assistant-diagnostics"] as const,
   session: () => [...systemKeys.all, "session"] as const,
   state: () => [...systemKeys.all, "state"] as const,
   approvals: () => [...systemKeys.all, "approvals"] as const,

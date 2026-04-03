@@ -23,9 +23,11 @@ function toneForHealth(status?: string): "neutral" | "success" | "warning" | "da
 export function AppShell() {
   const location = useLocation();
   const { user, logout } = useAuth();
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const shouldTrackAssistantChrome = showAdvanced || location.pathname.startsWith("/assistant");
 
   const { data: health } = useQuery({
-    queryKey: ["shell", "health"],
+    queryKey: systemKeys.health(),
     queryFn: () => healthApi.getHealth(),
     refetchInterval: 30_000,
   });
@@ -34,7 +36,7 @@ export function AppShell() {
     queryKey: systemKeys.session(),
     queryFn: () => systemApi.getSession(),
     retry: 0,
-    refetchInterval: 10_000,
+    refetchInterval: 20_000,
   });
 
   const { data: pendingApprovals } = useQuery({
@@ -43,11 +45,12 @@ export function AppShell() {
       const response = await systemApi.listAutoFixActions({ status: "planned", limit: 50 });
       return response.items.filter((item) => item.summary.requiresApproval);
     },
-    refetchInterval: 15_000,
+    enabled: shouldTrackAssistantChrome,
+    refetchInterval: shouldTrackAssistantChrome ? 15_000 : false,
   });
   const pendingApprovalCount = pendingApprovals?.length ?? 0;
 
-  const { events: systemEvents } = useSystemEvents(true);
+  const { events: systemEvents } = useSystemEvents(shouldTrackAssistantChrome);
   const lastSeenEventCount = useState({ current: 0 })[0];
   useEffect(() => {
     const newEvents = systemEvents.slice(lastSeenEventCount.current);
@@ -58,9 +61,6 @@ export function AppShell() {
       }
     }
   }, [systemEvents, lastSeenEventCount]);
-
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
   const pageTitle = resolvePageTitle(location.pathname);
   const systemHealth = systemSession?.health;
   const isSimplifiedView = location.pathname === "/home" || location.pathname.startsWith("/flow/") || location.pathname === "/chat";

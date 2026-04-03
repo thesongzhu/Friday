@@ -855,13 +855,13 @@ export function createFridaySelfHealingApiService(
       .slice(0, limit);
 
     const incidentCount = deps.db.withReadConnection((db) =>
-      db.prepare(`SELECT COUNT(*) AS count FROM friday_error_incidents WHERE user_id = ?`).get(input.userId) as { count: number },
+      db.prepare(`SELECT COUNT(*) AS count FROM error_incidents WHERE user_id = ?`).get(input.userId) as { count: number },
     ).count;
     const diagnosisCount = deps.db.withReadConnection((db) =>
-      db.prepare(`SELECT COUNT(*) AS count FROM friday_diagnosis_records`).get() as { count: number },
+      db.prepare(`SELECT COUNT(*) AS count FROM diagnosis_records`).get() as { count: number },
     ).count;
     const actionCount = deps.db.withReadConnection((db) =>
-      db.prepare(`SELECT COUNT(*) AS count FROM friday_auto_fix_actions WHERE user_id = ?`).get(input.userId) as { count: number },
+      db.prepare(`SELECT COUNT(*) AS count FROM auto_fix_actions WHERE user_id = ?`).get(input.userId) as { count: number },
     ).count;
 
     return {

@@ -27,6 +27,8 @@ import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitive
 import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { learningApi } from "@/lib/api/learning";
 import { systemApi } from "@/lib/api/system";
+import type { AssistantDiagnostics } from "@/lib/api/types";
+import { systemKeys } from "@/lib/system/query-keys";
 import {
   buildObservabilityActionQueue,
   buildObservabilityHref,
@@ -94,6 +96,13 @@ function formatDurationMs(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0 ms";
   if (value >= 1000) return `${(value / 1000).toFixed(2)} s`;
   return `${Math.round(value)} ms`;
+}
+
+function getContextCostChars(
+  run: AssistantDiagnostics["recentRuns"][number] | null | undefined,
+  kind: string,
+): number {
+  return run?.contextCostSummary?.components.find((component) => component.kind === kind)?.estimatedChars ?? 0;
 }
 
 function FocusChip(props: {
@@ -174,51 +183,68 @@ export function ObservabilityPage() {
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const focus = parseFocus(searchParams.get("focus"));
+  const needsOverview = focus === "overview" || focus === "health";
+  const needsAssistantDiagnostics = focus === "overview" || focus === "assistant";
+  const needsAlerts = focus === "overview" || focus === "alerts";
+  const needsAcceptance = focus === "acceptance";
+  const needsRetry = focus === "retry";
+  const needsRules = focus === "rules";
+  const needsLoop = focus === "loop";
+  const needsTraces = focus === "traces";
+  const needsAudit = focus === "audit";
+  const showActionQueue = focus === "overview";
   const selectedAlertId = searchParams.get("alertId");
   const selectedIssueId = searchParams.get("issueId");
   const selectedEscalationId = searchParams.get("escalationId");
   const selectedLoopRunId = searchParams.get("loopRunId");
 
   const overviewQuery = useQuery({
-    queryKey: ["observability", "overview"],
+    queryKey: systemKeys.observabilityOverview(),
     queryFn: () => systemApi.getObservabilityOverview(),
-    refetchInterval: 15_000,
+    enabled: needsOverview || showActionQueue,
+    refetchInterval: needsOverview || showActionQueue ? 15_000 : false,
   });
 
   const alertsQuery = useQuery({
     queryKey: ["observability", "alerts"],
     queryFn: () => systemApi.listObservabilityAlerts({ limit: 12 }),
-    refetchInterval: 15_000,
+    enabled: needsAlerts || showActionQueue,
+    refetchInterval: needsAlerts || showActionQueue ? 15_000 : false,
   });
 
   const issuesQuery = useQuery({
     queryKey: ["observability", "assistant-issues"],
     queryFn: () => systemApi.listAssistantIssues(12),
-    refetchInterval: 15_000,
+    enabled: needsAlerts || showActionQueue,
+    refetchInterval: needsAlerts || showActionQueue ? 15_000 : false,
   });
 
   const tracesQuery = useQuery({
     queryKey: ["observability", "traces"],
     queryFn: () => systemApi.searchObservabilityTraces({ limit: 8 }),
-    refetchInterval: 15_000,
+    enabled: needsTraces,
+    refetchInterval: needsTraces ? 15_000 : false,
   });
 
   const auditQuery = useQuery({
     queryKey: ["observability", "audit"],
     queryFn: () => systemApi.searchObservabilityAudit({ limit: 8 }),
-    refetchInterval: 15_000,
+    enabled: needsAudit,
+    refetchInterval: needsAudit ? 15_000 : false,
   });
 
   const agentLoopRunsQuery = useQuery({
     queryKey: ["observability", "agent-loop-runs"],
     queryFn: () => systemApi.listAgentLoopRuns({ limit: 8 }),
-    refetchInterval: 15_000,
+    enabled: needsLoop || showActionQueue,
+    refetchInterval: needsLoop || showActionQueue ? 15_000 : false,
   });
 
   const expertLoopRunsQuery = useQuery({
     queryKey: ["observability", "expert-loop-runs"],
     queryFn: () => systemApi.listExpertAgentLoopRuns({ limit: 8 }),
-    refetchInterval: 15_000,
+    enabled: needsLoop,
+    refetchInterval: needsLoop ? 15_000 : false,
   });
 
   const seriesQuery = useQuery({
@@ -232,67 +258,79 @@ export function ObservabilityPage() {
         bucketSize: "5m",
       });
     },
-    refetchInterval: 15_000,
+    enabled: focus === "overview",
+    refetchInterval: focus === "overview" ? 15_000 : false,
   });
 
   const slosQuery = useQuery({
     queryKey: ["observability", "slos"],
     queryFn: () => systemApi.listObservabilitySlos({ limit: 8 }),
-    refetchInterval: 15_000,
+    enabled: focus === "overview",
+    refetchInterval: focus === "overview" ? 15_000 : false,
   });
 
   const destinationsQuery = useQuery({
     queryKey: ["observability", "alert-destinations"],
     queryFn: () => systemApi.listObservabilityAlertDestinations(),
-    refetchInterval: 30_000,
+    enabled: focus === "overview",
+    refetchInterval: focus === "overview" ? 30_000 : false,
   });
 
   const acceptanceTestsQuery = useQuery({
     queryKey: ["observability", "acceptance-tests"],
     queryFn: () => systemApi.listAcceptanceTests({ limit: 8 }),
-    refetchInterval: 30_000,
+    enabled: needsAcceptance,
+    refetchInterval: needsAcceptance ? 30_000 : false,
   });
 
   const acceptanceResultsQuery = useQuery({
     queryKey: ["observability", "acceptance-results"],
     queryFn: () => systemApi.listAcceptanceResults({ limit: 8 }),
-    refetchInterval: 15_000,
+    enabled: needsAcceptance || showActionQueue,
+    refetchInterval: needsAcceptance || showActionQueue ? 15_000 : false,
   });
 
   const retryEscalationsQuery = useQuery({
     queryKey: ["observability", "retry-escalations"],
     queryFn: () => systemApi.listRetryEscalations({ limit: 8 }),
-    refetchInterval: 15_000,
+    enabled: needsRetry || showActionQueue,
+    refetchInterval: needsRetry || showActionQueue ? 15_000 : false,
   });
 
   const retryCircuitBreakersQuery = useQuery({
     queryKey: ["observability", "retry-circuit-breakers"],
     queryFn: () => systemApi.listRetryCircuitBreakers(),
-    refetchInterval: 15_000,
+    enabled: needsRetry || showActionQueue,
+    refetchInterval: needsRetry || showActionQueue ? 15_000 : false,
   });
 
   const retryCostSummaryQuery = useQuery({
     queryKey: ["observability", "retry-cost-summary"],
     queryFn: () => systemApi.getRetryCostSummary(),
-    refetchInterval: 15_000,
+    enabled: needsRetry,
+    refetchInterval: needsRetry ? 15_000 : false,
   });
 
   const rulesAuditLogQuery = useQuery({
     queryKey: ["observability", "rules-audit-log"],
     queryFn: () => systemApi.listRulesAuditLog({ limit: 8 }),
-    refetchInterval: 15_000,
+    enabled: needsRules,
+    refetchInterval: needsRules ? 15_000 : false,
   });
 
   const assistantDiagnosticsQuery = useQuery({
-    queryKey: ["observability", "assistant-diagnostics"],
+    queryKey: systemKeys.assistantDiagnostics(),
     queryFn: () => assistantDiagnosticsApi.get(),
-    refetchInterval: 10_000,
+    enabled: needsAssistantDiagnostics,
+    refetchInterval: needsAssistantDiagnostics ? 10_000 : false,
   });
 
   const learningOverviewQuery = useQuery({
-    queryKey: ["observability", "learning-overview"],
+    queryKey: systemKeys.learningOverview(12),
     queryFn: () => learningApi.getOverview(12),
-    refetchInterval: 20_000,
+    enabled: needsAssistantDiagnostics,
+    retry: 0,
+    refetchInterval: needsAssistantDiagnostics ? 20_000 : false,
   });
 
   const acknowledgeAlertMutation = useMutation({
@@ -633,10 +671,10 @@ export function ObservabilityPage() {
     <div className="space-y-4">
       <ShellCard
         eyebrow="Action queue"
-        title="What is wrong and what should I click next"
+        title={showActionQueue ? "What is wrong and what should I click next" : `Focused on ${formatObservabilityFocusLabel(focus)}`}
         aside={
-          <StatusPill tone={actionQueue.length > 0 ? "warning" : "success"}>
-            {actionQueue.length > 0 ? "action needed" : "stable"}
+          <StatusPill tone={showActionQueue && actionQueue.length > 0 ? "warning" : "success"}>
+            {showActionQueue && actionQueue.length > 0 ? "action needed" : "focused"}
           </StatusPill>
         }
       >
@@ -650,14 +688,20 @@ export function ObservabilityPage() {
           <FocusChip label="Rules" active={focus === "rules"} to={buildObservabilityHref({ focus: "rules" })} />
           <FocusChip label="Loop" active={focus === "loop"} to={buildObservabilityHref({ focus: "loop" })} />
         </div>
-        {actionQueue.length > 0 ? (
-          <div className="grid gap-3 xl:grid-cols-2">
-            {actionQueue.map((item) => (
-              <ObservabilityActionCard key={item.id} {...item} />
-            ))}
-          </div>
+        {showActionQueue ? (
+          actionQueue.length > 0 ? (
+            <div className="grid gap-3 xl:grid-cols-2">
+              {actionQueue.map((item) => (
+                <ObservabilityActionCard key={item.id} {...item} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-white/60">No urgent action cards are open right now.</p>
+          )
         ) : (
-          <p className="text-sm text-white/60">No urgent action cards are open right now.</p>
+          <p className="text-sm text-white/60">
+            Friday keeps this route narrow: only the telemetry needed for the current focus is loaded.
+          </p>
         )}
       </ShellCard>
 
@@ -684,7 +728,8 @@ export function ObservabilityPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Overview" title="Current operational state">
+        {needsOverview ? (
+          <ShellCard eyebrow="Overview" title="Current operational state">
           {overview ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
@@ -720,11 +765,13 @@ export function ObservabilityPage() {
           ) : (
             <p className="text-sm text-white/60">Loading the current system state...</p>
           )}
-        </ShellCard>
+          </ShellCard>
+        ) : null}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <ShellCard eyebrow="Learning explainability" title="Lessons, route shifts, and blocked candidates">
+        {needsAssistantDiagnostics ? (
+          <ShellCard eyebrow="Learning explainability" title="Lessons, route shifts, and blocked candidates">
           {learningOverview ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
@@ -768,7 +815,8 @@ export function ObservabilityPage() {
           ) : (
             <p className="text-sm text-white/60">Learning overview is loading...</p>
           )}
-        </ShellCard>
+          </ShellCard>
+        ) : null}
 
         {focus === "overview" || focus === "assistant" ? (
           <ShellCard eyebrow="Assistant diagnostics" title="Context governance, MCP loading, and task profiles">
@@ -814,10 +862,16 @@ export function ObservabilityPage() {
                       </StatusPill>
                     </div>
                     <div className="mt-3 grid gap-2 text-xs text-white/55">
+                      <p>Conversation: {getContextCostChars(latestAssistantRun, "conversation_input")} chars</p>
+                      <p>System prompt: {getContextCostChars(latestAssistantRun, "system_prompt")} chars</p>
+                      <p>Tool schema: {getContextCostChars(latestAssistantRun, "tool_schema")} chars</p>
                       <p>Workspace context: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "workspace_context")?.estimatedChars ?? 0} chars</p>
                       <p>Starter skills: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "starter_skills")?.estimatedChars ?? 0} chars</p>
                       <p>MCP: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "mcp")?.estimatedChars ?? 0} chars</p>
                       <p>Subagents: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "subagents")?.estimatedChars ?? 0} chars</p>
+                      <p>Estimated input: {latestAssistantRun.contextCostSummary?.totalEstimatedInputTokens ?? "n/a"} tokens</p>
+                      <p>Actual input: {latestAssistantRun.contextCostSummary?.actualUsage?.inputTokens ?? "n/a"} tokens</p>
+                      <p>Delta vs estimate: {latestAssistantRun.contextCostSummary?.actualUsage?.deltaInputTokens ?? "n/a"} tokens</p>
                     </div>
                   </div>
                 ) : (
@@ -854,7 +908,8 @@ export function ObservabilityPage() {
           </ShellCard>
         ) : null}
 
-        <ShellCard eyebrow="Live alerts" title="Investigate, acknowledge, or hand off to guided recovery">
+        {needsAlerts ? (
+          <ShellCard eyebrow="Live alerts" title="Investigate, acknowledge, or hand off to guided recovery">
           {alerts.length > 0 ? (
             <div className="space-y-3">
               {alerts.slice(0, 6).map((alert) => (
@@ -905,9 +960,11 @@ export function ObservabilityPage() {
           ) : (
             <p className="text-sm text-white/60">No active alerts are firing right now.</p>
           )}
-        </ShellCard>
+          </ShellCard>
+        ) : null}
 
-        <ShellCard eyebrow="Guided issues" title="Problems that map back to the assistant">
+        {needsAlerts ? (
+          <ShellCard eyebrow="Guided issues" title="Problems that map back to the assistant">
           {issues.length > 0 ? (
             <div className="space-y-3">
               {issues.slice(0, 6).map((issue) => (
@@ -936,11 +993,14 @@ export function ObservabilityPage() {
           ) : (
             <p className="text-sm text-white/60">No guided issues are open right now.</p>
           )}
-        </ShellCard>
+          </ShellCard>
+        ) : null}
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <ShellCard eyebrow="Acceptance and retry" title="Quality gates and retry pressure">
+      {needsAcceptance || needsRetry || needsLoop || needsRules ? (
+        <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+          {needsAcceptance || needsRetry ? (
+            <ShellCard eyebrow="Acceptance and retry" title="Quality gates and retry pressure">
           {acceptanceResults.length > 0 || retryEscalations.length > 0 || retryCircuitBreakers.length > 0 ? (
             <div className="space-y-3">
               <ObservabilityTile
@@ -979,9 +1039,11 @@ export function ObservabilityPage() {
           ) : (
             <p className="text-sm text-white/60">No acceptance or retry pressure is active right now.</p>
           )}
-        </ShellCard>
+            </ShellCard>
+          ) : null}
 
-        <ShellCard eyebrow="Agent loop and rules" title="Autonomous recovery and policy state">
+          {needsLoop || needsRules ? (
+            <ShellCard eyebrow="Agent loop and rules" title="Autonomous recovery and policy state">
           {agentLoopRuns.length > 0 || expertLoopRuns.length > 0 || rulesAuditLog.length > 0 ? (
             <div className="space-y-3">
               {agentLoopRuns.slice(0, 3).map((record) => (
@@ -1026,37 +1088,42 @@ export function ObservabilityPage() {
           ) : (
             <p className="text-sm text-white/60">No loop or rules events need attention right now.</p>
           )}
-        </ShellCard>
-      </div>
+            </ShellCard>
+          ) : null}
+        </div>
+      ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <ShellCard eyebrow="Time series" title="Trend context after you know what to inspect">
-          {series ? (
-            <div className="space-y-3">
-              <div className="grid gap-2">
-                {series.points.map((point) => (
-                  <div key={point.timestamp} className="grid grid-cols-[104px_1fr_48px] items-center gap-3 text-xs text-white/60">
-                    <span>{new Date(point.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                    <div className="h-2 rounded-full bg-white/[0.08]">
-                      <div
-                        className="h-2 rounded-full bg-emerald-300/70"
-                        style={{ width: `${Math.max(4, (point.value / maxPoint) * 100)}%` }}
-                      />
-                    </div>
-                    <span className="text-right text-white">{point.value}</span>
+      {focus === "overview" || needsTraces || needsAudit ? (
+        <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+          {focus === "overview" ? (
+            <ShellCard eyebrow="Time series" title="Trend context after you know what to inspect">
+              {series ? (
+                <div className="space-y-3">
+                  <div className="grid gap-2">
+                    {series.points.map((point) => (
+                      <div key={point.timestamp} className="grid grid-cols-[104px_1fr_48px] items-center gap-3 text-xs text-white/60">
+                        <span>{new Date(point.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                        <div className="h-2 rounded-full bg-white/[0.08]">
+                          <div
+                            className="h-2 rounded-full bg-emerald-300/70"
+                            style={{ width: `${Math.max(4, (point.value / maxPoint) * 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-right text-white">{point.value}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-              <p className="text-xs text-white/50">
-                Metric: {series.metricName} · Bucket {series.bucketSize}
-              </p>
-            </div>
-          ) : (
-            <p className="text-sm text-white/60">Loading time-series data...</p>
-          )}
-        </ShellCard>
+                  <p className="text-xs text-white/50">
+                    Metric: {series.metricName} · Bucket {series.bucketSize}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-white/60">Loading time-series data...</p>
+              )}
+            </ShellCard>
+          ) : null}
 
-        <ShellCard eyebrow="Deep evidence" title="Traces and audit stay available as drill-down">
+          <ShellCard eyebrow="Deep evidence" title="Traces and audit stay available as drill-down">
           {traces.length > 0 || auditEntries.length > 0 ? (
             <div className="space-y-3">
               {traces.slice(0, 3).map((trace) => (
@@ -1091,11 +1158,13 @@ export function ObservabilityPage() {
           ) : (
             <p className="text-sm text-white/60">Trace and audit evidence will appear here when the system has more history.</p>
           )}
-        </ShellCard>
-      </div>
+          </ShellCard>
+        </div>
+      ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <ShellCard
+      {focus === "overview" ? (
+        <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+          <ShellCard
           eyebrow="SLO pack"
           title="Service level state"
           aside={
@@ -1126,9 +1195,9 @@ export function ObservabilityPage() {
           ) : (
             <p className="text-sm text-white/60">No SLO definitions are configured yet. Click &quot;Add SLO&quot; to create one.</p>
           )}
-        </ShellCard>
+          </ShellCard>
 
-        <ShellCard
+          <ShellCard
           eyebrow="Alert routing"
           title="Who gets notified when Friday escalates"
           aside={
@@ -1178,8 +1247,9 @@ export function ObservabilityPage() {
           ) : !showCreateDest ? (
             <p className="text-sm text-white/60">No alert destinations are configured yet.</p>
           ) : null}
-        </ShellCard>
-      </div>
+          </ShellCard>
+        </div>
+      ) : null}
     </div>
   );
 }

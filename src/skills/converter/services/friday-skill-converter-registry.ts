@@ -80,12 +80,23 @@ async function detectBest(
   converters: FridaySkillConverter[],
   source: FridaySkillConversionSource,
 ): Promise<FridaySkillConverterDetection | null> {
+  const rankedConverters = converters
+    .map((converter) => ({
+      converter,
+      heuristicScore: scoreConverterHeuristic(converter, source),
+    }))
+    .sort((left, right) =>
+      right.heuristicScore - left.heuristicScore || right.converter.priority - left.converter.priority,
+    );
   const detections: Array<{ converter: FridaySkillConverter; detection: FridaySkillConverterDetection }> = [];
 
-  for (const converter of converters) {
-    const detection = await converter.detect(source);
+  for (const ranked of rankedConverters) {
+    const detection = await ranked.converter.detect(source);
     if (detection) {
-      detections.push({ converter, detection });
+      detections.push({ converter: ranked.converter, detection });
+      if ((ranked.heuristicScore >= 100 && detection.confidence >= 0.9) || detection.confidence >= 0.98) {
+        return detection;
+      }
     }
   }
 
@@ -101,4 +112,40 @@ async function detectBest(
   });
 
   return detections[0]!.detection;
+}
+
+function scoreConverterHeuristic(
+  converter: FridaySkillConverter,
+  source: FridaySkillConversionSource,
+): number {
+  const uri = source.uri?.toLowerCase();
+  if (!uri) {
+    return 0;
+  }
+
+  if (converter.id === "openai-gpt-action") {
+    if (/(^|\/)(openapi|swagger|api|spec)\.(json|ya?ml)$/.test(uri)) {
+      return 100;
+    }
+    if (/openapi|swagger/.test(uri)) {
+      return 80;
+    }
+    if (/\.(json|ya?ml)$/.test(uri)) {
+      return 20;
+    }
+  }
+
+  if (converter.id === "n8n-node") {
+    if (/(^|\/)(node|n8n-node|descriptor)\.json$/.test(uri)) {
+      return 100;
+    }
+    if (/n8n/.test(uri)) {
+      return 80;
+    }
+    if (/\.json$/.test(uri)) {
+      return 20;
+    }
+  }
+
+  return 0;
 }

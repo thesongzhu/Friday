@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { setupApi } from "@/lib/api/setup";
+import { shouldRetryQuery } from "@/providers/query-provider";
 
 export const setupKeys = {
   all: ["setup"] as const,
@@ -13,7 +14,7 @@ export function useSetupStatusQuery() {
     queryFn: () => setupApi.getStatus(),
     staleTime: 5_000,
     refetchOnMount: "always",
-    retry: 1,
+    retry: shouldRetryQuery,
   });
 }
 

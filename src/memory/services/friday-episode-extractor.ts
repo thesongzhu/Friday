@@ -47,6 +47,7 @@ interface RunRow {
   duration_ms: number | null;
   task_profile_json: string | null;
   context_cost_summary_json: string | null;
+  response_text: string | null;
 }
 
 // ─── Factory ────────────────────────────────────────────────────
@@ -62,7 +63,7 @@ export function createFridayEpisodeExtractor(
       const run = db.withReadConnection((conn) =>
         conn
           .prepare(
-            `SELECT task, status, duration_ms, task_profile_json, context_cost_summary_json
+            `SELECT task, status, duration_ms, task_profile_json, context_cost_summary_json, response_text
              FROM friday_agent_runs
              WHERE id = ?`,
           )
@@ -71,9 +72,8 @@ export function createFridayEpisodeExtractor(
 
       if (!run) return null;
 
-      // 2. Read tool events (best-effort; a run with no tool events still
-      // produces a minimal episode so world-model readiness is visible in
-      // real end-to-end flows).
+      // 2. Read tool events. Zero-tool completed runs are skipped later because
+      // they add world-model write cost without any tool-grounded evidence.
       const events = db.withReadConnection((conn) =>
         conn
           .prepare(
@@ -87,6 +87,15 @@ export function createFridayEpisodeExtractor(
 
       // 3. Pair tool_start → tool_end into steps
       const steps = events.length > 0 ? buildSteps(events) : [];
+
+      const trimmedResponse = run.response_text?.trim() ?? "";
+      const shouldSkipLowValueEpisode =
+        run.status === "completed"
+        && steps.length === 0
+        && (trimmedResponse.length === 0 || !trimmedResponse.startsWith("ERROR:"));
+      if (shouldSkipLowValueEpisode) {
+        return null;
+      }
 
       // 4. Derive outcome
       const outcome = deriveOutcome(run.status);

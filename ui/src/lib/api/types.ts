@@ -102,15 +102,32 @@ export interface ResolvedAgentTaskProfile {
 }
 
 export interface AgentContextCostComponent {
-  kind: "workspace_context" | "starter_skills" | "mcp" | "subagents";
+  kind:
+    | "conversation_input"
+    | "system_prompt"
+    | "tool_schema"
+    | "workspace_context"
+    | "starter_skills"
+    | "mcp"
+    | "subagents"
+    | "learned_preferences"
+    | "communication_policy"
+    | "disabled_tools";
   estimatedChars: number;
   count?: number;
   metadata?: Record<string, unknown>;
+  includedInTotal?: boolean;
 }
 
 export interface AgentContextCostSummary {
   totalEstimatedChars: number;
+  totalEstimatedInputTokens?: number;
   components: AgentContextCostComponent[];
+  actualUsage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    deltaInputTokens?: number;
+  };
 }
 
 export interface AgentRunRecord {

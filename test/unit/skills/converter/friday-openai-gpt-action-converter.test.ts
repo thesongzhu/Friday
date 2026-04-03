@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -136,6 +136,21 @@ describe("OpenAiGptActionConverter", () => {
       writeFileSync(filePath, "not json");
       const result = await converter.detect({ uri: filePath });
       expect(result).toBeNull();
+    });
+
+    it("does not warn for ordinary detect-time parse misses", async () => {
+      const converter = createFridayOpenAiGptActionConverter();
+      const filePath = join(testDir, "spec.json");
+      writeFileSync(filePath, "not json");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      try {
+        const result = await converter.detect({ uri: filePath });
+        expect(result).toBeNull();
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
 
     it("returns null for JSON without OpenAPI signature", async () => {
