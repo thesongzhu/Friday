@@ -1,7 +1,7 @@
 # Friday 全面代码级层路调查报告
 
-日期：2026-04-03  
-范围：本地可达全栈（UI、API、runtime、session/auth、deterministic/managed/agent 分支、SSE/realtime、persistence、test/closure 覆盖）  
+日期：2026-04-03
+范围：本地可达全栈（UI、API、runtime、session/auth、deterministic/managed/agent 分支、SSE/realtime、persistence、test/closure 覆盖）
 不在本轮穷尽范围内：cloud、OAuth、外部 channels、MCP，仅作为阻塞/风险项单列
 
 ## 1. 执行摘要
@@ -339,12 +339,12 @@ Friday 的核心能力非常多，主干也很强。问题在于：
 
 ### 8.2 本质根因分层
 
-1. 契约权威不单一  
-2. 分支不变量未统一  
-3. composition root 过大且重复接线  
-4. 产品面闭环测试缺失  
-5. 类型副本/手写镜像过多  
-6. 兼容层和 steady-state 边界不清  
+1. 契约权威不单一
+2. 分支不变量未统一
+3. composition root 过大且重复接线
+4. 产品面闭环测试缺失
+5. 类型副本/手写镜像过多
+6. 兼容层和 steady-state 边界不清
 
 ## 9. 整改计划（Decision-Complete）
 
@@ -420,5 +420,5 @@ Friday 出现这类“小问题”的原因，不是单个模块不成熟，而�
 
 所以问题会以“小处漏出、大处仍能跑”的形式出现。
 
-这类问题已经可以通过工程治理体系修掉，且整改顺序已经足够明确：  
+这类问题已经可以通过工程治理体系修掉，且整改顺序已经足够明确：
 先收 contract，再补闭环测试，再统一 wiring，最后做复杂度治理。

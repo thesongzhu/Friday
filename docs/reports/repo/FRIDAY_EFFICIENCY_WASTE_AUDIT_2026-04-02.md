@@ -1,7 +1,7 @@
 # Friday 效率与浪费专项审查
 
-日期：2026-04-02  
-环境：本地仓库 `/Users/jarvis/Projects/Friday`，时区 `America/Los_Angeles`  
+日期：2026-04-02
+环境：本地仓库 `/Users/jarvis/Projects/Friday`，时区 `America/Los_Angeles`
 范围：只审查 `token / 算力 / 时间 / 不必要功能调动` 的浪费；不做通用 UX、美术或安全评审
 
 ## 审查方法
