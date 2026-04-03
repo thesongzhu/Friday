@@ -243,6 +243,12 @@ export interface FridayLearningOverview {
   coverage: FridayLearningCoverageSummary;
 }
 
+interface FridayLearningCoverageCountsRow {
+  incident_count: number;
+  diagnosis_count: number;
+  action_count: number;
+}
+
 export interface FridaySelfHealingApiService {
   listIncidents(input: {
     userId: string;
@@ -786,6 +792,16 @@ export function createFridaySelfHealingApiService(
     return result;
   };
 
+  const loadLearningCoverageCounts = (userId: string): FridayLearningCoverageCountsRow =>
+    deps.db.withReadConnection((db) =>
+      db.prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM error_incidents WHERE user_id = ?) AS incident_count,
+           (SELECT COUNT(*) FROM diagnosis_records) AS diagnosis_count,
+           (SELECT COUNT(*) FROM auto_fix_actions WHERE user_id = ?) AS action_count`,
+      ).get(userId, userId) as FridayLearningCoverageCountsRow,
+    );
+
   const buildLearningOverview = (input: {
     userId: string;
     limit?: number;
@@ -1036,16 +1052,7 @@ export function createFridaySelfHealingApiService(
     const blockedRoutes = [...blockedRouteMap.values()]
       .sort((left, right) => right.count - left.count || right.lastSeenAt.localeCompare(left.lastSeenAt))
       .slice(0, limit);
-
-    const incidentCount = deps.db.withReadConnection((db) =>
-      db.prepare(`SELECT COUNT(*) AS count FROM error_incidents WHERE user_id = ?`).get(input.userId) as { count: number },
-    ).count;
-    const diagnosisCount = deps.db.withReadConnection((db) =>
-      db.prepare(`SELECT COUNT(*) AS count FROM diagnosis_records`).get() as { count: number },
-    ).count;
-    const actionCount = deps.db.withReadConnection((db) =>
-      db.prepare(`SELECT COUNT(*) AS count FROM auto_fix_actions WHERE user_id = ?`).get(input.userId) as { count: number },
-    ).count;
+    const coverageCounts = loadLearningCoverageCounts(input.userId);
 
     return {
       lessons,
@@ -1067,9 +1074,9 @@ export function createFridaySelfHealingApiService(
         blockedRoutes: blockedRoutes.length,
         rejectedFixes: rejectedFixes.length,
         rollbackHotspots: rollbackHotspots.length,
-        incidents: incidentCount,
-        diagnoses: diagnosisCount,
-        autoFixActions: actionCount,
+        incidents: coverageCounts.incident_count,
+        diagnoses: coverageCounts.diagnosis_count,
+        autoFixActions: coverageCounts.action_count,
       },
     };
   };
