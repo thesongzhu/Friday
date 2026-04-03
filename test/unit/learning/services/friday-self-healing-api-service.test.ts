@@ -283,4 +283,295 @@ describe("FridaySelfHealingApiService", () => {
       autoFixActions: 1,
     });
   });
+
+  it("batches action and incident lookups when building issue cards", () => {
+    const db = createTestDb();
+    allocatedDbs.push(db);
+    const idGenerator = createTestIdGenerator();
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    const lessonRepo = createFridayLearnedLessonRepository();
+    const actionRepo = createFridayAutoFixActionRepository();
+    const approvalRepo = createFridayApprovalRequestRepository();
+    const factRepo = createFridayPreferenceFactRepository();
+    const listActionIdsSpy = vi.spyOn(actionRepo, "listByIds");
+    const getActionByIdSpy = vi.spyOn(actionRepo, "getById");
+    const listIncidentIdsSpy = vi.spyOn(incidentRepo, "listByIds");
+    const getIncidentByIdSpy = vi.spyOn(incidentRepo, "getById");
+    const service = createFridaySelfHealingApiService({
+      db,
+      idGenerator,
+      nowIso: () => "2026-04-02T12:00:00.000Z",
+      incidentRepo,
+      diagnosisRepo,
+      lessonRepo,
+      actionRepo,
+      approvalRepo,
+      factRepo,
+      diagnosisService: {} as never,
+      planService: {} as never,
+      riskService: {} as never,
+      executionService: {} as never,
+      rollbackService: {} as never,
+      approvalService: {} as never,
+      autoFixDispatcher: {} as never,
+      metricsService: {} as never,
+      pipeline: {} as never,
+    });
+
+    db.withWriteTransaction((writerDb) => {
+      for (const index of [1, 2, 3]) {
+        incidentRepo.insert(writerDb, {
+          incidentId: `incident-${index}`,
+          userId: "test-user",
+          ts: `2026-04-02T09:0${index}:00.000Z`,
+          category: "workflow",
+          severity: index === 1 ? "high" : "medium",
+          signature: `workflow:signature:${index}`,
+          context: { incident: index },
+          autoFixEligible: true,
+          status: "open",
+          createdAt: `2026-04-02T09:0${index}:00.000Z`,
+          updatedAt: `2026-04-02T09:0${index}:00.000Z`,
+        });
+
+        actionRepo.insert(writerDb, {
+          actionId: `action-${index}`,
+          incidentId: `incident-${index}`,
+          userId: "test-user",
+          riskTier: 2,
+          plan: {
+            title: `Fix workflow issue ${index}`,
+            summary: "Apply a guarded remediation",
+            steps: [],
+            evidence: {
+              fingerprint: `workflow:signature:${index}`,
+              matchedLessonIds: [],
+              diagnosisId: `diag-${index}`,
+              recurrenceCount: index,
+            },
+          },
+          status: "planned",
+          outcome: null,
+          createdAt: `2026-04-02T09:1${index}:00.000Z`,
+          updatedAt: `2026-04-02T09:1${index}:00.000Z`,
+        });
+
+        approvalRepo.insert(writerDb, {
+          requestId: `approval-${index}`,
+          actionId: `action-${index}`,
+          userId: "test-user",
+          description: `Approve workflow fix ${index}`,
+          riskTier: 2,
+          plan: {
+            title: `Fix workflow issue ${index}`,
+            summary: "Apply a guarded remediation",
+            steps: [],
+            evidence: {
+              fingerprint: `workflow:signature:${index}`,
+              matchedLessonIds: [],
+              diagnosisId: `diag-${index}`,
+              recurrenceCount: index,
+            },
+          },
+          requestedAt: `2026-04-02T09:2${index}:00.000Z`,
+          expiresAt: `2026-04-02T10:2${index}:00.000Z`,
+          status: "pending",
+          createdAt: `2026-04-02T09:2${index}:00.000Z`,
+          updatedAt: `2026-04-02T09:2${index}:00.000Z`,
+        });
+      }
+    });
+
+    const cards = service.listIssueCards({ userId: "test-user", limit: 10 });
+
+    expect(listActionIdsSpy).toHaveBeenCalledTimes(1);
+    expect(getActionByIdSpy).not.toHaveBeenCalled();
+    expect(listIncidentIdsSpy).toHaveBeenCalledTimes(1);
+    expect(getIncidentByIdSpy).not.toHaveBeenCalled();
+    expect(cards.filter((card) => card.kind === "approval_required")).toEqual([
+      expect.objectContaining({
+        id: "approval:approval-3",
+        incidentId: "incident-3",
+        actionId: "action-3",
+        title: "Fix workflow issue 3",
+        severity: "medium",
+      }),
+      expect.objectContaining({
+        id: "approval:approval-2",
+        incidentId: "incident-2",
+        actionId: "action-2",
+        title: "Fix workflow issue 2",
+        severity: "medium",
+      }),
+      expect.objectContaining({
+        id: "approval:approval-1",
+        incidentId: "incident-1",
+        actionId: "action-1",
+        title: "Fix workflow issue 1",
+        severity: "high",
+      }),
+    ]);
+  });
+
+  it("batches related lookups when listing action details", () => {
+    const db = createTestDb();
+    allocatedDbs.push(db);
+    const idGenerator = createTestIdGenerator();
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    const lessonRepo = createFridayLearnedLessonRepository();
+    const actionRepo = createFridayAutoFixActionRepository();
+    const approvalRepo = createFridayApprovalRequestRepository();
+    const factRepo = createFridayPreferenceFactRepository();
+    const listIncidentIdsSpy = vi.spyOn(incidentRepo, "listByIds");
+    const getIncidentByIdSpy = vi.spyOn(incidentRepo, "getById");
+    const listDiagnosisIdsSpy = vi.spyOn(diagnosisRepo, "listByIds");
+    const getDiagnosisByIdSpy = vi.spyOn(diagnosisRepo, "getById");
+    const listApprovalActionIdsSpy = vi.spyOn(approvalRepo, "listByActionIds");
+    const getApprovalByActionIdSpy = vi.spyOn(approvalRepo, "getByActionId");
+    const listLessonFingerprintsSpy = vi.spyOn(lessonRepo, "listByFingerprints");
+    const getLessonByFingerprintSpy = vi.spyOn(lessonRepo, "getByFingerprint");
+    const service = createFridaySelfHealingApiService({
+      db,
+      idGenerator,
+      nowIso: () => "2026-04-02T12:00:00.000Z",
+      incidentRepo,
+      diagnosisRepo,
+      lessonRepo,
+      actionRepo,
+      approvalRepo,
+      factRepo,
+      diagnosisService: {} as never,
+      planService: {} as never,
+      riskService: {
+        assess: () => ({
+          riskTier: 2,
+          reasons: ["batched-risk-check"],
+          requiresApproval: true,
+          autoApplyAllowed: false,
+        }),
+      } as never,
+      executionService: {} as never,
+      rollbackService: {} as never,
+      approvalService: {} as never,
+      autoFixDispatcher: {} as never,
+      metricsService: {} as never,
+      pipeline: {} as never,
+    });
+
+    db.withWriteTransaction((writerDb) => {
+      for (const index of [1, 2]) {
+        incidentRepo.insert(writerDb, {
+          incidentId: `detail-incident-${index}`,
+          userId: "test-user",
+          ts: `2026-04-02T08:0${index}:00.000Z`,
+          category: "tool",
+          severity: index === 1 ? "high" : "medium",
+          signature: `detail:fingerprint:${index}`,
+          context: { index },
+          autoFixEligible: true,
+          status: "open",
+          createdAt: `2026-04-02T08:0${index}:00.000Z`,
+          updatedAt: `2026-04-02T08:0${index}:00.000Z`,
+        });
+
+        diagnosisRepo.insert(writerDb, {
+          id: `diag-${index}`,
+          incidentId: `detail-incident-${index}`,
+          errorFingerprint: `detail:fingerprint:${index}`,
+          confidence: 0.9,
+          diagnosis: {
+            summary: `Root cause ${index}`,
+            rootCause: `Tool failure ${index}`,
+          },
+          createdAt: `2026-04-02T08:1${index}:00.000Z`,
+          updatedAt: `2026-04-02T08:1${index}:00.000Z`,
+        });
+
+        lessonRepo.upsertByFingerprint(writerDb, {
+          id: `lesson-detail-${index}`,
+          fingerprint: `detail:fingerprint:${index}`,
+          title: `Lesson ${index}`,
+          cause: `Cause ${index}`,
+          fix: `Fix ${index}`,
+          nowIso: `2026-04-02T08:2${index}:00.000Z`,
+        });
+
+        actionRepo.insert(writerDb, {
+          actionId: `detail-action-${index}`,
+          incidentId: `detail-incident-${index}`,
+          userId: "test-user",
+          riskTier: 2,
+          plan: {
+            title: `Detail action ${index}`,
+            summary: "Reduce retries and trim payload",
+            steps: [],
+            evidence: {
+              fingerprint: `detail:fingerprint:${index}`,
+              matchedLessonIds: [`lesson-detail-${index}`],
+              diagnosisId: `diag-${index}`,
+              recurrenceCount: index + 1,
+            },
+          },
+          status: index === 1 ? "planned" : "rejected",
+          outcome: null,
+          createdAt: `2026-04-02T08:3${index}:00.000Z`,
+          updatedAt: `2026-04-02T08:3${index}:00.000Z`,
+        });
+
+        approvalRepo.insert(writerDb, {
+          requestId: `detail-approval-${index}`,
+          actionId: `detail-action-${index}`,
+          userId: "test-user",
+          description: `Approval detail ${index}`,
+          riskTier: 2,
+          plan: {
+            title: `Detail action ${index}`,
+            summary: "Reduce retries and trim payload",
+            steps: [],
+            evidence: {
+              fingerprint: `detail:fingerprint:${index}`,
+              matchedLessonIds: [`lesson-detail-${index}`],
+              diagnosisId: `diag-${index}`,
+              recurrenceCount: index + 1,
+            },
+          },
+          requestedAt: `2026-04-02T08:4${index}:00.000Z`,
+          expiresAt: `2026-04-02T09:4${index}:00.000Z`,
+          status: index === 1 ? "pending" : "rejected",
+          responseReason: index === 2 ? "Needs manual confirmation" : undefined,
+          createdAt: `2026-04-02T08:4${index}:00.000Z`,
+          updatedAt: `2026-04-02T08:4${index}:00.000Z`,
+        });
+      }
+    });
+
+    const actions = service.listActions({ userId: "test-user", limit: 10 });
+
+    expect(listIncidentIdsSpy).toHaveBeenCalledTimes(1);
+    expect(getIncidentByIdSpy).not.toHaveBeenCalled();
+    expect(listDiagnosisIdsSpy).toHaveBeenCalledTimes(1);
+    expect(getDiagnosisByIdSpy).not.toHaveBeenCalled();
+    expect(listApprovalActionIdsSpy).toHaveBeenCalledTimes(1);
+    expect(getApprovalByActionIdSpy).not.toHaveBeenCalled();
+    expect(listLessonFingerprintsSpy).toHaveBeenCalledTimes(1);
+    expect(getLessonByFingerprintSpy).not.toHaveBeenCalled();
+    expect(actions).toEqual([
+      expect.objectContaining({
+        action: expect.objectContaining({ actionId: "detail-action-2" }),
+        incident: expect.objectContaining({ incidentId: "detail-incident-2" }),
+        diagnosis: expect.objectContaining({ id: "diag-2" }),
+        approval: expect.objectContaining({ requestId: "detail-approval-2" }),
+        lesson: expect.objectContaining({ fingerprint: "detail:fingerprint:2" }),
+      }),
+      expect.objectContaining({
+        action: expect.objectContaining({ actionId: "detail-action-1" }),
+        incident: expect.objectContaining({ incidentId: "detail-incident-1" }),
+        diagnosis: expect.objectContaining({ id: "diag-1" }),
+        approval: expect.objectContaining({ requestId: "detail-approval-1" }),
+        lesson: expect.objectContaining({ fingerprint: "detail:fingerprint:1" }),
+      }),
+    ]);
+  });
 });

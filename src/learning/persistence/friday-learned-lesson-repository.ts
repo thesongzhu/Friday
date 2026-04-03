@@ -31,6 +31,10 @@ export interface FridayLearnedLessonRepository {
     db: Database.Database,
     fingerprint: string,
   ): FridayLearnedLessonEntity | null;
+  listByFingerprints(
+    db: Database.Database,
+    fingerprints: string[],
+  ): FridayLearnedLessonEntity[];
 }
 
 function rowToEntity(row: FridayLearnedLessonRow): FridayLearnedLessonEntity {
@@ -125,6 +129,26 @@ export function createFridayLearnedLessonRepository(): FridayLearnedLessonReposi
         .prepare("SELECT * FROM learned_lessons WHERE fingerprint = ?")
         .get(fingerprint) as FridayLearnedLessonRow | undefined;
       return row ? rowToEntity(row) : null;
+    },
+
+    listByFingerprints(db, fingerprints) {
+      if (fingerprints.length === 0) {
+        return [];
+      }
+      const uniqueFingerprints = [...new Set(fingerprints)];
+      const placeholders = uniqueFingerprints.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT * FROM learned_lessons
+           WHERE fingerprint IN (${placeholders})`,
+        )
+        .all(...uniqueFingerprints) as FridayLearnedLessonRow[];
+      const lessonsByFingerprint = new Map(
+        rows.map((row) => [row.fingerprint, rowToEntity(row)] as const),
+      );
+      return uniqueFingerprints
+        .map((fingerprint) => lessonsByFingerprint.get(fingerprint))
+        .filter((lesson): lesson is FridayLearnedLessonEntity => lesson != null);
     },
   };
 }

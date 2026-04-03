@@ -424,21 +424,31 @@ function normalizeLearningKeySegment(value: string): string {
 export function createFridaySelfHealingApiService(
   deps: CreateFridaySelfHealingApiServiceDeps,
 ): FridaySelfHealingApiService {
+  type FridayActionDetailsLookups = {
+    incidentsById?: Map<string, FridayErrorIncidentEntity>;
+    diagnosesById?: Map<string, FridayDiagnosisRecordEntity>;
+    approvalsByActionId?: Map<string, FridayApprovalRequestEntity>;
+    lessonsByFingerprint?: Map<string, FridayLearnedLessonEntity>;
+  };
+
   const buildActionDetails = (
     action: FridayAutoFixActionEntity,
+    lookups?: FridayActionDetailsLookups,
   ): FridaySelfHealingActionDetails => {
-    const incident = deps.db.withReadConnection((db) =>
-      deps.incidentRepo.getById(db, action.incidentId),
-    );
-    const diagnosis = deps.db.withReadConnection((db) =>
-      deps.diagnosisRepo.getById(db, action.plan.evidence.diagnosisId),
-    );
-    const approval = deps.db.withReadConnection((db) =>
-      deps.approvalRepo.getByActionId(db, action.actionId),
-    );
-    const lesson = deps.db.withReadConnection((db) =>
-      deps.lessonRepo.getByFingerprint(db, action.plan.evidence.fingerprint),
-    );
+    const incident =
+      lookups?.incidentsById?.get(action.incidentId)
+      ?? deps.db.withReadConnection((db) => deps.incidentRepo.getById(db, action.incidentId));
+    const diagnosisId = action.plan.evidence.diagnosisId;
+    const diagnosis =
+      lookups?.diagnosesById?.get(diagnosisId)
+      ?? deps.db.withReadConnection((db) => deps.diagnosisRepo.getById(db, diagnosisId));
+    const approval =
+      lookups?.approvalsByActionId?.get(action.actionId)
+      ?? deps.db.withReadConnection((db) => deps.approvalRepo.getByActionId(db, action.actionId));
+    const fingerprint = action.plan.evidence.fingerprint;
+    const lesson =
+      lookups?.lessonsByFingerprint?.get(fingerprint)
+      ?? deps.db.withReadConnection((db) => deps.lessonRepo.getByFingerprint(db, fingerprint));
     const risk = incident
       ? deps.riskService.assess({
         incident,
@@ -933,7 +943,46 @@ export function createFridaySelfHealingApiService(
           limit: input.limit,
         }),
       );
-      return actions.map(buildActionDetails);
+      const incidentsById = new Map(
+        deps.db.withReadConnection((db) =>
+          deps.incidentRepo.listByIds(
+            db,
+            actions.map((action) => action.incidentId),
+          ),
+        ).map((incident) => [incident.incidentId, incident] as const),
+      );
+      const diagnosesById = new Map(
+        deps.db.withReadConnection((db) =>
+          deps.diagnosisRepo.listByIds(
+            db,
+            actions.map((action) => action.plan.evidence.diagnosisId),
+          ),
+        ).map((diagnosis) => [diagnosis.id, diagnosis] as const),
+      );
+      const approvalsByActionId = new Map(
+        deps.db.withReadConnection((db) =>
+          deps.approvalRepo.listByActionIds(
+            db,
+            actions.map((action) => action.actionId),
+          ),
+        ).map((approval) => [approval.actionId, approval] as const),
+      );
+      const lessonsByFingerprint = new Map(
+        deps.db.withReadConnection((db) =>
+          deps.lessonRepo.listByFingerprints(
+            db,
+            actions.map((action) => action.plan.evidence.fingerprint),
+          ),
+        ).map((lesson) => [lesson.fingerprint, lesson] as const),
+      );
+      return actions.map((action) =>
+        buildActionDetails(action, {
+          incidentsById,
+          diagnosesById,
+          approvalsByActionId,
+          lessonsByFingerprint,
+        }),
+      );
     },
 
     getAction(input) {
@@ -1262,14 +1311,26 @@ export function createFridaySelfHealingApiService(
         }),
       );
       const cards: FridaySelfHealingIssueCard[] = [];
+      const actionsById = new Map(
+        deps.db.withReadConnection((db) =>
+          deps.actionRepo.listByIds(
+            db,
+            approvals.map((approval) => approval.actionId),
+          ),
+        ).map((action) => [action.actionId, action] as const),
+      );
+      const approvalIncidentsById = new Map(
+        deps.db.withReadConnection((db) =>
+          deps.incidentRepo.listByIds(
+            db,
+            [...actionsById.values()].map((action) => action.incidentId),
+          ),
+        ).map((incident) => [incident.incidentId, incident] as const),
+      );
 
       for (const approval of approvals) {
-        const action = deps.db.withReadConnection((db) =>
-          deps.actionRepo.getById(db, approval.actionId),
-        );
-        const incident = action
-          ? deps.db.withReadConnection((db) => deps.incidentRepo.getById(db, action.incidentId))
-          : null;
+        const action = actionsById.get(approval.actionId);
+        const incident = action ? approvalIncidentsById.get(action.incidentId) ?? null : null;
         cards.push({
           id: `approval:${approval.requestId}`,
           kind: "approval_required",

@@ -11,6 +11,10 @@ export interface FridayDiagnosisRecordRepository {
     db: Database.Database,
     diagnosisId: string,
   ): FridayDiagnosisRecordEntity | null;
+  listByIds(
+    db: Database.Database,
+    diagnosisIds: string[],
+  ): FridayDiagnosisRecordEntity[];
 
   insert(
     db: Database.Database,
@@ -70,6 +74,24 @@ export function createFridayDiagnosisRecordRepository(): FridayDiagnosisRecordRe
         .prepare("SELECT * FROM diagnosis_records WHERE id = ?")
         .get(diagnosisId) as FridayDiagnosisRecordRow | undefined;
       return row ? rowToEntity(row) : null;
+    },
+
+    listByIds(db, diagnosisIds) {
+      if (diagnosisIds.length === 0) {
+        return [];
+      }
+      const uniqueDiagnosisIds = [...new Set(diagnosisIds)];
+      const placeholders = uniqueDiagnosisIds.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT * FROM diagnosis_records
+           WHERE id IN (${placeholders})`,
+        )
+        .all(...uniqueDiagnosisIds) as FridayDiagnosisRecordRow[];
+      const diagnosesById = new Map(rows.map((row) => [row.id, rowToEntity(row)] as const));
+      return uniqueDiagnosisIds
+        .map((diagnosisId) => diagnosesById.get(diagnosisId))
+        .filter((diagnosis): diagnosis is FridayDiagnosisRecordEntity => diagnosis != null);
     },
 
     insert(db, record) {

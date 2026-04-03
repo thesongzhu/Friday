@@ -11,6 +11,10 @@ export interface FridayErrorIncidentRepository {
     db: Database.Database,
     incidentId: string,
   ): FridayErrorIncidentEntity | null;
+  listByIds(
+    db: Database.Database,
+    incidentIds: string[],
+  ): FridayErrorIncidentEntity[];
 
   insert(
     db: Database.Database,
@@ -75,6 +79,24 @@ export function createFridayErrorIncidentRepository(): FridayErrorIncidentReposi
         .prepare("SELECT * FROM error_incidents WHERE incident_id = ?")
         .get(incidentId) as FridayErrorIncidentRow | undefined;
       return row ? rowToEntity(row) : null;
+    },
+
+    listByIds(db, incidentIds) {
+      if (incidentIds.length === 0) {
+        return [];
+      }
+      const uniqueIncidentIds = [...new Set(incidentIds)];
+      const placeholders = uniqueIncidentIds.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT * FROM error_incidents
+           WHERE incident_id IN (${placeholders})`,
+        )
+        .all(...uniqueIncidentIds) as FridayErrorIncidentRow[];
+      const incidentsById = new Map(rows.map((row) => [row.incident_id, rowToEntity(row)] as const));
+      return uniqueIncidentIds
+        .map((incidentId) => incidentsById.get(incidentId))
+        .filter((incident): incident is FridayErrorIncidentEntity => incident != null);
     },
 
     insert(db, incident) {

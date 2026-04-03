@@ -16,6 +16,10 @@ export interface FridayAutoFixActionRepository {
     db: Database.Database,
     actionId: string,
   ): FridayAutoFixActionEntity | null;
+  listByIds(
+    db: Database.Database,
+    actionIds: string[],
+  ): FridayAutoFixActionEntity[];
 
   listByUser(
     db: Database.Database,
@@ -129,6 +133,24 @@ export function createFridayAutoFixActionRepository(): FridayAutoFixActionReposi
         .prepare("SELECT * FROM auto_fix_actions WHERE action_id = ?")
         .get(actionId) as FridayAutoFixActionRow | undefined;
       return row ? rowToEntity(row) : null;
+    },
+
+    listByIds(db, actionIds) {
+      if (actionIds.length === 0) {
+        return [];
+      }
+      const uniqueActionIds = [...new Set(actionIds)];
+      const placeholders = uniqueActionIds.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT * FROM auto_fix_actions
+           WHERE action_id IN (${placeholders})`,
+        )
+        .all(...uniqueActionIds) as FridayAutoFixActionRow[];
+      const actionsById = new Map(rows.map((row) => [row.action_id, rowToEntity(row)] as const));
+      return uniqueActionIds
+        .map((actionId) => actionsById.get(actionId))
+        .filter((action): action is FridayAutoFixActionEntity => action != null);
     },
 
     listByUser(db, input) {
