@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
 import { createFridayAutoFixDispatcherService } from "#learning";
@@ -162,6 +162,17 @@ describe("FridayAutoFixDispatcherService", () => {
     const results = await service.runReadyActions({ maxRiskTier: 1 });
     // Only action-001 (tier 0) qualifies, action-002 (tier 2) does not
     expect(results).toHaveLength(1);
+  });
+
+  it("batch-loads incidents for ready actions instead of fetching them one by one", async () => {
+    const listByIdsSpy = vi.spyOn(incidentRepo, "listByIds");
+    const getByIdSpy = vi.spyOn(incidentRepo, "getById");
+
+    await service.runReadyActions({ maxRiskTier: 2 });
+
+    expect(listByIdsSpy).toHaveBeenCalledTimes(1);
+    expect(listByIdsSpy).toHaveBeenCalledWith(expect.anything(), ["inc-001", "inc-002"]);
+    expect(getByIdSpy).not.toHaveBeenCalled();
   });
 
   it("filters by incidentIds", async () => {

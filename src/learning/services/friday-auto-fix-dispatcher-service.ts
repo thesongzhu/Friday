@@ -43,12 +43,17 @@ export function createFridayAutoFixDispatcherService(
           limit,
         }),
       );
+      const incidentsById = new Map(
+        deps.db.withReadConnection((db) =>
+          deps.incidentRepo
+            .listByIds(db, planned.map((action) => action.incidentId))
+            .map((incident) => [incident.incidentId, incident] as const),
+        ),
+      );
 
       const results: FridayAutoFixExecutionResult[] = [];
       for (const action of planned) {
-        const incident = deps.db.withReadConnection((db) =>
-          deps.incidentRepo.getById(db, action.incidentId),
-        );
+        const incident = incidentsById.get(action.incidentId);
         if (!incident) {
           continue;
         }
