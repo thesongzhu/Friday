@@ -31,6 +31,19 @@ export interface FridayErrorIncidentRepository {
       limit?: number;
     },
   ): FridayErrorIncidentEntity[];
+  countBySignature(
+    db: Database.Database,
+    input: {
+      userId: string;
+      fromTs?: string;
+      toTs?: string;
+      minCount?: number;
+      limit?: number;
+    },
+  ): Array<{
+    signature: string;
+    count: number;
+  }>;
 
   findRecentBySignature(
     db: Database.Database,
@@ -160,6 +173,41 @@ export function createFridayErrorIncidentRepository(): FridayErrorIncidentReposi
 
       const rows = db.prepare(sql).all(...params) as FridayErrorIncidentRow[];
       return rows.map(rowToEntity);
+    },
+
+    countBySignature(db, input) {
+      let sql = `SELECT signature, COUNT(*) as count
+                 FROM error_incidents
+                 WHERE user_id = ?`;
+      const params: unknown[] = [input.userId];
+
+      if (input.fromTs) {
+        sql += " AND ts >= ?";
+        params.push(input.fromTs);
+      }
+      if (input.toTs) {
+        sql += " AND ts <= ?";
+        params.push(input.toTs);
+      }
+
+      sql += " GROUP BY signature";
+
+      if (input.minCount && input.minCount > 1) {
+        sql += " HAVING COUNT(*) >= ?";
+        params.push(input.minCount);
+      }
+
+      sql += " ORDER BY count DESC, signature ASC";
+
+      if (input.limit) {
+        sql += " LIMIT ?";
+        params.push(input.limit);
+      }
+
+      return db.prepare(sql).all(...params) as Array<{
+        signature: string;
+        count: number;
+      }>;
     },
 
     findRecentBySignature(db, userId, signature, limit = 10) {

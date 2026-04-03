@@ -135,6 +135,48 @@ describe("FridayErrorIncidentRepository", () => {
     expect(results[0]!.incidentId).toBe("inc-002");
   });
 
+  it("countBySignature aggregates matching incidents inside a time window", () => {
+    repo.insert(db.writer, {
+      ...baseIncident,
+      incidentId: "inc-001",
+      ts: "2025-06-01T10:00:00.000Z",
+      signature: "sig-alpha",
+    });
+    repo.insert(db.writer, {
+      ...baseIncident,
+      incidentId: "inc-002",
+      ts: "2025-06-02T10:00:00.000Z",
+      signature: "sig-alpha",
+    });
+    repo.insert(db.writer, {
+      ...baseIncident,
+      incidentId: "inc-003",
+      ts: "2025-06-03T10:00:00.000Z",
+      signature: "sig-alpha",
+    });
+    repo.insert(db.writer, {
+      ...baseIncident,
+      incidentId: "inc-004",
+      ts: "2025-06-04T10:00:00.000Z",
+      signature: "sig-beta",
+    });
+    repo.insert(db.writer, {
+      ...baseIncident,
+      incidentId: "inc-005",
+      ts: "2025-05-01T10:00:00.000Z",
+      signature: "sig-alpha",
+    });
+
+    const counts = repo.countBySignature(db.writer, {
+      userId: "test-user",
+      fromTs: "2025-06-01T00:00:00.000Z",
+      toTs: "2025-06-30T23:59:59.999Z",
+      minCount: 2,
+    });
+
+    expect(counts).toEqual([{ signature: "sig-alpha", count: 3 }]);
+  });
+
   it("handles optional nodeId", () => {
     repo.insert(db.writer, {
       ...baseIncident,

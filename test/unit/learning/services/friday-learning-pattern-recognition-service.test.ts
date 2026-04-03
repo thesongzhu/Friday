@@ -310,4 +310,40 @@ describe("FridayLearningPatternRecognitionService", () => {
       expect(p.strength).toBeLessThanOrEqual(1);
     }
   });
+
+  it("counts recurring incident signatures beyond the old 500-row cap", () => {
+    const incidentRepo = createFridayErrorIncidentRepository();
+
+    for (let i = 0; i < 520; i++) {
+      db.withWriteTransaction((writer) => {
+        incidentRepo.insert(writer, {
+          incidentId: `inc-many-${i}`,
+          userId: "test-user",
+          ts: `2025-06-${String((i % 14) + 1).padStart(2, "0")}T10:${String(i % 60).padStart(2, "0")}:00.000Z`,
+          category: "tool",
+          severity: "high",
+          signature: "sig-over-500",
+          context: {},
+          autoFixEligible: false,
+          status: "open",
+          createdAt: NOW,
+          updatedAt: NOW,
+        });
+      });
+    }
+
+    const patterns = service.detectUserPatterns({
+      userId: "test-user",
+      nowIso: NOW,
+      lookbackDays: 30,
+    });
+
+    const recurring = patterns.find(
+      (pattern) =>
+        pattern.kind === "recurring_incident_signature" &&
+        pattern.key === "sig-over-500",
+    );
+    expect(recurring).toBeDefined();
+    expect(recurring!.occurrences).toBe(520);
+  });
 });

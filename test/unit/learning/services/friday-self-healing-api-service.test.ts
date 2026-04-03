@@ -74,6 +74,7 @@ describe("FridaySelfHealingApiService", () => {
     const actionRepo = createFridayAutoFixActionRepository();
     const approvalRepo = createFridayApprovalRequestRepository();
     const factRepo = createFridayPreferenceFactRepository();
+    const listByUserPrefixesSpy = vi.spyOn(factRepo, "listByUserAndKeyPrefixes");
     const listByUserSpy = vi.spyOn(factRepo, "listByUser");
     const listByActionIdsSpy = vi.spyOn(approvalRepo, "listByActionIds");
     const getByActionIdSpy = vi.spyOn(approvalRepo, "getByActionId");
@@ -238,7 +239,8 @@ describe("FridaySelfHealingApiService", () => {
 
     const overview = service.getLearningOverview({ userId: "test-user", limit: 10 });
 
-    expect(listByUserSpy).toHaveBeenCalledTimes(1);
+    expect(listByUserPrefixesSpy).toHaveBeenCalledTimes(1);
+    expect(listByUserSpy).not.toHaveBeenCalled();
     expect(listByActionIdsSpy).toHaveBeenCalledTimes(1);
     expect(getByActionIdSpy).not.toHaveBeenCalled();
     expect(overview.lessons).toEqual([

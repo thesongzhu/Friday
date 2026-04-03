@@ -775,7 +775,15 @@ export function createFridaySelfHealingApiService(
       deps.lessonRepo.listRecent(db, limit),
     );
     const preferenceFacts = deps.db.withReadConnection((db) =>
-      deps.factRepo.listByUser(db, input.userId, 0, 500),
+      deps.factRepo.listByUserAndKeyPrefixes(db, {
+        userId: input.userId,
+        keyPrefixes: [
+          "lesson_disabled:",
+          "pattern_demotion:",
+          "route_penalty:",
+          "route_pin:",
+        ],
+      }),
     );
     const lessonDisableFacts = preferenceFacts.filter((fact) =>
       fact.key.startsWith("lesson_disabled:"),

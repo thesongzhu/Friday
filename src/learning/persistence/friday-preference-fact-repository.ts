@@ -19,6 +19,15 @@ export interface FridayPreferenceFactRepository {
     minConfidence?: number,
     limit?: number,
   ): FridayPreferenceFactEntity[];
+  listByUserAndKeyPrefixes(
+    db: Database.Database,
+    input: {
+      userId: string;
+      keyPrefixes: string[];
+      minConfidence?: number;
+      limit?: number;
+    },
+  ): FridayPreferenceFactEntity[];
 
   countByUser(
     db: Database.Database,
@@ -93,6 +102,32 @@ export function createFridayPreferenceFactRepository(): FridayPreferenceFactRepo
            LIMIT ?`,
         )
         .all(userId, minConfidence, limit) as FridayPreferenceFactRow[];
+      return rows.map(rowToEntity);
+    },
+
+    listByUserAndKeyPrefixes(db, input) {
+      if (input.keyPrefixes.length === 0) {
+        return [];
+      }
+      const uniquePrefixes = [...new Set(input.keyPrefixes)];
+      const conditions = uniquePrefixes.map(() => "key LIKE ?").join(" OR ");
+      const params: unknown[] = [
+        input.userId,
+        input.minConfidence ?? 0,
+        ...uniquePrefixes.map((prefix) => `${prefix}%`),
+      ];
+
+      let sql = `SELECT * FROM preference_facts
+                 WHERE user_id = ? AND confidence >= ?
+                 AND (${conditions})
+                 ORDER BY confidence DESC`;
+
+      if (input.limit) {
+        sql += " LIMIT ?";
+        params.push(input.limit);
+      }
+
+      const rows = db.prepare(sql).all(...params) as FridayPreferenceFactRow[];
       return rows.map(rowToEntity);
     },
 

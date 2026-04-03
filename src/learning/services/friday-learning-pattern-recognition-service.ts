@@ -66,6 +66,10 @@ function computeStrength(
   return Math.min(1, Math.max(0, raw));
 }
 
+function earlierIso(left: string, right: string): string {
+  return left <= right ? left : right;
+}
+
 export function createFridayLearningPatternRecognitionService(
   deps: CreatePatternRecognitionServiceDeps,
 ): FridayLearningPatternRecognitionService {
@@ -74,72 +78,79 @@ export function createFridayLearningPatternRecognitionService(
       const { userId, nowIso, lookbackDays } = input;
       const patterns: FridayLearningPattern[] = [];
       const windowStart = subtractDays(nowIso, lookbackDays);
+      const correctionWindow = subtractDays(nowIso, Math.min(lookbackDays, 14));
+      const contradictionWindow = subtractDays(nowIso, 30);
+      const driftWindow = subtractDays(nowIso, 30);
+      const correctionScanStart = earlierIso(
+        correctionWindow,
+        earlierIso(contradictionWindow, driftWindow),
+      );
 
       // 1. Recurring incident signatures (>= 3 in lookback window)
       deps.db.withReadConnection((db) => {
-        const incidents = deps.incidentRepo.listByUser(db, {
+        const recurringSignatures = deps.incidentRepo.countBySignature(db, {
           userId,
           fromTs: windowStart,
           toTs: nowIso,
-          limit: 500,
+          minCount: 3,
         });
 
-        const signatureCounts = new Map<string, number>();
-        for (const inc of incidents) {
-          signatureCounts.set(
-            inc.signature,
-            (signatureCounts.get(inc.signature) ?? 0) + 1,
-          );
+        for (const { signature, count } of recurringSignatures) {
+          patterns.push({
+            patternId: deps.idGenerator(),
+            userId,
+            kind: "recurring_incident_signature",
+            key: signature,
+            strength: computeStrength(count, 1.0, 1.0),
+            occurrences: count,
+            windowStart,
+            windowEnd: nowIso,
+            evidence: { signature, count } satisfies JsonObject,
+          });
         }
 
-        for (const [signature, count] of signatureCounts) {
-          if (count >= 3) {
-            patterns.push({
-              patternId: deps.idGenerator(),
-              userId,
-              kind: "recurring_incident_signature",
-              key: signature,
-              strength: computeStrength(count, 1.0, 1.0),
-              occurrences: count,
-              windowStart,
-              windowEnd: nowIso,
-              evidence: { signature, count } satisfies JsonObject,
-            });
-          }
-        }
-
-        // 2. Recurring correction keys (>= 2 in 14 days)
-        const correctionWindow = subtractDays(nowIso, Math.min(lookbackDays, 14));
         const correctionRows = db
           .prepare(
-            `SELECT payload_json FROM learning_events
+            `SELECT ts, payload_json FROM learning_events
              WHERE user_id = ? AND kind = 'user_correction'
              AND ts >= ? AND ts <= ?
              ORDER BY ts DESC`,
           )
-          .all(userId, correctionWindow, nowIso) as Array<{
+          .all(userId, correctionScanStart, nowIso) as Array<{
+          ts: string;
           payload_json: string;
         }>;
 
         const correctionKeyCounts = new Map<string, number>();
+        const correctedNormalizedKeys = new Set<string>();
+        const fieldValues = new Map<string, Set<string>>();
         for (const row of correctionRows) {
           const payload = safeJsonParse(row.payload_json) as Record<
             string,
             unknown
           >;
-          const field = readCorrectionPayload(payload).correctedField;
+          const { correctedField: field, newValue: newVal } = readCorrectionPayload(payload);
           if (field) {
-            const normalized = field
-              .trim()
-              .toLowerCase()
-              .replace(/[^a-z0-9_]/g, "_");
-            correctionKeyCounts.set(
-              normalized,
-              (correctionKeyCounts.get(normalized) ?? 0) + 1,
-            );
+            const normalized = normalizeFieldToKey(field);
+            correctedNormalizedKeys.add(normalized);
+
+            if (row.ts >= correctionWindow) {
+              correctionKeyCounts.set(
+                normalized,
+                (correctionKeyCounts.get(normalized) ?? 0) + 1,
+              );
+            }
+
+            if (newVal !== undefined) {
+              if (!fieldValues.has(normalized)) {
+                fieldValues.set(normalized, new Set());
+              }
+              fieldValues.get(normalized)!.add(JSON.stringify(newVal));
+            }
           }
         }
 
+        // 2. Recurring correction keys (>= 2 in 14 days)
         for (const [key, count] of correctionKeyCounts) {
           if (count >= 2) {
             patterns.push({
@@ -159,26 +170,6 @@ export function createFridayLearningPatternRecognitionService(
         // 3. Stable preference keys (evidence_count >= 4, confidence >= 0.75, no contradictions in 30 days)
         const facts = deps.factRepo.listByUser(db, userId, 0.75, 100);
         if (facts.length > 0) {
-          const contradictionWindow = subtractDays(nowIso, 30);
-
-          const recentCorrections = db
-            .prepare(
-              `SELECT payload_json
-               FROM learning_events
-               WHERE user_id = ? AND kind = 'user_correction'
-               AND ts >= ?`,
-            )
-            .all(userId, contradictionWindow) as Array<{ payload_json: string }>;
-
-          const correctedNormalizedKeys = new Set<string>();
-          for (const row of recentCorrections) {
-            const payload = safeJsonParse(row.payload_json) as Record<string, unknown>;
-            const field = readCorrectionPayload(payload).correctedField;
-            if (field) {
-              correctedNormalizedKeys.add(normalizeFieldToKey(field));
-            }
-          }
-
           for (const fact of facts) {
             if (fact.evidenceCount >= 4) {
               // Compare using the normalized key (strip pref: prefix)
@@ -211,36 +202,6 @@ export function createFridayLearningPatternRecognitionService(
         }
 
         // 4. Drifting preference keys (same key changed to >= 2 distinct values in 30 days)
-        const driftWindow = subtractDays(nowIso, 30);
-        const driftRows = db
-          .prepare(
-            `SELECT payload_json FROM learning_events
-             WHERE user_id = ? AND kind = 'user_correction'
-             AND ts >= ? AND ts <= ?`,
-          )
-          .all(userId, driftWindow, nowIso) as Array<{
-          payload_json: string;
-        }>;
-
-        const fieldValues = new Map<string, Set<string>>();
-        for (const row of driftRows) {
-          const payload = safeJsonParse(row.payload_json) as Record<
-            string,
-            unknown
-          >;
-          const { correctedField: field, newValue: newVal } = readCorrectionPayload(payload);
-          if (field && newVal !== undefined) {
-            const normalized = field
-              .trim()
-              .toLowerCase()
-              .replace(/[^a-z0-9_]/g, "_");
-            if (!fieldValues.has(normalized)) {
-              fieldValues.set(normalized, new Set());
-            }
-            fieldValues.get(normalized)!.add(JSON.stringify(newVal));
-          }
-        }
-
         for (const [key, values] of fieldValues) {
           if (values.size >= 2) {
             patterns.push({
