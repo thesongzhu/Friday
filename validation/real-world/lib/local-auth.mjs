@@ -331,7 +331,7 @@ export function mintLocalAdminAccessToken(options = {}) {
   const mergedEnv = { ...dotEnv, ...processEnv };
   const dbPath = resolveFridayDbPath(mergedEnv, options.stateDbPath);
   const { secret, source } = loadMintTokenSecret({
-    processEnv: mergedEnv,
+    processEnv,
     explicitSecret: options.tokenSecret,
     tokenSecretFile: options.tokenSecretFile,
   });
