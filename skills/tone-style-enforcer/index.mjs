@@ -65,7 +65,7 @@ function adjustText(text, targetTone, detectedTone) {
   let adjusted = text;
 
   // Remove filler words regardless of tone
-  adjusted = adjusted.replace(FILLER_WORDS, "").replace(/\s{2,}/g, " ");
+  adjusted = adjusted.replace(FILLER_WORDS, "");
 
   if (targetTone === "professional" || targetTone === "formal") {
     if (detectedTone === "casual") {

@@ -11,7 +11,6 @@ const BUG_PATTERNS = [
   { id: "hardcoded-secret", severity: "high", label: "Possible hardcoded secret", pattern: /(?:password|secret|api_?key|token)\s*[:=]\s*["'][^"']{4,}/gi },
   { id: "magic-number", severity: "low", label: "Magic number (unnamed constant)", pattern: /(?<![.\w])(?:(?:return|[=<>!+\-*/])\s+)\d{2,}(?![.\d\w])/g },
   { id: "nested-ternary", severity: "medium", label: "Nested ternary operator", pattern: /\?[^:]*\?/g },
-  { id: "async-no-await", severity: "medium", label: "Async function without await", pattern: /async\s+function[^}]+\}(?![\s\S]*?\bawait\b)/g },
   { id: "no-error-handling", severity: "medium", label: "Promise without catch", pattern: /\.then\s*\([^)]*\)(?!\s*\.catch)/g },
   { id: "sql-concat", severity: "high", label: "SQL string concatenation (injection risk)", pattern: /(?:SELECT|INSERT|UPDATE|DELETE).*\+\s*(?:req\.|input\.|params\.)/gi },
 ];

@@ -101,7 +101,7 @@ export async function execute(input = {}) {
   }
 
   const platform = asString(input.targetPlatform ?? input.platform, "twitter").toLowerCase();
-  const config = PLATFORM_CONFIGS[platform] || PLATFORM_CONFIGS.twitter;
+  const config = PLATFORM_CONFIGS[platform] ?? PLATFORM_CONFIGS.twitter;
   const keyPoints = extractKeyPoints(content);
   const coreMessage = extractCoreMessage(content);
   const hashtags = extractHashtags(content, config.hashtagCount);

@@ -52,7 +52,7 @@ function classifyStep(stepText) {
 
 function shapeForType(type) {
   switch (type) {
-    case "start": return "rounded-rectangle";
+    case "start": return "ellipse";
     case "end": return "rounded-rectangle";
     case "decision": return "diamond";
     default: return "rectangle";

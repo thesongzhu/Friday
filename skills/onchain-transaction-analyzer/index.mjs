@@ -3,7 +3,7 @@ import { asString, compact } from "../_shared/friday-runtime-skill-utils.mjs";
 const ETH_ADDRESS_PATTERN = /0x[a-fA-F0-9]{40}/g;
 const TX_HASH_PATTERN = /0x[a-fA-F0-9]{64}/g;
 const TOKEN_AMOUNT_PATTERN = /(\d+(?:\.\d+)?)\s*(ETH|WETH|USDC|USDT|DAI|WBTC|MATIC|ARB|OP|BNB|AVAX|SOL|LINK|UNI|AAVE|CRV|MKR|SNX|COMP|SUSHI|tokens?|wei|gwei)/gi;
-const FUNCTION_PATTERN = /\b(transfer|swap|approve|mint|burn|stake|unstake|deposit|withdraw|claim|bridge|borrow|repay|liquidat|wrap|unwrap|delegate|vote|execute|multicall)\b/gi;
+const FUNCTION_PATTERN = /\b(transferr?(?:ed)?|swapp?(?:ed)?|approv(?:e[d]?|al)|mint(?:ed)?|burn(?:ed|t)?|stak(?:e[d]?|ing)|unstake[d]?|deposit(?:ed)?|withdraw(?:n|al)?|claim(?:ed)?|bridg(?:e[d]?|ing)|borrow(?:ed)?|repay(?:ed|ment)?|liquidat(?:e[d]?|ion)|wrapp?(?:ed)?|unwrapp?(?:ed)?|delegat(?:e[d]?|ion)|vot(?:e[d]?|ing)|execut(?:e[d]?|ion)|multicall(?:ed)?)\b/gi;
 const CONTRACT_PATTERN = /\b(Uniswap|Aave|Compound|OpenSea|Lido|Curve|Maker|Chainlink|ENS|Blur|Seaport|1inch|SushiSwap|PancakeSwap|Yearn|Convex)\b/gi;
 
 const CHAIN_EXPLORERS = {

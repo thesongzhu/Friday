@@ -28,7 +28,7 @@
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
-    "priority": 50,
+    "priority": 80,
     "modes": ["intent"]
   },
   "requirements": { "bins": [], "env": [], "config": [], "os": ["darwin", "linux"] },
@@ -37,6 +37,7 @@
   ],
   "outputs": [
     { "key": "summary", "type": "string", "description": "High-level summary." },
+    { "key": "nextStep", "type": "string", "description": "The recommended next action." },
     { "key": "details", "type": "object", "description": "Structured compressed output with bullets." }
   ],
   "permissions": {

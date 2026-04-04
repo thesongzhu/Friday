@@ -40,7 +40,7 @@
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
-    "priority": 50,
+    "priority": 82,
     "modes": [
       "intent"
     ]
@@ -68,6 +68,11 @@
       "key": "summary",
       "type": "string",
       "description": "High-level summary."
+    },
+    {
+      "key": "nextStep",
+      "type": "string",
+      "description": "The recommended next action."
     },
     {
       "key": "details",
