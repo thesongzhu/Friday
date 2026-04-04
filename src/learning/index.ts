@@ -172,3 +172,17 @@ export type {
   CreateFridaySelfLearningRuntimeDeps,
 } from "./runtime/friday-self-learning-runtime.types.js";
 export { createFridaySelfLearningRuntime } from "./runtime/friday-self-learning-runtime.js";
+
+// Session Satisfaction
+export type {
+  FridaySessionSatisfactionRepository,
+  FridaySessionSatisfactionEntity,
+  FridaySessionSatisfactionRow,
+} from "./persistence/friday-session-satisfaction-repository.js";
+export { createFridaySessionSatisfactionRepository } from "./persistence/friday-session-satisfaction-repository.js";
+
+export type {
+  FridaySessionSatisfactionService,
+  CreateSessionSatisfactionServiceDeps,
+} from "./services/friday-session-satisfaction-service.js";
+export { createFridaySessionSatisfactionService } from "./services/friday-session-satisfaction-service.js";
