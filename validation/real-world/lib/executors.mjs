@@ -201,7 +201,11 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
   const browser = await chromium.launch({ headless: true });
   const requestUrls = [];
   const requestFailures = [];
+  const reloadAbortedRequestFailures = [];
   const consoleErrors = [];
+  const requestOrder = new WeakMap();
+  let requestSequence = 0;
+  let reloadAbortCutoff = null;
   const startedAt = Date.now();
 
   try {
@@ -231,9 +235,19 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
     const page = await context.newPage();
     page.on("request", (request) => {
       requestUrls.push(request.url());
+      requestSequence += 1;
+      requestOrder.set(request, requestSequence);
     });
     page.on("requestfailed", (request) => {
-      requestFailures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "failed"}`);
+      const message = `${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "failed"}`;
+      const errorText = request.failure()?.errorText ?? "failed";
+      const startedBeforeIntentionalReload = reloadAbortCutoff != null
+        && (requestOrder.get(request) ?? Number.POSITIVE_INFINITY) <= reloadAbortCutoff;
+      if (startedBeforeIntentionalReload && /ERR_ABORTED/i.test(errorText)) {
+        reloadAbortedRequestFailures.push(message);
+        return;
+      }
+      requestFailures.push(message);
     });
     page.on("console", (message) => {
       if (message.type() === "error") {
@@ -265,13 +279,16 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
       );
     };
 
+    const idleWindowMs = execution.idleWindowMs ?? 1_500;
     await waitForReady();
     const firstVisibleSignalMs = Date.now() - startedAt;
+    await page.waitForTimeout(idleWindowMs);
     if (execution.reloadCheck) {
+      reloadAbortCutoff = requestSequence;
       await page.reload({ waitUntil: "domcontentloaded", timeout: scenarioTimeout(scenario, 90_000) });
       await waitForReady();
+      await page.waitForTimeout(idleWindowMs);
     }
-    await page.waitForTimeout(execution.idleWindowMs ?? 1_500);
 
     const screenshotPath = path.join(
       reportRoot,
@@ -310,6 +327,7 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
       allowedFinalPathPrefixes,
       consoleErrors,
       requestFailures,
+      reloadAbortedRequestFailures,
       significantRequestFailures,
       requestUrls,
       statusCode: gotoResponse?.status() ?? 0,
