@@ -54,6 +54,7 @@ import type {
   FridayAgentSystemPromptBuildResult,
 } from "./friday-agent-runtime.types.js";
 import { evaluateFridayAnswerAlignment } from "./friday-agent-answer-alignment.js";
+import { buildFridayLearningContextFragment } from "./friday-agent-workspace-context.js";
 import { notifyFridayContextEngineAfterTurn } from "./friday-agent-context-engine.js";
 import type { FridayDecisionContext } from "./friday-agent-decision-engine.types.js";
 import { createFridayFileVersionTracker } from "./friday-agent-file-version-tracker.js";
@@ -560,12 +561,17 @@ export function createFridayAgentRuntime(
         ? params.taskPrompt.trim()
         : params.task;
       let learnedPreferences: Record<string, unknown> = {};
+      let learningContextFragment = "";
       if (learningContextBuilder && principalId) {
         try {
           const learningCtx = learningContextBuilder({ userId: principalId, nowIso: nowIso() });
           if (learningCtx.preferences && typeof learningCtx.preferences === "object") {
             learnedPreferences = learningCtx.preferences;
           }
+          learningContextFragment = buildFridayLearningContextFragment({
+            individuationStage: learningCtx.individuationStage,
+            activePatterns: learningCtx.activePatterns,
+          });
         } catch (err) {
           // Non-fatal: preference enrichment failure should not kill the run.
           console.warn("[friday][agent-runtime] preference-enrichment:", err instanceof Error ? err.message : String(err));
@@ -1206,6 +1212,9 @@ export function createFridayAgentRuntime(
             "Respect these when generating responses:\n" +
             prefLines.join("\n") +
             "\n</user-preferences>";
+        }
+        if (learningContextFragment.length > 0) {
+          effectiveSystemPrompt += `\n\n${learningContextFragment}`;
         }
         if (communicationPromptBuilder && principalId) {
           try {
