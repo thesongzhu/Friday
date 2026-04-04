@@ -63,6 +63,7 @@ function assertContains(source, needle, label) {
 async function run() {
   const marketplaceTypesPath = "src/marketplace/model/friday-marketplace.types.ts";
   const runtimePath = "src/agent/runtime/friday-agent-runtime.ts";
+  const closureGapDetectorPath = "src/agent/runtime/friday-agent-closure-gap-detector.ts";
   const apiRuntimePath = "src/api/runtime/friday-api-runtime.ts";
   const hubPath = "src/hub/friday-hub-bootstrap.ts";
   const capabilityGatesPath = "src/hub/bootstrap/friday-capability-gates.ts";
@@ -74,6 +75,7 @@ async function run() {
   const [
     marketplaceTypesSource,
     runtimeSource,
+    closureGapDetectorSource,
     apiRuntimeSource,
     hubSource,
     capabilityGatesSource,
@@ -84,6 +86,7 @@ async function run() {
   ] = await Promise.all([
     readUtf8(marketplaceTypesPath),
     readUtf8(runtimePath),
+    readUtf8(closureGapDetectorPath),
     readUtf8(apiRuntimePath),
     readUtf8(hubPath),
     readUtf8(capabilityGatesPath),
@@ -119,7 +122,7 @@ async function run() {
     "Agent runtime tool-evidence guard",
   );
   assertContains(
-    runtimeSource,
+    closureGapDetectorSource,
     "no successful tool call evidence was recorded in this run",
     "Agent runtime unverified completion warning",
   );
