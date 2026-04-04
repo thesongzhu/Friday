@@ -29,7 +29,7 @@ function extractSentences(text) {
 }
 
 function generateHook(content) {
-  const firstSentence = content.replace(/([.!?])\s+.*/, "$1").trim();
+  const firstSentence = content.replace(/([.!?])\s+.*/, "$1").trim().replace(/[.!?]+$/, "");
   for (const h of HOOK_TEMPLATES) {
     if (h.pattern.test(content)) {
       return h.template(firstSentence);

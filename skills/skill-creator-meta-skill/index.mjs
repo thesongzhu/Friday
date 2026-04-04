@@ -8,21 +8,30 @@ const CATEGORY_MAP = [
   { category: "data", patterns: [/\bdata\b/i, /\banalytic/i, /\breport\b/i, /\bdashboard/i, /\bmetric/i] },
 ];
 
-function slugify(text) {
-  return text
+function slugify(text, maxLen = 60) {
+  const slug = text
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, "")
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 50);
+    .replace(/^-|-$/g, "");
+  // Truncate at the last whole word boundary within maxLen
+  if (slug.length <= maxLen) return slug;
+  const truncated = slug.slice(0, maxLen);
+  const lastDash = truncated.lastIndexOf("-");
+  return lastDash > 10 ? truncated.slice(0, lastDash) : truncated;
 }
 
-function titleCase(text) {
-  return text
+function titleCase(text, maxLen = 60) {
+  const full = text
     .split(/[\s-]+/)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(" ");
+  if (full.length <= maxLen) return full;
+  // Truncate at the last whole word boundary
+  const truncated = full.slice(0, maxLen);
+  const lastSpace = truncated.lastIndexOf(" ");
+  return lastSpace > 10 ? truncated.slice(0, lastSpace) : truncated;
 }
 
 function inferCategory(goal) {
@@ -114,8 +123,8 @@ export async function execute(input = {}) {
   }
 
   const rawName = asString(input.skillName, "");
-  const skillName = rawName || titleCase(slugify(goal).slice(0, 30));
-  const skillId = slugify(rawName || goal).slice(0, 40);
+  const skillId = slugify(rawName || goal);
+  const skillName = rawName || titleCase(skillId);
   const category = inferCategory(goal);
   const verbs = extractKeyVerbs(goal);
   const description = compact(goal, 200);

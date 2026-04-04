@@ -78,49 +78,51 @@ function buildNodes(entities) {
 
 function inferConnections(text, nodes) {
   const connections = [];
+  const lowerText = text.toLowerCase();
+  const added = new Set();
+
+  function addConnection(fromId, toId, label = "") {
+    const key = `${fromId}->${toId}`;
+    if (!added.has(key)) {
+      added.add(key);
+      connections.push({ from: fromId, to: toId, label, type: "arrow" });
+    }
+  }
 
   // Connect sequentially if sequence patterns are detected
   const isSequential = SEQUENCE_PATTERNS.some(p => p.test(text));
   if (isSequential) {
     for (let i = 0; i < nodes.length - 1; i++) {
-      connections.push({
-        from: nodes[i].id,
-        to: nodes[i + 1].id,
-        label: "",
-        type: "arrow",
-      });
+      addConnection(nodes[i].id, nodes[i + 1].id);
     }
     return connections;
   }
 
-  // Try to find explicit relationships in text
+  // Try to find explicit relationships: look for sentences containing both entities
+  const sentences = text.split(/[.!?\n]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i + 1; j < nodes.length; j++) {
       const a = nodes[i].label.toLowerCase();
       const b = nodes[j].label.toLowerCase();
-      // Check if both appear near each other in text
-      const aIdx = text.toLowerCase().indexOf(a);
-      const bIdx = text.toLowerCase().indexOf(b);
-      if (aIdx >= 0 && bIdx >= 0 && Math.abs(aIdx - bIdx) < 150) {
-        connections.push({
-          from: nodes[i].id,
-          to: nodes[j].id,
-          label: "",
-          type: "arrow",
-        });
+      // Both entities must appear in the SAME sentence
+      const cooccurs = sentences.some(s => s.includes(a) && s.includes(b));
+      if (cooccurs) {
+        // Determine direction: whichever appears first in text is the source
+        const aIdx = lowerText.indexOf(a);
+        const bIdx = lowerText.indexOf(b);
+        if (aIdx <= bIdx) {
+          addConnection(nodes[i].id, nodes[j].id);
+        } else {
+          addConnection(nodes[j].id, nodes[i].id);
+        }
       }
     }
   }
 
-  // Fallback: connect first node to all others (hub pattern)
+  // Fallback: connect sequentially by order of appearance if no relationships found
   if (connections.length === 0 && nodes.length > 1) {
-    for (let i = 1; i < nodes.length; i++) {
-      connections.push({
-        from: nodes[0].id,
-        to: nodes[i].id,
-        label: "",
-        type: "arrow",
-      });
+    for (let i = 0; i < nodes.length - 1; i++) {
+      addConnection(nodes[i].id, nodes[i + 1].id);
     }
   }
 

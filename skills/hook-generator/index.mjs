@@ -1,5 +1,14 @@
 import { asString, compact } from "../_shared/friday-runtime-skill-utils.mjs";
 
+function shortenTopic(topic) {
+  // Extract a concise noun-phrase from the topic for natural template insertion
+  const lower = topic.toLowerCase()
+    .replace(/^(why|how|what|when|where)\s+/i, "")
+    .replace(/\?+$/, "")
+    .trim();
+  return lower.length > 0 ? lower : topic.toLowerCase();
+}
+
 const HOOK_STYLES = {
   curiosity: {
     label: "Curiosity",
@@ -14,9 +23,9 @@ const HOOK_STYLES = {
   bold: {
     label: "Bold Statement",
     templates: [
-      (t) => `${t} is dead. Here's what's replacing it.`,
+      (t) => `The old way of thinking about ${t} is dead. Here's what's replacing it.`,
       (t) => `I'm going to say what nobody else will about ${t}.`,
-      (t) => `Stop wasting time on ${t} the wrong way.`,
+      (t) => `Stop wasting time approaching ${t} the wrong way.`,
       (t) => `This is the only guide to ${t} you'll ever need.`,
       (t) => `Forget everything you've been told about ${t}.`,
     ],
@@ -24,10 +33,10 @@ const HOOK_STYLES = {
   story: {
     label: "Story",
     templates: [
-      (t) => `Last year, I failed miserably at ${t}. Here's what I learned.`,
+      (t) => `Last year, I completely rethought my approach to ${t}. Here's what I learned.`,
       (t) => `A friend asked me about ${t} and my answer changed everything.`,
-      (t) => `I spent 3 months obsessing over ${t}. This is what happened.`,
-      (t) => `The moment I understood ${t}, everything clicked.`,
+      (t) => `I spent 3 months deep-diving into ${t}. This is what happened.`,
+      (t) => `The moment I truly understood ${t}, everything clicked.`,
       (t) => `Nobody believed me when I said ${t} would matter. They were wrong.`,
     ],
   },
@@ -76,7 +85,7 @@ export async function execute(input = {}) {
 
   const requestedStyle = asString(input.style, "").toLowerCase();
   const primaryStyle = HOOK_STYLES[requestedStyle] ? requestedStyle : detectTopicTone(topic);
-  const shortTopic = compact(topic, 50);
+  const shortTopic = shortenTopic(compact(topic, 60));
 
   const primary = HOOK_STYLES[primaryStyle];
   const primaryHooks = pickSubset(primary.templates, 3).map((fn) => ({
