@@ -22,6 +22,57 @@ describe("createFridayUixSurfaceService", () => {
     return { db, wizardContextRepo, persisted };
   }
 
+  function createPreferencePersistenceHarness() {
+    const stored = new Map<string, {
+      id: string;
+      principalId: string;
+      category: string;
+      key: string;
+      value: unknown;
+      source: "explicit" | "implicit";
+      confidence: number;
+      createdAt: string;
+      updatedAt: string;
+    }>();
+    const db = {
+      withWriteTransaction: <T>(callback: (db: Record<string, never>) => T) => callback({}),
+      withReadConnection: <T>(callback: (db: Record<string, never>) => T) => callback({}),
+    };
+    const preferenceRepo = {
+      listByPrincipal: vi.fn((_db: unknown, input: { principalId: string; category?: string }) =>
+        [...stored.values()].filter((item) =>
+          item.principalId === input.principalId && (!input.category || item.category === input.category)
+        )),
+      upsert: vi.fn((_db: unknown, input: {
+        id: string;
+        principalId: string;
+        category: string;
+        key: string;
+        value: unknown;
+        source: "explicit" | "implicit";
+        confidence: number;
+        nowIso: string;
+      }) => {
+        const mapKey = `${input.principalId}:${input.category}:${input.key}`;
+        const existing = stored.get(mapKey);
+        const saved = {
+          id: input.id,
+          principalId: input.principalId,
+          category: input.category,
+          key: input.key,
+          value: input.value,
+          source: input.source,
+          confidence: input.confidence,
+          createdAt: existing?.createdAt ?? input.nowIso,
+          updatedAt: input.nowIso,
+        };
+        stored.set(mapKey, saved);
+        return saved;
+      }),
+    };
+    return { db, preferenceRepo, stored };
+  }
+
   it("writes the latest harness summary into assistant focus for skill generation", async () => {
     const sessionService = {
       getOrCreateSession: vi.fn(async () => ({ key: "ui:assistant:assistant-shell" })),
@@ -71,6 +122,39 @@ describe("createFridayUixSurfaceService", () => {
         lastHarnessSummary: "Skill draft is ready for review.",
       }),
     );
+  });
+
+  it("persists uix user-profile preferences instead of rejecting them", () => {
+    const persistence = createPreferencePersistenceHarness();
+    const service = createFridayUixSurfaceService({
+      db: persistence.db as never,
+      preferenceRepo: persistence.preferenceRepo as never,
+      idGenerator: (() => {
+        let counter = 0;
+        return () => `pref-${++counter}`;
+      })(),
+      nowIso: () => "2026-04-04T02:00:00.000Z",
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+    });
+
+    const result = service.updatePreferences({
+      userId: "user-1",
+      request: {
+        preferences: [
+          { category: "uix", key: "user.profile_type", value: "developer" },
+          { category: "uix", key: "user.onboarded_at", value: "2026-04-04T02:00:00.000Z" },
+        ],
+      },
+    });
+
+    expect(result.created).toBe(2);
+    expect(result.updated).toBe(0);
+    expect(service.listPreferences({ userId: "user-1", category: "uix" }).items).toEqual([
+      expect.objectContaining({ category: "uix", key: "user.profile_type", value: "developer" }),
+      expect.objectContaining({ category: "uix", key: "user.onboarded_at", value: "2026-04-04T02:00:00.000Z" }),
+    ]);
   });
 
   it("writes harness focus for wizard clarification continuations", async () => {
