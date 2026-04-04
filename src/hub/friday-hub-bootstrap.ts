@@ -5147,6 +5147,26 @@ export async function createFridayHub(
       hubState = "stopping";
       upSince = null;
 
+      // P0-SHUT: Timeout wrapper prevents shutdown from hanging indefinitely
+      // if any single service is stuck. 30s per step is generous; if a service
+      // cannot stop in 30s it is effectively hung.
+      const SHUTDOWN_STEP_TIMEOUT_MS = 30_000;
+      const shutdownWithTimeout = async (
+        label: string,
+        step: () => Promise<void> | void,
+      ): Promise<void> => {
+        try {
+          await Promise.race([
+            Promise.resolve(step()),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error(`Shutdown step "${label}" timed out after ${SHUTDOWN_STEP_TIMEOUT_MS}ms`)), SHUTDOWN_STEP_TIMEOUT_MS),
+            ),
+          ]);
+        } catch (err) {
+          console.warn("[friday][hub-shutdown]", label, ":", err instanceof Error ? err.message : String(err));
+        }
+      };
+
       // P1-SHUT-001/002/003: Stop services started during bootstrap
       try { observabilityService?.scheduler?.stop(); } catch (err) {
       warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
@@ -5157,31 +5177,31 @@ export async function createFridayHub(
 
       // 1. Stop job scheduler (F11: await in-flight)
       if (jobScheduler) {
-        await jobScheduler.stop();
+        await shutdownWithTimeout("jobScheduler.stop", () => jobScheduler!.stop());
       }
 
       // 2. Stop memory file sync
       if (memoryFileSyncService) {
-        await memoryFileSyncService.stop();
+        await shutdownWithTimeout("memoryFileSyncService.stop", () => memoryFileSyncService!.stop());
       }
 
       // 3. Stop channel plugins
-      await channelRegistry.stopAll();
+      await shutdownWithTimeout("channelRegistry.stopAll", () => channelRegistry.stopAll());
       if (systemCompanionBridge?.isConnected()) {
-        await systemCompanionBridge.disconnect();
+        await shutdownWithTimeout("systemCompanionBridge.disconnect", () => systemCompanionBridge!.disconnect());
       }
       if (systemCompanionServer?.isRunning()) {
-        await systemCompanionServer.stop();
+        await shutdownWithTimeout("systemCompanionServer.stop", () => systemCompanionServer!.stop());
       }
       if (desktopSessionManager?.isConnected()) {
         desktopSessionManager.disconnect();
       }
-      await browserManager.close();
-      await subagentRegistry.drain();
+      await shutdownWithTimeout("browserManager.close", () => browserManager.close());
+      await shutdownWithTimeout("subagentRegistry.drain", () => subagentRegistry.drain());
       // 4. API runtime — no async teardown yet (HTTP server stop is CLI concern)
       // 5. Workflow runtime — scheduler now handles cron lifecycle
       // 6. Skills
-      await registry.close();
+      await shutdownWithTimeout("registry.close", () => registry.close());
       // 7. State
       stateRuntime?.close();
       hubState = "stopped";

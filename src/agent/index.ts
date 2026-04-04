@@ -449,6 +449,48 @@ export { createFridayAgentReviewGate } from "./runtime/friday-agent-review-gate.
 
 export { isMutatingToolCall } from "./runtime/friday-agent-tool-mutation.js";
 
+// ─── Tool call recovery ───
+
+export type { ParsedTextToolCall } from "./runtime/friday-agent-tool-call-recovery.js";
+export { recoverToolCallsFromAssistantText, looksLikeJson, unwrapJsonCodeFence, extractJsonCodeBlocks } from "./runtime/friday-agent-tool-call-recovery.js";
+
+// ─── Time-sensitive handler ───
+
+export type { RunTimeContext, TimeSensitiveResponseDecision } from "./runtime/friday-agent-time-sensitive-handler.js";
+export {
+  buildRunTimeContext,
+  resolveAgentTimezone,
+  normalizeIanaTimezone,
+  readPreferredTimezone,
+  formatDateInTimezone,
+  hasTimeSensitiveNewsIntent,
+  textHasTimeSensitiveNewsIntent,
+  evaluateTimeSensitiveResponse,
+  extractMessageText,
+} from "./runtime/friday-agent-time-sensitive-handler.js";
+
+// ─── Closure gap detection ───
+
+export type { OutputClosureGap } from "./runtime/friday-agent-closure-gap-detector.js";
+export {
+  FRIDAY_DESKTOP_UNAVAILABLE_MESSAGE,
+  FRIDAY_SYSTEM_UNAVAILABLE_MESSAGE,
+  normalizeDefaultRouteSentinel,
+  hasSafeDiagnosticCompletionEvidence,
+  detectOutputClosureGap,
+  detectEvidenceClosureGap,
+  detectArtifactTruthGap,
+  enforceToolEvidenceForCompletionClaim,
+  enforceFeedbackPersistenceEvidence,
+  hasSuccessfulToolEvidence,
+  shouldEnforceToolEvidenceForTask,
+  enforceBoundaryClarityResponse,
+  taskRequiresReadOnlyDesktopInspection,
+  toolCallViolatesDesktopInspectionIntent,
+  buildEvidenceRetryPrompt,
+  buildArtifactTruthRetryPrompt,
+} from "./runtime/friday-agent-closure-gap-detector.js";
+
 // ─── SSRF guard ───
 
 export type { FridayAgentSsrfGuard, FridaySsrfPolicy, PinnedHostname, LookupFn } from "./security/friday-agent-ssrf-guard.js";
