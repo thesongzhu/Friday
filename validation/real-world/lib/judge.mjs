@@ -11,8 +11,43 @@ function getTextOutput(artifact) {
   );
 }
 
+function extractEmbeddedJson(text) {
+  const normalized = typeof text === "string" ? text.trim() : "";
+  if (!normalized) {
+    return null;
+  }
+
+  const direct = safeJsonParse(stripMarkdownFences(normalized));
+  if (direct && typeof direct === "object") {
+    return direct;
+  }
+
+  const fencedMatches = [...normalized.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)];
+  for (const match of fencedMatches) {
+    const parsed = safeJsonParse((match[1] ?? "").trim());
+    if (parsed && typeof parsed === "object") {
+      return parsed;
+    }
+  }
+
+  const firstBrace = normalized.indexOf("{");
+  const lastBrace = normalized.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    const parsed = safeJsonParse(normalized.slice(firstBrace, lastBrace + 1));
+    if (parsed && typeof parsed === "object") {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function shouldRunJudge(scenario) {
+  return scenario?.execution?.useJudge === true;
+}
+
 function toJson(text) {
-  return safeJsonParse(stripMarkdownFences(text));
+  return extractEmbeddedJson(text);
 }
 
 export function evaluateBehavioralRubric({ scenario, artifact }) {
@@ -113,7 +148,7 @@ export function evaluateBehavioralRubric({ scenario, artifact }) {
 }
 
 export async function runLlmJudge({ client, scenario, artifact, envTruth, judgePolicy = "auto" }) {
-  if (judgePolicy === "never" || artifact.result === "blocked") {
+  if (judgePolicy === "never" || artifact.result === "blocked" || !shouldRunJudge(scenario)) {
     return { available: false, reason: "judge disabled for this run" };
   }
 
@@ -124,6 +159,8 @@ export async function runLlmJudge({ client, scenario, artifact, envTruth, judgeP
 
   const prompt = [
     "You are validating a Friday real-world scenario run.",
+    "Do not call tools.",
+    "Base the verdict only on the evidence below.",
     "Return JSON only with this shape:",
     '{"verdict":"pass|fail|manual_review","confidence":0.0,"reasons":["..."],"misroute":false}',
     "",
