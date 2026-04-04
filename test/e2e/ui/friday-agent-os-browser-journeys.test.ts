@@ -21,6 +21,11 @@ async function waitForAssistant(pageHandle: FridayBrowserPageHandle): Promise<vo
   await pageHandle.page.waitForSelector('[data-testid="assistant-goal-input"]');
 }
 
+async function waitForChat(pageHandle: FridayBrowserPageHandle): Promise<void> {
+  await pageHandle.page.goto("/chat");
+  await pageHandle.page.waitForSelector('textarea[placeholder*="Ask Friday anything"]');
+}
+
 async function waitForOutcomeAction(
   pageHandle: FridayBrowserPageHandle,
   action: "save" | "schedule" | "package" | "publish_later",
@@ -109,6 +114,19 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
       await env.cleanup();
       env = null;
     }
+  });
+
+  it("chat handles immediate capability answers without hanging on the stream", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
+    env = await createFridayBrowserE2eEnv();
+    pageHandle = await env.newPage();
+    await waitForChat(pageHandle);
+
+    await pageHandle.page.getByRole("button", { name: "Help" }).click();
+    await pageHandle.page.waitForFunction(() =>
+      document.body.textContent?.includes("Current capabilities:") ?? false
+    );
+
+    expect(await pageHandle.page.locator("body").textContent()).not.toContain("Failed to send message");
   });
 
   it("assistant -> outcome receipt -> save creates a leverage-scored automation", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {

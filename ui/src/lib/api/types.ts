@@ -265,6 +265,7 @@ export interface AgentRuntimeResult {
   durationMs: number;
   usageInput: number;
   usageOutput: number;
+  eventStreamAvailable?: boolean;
   images?: string[];
   finalResponse?: string;
   contextCostSummary?: AgentContextCostSummary;
