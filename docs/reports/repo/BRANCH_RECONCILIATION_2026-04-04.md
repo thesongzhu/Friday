@@ -4,11 +4,15 @@ Date: 2026-04-04
 
 ## Summary
 
-This report records the `main` branch reconciliation and safe branch cleanup performed from the clean worktree at `/Users/jarvis/Projects/Friday-publish-real-world`.
+This report records the `main` branch reconciliation and final branch cleanup performed across:
+
+- `/Users/jarvis/Projects/Friday`
+- `/Users/jarvis/Projects/Friday-publish-real-world`
 
 Confirmed facts:
 
 - `main` baseline before cleanup was `e51de41`.
+- Final `main` after the reconciliation record landed was `3f4321f`.
 - `main` was already passing:
   - `npm run lint`
   - `npm run build`
@@ -24,6 +28,7 @@ Authoritative raw evidence for this reconciliation lives in:
 - `docs/reports/repo/branch-reconciliation-2026-04-04/post-cleanup-local-branches-vv.txt`
 - `docs/reports/repo/branch-reconciliation-2026-04-04/worktrees.txt`
 - `docs/reports/repo/branch-reconciliation-2026-04-04/post-cleanup-worktrees.txt`
+- `docs/reports/repo/branch-reconciliation-2026-04-04/stash-list.txt`
 
 ## Cleanup Completed
 
@@ -31,6 +36,7 @@ Authoritative raw evidence for this reconciliation lives in:
 
 - Removed `/Users/jarvis/.claude-worktrees/Friday/laughing-hugle`
 - Removed `/Users/jarvis/Projects/Friday-nightly-fix`
+- Removed `/Users/jarvis/.claude-worktrees/Friday/serene-chaum`
 - Pruned the stale `claude/cranky-colden` worktree registration
 
 ### Local Branches Deleted
@@ -40,6 +46,7 @@ Authoritative raw evidence for this reconciliation lives in:
 - `codex/fix-2026-03-30-nightly` at `94169f8`
 - `codex/fix-file-tool-workspace-path` at `89ad6dc`
 - `codex/fix-real-world-smoke-followups` at `faac6c9`
+- `codex/efficiency-audit-fixes` at `3fc9983`
 - `codex/gha-node24-upgrade` at `9f2ef5e`
 - `codex/provider-backend-auth-matrix` at `2eef6f1`
 - `codex/routing-decision-trace-maturation` at `05bbcbe`
@@ -49,21 +56,28 @@ Authoritative raw evidence for this reconciliation lives in:
 - `codex/friday-real-validation-2026-03-31` at `8030a92`
 - `codex/protect-uncommitted-before-rebase-20260327` at `aafd891`
 - `codex/self-evolution-snapshot-2026-04-01` at `34661d2`
+- `serene-chaum` at `3f7e10e`
+- `codex/branch-reconciliation-2026-04-04` at `01b9e8f`
 
 ### Remote Branches Deleted Or Pruned
 
 - Deleted:
-  - `claude/investigate-twitter-thread-4PNHG`
   - `claude/review-friday-codebase-JQ9x5`
   - `claude/review-friday-codebase-JQ9x5-v2`
   - `claude/test-session-xXyVO`
   - `claude/fix-lint-ci-JQ9x5`
+  - `codex/branch-reconciliation-2026-04-04`
+  - `codex/efficiency-audit-fixes`
   - `codex/fix-2026-03-30-nightly`
+  - `codex/friday-real-validation-2026-03-31`
+  - `codex/full-audit-2026-03-29`
   - `codex/gha-node24-upgrade`
   - `codex/provider-backend-auth-matrix`
   - `codex/routing-decision-trace-maturation`
   - `codex/tier1-live-env-contracts`
   - `laughing-hugle`
+- Recreated and retained:
+  - `claude/investigate-twitter-thread-4PNHG`
 - Already absent on remote and pruned from local tracking during `git fetch --all --prune`:
   - `codex/fix-file-tool-workspace-path`
   - `codex/fix-real-world-smoke-followups`
@@ -81,19 +95,25 @@ Authoritative raw evidence for this reconciliation lives in:
 | `claude/fix-lint-ci-JQ9x5` | `cda052de72b1` | `2` | PR #57 merged on 2026-03-31 | Current `main` passes `lint` and `build`; branch treated as superseded and deleted |
 | `codex/fix-real-world-smoke-followups` | `faac6c9b5591` | `0` | PR #80 merged on 2026-04-04 | Already merged; local deleted and remote absent |
 | `codex/fix-file-tool-workspace-path` | `89ad6dc90311` | `0` | PR #81 merged on 2026-04-04 | Already merged; local deleted and remote absent |
-| `claude/investigate-twitter-thread-4PNHG` | `876368fe5472` | `0` | PR #82 merged on 2026-04-04 | Already merged; remote deleted |
 | `codex/fix-2026-03-30-nightly` | `94169f87adbd` | `0` | No open PR | No unique patch content remained; worktree and refs deleted |
 | `claude/review-friday-codebase-JQ9x5` | `b4f0fd839d24` | `0` | No open PR | No unique patch content remained; local and remote deleted |
 | `claude/review-friday-codebase-JQ9x5-v2` | `b4f0fd839d24` | `0` | No open PR | No unique patch content remained; remote deleted |
 
-### Retained Branches
+### Archived Or Deleted After Explicit Review
 
 | Ref | Head SHA | `main..branch` | `branch..main` | PR status | `git cherry` summary | Disposition |
 | --- | --- | ---: | ---: | --- | --- | --- |
-| `codex/efficiency-audit-fixes` | `3fc9983a1ff6` | `39` | `8` | PR #77 open, `mergeable=false` | 39 unique patches remain | Keep as split source only; do not merge whole branch |
-| `origin/codex/full-audit-2026-03-29` | `d8c18f95e90d` | `1` | `77` | No PR found | `+ d8c18f9 fix: harden audit gates and release readiness workflows` | Archive only; do not merge whole branch |
-| `origin/codex/friday-real-validation-2026-03-31` | `8030a92bd3dc` | `1` | `77` | No PR found | `+ 8030a92 Add Friday real validation evidence bundle for 2026-03-31` | Archive only; do not merge whole branch |
-| `serene-chaum` | `3f7e10eaca61` | `1` | `114` | Remote gone | `+ 3f7e10e fix: comprehensive audit remediation — P0/P1/P2 fixes + code quality sweep` | Mining branch only; not a merge target |
+| `codex/efficiency-audit-fixes` | `3fc9983a1ff6` | `39` | `8` | PR #77 closed on 2026-04-04 | 39 unique patches remain in `branch-ahead-behind.json` | Branch deleted after its SHAs and split plan were preserved in this report |
+| `origin/codex/full-audit-2026-03-29` | `d8c18f95e90d` | `1` | `77` | No PR found | `+ d8c18f9 fix: harden audit gates and release readiness workflows` | Archive ref deleted after SHA was preserved here |
+| `origin/codex/friday-real-validation-2026-03-31` | `8030a92bd3dc` | `1` | `77` | No PR found | `+ 8030a92 Add Friday real validation evidence bundle for 2026-03-31` | Archive ref deleted after SHA was preserved here |
+| `serene-chaum` | `3f7e10eaca61` | `1` | `114` | Remote gone | `+ 3f7e10e fix: comprehensive audit remediation — P0/P1/P2 fixes + code quality sweep` | Local branch and worktree deleted after diff snapshot was archived |
+
+### Final Retained Branches
+
+| Ref | Head SHA | `main..branch` | PR status | Disposition |
+| --- | --- | ---: | --- | --- |
+| `main` | `3f4321f4361e` | `0` | current default branch | Retained |
+| `claude/investigate-twitter-thread-4PNHG` | `876368fe5472` | `0` | PR #82 merged on 2026-04-04 | Restored and retained by user request |
 
 ### Local-Only WIP Branches Removed After Archiving
 
@@ -110,6 +130,7 @@ Before cleanup, the dirty worktree at `/Users/jarvis/Projects/Friday` was snapsh
 - `docs/reports/repo/branch-reconciliation-2026-04-04/dirty-worktree-diff.patch`
 - `docs/reports/repo/branch-reconciliation-2026-04-04/dirty-worktree-diff-stat.txt`
 - `docs/reports/repo/branch-reconciliation-2026-04-04/dirty-worktree-untracked.txt`
+- `docs/reports/repo/branch-reconciliation-2026-04-04/stash-list.txt`
 
 Confirmed facts from that snapshot:
 
@@ -124,12 +145,15 @@ Confirmed facts from that snapshot:
 - Untracked `docs/reports/ops/real-world-validation/**` entries are generated validation outputs, not missing product code on `main`.
 - Untracked `scripts/validation/run-real-world-validation.mjs` and `validation/real-world/**` are already tracked on `main`; they appear untracked in the old dirty branch only because that branch predates PR #78.
 - Untracked `managed-skills/output-current-datetime/**` does not exist on current `main`; it remains local-only material inside the dirty worktree snapshot.
+- The dirty worktree was preserved again as `stash@{0}: On codex/efficiency-audit-fixes: pre-branch-cleanup-2026-04-04` before switching `/Users/jarvis/Projects/Friday` back to `main`.
 
-No destructive cleanup was applied to `/Users/jarvis/Projects/Friday` itself.
+No tracked work from the dirty branch was discarded without a snapshot or stash handle.
 
 ## PR #77 Split Rule
 
-`PR #77` remains open only as a source branch for follow-up extraction. It is not a merge target.
+`PR #77` was closed on 2026-04-04 as part of the branch cleanup. Its branch was then deleted.
+
+The unique SHAs and extraction directions remain preserved here so any still-useful fix can be re-landed as a new minimal PR.
 
 Allowed follow-up directions:
 
@@ -162,19 +186,11 @@ Explicit exclusions:
 After cleanup, the local branch set was reduced to:
 
 - `main`
-- `codex/branch-reconciliation-2026-04-04`
-- `codex/efficiency-audit-fixes`
-- `serene-chaum`
+- `claude/investigate-twitter-thread-4PNHG`
 
 After cleanup, the remaining remote branches were reduced to:
 
 - `origin/main`
-- `origin/codex/efficiency-audit-fixes`
-- `origin/codex/full-audit-2026-03-29`
-- `origin/codex/friday-real-validation-2026-03-31`
+- `origin/claude/investigate-twitter-thread-4PNHG`
 
-This leaves no unexplained local product-code branches outside `main`. The only remaining non-`main` branches are:
-
-- one active split source (`codex/efficiency-audit-fixes`)
-- one explicit mining branch (`serene-chaum`)
-- two explicit archive remotes carrying non-main evidence (`origin/codex/full-audit-2026-03-29` and `origin/codex/friday-real-validation-2026-03-31`)
+This leaves no unexplained local or remote branches outside the two explicitly retained refs.
