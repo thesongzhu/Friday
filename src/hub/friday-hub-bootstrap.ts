@@ -595,6 +595,21 @@ export async function createFridayHub(
   let stateRuntime: FridayStateRuntime | null = null;
 
   // 1. Initialize state (SQLite + config)
+  // P2-CFG: Pre-validate stateDir accessibility before SQLite init to surface errors at the right layer.
+  if (config.stateDir) {
+    try {
+      if (!fs.existsSync(config.stateDir)) {
+        fs.mkdirSync(config.stateDir, { recursive: true });
+      }
+      fs.accessSync(config.stateDir, fs.constants.R_OK | fs.constants.W_OK);
+    } catch (err) {
+      throw new FridayDomainError(
+        "CONFIG_ERROR",
+        `State directory "${config.stateDir}" is not accessible (read/write): ${err instanceof Error ? err.message : String(err)}`,
+        { httpStatus: 500 },
+      );
+    }
+  }
   const stateOpts = config.stateDir
     ? { env: { ...process.env, FRIDAY_STATE_DIR: config.stateDir } as NodeJS.ProcessEnv }
     : undefined;
@@ -2635,7 +2650,10 @@ export async function createFridayHub(
     decisionEngine: worldModelDecisionEngine,
     worldStateManager: worldModelStateManager,
     learningContextBuilder: (input) => {
-      if (!_learningContextRef) return { preferences: {} };
+      if (!_learningContextRef) {
+        console.warn("[friday][hub-bootstrap] learning-context-ref not initialized; returning empty preferences");
+        return { preferences: {} };
+      }
       return _learningContextRef.buildContext(input);
     },
     communicationPromptBuilder: (input) => {
@@ -2869,9 +2887,14 @@ export async function createFridayHub(
       Awaited<ReturnType<typeof hubSessionService.getConversationFocus>>,
   ): void => {
     void (async () => {
-      const current = await hubSessionService.getConversationFocus(sessionKey).catch(() => null);
+      const current = await hubSessionService.getConversationFocus(sessionKey).catch((err) => {
+        console.warn("[friday][hub-bootstrap] get-conversation-focus:", err instanceof Error ? err.message : String(err));
+        return null;
+      });
       const next = updater(current);
-      await hubSessionService.setConversationFocus(sessionKey, next).catch(() => undefined);
+      await hubSessionService.setConversationFocus(sessionKey, next).catch((err) => {
+        console.warn("[friday][hub-bootstrap] set-conversation-focus:", err instanceof Error ? err.message : String(err));
+      });
     })();
   };
 
@@ -3404,7 +3427,13 @@ export async function createFridayHub(
       // Lazy: learningEventWriter is defined after uixService, so use the pipeline directly.
       selfLearningRuntime.pipeline.processBatch(events);
     },
-    learningContextBuilder: (input) => _learningContextRef?.buildContext(input) ?? { preferences: {} },
+    learningContextBuilder: (input) => {
+      if (!_learningContextRef) {
+        console.warn("[friday][hub-bootstrap] child-runtime learning-context-ref not initialized; returning empty preferences");
+        return { preferences: {} };
+      }
+      return _learningContextRef.buildContext(input);
+    },
     diagnosticsBuilder: () => ({
       generatedAt: nowIso(),
       taskProfilePresets: [

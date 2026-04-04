@@ -215,6 +215,8 @@ export interface FridayAgentRuntimeResult {
   contextCostSummary?: FridayAgentContextCostSummary;
   /** Resolved task profile applied to the run. */
   taskProfile?: FridayResolvedAgentTaskProfile;
+  /** Count of non-fatal operations that failed during the run (e.g. event persistence, world state load). */
+  nonFatalWarningCount?: number;
 }
 
 export interface FridayAgentUsageTurn {

@@ -342,6 +342,7 @@ export function createFridayAgentRuntime(
       let currentPhase: FridayAgentRunStatus = "pending";
       let activeToolName: string | undefined;
       let latestSubagentId: string | undefined;
+      let nonFatalWarningCount = 0;
       const activeSubagentIds = new Set<string>();
 
       // Resolve per-run overrides (FIX-1)
@@ -423,6 +424,7 @@ export function createFridayAgentRuntime(
           usageOutput: input.usageOutput,
           ...(input.images ? { images: input.images } : {}),
           ...(input.finalResponse ? { finalResponse: input.finalResponse } : {}),
+          ...(nonFatalWarningCount > 0 ? { nonFatalWarningCount } : {}),
         };
       };
 
@@ -567,6 +569,7 @@ export function createFridayAgentRuntime(
         } catch (err) {
           // Non-fatal: preference enrichment failure should not kill the run.
           console.warn("[friday][agent-runtime] preference-enrichment:", err instanceof Error ? err.message : String(err));
+          nonFatalWarningCount++;
         }
       }
       const runTimeContext = buildRunTimeContext(
@@ -1213,6 +1216,7 @@ export function createFridayAgentRuntime(
           } catch (err) {
             // Non-fatal: persona enrichment failure should not kill the run
             console.warn("[friday][agent-runtime] persona-enrichment:", err instanceof Error ? err.message : String(err));
+            nonFatalWarningCount++;
           }
         }
 
@@ -1433,6 +1437,7 @@ export function createFridayAgentRuntime(
             } catch (err) {
               // Non-fatal: usage persistence should not break run execution.
               console.warn("[friday][agent-runtime] usage-persist:", err instanceof Error ? err.message : String(err));
+              nonFatalWarningCount++;
             }
           }
 
