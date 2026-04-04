@@ -432,6 +432,9 @@ const TEMPLATE_DEFINITIONS: FridayActionTemplateSummary[] = [
   },
 ];
 
+const FRIDAY_UIX_PROFILE_TYPES = new Set(["beginner", "developer", "creator", "business"]);
+const FRIDAY_UIX_PREFERENCE_KEYS = new Set(["user.profile_type", "user.onboarded_at"]);
+
 const HIGH_RISK_KEYWORDS = [
   "delete",
   "drop",
@@ -518,6 +521,22 @@ function isValidCommunicationPreference(
   }
   const allowedValues = COMMUNICATION_ENUMS[settingName as keyof typeof COMMUNICATION_ENUMS] as readonly string[];
   return typeof value === "string" && allowedValues.includes(value);
+}
+
+function isValidUixPreference(
+  key: string,
+  value: unknown,
+): boolean {
+  if (!FRIDAY_UIX_PREFERENCE_KEYS.has(key)) {
+    return false;
+  }
+  if (key === "user.profile_type") {
+    return typeof value === "string" && FRIDAY_UIX_PROFILE_TYPES.has(value);
+  }
+  if (key === "user.onboarded_at") {
+    return typeof value === "string" && value.trim().length > 0 && Number.isFinite(Date.parse(value));
+  }
+  return false;
 }
 
 function summarizeWorkflowName(goal: string): string {
@@ -1366,32 +1385,40 @@ export function createFridayUixSurfaceService(
       if (!deps.db || !deps.preferenceRepo) {
         throw new FridayDomainError(
           "UIX_PREFERENCE_PERSISTENCE_UNAVAILABLE",
-          "Communication preferences are not available in this runtime",
+          "UI preferences are not available in this runtime",
           { httpStatus: 503 },
         );
       }
       const existingByKey = new Map(
-        listCommunicationPreferences(input.userId).map((preference) => [preference.key, preference]),
+        deps.db.withReadConnection((db) =>
+          deps.preferenceRepo!.listByPrincipal(db, {
+            principalId: input.userId,
+          })).map((preference) => [`${preference.category}:${preference.key}`, preference]),
       );
       let created = 0;
       let updated = 0;
       const preferences = deps.db.withWriteTransaction((db) =>
         input.request.preferences.map((preference) => {
-          if (preference.category !== "communication") {
+          const isCommunicationPreference = preference.category === "communication";
+          const isUixPreference = preference.category === "uix";
+          if (!isCommunicationPreference && !isUixPreference) {
             throw new FridayDomainError(
               "UIX_PREFERENCE_VALIDATION_FAILED",
-              "Only communication preferences are supported by this surface",
+              `Unsupported preference category: ${preference.category}`,
               { httpStatus: 400 },
             );
           }
-          if (!isValidCommunicationPreference(preference.key, preference.value)) {
+          if (
+            (isCommunicationPreference && !isValidCommunicationPreference(preference.key, preference.value))
+            || (isUixPreference && !isValidUixPreference(preference.key, preference.value))
+          ) {
             throw new FridayDomainError(
               "UIX_PREFERENCE_VALIDATION_FAILED",
-              `Invalid communication preference: ${preference.key}`,
+              `Invalid ${preference.category} preference: ${preference.key}`,
               { httpStatus: 400 },
             );
           }
-          const existing = existingByKey.get(preference.key);
+          const existing = existingByKey.get(`${preference.category}:${preference.key}`);
           if (existing) {
             updated += 1;
           } else {
@@ -1407,7 +1434,7 @@ export function createFridayUixSurfaceService(
             confidence: 1,
             nowIso: nowIso(),
           });
-          existingByKey.set(saved.key, saved);
+          existingByKey.set(`${saved.category}:${saved.key}`, saved);
           return saved;
         }));
       // Emit learning events so the learning pipeline can extract preference facts.

@@ -102,6 +102,16 @@ function buildTenantContext(principal: unknown): FridayProviderTenantContext | u
   };
 }
 
+function readUserProfileResponse(service: FridayUixSurfaceService, userId: string): FridayUserProfileResponse {
+  const prefs = service.listPreferences({ userId, category: "uix" });
+  const profilePref = prefs.items.find((p) => p.key === "user.profile_type");
+  const onboardedPref = prefs.items.find((p) => p.key === "user.onboarded_at");
+  return {
+    profileType: (profilePref?.value as FridayUserProfileType | undefined) ?? null,
+    onboardedAt: (onboardedPref?.value as string | undefined) ?? null,
+  };
+}
+
 export function createFridayUixRoutes(
   deps: FridayUixRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -313,13 +323,25 @@ export function createFridayUixRoutes(
       auth: { public: false, anyOfScopes: ["agent.run"] },
       async handler(ctx): Promise<FridayUserProfileResponse> {
         const userId = requireUserId(ctx.principal);
-        const prefs = deps.service.listPreferences({ userId, category: "uix" });
-        const profilePref = prefs.items.find((p) => p.key === "user.profile_type");
-        const onboardedPref = prefs.items.find((p) => p.key === "user.onboarded_at");
-        return {
-          profileType: (profilePref?.value as FridayUserProfileType | undefined) ?? null,
-          onboardedAt: (onboardedPref?.value as string | undefined) ?? null,
-        };
+        const current = readUserProfileResponse(deps.service, userId);
+        const profileType = current.profileType ?? "beginner";
+        const onboardedAt = current.onboardedAt ?? new Date().toISOString();
+        if (current.profileType === null || current.onboardedAt === null) {
+          deps.service.updatePreferences({
+            userId,
+            request: {
+              preferences: [
+                ...(current.profileType === null
+                  ? [{ category: "uix", key: "user.profile_type", value: profileType }]
+                  : []),
+                ...(current.onboardedAt === null
+                  ? [{ category: "uix", key: "user.onboarded_at", value: onboardedAt }]
+                  : []),
+              ],
+            } as never,
+          });
+        }
+        return { profileType, onboardedAt };
       },
     },
     {
@@ -347,10 +369,7 @@ export function createFridayUixRoutes(
             request: { preferences } as never,
           });
         }
-        return {
-          profileType: (profileType as FridayUserProfileType | undefined) ?? null,
-          onboardedAt: onboardedAt ?? null,
-        };
+        return readUserProfileResponse(deps.service, userId);
       },
     },
     {

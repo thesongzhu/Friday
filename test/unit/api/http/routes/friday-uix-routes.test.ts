@@ -178,6 +178,25 @@ function makeService(): FridayUixSurfaceService {
   };
 }
 
+function makePreference(input: {
+  id: string;
+  category: "communication" | "uix";
+  key: string;
+  value: unknown;
+}) {
+  return {
+    id: input.id,
+    principalId: "user-1",
+    category: input.category,
+    key: input.key,
+    value: input.value,
+    source: "explicit" as const,
+    confidence: 1,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
 describe("FridayUixRoutes", () => {
   it("creates assistant route definitions", () => {
     const routes = createFridayUixRoutes({ service: makeService() });
@@ -345,5 +364,82 @@ describe("FridayUixRoutes", () => {
 
     expect(service.listIssues).toHaveBeenCalledWith({ userId: "user-1", limit: 5 });
     expect(result.items[0]?.id).toBe("issue-1");
+  });
+
+  it("self-heals missing user-profile preferences on read", async () => {
+    const service = makeService();
+    vi.mocked(service.listPreferences).mockReturnValueOnce({
+      items: [],
+      nextCursor: undefined,
+    }).mockReturnValueOnce({
+      items: [
+        makePreference({ id: "uix-1", category: "uix", key: "user.profile_type", value: "beginner" }),
+        makePreference({ id: "uix-2", category: "uix", key: "user.onboarded_at", value: NOW }),
+      ],
+      nextCursor: undefined,
+    });
+    vi.mocked(service.updatePreferences).mockReturnValue({
+      preferences: [],
+      created: 2,
+      updated: 0,
+    });
+    const routes = createFridayUixRoutes({ service });
+    const route = routes.find((entry) => entry.operationId === "uix.user.profile.get")!;
+
+    const result = await route.handler(makeCtx()) as { profileType: string; onboardedAt: string };
+
+    expect(service.updatePreferences).toHaveBeenCalledWith({
+      userId: "user-1",
+      request: {
+        preferences: [
+          { category: "uix", key: "user.profile_type", value: "beginner" },
+          { category: "uix", key: "user.onboarded_at", value: expect.any(String) },
+        ],
+      },
+    });
+    expect(result.profileType).toBe("beginner");
+    expect(typeof result.onboardedAt).toBe("string");
+    expect(Number.isFinite(Date.parse(result.onboardedAt))).toBe(true);
+  });
+
+  it("returns persisted user-profile values after update", async () => {
+    const service = makeService();
+    vi.mocked(service.listPreferences).mockReturnValue({
+      items: [
+        makePreference({ id: "uix-1", category: "uix", key: "user.profile_type", value: "developer" }),
+        makePreference({ id: "uix-2", category: "uix", key: "user.onboarded_at", value: NOW }),
+      ],
+      nextCursor: undefined,
+    });
+    vi.mocked(service.updatePreferences).mockReturnValue({
+      preferences: [],
+      created: 1,
+      updated: 1,
+    });
+    const routes = createFridayUixRoutes({ service });
+    const route = routes.find((entry) => entry.operationId === "uix.user.profile.update")!;
+
+    const result = await route.handler(
+      makeCtx({
+        body: {
+          profileType: "developer",
+          onboardedAt: NOW,
+        },
+      }),
+    ) as { profileType: string; onboardedAt: string };
+
+    expect(service.updatePreferences).toHaveBeenCalledWith({
+      userId: "user-1",
+      request: {
+        preferences: [
+          { category: "uix", key: "user.profile_type", value: "developer" },
+          { category: "uix", key: "user.onboarded_at", value: NOW },
+        ],
+      },
+    });
+    expect(result).toEqual({
+      profileType: "developer",
+      onboardedAt: NOW,
+    });
   });
 });
