@@ -5197,12 +5197,15 @@ export async function createFridayHub(
       };
 
       // P1-SHUT-001/002/003: Stop services started during bootstrap
-      try { observabilityService?.scheduler?.stop(); } catch (err) {
-      warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
-      try { agentLearningBridge?.stop(); } catch (err) {
-      warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
-      try { if (mcpAdapter && "close" in mcpAdapter) await (mcpAdapter as unknown as { close(): Promise<void> }).close(); } catch (err) {
-      warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
+      if (observabilityService?.scheduler) {
+        await shutdownWithTimeout("observabilityService.scheduler.stop", () => observabilityService!.scheduler!.stop());
+      }
+      if (agentLearningBridge) {
+        await shutdownWithTimeout("agentLearningBridge.stop", () => agentLearningBridge!.stop());
+      }
+      if (mcpAdapter && "close" in mcpAdapter) {
+        await shutdownWithTimeout("mcpAdapter.close", () => (mcpAdapter as unknown as { close(): Promise<void> }).close());
+      }
 
       // 1. Stop job scheduler (F11: await in-flight)
       if (jobScheduler) {
