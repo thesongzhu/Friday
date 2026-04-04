@@ -166,6 +166,30 @@ export type {
   FridayAgentLoopRunDetails,
 } from "./services/friday-agent-loop-service.js";
 
+// Deep Pattern Extraction
+export { createFridayDeepPatternExtractionService } from "./services/friday-deep-pattern-extraction-service.js";
+export type {
+  FridayDeepPatternExtractionService,
+  CreateDeepPatternExtractionServiceDeps,
+} from "./services/friday-deep-pattern-extraction-service.js";
+
+// Individuation
+export type {
+  FridayIndividuationStage,
+  FridayIndividuationStateEntity,
+  FridayIndividuationStateRow,
+} from "./model/friday-individuation.types.js";
+export {
+  FRIDAY_INDIVIDUATION_THRESHOLDS,
+  FRIDAY_TOTAL_PERSONA_DIMENSIONS,
+} from "./model/friday-individuation.types.js";
+
+export { createFridayIndividuationService } from "./services/friday-individuation-service.js";
+export type {
+  FridayIndividuationService,
+  CreateIndividuationServiceDeps,
+} from "./services/friday-individuation-service.js";
+
 // Runtime
 export type {
   FridaySelfLearningRuntime,

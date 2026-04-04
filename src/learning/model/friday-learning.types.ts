@@ -213,6 +213,7 @@ export interface FridayLearningContext {
   preferences: Record<string, JsonValue>;
   appliedFacts: Array<{ factId: string; key: string; confidence: number }>;
   activePatterns: FridayLearningPattern[];
+  individuationStage?: string;
   generatedAt: ISODateTime;
 }
 
