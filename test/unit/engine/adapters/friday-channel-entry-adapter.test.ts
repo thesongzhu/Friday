@@ -16,7 +16,7 @@ describe("FridayChannelEntryAdapter", () => {
         executeRun,
       },
       idGenerator: () => "run-1",
-      resolveSessionKey: (channelKind, chatId) => `${channelKind}:default:${chatId}`,
+      resolveSessionKey: (message) => `${message.channelKind}:default:${message.chatId}`,
     });
 
     await adapter.handleMessage({
@@ -30,6 +30,11 @@ describe("FridayChannelEntryAdapter", () => {
 
     expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
       principalId: "user-42",
+      taskAlreadyInHistory: true,
+      executionContext: {
+        surface: "channel",
+        interactive: true,
+      },
       tenantContext: {
         hubId: "default",
         userId: "user-42",

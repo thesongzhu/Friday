@@ -34,6 +34,11 @@ export type {
   FridayEngineRunExecutorAgentRuntime,
   FridayEnginePlanningGate,
 } from "./friday-engine-run-executor.js";
+export { createFridayImmediateRunPersistence } from "./friday-immediate-run-persistence.js";
+export type {
+  CreateFridayImmediateRunPersistenceDeps,
+  FridayImmediateRunPersistenceInput,
+} from "./friday-immediate-run-persistence.js";
 
 // Entry adapters
 export { createFridayApiEntryAdapter } from "./adapters/friday-api-entry-adapter.js";

@@ -202,4 +202,53 @@ describe("Friday Mock Sessions E2E", () => {
     expect(getRunRes.json.ok).toBe(true);
     expect(getRunRes.json.data.run.status).toBe("completed");
   });
+
+  it("deterministic immediate runs remain readable via getRun and replayable via events", async () => {
+    const sessionKey = "chat:default:mock-deterministic-events";
+
+    const runRes = await apiFetch<{
+      ok: boolean;
+      data: {
+        runId: string;
+        status: string;
+        response: string;
+        eventStreamAvailable: boolean;
+      };
+    }>(
+      env.baseUrl,
+      env.accessToken,
+      "POST",
+      "/v1/agent/runs",
+      { task: "What can you do right now?", sessionKey },
+    );
+
+    expect(runRes.status).toBe(200);
+    expect(runRes.json.ok).toBe(true);
+    expect(runRes.json.data.status).toBe("completed");
+    expect(runRes.json.data.eventStreamAvailable).toBe(true);
+    expect(runRes.json.data.response).toContain("Current capabilities:");
+
+    const getRunRes = await apiFetch<{
+      ok: boolean;
+      data: { run: { id: string; status: string; responseText?: string } };
+    }>(env.baseUrl, env.accessToken, "GET", `/v1/agent/runs/${runRes.json.data.runId}`);
+
+    expect(getRunRes.status).toBe(200);
+    expect(getRunRes.json.data.run.status).toBe("completed");
+    expect(getRunRes.json.data.run.responseText).toContain("Current capabilities:");
+
+    const eventsRes = await fetch(
+      `${env.baseUrl}/v1/agent/runs/${encodeURIComponent(runRes.json.data.runId)}/events`,
+      {
+        headers: {
+          Authorization: `Bearer ${env.accessToken}`,
+          Accept: "text/event-stream",
+        },
+      },
+    );
+    const eventsText = await eventsRes.text();
+    expect(eventsRes.status).toBe(200);
+    expect(eventsText).toContain('"type":"agent.run.text_delta"');
+    expect(eventsText).toContain('"type":"agent.run.completed"');
+  });
 });
