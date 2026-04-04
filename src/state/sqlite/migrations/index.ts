@@ -63,6 +63,7 @@ import { V061_WORLD_MODEL_READINESS_MIGRATION } from "./v061-world-model-readine
 import { V062_UIX_GUIDED_CONTEXTS_MIGRATION } from "./v062-uix-guided-contexts.js";
 import { V063_AUTH_PROFILES_MIGRATION } from "./v063-auth-profiles.js";
 import { V064_LEARNING_ENHANCEMENTS_MIGRATION } from "./v064-learning-enhancements.js";
+import { V065_SESSION_SATISFACTION_MIGRATION } from "./v065-session-satisfaction.js";
 
 /**
  * Ordered migration list, always ascending by version.
@@ -132,6 +133,7 @@ export const FRIDAY_SQLITE_MIGRATIONS: readonly FridaySqliteMigration[] = [
   V062_UIX_GUIDED_CONTEXTS_MIGRATION,
   V063_AUTH_PROFILES_MIGRATION,
   V064_LEARNING_ENHANCEMENTS_MIGRATION,
+  V065_SESSION_SATISFACTION_MIGRATION,
 ];
 
 export { V003_PROVIDER_USAGE_COST_ROUTING_MIGRATION };
@@ -196,3 +198,4 @@ export { V061_WORLD_MODEL_READINESS_MIGRATION };
 export { V062_UIX_GUIDED_CONTEXTS_MIGRATION };
 export { V063_AUTH_PROFILES_MIGRATION };
 export { V064_LEARNING_ENHANCEMENTS_MIGRATION };
+export { V065_SESSION_SATISFACTION_MIGRATION };
