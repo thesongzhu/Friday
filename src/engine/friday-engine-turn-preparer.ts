@@ -192,7 +192,10 @@ export function createFridayEngineTurnPreparer(deps: CreateFridayEngineTurnPrepa
 
     // ── Load focus state ──
     if (input.sessionKey) {
-      focusState = await sessionDeps.getConversationFocus(input.sessionKey).catch(() => null);
+      focusState = await sessionDeps.getConversationFocus(input.sessionKey).catch((err) => {
+        console.warn("[friday][engine-turn-preparer] load-focus-state:", err instanceof Error ? err.message : String(err));
+        return null;
+      });
     }
 
     // ── Persist inbound user message ──
@@ -248,7 +251,10 @@ export function createFridayEngineTurnPreparer(deps: CreateFridayEngineTurnPrepa
         capabilitiesSnapshot: capabilitySnapshotGetter
           ? await Promise.resolve(
               capabilitySnapshotGetter({ readOnly: input.constraints?.readOnly ?? false }),
-            ).catch(() => undefined)
+            ).catch((err) => {
+              console.warn("[friday][engine-turn-preparer] capability-snapshot:", err instanceof Error ? err.message : String(err));
+              return undefined;
+            })
           : undefined,
         taskStatusSnapshot: taskStatusSnapshotGetter
           ? await Promise.resolve(
@@ -257,7 +263,10 @@ export function createFridayEngineTurnPreparer(deps: CreateFridayEngineTurnPrepa
                 sessionKey: input.sessionKey,
                 readOnly: input.constraints?.readOnly ?? false,
               }),
-            ).catch(() => undefined)
+            ).catch((err) => {
+              console.warn("[friday][engine-turn-preparer] task-status-snapshot:", err instanceof Error ? err.message : String(err));
+              return undefined;
+            })
           : undefined,
       });
 
@@ -287,7 +296,9 @@ export function createFridayEngineTurnPreparer(deps: CreateFridayEngineTurnPrepa
             activeRunId: input.runId,
             updatedAt: nowIso(),
           })
-          .catch(() => undefined);
+          .catch((err) => {
+            console.warn("[friday][engine-turn-preparer] set-conversation-focus:", err instanceof Error ? err.message : String(err));
+          });
         focusState = await sessionDeps.getConversationFocus(input.sessionKey).catch(() => focusState);
       }
 
@@ -310,7 +321,10 @@ export function createFridayEngineTurnPreparer(deps: CreateFridayEngineTurnPrepa
         turnKind: "new_topic",
         capabilitiesSnapshot: await Promise.resolve(
           capabilitySnapshotGetter({ readOnly: input.constraints?.readOnly ?? false }),
-        ).catch(() => undefined),
+        ).catch((err) => {
+          console.warn("[friday][engine-turn-preparer] standalone-capability-snapshot:", err instanceof Error ? err.message : String(err));
+          return undefined;
+        }),
       });
       if (evidenceBlocks.length > 0) {
         conversationContext = {

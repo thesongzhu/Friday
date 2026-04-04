@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Hook Generator",
+  "description": "Generate attention-grabbing hooks for any content.",
+  "sections": [
+    { "id": "inputs", "label": "Inputs", "fieldIds": ["topic", "style"] }
+  ],
+  "fields": [
+    {
+      "id": "topic",
+      "inputKey": "topic",
+      "kind": "text",
+      "label": "Topic",
+      "required": true,
+      "help": "The topic or subject to generate hooks for."
+    },
+    {
+      "id": "style",
+      "inputKey": "style",
+      "kind": "text",
+      "label": "Style",
+      "required": false,
+      "help": "Hook style: curiosity, bold, story, stat, or contrarian. Default: curiosity."
+    }
+  ],
+  "outputs": [
+    { "id": "summary", "outputKey": "summary", "label": "Summary", "widget": "text" },
+    { "id": "details", "outputKey": "details", "label": "Details", "widget": "json" }
+  ],
+  "actions": [
+    { "id": "run", "label": "Generate Hooks", "style": "primary" }
+  ]
+}

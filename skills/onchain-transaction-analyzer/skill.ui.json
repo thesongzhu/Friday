@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Onchain Transaction Analyzer",
+  "description": "Analyze blockchain transactions with wallet tracing and plain language explanations.",
+  "sections": [{ "id": "inputs", "label": "Inputs", "fieldIds": ["transaction", "chain"] }],
+  "fields": [
+    { "id": "transaction", "inputKey": "transaction", "kind": "text", "label": "Transaction", "required": true, "help": "Transaction hash, wallet address, or activity description." },
+    { "id": "chain", "inputKey": "chain", "kind": "text", "label": "Chain", "required": false, "help": "Blockchain network (e.g. ethereum, polygon, arbitrum). Defaults to ethereum." }
+  ],
+  "outputs": [
+    { "id": "summary", "outputKey": "summary", "label": "Summary", "widget": "text" },
+    { "id": "details", "outputKey": "details", "label": "Details", "widget": "json" }
+  ],
+  "actions": [{ "id": "run", "label": "Run", "style": "primary" }]
+}

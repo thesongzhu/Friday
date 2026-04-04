@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "2.0",
+  "id": "workflow-automation-agent",
+  "name": "Workflow Automation Agent",
+  "description": "Break complex tasks into step-by-step workflows, mapping actions to tools and optimizing execution.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "automation",
+  "author": { "name": "Friday" },
+  "tags": ["starter", "starter.builder", "workflow", "automation", "planning"],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 60000
+  },
+  "triggers": {
+    "intents": ["automate_workflow"],
+    "phrases": [
+      "automate this workflow",
+      "break this task into steps",
+      "create a workflow for this",
+      "plan the automation for this process"
+    ],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 84,
+    "modes": ["intent"]
+  },
+  "requirements": { "bins": [], "env": [], "config": [], "os": ["darwin", "linux"] },
+  "inputs": [
+    { "key": "goal", "type": "string", "required": true, "label": "Goal", "help": "Describe the workflow or process you want to automate." }
+  ],
+  "outputs": [
+    { "key": "summary", "type": "string", "description": "High-level summary." },
+    { "key": "nextStep", "type": "string", "description": "The recommended next action." },
+    { "key": "details", "type": "object", "description": "Structured output." }
+  ],
+  "permissions": {
+    "grants": [{ "id": "filesystem-read", "resource": "filesystem", "action": "read", "required": false, "reason": "Allow the skill to read lightweight local context when invoked from a workspace." }],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": { "allowedSatelliteTypes": ["desktop", "cloud-vm"], "requiredCapabilities": [] },
+  "telemetry": { "events": ["starter_skill_invoked", "starter_skill_suggested"] }
+}

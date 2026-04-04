@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Video Editing Planner",
+  "description": "Plan editing structure, cuts, transitions, and pacing for video content.",
+  "sections": [
+    { "id": "inputs", "label": "Inputs", "fieldIds": ["script"] }
+  ],
+  "fields": [
+    {
+      "id": "script",
+      "inputKey": "script",
+      "kind": "text",
+      "label": "Script",
+      "required": true,
+      "help": "Paste the video script or content to plan editing for."
+    }
+  ],
+  "outputs": [
+    { "id": "summary", "outputKey": "summary", "label": "Summary", "widget": "text" },
+    { "id": "details", "outputKey": "details", "label": "Details", "widget": "json" }
+  ],
+  "actions": [
+    { "id": "run", "label": "Plan Editing", "style": "primary" }
+  ]
+}

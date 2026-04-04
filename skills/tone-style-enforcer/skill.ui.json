@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Tone & Style Enforcer",
+  "description": "Check and adjust text tone for consistency.",
+  "sections": [{ "id": "inputs", "label": "Inputs", "fieldIds": ["content", "tone"] }],
+  "fields": [
+    { "id": "content", "inputKey": "content", "kind": "text", "label": "Content", "required": true, "help": "Text to analyze and adjust." },
+    { "id": "tone", "inputKey": "tone", "kind": "text", "label": "Tone", "required": false, "help": "Target tone: professional, casual, formal. Defaults to professional." }
+  ],
+  "outputs": [
+    { "id": "summary", "outputKey": "summary", "label": "Summary", "widget": "text" },
+    { "id": "details", "outputKey": "details", "label": "Details", "widget": "json" }
+  ],
+  "actions": [{ "id": "run", "label": "Run", "style": "primary" }]
+}

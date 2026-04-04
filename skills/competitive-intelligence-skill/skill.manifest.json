@@ -1,0 +1,110 @@
+{
+  "schemaVersion": "2.0",
+  "id": "competitive-intelligence-skill",
+  "name": "Competitive Intelligence",
+  "description": "Compares products, protocols, or tools to provide structured analysis of strengths, weaknesses, and opportunities.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": {
+    "name": "Friday"
+  },
+  "tags": [
+    "starter",
+    "starter.builder",
+    "comparison",
+    "competitive",
+    "analysis"
+  ],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 60000
+  },
+  "triggers": {
+    "intents": [
+      "compare_competitive"
+    ],
+    "phrases": [
+      "compare these products",
+      "competitive analysis of these tools",
+      "SWOT analysis for this",
+      "how does X compare to Y"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 82,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "items",
+      "type": "string",
+      "required": true,
+      "label": "Items",
+      "help": "Comma-separated list of products, tools, or options to compare."
+    }
+  ],
+  "outputs": [
+    {
+      "key": "summary",
+      "type": "string",
+      "description": "High-level summary."
+    },
+    {
+      "key": "nextStep",
+      "type": "string",
+      "description": "The recommended next action."
+    },
+    {
+      "key": "details",
+      "type": "object",
+      "description": "Structured output."
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "filesystem-read",
+        "resource": "filesystem",
+        "action": "read",
+        "required": false,
+        "reason": "Allow the skill to read lightweight local context when invoked from a workspace."
+      }
+    ],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": [
+      "starter_skill_invoked",
+      "starter_skill_suggested"
+    ]
+  }
+}

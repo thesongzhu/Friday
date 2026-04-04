@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Video Script Generator",
+  "description": "Generate a video script with hook, sections, and CTA.",
+  "sections": [
+    { "id": "inputs", "label": "Inputs", "fieldIds": ["topic", "duration"] }
+  ],
+  "fields": [
+    {
+      "id": "topic",
+      "inputKey": "topic",
+      "kind": "text",
+      "label": "Topic",
+      "required": true,
+      "help": "The topic or subject for the video script."
+    },
+    {
+      "id": "duration",
+      "inputKey": "duration",
+      "kind": "text",
+      "label": "Duration",
+      "required": false,
+      "help": "Target duration: short, medium, or long. Default: short."
+    }
+  ],
+  "outputs": [
+    { "id": "summary", "outputKey": "summary", "label": "Summary", "widget": "text" },
+    { "id": "details", "outputKey": "details", "label": "Details", "widget": "json" }
+  ],
+  "actions": [
+    { "id": "run", "label": "Generate Script", "style": "primary" }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "1.0",
+  "title": "UI/UX Layout Advisor",
+  "description": "Analyze layouts and suggest hierarchy, spacing, and accessibility improvements.",
+  "sections": [{ "id": "inputs", "label": "Inputs", "fieldIds": ["layout"] }],
+  "fields": [
+    { "id": "layout", "inputKey": "layout", "kind": "text", "label": "Layout", "required": true, "help": "Describe the UI layout or interface design." }
+  ],
+  "outputs": [
+    { "id": "summary", "outputKey": "summary", "label": "Summary", "widget": "text" },
+    { "id": "details", "outputKey": "details", "label": "Details", "widget": "json" }
+  ],
+  "actions": [{ "id": "run", "label": "Run", "style": "primary" }]
+}
