@@ -99,6 +99,7 @@ import type {
 } from "#agent";
 import { buildFridayEvidenceBlocks } from "#agent";
 import { createFridayOrchestrationEngine } from "#engine";
+import { createFridayImmediateRunPersistence } from "#engine";
 import type { FridayEngineRunResult } from "#engine";
 import type { CreateFridayEngineTurnPreparerDeps } from "#engine";
 import type { CreateFridayEngineRunExecutorDeps } from "#engine";
@@ -1709,6 +1710,16 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       sessionService.setConversationFocus(key, state).then(() => undefined),
   };
 
+  const persistImmediateRunResult = agentRepo && agentRunEventRepo
+    ? createFridayImmediateRunPersistence({
+      db: deps.db,
+      repo: agentRepo,
+      runEventRepository: agentRunEventRepo,
+      idGenerator: deps.idGenerator,
+      nowIso: deps.nowIso,
+    })
+    : undefined;
+
   const orchestrationEngine = deps.agentRuntime
     ? createFridayOrchestrationEngine({
       turnPreparerDeps: {
@@ -1726,6 +1737,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         sessionDeps: engineSessionDeps,
         planningGate: agentPlanningGate,
         nowIso: deps.nowIso,
+        persistImmediateRunResult,
         dispatchDeterministic,
         dispatchManagedAsync,
         finalizeFocus: finalizeFridayConversationFocus as CreateFridayEngineRunExecutorDeps["finalizeFocus"],

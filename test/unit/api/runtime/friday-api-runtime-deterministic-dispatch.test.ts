@@ -111,6 +111,63 @@ describe("FridayApiRuntime deterministic dispatch", () => {
 
     expect(result.status).toBe("completed");
     expect(result.response).toContain("Current capabilities:");
+    expect(result.eventStreamAvailable).toBe(true);
     expect(executeRun).not.toHaveBeenCalled();
+
+    const getRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.get");
+    expect(getRoute).toBeDefined();
+
+    const getResult = await getRoute!.handler({
+      params: { runId: result.runId },
+      query: {},
+      body: null,
+      headers: {},
+      principal: {
+        principalType: "user",
+        principalId: "user-1",
+        userId: "user-1",
+        scopes: ["agent.read"],
+        tokenId: "tok-1",
+        tokenKind: "access",
+        issuedAt: NOW,
+      },
+    } as never);
+
+    expect(getResult.run.id).toBe(result.runId);
+    expect(getResult.run.status).toBe("completed");
+    expect(getResult.run.responseText).toContain("Current capabilities:");
+
+    const eventsRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.events");
+    expect(eventsRoute).toBeDefined();
+    const raw = {
+      writeHead: vi.fn(),
+      write: vi.fn(),
+      end: vi.fn(),
+      on: vi.fn(),
+    };
+    await eventsRoute!.handler({
+      params: { runId: result.runId },
+      query: {},
+      body: null,
+      headers: {},
+      principal: {
+        principalType: "user",
+        principalId: "user-1",
+        userId: "user-1",
+        scopes: ["agent.read"],
+        tokenId: "tok-1",
+        tokenKind: "access",
+        issuedAt: NOW,
+      },
+      _raw: raw,
+    } as never);
+
+    expect(raw.write).toHaveBeenCalledWith(
+      expect.stringContaining('"type":"agent.run.text_delta"'),
+    );
+    expect(raw.write).toHaveBeenCalledWith(
+      expect.stringContaining('"type":"agent.run.completed"'),
+    );
+    expect(raw.end).toHaveBeenCalled();
   });
 });

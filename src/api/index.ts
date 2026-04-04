@@ -180,6 +180,15 @@ export type { FridayUixRoutesDeps } from "./http/routes/friday-uix-routes.js";
 // Discovery routes (C-005)
 export { createFridayDiscoveryRoutes } from "./http/routes/friday-discovery-routes.js";
 export type { FridayDiscoveryRoutesDeps } from "./http/routes/friday-discovery-routes.js";
+export type {
+  FridayAgentRunExecutionResponse,
+  FridayCancelAgentRunResponse,
+  FridayGetAgentRunResponse,
+  FridayListAgentRunsQuery,
+  FridayListAgentRunsResponse,
+  FridayStartAgentRunRequest,
+  FridayStartAgentRunResponse,
+} from "./model/friday-api-agent.types.js";
 
 // MCP server routes (C-011)
 export { createFridayMcpServerRoutes } from "./http/routes/friday-mcp-server-routes.js";

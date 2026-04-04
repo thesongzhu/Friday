@@ -183,7 +183,10 @@ describe("FridayAgentRoutes", () => {
         model: "gpt-4",
         timeoutMs: 60000,
       });
-      expect(result).toEqual(createStubResult());
+      expect(result).toEqual({
+        ...createStubResult(),
+        eventStreamAvailable: true,
+      });
     });
 
     it("forwards replyToMessageId when provided", async () => {
