@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "2.0",
+  "id": "code-review-skill",
+  "name": "Code Review",
+  "description": "Review code for bugs, inefficiencies, and adherence to best practices with actionable improvement suggestions.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": { "name": "Friday" },
+  "tags": ["starter", "starter.builder", "code-review", "bugs", "quality"],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 60000
+  },
+  "triggers": {
+    "intents": ["review_code"],
+    "phrases": [
+      "review this code",
+      "find bugs in this code",
+      "code quality check",
+      "suggest improvements for this code"
+    ],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 84,
+    "modes": ["intent"]
+  },
+  "requirements": { "bins": [], "env": [], "config": [], "os": ["darwin", "linux"] },
+  "inputs": [
+    { "key": "code", "type": "string", "required": true, "label": "Code", "help": "Source code to review for bugs, smells, and improvement opportunities." }
+  ],
+  "outputs": [
+    { "key": "summary", "type": "string", "description": "High-level summary." },
+    { "key": "nextStep", "type": "string", "description": "The recommended next action." },
+    { "key": "details", "type": "object", "description": "Structured output." }
+  ],
+  "permissions": {
+    "grants": [{ "id": "filesystem-read", "resource": "filesystem", "action": "read", "required": false, "reason": "Allow the skill to read lightweight local context when invoked from a workspace." }],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": { "allowedSatelliteTypes": ["desktop", "cloud-vm"], "requiredCapabilities": [] },
+  "telemetry": { "events": ["starter_skill_invoked", "starter_skill_suggested"] }
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Flowchart Decision Builder",
+  "description": "Generate flowcharts and decision trees from process descriptions.",
+  "sections": [{ "id": "inputs", "label": "Inputs", "fieldIds": ["process"] }],
+  "fields": [
+    { "id": "process", "inputKey": "process", "kind": "text", "label": "Process", "required": true, "help": "Describe the process or decision logic." }
+  ],
+  "outputs": [
+    { "id": "summary", "outputKey": "summary", "label": "Summary", "widget": "text" },
+    { "id": "details", "outputKey": "details", "label": "Details", "widget": "json" }
+  ],
+  "actions": [{ "id": "run", "label": "Run", "style": "primary" }]
+}

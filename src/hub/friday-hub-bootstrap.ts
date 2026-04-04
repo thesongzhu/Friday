@@ -595,6 +595,21 @@ export async function createFridayHub(
   let stateRuntime: FridayStateRuntime | null = null;
 
   // 1. Initialize state (SQLite + config)
+  // P2-CFG: Pre-validate stateDir accessibility before SQLite init to surface errors at the right layer.
+  if (config.stateDir) {
+    try {
+      if (!fs.existsSync(config.stateDir)) {
+        fs.mkdirSync(config.stateDir, { recursive: true });
+      }
+      fs.accessSync(config.stateDir, fs.constants.R_OK | fs.constants.W_OK);
+    } catch (err) {
+      throw new FridayDomainError(
+        "CONFIG_ERROR",
+        `State directory "${config.stateDir}" is not accessible (read/write): ${err instanceof Error ? err.message : String(err)}`,
+        { httpStatus: 500 },
+      );
+    }
+  }
   const stateOpts = config.stateDir
     ? { env: { ...process.env, FRIDAY_STATE_DIR: config.stateDir } as NodeJS.ProcessEnv }
     : undefined;
@@ -2635,7 +2650,10 @@ export async function createFridayHub(
     decisionEngine: worldModelDecisionEngine,
     worldStateManager: worldModelStateManager,
     learningContextBuilder: (input) => {
-      if (!_learningContextRef) return { preferences: {} };
+      if (!_learningContextRef) {
+        console.warn("[friday][hub-bootstrap] learning-context-ref not initialized; returning empty preferences");
+        return { preferences: {} };
+      }
       return _learningContextRef.buildContext(input);
     },
     communicationPromptBuilder: (input) => {
@@ -2869,9 +2887,14 @@ export async function createFridayHub(
       Awaited<ReturnType<typeof hubSessionService.getConversationFocus>>,
   ): void => {
     void (async () => {
-      const current = await hubSessionService.getConversationFocus(sessionKey).catch(() => null);
+      const current = await hubSessionService.getConversationFocus(sessionKey).catch((err) => {
+        console.warn("[friday][hub-bootstrap] get-conversation-focus:", err instanceof Error ? err.message : String(err));
+        return null;
+      });
       const next = updater(current);
-      await hubSessionService.setConversationFocus(sessionKey, next).catch(() => undefined);
+      await hubSessionService.setConversationFocus(sessionKey, next).catch((err) => {
+        console.warn("[friday][hub-bootstrap] set-conversation-focus:", err instanceof Error ? err.message : String(err));
+      });
     })();
   };
 
@@ -3404,7 +3427,13 @@ export async function createFridayHub(
       // Lazy: learningEventWriter is defined after uixService, so use the pipeline directly.
       selfLearningRuntime.pipeline.processBatch(events);
     },
-    learningContextBuilder: (input) => _learningContextRef?.buildContext(input) ?? { preferences: {} },
+    learningContextBuilder: (input) => {
+      if (!_learningContextRef) {
+        console.warn("[friday][hub-bootstrap] child-runtime learning-context-ref not initialized; returning empty preferences");
+        return { preferences: {} };
+      }
+      return _learningContextRef.buildContext(input);
+    },
     diagnosticsBuilder: () => ({
       generatedAt: nowIso(),
       taskProfilePresets: [
@@ -4386,10 +4415,23 @@ export async function createFridayHub(
   }
 
   // 2. image_analysis — stub analyzeImages via provider service (vision model)
+  //
+  // Known vision-capable model name patterns — used to warn before sending
+  // a request that will certainly fail with a non-vision model.
+  const VISION_MODEL_RE =
+    /gpt-4o|gpt-4-turbo|gpt-4\.1|claude-3|claude-.*sonnet|claude-.*opus|claude-.*haiku|gemini|llava|pixtral|qwen-vl|qwen2-vl|yi-vision|internvl/i;
+
   const analyzeImages: FridayImageAnalysisFn = async (request, signal) => {
     // Use the provider service to resolve a vision-capable model and call it.
-    // For now, create a graceful stub that reports service availability.
     const resolvedModel = request.model ?? "gpt-4o";
+
+    // Pre-check: warn if model is unlikely to support vision
+    if (!VISION_MODEL_RE.test(resolvedModel)) {
+      console.warn(
+        `[friday][image-analysis] model "${resolvedModel}" may not support vision — ` +
+        "consider using a vision-capable model (gpt-4o, claude-3-*, gemini-*, etc.)",
+      );
+    }
     const { result, route } = await providerService.runWithFallback({
       requestedModel: resolvedModel,
       tenantContext: request.tenantContext,
@@ -4425,6 +4467,22 @@ export async function createFridayHub(
 
         if (!response.ok) {
           const body = await response.text().catch(() => "");
+          // Provide user-friendly message when model doesn't support vision
+          const lower = body.toLowerCase();
+          if (
+            lower.includes("does not support image") ||
+            lower.includes("image_url is not supported") ||
+            lower.includes("vision") ||
+            lower.includes("multimodal") ||
+            (response.status === 400 && lower.includes("invalid"))
+          ) {
+            throw new FridayDomainError(
+              "VALIDATION_ERROR",
+              `Model "${_route.model}" does not support image analysis. ` +
+              `Use a vision-capable model such as gpt-4o, claude-3-sonnet, or gemini-pro-vision.`,
+              { httpStatus: 400 },
+            );
+          }
           throw new FridayDomainError("INTERNAL_ERROR", `Vision API error ${String(response.status)}: ${body}`, { httpStatus: 500 });
         }
 
@@ -5147,41 +5205,64 @@ export async function createFridayHub(
       hubState = "stopping";
       upSince = null;
 
+      // P0-SHUT: Timeout wrapper prevents shutdown from hanging indefinitely
+      // if any single service is stuck. 30s per step is generous; if a service
+      // cannot stop in 30s it is effectively hung.
+      const SHUTDOWN_STEP_TIMEOUT_MS = 30_000;
+      const shutdownWithTimeout = async (
+        label: string,
+        step: () => Promise<void> | void,
+      ): Promise<void> => {
+        try {
+          await Promise.race([
+            Promise.resolve(step()),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error(`Shutdown step "${label}" timed out after ${SHUTDOWN_STEP_TIMEOUT_MS}ms`)), SHUTDOWN_STEP_TIMEOUT_MS),
+            ),
+          ]);
+        } catch (err) {
+          console.warn("[friday][hub-shutdown]", label, ":", err instanceof Error ? err.message : String(err));
+        }
+      };
+
       // P1-SHUT-001/002/003: Stop services started during bootstrap
-      try { observabilityService?.scheduler?.stop(); } catch (err) {
-      warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
-      try { agentLearningBridge?.stop(); } catch (err) {
-      warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
-      try { if (mcpAdapter && "close" in mcpAdapter) await (mcpAdapter as unknown as { close(): Promise<void> }).close(); } catch (err) {
-      warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
+      if (observabilityService?.scheduler) {
+        await shutdownWithTimeout("observabilityService.scheduler.stop", () => observabilityService!.scheduler!.stop());
+      }
+      if (agentLearningBridge) {
+        await shutdownWithTimeout("agentLearningBridge.stop", () => agentLearningBridge!.stop());
+      }
+      if (mcpAdapter && "close" in mcpAdapter) {
+        await shutdownWithTimeout("mcpAdapter.close", () => (mcpAdapter as unknown as { close(): Promise<void> }).close());
+      }
 
       // 1. Stop job scheduler (F11: await in-flight)
       if (jobScheduler) {
-        await jobScheduler.stop();
+        await shutdownWithTimeout("jobScheduler.stop", () => jobScheduler!.stop());
       }
 
       // 2. Stop memory file sync
       if (memoryFileSyncService) {
-        await memoryFileSyncService.stop();
+        await shutdownWithTimeout("memoryFileSyncService.stop", () => memoryFileSyncService!.stop());
       }
 
       // 3. Stop channel plugins
-      await channelRegistry.stopAll();
+      await shutdownWithTimeout("channelRegistry.stopAll", () => channelRegistry.stopAll());
       if (systemCompanionBridge?.isConnected()) {
-        await systemCompanionBridge.disconnect();
+        await shutdownWithTimeout("systemCompanionBridge.disconnect", () => systemCompanionBridge!.disconnect());
       }
       if (systemCompanionServer?.isRunning()) {
-        await systemCompanionServer.stop();
+        await shutdownWithTimeout("systemCompanionServer.stop", () => systemCompanionServer!.stop());
       }
       if (desktopSessionManager?.isConnected()) {
         desktopSessionManager.disconnect();
       }
-      await browserManager.close();
-      await subagentRegistry.drain();
+      await shutdownWithTimeout("browserManager.close", () => browserManager.close());
+      await shutdownWithTimeout("subagentRegistry.drain", () => subagentRegistry.drain());
       // 4. API runtime — no async teardown yet (HTTP server stop is CLI concern)
       // 5. Workflow runtime — scheduler now handles cron lifecycle
       // 6. Skills
-      await registry.close();
+      await shutdownWithTimeout("registry.close", () => registry.close());
       // 7. State
       stateRuntime?.close();
       hubState = "stopped";

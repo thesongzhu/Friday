@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Structured Copywriting Skill",
+  "description": "Generate structured copy with hook, body sections, and CTA.",
+  "sections": [{ "id": "inputs", "label": "Inputs", "fieldIds": ["content", "platform"] }],
+  "fields": [
+    { "id": "content", "inputKey": "content", "kind": "text", "label": "Content", "required": true, "help": "Topic or raw content for copywriting." },
+    { "id": "platform", "inputKey": "platform", "kind": "text", "label": "Platform", "required": false, "help": "e.g. landing-page, email, social" }
+  ],
+  "outputs": [
+    { "id": "summary", "outputKey": "summary", "label": "Summary", "widget": "text" },
+    { "id": "details", "outputKey": "details", "label": "Details", "widget": "json" }
+  ],
+  "actions": [{ "id": "run", "label": "Run", "style": "primary" }]
+}

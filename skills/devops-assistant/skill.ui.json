@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1.0",
+  "title": "DevOps Assistant",
+  "description": "Get guidance on DevOps tasks, deployments, and CI/CD workflows.",
+  "sections": [
+    { "id": "inputs", "label": "Inputs", "fieldIds": ["task"] }
+  ],
+  "fields": [
+    {
+      "id": "task",
+      "inputKey": "task",
+      "kind": "text",
+      "label": "Task",
+      "required": true,
+      "help": "Describe the DevOps task or question."
+    }
+  ],
+  "outputs": [
+    { "id": "summary", "outputKey": "summary", "label": "Summary", "widget": "text" },
+    { "id": "details", "outputKey": "details", "label": "Details", "widget": "json" }
+  ],
+  "actions": [
+    { "id": "run", "label": "Assist", "style": "primary" }
+  ]
+}
