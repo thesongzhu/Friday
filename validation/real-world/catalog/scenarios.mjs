@@ -564,6 +564,7 @@ export const REAL_WORLD_SCENARIOS = [
       "tool result is visible in run metadata",
     ],
     execution: {
+      useJudge: true,
       expectToolCallCountMin: 1,
       constraints: { readOnly: true },
     },
