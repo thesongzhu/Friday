@@ -65,6 +65,8 @@
     "setup:hooks": "bash scripts/setup-hooks.sh",
     "ops:converge-runtime": "bash scripts/ops/friday-converge-runtime.sh",
     "ops:doctor:runtime": "node scripts/ops/friday-local-runtime-doctor.mjs",
+    "ops:check-branch-conformance": "node scripts/ops/check-branch-conformance.mjs --branch claude/investigate-twitter-thread-4PNHG",
+    "ops:real-green-gate": "node scripts/ops/run-real-green-gate.mjs --mint-local-admin-token",
     "ops:harden-local-enablement": "bash scripts/ops/harden-local-enablement.sh",
     "ops:openclaw-adoption:doctor": "node dist/cli/friday-cli.js phases doctor",
     "ops:openclaw-adoption:list": "node dist/cli/friday-cli.js phases list",
