@@ -38,6 +38,10 @@ export interface FridayChannelInboundMessage {
   replyToMessageId?: string;
   /** Optional timezone. */
   timezone?: string;
+  /** Optional unix timestamp in milliseconds. */
+  timestamp?: number;
+  /** Optional image attachments already normalized by the channel layer. */
+  images?: string[];
 }
 
 // ─── Adapter ───
@@ -46,7 +50,7 @@ export interface FridayChannelEntryAdapterDeps {
   engine: FridayOrchestrationEngine;
   idGenerator: () => string;
   /** Resolve a session key from channel + chat identifiers. */
-  resolveSessionKey: (channelKind: string, chatId: string) => string;
+  resolveSessionKey: (message: FridayChannelInboundMessage) => string;
 }
 
 export function createFridayChannelEntryAdapter(deps: FridayChannelEntryAdapterDeps) {
@@ -71,10 +75,16 @@ export function createFridayChannelEntryAdapter(deps: FridayChannelEntryAdapterD
     const input: FridayEngineRunInput = {
       task,
       runId: idGenerator(),
-      sessionKey: resolveSessionKey(msg.channelKind, msg.chatId),
+      sessionKey: resolveSessionKey(msg),
       replyToMessageId: msg.replyToMessageId,
       timezone: msg.timezone,
       principalId: msg.senderId,
+      images: msg.images,
+      taskAlreadyInHistory: true,
+      executionContext: {
+        surface: "channel",
+        interactive: true,
+      },
       tenantContext: {
         hubId: "default",
         userId: msg.senderId,

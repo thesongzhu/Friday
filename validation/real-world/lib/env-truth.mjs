@@ -1,0 +1,330 @@
+import { slugify } from "./defs.mjs";
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function getErrorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function readCapabilityStatus(processEnv, key) {
+  const raw = processEnv[key];
+  if (raw === undefined) {
+    return {
+      status: "unknown",
+      source: key,
+      note: `Set ${key}=true or ${key}=false to declare this prerequisite explicitly.`,
+    };
+  }
+  const normalized = String(raw).trim().toLowerCase();
+  if (["1", "true", "yes", "ready", "enabled"].includes(normalized)) {
+    return { status: "ready", source: key };
+  }
+  if (["0", "false", "no", "missing", "blocked", "disabled"].includes(normalized)) {
+    return { status: "missing", source: key };
+  }
+  return {
+    status: "unknown",
+    source: key,
+    note: `${key}=${String(raw)} is not understood; use true/false.`,
+  };
+}
+
+function resolveProviderModel(provider, preferredModel) {
+  if (!provider) return undefined;
+  const supportedModels = asArray(provider.config?.supportedModels).filter((value) => typeof value === "string");
+  return preferredModel
+    || provider.defaultModel
+    || provider.config?.defaultModel
+    || supportedModels[0];
+}
+
+function buildLane(provider, model, laneKey, source) {
+  if (!provider || !model) return null;
+  return {
+    id: slugify(`${laneKey}-${provider.id}-${model}`),
+    laneKey,
+    source,
+    providerId: provider.id,
+    providerName: provider.name,
+    providerKind: provider.kind,
+    backendKind: provider.config?.backendKind ?? "http",
+    model,
+  };
+}
+
+function providerValidationStatus(provider) {
+  return provider?.config?.validation?.status;
+}
+
+function isCliProvider(provider) {
+  return provider?.config?.backendKind === "cli" || provider?.config?.authMode === "external-session";
+}
+
+function uniqueProviders(providers) {
+  const seen = new Set();
+  return providers.filter((provider) => {
+    if (!provider?.id || seen.has(provider.id)) {
+      return false;
+    }
+    seen.add(provider.id);
+    return true;
+  });
+}
+
+function chooseDefaultLane(providers, routing) {
+  if (!routing?.defaultProviderId) return null;
+  const provider = providers.find((item) => item.id === routing.defaultProviderId && item.enabled);
+  if (!provider) return null;
+  return buildLane(provider, resolveProviderModel(provider, routing.defaultModel), "default", "routing.default");
+}
+
+function chooseFallbackLane(providers, routing, defaultLane) {
+  const enabled = providers.filter((provider) => provider.enabled && provider.id !== defaultLane?.providerId);
+  const preferredIds = asArray(routing?.fallbackProviderIds);
+  const fromPreferred = uniqueProviders(preferredIds
+    .map((providerId) => enabled.find((provider) => provider.id === providerId))
+    .filter(Boolean));
+  const candidates = uniqueProviders([
+    ...fromPreferred.filter((provider) => !isCliProvider(provider) && providerValidationStatus(provider) === "ok" && provider.kind !== defaultLane?.providerKind),
+    ...enabled.filter((provider) => !isCliProvider(provider) && providerValidationStatus(provider) === "ok" && provider.kind !== defaultLane?.providerKind),
+    ...fromPreferred.filter((provider) => !isCliProvider(provider) && providerValidationStatus(provider) === "ok"),
+    ...enabled.filter((provider) => !isCliProvider(provider) && providerValidationStatus(provider) === "ok"),
+    ...fromPreferred.filter((provider) => !isCliProvider(provider)),
+    ...enabled.filter((provider) => !isCliProvider(provider)),
+    ...fromPreferred.filter((provider) => provider.config?.backendKind !== defaultLane?.backendKind),
+    ...enabled.filter((provider) => provider.config?.backendKind !== defaultLane?.backendKind),
+    ...fromPreferred,
+    ...enabled,
+  ].filter(Boolean));
+  const selected = candidates[0];
+  if (!selected) return null;
+  return buildLane(selected, resolveProviderModel(selected), "fallback", selected.id && preferredIds.includes(selected.id) ? "routing.fallback" : "heuristic.fallback");
+}
+
+async function safeRequest(run, fallbackValue) {
+  try {
+    return await run();
+  } catch (error) {
+    return {
+      ok: false,
+      error: getErrorMessage(error),
+      ...(fallbackValue ?? {}),
+    };
+  }
+}
+
+function summarizePublicResponse(response) {
+  return {
+    ok: response.ok === true,
+    status: response.status ?? 0,
+    durationMs: response.durationMs,
+    requestId: response.json?.requestId,
+    error: response.error,
+  };
+}
+
+function summarizeAuthedResponse(response) {
+  return {
+    ok: response.ok === true && response.json?.ok === true,
+    status: response.status ?? 0,
+    durationMs: response.durationMs,
+    requestId: response.json?.requestId,
+    error: response.error,
+  };
+}
+
+function deriveTruthSignals({ setupStatus, userProfile }) {
+  const needsSetup = setupStatus?.needsSetup;
+  const profileType = userProfile?.profileType ?? null;
+  const onboardedAt = userProfile?.onboardedAt ?? null;
+  return {
+    setupUserProfileTruthMismatch: needsSetup === false && (!profileType || !onboardedAt),
+  };
+}
+
+export function selectJudgeLane(envTruth, testedLane) {
+  const candidates = [
+    envTruth?.providerLanes?.default,
+    envTruth?.providerLanes?.fallback,
+    ...asArray(envTruth?.enabledProviderLanes),
+  ].filter(Boolean);
+  return candidates.find((candidate) => candidate.providerId !== testedLane?.providerId) ?? null;
+}
+
+export function resolveScenarioLanes(scenario, envTruth) {
+  if (scenario.providerLane === "none") {
+    return [{ id: "none", laneKey: "none", source: "not_applicable" }];
+  }
+  const lanes = [];
+  if (envTruth.providerLanes.default) {
+    lanes.push(envTruth.providerLanes.default);
+  } else {
+    lanes.push({
+      id: "default-missing",
+      laneKey: "default",
+      source: "missing",
+      blockedReason: "Default provider/model lane is not ready.",
+    });
+  }
+  if (scenario.providerLane === "default_and_fallback") {
+    if (envTruth.providerLanes.fallback) {
+      lanes.push(envTruth.providerLanes.fallback);
+    } else {
+      lanes.push({
+        id: "fallback-missing",
+        laneKey: "fallback",
+        source: "missing",
+        blockedReason: "Fallback provider/model lane is not ready.",
+      });
+    }
+  }
+  return lanes;
+}
+
+export function resolveScenarioBlockers(scenario, envTruth) {
+  const blockers = [];
+  const preconditions = new Set(asArray(scenario.preconditions));
+  if (scenario.tags?.includes("desktop")) {
+    preconditions.add("desktop.ready");
+  }
+  if (scenario.tags?.includes("external-channel")) {
+    preconditions.add("external_channels.ready");
+  }
+  if (scenario.tags?.includes("cloud")) {
+    preconditions.add("cloud.ready");
+  }
+  if (scenario.tags?.includes("satellite")) {
+    preconditions.add("satellite.ready");
+  }
+  if (scenario.tags?.includes("mcp")) {
+    preconditions.add("mcp.ready");
+  }
+
+  const mapping = {
+    "auth.ready": {
+      status: envTruth.auth.ok ? "ready" : "missing",
+      source: "auth.login",
+      note: envTruth.auth.ok ? undefined : envTruth.auth.error,
+    },
+    "desktop.ready": envTruth.prerequisites.desktop,
+    "external_channels.ready": envTruth.prerequisites.externalChannels,
+    "cloud.ready": envTruth.prerequisites.cloud,
+    "satellite.ready": envTruth.prerequisites.satellite,
+    "mcp.ready": envTruth.prerequisites.mcp,
+  };
+
+  for (const key of preconditions) {
+    const state = mapping[key];
+    if (state && state.status !== "ready") {
+      blockers.push(`${key}=${state.status}${state.note ? ` (${state.note})` : ""}`);
+    }
+  }
+
+  if (scenario.providerLane !== "none" && !envTruth.providerLanes.default) {
+    blockers.push("default provider/model lane unavailable");
+  }
+  return blockers;
+}
+
+export async function collectEnvironmentTruth({
+  client,
+  baseUrl,
+  uiBaseUrl,
+  processEnv = process.env,
+}) {
+  const health = await safeRequest(() => client.request("GET", "/v1/health"), { status: 0 });
+  const version = await safeRequest(() => client.request("GET", "/v1/version"), { status: 0 });
+  const auth = {
+    ok: false,
+    mode: client.authMode,
+    source: client.authSource ?? null,
+    details: client.authDetails ?? null,
+    error: undefined,
+    user: null,
+  };
+
+  try {
+    const session = await client.initialize();
+    auth.ok = true;
+    auth.mode = session.authMode;
+    auth.source = session.authSource ?? null;
+    auth.details = session.authDetails ?? null;
+    auth.user = session.user ?? client.user ?? null;
+  } catch (error) {
+    auth.mode = client.authMode;
+    auth.source = client.authSource ?? null;
+    auth.details = client.authDetails ?? null;
+    auth.error = getErrorMessage(error);
+  }
+
+  const setupStatus = auth.ok
+    ? await safeRequest(() => client.request("GET", "/v1/setup/status"), { status: 0 })
+    : { ok: false, status: 0, error: "auth unavailable" };
+  const providersResponse = auth.ok
+    ? await safeRequest(() => client.request("GET", "/v1/providers"), { status: 0 })
+    : { ok: false, status: 0, error: "auth unavailable" };
+  const routingResponse = auth.ok
+    ? await safeRequest(() => client.request("GET", "/v1/model-routing"), { status: 0 })
+    : { ok: false, status: 0, error: "auth unavailable" };
+  const personaResponse = auth.ok
+    ? await safeRequest(() => client.request("GET", "/v1/uix/persona"), { status: 0 })
+    : { ok: false, status: 0, error: "auth unavailable" };
+  const userProfileResponse = auth.ok
+    ? await safeRequest(() => client.request("GET", "/v1/uix/user-profile"), { status: 0 })
+    : { ok: false, status: 0, error: "auth unavailable" };
+
+  const providers = asArray(providersResponse.json?.data?.items).filter(
+    (provider) => provider && typeof provider === "object",
+  );
+  const routing = routingResponse.json?.data?.routing ?? null;
+  const enabledProviders = providers.filter((provider) => provider.enabled);
+  const defaultLane = chooseDefaultLane(enabledProviders, routing);
+  const fallbackLane = chooseFallbackLane(enabledProviders, routing, defaultLane);
+  const enabledProviderLanes = enabledProviders
+    .map((provider) => buildLane(provider, resolveProviderModel(provider), "candidate", "providers.list"))
+    .filter(Boolean);
+  const resolvedSetupStatus = setupStatus.json?.data ?? null;
+  const resolvedUserProfile = userProfileResponse.json?.data ?? userProfileResponse.json ?? null;
+  const derived = deriveTruthSignals({
+    setupStatus: resolvedSetupStatus,
+    userProfile: resolvedUserProfile,
+  });
+
+  return {
+    collectedAt: new Date().toISOString(),
+    baseUrl,
+    uiBaseUrl,
+    auth,
+    publicChecks: {
+      health: summarizePublicResponse(health),
+      version: summarizePublicResponse(version),
+    },
+    authedChecks: {
+      setupStatus: summarizeAuthedResponse(setupStatus),
+      providers: summarizeAuthedResponse(providersResponse),
+      modelRouting: summarizeAuthedResponse(routingResponse),
+      persona: summarizeAuthedResponse(personaResponse),
+      userProfile: summarizeAuthedResponse(userProfileResponse),
+    },
+    setupStatus: resolvedSetupStatus,
+    userProfile: resolvedUserProfile,
+    derived,
+    routing,
+    providers,
+    enabledProviders,
+    providerLanes: {
+      default: defaultLane,
+      fallback: fallbackLane,
+    },
+    enabledProviderLanes,
+    prerequisites: {
+      desktop: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_DESKTOP_READY"),
+      externalChannels: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_EXTERNAL_CHANNELS_READY"),
+      cloud: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_CLOUD_READY"),
+      satellite: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_SATELLITE_READY"),
+      mcp: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_MCP_READY"),
+    },
+  };
+}

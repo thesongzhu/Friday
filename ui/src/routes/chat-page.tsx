@@ -10,6 +10,7 @@ import { sessionsApi, type SessionUsageResponse } from "@/lib/api/sessions";
 export function ChatPage() {
   const {
     messages,
+    sessionKey,
     runEvents,
     sendMessage,
     isStreaming,
@@ -20,16 +21,15 @@ export function ChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [sessionUsage, setSessionUsage] = useState<SessionUsageResponse | null>(null);
-  const sessionKeyRef = useRef<string | null>(null);
 
   // Fetch session usage after each completed run
   useEffect(() => {
-    // Get session key from localStorage (same source as useChatSession)
-    const key = localStorage.getItem("friday-chat-session-key");
-    if (!key || key === sessionKeyRef.current && sessionUsage) return;
-    sessionKeyRef.current = key;
-    sessionsApi.getUsage(key).then(setSessionUsage).catch(() => { /* non-fatal */ });
-  }, [messages.length, sessionUsage]);
+    if (!sessionKey) {
+      setSessionUsage(null);
+      return;
+    }
+    sessionsApi.getUsage(sessionKey).then(setSessionUsage).catch(() => { /* non-fatal */ });
+  }, [messages.length, sessionKey]);
 
   // Auto-scroll to bottom on new messages or streaming output
   useEffect(() => {

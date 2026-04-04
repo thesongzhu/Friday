@@ -1,0 +1,7 @@
+ managed-skills/hello-converter-e2e/conversion.report.json   | 4 ++--
+ managed-skills/output-current-date-time/run.sh              | 2 +-
+ managed-skills/output-current-date-time/skill.manifest.json | 6 +++---
+ managed-skills/output-current-date-time/skill.ui.json       | 6 +++---
+ managed-skills/real-e2e-import-test/conversion.report.json  | 4 ++--
+ package.json                                                | 5 +++++
+ 6 files changed, 16 insertions(+), 11 deletions(-)

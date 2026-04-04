@@ -1,3 +1,4 @@
+import type Database from "better-sqlite3";
 import type { FridaySqliteLayer } from "#state";
 import { FridayDomainError } from "#errors";
 import type {
@@ -419,6 +420,29 @@ function normalizeLearningKeySegment(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+function sqliteTableExists(db: Database.Database, tableName: string): boolean {
+  return db.prepare(
+    `SELECT 1
+       FROM sqlite_master
+      WHERE type = 'table'
+        AND name = ?
+      LIMIT 1`,
+  ).get(tableName) != null;
+}
+
+function countRowsIfTableExists(
+  db: Database.Database,
+  tableName: string,
+  sql: string,
+  ...params: unknown[]
+): number {
+  if (!sqliteTableExists(db, tableName)) {
+    return 0;
+  }
+  const row = db.prepare(sql).get(...params) as { count?: number } | undefined;
+  return row?.count ?? 0;
 }
 
 export function createFridaySelfHealingApiService(
@@ -855,14 +879,28 @@ export function createFridaySelfHealingApiService(
       .slice(0, limit);
 
     const incidentCount = deps.db.withReadConnection((db) =>
-      db.prepare(`SELECT COUNT(*) AS count FROM friday_error_incidents WHERE user_id = ?`).get(input.userId) as { count: number },
-    ).count;
+      countRowsIfTableExists(
+        db,
+        "friday_error_incidents",
+        `SELECT COUNT(*) AS count FROM friday_error_incidents WHERE user_id = ?`,
+        input.userId,
+      ),
+    );
     const diagnosisCount = deps.db.withReadConnection((db) =>
-      db.prepare(`SELECT COUNT(*) AS count FROM friday_diagnosis_records`).get() as { count: number },
-    ).count;
+      countRowsIfTableExists(
+        db,
+        "friday_diagnosis_records",
+        `SELECT COUNT(*) AS count FROM friday_diagnosis_records`,
+      ),
+    );
     const actionCount = deps.db.withReadConnection((db) =>
-      db.prepare(`SELECT COUNT(*) AS count FROM friday_auto_fix_actions WHERE user_id = ?`).get(input.userId) as { count: number },
-    ).count;
+      countRowsIfTableExists(
+        db,
+        "friday_auto_fix_actions",
+        `SELECT COUNT(*) AS count FROM friday_auto_fix_actions WHERE user_id = ?`,
+        input.userId,
+      ),
+    );
 
     return {
       lessons,
