@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "2.0",
+  "id": "scqa-writing-framework",
+  "name": "SCQA Writing Framework",
+  "description": "Structure content using the Situation, Complication, Question, Answer framework for clear, logical narratives.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": { "name": "Friday" },
+  "tags": ["starter", "writing", "framework", "narrative"],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 60000
+  },
+  "triggers": {
+    "intents": ["scqa_write"],
+    "phrases": [
+      "write this using SCQA",
+      "structure this with SCQA framework",
+      "turn this into a structured narrative",
+      "apply pyramid principle to this content"
+    ],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": ["intent"]
+  },
+  "requirements": { "bins": [], "env": [], "config": [], "os": ["darwin", "linux"] },
+  "inputs": [
+    { "key": "content", "type": "string", "required": true, "label": "Content", "help": "Raw content to structure using the SCQA framework." }
+  ],
+  "outputs": [
+    { "key": "summary", "type": "string", "description": "High-level summary." },
+    { "key": "details", "type": "object", "description": "Structured SCQA output." }
+  ],
+  "permissions": {
+    "grants": [{ "id": "filesystem-read", "resource": "filesystem", "action": "read", "required": false, "reason": "Allow the skill to read lightweight local context when invoked from a workspace." }],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": { "allowedSatelliteTypes": ["desktop", "cloud-vm"], "requiredCapabilities": [] },
+  "telemetry": { "events": ["starter_skill_invoked", "starter_skill_suggested"] }
+}
