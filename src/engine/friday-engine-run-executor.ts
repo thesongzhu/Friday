@@ -126,6 +126,15 @@ export interface CreateFridayEngineRunExecutorDeps {
   sessionDeps?: FridayEngineTurnPreparerSessionDeps;
   planningGate?: FridayEnginePlanningGate;
   nowIso: () => string;
+  persistImmediateRunResult?: (input: {
+    runId: string;
+    task: string;
+    sessionKey?: string;
+    providerId?: string;
+    model?: string;
+    constraints?: { readOnly?: boolean };
+    responseText: string;
+  }) => void | Promise<void>;
 
   // Dispatch functions injected for testability
   dispatchDeterministic: (
@@ -200,6 +209,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
     deterministicDispatchDeps,
     managedAsyncDispatchDeps,
     resolveIdempotencyKey,
+    persistImmediateRunResult,
   } = deps;
 
   /**
@@ -220,6 +230,16 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
       durationMs: 0,
       turnKind: prepared.conversationContext?.turnKind,
     };
+
+    await persistImmediateRunResult?.({
+      runId: input.runId,
+      task: input.task,
+      sessionKey: input.sessionKey,
+      providerId: input.providerId,
+      model: input.model,
+      constraints: input.constraints,
+      responseText,
+    });
 
     if (input.sessionKey && sessionDeps) {
       await sessionDeps
