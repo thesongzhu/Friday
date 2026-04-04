@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Competitive Intelligence",
+  "description": "Compare products, tools, or options with structured analysis.",
+  "sections": [
+    { "id": "inputs", "label": "Inputs", "fieldIds": ["items"] }
+  ],
+  "fields": [
+    {
+      "id": "items",
+      "inputKey": "items",
+      "kind": "text",
+      "label": "Items",
+      "required": true,
+      "help": "Comma-separated list of products, tools, or options to compare."
+    }
+  ],
+  "outputs": [
+    { "id": "summary", "outputKey": "summary", "label": "Summary", "widget": "text" },
+    { "id": "details", "outputKey": "details", "label": "Details", "widget": "json" }
+  ],
+  "actions": [
+    { "id": "run", "label": "Compare", "style": "primary" }
+  ]
+}

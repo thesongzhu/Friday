@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Deep Research Synthesizer",
+  "description": "Synthesize research data into key insights and patterns.",
+  "sections": [{ "id": "inputs", "label": "Inputs", "fieldIds": ["data"] }],
+  "fields": [
+    { "id": "data", "inputKey": "data", "kind": "text", "label": "Data", "required": true, "help": "Paste research data, findings, or notes to synthesize." }
+  ],
+  "outputs": [
+    { "id": "summary", "outputKey": "summary", "label": "Summary", "widget": "text" },
+    { "id": "details", "outputKey": "details", "label": "Details", "widget": "json" }
+  ],
+  "actions": [{ "id": "run", "label": "Run", "style": "primary" }]
+}

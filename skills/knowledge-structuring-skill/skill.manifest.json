@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "2.0",
+  "id": "knowledge-structuring-skill",
+  "name": "Knowledge Structuring",
+  "description": "Organize unstructured information into clear frameworks, categories, and hierarchical structures for easier understanding.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": { "name": "Friday" },
+  "tags": ["starter", "starter.builder", "organization", "structuring", "knowledge"],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 60000
+  },
+  "triggers": {
+    "intents": ["structure_knowledge"],
+    "phrases": [
+      "organize this information",
+      "structure these notes",
+      "turn this mess into structured knowledge",
+      "categorize and organize this"
+    ],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": ["intent"]
+  },
+  "requirements": { "bins": [], "env": [], "config": [], "os": ["darwin", "linux"] },
+  "inputs": [
+    { "key": "content", "type": "string", "required": true, "label": "Content", "help": "Unstructured text or notes to organize into a structured framework." }
+  ],
+  "outputs": [
+    { "key": "summary", "type": "string", "description": "High-level summary." },
+    { "key": "details", "type": "object", "description": "Structured output." }
+  ],
+  "permissions": {
+    "grants": [{ "id": "filesystem-read", "resource": "filesystem", "action": "read", "required": false, "reason": "Allow the skill to read lightweight local context when invoked from a workspace." }],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": { "allowedSatelliteTypes": ["desktop", "cloud-vm"], "requiredCapabilities": [] },
+  "telemetry": { "events": ["starter_skill_invoked", "starter_skill_suggested"] }
+}

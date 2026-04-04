@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "2.0",
+  "id": "video-script-generator",
+  "name": "Video Script Generator",
+  "description": "Generate video scripts with hooks, structured sections, pacing, and calls-to-action optimized for engagement.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "media",
+  "author": { "name": "Friday" },
+  "tags": ["starter", "starter.builder", "video", "script", "content"],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 60000
+  },
+  "triggers": {
+    "intents": ["generate_video_script"],
+    "phrases": [
+      "write a video script for this",
+      "create a YouTube script",
+      "generate a short video script",
+      "script this topic for video"
+    ],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": ["intent"]
+  },
+  "requirements": { "bins": [], "env": [], "config": [], "os": ["darwin", "linux"] },
+  "inputs": [
+    { "key": "topic", "type": "string", "required": true, "label": "Topic", "help": "The topic or subject for the video script." },
+    { "key": "duration", "type": "string", "required": false, "label": "Duration", "help": "Target duration: short (1-3 min), medium (5-8 min), or long (10+ min). Default: short." }
+  ],
+  "outputs": [
+    { "key": "summary", "type": "string", "description": "High-level summary." },
+    { "key": "details", "type": "object", "description": "Structured output." }
+  ],
+  "permissions": {
+    "grants": [{ "id": "filesystem-read", "resource": "filesystem", "action": "read", "required": false, "reason": "Allow the skill to read lightweight local context when invoked from a workspace." }],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": { "allowedSatelliteTypes": ["desktop", "cloud-vm"], "requiredCapabilities": [] },
+  "telemetry": { "events": ["starter_skill_invoked", "starter_skill_suggested"] }
+}

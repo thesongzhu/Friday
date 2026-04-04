@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Infographic Builder",
+  "description": "Turn content into structured infographic sections with visual hints.",
+  "sections": [{ "id": "inputs", "label": "Inputs", "fieldIds": ["content"] }],
+  "fields": [
+    { "id": "content", "inputKey": "content", "kind": "text", "label": "Content", "required": true, "help": "Text content to structure as an infographic." }
+  ],
+  "outputs": [
+    { "id": "summary", "outputKey": "summary", "label": "Summary", "widget": "text" },
+    { "id": "details", "outputKey": "details", "label": "Details", "widget": "json" }
+  ],
+  "actions": [{ "id": "run", "label": "Run", "style": "primary" }]
+}

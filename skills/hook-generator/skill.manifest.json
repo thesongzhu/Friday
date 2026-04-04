@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "2.0",
+  "id": "hook-generator",
+  "name": "Hook Generator",
+  "description": "Produce attention-grabbing hooks for videos, social posts, and content intros to maximize engagement.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "media",
+  "author": { "name": "Friday" },
+  "tags": ["starter", "starter.builder", "hooks", "engagement", "content"],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 60000
+  },
+  "triggers": {
+    "intents": ["generate_hook"],
+    "phrases": [
+      "generate a hook for this",
+      "write an attention-grabbing opener",
+      "create a viral hook",
+      "hook ideas for this topic"
+    ],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": ["intent"]
+  },
+  "requirements": { "bins": [], "env": [], "config": [], "os": ["darwin", "linux"] },
+  "inputs": [
+    { "key": "topic", "type": "string", "required": true, "label": "Topic", "help": "The topic or subject to generate hooks for." },
+    { "key": "style", "type": "string", "required": false, "label": "Style", "help": "Hook style: curiosity, bold, story, stat, or contrarian. Default: curiosity." }
+  ],
+  "outputs": [
+    { "key": "summary", "type": "string", "description": "High-level summary." },
+    { "key": "details", "type": "object", "description": "Structured output." }
+  ],
+  "permissions": {
+    "grants": [{ "id": "filesystem-read", "resource": "filesystem", "action": "read", "required": false, "reason": "Allow the skill to read lightweight local context when invoked from a workspace." }],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": { "allowedSatelliteTypes": ["desktop", "cloud-vm"], "requiredCapabilities": [] },
+  "telemetry": { "events": ["starter_skill_invoked", "starter_skill_suggested"] }
+}

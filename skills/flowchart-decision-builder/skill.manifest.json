@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "2.0",
+  "id": "flowchart-decision-builder",
+  "name": "Flowchart Decision Builder",
+  "description": "Generate decision trees and flowcharts from textual input to simplify complex decision-making processes.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": { "name": "Friday" },
+  "tags": ["starter", "flowchart", "decision-tree", "visual"],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 60000
+  },
+  "triggers": {
+    "intents": ["build_flowchart"],
+    "phrases": [
+      "create a flowchart for this",
+      "build a decision tree",
+      "map this process as a flowchart",
+      "visualize this decision logic"
+    ],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": ["intent"]
+  },
+  "requirements": { "bins": [], "env": [], "config": [], "os": ["darwin", "linux"] },
+  "inputs": [
+    { "key": "process", "type": "string", "required": true, "label": "Process", "help": "Describe the process or decision logic to map as a flowchart." }
+  ],
+  "outputs": [
+    { "key": "summary", "type": "string", "description": "High-level summary." },
+    { "key": "details", "type": "object", "description": "Flowchart nodes, connections, and layout." }
+  ],
+  "permissions": {
+    "grants": [{ "id": "filesystem-read", "resource": "filesystem", "action": "read", "required": false, "reason": "Allow the skill to read lightweight local context when invoked from a workspace." }],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": { "allowedSatelliteTypes": ["desktop", "cloud-vm"], "requiredCapabilities": [] },
+  "telemetry": { "events": ["starter_skill_invoked", "starter_skill_suggested"] }
+}
