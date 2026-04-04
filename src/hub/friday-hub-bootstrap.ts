@@ -4415,10 +4415,23 @@ export async function createFridayHub(
   }
 
   // 2. image_analysis — stub analyzeImages via provider service (vision model)
+  //
+  // Known vision-capable model name patterns — used to warn before sending
+  // a request that will certainly fail with a non-vision model.
+  const VISION_MODEL_RE =
+    /gpt-4o|gpt-4-turbo|gpt-4\.1|claude-3|claude-.*sonnet|claude-.*opus|claude-.*haiku|gemini|llava|pixtral|qwen-vl|qwen2-vl|yi-vision|internvl/i;
+
   const analyzeImages: FridayImageAnalysisFn = async (request, signal) => {
     // Use the provider service to resolve a vision-capable model and call it.
-    // For now, create a graceful stub that reports service availability.
     const resolvedModel = request.model ?? "gpt-4o";
+
+    // Pre-check: warn if model is unlikely to support vision
+    if (!VISION_MODEL_RE.test(resolvedModel)) {
+      console.warn(
+        `[friday][image-analysis] model "${resolvedModel}" may not support vision — ` +
+        "consider using a vision-capable model (gpt-4o, claude-3-*, gemini-*, etc.)",
+      );
+    }
     const { result, route } = await providerService.runWithFallback({
       requestedModel: resolvedModel,
       tenantContext: request.tenantContext,
@@ -4454,6 +4467,22 @@ export async function createFridayHub(
 
         if (!response.ok) {
           const body = await response.text().catch(() => "");
+          // Provide user-friendly message when model doesn't support vision
+          const lower = body.toLowerCase();
+          if (
+            lower.includes("does not support image") ||
+            lower.includes("image_url is not supported") ||
+            lower.includes("vision") ||
+            lower.includes("multimodal") ||
+            (response.status === 400 && lower.includes("invalid"))
+          ) {
+            throw new FridayDomainError(
+              "VALIDATION_ERROR",
+              `Model "${_route.model}" does not support image analysis. ` +
+              `Use a vision-capable model such as gpt-4o, claude-3-sonnet, or gemini-pro-vision.`,
+              { httpStatus: 400 },
+            );
+          }
           throw new FridayDomainError("INTERNAL_ERROR", `Vision API error ${String(response.status)}: ${body}`, { httpStatus: 500 });
         }
 
