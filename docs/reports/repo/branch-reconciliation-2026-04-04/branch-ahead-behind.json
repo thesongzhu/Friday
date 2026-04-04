@@ -1,0 +1,308 @@
+[
+  {
+    "ref": "codex/efficiency-audit-fixes",
+    "ahead": 39,
+    "behind": 8,
+    "cherry": [
+      "+ 2ecfd1e96724baa0a7a98891c2fd983de5cf78e0 fix: reduce runtime and UI waste",
+      "+ b65057c52490a9e94d93612e2e7c96c03d7dda04 fix: trim idle UI polling and event buffers",
+      "+ 42be6a71e8ec185b198c555d79ef97f319c6a62c fix: avoid fetching learned facts just to count them",
+      "+ 181b3e1db07d4f7935d80258cff482d86758a0f3 fix: reduce high-cost system polling and pattern writes",
+      "+ c07f2e6a921bba3311788ff764449ef691ec5922 fix: slow idle polling across operator surfaces",
+      "+ 13197c74c1f6163b7e51651406486d9a658fa978 fix: trim idle assistant and operator polling",
+      "+ 40859accb17444dd3588ce7c6fbe669390aa2ebd fix: cut low-value route polling",
+      "+ 31e7c2ee88c8b432a9906a69925f777bc0d0b943 fix: avoid desktop snapshots for capability checks",
+      "+ 808b4c869befe2270bcdad48eb4e788614f25a9d fix learning and system overview aggregation costs",
+      "+ a1b8e0d65a3811fe3c837374501f876f083248b9 fix self-healing query fan-out",
+      "+ c8bf5255c043373fbf89f5379c34c4e81db20c25 fix incident detail query fan-out",
+      "+ da66fdbab4ba99bb91a24856a45395ef6f18647d fix approval expiry lookup fan-out",
+      "+ 26325243f01d282196b86846e1d9def960016c8d fix process result action fan-out",
+      "+ 7c71ba578c33b31d40331a878d12ac03befa51aa fix lifecycle state fact counting",
+      "+ fc5decc90cef87d84456858be9f484284584a8fc fix agent loop detail fan-out",
+      "+ 69b3502360bb51be8602bf861821be22b4256b18 optimize learning pattern and overview queries",
+      "+ 7407667eb4c32e117fd68bffa704189b25adf802 optimize auto-fix history lookups",
+      "+ 073311e4e16be555f62abe3083066a59b80d6c28 avoid duplicate learning context rebuilds",
+      "+ 104a8a7e3c0f22d10f78850141641565b1add801 avoid rebuilding learning overview for single updates",
+      "+ 43b8d3e407ed83454d618eab0d679294c18e01b3 narrow prompt pattern demotion lookups",
+      "+ b108756081836e88ccfd02871d35564c36ff5673 optimize learning overview action aggregation",
+      "+ 64c5bdd17cfab8625faaa62c11f4be7e385b967e streamline self-healing incident action lookups",
+      "+ 0f90af95d4e9df8ddb4ec6c230c2e7fb3d0cc6f4 tighten learning and routing aggregations",
+      "+ e56c0985972c23087b11f40001deebd3ed9c7751 shrink learning overview hot paths",
+      "+ a587a476356a8ee4d2bd55b57e234db88bf8c377 trim world model snapshot rebuild work",
+      "+ b1340eb8951d95c9b8969baeed4fb83b7509da42 avoid rewriting unchanged world patterns",
+      "+ 071d53ce59aa4c6571d4fa5b5bab8a9b3f3822b4 batch memory search item lookups",
+      "+ 477c954d79a2a699294dea95e6d05df71932fc71 batch incident loads for auto-fix dispatch",
+      "+ 39a6f52b52bb673ee12f3eb757ecebd27cf6fb3c batch reject updates for expired approvals",
+      "+ ce6ddb841279a80bb8328a10ffb4623c4d27047f collapse system dashboard summary reads",
+      "+ 506bede08da937e13f32cdc32b0fb81b98050964 collapse learning overview coverage counts",
+      "+ f0f4c6cf2fc62b7ec4959f047815004ca04109b7 batch cooldown failure counts in agent loop",
+      "+ 14ab9ae42dccd03fc7a3764eede63b34f40c45f6 fix: restore release verify import ordering",
+      "+ d57127b5ebc5803d83c4ca6b0b993fda6c0c95af fix: migrate chat session keys to canonical format",
+      "+ 0222028bdd91de983dabb9fea446eb2465f8b813 fix: persist immediate control-plane runs",
+      "+ a583d65b7adebb2cc64d218d92e7bf31b23c8912 fix: handle immediate chat responses inline",
+      "+ 87e1290ea6ae614caf8c8264bbe788ebe09eeb4f docs: add friday layer route root cause investigation",
+      "+ 575ceb9fcf5107a4a0fed45b370c0c3440568c60 fix: harden agent run contracts across chat and channel flows",
+      "+ 3fc9983a1ff6fb61a4e0ea3f9e598ca7c592b4fe docs: trim trailing whitespace in audit reports"
+    ]
+  },
+  {
+    "ref": "origin/codex/efficiency-audit-fixes",
+    "ahead": 39,
+    "behind": 8,
+    "cherry": [
+      "+ 2ecfd1e96724baa0a7a98891c2fd983de5cf78e0 fix: reduce runtime and UI waste",
+      "+ b65057c52490a9e94d93612e2e7c96c03d7dda04 fix: trim idle UI polling and event buffers",
+      "+ 42be6a71e8ec185b198c555d79ef97f319c6a62c fix: avoid fetching learned facts just to count them",
+      "+ 181b3e1db07d4f7935d80258cff482d86758a0f3 fix: reduce high-cost system polling and pattern writes",
+      "+ c07f2e6a921bba3311788ff764449ef691ec5922 fix: slow idle polling across operator surfaces",
+      "+ 13197c74c1f6163b7e51651406486d9a658fa978 fix: trim idle assistant and operator polling",
+      "+ 40859accb17444dd3588ce7c6fbe669390aa2ebd fix: cut low-value route polling",
+      "+ 31e7c2ee88c8b432a9906a69925f777bc0d0b943 fix: avoid desktop snapshots for capability checks",
+      "+ 808b4c869befe2270bcdad48eb4e788614f25a9d fix learning and system overview aggregation costs",
+      "+ a1b8e0d65a3811fe3c837374501f876f083248b9 fix self-healing query fan-out",
+      "+ c8bf5255c043373fbf89f5379c34c4e81db20c25 fix incident detail query fan-out",
+      "+ da66fdbab4ba99bb91a24856a45395ef6f18647d fix approval expiry lookup fan-out",
+      "+ 26325243f01d282196b86846e1d9def960016c8d fix process result action fan-out",
+      "+ 7c71ba578c33b31d40331a878d12ac03befa51aa fix lifecycle state fact counting",
+      "+ fc5decc90cef87d84456858be9f484284584a8fc fix agent loop detail fan-out",
+      "+ 69b3502360bb51be8602bf861821be22b4256b18 optimize learning pattern and overview queries",
+      "+ 7407667eb4c32e117fd68bffa704189b25adf802 optimize auto-fix history lookups",
+      "+ 073311e4e16be555f62abe3083066a59b80d6c28 avoid duplicate learning context rebuilds",
+      "+ 104a8a7e3c0f22d10f78850141641565b1add801 avoid rebuilding learning overview for single updates",
+      "+ 43b8d3e407ed83454d618eab0d679294c18e01b3 narrow prompt pattern demotion lookups",
+      "+ b108756081836e88ccfd02871d35564c36ff5673 optimize learning overview action aggregation",
+      "+ 64c5bdd17cfab8625faaa62c11f4be7e385b967e streamline self-healing incident action lookups",
+      "+ 0f90af95d4e9df8ddb4ec6c230c2e7fb3d0cc6f4 tighten learning and routing aggregations",
+      "+ e56c0985972c23087b11f40001deebd3ed9c7751 shrink learning overview hot paths",
+      "+ a587a476356a8ee4d2bd55b57e234db88bf8c377 trim world model snapshot rebuild work",
+      "+ b1340eb8951d95c9b8969baeed4fb83b7509da42 avoid rewriting unchanged world patterns",
+      "+ 071d53ce59aa4c6571d4fa5b5bab8a9b3f3822b4 batch memory search item lookups",
+      "+ 477c954d79a2a699294dea95e6d05df71932fc71 batch incident loads for auto-fix dispatch",
+      "+ 39a6f52b52bb673ee12f3eb757ecebd27cf6fb3c batch reject updates for expired approvals",
+      "+ ce6ddb841279a80bb8328a10ffb4623c4d27047f collapse system dashboard summary reads",
+      "+ 506bede08da937e13f32cdc32b0fb81b98050964 collapse learning overview coverage counts",
+      "+ f0f4c6cf2fc62b7ec4959f047815004ca04109b7 batch cooldown failure counts in agent loop",
+      "+ 14ab9ae42dccd03fc7a3764eede63b34f40c45f6 fix: restore release verify import ordering",
+      "+ d57127b5ebc5803d83c4ca6b0b993fda6c0c95af fix: migrate chat session keys to canonical format",
+      "+ 0222028bdd91de983dabb9fea446eb2465f8b813 fix: persist immediate control-plane runs",
+      "+ a583d65b7adebb2cc64d218d92e7bf31b23c8912 fix: handle immediate chat responses inline",
+      "+ 87e1290ea6ae614caf8c8264bbe788ebe09eeb4f docs: add friday layer route root cause investigation",
+      "+ 575ceb9fcf5107a4a0fed45b370c0c3440568c60 fix: harden agent run contracts across chat and channel flows",
+      "+ 3fc9983a1ff6fb61a4e0ea3f9e598ca7c592b4fe docs: trim trailing whitespace in audit reports"
+    ]
+  },
+  {
+    "ref": "codex/protect-uncommitted-before-rebase-20260327",
+    "ahead": 2,
+    "behind": 96,
+    "cherry": [
+      "- b3e799a5382c05bb7acbb51ca72d46de481cb8e3 Add local runtime access diagnostics",
+      "+ aafd891ac046ef3ff7aa97415f368a1e8c791e61 WIP: protect local changes before rebase"
+    ]
+  },
+  {
+    "ref": "origin/claude/fix-lint-ci-JQ9x5",
+    "ahead": 2,
+    "behind": 56,
+    "cherry": [
+      "+ 641557e0118307e32441e811f4d10cb026105ff0 fix: resolve lint errors — import sort order and inline import() type",
+      "+ cda052de72b184c837ccb6c860634e73b0abf28b fix: correct UI type errors against actual operator-client types"
+    ]
+  },
+  {
+    "ref": "codex/friday-real-validation-2026-03-31",
+    "ahead": 1,
+    "behind": 77,
+    "cherry": [
+      "+ 8030a92bd3dc9064422bec674e9e01bfad4030b7 Add Friday real validation evidence bundle for 2026-03-31"
+    ]
+  },
+  {
+    "ref": "codex/full-audit-2026-03-29",
+    "ahead": 1,
+    "behind": 77,
+    "cherry": [
+      "+ d8c18f95e90ddff3e703409c203aa12aa58ede41 fix: harden audit gates and release readiness workflows"
+    ]
+  },
+  {
+    "ref": "codex/self-evolution-snapshot-2026-04-01",
+    "ahead": 1,
+    "behind": 26,
+    "cherry": [
+      "+ 34661d2478136a6cb2ec8d696ce129a8293b717f WIP: snapshot self-evolution explainability and live coverage work"
+    ]
+  },
+  {
+    "ref": "origin/codex/fix-uix-user-profile-persistence",
+    "ahead": 1,
+    "behind": 7,
+    "cherry": [
+      "- 3c94f260e16239c76ca5b222e37e163147e82270 fix uix user-profile persistence"
+    ]
+  },
+  {
+    "ref": "origin/codex/friday-real-validation-2026-03-31",
+    "ahead": 1,
+    "behind": 77,
+    "cherry": [
+      "+ 8030a92bd3dc9064422bec674e9e01bfad4030b7 Add Friday real validation evidence bundle for 2026-03-31"
+    ]
+  },
+  {
+    "ref": "origin/codex/full-audit-2026-03-29",
+    "ahead": 1,
+    "behind": 77,
+    "cherry": [
+      "+ d8c18f95e90ddff3e703409c203aa12aa58ede41 fix: harden audit gates and release readiness workflows"
+    ]
+  },
+  {
+    "ref": "origin/codex/real-world-validation-framework",
+    "ahead": 1,
+    "behind": 8,
+    "cherry": [
+      "- 3699d457e525fb5e7cc89d84fbdc92226e203aae add real-world validation harness"
+    ]
+  },
+  {
+    "ref": "serene-chaum",
+    "ahead": 1,
+    "behind": 114,
+    "cherry": [
+      "+ 3f7e10eaca61b2a209aeef864106ae521747d16e fix: comprehensive audit remediation — P0/P1/P2 fixes + code quality sweep"
+    ]
+  },
+  {
+    "ref": "claude/cranky-colden",
+    "ahead": 0,
+    "behind": 78,
+    "cherry": []
+  },
+  {
+    "ref": "claude/review-friday-codebase-JQ9x5",
+    "ahead": 0,
+    "behind": 49,
+    "cherry": []
+  },
+  {
+    "ref": "codex/fix-2026-03-30-nightly",
+    "ahead": 0,
+    "behind": 57,
+    "cherry": []
+  },
+  {
+    "ref": "codex/fix-file-tool-workspace-path",
+    "ahead": 0,
+    "behind": 3,
+    "cherry": []
+  },
+  {
+    "ref": "codex/fix-real-world-smoke-followups",
+    "ahead": 0,
+    "behind": 5,
+    "cherry": []
+  },
+  {
+    "ref": "codex/gha-node24-upgrade",
+    "ahead": 0,
+    "behind": 19,
+    "cherry": []
+  },
+  {
+    "ref": "codex/provider-backend-auth-matrix",
+    "ahead": 0,
+    "behind": 30,
+    "cherry": []
+  },
+  {
+    "ref": "codex/routing-decision-trace-maturation",
+    "ahead": 0,
+    "behind": 17,
+    "cherry": []
+  },
+  {
+    "ref": "codex/tier1-live-env-contracts",
+    "ahead": 0,
+    "behind": 16,
+    "cherry": []
+  },
+  {
+    "ref": "laughing-hugle",
+    "ahead": 0,
+    "behind": 81,
+    "cherry": []
+  },
+  {
+    "ref": "origin/claude/investigate-twitter-thread-4PNHG",
+    "ahead": 0,
+    "behind": 7,
+    "cherry": []
+  },
+  {
+    "ref": "origin/claude/review-friday-codebase-JQ9x5",
+    "ahead": 0,
+    "behind": 49,
+    "cherry": []
+  },
+  {
+    "ref": "origin/claude/review-friday-codebase-JQ9x5-v2",
+    "ahead": 0,
+    "behind": 49,
+    "cherry": []
+  },
+  {
+    "ref": "origin/claude/test-session-xXyVO",
+    "ahead": 0,
+    "behind": 37,
+    "cherry": []
+  },
+  {
+    "ref": "origin/codex/fix-2026-03-30-nightly",
+    "ahead": 0,
+    "behind": 57,
+    "cherry": []
+  },
+  {
+    "ref": "origin/codex/fix-file-tool-workspace-path",
+    "ahead": 0,
+    "behind": 3,
+    "cherry": []
+  },
+  {
+    "ref": "origin/codex/fix-real-world-smoke-followups",
+    "ahead": 0,
+    "behind": 5,
+    "cherry": []
+  },
+  {
+    "ref": "origin/codex/gha-node24-upgrade",
+    "ahead": 0,
+    "behind": 19,
+    "cherry": []
+  },
+  {
+    "ref": "origin/codex/provider-backend-auth-matrix",
+    "ahead": 0,
+    "behind": 30,
+    "cherry": []
+  },
+  {
+    "ref": "origin/codex/routing-decision-trace-maturation",
+    "ahead": 0,
+    "behind": 17,
+    "cherry": []
+  },
+  {
+    "ref": "origin/codex/tier1-live-env-contracts",
+    "ahead": 0,
+    "behind": 16,
+    "cherry": []
+  },
+  {
+    "ref": "origin/laughing-hugle",
+    "ahead": 0,
+    "behind": 81,
+    "cherry": []
+  }
+]
