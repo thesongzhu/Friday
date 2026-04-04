@@ -1,0 +1,826 @@
+import { validateCatalog } from "../lib/defs.mjs";
+
+function baseScenario(input) {
+  return {
+    providerLane: "none",
+    riskTier: "low",
+    suites: ["smoke", "daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    cleanup: [],
+    tags: [],
+    ...input,
+  };
+}
+
+function httpScenario(input) {
+  return baseScenario({
+    ...input,
+    preconditions: input.execution?.public ? (input.preconditions ?? []) : [...new Set([...(input.preconditions ?? []), "auth.ready"])],
+    expectedEvidence: [
+      "HTTP contract reachable",
+      "ok=true envelope present",
+      "expected data fields present",
+    ],
+    execution: {
+      kind: "http_probe",
+      method: "GET",
+      expectStatus: 200,
+      expectOkEnvelope: true,
+      ...input.execution,
+    },
+  });
+}
+
+function uiScenario(input) {
+  return baseScenario({
+    ...input,
+    preconditions: [...new Set([...(input.preconditions ?? []), "auth.ready"])],
+    entrySurface: input.entrySurface,
+    expectedEvidence: [
+      "page becomes visibly interactive",
+      "reload restores the surface",
+      "request and console activity are measurable",
+    ],
+    latencyBudget: {
+      timeToFirstVisibleSignalMs: 3_000,
+      ...(input.latencyBudget ?? {}),
+    },
+    execution: {
+      kind: "ui_probe",
+      reloadCheck: true,
+      idleWindowMs: 1_500,
+      allowedFinalPathPrefixes: input.execution?.allowedFinalPathPrefixes ?? [input.execution?.path ?? input.entrySurface],
+      ...input.execution,
+    },
+  });
+}
+
+function agentScenario(input) {
+  return baseScenario({
+    ...input,
+    preconditions: [...new Set([...(input.preconditions ?? []), "auth.ready"])],
+    providerLane: "default_and_fallback",
+    expectedEvidence: [
+      "agent run completes",
+      "output matches the requested user goal",
+      "actual provider/model and cost metrics are captured",
+    ],
+    latencyBudget: {
+      timeToFinalAnswerMs: 60_000,
+      ...(input.latencyBudget ?? {}),
+    },
+    execution: {
+      kind: "agent_run",
+      timeoutMs: 180_000,
+      constraints: { readOnly: true },
+      taskProfile: { id: "deterministic" },
+      ...input.execution,
+    },
+  });
+}
+
+function manualExternalScenario(input) {
+  return baseScenario({
+    ...input,
+    preconditions: [...new Set([...(input.preconditions ?? []), "auth.ready"])],
+    providerLane: "none",
+    suites: ["weekly"],
+    expectedEvidence: [
+      "real external or distributed endpoint is available",
+      "operator records inbound/outbound evidence",
+      "blocked vs manual-review is explicit instead of mocked",
+    ],
+    execution: {
+      kind: "manual_external",
+      manualChecklist: input.manualChecklist ?? [],
+      ...input.execution,
+    },
+  });
+}
+
+export const REAL_WORLD_SCENARIOS = [
+  baseScenario({
+    id: "l0-runtime-health",
+    layer: "L0",
+    productArea: "environment truth",
+    entrySurface: "/v1/health",
+    routeFamily: "runtime",
+    expectedEvidence: [
+      "public health route reachable",
+      "public version route reachable",
+      "auth bootstrap can be attempted",
+    ],
+    execution: {
+      kind: "env_truth",
+      checks: [
+        { path: "publicChecks.health.ok", equals: true, label: "health ok" },
+        { path: "publicChecks.version.ok", equals: true, label: "version ok" },
+      ],
+    },
+    severityOnFailure: "P0",
+  }),
+  baseScenario({
+    id: "l0-provider-lanes-ready",
+    layer: "L0",
+    productArea: "environment truth",
+    entrySurface: "/v1/model-routing",
+    routeFamily: "provider routing",
+    providerLane: "none",
+    expectedEvidence: [
+      "default provider lane resolved",
+      "fallback lane either resolved or explicitly blocked",
+      "enabled provider inventory captured",
+    ],
+    execution: {
+      kind: "env_truth",
+      checks: [
+        { path: "authedChecks.providers.ok", equals: true, label: "providers route" },
+        { path: "authedChecks.modelRouting.ok", equals: true, label: "model routing route" },
+      ],
+    },
+    severityOnFailure: "P0",
+  }),
+  baseScenario({
+    id: "l0-onboarding-truth-mismatch",
+    layer: "L0",
+    productArea: "environment truth",
+    entrySurface: "/v1/setup/status + /v1/uix/user-profile",
+    routeFamily: "onboarding truth",
+    expectedEvidence: [
+      "setup completion state is explicit",
+      "uix user profile onboarding state is explicit",
+      "setup/user-profile truth mismatch is surfaced as a real defect instead of being hidden behind UI retries",
+    ],
+    execution: {
+      kind: "env_truth",
+      failureResult: "failed",
+      failureClass: "ui_misroute",
+      checks: [
+        { path: "setupStatus.needsSetup", equals: false, label: "setup complete" },
+        { path: "derived.setupUserProfileTruthMismatch", equals: false, label: "setup/user-profile truth mismatch" },
+      ],
+    },
+    severityOnFailure: "P1",
+  }),
+  baseScenario({
+    id: "l0-desktop-prereq",
+    layer: "L0",
+    productArea: "desktop",
+    entrySurface: "desktop",
+    routeFamily: "desktop prerequisite",
+    expectedEvidence: [
+      "desktop prerequisite declared",
+      "blocked state is explicit when permission or protocol is unavailable",
+    ],
+    execution: {
+      kind: "env_truth",
+      checks: [
+        { path: "prerequisites.desktop.status", equals: "ready", label: "desktop ready" },
+      ],
+    },
+    severityOnFailure: "P1",
+    suites: ["weekly"],
+  }),
+  uiScenario({
+    id: "l1-chat-ui",
+    layer: "L1",
+    productArea: "chat",
+    entrySurface: "/chat",
+    routeFamily: "surface",
+    execution: { path: "/chat", readyText: "Friday" },
+    repeatProfile: { daily: 10, nightly: 30 },
+  }),
+  uiScenario({
+    id: "l1-assistant-ui",
+    layer: "L1",
+    productArea: "assistant",
+    entrySurface: "/assistant",
+    routeFamily: "surface",
+    execution: { path: "/assistant", readyText: "Friday" },
+    repeatProfile: { daily: 10, nightly: 30 },
+  }),
+  uiScenario({
+    id: "l1-command-center-ui",
+    layer: "L1",
+    productArea: "command center",
+    entrySurface: "/command-center",
+    routeFamily: "surface",
+    execution: { path: "/command-center", readyText: "Friday" },
+    suites: ["daily", "nightly", "weekly"],
+  }),
+  uiScenario({
+    id: "l1-observability-ui",
+    layer: "L1",
+    productArea: "observability",
+    entrySurface: "/observability",
+    routeFamily: "surface",
+    execution: { path: "/observability", readyText: "Friday" },
+    repeatProfile: { daily: 10, nightly: 30 },
+  }),
+  uiScenario({
+    id: "l1-settings-ui",
+    layer: "L1",
+    productArea: "settings",
+    entrySurface: "/settings",
+    routeFamily: "surface",
+    execution: { path: "/settings", readyText: "Friday" },
+    repeatProfile: { daily: 10, nightly: 30 },
+  }),
+  uiScenario({
+    id: "l1-skills-ui",
+    layer: "L1",
+    productArea: "skills",
+    entrySurface: "/skills",
+    routeFamily: "surface",
+    execution: { path: "/skills", readyText: "Friday" },
+    suites: ["nightly", "weekly"],
+  }),
+  uiScenario({
+    id: "l1-workflows-ui",
+    layer: "L1",
+    productArea: "workflows",
+    entrySurface: "/workflows",
+    routeFamily: "surface",
+    execution: { path: "/workflows", readyText: "Friday" },
+    suites: ["nightly", "weekly"],
+  }),
+  uiScenario({
+    id: "l1-marketplace-ui",
+    layer: "L1",
+    productArea: "marketplace",
+    entrySurface: "/marketplace",
+    routeFamily: "surface",
+    execution: { path: "/marketplace", readyText: "Friday" },
+    suites: ["nightly", "weekly"],
+  }),
+  uiScenario({
+    id: "l1-memory-ui",
+    layer: "L1",
+    productArea: "memory",
+    entrySurface: "/memory",
+    routeFamily: "surface",
+    execution: { path: "/memory", readyText: "Friday" },
+    suites: ["nightly", "weekly"],
+  }),
+  httpScenario({
+    id: "l2-health-contract",
+    layer: "L2",
+    productArea: "runtime",
+    entrySurface: "/v1/health",
+    routeFamily: "contract",
+    execution: {
+      public: true,
+      path: "/v1/health",
+      jsonPathsPresent: ["data.status"],
+    },
+  }),
+  httpScenario({
+    id: "l2-version-contract",
+    layer: "L2",
+    productArea: "runtime",
+    entrySurface: "/v1/version",
+    routeFamily: "contract",
+    execution: {
+      public: true,
+      path: "/v1/version",
+      jsonPathsPresent: ["data.version"],
+    },
+  }),
+  httpScenario({
+    id: "l2-setup-status-contract",
+    layer: "L2",
+    productArea: "setup",
+    entrySurface: "/v1/setup/status",
+    routeFamily: "contract",
+    execution: {
+      path: "/v1/setup/status",
+      jsonPathsPresent: ["data.needsSetup"],
+    },
+  }),
+  httpScenario({
+    id: "l2-providers-contract",
+    layer: "L2",
+    productArea: "providers",
+    entrySurface: "/v1/providers",
+    routeFamily: "contract",
+    execution: {
+      path: "/v1/providers",
+      jsonPathsPresent: ["data.items"],
+    },
+  }),
+  httpScenario({
+    id: "l2-uix-user-profile-contract",
+    layer: "L2",
+    productArea: "uix",
+    entrySurface: "/v1/uix/user-profile",
+    routeFamily: "contract",
+    execution: {
+      path: "/v1/uix/user-profile",
+      jsonPathsPresent: ["data.profileType", "data.onboardedAt"],
+    },
+  }),
+  httpScenario({
+    id: "l2-model-routing-contract",
+    layer: "L2",
+    productArea: "providers",
+    entrySurface: "/v1/model-routing",
+    routeFamily: "contract",
+    execution: {
+      path: "/v1/model-routing",
+      jsonPathsPresent: ["data.routing.defaultProviderId"],
+    },
+    severityOnFailure: "P0",
+  }),
+  httpScenario({
+    id: "l2-workflow-approvals-contract",
+    layer: "L2",
+    productArea: "workflows",
+    entrySurface: "/v1/workflow-approvals",
+    routeFamily: "contract",
+    execution: {
+      path: "/v1/workflow-approvals",
+      jsonPathsPresent: ["data.items"],
+    },
+  }),
+  httpScenario({
+    id: "l2-observability-overview-contract",
+    layer: "L2",
+    productArea: "observability",
+    entrySurface: "/v1/observability/overview",
+    routeFamily: "contract",
+    execution: {
+      path: "/v1/observability/overview",
+      jsonPathsPresent: ["data"],
+    },
+  }),
+  httpScenario({
+    id: "l2-diagnosis-overview-contract",
+    layer: "L2",
+    productArea: "self-healing",
+    entrySurface: "/v1/diagnosis/learning/overview",
+    routeFamily: "contract",
+    execution: {
+      path: "/v1/diagnosis/learning/overview",
+      jsonPathsPresent: ["data"],
+    },
+    suites: ["daily", "nightly", "weekly"],
+  }),
+  httpScenario({
+    id: "l2-auto-fix-metrics-contract",
+    layer: "L2",
+    productArea: "self-healing",
+    entrySurface: "/v1/auto-fix/metrics",
+    routeFamily: "contract",
+    execution: {
+      path: "/v1/auto-fix/metrics",
+      jsonPathsPresent: ["data"],
+    },
+    suites: ["daily", "nightly", "weekly"],
+  }),
+  httpScenario({
+    id: "l2-fleet-overview-contract",
+    layer: "L2",
+    productArea: "fleet",
+    entrySurface: "/v1/fleet/overview",
+    routeFamily: "contract",
+    execution: {
+      path: "/v1/fleet/overview",
+      jsonPathsPresent: ["data"],
+    },
+    suites: ["nightly", "weekly"],
+  }),
+  httpScenario({
+    id: "l2-marketplace-requests-contract",
+    layer: "L2",
+    productArea: "marketplace",
+    entrySurface: "/v1/marketplace/requests",
+    routeFamily: "contract",
+    execution: {
+      path: "/v1/marketplace/requests",
+      jsonPathsPresent: ["data.items"],
+    },
+    suites: ["nightly", "weekly"],
+  }),
+  httpScenario({
+    id: "l2-plugins-contract",
+    layer: "L2",
+    productArea: "plugins",
+    entrySurface: "/v1/plugins",
+    routeFamily: "contract",
+    execution: {
+      path: "/v1/plugins",
+      jsonPathsPresent: ["data.items"],
+    },
+    suites: ["nightly", "weekly"],
+  }),
+  agentScenario({
+    id: "l3-chat-direct-answer",
+    layer: "L3",
+    productArea: "assistant behavior",
+    entrySurface: "/v1/agent/runs",
+    routeFamily: "chat",
+    realWorldPrompt: "Reply with one sentence: what is the default reply language in this workspace?",
+    expectedEvidence: [
+      "run completes without clarification",
+      "answer is in Chinese or states Chinese explicitly",
+      "provider/model/cost metrics are recorded",
+    ],
+    oracles: {
+      behavior: {
+        expectedAnySubstrings: ["Chinese", "中文"],
+        disallowStatuses: ["awaiting_clarification", "awaiting_plan_approval"],
+        disallowClarification: true,
+        disallowPlanGate: true,
+      },
+    },
+    latencyBudget: { timeToFinalAnswerMs: 20_000 },
+    repeatProfile: { daily: 10, nightly: 30 },
+  }),
+  agentScenario({
+    id: "l3-summary-misroute-guard",
+    layer: "L3",
+    productArea: "assistant behavior",
+    entrySurface: "/v1/agent/runs",
+    routeFamily: "summary",
+    realWorldPrompt: "Summarize this note in 3 bullet points only: Friday should answer normal summaries directly and must not enter workflow generation or approval planning mode.",
+    expectedEvidence: [
+      "summary is returned directly",
+      "no workflow-planning clarification appears",
+      "output remains concise and task-aligned",
+    ],
+    oracles: {
+      behavior: {
+        misrouteTriggers: [
+          "Before I execute this generate workflow",
+          "generate workflow",
+        ],
+        forbiddenSubstrings: ["Before I execute this generate workflow"],
+        disallowStatuses: ["awaiting_clarification", "awaiting_plan_approval"],
+        minimumTextLength: 30,
+        disallowClarification: true,
+        disallowPlanGate: true,
+      },
+    },
+    latencyBudget: { timeToFinalAnswerMs: 60_000 },
+    repeatProfile: { daily: 10, nightly: 30 },
+  }),
+  agentScenario({
+    id: "l3-long-summary-direct",
+    layer: "L3",
+    productArea: "assistant behavior",
+    entrySurface: "/v1/agent/runs",
+    routeFamily: "long summary",
+    realWorldPrompt: [
+      "Summarize this release note in exactly 5 bullet points.",
+      "Friday now supports real-world validation with environment truth, UI route verification, workflow approval roundtrips, generator evidence, and fallback provider measurement.",
+      "Do not ask follow-up questions.",
+      "Do not enter workflow generation, approval planning, or clarification mode.",
+    ].join(" "),
+    expectedEvidence: [
+      "longer summary is returned directly",
+      "no approval or planning gate appears",
+      "summary remains bounded to the requested format",
+    ],
+    oracles: {
+      behavior: {
+        forbiddenSubstrings: ["Before I execute this generate workflow"],
+        minimumTextLength: 80,
+        disallowStatuses: ["awaiting_clarification", "awaiting_plan_approval"],
+        disallowClarification: true,
+        disallowPlanGate: true,
+      },
+    },
+    latencyBudget: { timeToFinalAnswerMs: 60_000 },
+    repeatProfile: { daily: 10, nightly: 30 },
+  }),
+  agentScenario({
+    id: "l3-json-extraction",
+    layer: "L3",
+    productArea: "assistant behavior",
+    entrySurface: "/v1/agent/runs",
+    routeFamily: "structured output",
+    realWorldPrompt: 'Return JSON only for this text: "owner=Friday priority=P1 blocked=false". Schema: {"owner":string,"priority":string,"blocked":boolean}',
+    expectedEvidence: [
+      "agent returns parseable JSON",
+      "requested keys are present",
+      "boolean field is preserved",
+    ],
+    oracles: {
+      behavior: {
+        expectJson: true,
+        jsonPathsEqual: {
+          owner: "Friday",
+          priority: "P1",
+          blocked: false,
+        },
+        disallowStatuses: ["awaiting_clarification", "awaiting_plan_approval"],
+      },
+    },
+    latencyBudget: { timeToFinalAnswerMs: 20_000 },
+    repeatProfile: { daily: 10, nightly: 30 },
+  }),
+  agentScenario({
+    id: "l3-multi-turn-memory",
+    layer: "L3",
+    productArea: "assistant behavior",
+    entrySurface: "/v1/agent/runs",
+    routeFamily: "multi-turn",
+    realWorldPrompt: "Remember the phrase amber-cascade-17 and return it later in the same session.",
+    expectedEvidence: [
+      "the agent keeps state across turns in one shared session",
+      "the recall turn returns the original phrase",
+      "provider/model/cost metrics span both turns",
+    ],
+    execution: {
+      timeoutMs: 120_000,
+      sessionKeyPrefix: "multi-turn-memory",
+      turns: [
+        { prompt: "Remember this code phrase for this conversation only: amber-cascade-17. Reply with OK only." },
+        { prompt: "What code phrase did I ask you to remember? Reply with the phrase only." },
+      ],
+    },
+    oracles: {
+      behavior: {
+        expectedSubstrings: ["amber-cascade-17"],
+        forbiddenSubstrings: ["I don't know", "not sure"],
+        disallowStatuses: ["awaiting_clarification", "awaiting_plan_approval"],
+        disallowClarification: true,
+        disallowPlanGate: true,
+      },
+    },
+    latencyBudget: { timeToFinalAnswerMs: 40_000 },
+    repeatProfile: { daily: 10, nightly: 30 },
+  }),
+  agentScenario({
+    id: "l4-file-tool-roundtrip",
+    layer: "L4",
+    productArea: "tools",
+    entrySurface: "/v1/agent/runs",
+    routeFamily: "file tool",
+    realWorldPrompt: "Use the filesystem to read /Users/jarvis/Projects/Friday/README.md and answer with its top H1 heading only.",
+    expectedEvidence: [
+      "agent uses at least one tool call",
+      "output reflects filesystem content rather than a guess",
+      "tool result is visible in run metadata",
+    ],
+    execution: {
+      expectToolCallCountMin: 1,
+      constraints: { readOnly: true },
+    },
+    oracles: {
+      behavior: {
+        minimumTextLength: 3,
+      },
+    },
+  }),
+  baseScenario({
+    id: "l5-workflow-approval-roundtrip",
+    layer: "L5",
+    productArea: "workflow approval",
+    entrySurface: "/v1/workflows",
+    routeFamily: "approval loop",
+    providerLane: "none",
+    preconditions: ["auth.ready"],
+    expectedEvidence: [
+      "workflow is created and published",
+      "approval request is generated and approved",
+      "run completes after approval and evidence route is reachable",
+    ],
+    execution: {
+      kind: "workflow_roundtrip",
+      slugPrefix: "real-world-approval",
+      workflowName: "Real World Validation Approval Workflow",
+      timeoutMs: 120_000,
+    },
+    severityOnFailure: "P0",
+    repeatProfile: { daily: 10, nightly: 30 },
+  }),
+  baseScenario({
+    id: "l5-skill-generator-loop",
+    layer: "L5",
+    productArea: "skill generator",
+    entrySurface: "/v1/skills/generator/sessions",
+    routeFamily: "generator",
+    providerLane: "none",
+    preconditions: ["auth.ready"],
+    realWorldPrompt: "Create a tiny skill that echoes the current date in a concise sentence.",
+    expectedEvidence: [
+      "generator session can start",
+      "draft generation, self-test, and evidence all complete",
+      "validation issues are captured as evidence instead of being hidden",
+    ],
+    execution: {
+      kind: "skill_generator_loop",
+      approve: false,
+      timeoutMs: 180_000,
+    },
+    severityOnFailure: "P1",
+    suites: ["daily", "nightly", "weekly"],
+    repeatProfile: { daily: 10, nightly: 10 },
+  }),
+  baseScenario({
+    id: "l5-workflow-generator-loop",
+    layer: "L5",
+    productArea: "workflow generator",
+    entrySurface: "/v1/workflows/generator/sessions",
+    routeFamily: "generator",
+    providerLane: "none",
+    preconditions: ["auth.ready"],
+    realWorldPrompt: "Create a minimal workflow that triggers manually and logs a message.",
+    expectedEvidence: [
+      "workflow generator session can start",
+      "draft generation and evidence are reachable",
+      "approval readiness is explicit",
+    ],
+    execution: {
+      kind: "workflow_generator_loop",
+      approve: false,
+      timeoutMs: 180_000,
+    },
+    severityOnFailure: "P1",
+    suites: ["daily", "nightly", "weekly"],
+    repeatProfile: { daily: 10, nightly: 10 },
+  }),
+  baseScenario({
+    id: "l5-persona-explicit-preference",
+    layer: "L5",
+    productArea: "persona and learning",
+    entrySurface: "/v1/uix/persona",
+    routeFamily: "persona",
+    providerLane: "none",
+    preconditions: ["auth.ready"],
+    expectedEvidence: [
+      "explicit preference write succeeds",
+      "resolved persona changes accordingly",
+      "cleanup removes temporary preferences",
+    ],
+    execution: {
+      kind: "persona_learning",
+      preferences: [
+        { category: "communication", key: "persona.directness", value: "direct" },
+        { category: "communication", key: "persona.verbosity", value: "concise" },
+      ],
+      expectPersonaChecks: [
+        { path: "settings.directness", equals: "direct" },
+        { path: "settings.verbosity", equals: "concise" },
+      ],
+    },
+    severityOnFailure: "P1",
+    suites: ["daily", "nightly", "weekly"],
+    repeatProfile: { daily: 10, nightly: 10 },
+  }),
+  httpScenario({
+    id: "l5-self-healing-actions-readiness",
+    layer: "L5",
+    productArea: "self-healing",
+    entrySurface: "/v1/auto-fix/actions",
+    routeFamily: "self-healing entry",
+    expectedEvidence: [
+      "auto-fix action inventory is reachable in read-only mode",
+      "self-healing entry state is visible without triggering execution",
+      "empty inventory is explicit instead of hidden behind transport errors",
+    ],
+    execution: {
+      path: "/v1/auto-fix/actions",
+      jsonPathsPresent: ["data.items"],
+    },
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    repeatProfile: { daily: 10, nightly: 10 },
+  }),
+  manualExternalScenario({
+    id: "l6-discord-roundtrip-manual",
+    layer: "L6",
+    productArea: "external channels",
+    entrySurface: "discord",
+    routeFamily: "distributed channel",
+    preconditions: ["external_channels.ready"],
+    tags: ["external-channel"],
+    manualChecklist: [
+      "send a real inbound Discord message",
+      "capture Friday outbound reply and attachment behavior",
+      "record dedupe/retry evidence in the report folder",
+    ],
+  }),
+  manualExternalScenario({
+    id: "l6-slack-roundtrip-manual",
+    layer: "L6",
+    productArea: "external channels",
+    entrySurface: "slack",
+    routeFamily: "distributed channel",
+    preconditions: ["external_channels.ready"],
+    tags: ["external-channel"],
+    manualChecklist: [
+      "send a real inbound Slack message",
+      "capture thread reply, latency, and retry behavior",
+      "verify no fake success is reported when delivery fails",
+    ],
+  }),
+  manualExternalScenario({
+    id: "l6-webchat-roundtrip-manual",
+    layer: "L6",
+    productArea: "external channels",
+    entrySurface: "webchat",
+    routeFamily: "distributed channel",
+    preconditions: ["external_channels.ready"],
+    tags: ["external-channel"],
+    manualChecklist: [
+      "exercise real inbound to outbound webchat flow",
+      "capture attachment delivery evidence",
+      "verify queue backlog and dedupe semantics",
+    ],
+  }),
+  manualExternalScenario({
+    id: "l6-satellite-pairing-manual",
+    layer: "L6",
+    productArea: "satellites",
+    entrySurface: "/v1/satellites",
+    routeFamily: "distributed recovery",
+    preconditions: ["satellite.ready"],
+    tags: ["satellite"],
+    manualChecklist: [
+      "pair a real satellite node",
+      "force offline/resume once",
+      "capture sync and command queue evidence",
+    ],
+  }),
+  baseScenario({
+    id: "l8-agent-core-soak",
+    layer: "L8",
+    productArea: "stability",
+    entrySurface: "/v1/agent/runs",
+    routeFamily: "soak",
+    providerLane: "default_and_fallback",
+    realWorldPrompt: "Reply with OK only.",
+    expectedEvidence: [
+      "repeated agent runs stay stable over time across core prompt variants",
+      "completion rate and latency drift are measurable",
+      "default and fallback soak lanes remain independently observable",
+    ],
+    execution: {
+      kind: "agent_run",
+      timeoutMs: 30_000,
+      promptVariantsBySuite: {
+        daily: [
+          "Reply with one sentence: what is the default reply language in this workspace?",
+          'Return JSON only for this text: "owner=Friday priority=P1 blocked=false". Schema: {"owner":string,"priority":string,"blocked":boolean}',
+        ],
+        nightly: [
+          "Reply with one sentence: what is the default reply language in this workspace?",
+          "Summarize this note in 3 bullet points only: Friday should answer normal summaries directly and must not enter workflow generation or approval planning mode.",
+          'Return JSON only for this text: "owner=Friday priority=P1 blocked=false". Schema: {"owner":string,"priority":string,"blocked":boolean}',
+        ],
+        weekly: [
+          "Reply with one sentence: what is the default reply language in this workspace?",
+        ],
+      },
+      soak: {
+        daily: { durationMs: 2 * 60 * 60 * 1000, concurrency: 1, laneKeys: ["default"] },
+        nightly: { durationMs: 8 * 60 * 60 * 1000, concurrency: 1, laneKeys: ["default"] },
+        weekly: { durationMs: 24 * 60 * 60 * 1000, concurrency: 1, laneKeys: ["fallback"] },
+      },
+      constraints: { readOnly: true },
+      taskProfile: { id: "deterministic" },
+    },
+    oracles: {
+      behavior: {
+        minimumTextLength: 10,
+        disallowStatuses: ["awaiting_clarification", "awaiting_plan_approval"],
+      },
+    },
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+  }),
+  baseScenario({
+    id: "l8-workflow-approval-soak",
+    layer: "L8",
+    productArea: "stability",
+    entrySurface: "/v1/workflows",
+    routeFamily: "soak",
+    providerLane: "none",
+    preconditions: ["auth.ready"],
+    expectedEvidence: [
+      "workflow approval roundtrip remains stable over long runs",
+      "approval creation, approval resolution, and evidence export remain measurable",
+      "run completion drift is visible in the soak report",
+    ],
+    execution: {
+      kind: "workflow_roundtrip",
+      slugPrefix: "real-world-approval-soak",
+      workflowName: "Real World Validation Approval Workflow Soak",
+      timeoutMs: 120_000,
+      soak: {
+        daily: { durationMs: 2 * 60 * 60 * 1000, concurrency: 1 },
+        nightly: { durationMs: 8 * 60 * 60 * 1000, concurrency: 1 },
+        weekly: { durationMs: 24 * 60 * 60 * 1000, concurrency: 1 },
+      },
+    },
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+  }),
+];
+
+const validation = validateCatalog(REAL_WORLD_SCENARIOS);
+if (!validation.ok) {
+  throw new Error(`Real-world scenario catalog is invalid:\n${validation.errors.join("\n")}`);
+}
