@@ -160,19 +160,27 @@ async function executeEnvTruth({ artifact, scenario, envTruth }) {
 }
 
 function resolveAgentTurnPrompt({ scenario, execution, suite, attemptIndex, turn, turnIndex }) {
+  const applyPromptVariables = (value) => {
+    if (typeof value !== "string" || value.length === 0) {
+      return value;
+    }
+    return value
+      .replaceAll("{{repoRoot}}", process.cwd())
+      .replaceAll("{{workspaceRoot}}", process.cwd());
+  };
   if (typeof turn?.prompt === "string" && turn.prompt.trim().length > 0) {
-    return turn.prompt;
+    return applyPromptVariables(turn.prompt);
   }
   const bySuite = execution.promptVariantsBySuite?.[suite];
   if (Array.isArray(bySuite) && bySuite.length > 0) {
     const index = Math.max(0, ((attemptIndex ?? 1) - 1 + turnIndex) % bySuite.length);
-    return bySuite[index];
+    return applyPromptVariables(bySuite[index]);
   }
   if (Array.isArray(execution.promptVariants) && execution.promptVariants.length > 0) {
     const index = Math.max(0, ((attemptIndex ?? 1) - 1 + turnIndex) % execution.promptVariants.length);
-    return execution.promptVariants[index];
+    return applyPromptVariables(execution.promptVariants[index]);
   }
-  return scenario.realWorldPrompt;
+  return applyPromptVariables(scenario.realWorldPrompt);
 }
 
 async function executeHttpProbe({ artifact, client, scenario }) {
