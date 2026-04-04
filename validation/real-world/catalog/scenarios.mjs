@@ -557,7 +557,7 @@ export const REAL_WORLD_SCENARIOS = [
     productArea: "tools",
     entrySurface: "/v1/agent/runs",
     routeFamily: "file tool",
-    realWorldPrompt: "Use the filesystem to read {{repoRoot}}/README.md and answer with its top H1 heading only.",
+    realWorldPrompt: "Use the filesystem to read README.md from the current workspace root and answer with its top H1 heading only.",
     expectedEvidence: [
       "agent uses at least one tool call",
       "output reflects filesystem content rather than a guess",
@@ -571,6 +571,10 @@ export const REAL_WORLD_SCENARIOS = [
     oracles: {
       behavior: {
         minimumTextLength: 3,
+        forbiddenSubstrings: [
+          "outside the allowed workspace root",
+          "cannot access the file",
+        ],
       },
     },
   }),
