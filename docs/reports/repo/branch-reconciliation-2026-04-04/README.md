@@ -16,6 +16,9 @@ Key files:
 - `post-cleanup-local-branches-vv.txt`
 - `post-cleanup-remote-branches.txt`
 - `post-cleanup-worktrees.txt`
+- `stash-list.txt`
+- `serene-chaum-worktree-diff.patch`
+- `serene-chaum-worktree-diff-stat.txt`
 - `ref-heads.txt`
 - `branch-ahead-behind.json`
 
