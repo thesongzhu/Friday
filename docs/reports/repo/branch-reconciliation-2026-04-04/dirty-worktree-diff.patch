@@ -1,0 +1,96 @@
+diff --git a/managed-skills/hello-converter-e2e/conversion.report.json b/managed-skills/hello-converter-e2e/conversion.report.json
+index 8e992ad..9049474 100644
+--- a/managed-skills/hello-converter-e2e/conversion.report.json
++++ b/managed-skills/hello-converter-e2e/conversion.report.json
+@@ -1,6 +1,6 @@
+ {
+   "sourceFormat": "clawdbot-skill-md",
+-  "sourceRef": "local:friday-converter-test-Bzy3Hn",
+-  "convertedAt": "2026-04-01T03:51:17.663Z",
++  "sourceRef": "local:friday-converter-test-RHuY6M",
++  "convertedAt": "2026-04-03T19:50:28.749Z",
+   "converterId": "clawdbot-skill-md"
+ }
+\ No newline at end of file
+diff --git a/managed-skills/output-current-date-time/run.sh b/managed-skills/output-current-date-time/run.sh
+index f347c20..3f6cd3a 100755
+--- a/managed-skills/output-current-date-time/run.sh
++++ b/managed-skills/output-current-date-time/run.sh
+@@ -4,4 +4,4 @@
+ current_date_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+ 
+ # Output the result as JSON
+-printf '{"dateTime": "%s"}\n' "$current_date_time"
++printf '{"currentDateTime": "%s"}\n' "$current_date_time"
+diff --git a/managed-skills/output-current-date-time/skill.manifest.json b/managed-skills/output-current-date-time/skill.manifest.json
+index b8e36ac..20e9f0e 100644
+--- a/managed-skills/output-current-date-time/skill.manifest.json
++++ b/managed-skills/output-current-date-time/skill.manifest.json
+@@ -19,7 +19,7 @@
+     "entrypoint": "run.sh",
+     "minHubVersion": "1.0.0",
+     "apiVersion": "1",
+-    "timeoutMsDefault": 30000
++    "timeoutMsDefault": 3000
+   },
+   "triggers": {
+     "intents": [],
+@@ -49,9 +49,9 @@
+   "inputs": [],
+   "outputs": [
+     {
+-      "key": "dateTime",
++      "key": "currentDateTime",
+       "type": "string",
+-      "description": "Current date and time in ISO format"
++      "description": "The current date and time in ISO format."
+     }
+   ],
+   "permissions": {
+diff --git a/managed-skills/output-current-date-time/skill.ui.json b/managed-skills/output-current-date-time/skill.ui.json
+index 9184e71..ed746b9 100644
+--- a/managed-skills/output-current-date-time/skill.ui.json
++++ b/managed-skills/output-current-date-time/skill.ui.json
+@@ -6,9 +6,9 @@
+   "fields": [],
+   "outputs": [
+     {
+-      "id": "dateTime-output",
+-      "outputKey": "dateTime",
+-      "label": "dateTime",
++      "id": "currentDateTime-output",
++      "outputKey": "currentDateTime",
++      "label": "currentDateTime",
+       "widget": "text"
+     }
+   ],
+diff --git a/managed-skills/real-e2e-import-test/conversion.report.json b/managed-skills/real-e2e-import-test/conversion.report.json
+index f2c0319..2be40ae 100644
+--- a/managed-skills/real-e2e-import-test/conversion.report.json
++++ b/managed-skills/real-e2e-import-test/conversion.report.json
+@@ -1,6 +1,6 @@
+ {
+   "sourceFormat": "clawdbot-skill-md",
+-  "sourceRef": "local:friday-real-skill-real-e2e-import-test-eGRczU",
+-  "convertedAt": "2026-04-01T05:17:08.767Z",
++  "sourceRef": "local:friday-real-skill-real-e2e-import-test-JYHbtj",
++  "convertedAt": "2026-04-03T20:02:53.517Z",
+   "converterId": "clawdbot-skill-md"
+ }
+\ No newline at end of file
+diff --git a/package.json b/package.json
+index 0732029..586c6d7 100644
+--- a/package.json
++++ b/package.json
+@@ -104,6 +104,11 @@
+     "benchmark:openclaw:mixed-round1": "node scripts/benchmark/run-friday-openclaw-benchmark.mjs --repeats 1",
+     "benchmark:openclaw:mixed-round1:full": "node scripts/benchmark/run-friday-openclaw-benchmark.mjs --repeats 3",
+     "benchmark:openclaw:promoted-gaps": "node scripts/benchmark/run-friday-openclaw-benchmark.mjs --repeats 1 --cases dialog-risk-boundary-reset,dialog-expectation-boundary-autonomy,doing-continue-with-blocker,troubleshoot-high-risk-approval-boundary",
++    "validate:real-world:catalog": "node scripts/validation/run-real-world-validation.mjs --catalog-only",
++    "validate:real-world:smoke": "node scripts/validation/run-real-world-validation.mjs --suite smoke",
++    "validate:real-world:daily": "node scripts/validation/run-real-world-validation.mjs --suite daily",
++    "validate:real-world:nightly": "node scripts/validation/run-real-world-validation.mjs --suite nightly",
++    "validate:real-world:weekly": "node scripts/validation/run-real-world-validation.mjs --suite weekly",
+     "release:manifest": "node scripts/ops/write-friday-release-manifest.mjs",
+     "verify:companion:native": "bash scripts/ops/verify-friday-companion-app.sh",
+     "release:companion:local": "bash scripts/ops/release-friday-companion-app.sh",
