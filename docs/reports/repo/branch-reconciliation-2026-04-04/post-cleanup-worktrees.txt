@@ -1,0 +1,12 @@
+worktree /Users/jarvis/Projects/Friday
+HEAD 3fc9983a1ff6fb61a4e0ea3f9e598ca7c592b4fe
+branch refs/heads/codex/efficiency-audit-fixes
+
+worktree /Users/jarvis/.claude-worktrees/Friday/serene-chaum
+HEAD 3f7e10eaca61b2a209aeef864106ae521747d16e
+branch refs/heads/serene-chaum
+
+worktree /Users/jarvis/Projects/Friday-publish-real-world
+HEAD e51de41f5ba1c52152fc3bfc7b7d4eaff3fe3eb7
+branch refs/heads/codex/branch-reconciliation-2026-04-04
+
