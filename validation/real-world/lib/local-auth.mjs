@@ -236,24 +236,22 @@ function parsePositiveInteger(value, defaultValue) {
   return parsed;
 }
 
-function loadTokenSecret({
+export function loadMintTokenSecret({
   processEnv = process.env,
   explicitSecret,
   tokenSecretFile,
-  envFilePath,
+  envFilePath: _envFilePath,
 }) {
-  const dotEnv = loadDotEnvOverrides({ processEnv, envFilePath });
-  const mergedEnv = { ...dotEnv, ...processEnv };
   if (typeof explicitSecret === "string" && explicitSecret.trim().length > 0) {
     return {
       secret: explicitSecret.trim(),
       source: "FRIDAY_TOKEN_SECRET",
     };
   }
-  if (typeof mergedEnv.FRIDAY_TOKEN_SECRET === "string" && mergedEnv.FRIDAY_TOKEN_SECRET.trim().length > 0) {
+  if (typeof processEnv.FRIDAY_TOKEN_SECRET === "string" && processEnv.FRIDAY_TOKEN_SECRET.trim().length > 0) {
     return {
-      secret: mergedEnv.FRIDAY_TOKEN_SECRET.trim(),
-      source: processEnv.FRIDAY_TOKEN_SECRET ? "FRIDAY_TOKEN_SECRET" : ".env:FRIDAY_TOKEN_SECRET",
+      secret: processEnv.FRIDAY_TOKEN_SECRET.trim(),
+      source: "FRIDAY_TOKEN_SECRET",
     };
   }
   const resolvedPath = resolveFridayTokenSecretPath(tokenSecretFile);
@@ -332,11 +330,10 @@ export function mintLocalAdminAccessToken(options = {}) {
   });
   const mergedEnv = { ...dotEnv, ...processEnv };
   const dbPath = resolveFridayDbPath(mergedEnv, options.stateDbPath);
-  const { secret, source } = loadTokenSecret({
+  const { secret, source } = loadMintTokenSecret({
     processEnv: mergedEnv,
     explicitSecret: options.tokenSecret,
     tokenSecretFile: options.tokenSecretFile,
-    envFilePath: options.envFilePath,
   });
   const accessTokenTtlSec = parsePositiveInteger(options.accessTokenTtlSec, 3600);
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
