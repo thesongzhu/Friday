@@ -5,7 +5,7 @@ import {
   readStringParam,
 } from "./friday-agent-tool-helpers.js";
 import type { FridayImageGenerateService } from "../../media/friday-image-generate-service.js";
-import type { FridayImageGenerateSize, FridayImageGenerateStyle, FridayImageGenerateQuality } from "../../media/friday-image-generate-service.js";
+import type { FridayImageGenerateQuality, FridayImageGenerateSize, FridayImageGenerateStyle } from "../../media/friday-image-generate-service.js";
 
 // ─── Types ───
 
