@@ -2515,39 +2515,15 @@ export async function createFridayHub(
         // Non-fatal: pattern loading failure should not block agent runs.
       }
     }
-    const starterSkills = registry.list()
-      .filter((skill) => (skill.manifest.tags ?? []).includes("starter"))
-      .sort((left, right) => {
-        const leftPriority =
-          (left.manifest.tags ?? []).includes("starter.recovery")
-            ? 0
-            : (left.manifest.tags ?? []).includes("starter.diagnosis")
-              ? 1
-              : 2;
-        const rightPriority =
-          (right.manifest.tags ?? []).includes("starter.recovery")
-            ? 0
-            : (right.manifest.tags ?? []).includes("starter.diagnosis")
-              ? 1
-              : 2;
-        if (leftPriority !== rightPriority) {
-          return leftPriority - rightPriority;
-        }
-        return left.manifest.name.localeCompare(right.manifest.name);
-      })
-      .slice(0, 8)
-      .map((skill) => ({
-        skillId: skill.manifest.id,
-        purpose: skill.manifest.description,
-        triggerPhrases: skill.manifest.triggers.phrases ?? [],
-        tags: skill.manifest.tags ?? [],
-      }));
+    const starterSkills = listInstalledStarterSkills().slice(0, 8);
     const prompt = buildFridayAgentSystemPrompt({
       toolNames: input.toolNames,
       modelIdentity: agentModelIdentity,
       version: FRIDAY_VERSION,
       workspaceContext,
       starterSkills,
+      enforceStarterSkillRouting: starterSkillRoutingEnforced,
+      subagentForkModeEnabled,
       currentTime: {
         nowIso: input.nowIso,
         timezone: input.timezone,
@@ -2695,9 +2671,13 @@ export async function createFridayHub(
       });
       return buildFridayCommunicationPromptFragment(persona);
     },
+    starterSkillRouting: {
+      enabled: starterSkillRoutingEnforced,
+      skills: listInstalledStarterSkills(),
+    },
     delegationHandler: async (input) => {
       const inferredProfile = inferFridaySubagentProfile(input.task);
-      const detached = subagentRegistry.spawnDetached({
+      const detached = await subagentRegistry.spawnDetached({
         task: input.task,
         taskPrompt: input.taskPrompt,
         providerId: input.providerId,
@@ -2864,6 +2844,10 @@ export async function createFridayHub(
         workdir: workspaceRoot,
         artifactWriter: agentArtifactWriter,
         evaluateRules,
+        starterSkillRouting: {
+          enabled: starterSkillRoutingEnforced,
+          skills: listInstalledStarterSkills(),
+        },
         usageRecorder: async (usage) => {
           await providerService.recordUsage({
             providerId: usage.providerId,

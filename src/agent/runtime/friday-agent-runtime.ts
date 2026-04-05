@@ -67,6 +67,11 @@ import { shouldDelegateFridayAgentTask } from "./friday-agent-delegation-policy.
 import { resolveFridayAgentTaskProfile } from "./friday-agent-task-profile.js";
 import { isMutatingToolCall } from "./friday-agent-tool-mutation.js";
 import { getApprovalRequiredReasonForToolCall } from "./friday-agent-tool-risk.js";
+import {
+  buildFridayStarterSkillRoutingRetryPrompt,
+  findFridayStarterSkillRoutingCandidate,
+  hasFridayStarterSkillRoutingEvidence,
+} from "./friday-agent-starter-skill-routing.js";
 import { summarizeToolCall } from "../services/friday-tool-call-summary.js";
 
 const RULES_EVALUATE_SCOPE = "rules:evaluate";
@@ -161,6 +166,7 @@ export function createFridayAgentRuntime(
     delegationHandler,
     contextEngine,
     decisionEngine,
+    starterSkillRouting,
   } = deps;
 
   // Clone the tools array so registerTool does not mutate the caller's array.
@@ -1192,6 +1198,7 @@ export function createFridayAgentRuntime(
         let answerAlignmentRetries = 0;
         let desktopInspectionRetries = 0;
         let artifactTruthRetries = 0;
+        let starterSkillRoutingRetries = 0;
         const fileVersionTracker = createFridayFileVersionTracker();
 
         while (iterations < FRIDAY_AGENT_MAX_LOOP_ITERATIONS) {
@@ -1416,6 +1423,28 @@ export function createFridayAgentRuntime(
 
           // 5. If no tool calls, we're done
           if (toolUseBlocks.length === 0) {
+            const starterSkillCandidate = starterSkillRouting?.enabled
+              ? findFridayStarterSkillRoutingCandidate({
+                task: params.task,
+                skills: starterSkillRouting.skills,
+              })
+              : null;
+            if (
+              starterSkillCandidate
+              && !hasFridayStarterSkillRoutingEvidence(allToolCalls)
+              && starterSkillRoutingRetries < 1
+            ) {
+              starterSkillRoutingRetries++;
+              messages.push({
+                role: "user",
+                content: buildFridayStarterSkillRoutingRetryPrompt({
+                  task: params.task,
+                  candidate: starterSkillCandidate,
+                }),
+              });
+              continue;
+            }
+
             let candidateResponse = enforceToolEvidenceForCompletionClaim(
               assistantText,
               allToolCalls,

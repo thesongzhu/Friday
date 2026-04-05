@@ -25,6 +25,7 @@ import type {
   FridayAgentTaskProfileInput,
   FridayResolvedAgentTaskProfile,
 } from "./friday-agent-task-profile.js";
+import type { FridayAgentStarterSkillRoutingConfig } from "./friday-agent-starter-skill-routing.js";
 
 export interface FridayAgentExecutionContext {
   surface?: string;
@@ -309,4 +310,6 @@ export interface CreateFridayAgentRuntimeDeps {
   decisionEngine?: FridayDecisionEngine;
   /** Optional world state manager for loading user context into decision engine. */
   worldStateManager?: FridayWorldStateManager;
+  /** Optional one-shot enforcement for installed starter-skill discovery on matching operational requests. */
+  starterSkillRouting?: FridayAgentStarterSkillRoutingConfig;
 }

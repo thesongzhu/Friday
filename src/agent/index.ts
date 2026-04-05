@@ -82,6 +82,16 @@ export type {
   CreateFridayAgentRuntimeDeps,
 } from "./runtime/friday-agent-runtime.types.js";
 export { createFridayAgentRuntime } from "./runtime/friday-agent-runtime.js";
+export type {
+  FridayAgentStarterSkillDescriptor,
+  FridayAgentStarterSkillRoutingConfig,
+} from "./runtime/friday-agent-starter-skill-routing.js";
+export {
+  buildFridayStarterSkillRoutingRetryPrompt,
+  findFridayStarterSkillRoutingCandidate,
+  hasFridayStarterSkillRoutingEvidence,
+  shouldBypassFridayStarterSkillRouting,
+} from "./runtime/friday-agent-starter-skill-routing.js";
 export {
   createFridayWorkspaceContextEngine,
   notifyFridayContextEngineAfterTurn,
