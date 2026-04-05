@@ -45,6 +45,10 @@ export interface BuildFridayAgentSystemPromptParams {
     timezone: string;
     localDate: string;
   };
+  /** Operational mode suffix appended to the system prompt. */
+  operationalModeSuffix?: string;
+  /** Deferred tool descriptions (name + purpose) for tools not loaded in the initial prompt. */
+  deferredToolHints?: Array<{ name: string; description: string }>;
 }
 
 export function buildFridayAgentSystemPrompt(
@@ -60,6 +64,8 @@ export function buildFridayAgentSystemPrompt(
     subagentForkModeEnabled,
     runtimeCapabilities,
     currentTime,
+    operationalModeSuffix,
+    deferredToolHints,
   } = params;
   const toolList = toolNames.join(", ");
   const toolSet = new Set(toolNames);
@@ -258,6 +264,14 @@ export function buildFridayAgentSystemPrompt(
     '<!--action:{"type":"open_fleet","label":"View Fleet"}-->\n' +
     '<!--action:{"type":"open_page","label":"Open Settings","href":"/settings"}-->\n' +
     "Use these sparingly — only when your reply naturally suggests a next step the user can take in the UI. " +
-    "Do not add action markers to every response."
+    "Do not add action markers to every response." +
+    // ─── Deferred tool hints ───
+    (deferredToolHints && deferredToolHints.length > 0
+      ? "\n\nAdditional tools available on demand (not loaded in this prompt):\n" +
+        deferredToolHints.map((t) => `- ${t.name}: ${t.description}`).join("\n") +
+        "\nIf you need one of these tools, inform the user which tool you require."
+      : "") +
+    // ─── Operational mode suffix ───
+    (operationalModeSuffix ? `\n\n[Operational Mode] ${operationalModeSuffix}` : "")
   );
 }

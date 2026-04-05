@@ -73,6 +73,9 @@ import {
   hasFridayStarterSkillRoutingEvidence,
 } from "./friday-agent-starter-skill-routing.js";
 import { summarizeToolCall } from "../services/friday-tool-call-summary.js";
+import { assessDegradation, getDegradationSystemPrompt } from "./friday-agent-degradation-handler.js";
+import { FRIDAY_MODE_CONFIGS } from "./friday-agent-operational-mode.js";
+import type { FridayOperationalMode } from "./friday-agent-operational-mode.js";
 
 const RULES_EVALUATE_SCOPE = "rules:evaluate";
 const TERMINAL_CONTEXT_ENGINE_STATUSES: ReadonlySet<FridayAgentRunStatus> = new Set([
@@ -1190,6 +1193,30 @@ export function createFridayAgentRuntime(
             "\n\nNote: The following tools are disabled for this run and will fail if called: " +
             [...disabledToolNames].join(", ") +
             ". Do not attempt to use them.";
+        }
+
+        // ─── Degradation assessment ───
+        // Only assess degradation when tools were configured but some are unavailable.
+        // Skip when no tools were registered at all (e.g. minimal/test configurations).
+        const activeTool = [...toolMap.values()];
+        const degradationLevel = depsTools.length > 0 ? assessDegradation(activeTool) : "nominal" as const;
+        if (degradationLevel !== "nominal") {
+          effectiveSystemPrompt += "\n\n[Degradation Notice] " + getDegradationSystemPrompt(degradationLevel);
+          eventEmitter.emit("agent.run.degraded", {
+            runId,
+            level: degradationLevel,
+            unavailableTools: [],
+            reason: `Tool availability assessed as ${degradationLevel}`,
+          });
+        }
+
+        // ─── Operational mode suffix ───
+        const runOperationalMode: FridayOperationalMode | undefined = constraints?.operationalMode as FridayOperationalMode | undefined;
+        if (runOperationalMode) {
+          const modeConfig = FRIDAY_MODE_CONFIGS[runOperationalMode];
+          if (modeConfig?.systemPromptSuffix) {
+            effectiveSystemPrompt += `\n\n[Operational Mode] ${modeConfig.systemPromptSuffix}`;
+          }
         }
 
         let iterations = 0;
