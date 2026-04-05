@@ -1,0 +1,123 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-sentiment-cycle",
+  "name": "情绪周期分析器",
+  "description": "Analyzes market data to determine the current sentiment cycle phase (冰点→修复→升温→高潮→分歧→退潮) and provides tactical implications.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "ai",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": [
+    "trade",
+    "sentiment",
+    "A-stock",
+    "cycle"
+  ],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": [
+      "情绪周期",
+      "market sentiment phase",
+      "什么阶段"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [
+      "node"
+    ],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "marketData",
+      "type": "object",
+      "description": "Pre-fetched market data object containing limitUpCount, limitDownCount, maxConsecutiveBoards, sectorBreadth, profitEffect, and leadersStable. If absent, the skill outputs instructions describing what data is needed.",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "phase",
+      "type": "string",
+      "description": "Current sentiment cycle phase: 冰点|修复|升温|高潮|分歧|退潮"
+    },
+    {
+      "key": "confidence",
+      "type": "number",
+      "description": "Classification confidence from 0 to 1"
+    },
+    {
+      "key": "keySignals",
+      "type": "array",
+      "description": "Array of signal strings that drove the classification"
+    },
+    {
+      "key": "tacticalImplication",
+      "type": "string",
+      "description": "What this phase means for trading"
+    },
+    {
+      "key": "metrics",
+      "type": "object",
+      "description": "Raw metrics used for classification"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes sentiment cycle analysis via Node.js"
+      }
+    ],
+    "promptOn": [
+      "shell.execute"
+    ]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

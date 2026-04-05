@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-exit-monitor",
+  "name": "持仓退出监控",
+  "description": "Monitors open positions and generates exit signals based on knowledge base rules.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "ai",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": ["trade", "exit", "止损", "monitor", "持仓"],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": ["退出监控", "exit monitor", "止损", "该卖吗", "should I sell"],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": ["intent"]
+  },
+  "requirements": {
+    "bins": ["node"],
+    "env": [],
+    "config": [],
+    "os": ["darwin", "linux", "win32"]
+  },
+  "inputs": [
+    {
+      "key": "urgencyMode",
+      "type": "boolean",
+      "description": "When true, only check emergency exits (HIGH urgency rules)",
+      "required": false,
+      "default": false
+    },
+    {
+      "key": "portfolio",
+      "type": "object",
+      "description": "Current positions from portfolio tracker: { positionBreakdown: [{ symbol, shares, avgPrice, currentPrice, entryDate, ... }] }",
+      "required": false
+    },
+    {
+      "key": "sentimentPhase",
+      "type": "string",
+      "description": "Current sentiment cycle phase (initiation, expansion, divergence, decline, ice)",
+      "required": false
+    },
+    {
+      "key": "marketData",
+      "type": "object",
+      "description": "Current market prices and MA data: { prices: { [symbol]: { current, ma5, ma10, ma20, prevLow } } }",
+      "required": false
+    },
+    {
+      "key": "leaders",
+      "type": "array",
+      "description": "Current leader stocks from leader scanner for rotation detection",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "exitSignals",
+      "type": "array",
+      "description": "Exit signals: { symbol, urgency, reason, suggestedAction, referencedRule }"
+    },
+    {
+      "key": "holdSignals",
+      "type": "array",
+      "description": "Positions to keep holding with rationale"
+    },
+    {
+      "key": "stdout",
+      "type": "string",
+      "description": "Command standard output"
+    },
+    {
+      "key": "stderr",
+      "type": "string",
+      "description": "Command standard error"
+    },
+    {
+      "key": "exitCode",
+      "type": "number",
+      "description": "Command exit code"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes exit monitoring logic via run.sh"
+      }
+    ],
+    "promptOn": ["shell.execute"]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

@@ -1,0 +1,182 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-journal",
+  "name": "交易日志",
+  "description": "Records trade decisions, outcomes, and reasoning. Builds the user's personal trading journal.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": [
+    "trade",
+    "journal",
+    "A-stock",
+    "logging"
+  ],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": [
+      "交易日志",
+      "记录交易",
+      "trade journal",
+      "record trade"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [
+      "node"
+    ],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "action",
+      "type": "string",
+      "description": "Action to perform: record_entry, record_exit, daily_summary, or query",
+      "required": true,
+      "enum": [
+        "record_entry",
+        "record_exit",
+        "daily_summary",
+        "query"
+      ]
+    },
+    {
+      "key": "symbol",
+      "type": "string",
+      "description": "Stock symbol involved in the trade",
+      "required": false
+    },
+    {
+      "key": "strategy",
+      "type": "string",
+      "description": "Which strategy was used (e.g. 打板, 低吸, 半路, 追涨)",
+      "required": false
+    },
+    {
+      "key": "notes",
+      "type": "string",
+      "description": "Free-form notes about the trade or reasoning",
+      "required": false
+    },
+    {
+      "key": "emotionalState",
+      "type": "string",
+      "description": "Trader's emotional state at time of trade",
+      "required": false,
+      "enum": [
+        "calm",
+        "anxious",
+        "greedy",
+        "fearful",
+        "confident",
+        "fomo"
+      ]
+    },
+    {
+      "key": "entryPrice",
+      "type": "number",
+      "description": "Entry price per share",
+      "required": false
+    },
+    {
+      "key": "exitPrice",
+      "type": "number",
+      "description": "Exit price per share",
+      "required": false
+    },
+    {
+      "key": "shares",
+      "type": "number",
+      "description": "Number of shares traded",
+      "required": false
+    },
+    {
+      "key": "sentimentPhase",
+      "type": "string",
+      "description": "Market sentiment phase at time of trade (e.g. 冰点, 修复, 升温, 高潮, 分歧, 退潮)",
+      "required": false
+    },
+    {
+      "key": "query",
+      "type": "string",
+      "description": "Search query for searching past journal entries (used with action=query)",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "entry",
+      "type": "object",
+      "description": "The journal entry created or found"
+    },
+    {
+      "key": "patterns",
+      "type": "array",
+      "description": "Recurring patterns detected across journal entries"
+    },
+    {
+      "key": "stats",
+      "type": "object",
+      "description": "Running statistics (total trades, win rate, etc.)"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes trade journal operations via Node.js"
+      }
+    ],
+    "promptOn": [
+      "shell.execute"
+    ]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

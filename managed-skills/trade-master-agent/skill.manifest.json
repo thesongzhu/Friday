@@ -1,0 +1,93 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-master-agent",
+  "name": "交易主控Agent",
+  "description": "交易主控Agent，通过自然语言理解用户意图并路由到相应交易技能执行。",
+  "version": "1.0.0",
+  "kind": "conversation",
+  "category": "ai",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": ["trade", "agent", "nlp", "a-stock"],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 60000
+  },
+  "triggers": {
+    "intents": ["trade_assistant"],
+    "phrases": ["交易助手", "trade agent", "帮我分析", "帮我看看", "今天买什么"],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 100,
+    "modes": ["intent"]
+  },
+  "requirements": {
+    "bins": ["node"],
+    "env": [],
+    "config": [],
+    "os": ["darwin", "linux", "win32"]
+  },
+  "inputs": [
+    {
+      "key": "query",
+      "type": "string",
+      "description": "用户的问题或指令",
+      "required": true
+    },
+    {
+      "key": "context",
+      "type": "object",
+      "description": "附加上下文信息",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "response",
+      "type": "string",
+      "description": "Agent 的回复"
+    },
+    {
+      "key": "skillsUsed",
+      "type": "array",
+      "description": "调用的技能列表"
+    },
+    {
+      "key": "data",
+      "type": "object",
+      "description": "结构化数据"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes agent orchestration script via run.sh"
+      }
+    ],
+    "promptOn": ["shell.execute"]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

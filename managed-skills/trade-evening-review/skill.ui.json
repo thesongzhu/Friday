@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "1.0",
+  "title": "收盘复盘工作流",
+  "description": "每个交易日收盘后自动执行，汇总当日盈亏、交易日志、龙虎榜、明日研判和自选股。",
+  "sections": [
+    {
+      "id": "main",
+      "label": "工作流控制",
+      "fieldIds": []
+    }
+  ],
+  "fields": [],
+  "outputs": [
+    {
+      "id": "output-eveningReport",
+      "outputKey": "eveningReport",
+      "label": "收盘复盘报告",
+      "widget": "text"
+    },
+    {
+      "id": "output-tomorrowWatchlist",
+      "outputKey": "tomorrowWatchlist",
+      "label": "明日自选股",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "执行复盘",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "重置",
+      "style": "secondary"
+    }
+  ]
+}

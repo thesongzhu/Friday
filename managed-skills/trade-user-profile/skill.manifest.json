@@ -1,0 +1,95 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-user-profile",
+  "name": "交易用户画像",
+  "description": "管理用户交易配置文件 — 资金规模、风险偏好、持仓设置、交易风格、关注板块、自选股及通知偏好。",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": ["trading", "profile", "configuration"],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": [],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": ["intent"]
+  },
+  "requirements": {
+    "bins": ["node"],
+    "env": [],
+    "config": [],
+    "os": ["darwin", "linux", "win32"]
+  },
+  "inputs": [
+    {
+      "key": "action",
+      "type": "string",
+      "description": "操作类型: get(获取), set(设置), update(更新), reset(重置)",
+      "required": true,
+      "enum": ["get", "set", "update", "reset"]
+    },
+    {
+      "key": "field",
+      "type": "string",
+      "description": "要操作的具体字段名称",
+      "required": false
+    },
+    {
+      "key": "value",
+      "type": "object",
+      "description": "要设置或更新的新值",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "profile",
+      "type": "object",
+      "description": "完整或部分用户画像数据"
+    },
+    {
+      "key": "changesMade",
+      "type": "array",
+      "description": "本次操作所做的变更列表"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes profile CRUD operations via run.sh"
+      }
+    ],
+    "promptOn": ["shell.execute"]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

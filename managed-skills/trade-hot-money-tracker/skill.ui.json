@@ -1,0 +1,70 @@
+{
+  "schemaVersion": "1.0",
+  "title": "游资追踪器",
+  "description": "追踪A股游资活动，基于龙虎榜数据分析知名游资席位的买卖行为和重叠标的。",
+  "sections": [
+    {
+      "id": "main",
+      "label": "参数配置",
+      "fieldIds": ["date", "seatNames", "symbol"]
+    }
+  ],
+  "fields": [
+    {
+      "id": "date",
+      "inputKey": "date",
+      "label": "查询日期",
+      "widget": "text",
+      "placeholder": "YYYYMMDD，默认今天",
+      "required": false
+    },
+    {
+      "id": "seatNames",
+      "inputKey": "seatNames",
+      "label": "游资席位名称",
+      "widget": "text",
+      "placeholder": "例如: 东方财富拉萨,华鑫证券",
+      "required": false
+    },
+    {
+      "id": "symbol",
+      "inputKey": "symbol",
+      "label": "股票代码",
+      "widget": "text",
+      "placeholder": "例如: 000001",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-topSeats",
+      "outputKey": "topSeats",
+      "label": "活跃席位排名",
+      "widget": "json"
+    },
+    {
+      "id": "output-seatActivity",
+      "outputKey": "seatActivity",
+      "label": "席位活动明细",
+      "widget": "json"
+    },
+    {
+      "id": "output-overlaps",
+      "outputKey": "overlaps",
+      "label": "多席位重叠标的",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "追踪游资",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "重置",
+      "style": "secondary"
+    }
+  ]
+}

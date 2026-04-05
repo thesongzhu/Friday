@@ -1,0 +1,139 @@
+{
+  "schemaVersion": "1.0",
+  "title": "持仓跟踪器",
+  "description": "Tracks user's actual holdings, entry prices, current P&L, and position sizing.",
+  "sections": [
+    {
+      "id": "action",
+      "label": "Action",
+      "fieldIds": ["action"]
+    },
+    {
+      "id": "trade",
+      "label": "Trade Details",
+      "fieldIds": ["symbol", "shares", "price", "side", "date", "notes"]
+    }
+  ],
+  "fields": [
+    {
+      "id": "action",
+      "inputKey": "action",
+      "label": "Action",
+      "widget": "select",
+      "options": [
+        { "value": "view", "label": "View Portfolio (查看持仓)" },
+        { "value": "add_position", "label": "Add Position (建仓)" },
+        { "value": "close_position", "label": "Close Position (平仓)" },
+        { "value": "update_price", "label": "Update Price (更新价格)" }
+      ],
+      "default": "view"
+    },
+    {
+      "id": "symbol",
+      "inputKey": "symbol",
+      "label": "Stock Code",
+      "widget": "text",
+      "placeholder": "e.g. 000001, 600519"
+    },
+    {
+      "id": "shares",
+      "inputKey": "shares",
+      "label": "Shares",
+      "widget": "number",
+      "placeholder": "Number of shares"
+    },
+    {
+      "id": "price",
+      "inputKey": "price",
+      "label": "Price",
+      "widget": "number",
+      "placeholder": "Entry/exit/current price"
+    },
+    {
+      "id": "side",
+      "inputKey": "side",
+      "label": "Side",
+      "widget": "select",
+      "options": [
+        { "value": "buy", "label": "Buy (买入)" },
+        { "value": "sell", "label": "Sell (卖出)" }
+      ]
+    },
+    {
+      "id": "date",
+      "inputKey": "date",
+      "label": "Trade Date",
+      "widget": "text",
+      "placeholder": "YYYY-MM-DD"
+    },
+    {
+      "id": "notes",
+      "inputKey": "notes",
+      "label": "Notes",
+      "widget": "text",
+      "placeholder": "Optional trade notes"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-portfolio",
+      "outputKey": "portfolio",
+      "label": "Portfolio Summary",
+      "widget": "json"
+    },
+    {
+      "id": "output-cashAvailable",
+      "outputKey": "cashAvailable",
+      "label": "Cash Available",
+      "widget": "text"
+    },
+    {
+      "id": "output-exposurePct",
+      "outputKey": "exposurePct",
+      "label": "Exposure %",
+      "widget": "text"
+    },
+    {
+      "id": "output-positionBreakdown",
+      "outputKey": "positionBreakdown",
+      "label": "Position Breakdown",
+      "widget": "table"
+    },
+    {
+      "id": "output-tradeHistory",
+      "outputKey": "tradeHistory",
+      "label": "Trade History",
+      "widget": "table"
+    },
+    {
+      "id": "output-stdout",
+      "outputKey": "stdout",
+      "label": "Command standard output",
+      "widget": "text"
+    },
+    {
+      "id": "output-stderr",
+      "outputKey": "stderr",
+      "label": "Command standard error",
+      "widget": "text"
+    },
+    {
+      "id": "output-exitCode",
+      "outputKey": "exitCode",
+      "label": "Command exit code",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Execute",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

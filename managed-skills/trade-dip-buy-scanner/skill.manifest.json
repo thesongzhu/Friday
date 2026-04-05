@@ -1,0 +1,129 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-dip-buy-scanner",
+  "name": "低吸机会扫描器",
+  "description": "Scans for dip-buying opportunities in trending/leader stocks.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "ai",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": ["trade", "dip-buy", "低吸", "A股"],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": ["低吸", "dip buy", "回调买入", "分歧低吸"],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": ["node"],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "universe",
+      "type": "string",
+      "description": "Stock universe to scan",
+      "required": false,
+      "default": "leaders",
+      "enum": ["leaders", "watchlist", "sector"]
+    },
+    {
+      "key": "sector",
+      "type": "string",
+      "description": "Sector to filter when universe=sector",
+      "required": false
+    },
+    {
+      "key": "maxDrawdownPct",
+      "type": "number",
+      "description": "Maximum drawdown percentage from recent high",
+      "required": false,
+      "default": 10
+    },
+    {
+      "key": "marketData",
+      "type": "object",
+      "description": "Pre-fetched stock market data (OHLCV etc.)",
+      "required": false
+    },
+    {
+      "key": "sentimentPhase",
+      "type": "string",
+      "description": "Current market sentiment phase (e.g. 冰点/回暖/高潮/退潮)",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "candidates",
+      "type": "array",
+      "description": "Stocks meeting dip-buy criteria, ranked by score"
+    },
+    {
+      "key": "supportLevels",
+      "type": "object",
+      "description": "Key support levels per candidate (MA5, MA10, breakout levels)"
+    },
+    {
+      "key": "volumeConfirmation",
+      "type": "object",
+      "description": "Volume analysis per candidate (contraction ratio, avg volume)"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes dip-buy scanning logic via run.sh"
+      }
+    ],
+    "promptOn": [
+      "shell.execute"
+    ]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

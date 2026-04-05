@@ -1,0 +1,95 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-sector-flow",
+  "name": "板块资金流向",
+  "description": "获取A股板块资金流向数据，支持行业排名、概念排名、个股资金流和北向资金。",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "integration",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": ["trade", "akshare", "fund-flow", "sector", "a-stock"],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": ["资金流向", "板块排名", "北向资金", "show fund flow"],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": ["intent"]
+  },
+  "requirements": {
+    "bins": ["python3"],
+    "env": [],
+    "config": [],
+    "os": ["darwin", "linux", "win32"]
+  },
+  "inputs": [
+    {
+      "key": "flowType",
+      "type": "string",
+      "description": "流向类型：sector_rank=行业板块排名, concept_rank=概念板块排名, industry_flow=个股资金流排名, northbound=北向资金",
+      "required": true,
+      "enum": ["sector_rank", "concept_rank", "industry_flow", "northbound"]
+    },
+    {
+      "key": "topN",
+      "type": "number",
+      "description": "返回前N条记录",
+      "required": false,
+      "default": 10
+    }
+  ],
+  "outputs": [
+    {
+      "key": "rankings",
+      "type": "array",
+      "description": "排名数据"
+    },
+    {
+      "key": "flowData",
+      "type": "object",
+      "description": "资金流向汇总"
+    },
+    {
+      "key": "trendChange",
+      "type": "array",
+      "description": "趋势变化数据"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes Python script via run.sh to fetch fund flow data"
+      }
+    ],
+    "promptOn": ["shell.execute"]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "schemaVersion": "1.0",
+  "title": "交易绩效分析",
+  "description": "Analyzes trading performance over time with strategy-specific breakdowns.",
+  "sections": [
+    {
+      "id": "config",
+      "label": "分析设置",
+      "fieldIds": [
+        "period",
+        "byStrategy"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "period",
+      "inputKey": "period",
+      "label": "分析周期",
+      "widget": "select",
+      "options": [
+        { "label": "本周", "value": "week" },
+        { "label": "本月", "value": "month" },
+        { "label": "本季度", "value": "quarter" },
+        { "label": "本年", "value": "year" },
+        { "label": "全部", "value": "all" }
+      ]
+    },
+    {
+      "id": "byStrategy",
+      "inputKey": "byStrategy",
+      "label": "按策略分组",
+      "widget": "toggle"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-summary",
+      "outputKey": "summary",
+      "label": "绩效概览",
+      "widget": "text"
+    },
+    {
+      "id": "output-byStrategy",
+      "outputKey": "byStrategy",
+      "label": "策略分析",
+      "widget": "text"
+    },
+    {
+      "id": "output-bestTrades",
+      "outputKey": "bestTrades",
+      "label": "最佳交易 Top 5",
+      "widget": "text"
+    },
+    {
+      "id": "output-worstTrades",
+      "outputKey": "worstTrades",
+      "label": "最差交易 Top 5",
+      "widget": "text"
+    },
+    {
+      "id": "output-drawdownHistory",
+      "outputKey": "drawdownHistory",
+      "label": "回撤历史",
+      "widget": "text"
+    },
+    {
+      "id": "output-suggestions",
+      "outputKey": "suggestions",
+      "label": "改进建议",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "分析",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "重置",
+      "style": "secondary"
+    }
+  ]
+}

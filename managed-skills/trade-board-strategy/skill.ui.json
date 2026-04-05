@@ -1,0 +1,104 @@
+{
+  "schemaVersion": "1.0",
+  "title": "打板策略分析器",
+  "description": "Analyzes limit-up board trading opportunities across multiple strategies.",
+  "sections": [
+    {
+      "id": "params",
+      "label": "Strategy Parameters",
+      "fieldIds": ["strategyType", "sentimentPhase"]
+    },
+    {
+      "id": "data",
+      "label": "Market Data",
+      "fieldIds": ["marketData"]
+    }
+  ],
+  "fields": [
+    {
+      "id": "strategyType",
+      "inputKey": "strategyType",
+      "label": "Strategy Type",
+      "widget": "select",
+      "options": [
+        { "value": "all", "label": "All Strategies (全部)" },
+        { "value": "first_board", "label": "首板 (First Board)" },
+        { "value": "second_board", "label": "一进二 (Second Board)" },
+        { "value": "weak_to_strong", "label": "弱转强 (Weak to Strong)" },
+        { "value": "reversal_wrap", "label": "反包 (Reversal Wrap)" }
+      ],
+      "default": "all"
+    },
+    {
+      "id": "sentimentPhase",
+      "inputKey": "sentimentPhase",
+      "label": "Sentiment Phase",
+      "widget": "select",
+      "options": [
+        { "value": "", "label": "Auto-detect" },
+        { "value": "initiation", "label": "启动期 (Initiation)" },
+        { "value": "expansion", "label": "扩散期 (Expansion)" },
+        { "value": "divergence", "label": "分歧期 (Divergence)" },
+        { "value": "decline", "label": "退潮期 (Decline)" },
+        { "value": "ice", "label": "冰点期 (Ice)" }
+      ]
+    },
+    {
+      "id": "marketData",
+      "inputKey": "marketData",
+      "label": "Market Data (JSON)",
+      "widget": "textarea",
+      "placeholder": "Paste market data JSON here"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-setups",
+      "outputKey": "setups",
+      "label": "Trade Setups",
+      "widget": "table"
+    },
+    {
+      "id": "output-ranking",
+      "outputKey": "ranking",
+      "label": "Ranked Setups",
+      "widget": "table"
+    },
+    {
+      "id": "output-warnings",
+      "outputKey": "warnings",
+      "label": "Risk Warnings",
+      "widget": "table"
+    },
+    {
+      "id": "output-stdout",
+      "outputKey": "stdout",
+      "label": "Command standard output",
+      "widget": "text"
+    },
+    {
+      "id": "output-stderr",
+      "outputKey": "stderr",
+      "label": "Command standard error",
+      "widget": "text"
+    },
+    {
+      "id": "output-exitCode",
+      "outputKey": "exitCode",
+      "label": "Command exit code",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Analyze",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

@@ -1,0 +1,151 @@
+{
+  "schemaVersion": "1.0",
+  "title": "交易日志",
+  "description": "Records trade decisions, outcomes, and reasoning. Builds the user's personal trading journal.",
+  "sections": [
+    {
+      "id": "action",
+      "label": "操作",
+      "fieldIds": [
+        "action"
+      ]
+    },
+    {
+      "id": "trade-info",
+      "label": "交易信息",
+      "fieldIds": [
+        "symbol",
+        "strategy",
+        "entryPrice",
+        "exitPrice",
+        "shares",
+        "sentimentPhase",
+        "emotionalState"
+      ]
+    },
+    {
+      "id": "notes-query",
+      "label": "备注 / 查询",
+      "fieldIds": [
+        "notes",
+        "query"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "action",
+      "inputKey": "action",
+      "label": "操作类型",
+      "widget": "select",
+      "options": [
+        { "label": "记录入场", "value": "record_entry" },
+        { "label": "记录出场", "value": "record_exit" },
+        { "label": "每日总结", "value": "daily_summary" },
+        { "label": "查询记录", "value": "query" }
+      ]
+    },
+    {
+      "id": "symbol",
+      "inputKey": "symbol",
+      "label": "股票代码",
+      "widget": "text",
+      "placeholder": "e.g. 000001"
+    },
+    {
+      "id": "strategy",
+      "inputKey": "strategy",
+      "label": "交易策略",
+      "widget": "text",
+      "placeholder": "e.g. 打板, 低吸, 半路"
+    },
+    {
+      "id": "entryPrice",
+      "inputKey": "entryPrice",
+      "label": "入场价格",
+      "widget": "number",
+      "placeholder": "e.g. 15.50"
+    },
+    {
+      "id": "exitPrice",
+      "inputKey": "exitPrice",
+      "label": "出场价格",
+      "widget": "number",
+      "placeholder": "e.g. 16.80"
+    },
+    {
+      "id": "shares",
+      "inputKey": "shares",
+      "label": "交易股数",
+      "widget": "number",
+      "placeholder": "e.g. 1000"
+    },
+    {
+      "id": "sentimentPhase",
+      "inputKey": "sentimentPhase",
+      "label": "情绪阶段",
+      "widget": "text",
+      "placeholder": "e.g. 升温, 高潮"
+    },
+    {
+      "id": "emotionalState",
+      "inputKey": "emotionalState",
+      "label": "情绪状态",
+      "widget": "select",
+      "options": [
+        { "label": "冷静 (calm)", "value": "calm" },
+        { "label": "焦虑 (anxious)", "value": "anxious" },
+        { "label": "贪婪 (greedy)", "value": "greedy" },
+        { "label": "恐惧 (fearful)", "value": "fearful" },
+        { "label": "自信 (confident)", "value": "confident" },
+        { "label": "追涨冲动 (fomo)", "value": "fomo" }
+      ]
+    },
+    {
+      "id": "notes",
+      "inputKey": "notes",
+      "label": "备注",
+      "widget": "text",
+      "placeholder": "交易逻辑、想法、复盘笔记..."
+    },
+    {
+      "id": "query",
+      "inputKey": "query",
+      "label": "查询内容",
+      "widget": "text",
+      "placeholder": "按日期/代码/策略/关键词搜索"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-entry",
+      "outputKey": "entry",
+      "label": "日志条目",
+      "widget": "text"
+    },
+    {
+      "id": "output-patterns",
+      "outputKey": "patterns",
+      "label": "行为模式",
+      "widget": "text"
+    },
+    {
+      "id": "output-stats",
+      "outputKey": "stats",
+      "label": "统计数据",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "执行",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "重置",
+      "style": "secondary"
+    }
+  ]
+}

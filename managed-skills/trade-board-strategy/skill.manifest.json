@@ -1,0 +1,115 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-board-strategy",
+  "name": "打板策略分析器",
+  "description": "Analyzes limit-up board trading opportunities across multiple strategies: 首板, 一进二, 弱转强, and 反包.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "ai",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": ["trade", "打板", "limit-up", "strategy", "首板", "弱转强", "反包"],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": ["打板", "board strategy", "首板", "弱转强", "反包"],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": ["intent"]
+  },
+  "requirements": {
+    "bins": ["node"],
+    "env": [],
+    "config": [],
+    "os": ["darwin", "linux", "win32"]
+  },
+  "inputs": [
+    {
+      "key": "strategyType",
+      "type": "string",
+      "description": "Strategy to analyze: first_board (首板), second_board (一进二), weak_to_strong (弱转强), reversal_wrap (反包), or all",
+      "required": true,
+      "enum": ["first_board", "second_board", "weak_to_strong", "reversal_wrap", "all"]
+    },
+    {
+      "key": "marketData",
+      "type": "object",
+      "description": "Pre-fetched market data including limit-up pool, auction data, and historical data",
+      "required": false
+    },
+    {
+      "key": "sentimentPhase",
+      "type": "string",
+      "description": "Current sentiment cycle phase (e.g. initiation, expansion, divergence, decline)",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "setups",
+      "type": "array",
+      "description": "Identified trade setups with entry criteria"
+    },
+    {
+      "key": "ranking",
+      "type": "array",
+      "description": "Setups prioritized by confidence and risk/reward"
+    },
+    {
+      "key": "warnings",
+      "type": "array",
+      "description": "Risk factors per setup"
+    },
+    {
+      "key": "stdout",
+      "type": "string",
+      "description": "Command standard output"
+    },
+    {
+      "key": "stderr",
+      "type": "string",
+      "description": "Command standard error"
+    },
+    {
+      "key": "exitCode",
+      "type": "number",
+      "description": "Command exit code"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes board strategy analysis via run.sh"
+      }
+    ],
+    "promptOn": ["shell.execute"]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

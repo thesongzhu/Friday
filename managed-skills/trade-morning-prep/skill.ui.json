@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "title": "早盘准备工作流",
+  "description": "每个交易日开盘前自动执行，汇总市场数据、情绪研判、龙头扫描、持仓预警和交易信号。",
+  "sections": [
+    {
+      "id": "main",
+      "label": "工作流控制",
+      "fieldIds": []
+    }
+  ],
+  "fields": [],
+  "outputs": [
+    {
+      "id": "output-morningBrief",
+      "outputKey": "morningBrief",
+      "label": "早盘准备报告",
+      "widget": "text"
+    },
+    {
+      "id": "output-signals",
+      "outputKey": "signals",
+      "label": "今日交易信号",
+      "widget": "json"
+    },
+    {
+      "id": "output-exitAlerts",
+      "outputKey": "exitAlerts",
+      "label": "持仓退出预警",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "执行早盘准备",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "重置",
+      "style": "secondary"
+    }
+  ]
+}

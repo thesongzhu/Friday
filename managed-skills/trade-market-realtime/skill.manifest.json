@@ -1,0 +1,100 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-market-realtime",
+  "name": "A股实时行情数据",
+  "description": "获取A股实时行情数据，支持个股报价、涨停池、板块热度、指数行情、集合竞价和龙虎榜。",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "integration",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": ["trade", "akshare", "realtime", "a-stock"],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": ["获取实时行情", "show live market", "涨停池"],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": ["intent"]
+  },
+  "requirements": {
+    "bins": ["python3"],
+    "env": [],
+    "config": [],
+    "os": ["darwin", "linux", "win32"]
+  },
+  "inputs": [
+    {
+      "key": "dataType",
+      "type": "string",
+      "description": "数据类型：quote=个股报价, limit_up_pool=涨停池, sector_heat=板块热度, index=指数行情, auction=集合竞价, dragon_tiger=龙虎榜",
+      "required": true,
+      "enum": ["quote", "limit_up_pool", "sector_heat", "index", "auction", "dragon_tiger"]
+    },
+    {
+      "key": "symbols",
+      "type": "array",
+      "description": "股票代码列表，例如 [\"000001\", \"600519\"]，仅 quote 和 auction 类型使用",
+      "required": false
+    },
+    {
+      "key": "sector",
+      "type": "string",
+      "description": "板块名称，用于 sector_heat 过滤",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "data",
+      "type": "object",
+      "description": "行情数据"
+    },
+    {
+      "key": "fetchedAt",
+      "type": "string",
+      "description": "数据获取时间"
+    },
+    {
+      "key": "source",
+      "type": "string",
+      "description": "数据来源"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes Python script via run.sh to fetch market data"
+      }
+    ],
+    "promptOn": ["shell.execute"]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

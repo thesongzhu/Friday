@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "1.0",
+  "title": "策略适配度分析",
+  "description": "Analyzes which trading strategies work best for the specific user and recommends focus areas.",
+  "sections": [
+    {
+      "id": "config",
+      "label": "分析设置",
+      "fieldIds": [
+        "period"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "period",
+      "inputKey": "period",
+      "label": "分析周期",
+      "widget": "select",
+      "options": [
+        { "label": "本月", "value": "month" },
+        { "label": "本季度", "value": "quarter" },
+        { "label": "全部", "value": "all" }
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-strategyScores",
+      "outputKey": "strategyScores",
+      "label": "策略评分",
+      "widget": "text"
+    },
+    {
+      "id": "output-recommendations",
+      "outputKey": "recommendations",
+      "label": "操作建议",
+      "widget": "text"
+    },
+    {
+      "id": "output-profileUpdateSuggestions",
+      "outputKey": "profileUpdateSuggestions",
+      "label": "用户画像更新建议",
+      "widget": "text"
+    },
+    {
+      "id": "output-knowledgeGaps",
+      "outputKey": "knowledgeGaps",
+      "label": "知识缺口",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "分析",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "重置",
+      "style": "secondary"
+    }
+  ]
+}

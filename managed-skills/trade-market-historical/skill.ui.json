@@ -1,0 +1,91 @@
+{
+  "schemaVersion": "1.0",
+  "title": "A股历史K线数据",
+  "description": "获取A股历史K线数据，支持日线、周线和分钟级别K线，支持前复权和后复权。",
+  "sections": [
+    {
+      "id": "main",
+      "label": "参数配置",
+      "fieldIds": ["symbol", "period", "startDate", "endDate", "adjustType"]
+    }
+  ],
+  "fields": [
+    {
+      "id": "symbol",
+      "inputKey": "symbol",
+      "label": "股票代码",
+      "widget": "text",
+      "placeholder": "例如: 000001",
+      "required": true
+    },
+    {
+      "id": "period",
+      "inputKey": "period",
+      "label": "K线周期",
+      "widget": "select",
+      "options": [
+        {"value": "daily", "label": "日线"},
+        {"value": "weekly", "label": "周线"},
+        {"value": "60min", "label": "60分钟"},
+        {"value": "30min", "label": "30分钟"},
+        {"value": "15min", "label": "15分钟"},
+        {"value": "5min", "label": "5分钟"}
+      ],
+      "required": false
+    },
+    {
+      "id": "startDate",
+      "inputKey": "startDate",
+      "label": "开始日期",
+      "widget": "text",
+      "placeholder": "YYYYMMDD",
+      "required": false
+    },
+    {
+      "id": "endDate",
+      "inputKey": "endDate",
+      "label": "结束日期",
+      "widget": "text",
+      "placeholder": "YYYYMMDD",
+      "required": false
+    },
+    {
+      "id": "adjustType",
+      "inputKey": "adjustType",
+      "label": "复权类型",
+      "widget": "select",
+      "options": [
+        {"value": "qfq", "label": "前复权"},
+        {"value": "hfq", "label": "后复权"},
+        {"value": "none", "label": "不复权"}
+      ],
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-klines",
+      "outputKey": "klines",
+      "label": "K线数据",
+      "widget": "json"
+    },
+    {
+      "id": "output-metadata",
+      "outputKey": "metadata",
+      "label": "元数据",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "获取数据",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "重置",
+      "style": "secondary"
+    }
+  ]
+}

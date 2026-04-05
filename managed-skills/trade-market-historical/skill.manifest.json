@@ -1,0 +1,110 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-market-historical",
+  "name": "A股历史K线数据",
+  "description": "获取A股历史K线数据，支持日线、周线和分钟级别K线，支持前复权和后复权。",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "integration",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": ["trade", "akshare", "historical", "kline", "a-stock"],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": ["获取K线", "历史行情", "show historical data"],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": ["intent"]
+  },
+  "requirements": {
+    "bins": ["python3"],
+    "env": [],
+    "config": [],
+    "os": ["darwin", "linux", "win32"]
+  },
+  "inputs": [
+    {
+      "key": "symbol",
+      "type": "string",
+      "description": "股票代码，例如 000001",
+      "required": true
+    },
+    {
+      "key": "period",
+      "type": "string",
+      "description": "K线周期：daily=日线, weekly=周线, 60min/30min/15min/5min=分钟线",
+      "required": false,
+      "enum": ["daily", "weekly", "60min", "30min", "15min", "5min"],
+      "default": "daily"
+    },
+    {
+      "key": "startDate",
+      "type": "string",
+      "description": "开始日期，格式 YYYYMMDD",
+      "required": false
+    },
+    {
+      "key": "endDate",
+      "type": "string",
+      "description": "结束日期，格式 YYYYMMDD",
+      "required": false
+    },
+    {
+      "key": "adjustType",
+      "type": "string",
+      "description": "复权类型：none=不复权, qfq=前复权, hfq=后复权",
+      "required": false,
+      "enum": ["none", "qfq", "hfq"],
+      "default": "qfq"
+    }
+  ],
+  "outputs": [
+    {
+      "key": "klines",
+      "type": "array",
+      "description": "K线数据数组"
+    },
+    {
+      "key": "metadata",
+      "type": "object",
+      "description": "元数据，包含股票代码、周期等信息"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes Python script via run.sh to fetch historical data"
+      }
+    ],
+    "promptOn": ["shell.execute"]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

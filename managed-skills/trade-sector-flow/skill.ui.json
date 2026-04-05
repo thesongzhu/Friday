@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "1.0",
+  "title": "板块资金流向",
+  "description": "获取A股板块资金流向数据，支持行业排名、概念排名、个股资金流和北向资金。",
+  "sections": [
+    {
+      "id": "main",
+      "label": "参数配置",
+      "fieldIds": ["flowType", "topN"]
+    }
+  ],
+  "fields": [
+    {
+      "id": "flowType",
+      "inputKey": "flowType",
+      "label": "流向类型",
+      "widget": "select",
+      "options": [
+        {"value": "sector_rank", "label": "行业板块排名"},
+        {"value": "concept_rank", "label": "概念板块排名"},
+        {"value": "industry_flow", "label": "个股资金流排名"},
+        {"value": "northbound", "label": "北向资金"}
+      ],
+      "required": true
+    },
+    {
+      "id": "topN",
+      "inputKey": "topN",
+      "label": "返回条数",
+      "widget": "number",
+      "placeholder": "默认 10",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-rankings",
+      "outputKey": "rankings",
+      "label": "排名数据",
+      "widget": "json"
+    },
+    {
+      "id": "output-flowData",
+      "outputKey": "flowData",
+      "label": "资金流向汇总",
+      "widget": "json"
+    },
+    {
+      "id": "output-trendChange",
+      "outputKey": "trendChange",
+      "label": "趋势变化",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "获取数据",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "重置",
+      "style": "secondary"
+    }
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "1.0",
+  "title": "交易用户画像",
+  "description": "管理用户交易配置文件 — 资金规模、风险偏好、持仓设置、交易风格、关注板块、自选股及通知偏好。",
+  "sections": [
+    {
+      "id": "action-section",
+      "label": "操作",
+      "fieldIds": ["action"]
+    },
+    {
+      "id": "params-section",
+      "label": "参数",
+      "fieldIds": ["field", "value"]
+    }
+  ],
+  "fields": [
+    {
+      "id": "action",
+      "inputKey": "action",
+      "label": "操作类型",
+      "widget": "select",
+      "options": [
+        { "label": "获取 (get)", "value": "get" },
+        { "label": "设置 (set)", "value": "set" },
+        { "label": "更新 (update)", "value": "update" },
+        { "label": "重置 (reset)", "value": "reset" }
+      ],
+      "required": true,
+      "defaultValue": "get"
+    },
+    {
+      "id": "field",
+      "inputKey": "field",
+      "label": "字段名称",
+      "widget": "select",
+      "options": [
+        { "label": "资金规模 (capitalSize)", "value": "capitalSize" },
+        { "label": "风险承受 (riskTolerance)", "value": "riskTolerance" },
+        { "label": "最大仓位% (maxPositionPct)", "value": "maxPositionPct" },
+        { "label": "最大持仓数 (maxConcurrentPositions)", "value": "maxConcurrentPositions" },
+        { "label": "交易风格 (preferredStyles)", "value": "preferredStyles" },
+        { "label": "关注板块 (preferredSectors)", "value": "preferredSectors" },
+        { "label": "自选股 (stockWatchlist)", "value": "stockWatchlist" },
+        { "label": "交易时段 (tradingHours)", "value": "tradingHours" },
+        { "label": "通知偏好 (notificationPrefs)", "value": "notificationPrefs" },
+        { "label": "经验水平 (experienceLevel)", "value": "experienceLevel" },
+        { "label": "游资席位 (trackedHotMoneySeats)", "value": "trackedHotMoneySeats" }
+      ],
+      "required": false
+    },
+    {
+      "id": "value",
+      "inputKey": "value",
+      "label": "新值 (JSON)",
+      "widget": "textarea",
+      "placeholder": "输入 JSON 格式的值",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-profile",
+      "outputKey": "profile",
+      "label": "用户画像",
+      "widget": "json"
+    },
+    {
+      "id": "output-changes",
+      "outputKey": "changesMade",
+      "label": "变更记录",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "执行",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "重置",
+      "style": "secondary"
+    }
+  ]
+}

@@ -1,0 +1,109 @@
+{
+  "schemaVersion": "1.0",
+  "title": "龙头股扫描器",
+  "description": "Identifies current market leader stocks (人气龙头) and their status.",
+  "sections": [
+    {
+      "id": "params",
+      "label": "Scan Parameters",
+      "fieldIds": ["scope", "sector", "sentimentPhase"]
+    },
+    {
+      "id": "data",
+      "label": "Market Data",
+      "fieldIds": ["marketData"]
+    }
+  ],
+  "fields": [
+    {
+      "id": "scope",
+      "inputKey": "scope",
+      "label": "Scan Scope",
+      "widget": "select",
+      "options": [
+        { "value": "market_wide", "label": "Market Wide (全市场)" },
+        { "value": "sector", "label": "Sector (板块)" },
+        { "value": "watchlist", "label": "Watchlist (自选股)" }
+      ],
+      "default": "market_wide"
+    },
+    {
+      "id": "sector",
+      "inputKey": "sector",
+      "label": "Sector Filter",
+      "widget": "text",
+      "placeholder": "e.g. AI, 机器人, 半导体"
+    },
+    {
+      "id": "sentimentPhase",
+      "inputKey": "sentimentPhase",
+      "label": "Sentiment Phase",
+      "widget": "select",
+      "options": [
+        { "value": "", "label": "Auto-detect" },
+        { "value": "initiation", "label": "启动期 (Initiation)" },
+        { "value": "expansion", "label": "扩散期 (Expansion)" },
+        { "value": "divergence", "label": "分歧期 (Divergence)" },
+        { "value": "decline", "label": "退潮期 (Decline)" },
+        { "value": "ice", "label": "冰点期 (Ice)" }
+      ]
+    },
+    {
+      "id": "marketData",
+      "inputKey": "marketData",
+      "label": "Market Data (JSON)",
+      "widget": "textarea",
+      "placeholder": "Paste limit-up pool JSON data here"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-leaders",
+      "outputKey": "leaders",
+      "label": "Ranked Leader Candidates",
+      "widget": "table"
+    },
+    {
+      "id": "output-leaderHistory",
+      "outputKey": "leaderHistory",
+      "label": "Leader Evolution History",
+      "widget": "table"
+    },
+    {
+      "id": "output-rotationSignal",
+      "outputKey": "rotationSignal",
+      "label": "Rotation Signal",
+      "widget": "text"
+    },
+    {
+      "id": "output-stdout",
+      "outputKey": "stdout",
+      "label": "Command standard output",
+      "widget": "text"
+    },
+    {
+      "id": "output-stderr",
+      "outputKey": "stderr",
+      "label": "Command standard error",
+      "widget": "text"
+    },
+    {
+      "id": "output-exitCode",
+      "outputKey": "exitCode",
+      "label": "Command exit code",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Scan Leaders",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

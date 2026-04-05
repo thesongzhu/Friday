@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-evening-review",
+  "name": "收盘复盘工作流",
+  "description": "每个交易日收盘后自动执行的复盘工作流，汇总当日盈亏、交易日志、龙虎榜、明日研判和自选股。",
+  "version": "1.0.0",
+  "kind": "workflow",
+  "category": "automation",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": ["trade", "workflow", "evening", "review", "a-stock"],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 120000
+  },
+  "triggers": {
+    "schedule": [
+      {
+        "cron": "0 17 * * 1-5",
+        "timezone": "Asia/Shanghai"
+      }
+    ],
+    "intents": [],
+    "phrases": ["收盘复盘", "evening review"],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 80,
+    "modes": ["intent"]
+  },
+  "requirements": {
+    "bins": ["node"],
+    "env": [],
+    "config": [],
+    "os": ["darwin", "linux", "win32"]
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "key": "eveningReport",
+      "type": "object",
+      "description": "完整的收盘复盘报告"
+    },
+    {
+      "key": "tomorrowWatchlist",
+      "type": "array",
+      "description": "明日自选股列表"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes workflow orchestration script via run.sh"
+      }
+    ],
+    "promptOn": ["shell.execute"]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

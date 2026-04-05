@@ -1,0 +1,99 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-hot-money-tracker",
+  "name": "游资追踪器",
+  "description": "追踪A股游资活动，基于龙虎榜数据分析知名游资席位的买卖行为和重叠标的。",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "integration",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": ["trade", "akshare", "hot-money", "dragon-tiger", "a-stock"],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": ["游资追踪", "龙虎榜席位", "hot money tracker", "track seat activity"],
+    "channels": ["*"]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": ["intent"]
+  },
+  "requirements": {
+    "bins": ["python3"],
+    "env": [],
+    "config": [],
+    "os": ["darwin", "linux", "win32"]
+  },
+  "inputs": [
+    {
+      "key": "date",
+      "type": "string",
+      "description": "查询日期，格式 YYYYMMDD，默认今天",
+      "required": false
+    },
+    {
+      "key": "seatNames",
+      "type": "array",
+      "description": "游资席位名称列表，用于过滤特定席位",
+      "required": false
+    },
+    {
+      "key": "symbol",
+      "type": "string",
+      "description": "股票代码，查询指定个股的龙虎榜席位",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "topSeats",
+      "type": "array",
+      "description": "活跃席位排名"
+    },
+    {
+      "key": "seatActivity",
+      "type": "array",
+      "description": "席位买卖活动明细"
+    },
+    {
+      "key": "overlaps",
+      "type": "array",
+      "description": "多席位重叠标的"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes Python script via run.sh to fetch hot money data"
+      }
+    ],
+    "promptOn": ["shell.execute"]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

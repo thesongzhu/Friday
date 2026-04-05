@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "1.0",
+  "title": "交易主控Agent",
+  "description": "通过自然语言理解用户意图并路由到相应交易技能执行。",
+  "sections": [
+    {
+      "id": "main",
+      "label": "对话",
+      "fieldIds": ["query"]
+    }
+  ],
+  "fields": [
+    {
+      "id": "query",
+      "inputKey": "query",
+      "label": "问题或指令",
+      "widget": "textarea",
+      "placeholder": "例如：今天行情怎么样？/ 帮我看看龙头股 / 今天买什么？",
+      "description": "输入你的交易相关问题或指令"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-response",
+      "outputKey": "response",
+      "label": "Agent 回复",
+      "widget": "text"
+    },
+    {
+      "id": "output-skillsUsed",
+      "outputKey": "skillsUsed",
+      "label": "调用的技能",
+      "widget": "json"
+    },
+    {
+      "id": "output-data",
+      "outputKey": "data",
+      "label": "结构化数据",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "发送",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "清空",
+      "style": "secondary"
+    }
+  ]
+}

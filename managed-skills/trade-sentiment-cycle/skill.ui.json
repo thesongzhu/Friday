@@ -1,0 +1,134 @@
+{
+  "schemaVersion": "1.0",
+  "title": "情绪周期分析器",
+  "description": "Analyzes market data to determine the current sentiment cycle phase and provides tactical implications.",
+  "sections": [
+    {
+      "id": "market-data",
+      "label": "市场数据",
+      "fieldIds": [
+        "limitUpCount",
+        "limitDownCount",
+        "maxConsecutiveBoards",
+        "sectorBreadth",
+        "profitEffect",
+        "leadersStable",
+        "highLevelDivergence",
+        "leaderDivergence",
+        "consecutiveBoardBreak",
+        "highLevelSelloff"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "limitUpCount",
+      "inputKey": "marketData.limitUpCount",
+      "label": "涨停数",
+      "widget": "number",
+      "placeholder": "e.g. 45"
+    },
+    {
+      "id": "limitDownCount",
+      "inputKey": "marketData.limitDownCount",
+      "label": "跌停数",
+      "widget": "number",
+      "placeholder": "e.g. 10"
+    },
+    {
+      "id": "maxConsecutiveBoards",
+      "inputKey": "marketData.maxConsecutiveBoards",
+      "label": "最高连板数",
+      "widget": "number",
+      "placeholder": "e.g. 4"
+    },
+    {
+      "id": "sectorBreadth",
+      "inputKey": "marketData.sectorBreadth",
+      "label": "活跃板块数",
+      "widget": "number",
+      "placeholder": "e.g. 5"
+    },
+    {
+      "id": "profitEffect",
+      "inputKey": "marketData.profitEffect",
+      "label": "赚钱效应 (-1 to 1)",
+      "widget": "number",
+      "placeholder": "e.g. 0.3"
+    },
+    {
+      "id": "leadersStable",
+      "inputKey": "marketData.leadersStable",
+      "label": "龙头企稳",
+      "widget": "toggle"
+    },
+    {
+      "id": "highLevelDivergence",
+      "inputKey": "marketData.highLevelDivergence",
+      "label": "高位股分化",
+      "widget": "toggle"
+    },
+    {
+      "id": "leaderDivergence",
+      "inputKey": "marketData.leaderDivergence",
+      "label": "龙头分歧",
+      "widget": "toggle"
+    },
+    {
+      "id": "consecutiveBoardBreak",
+      "inputKey": "marketData.consecutiveBoardBreak",
+      "label": "连板断裂",
+      "widget": "toggle"
+    },
+    {
+      "id": "highLevelSelloff",
+      "inputKey": "marketData.highLevelSelloff",
+      "label": "高位集体调整",
+      "widget": "toggle"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-phase",
+      "outputKey": "phase",
+      "label": "情绪周期阶段",
+      "widget": "text"
+    },
+    {
+      "id": "output-confidence",
+      "outputKey": "confidence",
+      "label": "置信度",
+      "widget": "text"
+    },
+    {
+      "id": "output-keySignals",
+      "outputKey": "keySignals",
+      "label": "关键信号",
+      "widget": "text"
+    },
+    {
+      "id": "output-tacticalImplication",
+      "outputKey": "tacticalImplication",
+      "label": "战术建议",
+      "widget": "text"
+    },
+    {
+      "id": "output-metrics",
+      "outputKey": "metrics",
+      "label": "原始指标",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "分析",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "重置",
+      "style": "secondary"
+    }
+  ]
+}
