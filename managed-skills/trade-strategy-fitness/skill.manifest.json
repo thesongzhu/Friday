@@ -1,0 +1,146 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-strategy-fitness",
+  "name": "Strategy Fitness Analyzer",
+  "description": "Analyzes which trading strategies work best for the specific user based on historical performance, and recommends focus areas and profile updates.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "ai",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": [
+    "trade",
+    "strategy",
+    "fitness",
+    "A-stock",
+    "learning"
+  ],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": [
+      "策略适配",
+      "策略分析",
+      "strategy fitness",
+      "哪个策略适合我",
+      "which strategy works",
+      "strategy evaluation"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [
+      "node"
+    ],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "period",
+      "type": "string",
+      "description": "Analysis period: month, quarter, or all",
+      "required": false,
+      "default": "quarter",
+      "enum": [
+        "month",
+        "quarter",
+        "all"
+      ]
+    },
+    {
+      "key": "performanceData",
+      "type": "object",
+      "description": "Performance analytics data from trade-performance-analytics skill",
+      "required": false
+    },
+    {
+      "key": "journalData",
+      "type": "object",
+      "description": "Trade journal data from trade-journal skill",
+      "required": false
+    },
+    {
+      "key": "userProfile",
+      "type": "object",
+      "description": "Current user profile including preferredStyles and experience level",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "strategyScores",
+      "type": "array",
+      "description": "Array of { strategy, winRate, avgReturn, sampleSize, fitnessScore }"
+    },
+    {
+      "key": "recommendations",
+      "type": "array",
+      "description": "Actionable recommendations: focus more on X, reduce Y"
+    },
+    {
+      "key": "profileUpdateSuggestions",
+      "type": "array",
+      "description": "Suggested changes to user profile based on actual performance"
+    },
+    {
+      "key": "knowledgeGaps",
+      "type": "array",
+      "description": "Areas where user should study more based on low fitness + low sample size"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes strategy fitness analysis via Node.js"
+      }
+    ],
+    "promptOn": [
+      "shell.execute"
+    ]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

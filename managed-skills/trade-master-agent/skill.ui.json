@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Trade Master Agent",
+  "description": "Natural language trading assistant",
+  "sections": [
+    {
+      "id": "main",
+      "label": "Conversation",
+      "fieldIds": [
+        "query"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "query",
+      "inputKey": "query",
+      "label": "Question or Command",
+      "widget": "textarea",
+      "placeholder": "e.g.：How is the market today？/ Help me checkLeader Stocks / What to buy today？",
+      "description": "Enter your trading-relatedQuestion or Command"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-response",
+      "outputKey": "response",
+      "label": "Agent Response",
+      "widget": "text"
+    },
+    {
+      "id": "output-skillsUsed",
+      "outputKey": "skillsUsed",
+      "label": "Skills Used",
+      "widget": "json"
+    },
+    {
+      "id": "output-data",
+      "outputKey": "data",
+      "label": "Structured data",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Send",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Clear",
+      "style": "secondary"
+    }
+  ]
+}

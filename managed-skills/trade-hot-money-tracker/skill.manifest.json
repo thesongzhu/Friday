@@ -1,0 +1,130 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-hot-money-tracker",
+  "name": "Hot Money Tracker",
+  "description": "Tracks hot money (institutional short-term traders) activity via dragon-tiger list data, analyzing known trading seat behavior and multi-seat overlap stocks.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "integration",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": [
+    "trade",
+    "akshare",
+    "hot-money",
+    "dragon-tiger",
+    "a-stock"
+  ],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": [
+      "游资追踪",
+      "龙虎榜席位",
+      "hot money tracker",
+      "track seat activity",
+      "hot money",
+      "dragon tiger list",
+      "institutional tracker"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [
+      "python3"
+    ],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "date",
+      "type": "string",
+      "description": "Query Date，Format YYYYMMDD，Default: today",
+      "required": false
+    },
+    {
+      "key": "seatNames",
+      "type": "array",
+      "description": "Hot money seat names list，Filter by specific seats",
+      "required": false
+    },
+    {
+      "key": "symbol",
+      "type": "string",
+      "description": "Stock Code，QuerySpecifiedSingle StockDragon-Tiger ListSeats",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "topSeats",
+      "type": "array",
+      "description": "Top Active Seats"
+    },
+    {
+      "key": "seatActivity",
+      "type": "array",
+      "description": "Seat Trading Details"
+    },
+    {
+      "key": "overlaps",
+      "type": "array",
+      "description": "Multi-Seat Overlap Stocks"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes Python script via run.sh to fetch hot money data"
+      }
+    ],
+    "promptOn": [
+      "shell.execute"
+    ]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

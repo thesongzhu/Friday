@@ -1,0 +1,117 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-live-session",
+  "name": "Live Session Monitor",
+  "description": "Intraday monitoring workflow that checks exit conditions and scans for new opportunities every 15 minutes during trading hours. Only alerts on actionable events.",
+  "version": "1.0.0",
+  "kind": "workflow",
+  "category": "automation",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": [
+    "trade",
+    "workflow",
+    "live",
+    "monitor",
+    "a-stock"
+  ],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 60000
+  },
+  "triggers": {
+    "schedule": [
+      {
+        "cron": "*/15 9-14 * * 1-5",
+        "timezone": "Asia/Shanghai"
+      }
+    ],
+    "intents": [],
+    "phrases": [
+      "盘中监控",
+      "live session",
+      "live monitor",
+      "intraday scan"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 90,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [
+      "node"
+    ],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "urgencyOnly",
+      "type": "boolean",
+      "description": "Output urgent alerts only，Skip routine monitoring info",
+      "required": false,
+      "default": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "alerts",
+      "type": "array",
+      "description": "List of actionable alerts"
+    },
+    {
+      "key": "marketSnapshot",
+      "type": "object",
+      "description": "Current market snapshot"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes workflow orchestration script via run.sh"
+      }
+    ],
+    "promptOn": [
+      "shell.execute"
+    ]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

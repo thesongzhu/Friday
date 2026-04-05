@@ -1,0 +1,124 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Dip-Buy Scanner",
+  "description": "Scan for dip-buying opportunities in trending stocks",
+  "sections": [
+    {
+      "id": "main",
+      "label": "Scan Config (Scan Configuration)",
+      "fieldIds": [
+        "universe",
+        "sector",
+        "maxDrawdownPct",
+        "sentimentPhase"
+      ]
+    },
+    {
+      "id": "data",
+      "label": "Data (Data)",
+      "fieldIds": [
+        "marketData"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "universe",
+      "inputKey": "universe",
+      "label": "Stock Pool (Universe)",
+      "widget": "select",
+      "options": [
+        {
+          "label": "Leader Stocks (Leaders)",
+          "value": "leaders"
+        },
+        {
+          "label": "Watchlist (Watchlist)",
+          "value": "watchlist"
+        },
+        {
+          "label": "Sector (Sector)",
+          "value": "sector"
+        }
+      ],
+      "default": "leaders"
+    },
+    {
+      "id": "sector",
+      "inputKey": "sector",
+      "label": "SectorName (Sector Name)",
+      "widget": "text",
+      "placeholder": "e.g. Semiconductor, AI, New Energy"
+    },
+    {
+      "id": "maxDrawdownPct",
+      "inputKey": "maxDrawdownPct",
+      "label": "Max Drawdown% (Max Drawdown %)",
+      "widget": "number",
+      "default": 10
+    },
+    {
+      "id": "sentimentPhase",
+      "inputKey": "sentimentPhase",
+      "label": "Sentiment Cycle (Sentiment Phase)",
+      "widget": "select",
+      "options": [
+        {
+          "label": "Ice Point (Ice Point)",
+          "value": "Ice Point"
+        },
+        {
+          "label": "Warming (Warming)",
+          "value": "Warming"
+        },
+        {
+          "label": "Climax (Climax)",
+          "value": "Climax"
+        },
+        {
+          "label": "Ebb (Ebb)",
+          "value": "Ebb"
+        }
+      ]
+    },
+    {
+      "id": "marketData",
+      "inputKey": "marketData",
+      "label": "MarketData (Market Data)",
+      "widget": "json",
+      "placeholder": "Pre-fetched OHLCV data (optional)"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-candidates",
+      "outputKey": "candidates",
+      "label": "Dip BuyCandidates (Dip-Buy Candidates)",
+      "widget": "table"
+    },
+    {
+      "id": "output-supportLevels",
+      "outputKey": "supportLevels",
+      "label": "Support Levels (Support Levels)",
+      "widget": "json"
+    },
+    {
+      "id": "output-volumeConfirmation",
+      "outputKey": "volumeConfirmation",
+      "label": "Volume Confirmation (Volume Confirmation)",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Scan (Scan)",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset (Reset)",
+      "style": "secondary"
+    }
+  ]
+}

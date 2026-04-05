@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-auction-analyzer",
+  "name": "Auction Analyzer",
+  "description": "Analyzes the 9:15-9:25 opening auction to identify pre-market sentiment, buy/sell pressure, gap direction, volume intensity, and per-stock recommendations.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "ai",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": [
+    "trade",
+    "auction",
+    "Auction",
+    "Auction Data",
+    "AStock"
+  ],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": [
+      "竞价分析",
+      "opening auction",
+      "集合竞价",
+      "auction analysis",
+      "pre-market scan"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [
+      "node"
+    ],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "symbols",
+      "type": "array",
+      "description": "Specific tickers to analyze; defaults to watchlist + yesterday's leaders",
+      "required": false
+    },
+    {
+      "key": "auctionData",
+      "type": "object",
+      "description": "Pre-fetched auction data (buy/sell volumes, prices, etc.)",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "auctionSignals",
+      "type": "array",
+      "description": "Per-stock auction analysis with strength score and recommendation"
+    },
+    {
+      "key": "marketOpenSentiment",
+      "type": "string",
+      "description": "Overall market opening sentiment assessment"
+    },
+    {
+      "key": "gapPlays",
+      "type": "array",
+      "description": "Potential gap-up plays with risk assessment"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes auction analysis logic via run.sh"
+      }
+    ],
+    "promptOn": [
+      "shell.execute"
+    ]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

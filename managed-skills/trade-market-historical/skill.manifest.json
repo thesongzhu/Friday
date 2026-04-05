@@ -1,0 +1,151 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-market-historical",
+  "name": "Market Historical Data",
+  "description": "Fetches historical K-line data for A-stocks via AKShare. Supports daily, weekly, and intraday timeframes with forward/backward price adjustment.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "integration",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": [
+    "trade",
+    "akshare",
+    "historical",
+    "kline",
+    "a-stock"
+  ],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": [
+      "获取K线",
+      "历史行情",
+      "show historical data",
+      "historical data",
+      "K-line data",
+      "price history"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [
+      "python3"
+    ],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "symbol",
+      "type": "string",
+      "description": "Stock Code，e.g. 000001",
+      "required": true
+    },
+    {
+      "key": "period",
+      "type": "string",
+      "description": "K-Line Period：daily=Daily, weekly=Weekly, 60min/30min/15min/5min=Minutes-line",
+      "required": false,
+      "enum": [
+        "daily",
+        "weekly",
+        "60min",
+        "30min",
+        "15min",
+        "5min"
+      ],
+      "default": "daily"
+    },
+    {
+      "key": "startDate",
+      "type": "string",
+      "description": "Start Date，Format YYYYMMDD",
+      "required": false
+    },
+    {
+      "key": "endDate",
+      "type": "string",
+      "description": "End Date，Format YYYYMMDD",
+      "required": false
+    },
+    {
+      "key": "adjustType",
+      "type": "string",
+      "description": "Adjust Type：none=No Adjust, qfq=Forward Adjust, hfq=Backward Adjust",
+      "required": false,
+      "enum": [
+        "none",
+        "qfq",
+        "hfq"
+      ],
+      "default": "qfq"
+    }
+  ],
+  "outputs": [
+    {
+      "key": "klines",
+      "type": "array",
+      "description": "K-lineDataArray"
+    },
+    {
+      "key": "metadata",
+      "type": "object",
+      "description": "ElementData，ContainsStock Code、period info"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes Python script via run.sh to fetch historical data"
+      }
+    ],
+    "promptOn": [
+      "shell.execute"
+    ]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

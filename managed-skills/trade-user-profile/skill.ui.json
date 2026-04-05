@@ -1,0 +1,137 @@
+{
+  "schemaVersion": "1.0",
+  "title": "User Trading Profile",
+  "description": "Manage your trading profile and preferences",
+  "sections": [
+    {
+      "id": "action-section",
+      "label": "Actions",
+      "fieldIds": [
+        "action"
+      ]
+    },
+    {
+      "id": "params-section",
+      "label": "Parameters",
+      "fieldIds": [
+        "field",
+        "value"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "action",
+      "inputKey": "action",
+      "label": "Action Type",
+      "widget": "select",
+      "options": [
+        {
+          "label": "Get",
+          "value": "get"
+        },
+        {
+          "label": "Set",
+          "value": "set"
+        },
+        {
+          "label": "Update",
+          "value": "update"
+        },
+        {
+          "label": "Reset",
+          "value": "reset"
+        }
+      ],
+      "required": true,
+      "defaultValue": "get"
+    },
+    {
+      "id": "field",
+      "inputKey": "field",
+      "label": "Field Name",
+      "widget": "select",
+      "options": [
+        {
+          "label": "Capital Size",
+          "value": "capitalSize"
+        },
+        {
+          "label": "Risk Tolerance",
+          "value": "riskTolerance"
+        },
+        {
+          "label": "Max Position %",
+          "value": "maxPositionPct"
+        },
+        {
+          "label": "Max Concurrent Positions",
+          "value": "maxConcurrentPositions"
+        },
+        {
+          "label": "Preferred Styles",
+          "value": "preferredStyles"
+        },
+        {
+          "label": "Preferred Sectors",
+          "value": "preferredSectors"
+        },
+        {
+          "label": "Stock Watchlist",
+          "value": "stockWatchlist"
+        },
+        {
+          "label": "Trading Hours",
+          "value": "tradingHours"
+        },
+        {
+          "label": "Notification Preferences",
+          "value": "notificationPrefs"
+        },
+        {
+          "label": "Experience Level",
+          "value": "experienceLevel"
+        },
+        {
+          "label": "Tracked Hot Money Seats",
+          "value": "trackedHotMoneySeats"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "value",
+      "inputKey": "value",
+      "label": "New Value (JSON)",
+      "widget": "textarea",
+      "placeholder": "Enter value in JSON format",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-profile",
+      "outputKey": "profile",
+      "label": "User Profile",
+      "widget": "json"
+    },
+    {
+      "id": "output-changes",
+      "outputKey": "changesMade",
+      "label": "Changes Made",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Execute",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

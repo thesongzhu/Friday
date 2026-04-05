@@ -1,0 +1,194 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Trade Signal Generator",
+  "description": "Generate actionable trading signals",
+  "sections": [
+    {
+      "id": "mode",
+      "label": "Scan Mode",
+      "fieldIds": [
+        "mode",
+        "symbol"
+      ]
+    },
+    {
+      "id": "context",
+      "label": "Market Context",
+      "fieldIds": [
+        "sentimentPhase"
+      ]
+    },
+    {
+      "id": "inputs",
+      "label": "Strategy Inputs",
+      "fieldIds": [
+        "leaders",
+        "boardSetups",
+        "dipBuyCandidates",
+        "auctionSignals"
+      ]
+    },
+    {
+      "id": "user",
+      "label": "User Settings",
+      "fieldIds": [
+        "portfolio",
+        "userProfile"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "mode",
+      "inputKey": "mode",
+      "label": "Scan Mode",
+      "widget": "select",
+      "options": [
+        {
+          "value": "full_scan",
+          "label": "Full Scan (Full Market Scan)"
+        },
+        {
+          "value": "watchlist_only",
+          "label": "Watchlist Only (Watchlist)"
+        },
+        {
+          "value": "specific_stock",
+          "label": "Specific Stock (Single Stock)"
+        }
+      ],
+      "default": "full_scan"
+    },
+    {
+      "id": "symbol",
+      "inputKey": "symbol",
+      "label": "Stock Code",
+      "widget": "text",
+      "placeholder": "e.g. 000001 (for specific_stock mode)"
+    },
+    {
+      "id": "sentimentPhase",
+      "inputKey": "sentimentPhase",
+      "label": "Sentiment Phase",
+      "widget": "select",
+      "options": [
+        {
+          "value": "",
+          "label": "Auto-detect"
+        },
+        {
+          "value": "initiation",
+          "label": "Startup Phase (Initiation)"
+        },
+        {
+          "value": "expansion",
+          "label": "Expansion Phase (Expansion)"
+        },
+        {
+          "value": "divergence",
+          "label": "Divergence Phase (Divergence)"
+        },
+        {
+          "value": "decline",
+          "label": "EbbPhase (Decline)"
+        },
+        {
+          "value": "ice",
+          "label": "Ice PointPhase (Ice)"
+        }
+      ]
+    },
+    {
+      "id": "leaders",
+      "inputKey": "leaders",
+      "label": "Leader Stocks (JSON)",
+      "widget": "textarea",
+      "placeholder": "Paste leader scanner output here"
+    },
+    {
+      "id": "boardSetups",
+      "inputKey": "boardSetups",
+      "label": "Board Setups (JSON)",
+      "widget": "textarea",
+      "placeholder": "Paste board strategy output here"
+    },
+    {
+      "id": "dipBuyCandidates",
+      "inputKey": "dipBuyCandidates",
+      "label": "Dip Buy Candidates (JSON)",
+      "widget": "textarea",
+      "placeholder": "Paste dip buy scanner output here"
+    },
+    {
+      "id": "auctionSignals",
+      "inputKey": "auctionSignals",
+      "label": "Auction Signals (JSON)",
+      "widget": "textarea",
+      "placeholder": "Paste auction analyzer output here"
+    },
+    {
+      "id": "portfolio",
+      "inputKey": "portfolio",
+      "label": "Current Portfolio (JSON)",
+      "widget": "textarea",
+      "placeholder": "Paste portfolio data here"
+    },
+    {
+      "id": "userProfile",
+      "inputKey": "userProfile",
+      "label": "User Profile (JSON)",
+      "widget": "textarea",
+      "placeholder": "{ capitalSize, maxPositionPct, preferredStyles, riskTolerance }"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-signals",
+      "outputKey": "signals",
+      "label": "Trade Signals",
+      "widget": "table"
+    },
+    {
+      "id": "output-marketContext",
+      "outputKey": "marketContext",
+      "label": "Market Context",
+      "widget": "json"
+    },
+    {
+      "id": "output-riskWarnings",
+      "outputKey": "riskWarnings",
+      "label": "Risk Warnings",
+      "widget": "table"
+    },
+    {
+      "id": "output-stdout",
+      "outputKey": "stdout",
+      "label": "Command standard output",
+      "widget": "text"
+    },
+    {
+      "id": "output-stderr",
+      "outputKey": "stderr",
+      "label": "Command standard error",
+      "widget": "text"
+    },
+    {
+      "id": "output-exitCode",
+      "outputKey": "exitCode",
+      "label": "Command exit code",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Generate Signals",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

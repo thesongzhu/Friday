@@ -1,0 +1,140 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Exit Monitor",
+  "description": "Monitor positions for exit conditions",
+  "sections": [
+    {
+      "id": "config",
+      "label": "Monitor Settings",
+      "fieldIds": [
+        "urgencyMode",
+        "sentimentPhase"
+      ]
+    },
+    {
+      "id": "data",
+      "label": "Position & Market Data",
+      "fieldIds": [
+        "portfolio",
+        "marketData",
+        "leaders"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "urgencyMode",
+      "inputKey": "urgencyMode",
+      "label": "Urgency Mode",
+      "widget": "select",
+      "options": [
+        {
+          "value": "false",
+          "label": "Full Check (Full Check)"
+        },
+        {
+          "value": "true",
+          "label": "Emergency Only (Urgent Stops Only)"
+        }
+      ],
+      "default": "false"
+    },
+    {
+      "id": "sentimentPhase",
+      "inputKey": "sentimentPhase",
+      "label": "Sentiment Phase",
+      "widget": "select",
+      "options": [
+        {
+          "value": "",
+          "label": "Unknown"
+        },
+        {
+          "value": "initiation",
+          "label": "Startup Phase (Initiation)"
+        },
+        {
+          "value": "expansion",
+          "label": "Expansion Phase (Expansion)"
+        },
+        {
+          "value": "divergence",
+          "label": "Divergence Phase (Divergence)"
+        },
+        {
+          "value": "decline",
+          "label": "EbbPhase (Decline)"
+        },
+        {
+          "value": "ice",
+          "label": "Ice PointPhase (Ice)"
+        }
+      ]
+    },
+    {
+      "id": "portfolio",
+      "inputKey": "portfolio",
+      "label": "Portfolio (JSON)",
+      "widget": "textarea",
+      "placeholder": "Paste portfolio tracker output here"
+    },
+    {
+      "id": "marketData",
+      "inputKey": "marketData",
+      "label": "Market Data (JSON)",
+      "widget": "textarea",
+      "placeholder": "{ prices: { SYMBOL: { current, ma5, ma10, ma20, prevLow } } }"
+    },
+    {
+      "id": "leaders",
+      "inputKey": "leaders",
+      "label": "Leader Stocks (JSON)",
+      "widget": "textarea",
+      "placeholder": "Paste leader scanner output here"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-exitSignals",
+      "outputKey": "exitSignals",
+      "label": "Exit Signals",
+      "widget": "table"
+    },
+    {
+      "id": "output-holdSignals",
+      "outputKey": "holdSignals",
+      "label": "Hold Signals",
+      "widget": "table"
+    },
+    {
+      "id": "output-stdout",
+      "outputKey": "stdout",
+      "label": "Command standard output",
+      "widget": "text"
+    },
+    {
+      "id": "output-stderr",
+      "outputKey": "stderr",
+      "label": "Command standard error",
+      "widget": "text"
+    },
+    {
+      "id": "output-exitCode",
+      "outputKey": "exitCode",
+      "label": "Command exit code",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Check Exits",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}
