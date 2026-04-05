@@ -3,10 +3,10 @@ import type { FridaySkillExecuteRequest, FridaySkillExecutor, FridaySkillRegistr
 import { FRIDAY_AGENT_TOOL_TIMEOUT_MS } from "../friday-agent.constants.js";
 import { evaluateFridaySkillMcpReadiness, type FridayMcpServerReadiness } from "../mcp/friday-mcp-readiness.js";
 import {
+  errorResult,
   jsonResult,
   readNumberParam,
   readStringParam,
-  errorResult,
 } from "./friday-agent-tool-helpers.js";
 
 // ─── Options ───
