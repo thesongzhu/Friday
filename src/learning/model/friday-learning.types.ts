@@ -28,6 +28,8 @@ export interface FridayExtractedSignal {
   key: string;
   value: JsonValue;
   confidence: number;
+  emotionalValence?: number; // -1.0 (negative) to 1.0 (positive)
+  situationalContext?: Record<string, unknown>;
   sourceEventId: string;
   userId: string;
   sessionId?: string;
@@ -44,6 +46,8 @@ export interface FridayPreferenceFactRow {
   evidence_count: number;
   last_confirmed_at: string;
   source_event_ids_json: string;
+  emotional_valence: number | null;
+  metadata_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -57,6 +61,8 @@ export interface FridayPreferenceFactEntity {
   evidenceCount: number;
   lastConfirmedAt: ISODateTime;
   sourceEventIds: string[];
+  emotionalValence?: number;
+  metadata?: Record<string, unknown>;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
 }
@@ -207,6 +213,7 @@ export interface FridayLearningContext {
   preferences: Record<string, JsonValue>;
   appliedFacts: Array<{ factId: string; key: string; confidence: number }>;
   activePatterns: FridayLearningPattern[];
+  individuationStage?: string;
   generatedAt: ISODateTime;
 }
 

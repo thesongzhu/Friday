@@ -16,6 +16,9 @@ import type { FridayAutoFixRollbackService } from "../services/friday-auto-fix-r
 import type { FridayApprovalWorkflowService } from "../services/friday-approval-workflow-service.js";
 import type { FridayAutoFixDispatcherService } from "../services/friday-auto-fix-dispatcher-service.js";
 import type { FridayAutoFixStepKind } from "../model/friday-auto-fix.types.js";
+import type { FridaySessionSatisfactionService } from "../services/friday-session-satisfaction-service.js";
+import type { FridayDeepPatternExtractionService } from "../services/friday-deep-pattern-extraction-service.js";
+import type { FridayIndividuationService } from "../services/friday-individuation-service.js";
 
 export interface FridaySelfLearningRuntime {
   events: FridayLearningEventCollectionService;
@@ -34,6 +37,9 @@ export interface FridaySelfLearningRuntime {
   autoFixRollback: FridayAutoFixRollbackService;
   approvals: FridayApprovalWorkflowService;
   autoFixDispatcher: FridayAutoFixDispatcherService;
+  satisfaction: FridaySessionSatisfactionService;
+  deepPatterns: FridayDeepPatternExtractionService;
+  individuation: FridayIndividuationService;
 }
 
 export interface CreateFridaySelfLearningRuntimeDeps {

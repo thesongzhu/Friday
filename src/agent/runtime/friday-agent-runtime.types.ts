@@ -299,7 +299,11 @@ export interface CreateFridayAgentRuntimeDeps {
   /** Optional global rules evaluator used to gate run/tool execution. */
   evaluateRules?: (context: FridayEvaluationContext, signal?: AbortSignal) => Promise<FridayEvaluationResult>;
   /** Optional callback that returns learned user preferences to inject into the system prompt. */
-  learningContextBuilder?: (input: { userId: string; nowIso: string }) => { preferences: Record<string, unknown> };
+  learningContextBuilder?: (input: { userId: string; nowIso: string }) => {
+    preferences: Record<string, unknown>;
+    individuationStage?: string;
+    activePatterns?: Array<{ kind: string; key: string; strength: number }>;
+  };
   /** Optional callback that returns a communication persona prompt fragment for the current user. */
   communicationPromptBuilder?: (input: { userId: string; nowIso: string }) => string | null;
   /** Optional deterministic delegation hook for top-level coordinator runs. */

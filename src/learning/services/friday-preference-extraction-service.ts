@@ -97,17 +97,29 @@ export function createFridayPreferenceExtractionService(
     extract(event) {
       const signals: FridayExtractedSignal[] = [];
 
+      const baseSituationalContext: Record<string, unknown> | undefined =
+        event.sessionId || event.runId
+          ? {
+              ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+              ...(event.runId ? { runId: event.runId } : {}),
+              hour: new Date(event.ts).getUTCHours(),
+            }
+          : undefined;
+
       const makeSignal = (
         kind: FridayLearningSignalKind,
         key: string,
         value: unknown,
         confidence: number,
+        emotionalValence?: number,
       ): FridayExtractedSignal => ({
         signalId: deps.idGenerator(),
         kind,
         key,
         value: value as FridayExtractedSignal["value"],
         confidence,
+        emotionalValence,
+        situationalContext: baseSituationalContext,
         sourceEventId: event.eventId,
         userId: event.userId,
         sessionId: event.sessionId,
@@ -120,7 +132,7 @@ export function createFridayPreferenceExtractionService(
           const { correctedField, newValue } = readCorrectionPayload(event.payload);
           if (correctedField && newValue !== undefined) {
             const key = `pref:${normalizeKey(correctedField)}`;
-            signals.push(makeSignal("correction", key, newValue, 1.0));
+            signals.push(makeSignal("correction", key, newValue, 1.0, -0.3));
           }
           break;
         }
@@ -134,7 +146,7 @@ export function createFridayPreferenceExtractionService(
                 const key = rule.keyExtractor(match);
                 const value = rule.valueExtractor(match);
                 signals.push(
-                  makeSignal("preference", key, value, rule.confidence),
+                  makeSignal("preference", key, value, rule.confidence, 0.2),
                 );
                 break; // first match wins
               }
@@ -154,7 +166,7 @@ export function createFridayPreferenceExtractionService(
             const key = `tool_failure:${normalizeKey(toolName)}:${normalizeKey(errorCode)}`;
             const sig = computeSignature("tool_result", key, toolName);
             signals.push(
-              makeSignal("error", key, { toolName, errorCode, signature: sig }, 1.0),
+              makeSignal("error", key, { toolName, errorCode, signature: sig }, 1.0, -0.7),
             );
           }
           break;
@@ -185,7 +197,7 @@ export function createFridayPreferenceExtractionService(
             errorValue["severity"] = event.payload["severity"];
           }
           signals.push(
-            makeSignal("error", key, errorValue, 1.0),
+            makeSignal("error", key, errorValue, 1.0, -0.8),
           );
           break;
         }
@@ -198,7 +210,7 @@ export function createFridayPreferenceExtractionService(
             // Low-weight reinforcement for successful outcomes
             const key = `workflow_success:${normalizeKey(workflowId)}`;
             signals.push(
-              makeSignal("positive_feedback", key, { workflowId }, 0.55),
+              makeSignal("positive_feedback", key, { workflowId }, 0.55, 0.6),
             );
           } else if (
             success === false ||
@@ -217,6 +229,7 @@ export function createFridayPreferenceExtractionService(
                 key,
                 { workflowId, value: "low", error: errorMsg },
                 0.3,
+                -0.5,
               ),
             );
           }
@@ -242,6 +255,7 @@ export function createFridayPreferenceExtractionService(
                   fingerprint: event.payload["fingerprint"],
                 },
                 0.85,
+                -0.6,
               ),
             );
 
@@ -277,6 +291,7 @@ export function createFridayPreferenceExtractionService(
                     fingerprint: event.payload["fingerprint"],
                   },
                   0.75,
+                  -0.6,
                 ),
               );
             }
@@ -295,6 +310,7 @@ export function createFridayPreferenceExtractionService(
                   verificationSummary: event.payload["verificationSummary"],
                 },
                 0.9,
+                0.3,
               ),
             );
           }
