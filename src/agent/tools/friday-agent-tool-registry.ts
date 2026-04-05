@@ -54,6 +54,22 @@ import {
   createFridayAgentTaskStatusTool,
   type FridayAgentTaskStatusSnapshot,
 } from "./friday-agent-task-status-tool.js";
+import { createFridayAgentImageGenerateTool } from "./friday-agent-image-generate-tool.js";
+import { createFridayAgentDatabaseTool } from "./friday-agent-database-tool.js";
+import { createFridayAgentPdfTool } from "./friday-agent-pdf-tool.js";
+import { createFridayAgentEmailTool } from "./friday-agent-email-tool.js";
+import { createFridayAgentCalendarTool } from "./friday-agent-calendar-tool.js";
+import { createFridayAgentSttTool } from "./friday-agent-stt-tool.js";
+import { createFridayAgentDockerTool } from "./friday-agent-docker-tool.js";
+import { createFridayAgentDataAnalysisTool } from "./friday-agent-data-analysis-tool.js";
+import type { FridayImageGenerateService } from "../../media/friday-image-generate-service.js";
+import type { FridayDatabaseConnector } from "../../database/friday-database-connector.js";
+import type { FridayPdfExtractFn, FridayPdfGenerateFn } from "./friday-agent-pdf-tool.js";
+import type { FridayEmailService } from "./friday-agent-email-tool.js";
+import type { FridayCalendarService } from "../../calendar/friday-calendar-service.js";
+import type { FridaySttService } from "../../media/friday-stt-service.js";
+import type { FridayDockerService } from "../../containers/friday-docker-service.js";
+import type { FridayDataAnalysisService } from "./friday-agent-data-analysis-tool.js";
 
 // ─── Registry options ───
 
@@ -114,6 +130,24 @@ export interface CreateFridayAgentToolRegistryOptions {
   /** Deterministic task status snapshot getter for coordinator/status questions. */
   taskStatusSnapshotGetter?: (input: { runId?: string; sessionKey?: string; readOnly: boolean }) =>
     Promise<FridayAgentTaskStatusSnapshot> | FridayAgentTaskStatusSnapshot;
+  /** Image generation service for image_generate tool. */
+  imageGenerateService?: FridayImageGenerateService;
+  /** Database connector for database_query tool. */
+  databaseConnector?: FridayDatabaseConnector;
+  /** PDF text extraction function for pdf_process tool. */
+  pdfExtractFn?: FridayPdfExtractFn;
+  /** PDF generation function for pdf_process tool (optional). */
+  pdfGenerateFn?: FridayPdfGenerateFn;
+  /** Email service for email tool. */
+  emailService?: FridayEmailService;
+  /** Calendar service for calendar tool. */
+  calendarService?: FridayCalendarService;
+  /** Speech-to-text service for stt tool. */
+  sttService?: FridaySttService;
+  /** Docker service for docker tool. */
+  dockerService?: FridayDockerService;
+  /** Data analysis service for data_analysis tool. */
+  dataAnalysisService?: FridayDataAnalysisService;
 }
 
 // ─── Factory ───
@@ -282,6 +316,60 @@ export function createFridayAgentToolRegistry(
   if (options?.taskStatusSnapshotGetter) {
     tools.push(
       createFridayAgentTaskStatusTool({ getSnapshot: options.taskStatusSnapshotGetter }),
+    );
+  }
+
+  // ─── Community-driven tools ───
+
+  if (options?.imageGenerateService) {
+    tools.push(
+      createFridayAgentImageGenerateTool({ imageGenerateService: options.imageGenerateService }),
+    );
+  }
+
+  if (options?.databaseConnector) {
+    tools.push(
+      createFridayAgentDatabaseTool({ databaseConnector: options.databaseConnector }),
+    );
+  }
+
+  if (options?.pdfExtractFn) {
+    tools.push(
+      createFridayAgentPdfTool({
+        extractFn: options.pdfExtractFn,
+        generateFn: options.pdfGenerateFn,
+        workspaceRoot: workdir,
+      }),
+    );
+  }
+
+  if (options?.emailService) {
+    tools.push(
+      createFridayAgentEmailTool({ emailService: options.emailService }),
+    );
+  }
+
+  if (options?.calendarService) {
+    tools.push(
+      createFridayAgentCalendarTool({ calendarService: options.calendarService }),
+    );
+  }
+
+  if (options?.sttService) {
+    tools.push(
+      createFridayAgentSttTool({ sttService: options.sttService }),
+    );
+  }
+
+  if (options?.dockerService) {
+    tools.push(
+      createFridayAgentDockerTool({ dockerService: options.dockerService }),
+    );
+  }
+
+  if (options?.dataAnalysisService) {
+    tools.push(
+      createFridayAgentDataAnalysisTool({ dataAnalysisService: options.dataAnalysisService }),
     );
   }
 
