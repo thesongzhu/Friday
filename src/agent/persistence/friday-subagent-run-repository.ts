@@ -7,9 +7,9 @@ import { FRIDAY_SUBAGENT_ERROR_CODES } from "../subagent/friday-subagent-constan
 import type {
   FridaySubagentListFilters,
   FridaySubagentOutcome,
-  FridaySubagentSpawnMode,
   FridaySubagentRunRecord,
   FridaySubagentRunStatus,
+  FridaySubagentSpawnMode,
 } from "../subagent/friday-subagent.types.js";
 
 // ─── Row shape from SQLite ───
