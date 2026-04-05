@@ -253,6 +253,18 @@ describe("Friday Migration Chain (V001–V024)", () => {
     expect(tableNames).toContain("friday_subagent_runs");
   });
 
+  it("adds V064 subagent fork-mode columns", () => {
+    const db = freshDb();
+    runFridayMigrations({ db, migrations: FRIDAY_SQLITE_MIGRATIONS });
+
+    const columns = db.prepare("PRAGMA table_info(friday_subagent_runs)").all() as Array<{ name: string }>;
+    const columnNames = columns.map((column) => column.name);
+
+    expect(columnNames).toContain("mode");
+    expect(columnNames).toContain("forked_from_message_id");
+    expect(columnNames).toContain("inherited_message_count");
+  });
+
   // ─── V017–V022 agent anti-pattern tables/columns ───
 
   it("creates V019 friday_agent_run_events table", () => {

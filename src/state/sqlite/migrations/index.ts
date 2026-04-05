@@ -62,6 +62,7 @@ import { V060_UIX_ONBOARDING_SESSIONS_MIGRATION } from "./v060-uix-onboarding-se
 import { V061_WORLD_MODEL_READINESS_MIGRATION } from "./v061-world-model-readiness.js";
 import { V062_UIX_GUIDED_CONTEXTS_MIGRATION } from "./v062-uix-guided-contexts.js";
 import { V063_AUTH_PROFILES_MIGRATION } from "./v063-auth-profiles.js";
+import { V064_SUBAGENT_FORK_MODE_MIGRATION } from "./v064-subagent-fork-mode.js";
 
 /**
  * Ordered migration list, always ascending by version.
@@ -130,6 +131,7 @@ export const FRIDAY_SQLITE_MIGRATIONS: readonly FridaySqliteMigration[] = [
   V061_WORLD_MODEL_READINESS_MIGRATION,
   V062_UIX_GUIDED_CONTEXTS_MIGRATION,
   V063_AUTH_PROFILES_MIGRATION,
+  V064_SUBAGENT_FORK_MODE_MIGRATION,
 ];
 
 export { V003_PROVIDER_USAGE_COST_ROUTING_MIGRATION };
@@ -193,3 +195,4 @@ export { V060_UIX_ONBOARDING_SESSIONS_MIGRATION };
 export { V061_WORLD_MODEL_READINESS_MIGRATION };
 export { V062_UIX_GUIDED_CONTEXTS_MIGRATION };
 export { V063_AUTH_PROFILES_MIGRATION };
+export { V064_SUBAGENT_FORK_MODE_MIGRATION };

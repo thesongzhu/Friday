@@ -7,6 +7,7 @@ import { FRIDAY_SUBAGENT_ERROR_CODES } from "../subagent/friday-subagent-constan
 import type {
   FridaySubagentListFilters,
   FridaySubagentOutcome,
+  FridaySubagentSpawnMode,
   FridaySubagentRunRecord,
   FridaySubagentRunStatus,
 } from "../subagent/friday-subagent.types.js";
@@ -22,6 +23,9 @@ interface FridaySubagentRunRow {
   task: string;
   label: string | null;
   model: string | null;
+  mode: string;
+  forked_from_message_id: string | null;
+  inherited_message_count: number | null;
   depth: number;
   status: string;
   outcome: string | null;
@@ -45,6 +49,9 @@ function rowToRecord(row: FridaySubagentRunRow): FridaySubagentRunRecord {
     task: row.task,
     label: row.label ?? undefined,
     model: row.model ?? undefined,
+    mode: (row.mode as FridaySubagentSpawnMode) ?? "fresh",
+    forkedFromMessageId: row.forked_from_message_id ?? undefined,
+    inheritedMessageCount: row.inherited_message_count ?? undefined,
     depth: row.depth,
     status: row.status as FridaySubagentRunStatus,
     outcome: safeJsonParse<FridaySubagentOutcome>(row.outcome),
@@ -73,6 +80,9 @@ export interface FridaySubagentRunRepository {
       task: string;
       label?: string;
       model?: string;
+      mode?: FridaySubagentSpawnMode;
+      forkedFromMessageId?: string;
+      inheritedMessageCount?: number;
       depth: number;
       nowIso: string;
       requesterSessionKey?: string;
@@ -135,9 +145,10 @@ export function createFridaySubagentRunRepository(): FridaySubagentRunRepository
       db.prepare(
         `INSERT INTO friday_subagent_runs (
           id, parent_run_id, parent_session_key, child_run_id, child_session_key,
-          task, label, model, depth, status, created_at,
+          task, label, model, mode, forked_from_message_id, inherited_message_count,
+          depth, status, created_at,
           requester_session_key, root_run_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       ).run(
         input.id,
         input.parentRunId,
@@ -147,6 +158,9 @@ export function createFridaySubagentRunRepository(): FridaySubagentRunRepository
         input.task,
         input.label ?? null,
         input.model ?? null,
+        input.mode ?? "fresh",
+        input.forkedFromMessageId ?? null,
+        input.inheritedMessageCount ?? null,
         input.depth,
         input.nowIso,
         input.requesterSessionKey ?? null,

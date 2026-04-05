@@ -1,5 +1,6 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridayProviderTenantContext } from "#providers";
+import type { FridaySessionService } from "#sessions";
 import type {
   FridayAgentConversationContext,
   FridayAgentRuntimeResult,
@@ -21,6 +22,8 @@ export type FridaySubagentRunStatus =
   | "failed"
   | "cancelled";
 
+export type FridaySubagentSpawnMode = "fresh" | "fork";
+
 // ─── Sub-agent outcome (result summary) ───
 
 export interface FridaySubagentOutcome {
@@ -41,6 +44,9 @@ export interface FridaySubagentSpawnInput {
   model?: string;
   profile?: FridaySubagentProfileId;
   timeoutMs?: number;
+  mode?: FridaySubagentSpawnMode;
+  inheritMessageCount?: number;
+  forkFromMessageId?: string;
 }
 
 // ─── Sub-agent run record (persisted in SQLite) ───
@@ -54,6 +60,9 @@ export interface FridaySubagentRunRecord {
   task: string;
   label?: string;
   model?: string;
+  mode: FridaySubagentSpawnMode;
+  forkedFromMessageId?: string;
+  inheritedMessageCount?: number;
   depth: number;
   status: FridaySubagentRunStatus;
   outcome?: FridaySubagentOutcome;
@@ -95,6 +104,9 @@ export interface FridaySubagentDetachedResult {
   status: "accepted";
   statusSnapshot: FridaySubagentRunStatus;
   outcome?: FridaySubagentOutcome;
+  mode: FridaySubagentSpawnMode;
+  forkedFromMessageId?: string;
+  inheritedMessageCount?: number;
   detached: true;
   awaited: false;
 }
@@ -105,7 +117,7 @@ export interface FridaySubagentRegistry {
   /** Spawn a child run. Blocks until child completes. Returns outcome. */
   spawn(input: FridaySubagentRegistrySpawnInput): Promise<FridaySubagentOutcome>;
   /** Spawn a child run in detached mode. Returns immediately with accepted metadata. */
-  spawnDetached(input: FridaySubagentRegistrySpawnInput): FridaySubagentDetachedResult;
+  spawnDetached(input: FridaySubagentRegistrySpawnInput): Promise<FridaySubagentDetachedResult>;
   /** Wait for in-flight detached children to settle before shutdown. */
   drain(timeoutMs?: number): Promise<void>;
   /** Start a detached child run (called internally after spawnDetached). */
@@ -137,6 +149,9 @@ export interface FridaySubagentRegistrySpawnInput {
   profile?: FridaySubagentProfileId | FridaySubagentProfileInput;
   timezone?: string;
   timeoutMs?: number;
+  mode?: FridaySubagentSpawnMode;
+  inheritMessageCount?: number;
+  forkFromMessageId?: string;
   conversationContext?: FridayAgentConversationContext;
   tenantContext?: FridayProviderTenantContext;
   parentRunId: string;
@@ -183,6 +198,7 @@ export interface CreateFridaySubagentRegistryDeps {
   eventEmitter: FridayAgentEventEmitter;
   idGenerator: () => string;
   nowIso: () => string;
+  sessionService?: FridaySessionService;
 }
 
 export interface CreateChildRuntimeParams {

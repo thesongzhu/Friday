@@ -75,6 +75,7 @@ function makeRecord(overrides?: Partial<FridaySubagentRunRecord>): FridaySubagen
     childRunId: "child-run-1",
     childSessionKey: buildFridaySubagentSessionKey("agent:run:parent-run-1", "child-run-1"),
     task: "Test task",
+    mode: "fresh",
     depth: 1,
     status: "completed",
     outcome: makeOutcome(),
@@ -89,6 +90,7 @@ function makeDetachedResult(overrides?: Partial<FridaySubagentDetachedResult>): 
     subagentId: "sub-detached-1",
     childRunId: "child-run-detached-1",
     childSessionKey: buildFridaySubagentSessionKey("agent:run:parent-run-1", "child-run-detached-1"),
+    mode: "fresh",
     status: "accepted",
     statusSnapshot: "pending",
     detached: true,
@@ -100,7 +102,7 @@ function makeDetachedResult(overrides?: Partial<FridaySubagentDetachedResult>): 
 function mockRegistry(overrides?: Partial<FridaySubagentRegistry>): FridaySubagentRegistry {
   return {
     spawn: vi.fn().mockResolvedValue(makeOutcome()),
-    spawnDetached: vi.fn().mockReturnValue(makeDetachedResult()),
+    spawnDetached: vi.fn().mockResolvedValue(makeDetachedResult()),
     drain: vi.fn().mockResolvedValue(undefined),
     startRun: vi.fn().mockResolvedValue(makeOutcome()),
     waitForCompletion: vi.fn().mockResolvedValue(makeOutcome()),
@@ -140,6 +142,7 @@ describe("FridayAgentSubagentTools", () => {
       expect(parsed.subagentId).toBe("sub-detached-1");
       expect(parsed.childRunId).toBe("child-run-detached-1");
       expect(parsed.childSessionKey).toBeTruthy();
+      expect(parsed.mode).toBe("fresh");
       expect(registry.spawnDetached).toHaveBeenCalled();
       expect(registry.spawn).not.toHaveBeenCalled();
     });
@@ -152,7 +155,7 @@ describe("FridayAgentSubagentTools", () => {
         outcome: makeOutcome({ response: "CHILD_OK" }),
       });
       const registry = mockRegistry({
-        spawnDetached: vi.fn().mockReturnValue(makeDetachedResult()),
+        spawnDetached: vi.fn().mockResolvedValue(makeDetachedResult()),
         getById: vi.fn().mockReturnValue(completedRecord),
       });
 
@@ -169,6 +172,61 @@ describe("FridayAgentSubagentTools", () => {
       expect(parsed.statusSnapshot).toBe("completed");
       expect(parsed.outcome).toMatchObject({ response: "CHILD_OK" });
       expect(String(parsed.message)).toContain("completion snapshot");
+    });
+
+    it("passes explicit fork-mode arguments when the rollout is enabled", async () => {
+      const registry = mockRegistry({
+        spawnDetached: vi.fn().mockResolvedValue(makeDetachedResult({
+          mode: "fork",
+          forkedFromMessageId: "msg-9",
+          inheritedMessageCount: 4,
+        })),
+      });
+      const tools = createFridayAgentSubagentTools({
+        registry,
+        subagentContext: makeContext(),
+        forkModeEnabled: true,
+      });
+
+      const spawnTool = tools.find((t) => t.name === "spawn_subagent")!;
+      const result = await spawnTool.execute(
+        {
+          task: "Continue with parent context",
+          mode: "fork",
+          inheritMessageCount: 4,
+          forkFromMessageId: "msg-9",
+        },
+        signal(),
+      );
+
+      expect(registry.spawnDetached).toHaveBeenCalledWith(expect.objectContaining({
+        mode: "fork",
+        inheritMessageCount: 4,
+        forkFromMessageId: "msg-9",
+      }));
+      expect(JSON.parse(result.content)).toMatchObject({
+        mode: "fork",
+        forkedFromMessageId: "msg-9",
+        inheritedMessageCount: 4,
+      });
+    });
+
+    it("rejects fork-mode arguments when the rollout is disabled", async () => {
+      const registry = mockRegistry();
+      const tools = createFridayAgentSubagentTools({
+        registry,
+        subagentContext: makeContext(),
+      });
+
+      const spawnTool = tools.find((t) => t.name === "spawn_subagent")!;
+      const result = await spawnTool.execute(
+        { task: "Continue with parent context", mode: "fork" },
+        signal(),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain("fork mode is not enabled");
+      expect(registry.spawnDetached).not.toHaveBeenCalled();
     });
 
     it("passes through built-in profile selection", async () => {
@@ -320,7 +378,7 @@ describe("FridayAgentSubagentTools", () => {
     });
 
     it("passes optional params", async () => {
-      const spawnDetachedFn = vi.fn().mockReturnValue(makeDetachedResult());
+      const spawnDetachedFn = vi.fn().mockResolvedValue(makeDetachedResult());
       const registry = mockRegistry({ spawnDetached: spawnDetachedFn });
 
       const tools = createFridayAgentSubagentTools({
@@ -350,7 +408,7 @@ describe("FridayAgentSubagentTools", () => {
     });
 
     it("uses the current run context from the execution signal and inherits readOnly", async () => {
-      const spawnDetachedFn = vi.fn().mockReturnValue(makeDetachedResult());
+      const spawnDetachedFn = vi.fn().mockResolvedValue(makeDetachedResult());
       const registry = mockRegistry({ spawnDetached: spawnDetachedFn });
 
       const tools = createFridayAgentSubagentTools({
@@ -376,7 +434,7 @@ describe("FridayAgentSubagentTools", () => {
     });
 
     it("inherits timezone from the current run context", async () => {
-      const spawnDetachedFn = vi.fn().mockReturnValue(makeDetachedResult());
+      const spawnDetachedFn = vi.fn().mockResolvedValue(makeDetachedResult());
       const registry = mockRegistry({ spawnDetached: spawnDetachedFn });
 
       const tools = createFridayAgentSubagentTools({
@@ -398,7 +456,7 @@ describe("FridayAgentSubagentTools", () => {
     });
 
     it("forwards taskPrompt and conversationContext from the execution signal", async () => {
-      const spawnDetachedFn = vi.fn().mockReturnValue(makeDetachedResult());
+      const spawnDetachedFn = vi.fn().mockResolvedValue(makeDetachedResult());
       const registry = mockRegistry({ spawnDetached: spawnDetachedFn });
 
       const tools = createFridayAgentSubagentTools({
@@ -484,6 +542,7 @@ describe("FridayAgentSubagentTools", () => {
       const parsed = JSON.parse(result.content) as { count: number; subagents: unknown[] };
       expect(parsed.count).toBe(2);
       expect(parsed.subagents).toHaveLength(2);
+      expect((parsed.subagents[0] as Record<string, unknown>).mode).toBe("fresh");
     });
 
     it("filters by status", async () => {
@@ -550,6 +609,7 @@ describe("FridayAgentSubagentTools", () => {
       expect(parsed.id).toBe("sub-42");
       expect(parsed.childRunId).toBe("child-run-1");
       expect(parsed.task).toBe("Find specific");
+      expect(parsed.mode).toBe("fresh");
       expect(parsed.status).toBe("completed");
       expect(parsed.outcome).toBeDefined();
     });

@@ -420,6 +420,7 @@ export { createFridayAgentAutomationService } from "./services/friday-agent-auto
 
 export type {
   FridaySubagentRunStatus,
+  FridaySubagentSpawnMode,
   FridaySubagentOutcome,
   FridaySubagentSpawnInput,
   FridaySubagentRunRecord,

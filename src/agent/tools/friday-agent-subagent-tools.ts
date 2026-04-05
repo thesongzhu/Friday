@@ -5,6 +5,7 @@ import type {
   FridaySubagentContext,
   FridaySubagentRegistry,
   FridaySubagentRunStatus,
+  FridaySubagentSpawnMode,
 } from "../subagent/friday-subagent.types.js";
 import type { FridaySubagentProfileId } from "../subagent/friday-subagent-profile.js";
 import { getFridayAgentToolExecutionContext } from "../runtime/friday-agent-tool-execution-context.js";
@@ -20,6 +21,7 @@ import {
 export interface CreateFridayAgentSubagentToolsDeps {
   registry: FridaySubagentRegistry;
   subagentContext: FridaySubagentContext;
+  forkModeEnabled?: boolean;
 }
 
 // ─── Factory ───
@@ -91,6 +93,23 @@ function createSpawnSubagentTool(
           type: "boolean",
           description: "If true, block until sub-agent completes (legacy behavior). Default: false.",
         },
+        ...(deps.forkModeEnabled
+          ? {
+              mode: {
+                type: "string",
+                enum: ["fresh", "fork"],
+                description: "Optional spawn mode. Use fork to inherit parent session context from a fork point.",
+              },
+              inheritMessageCount: {
+                type: "number",
+                description: "Optional number of recent parent messages to inherit when mode=fork.",
+              },
+              forkFromMessageId: {
+                type: "string",
+                description: "Optional parent message ID to use as the fork point when mode=fork.",
+              },
+            }
+          : {}),
       },
       required: ["task"],
     },
@@ -102,7 +121,17 @@ function createSpawnSubagentTool(
       const profile = readStringParam(args, "profile") as FridaySubagentProfileId | undefined;
       const timeoutMs = readNumberParam(args, "timeoutMs", { integer: true });
       const wait = args.wait === true;
+      const mode = (readStringParam(args, "mode") as FridaySubagentSpawnMode | undefined) ?? "fresh";
+      const inheritMessageCount = readNumberParam(args, "inheritMessageCount", { integer: true });
+      const forkFromMessageId = readStringParam(args, "forkFromMessageId");
       const toolExecutionContext = getFridayAgentToolExecutionContext(signal);
+
+      if (!deps.forkModeEnabled && (args.mode !== undefined || args.inheritMessageCount !== undefined || args.forkFromMessageId !== undefined)) {
+        return errorResult("Sub-agent fork mode is not enabled in this deployment.");
+      }
+      if (mode !== "fresh" && mode !== "fork") {
+        return errorResult("spawn_subagent mode must be either 'fresh' or 'fork'.");
+      }
 
       try {
         const spawnInput = {
@@ -113,6 +142,9 @@ function createSpawnSubagentTool(
           profile,
           timezone: subagentContext.timezone,
           timeoutMs,
+          mode,
+          inheritMessageCount,
+          forkFromMessageId,
           conversationContext: toolExecutionContext?.conversationContext,
           parentRunId: subagentContext.parentRunId,
           parentSessionKey: subagentContext.parentSessionKey,
@@ -133,6 +165,7 @@ function createSpawnSubagentTool(
           if (outcome.status === "completed") {
             return jsonResult({
               status: "completed",
+              mode,
               response: outcome.response,
               stats: {
                 toolCallCount: outcome.toolCallCount,
@@ -150,7 +183,7 @@ function createSpawnSubagentTool(
         }
 
         // Non-blocking (detached) mode — default
-        const detached = deps.registry.spawnDetached(spawnInput);
+        const detached = await deps.registry.spawnDetached(spawnInput);
         const latestRecord = deps.registry.getById(detached.subagentId);
         const statusSnapshot = latestRecord?.status ?? detached.statusSnapshot;
         const outcome = statusSnapshot === "completed" || statusSnapshot === "failed" || statusSnapshot === "cancelled"
@@ -168,6 +201,11 @@ function createSpawnSubagentTool(
           childRunId: detached.childRunId,
           childSessionKey: detached.childSessionKey,
           ...(profile ? { profile } : {}),
+          mode: detached.mode,
+          ...(detached.forkedFromMessageId ? { forkedFromMessageId: detached.forkedFromMessageId } : {}),
+          ...(typeof detached.inheritedMessageCount === "number"
+            ? { inheritedMessageCount: detached.inheritedMessageCount }
+            : {}),
           statusSnapshot,
           ...(outcome ? { outcome } : {}),
           message,
@@ -212,10 +250,13 @@ function createListSubagentsTool(
         subagents: filtered.map((r) => ({
           id: r.id,
           childRunId: r.childRunId,
-          task: r.task,
-          label: r.label,
-          status: r.status,
-          depth: r.depth,
+        task: r.task,
+        label: r.label,
+        mode: r.mode,
+        forkedFromMessageId: r.forkedFromMessageId,
+        inheritedMessageCount: r.inheritedMessageCount,
+        status: r.status,
+        depth: r.depth,
           durationMs: r.durationMs,
           outcome: r.outcome
             ? {
@@ -274,6 +315,9 @@ function createGetSubagentTool(
         task: record.task,
         label: record.label,
         status: record.status,
+        mode: record.mode,
+        forkedFromMessageId: record.forkedFromMessageId,
+        inheritedMessageCount: record.inheritedMessageCount,
         depth: record.depth,
         durationMs: record.durationMs,
         childSessionKey: record.childSessionKey,

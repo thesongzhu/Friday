@@ -1703,6 +1703,9 @@ export async function createFridayHub(
         id: record.id,
         childRunId: record.childRunId,
         childSessionKey: record.childSessionKey,
+        mode: record.mode,
+        forkedFromMessageId: record.forkedFromMessageId,
+        inheritedMessageCount: record.inheritedMessageCount,
         status: record.status,
         task: record.task,
         label: record.label,
@@ -1725,6 +1728,9 @@ export async function createFridayHub(
         id: record.id,
         childRunId: record.childRunId,
         childSessionKey: record.childSessionKey,
+        mode: record.mode,
+        forkedFromMessageId: record.forkedFromMessageId,
+        inheritedMessageCount: record.inheritedMessageCount,
         status: record.status,
         task: record.task,
         label: record.label,
@@ -1893,6 +1899,7 @@ export async function createFridayHub(
     webSearchApiKey: process.env.FRIDAY_SERPER_API_KEY ?? process.env.FRIDAY_TAVILY_API_KEY,
     capabilitySnapshotGetter: getAgentCapabilitySnapshot,
     taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
+    subagentForkModeEnabled,
   });
 
   const mcpServer = (() => {
@@ -2788,6 +2795,7 @@ export async function createFridayHub(
 
   subagentRegistry = createFridaySubagentRegistry({
     db: stateRuntime!.sqlite,
+    sessionService: hubSessionService,
     createChildRuntime: (params) => {
       let childRuntimeRef: FridayAgentRuntime | undefined;
       const childRuntimeGetter = () => childRuntimeRef;
@@ -2824,6 +2832,7 @@ export async function createFridayHub(
         webSearchApiKey: process.env.FRIDAY_SERPER_API_KEY ?? process.env.FRIDAY_TAVILY_API_KEY,
         capabilitySnapshotGetter: getAgentCapabilitySnapshot,
         taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
+        subagentForkModeEnabled,
       });
       const childRuntime = createFridayAgentRuntime({
         db: stateRuntime!.sqlite,
@@ -4406,6 +4415,7 @@ export async function createFridayHub(
     const subagentTools = createFridayAgentSubagentTools({
       registry: subagentRegistry,
       subagentContext: topLevelSubagentContext,
+      forkModeEnabled: subagentForkModeEnabled,
     });
     for (const tool of subagentTools) {
       agentTools.push(tool);

@@ -115,6 +115,8 @@ export interface CreateFridayAgentToolRegistryOptions {
   /** Deterministic task status snapshot getter for coordinator/status questions. */
   taskStatusSnapshotGetter?: (input: { runId?: string; sessionKey?: string; readOnly: boolean }) =>
     Promise<FridayAgentTaskStatusSnapshot> | FridayAgentTaskStatusSnapshot;
+  /** Whether explicit subagent fork mode should be exposed in tool schema. */
+  subagentForkModeEnabled?: boolean;
 }
 
 // ─── Factory ───
@@ -171,6 +173,7 @@ export function createFridayAgentToolRegistry(
       ...createFridayAgentSubagentTools({
         registry: options.subagentRegistry,
         subagentContext: options.subagentContext,
+        forkModeEnabled: options.subagentForkModeEnabled,
       }),
     );
   }
