@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Auction Analyzer",
+  "description": "Analyze opening auction for sentiment and opportunities",
+  "sections": [
+    {
+      "id": "main",
+      "label": "Analysis Config (Analysis Configuration)",
+      "fieldIds": [
+        "symbols",
+        "auctionData"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "symbols",
+      "inputKey": "symbols",
+      "label": "Stock Code (Symbols)",
+      "widget": "tags",
+      "placeholder": "e.g. 000001, 600001"
+    },
+    {
+      "id": "auctionData",
+      "inputKey": "auctionData",
+      "label": "AuctionData (Auction Data)",
+      "widget": "json",
+      "placeholder": "Pre-fetched auction data (optional)"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-auctionSignals",
+      "outputKey": "auctionSignals",
+      "label": "Auction Signals (Auction Signals)",
+      "widget": "table"
+    },
+    {
+      "id": "output-marketOpenSentiment",
+      "outputKey": "marketOpenSentiment",
+      "label": "Market Open Sentiment (Market Open Sentiment)",
+      "widget": "text"
+    },
+    {
+      "id": "output-gapPlays",
+      "outputKey": "gapPlays",
+      "label": "Gap-Up Plays (Gap Plays)",
+      "widget": "table"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Analyze (Analyze)",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset (Reset)",
+      "style": "secondary"
+    }
+  ]
+}

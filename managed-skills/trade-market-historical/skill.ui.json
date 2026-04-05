@@ -1,0 +1,124 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Market Historical Data",
+  "description": "Fetch historical K-line and price data",
+  "sections": [
+    {
+      "id": "main",
+      "label": "Parameters",
+      "fieldIds": [
+        "symbol",
+        "period",
+        "startDate",
+        "endDate",
+        "adjustType"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "symbol",
+      "inputKey": "symbol",
+      "label": "Stock Code",
+      "widget": "text",
+      "placeholder": "e.g.: 000001",
+      "required": true
+    },
+    {
+      "id": "period",
+      "inputKey": "period",
+      "label": "K-Line Period",
+      "widget": "select",
+      "options": [
+        {
+          "value": "daily",
+          "label": "Daily"
+        },
+        {
+          "value": "weekly",
+          "label": "Weekly"
+        },
+        {
+          "value": "60min",
+          "label": "60Minutes"
+        },
+        {
+          "value": "30min",
+          "label": "30Minutes"
+        },
+        {
+          "value": "15min",
+          "label": "15Minutes"
+        },
+        {
+          "value": "5min",
+          "label": "5Minutes"
+        }
+      ],
+      "required": false
+    },
+    {
+      "id": "startDate",
+      "inputKey": "startDate",
+      "label": "Start Date",
+      "widget": "text",
+      "placeholder": "YYYYMMDD",
+      "required": false
+    },
+    {
+      "id": "endDate",
+      "inputKey": "endDate",
+      "label": "End Date",
+      "widget": "text",
+      "placeholder": "YYYYMMDD",
+      "required": false
+    },
+    {
+      "id": "adjustType",
+      "inputKey": "adjustType",
+      "label": "Adjust Type",
+      "widget": "select",
+      "options": [
+        {
+          "value": "qfq",
+          "label": "Forward Adjust"
+        },
+        {
+          "value": "hfq",
+          "label": "Backward Adjust"
+        },
+        {
+          "value": "none",
+          "label": "No Adjust"
+        }
+      ],
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-klines",
+      "outputKey": "klines",
+      "label": "K-lineData",
+      "widget": "json"
+    },
+    {
+      "id": "output-metadata",
+      "outputKey": "metadata",
+      "label": "ElementData",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "GetData",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

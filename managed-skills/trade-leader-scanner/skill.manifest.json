@@ -1,0 +1,154 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-leader-scanner",
+  "name": "Leader Stock Scanner",
+  "description": "Identifies current market leader stocks and their status based on position ranking, timing, sector alignment, resilience, and popularity metrics.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "ai",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": [
+    "trade",
+    "leader",
+    "Leader",
+    "limit-up"
+  ],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [],
+    "phrases": [
+      "龙头股",
+      "leader stocks",
+      "谁是龙头",
+      "find leaders",
+      "market leaders"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [
+      "node"
+    ],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "scope",
+      "type": "string",
+      "description": "Scan scope: market_wide, sector, or watchlist",
+      "required": false,
+      "default": "market_wide",
+      "enum": [
+        "market_wide",
+        "sector",
+        "watchlist"
+      ]
+    },
+    {
+      "key": "sector",
+      "type": "string",
+      "description": "Sector name to filter by (only used when scope=sector)",
+      "required": false
+    },
+    {
+      "key": "marketData",
+      "type": "object",
+      "description": "Pre-fetched limit-up pool data with stock entries",
+      "required": false
+    },
+    {
+      "key": "sentimentPhase",
+      "type": "string",
+      "description": "Current sentiment cycle phase (e.g. initiation, expansion, divergence, decline)",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "key": "leaders",
+      "type": "array",
+      "description": "Ranked leader candidates with composite scores"
+    },
+    {
+      "key": "leaderHistory",
+      "type": "array",
+      "description": "How leaders have evolved over recent sessions"
+    },
+    {
+      "key": "rotationSignal",
+      "type": "string",
+      "description": "Whether leader rotation is happening (stable|rotating|unclear)"
+    },
+    {
+      "key": "stdout",
+      "type": "string",
+      "description": "Command standard output"
+    },
+    {
+      "key": "stderr",
+      "type": "string",
+      "description": "Command standard error"
+    },
+    {
+      "key": "exitCode",
+      "type": "number",
+      "description": "Command exit code"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes leader scanning logic via run.sh"
+      }
+    ],
+    "promptOn": [
+      "shell.execute"
+    ]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

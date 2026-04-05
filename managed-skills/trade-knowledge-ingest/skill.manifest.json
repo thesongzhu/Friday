@@ -1,0 +1,150 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-knowledge-ingest",
+  "name": "Knowledge Ingest Engine",
+  "description": "Ingests trading knowledge base files into Friday memory system, chunked and tagged by topic, series, and type. Supports incremental import with content hash deduplication.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "ai",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": [
+    "trading",
+    "knowledge-base",
+    "ingest",
+    "a-stock"
+  ],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 300000
+  },
+  "triggers": {
+    "intents": [
+      "ingest_trading_knowledge"
+    ],
+    "phrases": [
+      "导入交易知识",
+      "load trading knowledge",
+      "ingest trade agent content",
+      "ingest knowledge",
+      "import knowledge base"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [
+      "node"
+    ],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "contentDir",
+      "type": "string",
+      "required": true,
+      "label": "Knowledge Base Directory",
+      "help": "Trade Agent OG Content directory path"
+    },
+    {
+      "key": "namespace",
+      "type": "string",
+      "required": false,
+      "label": "Namespace",
+      "help": "Memory namespace prefix",
+      "defaultValue": "trade-kb"
+    },
+    {
+      "key": "forceReindex",
+      "type": "boolean",
+      "required": false,
+      "label": "Force Reindex",
+      "help": "Ignore hash cache，force re-import all files",
+      "defaultValue": false
+    },
+    {
+      "key": "aiExportDir",
+      "type": "string",
+      "required": false,
+      "label": "AIExport Directory",
+      "help": "ai_export directory path，containing preprocessed CSV files"
+    }
+  ],
+  "outputs": [
+    {
+      "key": "chunksIngested",
+      "type": "number",
+      "description": "Number of chunks successfully ingested"
+    },
+    {
+      "key": "categoryCounts",
+      "type": "object",
+      "description": "Import count by category"
+    },
+    {
+      "key": "topicCounts",
+      "type": "object",
+      "description": "Import count by topic"
+    },
+    {
+      "key": "errors",
+      "type": "array",
+      "description": "List of errors during import"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "filesystem.read",
+        "resource": "filesystem",
+        "action": "read",
+        "required": true,
+        "reason": "Read knowledge basefilesContent"
+      },
+      {
+        "id": "memory.write",
+        "resource": "memory",
+        "action": "write",
+        "required": true,
+        "reason": "Store knowledge into Friday memory system"
+      }
+    ],
+    "promptOn": [
+      "filesystem.read"
+    ]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

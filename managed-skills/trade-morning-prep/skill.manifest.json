@@ -1,0 +1,113 @@
+{
+  "schemaVersion": "2.0",
+  "id": "trade-morning-prep",
+  "name": "Morning Prep Workflow",
+  "description": "Pre-market daily workflow that fetches market overview, analyzes sentiment cycle, scans leader stocks, checks portfolio exits, and generates trading signals.",
+  "version": "1.0.0",
+  "kind": "workflow",
+  "category": "automation",
+  "author": {
+    "name": "friday-trade"
+  },
+  "tags": [
+    "trade",
+    "workflow",
+    "morning",
+    "a-stock"
+  ],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 120000
+  },
+  "triggers": {
+    "schedule": [
+      {
+        "cron": "45 8 * * 1-5",
+        "timezone": "Asia/Shanghai"
+      }
+    ],
+    "intents": [],
+    "phrases": [
+      "早盘准备",
+      "morning prep",
+      "pre-market brief",
+      "daily prep"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 80,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [
+      "node"
+    ],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [],
+  "outputs": [
+    {
+      "key": "morningBrief",
+      "type": "object",
+      "description": "Complete morning prep report"
+    },
+    {
+      "key": "signals",
+      "type": "array",
+      "description": "Today's trade signals"
+    },
+    {
+      "key": "exitAlerts",
+      "type": "array",
+      "description": "Exit alerts for existing positions"
+    }
+  ],
+  "permissions": {
+    "grants": [
+      {
+        "id": "shell.execute",
+        "resource": "shell",
+        "action": "execute",
+        "required": true,
+        "reason": "Executes workflow orchestration script via run.sh"
+      }
+    ],
+    "promptOn": [
+      "shell.execute"
+    ]
+  },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": []
+  }
+}

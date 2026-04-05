@@ -1,0 +1,134 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Sentiment Cycle Analyzer",
+  "description": "Analyze market sentiment cycle phase",
+  "sections": [
+    {
+      "id": "market-data",
+      "label": "Market Data",
+      "fieldIds": [
+        "limitUpCount",
+        "limitDownCount",
+        "maxConsecutiveBoards",
+        "sectorBreadth",
+        "profitEffect",
+        "leadersStable",
+        "highLevelDivergence",
+        "leaderDivergence",
+        "consecutiveBoardBreak",
+        "highLevelSelloff"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "limitUpCount",
+      "inputKey": "marketData.limitUpCount",
+      "label": "Limit-Up Count",
+      "widget": "number",
+      "placeholder": "e.g. 45"
+    },
+    {
+      "id": "limitDownCount",
+      "inputKey": "marketData.limitDownCount",
+      "label": "Limit-Down Count",
+      "widget": "number",
+      "placeholder": "e.g. 10"
+    },
+    {
+      "id": "maxConsecutiveBoards",
+      "inputKey": "marketData.maxConsecutiveBoards",
+      "label": "Max Consecutive Boards",
+      "widget": "number",
+      "placeholder": "e.g. 4"
+    },
+    {
+      "id": "sectorBreadth",
+      "inputKey": "marketData.sectorBreadth",
+      "label": "Active Sector Count",
+      "widget": "number",
+      "placeholder": "e.g. 5"
+    },
+    {
+      "id": "profitEffect",
+      "inputKey": "marketData.profitEffect",
+      "label": "Profit Effect (-1 to 1)",
+      "widget": "number",
+      "placeholder": "e.g. 0.3"
+    },
+    {
+      "id": "leadersStable",
+      "inputKey": "marketData.leadersStable",
+      "label": "Leader Stabilizing",
+      "widget": "toggle"
+    },
+    {
+      "id": "highLevelDivergence",
+      "inputKey": "marketData.highLevelDivergence",
+      "label": "High-Level Stock Divergence",
+      "widget": "toggle"
+    },
+    {
+      "id": "leaderDivergence",
+      "inputKey": "marketData.leaderDivergence",
+      "label": "LeaderDivergence",
+      "widget": "toggle"
+    },
+    {
+      "id": "consecutiveBoardBreak",
+      "inputKey": "marketData.consecutiveBoardBreak",
+      "label": "Consecutive Board Break",
+      "widget": "toggle"
+    },
+    {
+      "id": "highLevelSelloff",
+      "inputKey": "marketData.highLevelSelloff",
+      "label": "High-Level Group Correction",
+      "widget": "toggle"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "output-phase",
+      "outputKey": "phase",
+      "label": "Sentiment Cycle Phase",
+      "widget": "text"
+    },
+    {
+      "id": "output-confidence",
+      "outputKey": "confidence",
+      "label": "Confidence",
+      "widget": "text"
+    },
+    {
+      "id": "output-keySignals",
+      "outputKey": "keySignals",
+      "label": "Key Signals",
+      "widget": "text"
+    },
+    {
+      "id": "output-tacticalImplication",
+      "outputKey": "tacticalImplication",
+      "label": "Tactical Implication",
+      "widget": "text"
+    },
+    {
+      "id": "output-metrics",
+      "outputKey": "metrics",
+      "label": "Raw Metrics",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Analyze",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}
