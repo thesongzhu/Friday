@@ -32,6 +32,8 @@ export interface FridayPreferenceFactRepository {
       lastConfirmedAt: string;
       sourceEventId: string;
       nowIso: string;
+      emotionalValence?: number;
+      metadata?: Record<string, unknown>;
     },
   ): FridayPreferenceFactEntity;
 
@@ -62,6 +64,10 @@ function rowToEntity(row: FridayPreferenceFactRow): FridayPreferenceFactEntity {
     evidenceCount: row.evidence_count,
     lastConfirmedAt: row.last_confirmed_at,
     sourceEventIds: safeJsonParse<string[]>(row.source_event_ids_json) ?? [],
+    emotionalValence: row.emotional_valence ?? undefined,
+    metadata: row.metadata_json
+      ? safeJsonParse<Record<string, unknown>>(row.metadata_json) ?? undefined
+      : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -112,6 +118,8 @@ export function createFridayPreferenceFactRepository(): FridayPreferenceFactRepo
                evidence_count = evidence_count + ?,
                last_confirmed_at = ?,
                source_event_ids_json = ?,
+               emotional_valence = COALESCE(?, emotional_valence),
+               metadata_json = COALESCE(?, metadata_json),
                updated_at = ?
            WHERE user_id = ? AND key = ?`,
         ).run(
@@ -120,6 +128,8 @@ export function createFridayPreferenceFactRepository(): FridayPreferenceFactRepo
           input.evidenceCountDelta,
           input.lastConfirmedAt,
           JSON.stringify(mergedSourceIds),
+          input.emotionalValence ?? null,
+          input.metadata ? JSON.stringify(input.metadata) : null,
           input.nowIso,
           input.userId,
           input.key,
@@ -128,8 +138,9 @@ export function createFridayPreferenceFactRepository(): FridayPreferenceFactRepo
         db.prepare(
           `INSERT INTO preference_facts
            (fact_id, user_id, key, value_json, confidence, evidence_count,
-            last_confirmed_at, source_event_ids_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            last_confirmed_at, source_event_ids_json, emotional_valence,
+            metadata_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           input.factId,
           input.userId,
@@ -139,6 +150,8 @@ export function createFridayPreferenceFactRepository(): FridayPreferenceFactRepo
           input.evidenceCountDelta,
           input.lastConfirmedAt,
           JSON.stringify([input.sourceEventId]),
+          input.emotionalValence ?? null,
+          input.metadata ? JSON.stringify(input.metadata) : null,
           input.nowIso,
           input.nowIso,
         );

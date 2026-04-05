@@ -2,6 +2,7 @@ import type { FridaySqliteLayer } from "#state";
 import type { FridayPreferenceFactService } from "./friday-preference-fact-service.js";
 import type { FridayLearningPatternRecognitionService } from "./friday-learning-pattern-recognition-service.js";
 import type { FridayLearningLifecycleService } from "./friday-learning-lifecycle-service.js";
+import type { FridayIndividuationService } from "./friday-individuation-service.js";
 import type {
   FridayLearningContext,
   JsonValue,
@@ -29,6 +30,7 @@ export interface CreateContextEnrichmentServiceDeps {
   factService: FridayPreferenceFactService;
   patternService: FridayLearningPatternRecognitionService;
   lifecycleService: FridayLearningLifecycleService;
+  individuationService?: FridayIndividuationService;
   contextUseThreshold?: number;
   lookbackDays?: number;
 }
@@ -70,12 +72,17 @@ export function createFridayLearningContextEnrichmentService(
         lookbackDays,
       });
 
+      const individuationStage = deps.individuationService
+        ? deps.individuationService.getStage(userId)?.stage
+        : undefined;
+
       return {
         userId,
         lifecycleState,
         preferences,
         appliedFacts,
         activePatterns,
+        individuationStage,
         generatedAt: nowIso,
       };
     },

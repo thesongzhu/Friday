@@ -680,3 +680,54 @@ function buildWorkspacePromptFragment(
 
   return "\n\n# Workspace Context\n\n" + sections.join("\n\n");
 }
+
+// ─── Learning Context Fragment ──────────────────────────────────
+
+/**
+ * Builds a compact markdown fragment summarising the user's learned
+ * patterns, individuation stage, and satisfaction trend for injection
+ * into the agent system prompt.
+ */
+export function buildFridayLearningContextFragment(input: {
+  individuationStage?: string;
+  activePatterns?: Array<{ kind: string; key: string; strength: number }>;
+  satisfactionTrend?: { average: number; trend: string; recentSessions: number };
+  maxChars?: number;
+}): string {
+  const maxChars = input.maxChars ?? 1200;
+  const parts: string[] = [];
+
+  if (input.individuationStage) {
+    parts.push(`**Individuation stage**: ${input.individuationStage}`);
+  }
+
+  if (input.satisfactionTrend && input.satisfactionTrend.recentSessions > 0) {
+    const t = input.satisfactionTrend;
+    parts.push(
+      `**Satisfaction**: avg ${t.average.toFixed(2)}, trend ${t.trend} (${t.recentSessions} sessions)`,
+    );
+  }
+
+  if (input.activePatterns && input.activePatterns.length > 0) {
+    const sorted = [...input.activePatterns]
+      .sort((a, b) => b.strength - a.strength)
+      .slice(0, 5);
+    const lines = sorted.map(
+      (p) => `- [${p.kind}] ${p.key} (strength ${p.strength.toFixed(2)})`,
+    );
+    parts.push("**Active patterns**:\n" + lines.join("\n"));
+  }
+
+  if (parts.length === 0) return "";
+
+  let fragment =
+    "<learning-context>\n" +
+    parts.join("\n") +
+    "\n</learning-context>";
+
+  if (fragment.length > maxChars) {
+    fragment = fragment.slice(0, maxChars - 3) + "...";
+  }
+
+  return fragment;
+}

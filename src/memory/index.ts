@@ -160,3 +160,10 @@ export { createFridayEpisodeExtractor } from "./services/friday-episode-extracto
 
 export type { FridayPatternExtractor, CreateFridayPatternExtractorDeps } from "./services/friday-pattern-extractor.js";
 export { createFridayPatternExtractor } from "./services/friday-pattern-extractor.js";
+
+// ─── Memory Consolidation ───
+
+export type { FridayMemoryConsolidationService, CreateFridayMemoryConsolidationServiceDeps } from "./services/friday-memory-consolidation-service.js";
+export { createFridayMemoryConsolidationService } from "./services/friday-memory-consolidation-service.js";
+export type { FridayConsolidationResult, FridayConsolidationConfig } from "./model/friday-memory-consolidation.types.js";
+export { FRIDAY_CONSOLIDATION_DEFAULTS } from "./model/friday-memory-consolidation.types.js";
