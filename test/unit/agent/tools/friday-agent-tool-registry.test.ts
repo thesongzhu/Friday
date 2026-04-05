@@ -192,7 +192,7 @@ describe("createFridayAgentToolRegistry", () => {
       capabilitySnapshotGetter: () => ({
         readOnly: false,
         messaging: { enabled: true, kinds: ["discord"] },
-        mcp: { enabled: false, serverCount: 0 },
+        mcp: { enabled: false, serverCount: 0, servers: [] },
         provider: { available: true, configuredCount: 1, mutationBlockedByReadOnly: false },
         browser: { activeMode: "host_chrome_visible", targetBrowser: "Google Chrome" },
         system: { enabled: true },

@@ -32,6 +32,7 @@ export const FRIDAY_SKILL_MANIFEST_DEFAULTS: ManifestDefaults = Object.freeze({
     env: [] as string[],
     config: [] as string[],
     os: ["darwin", "linux", "win32"] as Array<"darwin" | "linux" | "win32">,
+    mcpServers: [] as NonNullable<SkillManifestV2["requirements"]["mcpServers"]>,
   },
   inputs: [] as SkillManifestV2["inputs"],
   outputs: [] as SkillManifestV2["outputs"],
@@ -104,6 +105,9 @@ export function applyFridaySkillManifestDefaults(
       env: (rawRequirements.env as string[]) ?? [...defaults.requirements.env],
       config: (rawRequirements.config as string[]) ?? [...defaults.requirements.config],
       os: (rawRequirements.os as SkillManifestV2["requirements"]["os"]) ?? [...defaults.requirements.os],
+      mcpServers:
+        (rawRequirements.mcpServers as SkillManifestV2["requirements"]["mcpServers"]) ??
+        [...(defaults.requirements.mcpServers ?? [])],
     },
 
     inputs: (raw.inputs as SkillManifestV2["inputs"]) ?? [...defaults.inputs],

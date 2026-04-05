@@ -76,4 +76,32 @@ describe("FRIDAY_SKILL_MANIFEST_V2_SCHEMA", () => {
     const result = safeParseFridaySkillManifestV2(manifest);
     expect(result.success).toBe(true);
   });
+
+  it("accepts manifest with MCP server requirements", () => {
+    const manifest = makeManifest({
+      requirements: {
+        bins: [],
+        env: [],
+        config: [],
+        os: ["darwin", "linux", "win32"],
+        mcpServers: [{ name: "github", auth: "authenticated" }],
+      },
+    });
+    const result = safeParseFridaySkillManifestV2(manifest);
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects invalid MCP auth requirements", () => {
+    const manifest = makeManifest({
+      requirements: {
+        bins: [],
+        env: [],
+        config: [],
+        os: ["darwin", "linux", "win32"],
+        mcpServers: [{ name: "github", auth: "oauth" as "authenticated" }],
+      },
+    });
+    const result = safeParseFridaySkillManifestV2(manifest);
+    expect(result.success).toBe(false);
+  });
 });

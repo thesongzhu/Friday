@@ -144,6 +144,10 @@ export const FRIDAY_SKILL_MANIFEST_V2_SCHEMA: z.ZodType<SkillManifestV2> = z.obj
     env: z.array(z.string()),
     config: z.array(z.string()),
     os: z.array(OsSchema),
+    mcpServers: z.array(z.object({
+      name: z.string().min(1),
+      auth: z.enum(["connected", "authenticated"]),
+    }).strict()).optional(),
   }).strict(),
 
   inputs: z.array(InputDefinitionSchema),
