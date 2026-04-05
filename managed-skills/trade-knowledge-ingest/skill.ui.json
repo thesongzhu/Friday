@@ -1,65 +1,78 @@
 {
   "schemaVersion": "1.0",
-  "title": "交易知识导入引擎",
-  "description": "将交易知识库导入 Friday 记忆系统",
+  "title": "Knowledge Ingest Engine",
+  "description": "Import trading knowledge into Friday memory system",
   "sections": [
     {
       "id": "main",
-      "label": "导入配置",
-      "fieldIds": ["contentDir", "namespace", "forceReindex", "aiExportDir"]
+      "label": "Import Configuration",
+      "fieldIds": [
+        "contentDir",
+        "namespace",
+        "forceReindex",
+        "aiExportDir"
+      ]
     }
   ],
   "fields": [
     {
       "id": "contentDir",
       "inputKey": "contentDir",
-      "label": "知识库目录",
+      "label": "Knowledge Base Directory",
       "widget": "text",
-      "help": "Trade Agent OG 根目录路径"
+      "help": "Root directory path of the trading knowledge base"
     },
     {
       "id": "namespace",
       "inputKey": "namespace",
-      "label": "命名空间",
+      "label": "Namespace",
       "widget": "text",
-      "help": "记忆存储命名空间前缀"
+      "help": "Memory storage namespace prefix"
     },
     {
       "id": "forceReindex",
       "inputKey": "forceReindex",
-      "label": "强制重新索引",
+      "label": "Force Reindex",
       "widget": "checkbox"
     },
     {
       "id": "aiExportDir",
       "inputKey": "aiExportDir",
-      "label": "AI导出目录",
+      "label": "AI Export Directory",
       "widget": "text",
-      "help": "可选：直接指定 ai_export 目录"
+      "help": "Optional: specify ai_export directory directly"
     }
   ],
   "outputs": [
     {
       "id": "output-chunksIngested",
       "outputKey": "chunksIngested",
-      "label": "导入块数",
+      "label": "Chunks Ingested",
       "widget": "text"
     },
     {
       "id": "output-categoryCounts",
       "outputKey": "categoryCounts",
-      "label": "分类统计",
+      "label": "Category Counts",
       "widget": "json"
     },
     {
       "id": "output-errors",
       "outputKey": "errors",
-      "label": "错误列表",
+      "label": "Errors",
       "widget": "text"
     }
   ],
   "actions": [
-    { "id": "run", "label": "开始导入", "style": "primary" },
-    { "id": "reset", "label": "重置", "style": "secondary" }
+    {
+      "id": "run",
+      "label": "Start Import",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
   ]
 }

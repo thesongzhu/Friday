@@ -1,26 +1,29 @@
 {
   "schemaVersion": "1.0",
-  "title": "竞价分析器",
-  "description": "Analyzes the 9:15-9:25 opening auction to identify pre-market sentiment and opportunities.",
+  "title": "Auction Analyzer",
+  "description": "Analyze opening auction for sentiment and opportunities",
   "sections": [
     {
       "id": "main",
-      "label": "分析配置 (Analysis Configuration)",
-      "fieldIds": ["symbols", "auctionData"]
+      "label": "Analysis Config (Analysis Configuration)",
+      "fieldIds": [
+        "symbols",
+        "auctionData"
+      ]
     }
   ],
   "fields": [
     {
       "id": "symbols",
       "inputKey": "symbols",
-      "label": "股票代码 (Symbols)",
+      "label": "Stock Code (Symbols)",
       "widget": "tags",
       "placeholder": "e.g. 000001, 600001"
     },
     {
       "id": "auctionData",
       "inputKey": "auctionData",
-      "label": "竞价数据 (Auction Data)",
+      "label": "AuctionData (Auction Data)",
       "widget": "json",
       "placeholder": "Pre-fetched auction data (optional)"
     }
@@ -29,31 +32,31 @@
     {
       "id": "output-auctionSignals",
       "outputKey": "auctionSignals",
-      "label": "竞价信号 (Auction Signals)",
+      "label": "Auction Signals (Auction Signals)",
       "widget": "table"
     },
     {
       "id": "output-marketOpenSentiment",
       "outputKey": "marketOpenSentiment",
-      "label": "开盘情绪 (Market Open Sentiment)",
+      "label": "Market Open Sentiment (Market Open Sentiment)",
       "widget": "text"
     },
     {
       "id": "output-gapPlays",
       "outputKey": "gapPlays",
-      "label": "高开机会 (Gap Plays)",
+      "label": "Gap-Up Plays (Gap Plays)",
       "widget": "table"
     }
   ],
   "actions": [
     {
       "id": "run",
-      "label": "分析 (Analyze)",
+      "label": "Analyze (Analyze)",
       "style": "primary"
     },
     {
       "id": "reset",
-      "label": "重置 (Reset)",
+      "label": "Reset (Reset)",
       "style": "secondary"
     }
   ]

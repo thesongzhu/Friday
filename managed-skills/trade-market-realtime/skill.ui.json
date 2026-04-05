@@ -1,44 +1,66 @@
 {
   "schemaVersion": "1.0",
-  "title": "A股实时行情数据",
-  "description": "获取A股实时行情数据，支持个股报价、涨停池、板块热度、指数行情、集合竞价和龙虎榜。",
+  "title": "Market Realtime Data",
+  "description": "Fetch real-time market quotes and data",
   "sections": [
     {
       "id": "main",
-      "label": "参数配置",
-      "fieldIds": ["dataType", "symbols", "sector"]
+      "label": "Parameters",
+      "fieldIds": [
+        "dataType",
+        "symbols",
+        "sector"
+      ]
     }
   ],
   "fields": [
     {
       "id": "dataType",
       "inputKey": "dataType",
-      "label": "数据类型",
+      "label": "Data Type",
       "widget": "select",
       "options": [
-        {"value": "quote", "label": "个股报价"},
-        {"value": "limit_up_pool", "label": "涨停池"},
-        {"value": "sector_heat", "label": "板块热度"},
-        {"value": "index", "label": "指数行情"},
-        {"value": "auction", "label": "集合竞价"},
-        {"value": "dragon_tiger", "label": "龙虎榜"}
+        {
+          "value": "quote",
+          "label": "Stock Quotes"
+        },
+        {
+          "value": "limit_up_pool",
+          "label": "Limit-Up Pool"
+        },
+        {
+          "value": "sector_heat",
+          "label": "Sector Heat"
+        },
+        {
+          "value": "index",
+          "label": "Index Data"
+        },
+        {
+          "value": "auction",
+          "label": "Auction Data"
+        },
+        {
+          "value": "dragon_tiger",
+          "label": "Dragon-Tiger List"
+        }
       ],
       "required": true
     },
     {
       "id": "symbols",
       "inputKey": "symbols",
-      "label": "股票代码列表",
+      "label": "Stock CodeList",
       "widget": "text",
-      "placeholder": "例如: 000001,600519",
+      "placeholder": "e.g.: 000001,600519",
       "required": false
     },
     {
       "id": "sector",
       "inputKey": "sector",
-      "label": "板块名称",
+      "label": "SectorName",
       "widget": "text",
-      "placeholder": "例如: 半导体",
+      "placeholder": "e.g.: Semiconductor",
       "required": false
     }
   ],
@@ -46,31 +68,31 @@
     {
       "id": "output-data",
       "outputKey": "data",
-      "label": "行情数据",
+      "label": "QuoteData",
       "widget": "json"
     },
     {
       "id": "output-fetchedAt",
       "outputKey": "fetchedAt",
-      "label": "获取时间",
+      "label": "GetTime",
       "widget": "text"
     },
     {
       "id": "output-source",
       "outputKey": "source",
-      "label": "数据来源",
+      "label": "DataSource",
       "widget": "text"
     }
   ],
   "actions": [
     {
       "id": "run",
-      "label": "获取数据",
+      "label": "GetData",
       "style": "primary"
     },
     {
       "id": "reset",
-      "label": "重置",
+      "label": "Reset",
       "style": "secondary"
     }
   ]

@@ -1,11 +1,11 @@
 {
   "schemaVersion": "1.0",
-  "title": "交易绩效分析",
-  "description": "Analyzes trading performance over time with strategy-specific breakdowns.",
+  "title": "Performance Analytics",
+  "description": "Analyze trading performance and statistics",
   "sections": [
     {
       "id": "config",
-      "label": "分析设置",
+      "label": "Analysis Settings",
       "fieldIds": [
         "period",
         "byStrategy"
@@ -16,20 +16,35 @@
     {
       "id": "period",
       "inputKey": "period",
-      "label": "分析周期",
+      "label": "Analysis Period",
       "widget": "select",
       "options": [
-        { "label": "本周", "value": "week" },
-        { "label": "本月", "value": "month" },
-        { "label": "本季度", "value": "quarter" },
-        { "label": "本年", "value": "year" },
-        { "label": "全部", "value": "all" }
+        {
+          "label": "This Week",
+          "value": "week"
+        },
+        {
+          "label": "This Month",
+          "value": "month"
+        },
+        {
+          "label": "This Quarter",
+          "value": "quarter"
+        },
+        {
+          "label": "This Year",
+          "value": "year"
+        },
+        {
+          "label": "All",
+          "value": "all"
+        }
       ]
     },
     {
       "id": "byStrategy",
       "inputKey": "byStrategy",
-      "label": "按策略分组",
+      "label": "Group by Strategy",
       "widget": "toggle"
     }
   ],
@@ -37,49 +52,49 @@
     {
       "id": "output-summary",
       "outputKey": "summary",
-      "label": "绩效概览",
+      "label": "Performance Overview",
       "widget": "text"
     },
     {
       "id": "output-byStrategy",
       "outputKey": "byStrategy",
-      "label": "策略分析",
+      "label": "Strategy Analysis",
       "widget": "text"
     },
     {
       "id": "output-bestTrades",
       "outputKey": "bestTrades",
-      "label": "最佳交易 Top 5",
+      "label": "Best Trades Top 5",
       "widget": "text"
     },
     {
       "id": "output-worstTrades",
       "outputKey": "worstTrades",
-      "label": "最差交易 Top 5",
+      "label": "Worst Trades Top 5",
       "widget": "text"
     },
     {
       "id": "output-drawdownHistory",
       "outputKey": "drawdownHistory",
-      "label": "回撤历史",
+      "label": "Drawdown History",
       "widget": "text"
     },
     {
       "id": "output-suggestions",
       "outputKey": "suggestions",
-      "label": "改进建议",
+      "label": "Improvement Suggestions",
       "widget": "text"
     }
   ],
   "actions": [
     {
       "id": "run",
-      "label": "分析",
+      "label": "Analyze",
       "style": "primary"
     },
     {
       "id": "reset",
-      "label": "重置",
+      "label": "Reset",
       "style": "secondary"
     }
   ]

@@ -1,37 +1,41 @@
 {
   "schemaVersion": "1.0",
-  "title": "游资追踪器",
-  "description": "追踪A股游资活动，基于龙虎榜数据分析知名游资席位的买卖行为和重叠标的。",
+  "title": "Hot Money Tracker",
+  "description": "Track hot money trader activity via dragon-tiger list",
   "sections": [
     {
       "id": "main",
-      "label": "参数配置",
-      "fieldIds": ["date", "seatNames", "symbol"]
+      "label": "Parameters",
+      "fieldIds": [
+        "date",
+        "seatNames",
+        "symbol"
+      ]
     }
   ],
   "fields": [
     {
       "id": "date",
       "inputKey": "date",
-      "label": "查询日期",
+      "label": "Query Date",
       "widget": "text",
-      "placeholder": "YYYYMMDD，默认今天",
+      "placeholder": "YYYYMMDD，Default: today",
       "required": false
     },
     {
       "id": "seatNames",
       "inputKey": "seatNames",
-      "label": "游资席位名称",
+      "label": "Hot Money Seat Names",
       "widget": "text",
-      "placeholder": "例如: 东方财富拉萨,华鑫证券",
+      "placeholder": "e.g.: Dongfang Fortune Lhasa,Huaxin Securities",
       "required": false
     },
     {
       "id": "symbol",
       "inputKey": "symbol",
-      "label": "股票代码",
+      "label": "Stock Code",
       "widget": "text",
-      "placeholder": "例如: 000001",
+      "placeholder": "e.g.: 000001",
       "required": false
     }
   ],
@@ -39,31 +43,31 @@
     {
       "id": "output-topSeats",
       "outputKey": "topSeats",
-      "label": "活跃席位排名",
+      "label": "Top Active Seats",
       "widget": "json"
     },
     {
       "id": "output-seatActivity",
       "outputKey": "seatActivity",
-      "label": "席位活动明细",
+      "label": "Seat Activity Details",
       "widget": "json"
     },
     {
       "id": "output-overlaps",
       "outputKey": "overlaps",
-      "label": "多席位重叠标的",
+      "label": "Multi-Seat Overlap Stocks",
       "widget": "json"
     }
   ],
   "actions": [
     {
       "id": "run",
-      "label": "追踪游资",
+      "label": "Track Hot Money",
       "style": "primary"
     },
     {
       "id": "reset",
-      "label": "重置",
+      "label": "Reset",
       "style": "secondary"
     }
   ]

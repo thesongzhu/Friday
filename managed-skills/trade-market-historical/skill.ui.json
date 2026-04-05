@@ -1,42 +1,66 @@
 {
   "schemaVersion": "1.0",
-  "title": "A股历史K线数据",
-  "description": "获取A股历史K线数据，支持日线、周线和分钟级别K线，支持前复权和后复权。",
+  "title": "Market Historical Data",
+  "description": "Fetch historical K-line and price data",
   "sections": [
     {
       "id": "main",
-      "label": "参数配置",
-      "fieldIds": ["symbol", "period", "startDate", "endDate", "adjustType"]
+      "label": "Parameters",
+      "fieldIds": [
+        "symbol",
+        "period",
+        "startDate",
+        "endDate",
+        "adjustType"
+      ]
     }
   ],
   "fields": [
     {
       "id": "symbol",
       "inputKey": "symbol",
-      "label": "股票代码",
+      "label": "Stock Code",
       "widget": "text",
-      "placeholder": "例如: 000001",
+      "placeholder": "e.g.: 000001",
       "required": true
     },
     {
       "id": "period",
       "inputKey": "period",
-      "label": "K线周期",
+      "label": "K-Line Period",
       "widget": "select",
       "options": [
-        {"value": "daily", "label": "日线"},
-        {"value": "weekly", "label": "周线"},
-        {"value": "60min", "label": "60分钟"},
-        {"value": "30min", "label": "30分钟"},
-        {"value": "15min", "label": "15分钟"},
-        {"value": "5min", "label": "5分钟"}
+        {
+          "value": "daily",
+          "label": "Daily"
+        },
+        {
+          "value": "weekly",
+          "label": "Weekly"
+        },
+        {
+          "value": "60min",
+          "label": "60Minutes"
+        },
+        {
+          "value": "30min",
+          "label": "30Minutes"
+        },
+        {
+          "value": "15min",
+          "label": "15Minutes"
+        },
+        {
+          "value": "5min",
+          "label": "5Minutes"
+        }
       ],
       "required": false
     },
     {
       "id": "startDate",
       "inputKey": "startDate",
-      "label": "开始日期",
+      "label": "Start Date",
       "widget": "text",
       "placeholder": "YYYYMMDD",
       "required": false
@@ -44,7 +68,7 @@
     {
       "id": "endDate",
       "inputKey": "endDate",
-      "label": "结束日期",
+      "label": "End Date",
       "widget": "text",
       "placeholder": "YYYYMMDD",
       "required": false
@@ -52,12 +76,21 @@
     {
       "id": "adjustType",
       "inputKey": "adjustType",
-      "label": "复权类型",
+      "label": "Adjust Type",
       "widget": "select",
       "options": [
-        {"value": "qfq", "label": "前复权"},
-        {"value": "hfq", "label": "后复权"},
-        {"value": "none", "label": "不复权"}
+        {
+          "value": "qfq",
+          "label": "Forward Adjust"
+        },
+        {
+          "value": "hfq",
+          "label": "Backward Adjust"
+        },
+        {
+          "value": "none",
+          "label": "No Adjust"
+        }
       ],
       "required": false
     }
@@ -66,25 +99,25 @@
     {
       "id": "output-klines",
       "outputKey": "klines",
-      "label": "K线数据",
+      "label": "K-lineData",
       "widget": "json"
     },
     {
       "id": "output-metadata",
       "outputKey": "metadata",
-      "label": "元数据",
+      "label": "ElementData",
       "widget": "json"
     }
   ],
   "actions": [
     {
       "id": "run",
-      "label": "获取数据",
+      "label": "GetData",
       "style": "primary"
     },
     {
       "id": "reset",
-      "label": "重置",
+      "label": "Reset",
       "style": "secondary"
     }
   ]

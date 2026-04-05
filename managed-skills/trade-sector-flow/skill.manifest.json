@@ -1,15 +1,21 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-sector-flow",
-  "name": "板块资金流向",
-  "description": "获取A股板块资金流向数据，支持行业排名、概念排名、个股资金流和北向资金。",
+  "name": "Sector & Capital Flow",
+  "description": "Analyzes sector rotation and capital flow data: industry rankings, concept board rankings, individual stock fund flow, and northbound capital flow.",
   "version": "1.0.0",
   "kind": "system",
   "category": "integration",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trade", "akshare", "fund-flow", "sector", "a-stock"],
+  "tags": [
+    "trade",
+    "akshare",
+    "fund-flow",
+    "sector",
+    "a-stock"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -19,33 +25,56 @@
   },
   "triggers": {
     "intents": [],
-    "phrases": ["资金流向", "板块排名", "北向资金", "show fund flow"],
-    "channels": ["*"]
+    "phrases": [
+      "资金流向",
+      "板块排名",
+      "北向资金",
+      "show fund flow",
+      "sector flow",
+      "capital flow",
+      "sector rotation"
+    ],
+    "channels": [
+      "*"
+    ]
   },
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
     "priority": 50,
-    "modes": ["intent"]
+    "modes": [
+      "intent"
+    ]
   },
   "requirements": {
-    "bins": ["python3"],
+    "bins": [
+      "python3"
+    ],
     "env": [],
     "config": [],
-    "os": ["darwin", "linux", "win32"]
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
   },
   "inputs": [
     {
       "key": "flowType",
       "type": "string",
-      "description": "流向类型：sector_rank=行业板块排名, concept_rank=概念板块排名, industry_flow=个股资金流排名, northbound=北向资金",
+      "description": "Flow Type：sector_rank=Industry Sector Ranking, concept_rank=Concept Board Ranking, industry_flow=Stock Fund Flow Ranking, northbound=Northbound Capital",
       "required": true,
-      "enum": ["sector_rank", "concept_rank", "industry_flow", "northbound"]
+      "enum": [
+        "sector_rank",
+        "concept_rank",
+        "industry_flow",
+        "northbound"
+      ]
     },
     {
       "key": "topN",
       "type": "number",
-      "description": "返回前N条记录",
+      "description": "Return top NRecord",
       "required": false,
       "default": 10
     }
@@ -54,17 +83,17 @@
     {
       "key": "rankings",
       "type": "array",
-      "description": "排名数据"
+      "description": "RankingsData"
     },
     {
       "key": "flowData",
       "type": "object",
-      "description": "资金流向汇总"
+      "description": "Capital Flow Summary"
     },
     {
       "key": "trendChange",
       "type": "array",
-      "description": "趋势变化数据"
+      "description": "TrendChangesData"
     }
   ],
   "permissions": {
@@ -77,7 +106,9 @@
         "reason": "Executes Python script via run.sh to fetch fund flow data"
       }
     ],
-    "promptOn": ["shell.execute"]
+    "promptOn": [
+      "shell.execute"
+    ]
   },
   "schemas": {
     "input": null,
@@ -86,7 +117,12 @@
   },
   "flow": null,
   "executionTargets": {
-    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
     "requiredCapabilities": []
   },
   "telemetry": {

@@ -1,7 +1,13 @@
 ---
 skillKey: trade-signal-generator
-name: 交易信号生成器
+name: Trade Signal Generator
 author: friday-trade
 ---
 
-Synthesizes outputs from all analysis skills into concrete entry/exit signals. Cross-validates signals across multiple strategies, applies sentiment phase filtering, calculates position sizing, and ranks by confidence-weighted risk/reward ratio.
+Synthesizes outputs from all analysis skills into concrete entry/exit signals.
+
+Each signal includes: symbol, direction, strategy, entry zone, stop loss, target price, position size suggestion, confidence score, reasoning, and knowledge base references.
+
+```bash
+node index.mjs
+```

@@ -1,15 +1,21 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-hot-money-tracker",
-  "name": "游资追踪器",
-  "description": "追踪A股游资活动，基于龙虎榜数据分析知名游资席位的买卖行为和重叠标的。",
+  "name": "Hot Money Tracker",
+  "description": "Tracks hot money (institutional short-term traders) activity via dragon-tiger list data, analyzing known trading seat behavior and multi-seat overlap stocks.",
   "version": "1.0.0",
   "kind": "system",
   "category": "integration",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trade", "akshare", "hot-money", "dragon-tiger", "a-stock"],
+  "tags": [
+    "trade",
+    "akshare",
+    "hot-money",
+    "dragon-tiger",
+    "a-stock"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -19,38 +25,56 @@
   },
   "triggers": {
     "intents": [],
-    "phrases": ["游资追踪", "龙虎榜席位", "hot money tracker", "track seat activity"],
-    "channels": ["*"]
+    "phrases": [
+      "游资追踪",
+      "龙虎榜席位",
+      "hot money tracker",
+      "track seat activity",
+      "hot money",
+      "dragon tiger list",
+      "institutional tracker"
+    ],
+    "channels": [
+      "*"
+    ]
   },
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
     "priority": 50,
-    "modes": ["intent"]
+    "modes": [
+      "intent"
+    ]
   },
   "requirements": {
-    "bins": ["python3"],
+    "bins": [
+      "python3"
+    ],
     "env": [],
     "config": [],
-    "os": ["darwin", "linux", "win32"]
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
   },
   "inputs": [
     {
       "key": "date",
       "type": "string",
-      "description": "查询日期，格式 YYYYMMDD，默认今天",
+      "description": "Query Date，Format YYYYMMDD，Default: today",
       "required": false
     },
     {
       "key": "seatNames",
       "type": "array",
-      "description": "游资席位名称列表，用于过滤特定席位",
+      "description": "Hot money seat names list，Filter by specific seats",
       "required": false
     },
     {
       "key": "symbol",
       "type": "string",
-      "description": "股票代码，查询指定个股的龙虎榜席位",
+      "description": "Stock Code，QuerySpecifiedSingle StockDragon-Tiger ListSeats",
       "required": false
     }
   ],
@@ -58,17 +82,17 @@
     {
       "key": "topSeats",
       "type": "array",
-      "description": "活跃席位排名"
+      "description": "Top Active Seats"
     },
     {
       "key": "seatActivity",
       "type": "array",
-      "description": "席位买卖活动明细"
+      "description": "Seat Trading Details"
     },
     {
       "key": "overlaps",
       "type": "array",
-      "description": "多席位重叠标的"
+      "description": "Multi-Seat Overlap Stocks"
     }
   ],
   "permissions": {
@@ -81,7 +105,9 @@
         "reason": "Executes Python script via run.sh to fetch hot money data"
       }
     ],
-    "promptOn": ["shell.execute"]
+    "promptOn": [
+      "shell.execute"
+    ]
   },
   "schemas": {
     "input": null,
@@ -90,7 +116,12 @@
   },
   "flow": null,
   "executionTargets": {
-    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
     "requiredCapabilities": []
   },
   "telemetry": {

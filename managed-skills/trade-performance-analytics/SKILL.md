@@ -1,16 +1,13 @@
 ---
 skillKey: trade-performance-analytics
-name: 交易绩效分析
+name: Performance Analytics
 author: friday-trade
 ---
 
-Analyzes trading performance over time with strategy-specific breakdowns.
+Analyzes trading performance over time.
 
-Computes key metrics including:
-- Win rate, total P&L, average gain/loss, profit factor
-- Per-strategy performance breakdown (win rate, avg return, profit factor per strategy)
-- Top 5 best and worst trades
-- Drawdown history tracking (peak-to-trough decline)
-- Improvement suggestions based on detected patterns
+Metrics: win rate, total P&L, average gain/loss, profit factor, max drawdown, per-strategy breakdown, best/worst trades, and improvement suggestions.
 
-Accepts trade journal data and portfolio history as input, or reads from the trade-journal skill's data file if available.
+```bash
+node index.mjs
+```

@@ -1,9 +1,13 @@
 ---
 skillKey: trade-sector-flow
-name: 板块资金流向
+name: Sector & Capital Flow
 author: friday-trade
 ---
 
-获取A股板块资金流向数据，支持行业板块排名、概念板块排名、个股资金流排名和北向资金流向。
+Analyzes sector rotation and capital flow data via AKShare.
 
-使用 AKShare 库获取资金流向数据并以 JSON 格式输出。
+Supports: sector rankings, concept board rankings, individual stock fund flow, and northbound capital flow.
+
+```bash
+python3 main.py
+```

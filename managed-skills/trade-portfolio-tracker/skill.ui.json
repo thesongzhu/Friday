@@ -1,17 +1,26 @@
 {
   "schemaVersion": "1.0",
-  "title": "持仓跟踪器",
-  "description": "Tracks user's actual holdings, entry prices, current P&L, and position sizing.",
+  "title": "Portfolio Tracker",
+  "description": "Track positions, P&L, and trade history",
   "sections": [
     {
       "id": "action",
       "label": "Action",
-      "fieldIds": ["action"]
+      "fieldIds": [
+        "action"
+      ]
     },
     {
       "id": "trade",
       "label": "Trade Details",
-      "fieldIds": ["symbol", "shares", "price", "side", "date", "notes"]
+      "fieldIds": [
+        "symbol",
+        "shares",
+        "price",
+        "side",
+        "date",
+        "notes"
+      ]
     }
   ],
   "fields": [
@@ -21,10 +30,22 @@
       "label": "Action",
       "widget": "select",
       "options": [
-        { "value": "view", "label": "View Portfolio (查看持仓)" },
-        { "value": "add_position", "label": "Add Position (建仓)" },
-        { "value": "close_position", "label": "Close Position (平仓)" },
-        { "value": "update_price", "label": "Update Price (更新价格)" }
+        {
+          "value": "view",
+          "label": "View Portfolio (View Portfolio)"
+        },
+        {
+          "value": "add_position",
+          "label": "Add Position (Add Position)"
+        },
+        {
+          "value": "close_position",
+          "label": "Close Position (Close Position)"
+        },
+        {
+          "value": "update_price",
+          "label": "Update Price (Update Price)"
+        }
       ],
       "default": "view"
     },
@@ -55,8 +76,14 @@
       "label": "Side",
       "widget": "select",
       "options": [
-        { "value": "buy", "label": "Buy (买入)" },
-        { "value": "sell", "label": "Sell (卖出)" }
+        {
+          "value": "buy",
+          "label": "Buy (Buy)"
+        },
+        {
+          "value": "sell",
+          "label": "Sell (Sell)"
+        }
       ]
     },
     {

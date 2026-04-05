@@ -1,62 +1,90 @@
 {
   "schemaVersion": "1.0",
-  "title": "低吸机会扫描器",
-  "description": "Scans for dip-buying opportunities in trending/leader stocks.",
+  "title": "Dip-Buy Scanner",
+  "description": "Scan for dip-buying opportunities in trending stocks",
   "sections": [
     {
       "id": "main",
-      "label": "扫描配置 (Scan Configuration)",
-      "fieldIds": ["universe", "sector", "maxDrawdownPct", "sentimentPhase"]
+      "label": "Scan Config (Scan Configuration)",
+      "fieldIds": [
+        "universe",
+        "sector",
+        "maxDrawdownPct",
+        "sentimentPhase"
+      ]
     },
     {
       "id": "data",
-      "label": "数据 (Data)",
-      "fieldIds": ["marketData"]
+      "label": "Data (Data)",
+      "fieldIds": [
+        "marketData"
+      ]
     }
   ],
   "fields": [
     {
       "id": "universe",
       "inputKey": "universe",
-      "label": "股票池 (Universe)",
+      "label": "Stock Pool (Universe)",
       "widget": "select",
       "options": [
-        { "label": "龙头股 (Leaders)", "value": "leaders" },
-        { "label": "自选股 (Watchlist)", "value": "watchlist" },
-        { "label": "板块 (Sector)", "value": "sector" }
+        {
+          "label": "Leader Stocks (Leaders)",
+          "value": "leaders"
+        },
+        {
+          "label": "Watchlist (Watchlist)",
+          "value": "watchlist"
+        },
+        {
+          "label": "Sector (Sector)",
+          "value": "sector"
+        }
       ],
       "default": "leaders"
     },
     {
       "id": "sector",
       "inputKey": "sector",
-      "label": "板块名称 (Sector Name)",
+      "label": "SectorName (Sector Name)",
       "widget": "text",
-      "placeholder": "e.g. 半导体, AI, 新能源"
+      "placeholder": "e.g. Semiconductor, AI, New Energy"
     },
     {
       "id": "maxDrawdownPct",
       "inputKey": "maxDrawdownPct",
-      "label": "最大回撤% (Max Drawdown %)",
+      "label": "Max Drawdown% (Max Drawdown %)",
       "widget": "number",
       "default": 10
     },
     {
       "id": "sentimentPhase",
       "inputKey": "sentimentPhase",
-      "label": "情绪周期 (Sentiment Phase)",
+      "label": "Sentiment Cycle (Sentiment Phase)",
       "widget": "select",
       "options": [
-        { "label": "冰点 (Ice Point)", "value": "冰点" },
-        { "label": "回暖 (Warming)", "value": "回暖" },
-        { "label": "高潮 (Climax)", "value": "高潮" },
-        { "label": "退潮 (Ebb)", "value": "退潮" }
+        {
+          "label": "Ice Point (Ice Point)",
+          "value": "Ice Point"
+        },
+        {
+          "label": "Warming (Warming)",
+          "value": "Warming"
+        },
+        {
+          "label": "Climax (Climax)",
+          "value": "Climax"
+        },
+        {
+          "label": "Ebb (Ebb)",
+          "value": "Ebb"
+        }
       ]
     },
     {
       "id": "marketData",
       "inputKey": "marketData",
-      "label": "市场数据 (Market Data)",
+      "label": "MarketData (Market Data)",
       "widget": "json",
       "placeholder": "Pre-fetched OHLCV data (optional)"
     }
@@ -65,31 +93,31 @@
     {
       "id": "output-candidates",
       "outputKey": "candidates",
-      "label": "低吸候选 (Dip-Buy Candidates)",
+      "label": "Dip BuyCandidates (Dip-Buy Candidates)",
       "widget": "table"
     },
     {
       "id": "output-supportLevels",
       "outputKey": "supportLevels",
-      "label": "支撑位 (Support Levels)",
+      "label": "Support Levels (Support Levels)",
       "widget": "json"
     },
     {
       "id": "output-volumeConfirmation",
       "outputKey": "volumeConfirmation",
-      "label": "量能确认 (Volume Confirmation)",
+      "label": "Volume Confirmation (Volume Confirmation)",
       "widget": "json"
     }
   ],
   "actions": [
     {
       "id": "run",
-      "label": "扫描 (Scan)",
+      "label": "Scan (Scan)",
       "style": "primary"
     },
     {
       "id": "reset",
-      "label": "重置 (Reset)",
+      "label": "Reset (Reset)",
       "style": "secondary"
     }
   ]

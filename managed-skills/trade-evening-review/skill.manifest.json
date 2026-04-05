@@ -1,15 +1,21 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-evening-review",
-  "name": "收盘复盘工作流",
-  "description": "每个交易日收盘后自动执行的复盘工作流，汇总当日盈亏、交易日志、龙虎榜、明日研判和自选股。",
+  "name": "Evening Review Workflow",
+  "description": "Post-market daily review workflow that summarizes P&L, trade journal, dragon-tiger list activity, next-day outlook, and watchlist generation.",
   "version": "1.0.0",
   "kind": "workflow",
   "category": "automation",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trade", "workflow", "evening", "review", "a-stock"],
+  "tags": [
+    "trade",
+    "workflow",
+    "evening",
+    "review",
+    "a-stock"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -25,32 +31,47 @@
       }
     ],
     "intents": [],
-    "phrases": ["收盘复盘", "evening review"],
-    "channels": ["*"]
+    "phrases": [
+      "收盘复盘",
+      "evening review",
+      "post-market review",
+      "daily review"
+    ],
+    "channels": [
+      "*"
+    ]
   },
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
     "priority": 80,
-    "modes": ["intent"]
+    "modes": [
+      "intent"
+    ]
   },
   "requirements": {
-    "bins": ["node"],
+    "bins": [
+      "node"
+    ],
     "env": [],
     "config": [],
-    "os": ["darwin", "linux", "win32"]
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
   },
   "inputs": [],
   "outputs": [
     {
       "key": "eveningReport",
       "type": "object",
-      "description": "完整的收盘复盘报告"
+      "description": "Complete evening review report"
     },
     {
       "key": "tomorrowWatchlist",
       "type": "array",
-      "description": "明日自选股列表"
+      "description": "Tomorrow Watchlist"
     }
   ],
   "permissions": {
@@ -63,7 +84,9 @@
         "reason": "Executes workflow orchestration script via run.sh"
       }
     ],
-    "promptOn": ["shell.execute"]
+    "promptOn": [
+      "shell.execute"
+    ]
   },
   "schemas": {
     "input": null,
@@ -72,7 +95,12 @@
   },
   "flow": null,
   "executionTargets": {
-    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
     "requiredCapabilities": []
   },
   "telemetry": {

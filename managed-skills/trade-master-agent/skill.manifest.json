@@ -1,15 +1,20 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-master-agent",
-  "name": "交易主控Agent",
-  "description": "交易主控Agent，通过自然语言理解用户意图并路由到相应交易技能执行。",
+  "name": "Trade Master Agent",
+  "description": "Conversational trading assistant that routes natural language queries to the appropriate trading skills and orchestrates multi-skill workflows.",
   "version": "1.0.0",
   "kind": "conversation",
   "category": "ai",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trade", "agent", "nlp", "a-stock"],
+  "tags": [
+    "trade",
+    "agent",
+    "nlp",
+    "a-stock"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -18,33 +23,54 @@
     "timeoutMsDefault": 60000
   },
   "triggers": {
-    "intents": ["trade_assistant"],
-    "phrases": ["交易助手", "trade agent", "帮我分析", "帮我看看", "今天买什么"],
-    "channels": ["*"]
+    "intents": [
+      "trade_assistant"
+    ],
+    "phrases": [
+      "交易助手",
+      "trade agent",
+      "帮我分析",
+      "帮我看看",
+      "今天买什么",
+      "trade assistant",
+      "trading help",
+      "analyze for me"
+    ],
+    "channels": [
+      "*"
+    ]
   },
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
     "priority": 100,
-    "modes": ["intent"]
+    "modes": [
+      "intent"
+    ]
   },
   "requirements": {
-    "bins": ["node"],
+    "bins": [
+      "node"
+    ],
     "env": [],
     "config": [],
-    "os": ["darwin", "linux", "win32"]
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
   },
   "inputs": [
     {
       "key": "query",
       "type": "string",
-      "description": "用户的问题或指令",
+      "description": "User's question or command",
       "required": true
     },
     {
       "key": "context",
       "type": "object",
-      "description": "附加上下文信息",
+      "description": "Additional context",
       "required": false
     }
   ],
@@ -52,17 +78,17 @@
     {
       "key": "response",
       "type": "string",
-      "description": "Agent 的回复"
+      "description": "Agent Response"
     },
     {
       "key": "skillsUsed",
       "type": "array",
-      "description": "调用的技能列表"
+      "description": "Skills invoked"
     },
     {
       "key": "data",
       "type": "object",
-      "description": "结构化数据"
+      "description": "Structured data"
     }
   ],
   "permissions": {
@@ -75,7 +101,9 @@
         "reason": "Executes agent orchestration script via run.sh"
       }
     ],
-    "promptOn": ["shell.execute"]
+    "promptOn": [
+      "shell.execute"
+    ]
   },
   "schemas": {
     "input": null,
@@ -84,7 +112,12 @@
   },
   "flow": null,
   "executionTargets": {
-    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
     "requiredCapabilities": []
   },
   "telemetry": {

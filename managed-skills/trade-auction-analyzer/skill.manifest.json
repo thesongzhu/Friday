@@ -1,15 +1,21 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-auction-analyzer",
-  "name": "竞价分析器",
-  "description": "Analyzes the 9:15-9:25 opening auction to identify pre-market sentiment and opportunities.",
+  "name": "Auction Analyzer",
+  "description": "Analyzes the 9:15-9:25 opening auction to identify pre-market sentiment, buy/sell pressure, gap direction, volume intensity, and per-stock recommendations.",
   "version": "1.0.0",
   "kind": "system",
   "category": "ai",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trade", "auction", "竞价", "集合竞价", "A股"],
+  "tags": [
+    "trade",
+    "auction",
+    "Auction",
+    "Auction Data",
+    "AStock"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -19,7 +25,13 @@
   },
   "triggers": {
     "intents": [],
-    "phrases": ["竞价分析", "opening auction", "集合竞价"],
+    "phrases": [
+      "竞价分析",
+      "opening auction",
+      "集合竞价",
+      "auction analysis",
+      "pre-market scan"
+    ],
     "channels": [
       "*"
     ]
@@ -33,7 +45,9 @@
     ]
   },
   "requirements": {
-    "bins": ["node"],
+    "bins": [
+      "node"
+    ],
     "env": [],
     "config": [],
     "os": [

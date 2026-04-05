@@ -1,11 +1,11 @@
 {
   "schemaVersion": "1.0",
-  "title": "早盘准备工作流",
-  "description": "每个交易日开盘前自动执行，汇总市场数据、情绪研判、龙头扫描、持仓预警和交易信号。",
+  "title": "Morning Prep Workflow",
+  "description": "Pre-market analysis and signal generation",
   "sections": [
     {
       "id": "main",
-      "label": "工作流控制",
+      "label": "Workflow Control",
       "fieldIds": []
     }
   ],
@@ -14,31 +14,31 @@
     {
       "id": "output-morningBrief",
       "outputKey": "morningBrief",
-      "label": "早盘准备报告",
+      "label": "Morning Prep Report",
       "widget": "text"
     },
     {
       "id": "output-signals",
       "outputKey": "signals",
-      "label": "今日交易信号",
+      "label": "Today's trade signals",
       "widget": "json"
     },
     {
       "id": "output-exitAlerts",
       "outputKey": "exitAlerts",
-      "label": "持仓退出预警",
+      "label": "Position Exit Alerts",
       "widget": "json"
     }
   ],
   "actions": [
     {
       "id": "run",
-      "label": "执行早盘准备",
+      "label": "Run Morning Prep",
       "style": "primary"
     },
     {
       "id": "reset",
-      "label": "重置",
+      "label": "Reset",
       "style": "secondary"
     }
   ]

@@ -1,8 +1,8 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-performance-analytics",
-  "name": "交易绩效分析",
-  "description": "Analyzes trading performance over time with strategy-specific breakdowns.",
+  "name": "Performance Analytics",
+  "description": "Analyzes trading performance over time with win rate, profit factor, drawdown tracking, per-strategy breakdowns, and improvement suggestions.",
   "version": "1.0.0",
   "kind": "system",
   "category": "ai",
@@ -28,7 +28,10 @@
       "交易绩效",
       "绩效分析",
       "trade performance",
-      "trading analytics"
+      "trading analytics",
+      "performance analytics",
+      "trading stats",
+      "how am I doing"
     ],
     "channels": [
       "*"

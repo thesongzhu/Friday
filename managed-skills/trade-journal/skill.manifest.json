@@ -1,8 +1,8 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-journal",
-  "name": "交易日志",
-  "description": "Records trade decisions, outcomes, and reasoning. Builds the user's personal trading journal.",
+  "name": "Trade Journal",
+  "description": "Records trade decisions, outcomes, reasoning, and emotional state. Supports entry/exit logging, daily summaries, and pattern detection across trade history.",
   "version": "1.0.0",
   "kind": "system",
   "category": "utility",
@@ -28,7 +28,8 @@
       "交易日志",
       "记录交易",
       "trade journal",
-      "record trade"
+      "record trade",
+      "log trade"
     ],
     "channels": [
       "*"
@@ -76,7 +77,7 @@
     {
       "key": "strategy",
       "type": "string",
-      "description": "Which strategy was used (e.g. 打板, 低吸, 半路, 追涨)",
+      "description": "Which strategy was used (e.g. Board Hit, Dip Buy, Midway, Chase)",
       "required": false
     },
     {
@@ -120,7 +121,7 @@
     {
       "key": "sentimentPhase",
       "type": "string",
-      "description": "Market sentiment phase at time of trade (e.g. 冰点, 修复, 升温, 高潮, 分歧, 退潮)",
+      "description": "Market sentiment phase at time of trade (e.g. Ice Point, Repair, Warming, Climax, Divergence, Ebb)",
       "required": false
     },
     {

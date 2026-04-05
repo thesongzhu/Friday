@@ -1,9 +1,17 @@
 ---
 skillKey: trade-board-strategy
-name: 打板策略分析器
+name: Board Strategy Analyzer
 author: friday-trade
 ---
 
-Analyzes limit-up board trading opportunities across multiple strategies: 首板 (First Board), 一进二 (Second Board), 弱转强 (Weak to Strong Reversal), and 反包 (Reversal Wrap).
+Analyzes limit-up board trading opportunities across multiple strategies.
 
-Each strategy evaluates market data against specific entry conditions, seal strength, volume patterns, and theme persistence to produce ranked trade setups with confidence scores and risk warnings.
+Supports four strategy types:
+1. First Board - initial limit-up opportunities
+2. Second Board (1-to-2) - continuation plays
+3. Weak-to-Strong Reversal - momentum shift entries
+4. Reversal Wrap - recovery after failed breakouts
+
+```bash
+node index.mjs
+```

@@ -1,53 +1,55 @@
 {
   "schemaVersion": "1.0",
-  "title": "交易主控Agent",
-  "description": "通过自然语言理解用户意图并路由到相应交易技能执行。",
+  "title": "Trade Master Agent",
+  "description": "Natural language trading assistant",
   "sections": [
     {
       "id": "main",
-      "label": "对话",
-      "fieldIds": ["query"]
+      "label": "Conversation",
+      "fieldIds": [
+        "query"
+      ]
     }
   ],
   "fields": [
     {
       "id": "query",
       "inputKey": "query",
-      "label": "问题或指令",
+      "label": "Question or Command",
       "widget": "textarea",
-      "placeholder": "例如：今天行情怎么样？/ 帮我看看龙头股 / 今天买什么？",
-      "description": "输入你的交易相关问题或指令"
+      "placeholder": "e.g.：How is the market today？/ Help me checkLeader Stocks / What to buy today？",
+      "description": "Enter your trading-relatedQuestion or Command"
     }
   ],
   "outputs": [
     {
       "id": "output-response",
       "outputKey": "response",
-      "label": "Agent 回复",
+      "label": "Agent Response",
       "widget": "text"
     },
     {
       "id": "output-skillsUsed",
       "outputKey": "skillsUsed",
-      "label": "调用的技能",
+      "label": "Skills Used",
       "widget": "json"
     },
     {
       "id": "output-data",
       "outputKey": "data",
-      "label": "结构化数据",
+      "label": "Structured data",
       "widget": "json"
     }
   ],
   "actions": [
     {
       "id": "run",
-      "label": "发送",
+      "label": "Send",
       "style": "primary"
     },
     {
       "id": "reset",
-      "label": "清空",
+      "label": "Clear",
       "style": "secondary"
     }
   ]

@@ -1,30 +1,47 @@
 {
   "schemaVersion": "1.0",
-  "title": "交易用户画像",
-  "description": "管理用户交易配置文件 — 资金规模、风险偏好、持仓设置、交易风格、关注板块、自选股及通知偏好。",
+  "title": "User Trading Profile",
+  "description": "Manage your trading profile and preferences",
   "sections": [
     {
       "id": "action-section",
-      "label": "操作",
-      "fieldIds": ["action"]
+      "label": "Actions",
+      "fieldIds": [
+        "action"
+      ]
     },
     {
       "id": "params-section",
-      "label": "参数",
-      "fieldIds": ["field", "value"]
+      "label": "Parameters",
+      "fieldIds": [
+        "field",
+        "value"
+      ]
     }
   ],
   "fields": [
     {
       "id": "action",
       "inputKey": "action",
-      "label": "操作类型",
+      "label": "Action Type",
       "widget": "select",
       "options": [
-        { "label": "获取 (get)", "value": "get" },
-        { "label": "设置 (set)", "value": "set" },
-        { "label": "更新 (update)", "value": "update" },
-        { "label": "重置 (reset)", "value": "reset" }
+        {
+          "label": "Get",
+          "value": "get"
+        },
+        {
+          "label": "Set",
+          "value": "set"
+        },
+        {
+          "label": "Update",
+          "value": "update"
+        },
+        {
+          "label": "Reset",
+          "value": "reset"
+        }
       ],
       "required": true,
       "defaultValue": "get"
@@ -32,29 +49,62 @@
     {
       "id": "field",
       "inputKey": "field",
-      "label": "字段名称",
+      "label": "Field Name",
       "widget": "select",
       "options": [
-        { "label": "资金规模 (capitalSize)", "value": "capitalSize" },
-        { "label": "风险承受 (riskTolerance)", "value": "riskTolerance" },
-        { "label": "最大仓位% (maxPositionPct)", "value": "maxPositionPct" },
-        { "label": "最大持仓数 (maxConcurrentPositions)", "value": "maxConcurrentPositions" },
-        { "label": "交易风格 (preferredStyles)", "value": "preferredStyles" },
-        { "label": "关注板块 (preferredSectors)", "value": "preferredSectors" },
-        { "label": "自选股 (stockWatchlist)", "value": "stockWatchlist" },
-        { "label": "交易时段 (tradingHours)", "value": "tradingHours" },
-        { "label": "通知偏好 (notificationPrefs)", "value": "notificationPrefs" },
-        { "label": "经验水平 (experienceLevel)", "value": "experienceLevel" },
-        { "label": "游资席位 (trackedHotMoneySeats)", "value": "trackedHotMoneySeats" }
+        {
+          "label": "Capital Size",
+          "value": "capitalSize"
+        },
+        {
+          "label": "Risk Tolerance",
+          "value": "riskTolerance"
+        },
+        {
+          "label": "Max Position %",
+          "value": "maxPositionPct"
+        },
+        {
+          "label": "Max Concurrent Positions",
+          "value": "maxConcurrentPositions"
+        },
+        {
+          "label": "Preferred Styles",
+          "value": "preferredStyles"
+        },
+        {
+          "label": "Preferred Sectors",
+          "value": "preferredSectors"
+        },
+        {
+          "label": "Stock Watchlist",
+          "value": "stockWatchlist"
+        },
+        {
+          "label": "Trading Hours",
+          "value": "tradingHours"
+        },
+        {
+          "label": "Notification Preferences",
+          "value": "notificationPrefs"
+        },
+        {
+          "label": "Experience Level",
+          "value": "experienceLevel"
+        },
+        {
+          "label": "Tracked Hot Money Seats",
+          "value": "trackedHotMoneySeats"
+        }
       ],
       "required": false
     },
     {
       "id": "value",
       "inputKey": "value",
-      "label": "新值 (JSON)",
+      "label": "New Value (JSON)",
       "widget": "textarea",
-      "placeholder": "输入 JSON 格式的值",
+      "placeholder": "Enter value in JSON format",
       "required": false
     }
   ],
@@ -62,25 +112,25 @@
     {
       "id": "output-profile",
       "outputKey": "profile",
-      "label": "用户画像",
+      "label": "User Profile",
       "widget": "json"
     },
     {
       "id": "output-changes",
       "outputKey": "changesMade",
-      "label": "变更记录",
+      "label": "Changes Made",
       "widget": "json"
     }
   ],
   "actions": [
     {
       "id": "run",
-      "label": "执行",
+      "label": "Execute",
       "style": "primary"
     },
     {
       "id": "reset",
-      "label": "重置",
+      "label": "Reset",
       "style": "secondary"
     }
   ]

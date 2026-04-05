@@ -1,15 +1,20 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-leader-scanner",
-  "name": "龙头股扫描器",
-  "description": "Identifies current market leader stocks (人气龙头) and their status by scoring on position, timing, theme alignment, resilience, and popularity.",
+  "name": "Leader Stock Scanner",
+  "description": "Identifies current market leader stocks and their status based on position ranking, timing, sector alignment, resilience, and popularity metrics.",
   "version": "1.0.0",
   "kind": "system",
   "category": "ai",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trade", "leader", "龙头", "limit-up"],
+  "tags": [
+    "trade",
+    "leader",
+    "Leader",
+    "limit-up"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -19,20 +24,36 @@
   },
   "triggers": {
     "intents": [],
-    "phrases": ["龙头股", "leader stocks", "谁是龙头"],
-    "channels": ["*"]
+    "phrases": [
+      "龙头股",
+      "leader stocks",
+      "谁是龙头",
+      "find leaders",
+      "market leaders"
+    ],
+    "channels": [
+      "*"
+    ]
   },
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
     "priority": 50,
-    "modes": ["intent"]
+    "modes": [
+      "intent"
+    ]
   },
   "requirements": {
-    "bins": ["node"],
+    "bins": [
+      "node"
+    ],
     "env": [],
     "config": [],
-    "os": ["darwin", "linux", "win32"]
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
   },
   "inputs": [
     {
@@ -41,7 +62,11 @@
       "description": "Scan scope: market_wide, sector, or watchlist",
       "required": false,
       "default": "market_wide",
-      "enum": ["market_wide", "sector", "watchlist"]
+      "enum": [
+        "market_wide",
+        "sector",
+        "watchlist"
+      ]
     },
     {
       "key": "sector",
@@ -104,7 +129,9 @@
         "reason": "Executes leader scanning logic via run.sh"
       }
     ],
-    "promptOn": ["shell.execute"]
+    "promptOn": [
+      "shell.execute"
+    ]
   },
   "schemas": {
     "input": null,
@@ -113,7 +140,12 @@
   },
   "flow": null,
   "executionTargets": {
-    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
     "requiredCapabilities": []
   },
   "telemetry": {

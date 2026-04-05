@@ -1,18 +1,18 @@
 {
   "schemaVersion": "1.0",
-  "title": "交易日志",
-  "description": "Records trade decisions, outcomes, and reasoning. Builds the user's personal trading journal.",
+  "title": "Trade Journal",
+  "description": "Record and review trade decisions and outcomes",
   "sections": [
     {
       "id": "action",
-      "label": "操作",
+      "label": "Actions",
       "fieldIds": [
         "action"
       ]
     },
     {
       "id": "trade-info",
-      "label": "交易信息",
+      "label": "Trade Info",
       "fieldIds": [
         "symbol",
         "strategy",
@@ -25,7 +25,7 @@
     },
     {
       "id": "notes-query",
-      "label": "备注 / 查询",
+      "label": "Notes / Query",
       "fieldIds": [
         "notes",
         "query"
@@ -36,115 +36,145 @@
     {
       "id": "action",
       "inputKey": "action",
-      "label": "操作类型",
+      "label": "Action Type",
       "widget": "select",
       "options": [
-        { "label": "记录入场", "value": "record_entry" },
-        { "label": "记录出场", "value": "record_exit" },
-        { "label": "每日总结", "value": "daily_summary" },
-        { "label": "查询记录", "value": "query" }
+        {
+          "label": "Record Entry",
+          "value": "record_entry"
+        },
+        {
+          "label": "Record Exit",
+          "value": "record_exit"
+        },
+        {
+          "label": "Daily Summary",
+          "value": "daily_summary"
+        },
+        {
+          "label": "QueryRecord",
+          "value": "query"
+        }
       ]
     },
     {
       "id": "symbol",
       "inputKey": "symbol",
-      "label": "股票代码",
+      "label": "Stock Code",
       "widget": "text",
       "placeholder": "e.g. 000001"
     },
     {
       "id": "strategy",
       "inputKey": "strategy",
-      "label": "交易策略",
+      "label": "Trade Strategy",
       "widget": "text",
-      "placeholder": "e.g. 打板, 低吸, 半路"
+      "placeholder": "e.g. Board Hit, Dip Buy, Midway"
     },
     {
       "id": "entryPrice",
       "inputKey": "entryPrice",
-      "label": "入场价格",
+      "label": "Entry Price",
       "widget": "number",
       "placeholder": "e.g. 15.50"
     },
     {
       "id": "exitPrice",
       "inputKey": "exitPrice",
-      "label": "出场价格",
+      "label": "Exit Price",
       "widget": "number",
       "placeholder": "e.g. 16.80"
     },
     {
       "id": "shares",
       "inputKey": "shares",
-      "label": "交易股数",
+      "label": "Shares",
       "widget": "number",
       "placeholder": "e.g. 1000"
     },
     {
       "id": "sentimentPhase",
       "inputKey": "sentimentPhase",
-      "label": "情绪阶段",
+      "label": "Sentiment Phase",
       "widget": "text",
-      "placeholder": "e.g. 升温, 高潮"
+      "placeholder": "e.g. Warming, Climax"
     },
     {
       "id": "emotionalState",
       "inputKey": "emotionalState",
-      "label": "情绪状态",
+      "label": "Emotional State",
       "widget": "select",
       "options": [
-        { "label": "冷静 (calm)", "value": "calm" },
-        { "label": "焦虑 (anxious)", "value": "anxious" },
-        { "label": "贪婪 (greedy)", "value": "greedy" },
-        { "label": "恐惧 (fearful)", "value": "fearful" },
-        { "label": "自信 (confident)", "value": "confident" },
-        { "label": "追涨冲动 (fomo)", "value": "fomo" }
+        {
+          "label": "Calm (calm)",
+          "value": "calm"
+        },
+        {
+          "label": "Anxious (anxious)",
+          "value": "anxious"
+        },
+        {
+          "label": "Greedy (greedy)",
+          "value": "greedy"
+        },
+        {
+          "label": "Fearful (fearful)",
+          "value": "fearful"
+        },
+        {
+          "label": "Confident (confident)",
+          "value": "confident"
+        },
+        {
+          "label": "ChaseImpulsive (fomo)",
+          "value": "fomo"
+        }
       ]
     },
     {
       "id": "notes",
       "inputKey": "notes",
-      "label": "备注",
+      "label": "Notes",
       "widget": "text",
-      "placeholder": "交易逻辑、想法、复盘笔记..."
+      "placeholder": "Trading Logic、Ideas、Review Notes..."
     },
     {
       "id": "query",
       "inputKey": "query",
-      "label": "查询内容",
+      "label": "QueryContent",
       "widget": "text",
-      "placeholder": "按日期/代码/策略/关键词搜索"
+      "placeholder": "DailyPhase/Code/Strategy/Keyword Search"
     }
   ],
   "outputs": [
     {
       "id": "output-entry",
       "outputKey": "entry",
-      "label": "日志条目",
+      "label": "Journal Entry",
       "widget": "text"
     },
     {
       "id": "output-patterns",
       "outputKey": "patterns",
-      "label": "行为模式",
+      "label": "Behavioral Patterns",
       "widget": "text"
     },
     {
       "id": "output-stats",
       "outputKey": "stats",
-      "label": "统计数据",
+      "label": "Statistics",
       "widget": "text"
     }
   ],
   "actions": [
     {
       "id": "run",
-      "label": "执行",
+      "label": "Execute",
       "style": "primary"
     },
     {
       "id": "reset",
-      "label": "重置",
+      "label": "Reset",
       "style": "secondary"
     }
   ]

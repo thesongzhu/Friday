@@ -1,15 +1,21 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-live-session",
-  "name": "盘中监控工作流",
-  "description": "交易时段每15分钟执行一次的盘中监控工作流，监控持仓风险和实时交易机会。",
+  "name": "Live Session Monitor",
+  "description": "Intraday monitoring workflow that checks exit conditions and scans for new opportunities every 15 minutes during trading hours. Only alerts on actionable events.",
   "version": "1.0.0",
   "kind": "workflow",
   "category": "automation",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trade", "workflow", "live", "monitor", "a-stock"],
+  "tags": [
+    "trade",
+    "workflow",
+    "live",
+    "monitor",
+    "a-stock"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -25,26 +31,41 @@
       }
     ],
     "intents": [],
-    "phrases": ["盘中监控", "live session"],
-    "channels": ["*"]
+    "phrases": [
+      "盘中监控",
+      "live session",
+      "live monitor",
+      "intraday scan"
+    ],
+    "channels": [
+      "*"
+    ]
   },
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
     "priority": 90,
-    "modes": ["intent"]
+    "modes": [
+      "intent"
+    ]
   },
   "requirements": {
-    "bins": ["node"],
+    "bins": [
+      "node"
+    ],
     "env": [],
     "config": [],
-    "os": ["darwin", "linux", "win32"]
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
   },
   "inputs": [
     {
       "key": "urgencyOnly",
       "type": "boolean",
-      "description": "仅输出紧急告警，跳过常规监控信息",
+      "description": "Output urgent alerts only，Skip routine monitoring info",
       "required": false,
       "default": false
     }
@@ -53,12 +74,12 @@
     {
       "key": "alerts",
       "type": "array",
-      "description": "可执行的告警列表"
+      "description": "List of actionable alerts"
     },
     {
       "key": "marketSnapshot",
       "type": "object",
-      "description": "当前市场快照"
+      "description": "Current market snapshot"
     }
   ],
   "permissions": {
@@ -71,7 +92,9 @@
         "reason": "Executes workflow orchestration script via run.sh"
       }
     ],
-    "promptOn": ["shell.execute"]
+    "promptOn": [
+      "shell.execute"
+    ]
   },
   "schemas": {
     "input": null,
@@ -80,7 +103,12 @@
   },
   "flow": null,
   "executionTargets": {
-    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
     "requiredCapabilities": []
   },
   "telemetry": {

@@ -1,15 +1,20 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-morning-prep",
-  "name": "早盘准备工作流",
-  "description": "每个交易日开盘前自动执行的早盘准备工作流，汇总市场数据、情绪研判、龙头扫描、持仓预警和交易信号。",
+  "name": "Morning Prep Workflow",
+  "description": "Pre-market daily workflow that fetches market overview, analyzes sentiment cycle, scans leader stocks, checks portfolio exits, and generates trading signals.",
   "version": "1.0.0",
   "kind": "workflow",
   "category": "automation",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trade", "workflow", "morning", "a-stock"],
+  "tags": [
+    "trade",
+    "workflow",
+    "morning",
+    "a-stock"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -25,37 +30,52 @@
       }
     ],
     "intents": [],
-    "phrases": ["早盘准备", "morning prep"],
-    "channels": ["*"]
+    "phrases": [
+      "早盘准备",
+      "morning prep",
+      "pre-market brief",
+      "daily prep"
+    ],
+    "channels": [
+      "*"
+    ]
   },
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
     "priority": 80,
-    "modes": ["intent"]
+    "modes": [
+      "intent"
+    ]
   },
   "requirements": {
-    "bins": ["node"],
+    "bins": [
+      "node"
+    ],
     "env": [],
     "config": [],
-    "os": ["darwin", "linux", "win32"]
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
   },
   "inputs": [],
   "outputs": [
     {
       "key": "morningBrief",
       "type": "object",
-      "description": "完整的早盘准备报告"
+      "description": "Complete morning prep report"
     },
     {
       "key": "signals",
       "type": "array",
-      "description": "今日交易信号"
+      "description": "Today's trade signals"
     },
     {
       "key": "exitAlerts",
       "type": "array",
-      "description": "现有持仓退出预警"
+      "description": "Exit alerts for existing positions"
     }
   ],
   "permissions": {
@@ -68,7 +88,9 @@
         "reason": "Executes workflow orchestration script via run.sh"
       }
     ],
-    "promptOn": ["shell.execute"]
+    "promptOn": [
+      "shell.execute"
+    ]
   },
   "schemas": {
     "input": null,
@@ -77,7 +99,12 @@
   },
   "flow": null,
   "executionTargets": {
-    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
     "requiredCapabilities": []
   },
   "telemetry": {

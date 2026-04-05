@@ -1,8 +1,8 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-strategy-fitness",
-  "name": "策略适配度分析",
-  "description": "Analyzes which trading strategies work best for the specific user and recommends focus areas.",
+  "name": "Strategy Fitness Analyzer",
+  "description": "Analyzes which trading strategies work best for the specific user based on historical performance, and recommends focus areas and profile updates.",
   "version": "1.0.0",
   "kind": "system",
   "category": "ai",
@@ -29,7 +29,9 @@
       "策略适配",
       "策略分析",
       "strategy fitness",
-      "哪个策略适合我"
+      "哪个策略适合我",
+      "which strategy works",
+      "strategy evaluation"
     ],
     "channels": [
       "*"

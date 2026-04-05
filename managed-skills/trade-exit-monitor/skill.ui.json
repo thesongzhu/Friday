@@ -1,17 +1,24 @@
 {
   "schemaVersion": "1.0",
-  "title": "持仓退出监控",
-  "description": "Monitors open positions and generates exit signals based on knowledge base rules.",
+  "title": "Exit Monitor",
+  "description": "Monitor positions for exit conditions",
   "sections": [
     {
       "id": "config",
       "label": "Monitor Settings",
-      "fieldIds": ["urgencyMode", "sentimentPhase"]
+      "fieldIds": [
+        "urgencyMode",
+        "sentimentPhase"
+      ]
     },
     {
       "id": "data",
       "label": "Position & Market Data",
-      "fieldIds": ["portfolio", "marketData", "leaders"]
+      "fieldIds": [
+        "portfolio",
+        "marketData",
+        "leaders"
+      ]
     }
   ],
   "fields": [
@@ -21,8 +28,14 @@
       "label": "Urgency Mode",
       "widget": "select",
       "options": [
-        { "value": "false", "label": "Full Check (完整检查)" },
-        { "value": "true", "label": "Emergency Only (仅紧急止损)" }
+        {
+          "value": "false",
+          "label": "Full Check (Full Check)"
+        },
+        {
+          "value": "true",
+          "label": "Emergency Only (Urgent Stops Only)"
+        }
       ],
       "default": "false"
     },
@@ -32,12 +45,30 @@
       "label": "Sentiment Phase",
       "widget": "select",
       "options": [
-        { "value": "", "label": "Unknown" },
-        { "value": "initiation", "label": "启动期 (Initiation)" },
-        { "value": "expansion", "label": "扩散期 (Expansion)" },
-        { "value": "divergence", "label": "分歧期 (Divergence)" },
-        { "value": "decline", "label": "退潮期 (Decline)" },
-        { "value": "ice", "label": "冰点期 (Ice)" }
+        {
+          "value": "",
+          "label": "Unknown"
+        },
+        {
+          "value": "initiation",
+          "label": "Startup Phase (Initiation)"
+        },
+        {
+          "value": "expansion",
+          "label": "Expansion Phase (Expansion)"
+        },
+        {
+          "value": "divergence",
+          "label": "Divergence Phase (Divergence)"
+        },
+        {
+          "value": "decline",
+          "label": "EbbPhase (Decline)"
+        },
+        {
+          "value": "ice",
+          "label": "Ice PointPhase (Ice)"
+        }
       ]
     },
     {

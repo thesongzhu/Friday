@@ -1,15 +1,21 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-exit-monitor",
-  "name": "持仓退出监控",
-  "description": "Monitors open positions and generates exit signals based on knowledge base rules.",
+  "name": "Exit Monitor",
+  "description": "Monitors open positions and generates exit signals based on technical stops, time stops, sentiment cycle deterioration, and leader rotation rules.",
   "version": "1.0.0",
   "kind": "system",
   "category": "ai",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trade", "exit", "止损", "monitor", "持仓"],
+  "tags": [
+    "trade",
+    "exit",
+    "止损",
+    "monitor",
+    "Portfolio"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -19,20 +25,37 @@
   },
   "triggers": {
     "intents": [],
-    "phrases": ["退出监控", "exit monitor", "止损", "该卖吗", "should I sell"],
-    "channels": ["*"]
+    "phrases": [
+      "退出监控",
+      "exit monitor",
+      "止损",
+      "该卖吗",
+      "should I sell",
+      "stop loss check"
+    ],
+    "channels": [
+      "*"
+    ]
   },
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
     "priority": 50,
-    "modes": ["intent"]
+    "modes": [
+      "intent"
+    ]
   },
   "requirements": {
-    "bins": ["node"],
+    "bins": [
+      "node"
+    ],
     "env": [],
     "config": [],
-    "os": ["darwin", "linux", "win32"]
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
   },
   "inputs": [
     {
@@ -104,7 +127,9 @@
         "reason": "Executes exit monitoring logic via run.sh"
       }
     ],
-    "promptOn": ["shell.execute"]
+    "promptOn": [
+      "shell.execute"
+    ]
   },
   "schemas": {
     "input": null,
@@ -113,7 +138,12 @@
   },
   "flow": null,
   "executionTargets": {
-    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
     "requiredCapabilities": []
   },
   "telemetry": {

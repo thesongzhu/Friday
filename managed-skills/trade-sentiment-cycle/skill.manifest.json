@@ -1,8 +1,8 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-sentiment-cycle",
-  "name": "情绪周期分析器",
-  "description": "Analyzes market data to determine the current sentiment cycle phase (冰点→修复→升温→高潮→分歧→退潮) and provides tactical implications.",
+  "name": "Sentiment Cycle Analyzer",
+  "description": "Determines the current market sentiment cycle phase (ice point, repair, warming, climax, divergence, ebb) and provides tactical trading implications.",
   "version": "1.0.0",
   "kind": "system",
   "category": "ai",
@@ -27,7 +27,10 @@
     "phrases": [
       "情绪周期",
       "market sentiment phase",
-      "什么阶段"
+      "什么阶段",
+      "sentiment cycle",
+      "market phase",
+      "what phase"
     ],
     "channels": [
       "*"
@@ -65,7 +68,7 @@
     {
       "key": "phase",
       "type": "string",
-      "description": "Current sentiment cycle phase: 冰点|修复|升温|高潮|分歧|退潮"
+      "description": "Current sentiment cycle phase: Ice Point|Repair|Warming|Climax|Divergence|Ebb"
     },
     {
       "key": "confidence",

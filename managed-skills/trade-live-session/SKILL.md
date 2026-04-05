@@ -1,9 +1,13 @@
 ---
 skillKey: trade-live-session
-name: 盘中监控工作流
+name: Live Session Monitor
 author: friday-trade
 ---
 
-盘中监控工作流，交易时段每15分钟执行一次，监控持仓退出条件和板块策略信号，仅在有可执行提醒时输出告警。
+Intraday monitoring workflow. Runs every 15 minutes during trading hours (9:00-15:00 CST).
 
-协调调用 trade-market-realtime、trade-exit-monitor、trade-board-strategy 等技能。
+Checks exit conditions for held positions and scans for new high-confidence setups. Only generates alerts when there is actionable information.
+
+```bash
+node index.mjs
+```

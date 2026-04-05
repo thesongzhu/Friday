@@ -1,34 +1,49 @@
 {
   "schemaVersion": "1.0",
-  "title": "板块资金流向",
-  "description": "获取A股板块资金流向数据，支持行业排名、概念排名、个股资金流和北向资金。",
+  "title": "Sector & Capital Flow",
+  "description": "Analyze sector rotation and capital flow",
   "sections": [
     {
       "id": "main",
-      "label": "参数配置",
-      "fieldIds": ["flowType", "topN"]
+      "label": "Parameters",
+      "fieldIds": [
+        "flowType",
+        "topN"
+      ]
     }
   ],
   "fields": [
     {
       "id": "flowType",
       "inputKey": "flowType",
-      "label": "流向类型",
+      "label": "Flow Type",
       "widget": "select",
       "options": [
-        {"value": "sector_rank", "label": "行业板块排名"},
-        {"value": "concept_rank", "label": "概念板块排名"},
-        {"value": "industry_flow", "label": "个股资金流排名"},
-        {"value": "northbound", "label": "北向资金"}
+        {
+          "value": "sector_rank",
+          "label": "Industry Sector Ranking"
+        },
+        {
+          "value": "concept_rank",
+          "label": "Concept Board Ranking"
+        },
+        {
+          "value": "industry_flow",
+          "label": "Stock Fund Flow Ranking"
+        },
+        {
+          "value": "northbound",
+          "label": "Northbound Capital"
+        }
       ],
       "required": true
     },
     {
       "id": "topN",
       "inputKey": "topN",
-      "label": "返回条数",
+      "label": "Return Count",
       "widget": "number",
-      "placeholder": "默认 10",
+      "placeholder": "Default 10",
       "required": false
     }
   ],
@@ -36,31 +51,31 @@
     {
       "id": "output-rankings",
       "outputKey": "rankings",
-      "label": "排名数据",
+      "label": "RankingsData",
       "widget": "json"
     },
     {
       "id": "output-flowData",
       "outputKey": "flowData",
-      "label": "资金流向汇总",
+      "label": "Capital Flow Summary",
       "widget": "json"
     },
     {
       "id": "output-trendChange",
       "outputKey": "trendChange",
-      "label": "趋势变化",
+      "label": "TrendChanges",
       "widget": "json"
     }
   ],
   "actions": [
     {
       "id": "run",
-      "label": "获取数据",
+      "label": "GetData",
       "style": "primary"
     },
     {
       "id": "reset",
-      "label": "重置",
+      "label": "Reset",
       "style": "secondary"
     }
   ]

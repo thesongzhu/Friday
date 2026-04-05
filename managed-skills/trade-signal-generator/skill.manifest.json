@@ -1,15 +1,21 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-signal-generator",
-  "name": "交易信号生成器",
-  "description": "Synthesizes outputs from all analysis skills into concrete entry/exit signals.",
+  "name": "Trade Signal Generator",
+  "description": "Synthesizes outputs from all analysis skills into concrete entry/exit signals with confidence scores, position sizing, and knowledge base references.",
   "version": "1.0.0",
   "kind": "system",
   "category": "ai",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trade", "signal", "信号", "entry", "exit"],
+  "tags": [
+    "trade",
+    "signal",
+    "Signals",
+    "entry",
+    "exit"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -19,20 +25,37 @@
   },
   "triggers": {
     "intents": [],
-    "phrases": ["交易信号", "trade signals", "买什么", "what to buy"],
-    "channels": ["*"]
+    "phrases": [
+      "交易信号",
+      "trade signals",
+      "买什么",
+      "what to buy",
+      "generate signals",
+      "what to trade"
+    ],
+    "channels": [
+      "*"
+    ]
   },
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
     "priority": 50,
-    "modes": ["intent"]
+    "modes": [
+      "intent"
+    ]
   },
   "requirements": {
-    "bins": ["node"],
+    "bins": [
+      "node"
+    ],
     "env": [],
     "config": [],
-    "os": ["darwin", "linux", "win32"]
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
   },
   "inputs": [
     {
@@ -41,7 +64,11 @@
       "description": "Scan mode: full_scan, watchlist_only, or specific_stock",
       "required": false,
       "default": "full_scan",
-      "enum": ["full_scan", "watchlist_only", "specific_stock"]
+      "enum": [
+        "full_scan",
+        "watchlist_only",
+        "specific_stock"
+      ]
     },
     {
       "key": "symbol",
@@ -134,7 +161,9 @@
         "reason": "Executes signal generation logic via run.sh"
       }
     ],
-    "promptOn": ["shell.execute"]
+    "promptOn": [
+      "shell.execute"
+    ]
   },
   "schemas": {
     "input": null,
@@ -143,7 +172,12 @@
   },
   "flow": null,
   "executionTargets": {
-    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
     "requiredCapabilities": []
   },
   "telemetry": {

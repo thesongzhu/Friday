@@ -1,9 +1,13 @@
 ---
 skillKey: trade-hot-money-tracker
-name: 游资追踪器
+name: Hot Money Tracker
 author: friday-trade
 ---
 
-追踪A股游资（热钱）活动，基于龙虎榜数据分析知名游资席位的买卖行为和重叠标的。
+Tracks hot money (institutional short-term traders) activity via dragon-tiger list data from AKShare.
 
-使用 AKShare 库获取龙虎榜数据并以 JSON 格式输出。
+Identifies active trading seats, buy/sell details, and multi-seat overlap stocks.
+
+```bash
+python3 main.py
+```

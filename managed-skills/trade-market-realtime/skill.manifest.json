@@ -1,15 +1,20 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-market-realtime",
-  "name": "A股实时行情数据",
-  "description": "获取A股实时行情数据，支持个股报价、涨停池、板块热度、指数行情、集合竞价和龙虎榜。",
+  "name": "Market Realtime Data",
+  "description": "Fetches real-time A-stock market data via AKShare: quotes, limit-up pool, sector heat, indices, auction data, and dragon-tiger list.",
   "version": "1.0.0",
   "kind": "system",
   "category": "integration",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trade", "akshare", "realtime", "a-stock"],
+  "tags": [
+    "trade",
+    "akshare",
+    "realtime",
+    "a-stock"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -19,39 +24,63 @@
   },
   "triggers": {
     "intents": [],
-    "phrases": ["获取实时行情", "show live market", "涨停池"],
-    "channels": ["*"]
+    "phrases": [
+      "获取实时行情",
+      "show live market",
+      "涨停池",
+      "live market",
+      "real-time quotes",
+      "market data"
+    ],
+    "channels": [
+      "*"
+    ]
   },
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
     "priority": 50,
-    "modes": ["intent"]
+    "modes": [
+      "intent"
+    ]
   },
   "requirements": {
-    "bins": ["python3"],
+    "bins": [
+      "python3"
+    ],
     "env": [],
     "config": [],
-    "os": ["darwin", "linux", "win32"]
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
   },
   "inputs": [
     {
       "key": "dataType",
       "type": "string",
-      "description": "数据类型：quote=个股报价, limit_up_pool=涨停池, sector_heat=板块热度, index=指数行情, auction=集合竞价, dragon_tiger=龙虎榜",
+      "description": "Data Type：quote=Stock Quotes, limit_up_pool=Limit-Up Pool, sector_heat=Sector Heat, index=Index Data, auction=Auction Data, dragon_tiger=Dragon-Tiger List",
       "required": true,
-      "enum": ["quote", "limit_up_pool", "sector_heat", "index", "auction", "dragon_tiger"]
+      "enum": [
+        "quote",
+        "limit_up_pool",
+        "sector_heat",
+        "index",
+        "auction",
+        "dragon_tiger"
+      ]
     },
     {
       "key": "symbols",
       "type": "array",
-      "description": "股票代码列表，例如 [\"000001\", \"600519\"]，仅 quote 和 auction 类型使用",
+      "description": "Stock CodeList，e.g. [\"000001\", \"600519\"]，Only quote and auction types use",
       "required": false
     },
     {
       "key": "sector",
       "type": "string",
-      "description": "板块名称，用于 sector_heat 过滤",
+      "description": "SectorName，for sector_heat filtering",
       "required": false
     }
   ],
@@ -59,17 +88,17 @@
     {
       "key": "data",
       "type": "object",
-      "description": "行情数据"
+      "description": "QuoteData"
     },
     {
       "key": "fetchedAt",
       "type": "string",
-      "description": "数据获取时间"
+      "description": "DataGetTime"
     },
     {
       "key": "source",
       "type": "string",
-      "description": "数据来源"
+      "description": "DataSource"
     }
   ],
   "permissions": {
@@ -82,7 +111,9 @@
         "reason": "Executes Python script via run.sh to fetch market data"
       }
     ],
-    "promptOn": ["shell.execute"]
+    "promptOn": [
+      "shell.execute"
+    ]
   },
   "schemas": {
     "input": null,
@@ -91,7 +122,12 @@
   },
   "flow": null,
   "executionTargets": {
-    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
     "requiredCapabilities": []
   },
   "telemetry": {

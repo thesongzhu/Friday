@@ -1,15 +1,20 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-portfolio-tracker",
-  "name": "持仓跟踪器",
-  "description": "Tracks user's actual holdings, entry prices, current P&L, and position sizing.",
+  "name": "Portfolio Tracker",
+  "description": "Tracks user holdings, entry prices, live P&L, position sizing, and trade history. Supports add/close/update position actions.",
   "version": "1.0.0",
   "kind": "system",
   "category": "utility",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trade", "portfolio", "持仓", "P&L"],
+  "tags": [
+    "trade",
+    "portfolio",
+    "Portfolio",
+    "P&L"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -19,20 +24,37 @@
   },
   "triggers": {
     "intents": [],
-    "phrases": ["持仓", "portfolio", "我的仓位", "holdings"],
-    "channels": ["*"]
+    "phrases": [
+      "持仓",
+      "portfolio",
+      "我的仓位",
+      "holdings",
+      "my positions",
+      "show holdings"
+    ],
+    "channels": [
+      "*"
+    ]
   },
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
     "priority": 50,
-    "modes": ["intent"]
+    "modes": [
+      "intent"
+    ]
   },
   "requirements": {
-    "bins": ["node"],
+    "bins": [
+      "node"
+    ],
     "env": [],
     "config": [],
-    "os": ["darwin", "linux", "win32"]
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
   },
   "inputs": [
     {
@@ -40,7 +62,12 @@
       "type": "string",
       "description": "Action to perform on the portfolio",
       "required": true,
-      "enum": ["view", "add_position", "close_position", "update_price"]
+      "enum": [
+        "view",
+        "add_position",
+        "close_position",
+        "update_price"
+      ]
     },
     {
       "key": "symbol",
@@ -65,7 +92,10 @@
       "type": "string",
       "description": "Trade direction",
       "required": false,
-      "enum": ["buy", "sell"]
+      "enum": [
+        "buy",
+        "sell"
+      ]
     },
     {
       "key": "date",
@@ -132,7 +162,9 @@
         "reason": "Executes portfolio tracking logic via run.sh"
       }
     ],
-    "promptOn": ["shell.execute"]
+    "promptOn": [
+      "shell.execute"
+    ]
   },
   "schemas": {
     "input": null,
@@ -141,7 +173,12 @@
   },
   "flow": null,
   "executionTargets": {
-    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
     "requiredCapabilities": []
   },
   "telemetry": {

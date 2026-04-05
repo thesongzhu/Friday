@@ -1,15 +1,20 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-dip-buy-scanner",
-  "name": "低吸机会扫描器",
-  "description": "Scans for dip-buying opportunities in trending/leader stocks.",
+  "name": "Dip-Buy Scanner",
+  "description": "Scans for dip-buying opportunities in trending and leader stocks based on sentiment extremes, sector rotation, and leader divergence patterns.",
   "version": "1.0.0",
   "kind": "system",
   "category": "ai",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trade", "dip-buy", "低吸", "A股"],
+  "tags": [
+    "trade",
+    "dip-buy",
+    "Dip Buy",
+    "AStock"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -19,7 +24,14 @@
   },
   "triggers": {
     "intents": [],
-    "phrases": ["低吸", "dip buy", "回调买入", "分歧低吸"],
+    "phrases": [
+      "低吸",
+      "dip buy",
+      "回调买入",
+      "分歧低吸",
+      "pullback entry",
+      "buy the dip"
+    ],
     "channels": [
       "*"
     ]
@@ -33,7 +45,9 @@
     ]
   },
   "requirements": {
-    "bins": ["node"],
+    "bins": [
+      "node"
+    ],
     "env": [],
     "config": [],
     "os": [
@@ -49,7 +63,11 @@
       "description": "Stock universe to scan",
       "required": false,
       "default": "leaders",
-      "enum": ["leaders", "watchlist", "sector"]
+      "enum": [
+        "leaders",
+        "watchlist",
+        "sector"
+      ]
     },
     {
       "key": "sector",
@@ -73,7 +91,7 @@
     {
       "key": "sentimentPhase",
       "type": "string",
-      "description": "Current market sentiment phase (e.g. 冰点/回暖/高潮/退潮)",
+      "description": "Current market sentiment phase (e.g. Ice Point/Warming/Climax/Ebb)",
       "required": false
     }
   ],

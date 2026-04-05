@@ -1,15 +1,23 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-board-strategy",
-  "name": "打板策略分析器",
-  "description": "Analyzes limit-up board trading opportunities across multiple strategies: 首板, 一进二, 弱转强, and 反包.",
+  "name": "Board Strategy Analyzer",
+  "description": "Analyzes limit-up board trading opportunities across multiple strategies: first board, second board, weak-to-strong reversal, and reversal wrap.",
   "version": "1.0.0",
   "kind": "system",
   "category": "ai",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trade", "打板", "limit-up", "strategy", "首板", "弱转强", "反包"],
+  "tags": [
+    "trade",
+    "Board Hit",
+    "limit-up",
+    "strategy",
+    "First Board",
+    "Weak-to-Strong",
+    "Reversal Wrap"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -19,28 +27,52 @@
   },
   "triggers": {
     "intents": [],
-    "phrases": ["打板", "board strategy", "首板", "弱转强", "反包"],
-    "channels": ["*"]
+    "phrases": [
+      "打板",
+      "board strategy",
+      "首板",
+      "弱转强",
+      "反包",
+      "limit-up scan",
+      "weak to strong"
+    ],
+    "channels": [
+      "*"
+    ]
   },
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
     "priority": 50,
-    "modes": ["intent"]
+    "modes": [
+      "intent"
+    ]
   },
   "requirements": {
-    "bins": ["node"],
+    "bins": [
+      "node"
+    ],
     "env": [],
     "config": [],
-    "os": ["darwin", "linux", "win32"]
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
   },
   "inputs": [
     {
       "key": "strategyType",
       "type": "string",
-      "description": "Strategy to analyze: first_board (首板), second_board (一进二), weak_to_strong (弱转强), reversal_wrap (反包), or all",
+      "description": "Strategy to analyze: first_board (First Board), second_board (1-to-2 Board), weak_to_strong (Weak-to-Strong), reversal_wrap (Reversal Wrap), or all",
       "required": true,
-      "enum": ["first_board", "second_board", "weak_to_strong", "reversal_wrap", "all"]
+      "enum": [
+        "first_board",
+        "second_board",
+        "weak_to_strong",
+        "reversal_wrap",
+        "all"
+      ]
     },
     {
       "key": "marketData",
@@ -97,7 +129,9 @@
         "reason": "Executes board strategy analysis via run.sh"
       }
     ],
-    "promptOn": ["shell.execute"]
+    "promptOn": [
+      "shell.execute"
+    ]
   },
   "schemas": {
     "input": null,
@@ -106,7 +140,12 @@
   },
   "flow": null,
   "executionTargets": {
-    "allowedSatelliteTypes": ["phone", "desktop", "rpi", "cloud-vm"],
+    "allowedSatelliteTypes": [
+      "phone",
+      "desktop",
+      "rpi",
+      "cloud-vm"
+    ],
     "requiredCapabilities": []
   },
   "telemetry": {

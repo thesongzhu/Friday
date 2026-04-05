@@ -1,27 +1,40 @@
 {
   "schemaVersion": "1.0",
-  "title": "交易信号生成器",
-  "description": "Synthesizes outputs from all analysis skills into concrete entry/exit signals.",
+  "title": "Trade Signal Generator",
+  "description": "Generate actionable trading signals",
   "sections": [
     {
       "id": "mode",
       "label": "Scan Mode",
-      "fieldIds": ["mode", "symbol"]
+      "fieldIds": [
+        "mode",
+        "symbol"
+      ]
     },
     {
       "id": "context",
       "label": "Market Context",
-      "fieldIds": ["sentimentPhase"]
+      "fieldIds": [
+        "sentimentPhase"
+      ]
     },
     {
       "id": "inputs",
       "label": "Strategy Inputs",
-      "fieldIds": ["leaders", "boardSetups", "dipBuyCandidates", "auctionSignals"]
+      "fieldIds": [
+        "leaders",
+        "boardSetups",
+        "dipBuyCandidates",
+        "auctionSignals"
+      ]
     },
     {
       "id": "user",
       "label": "User Settings",
-      "fieldIds": ["portfolio", "userProfile"]
+      "fieldIds": [
+        "portfolio",
+        "userProfile"
+      ]
     }
   ],
   "fields": [
@@ -31,9 +44,18 @@
       "label": "Scan Mode",
       "widget": "select",
       "options": [
-        { "value": "full_scan", "label": "Full Scan (全市场扫描)" },
-        { "value": "watchlist_only", "label": "Watchlist Only (自选股)" },
-        { "value": "specific_stock", "label": "Specific Stock (个股)" }
+        {
+          "value": "full_scan",
+          "label": "Full Scan (Full Market Scan)"
+        },
+        {
+          "value": "watchlist_only",
+          "label": "Watchlist Only (Watchlist)"
+        },
+        {
+          "value": "specific_stock",
+          "label": "Specific Stock (Single Stock)"
+        }
       ],
       "default": "full_scan"
     },
@@ -50,12 +72,30 @@
       "label": "Sentiment Phase",
       "widget": "select",
       "options": [
-        { "value": "", "label": "Auto-detect" },
-        { "value": "initiation", "label": "启动期 (Initiation)" },
-        { "value": "expansion", "label": "扩散期 (Expansion)" },
-        { "value": "divergence", "label": "分歧期 (Divergence)" },
-        { "value": "decline", "label": "退潮期 (Decline)" },
-        { "value": "ice", "label": "冰点期 (Ice)" }
+        {
+          "value": "",
+          "label": "Auto-detect"
+        },
+        {
+          "value": "initiation",
+          "label": "Startup Phase (Initiation)"
+        },
+        {
+          "value": "expansion",
+          "label": "Expansion Phase (Expansion)"
+        },
+        {
+          "value": "divergence",
+          "label": "Divergence Phase (Divergence)"
+        },
+        {
+          "value": "decline",
+          "label": "EbbPhase (Decline)"
+        },
+        {
+          "value": "ice",
+          "label": "Ice PointPhase (Ice)"
+        }
       ]
     },
     {

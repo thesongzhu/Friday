@@ -1,15 +1,20 @@
 {
   "schemaVersion": "2.0",
   "id": "trade-knowledge-ingest",
-  "name": "交易知识导入引擎",
-  "description": "将交易知识库文件导入 Friday 记忆系统，按主题/系列/类型分块标签化存储，支持增量导入和内容哈希去重。",
+  "name": "Knowledge Ingest Engine",
+  "description": "Ingests trading knowledge base files into Friday memory system, chunked and tagged by topic, series, and type. Supports incremental import with content hash deduplication.",
   "version": "1.0.0",
   "kind": "system",
   "category": "ai",
   "author": {
     "name": "friday-trade"
   },
-  "tags": ["trading", "knowledge-base", "ingest", "a-stock"],
+  "tags": [
+    "trading",
+    "knowledge-base",
+    "ingest",
+    "a-stock"
+  ],
   "runtime": {
     "kind": "shell",
     "entrypoint": "run.sh",
@@ -18,74 +23,91 @@
     "timeoutMsDefault": 300000
   },
   "triggers": {
-    "intents": ["ingest_trading_knowledge"],
-    "phrases": ["导入交易知识", "load trading knowledge", "ingest trade agent content"],
-    "channels": ["*"]
+    "intents": [
+      "ingest_trading_knowledge"
+    ],
+    "phrases": [
+      "导入交易知识",
+      "load trading knowledge",
+      "ingest trade agent content",
+      "ingest knowledge",
+      "import knowledge base"
+    ],
+    "channels": [
+      "*"
+    ]
   },
   "invocation": {
     "userInvocable": true,
     "modelInvocable": true,
     "priority": 50,
-    "modes": ["intent"]
+    "modes": [
+      "intent"
+    ]
   },
   "requirements": {
-    "bins": ["node"],
+    "bins": [
+      "node"
+    ],
     "env": [],
     "config": [],
-    "os": ["darwin", "linux"]
+    "os": [
+      "darwin",
+      "linux"
+    ]
   },
   "inputs": [
     {
       "key": "contentDir",
       "type": "string",
       "required": true,
-      "label": "知识库目录",
-      "help": "Trade Agent OG 内容目录路径"
+      "label": "Knowledge Base Directory",
+      "help": "Trade Agent OG Content directory path"
     },
     {
       "key": "namespace",
       "type": "string",
       "required": false,
-      "label": "命名空间",
-      "help": "记忆存储命名空间前缀",
+      "label": "Namespace",
+      "help": "Memory namespace prefix",
       "defaultValue": "trade-kb"
     },
     {
       "key": "forceReindex",
       "type": "boolean",
       "required": false,
-      "label": "强制重新索引",
-      "help": "忽略哈希缓存，强制重新导入所有文件",
+      "label": "Force Reindex",
+      "help": "Ignore hash cache，force re-import all files",
       "defaultValue": false
     },
     {
       "key": "aiExportDir",
       "type": "string",
       "required": false,
-      "label": "AI导出目录",
-      "help": "ai_export 目录路径，包含预处理的 CSV 文件"
+      "label": "AIExport Directory",
+      "help": "ai_export directory path，containing preprocessed CSV files"
     }
   ],
   "outputs": [
     {
       "key": "chunksIngested",
       "type": "number",
-      "description": "成功导入的内容块数量"
+      "description": "Number of chunks successfully ingested"
     },
     {
       "key": "categoryCounts",
       "type": "object",
-      "description": "按类别统计的导入数量"
+      "description": "Import count by category"
     },
     {
       "key": "topicCounts",
       "type": "object",
-      "description": "按主题统计的导入数量"
+      "description": "Import count by topic"
     },
     {
       "key": "errors",
       "type": "array",
-      "description": "导入过程中的错误列表"
+      "description": "List of errors during import"
     }
   ],
   "permissions": {
@@ -95,23 +117,34 @@
         "resource": "filesystem",
         "action": "read",
         "required": true,
-        "reason": "读取知识库文件内容"
+        "reason": "Read knowledge basefilesContent"
       },
       {
         "id": "memory.write",
         "resource": "memory",
         "action": "write",
         "required": true,
-        "reason": "将知识内容存入 Friday 记忆系统"
+        "reason": "Store knowledge into Friday memory system"
       }
     ],
-    "promptOn": ["filesystem.read"]
+    "promptOn": [
+      "filesystem.read"
+    ]
   },
-  "schemas": { "input": null, "state": null, "output": null },
+  "schemas": {
+    "input": null,
+    "state": null,
+    "output": null
+  },
   "flow": null,
   "executionTargets": {
-    "allowedSatelliteTypes": ["desktop", "cloud-vm"],
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
     "requiredCapabilities": []
   },
-  "telemetry": { "events": [] }
+  "telemetry": {
+    "events": []
+  }
 }

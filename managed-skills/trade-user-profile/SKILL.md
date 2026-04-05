@@ -1,7 +1,13 @@
 ---
 skillKey: trade-user-profile
-name: 交易用户画像
+name: User Trading Profile
 author: friday-trade
 ---
 
-管理用户交易配置文件 — 包括资金规模、风险偏好、持仓设置、交易风格、关注板块、自选股及通知偏好等个性化交易参数。
+Stores and manages each user's trading configuration.
+
+Fields: capital size, risk tolerance, max position %, max concurrent positions, preferred styles, preferred sectors, stock watchlist, trading hours, notification preferences, experience level, tracked hot money seats.
+
+```bash
+node index.mjs
+```

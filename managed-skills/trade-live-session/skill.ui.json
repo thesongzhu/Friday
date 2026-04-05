@@ -1,46 +1,48 @@
 {
   "schemaVersion": "1.0",
-  "title": "盘中监控工作流",
-  "description": "交易时段每15分钟执行一次，监控持仓风险和实时交易机会。",
+  "title": "Live Session Monitor",
+  "description": "Intraday position and opportunity monitoring",
   "sections": [
     {
       "id": "main",
-      "label": "监控设置",
-      "fieldIds": ["urgencyOnly"]
+      "label": "Monitor Settings",
+      "fieldIds": [
+        "urgencyOnly"
+      ]
     }
   ],
   "fields": [
     {
       "id": "urgencyOnly",
       "inputKey": "urgencyOnly",
-      "label": "仅紧急告警",
+      "label": "Urgent Alerts Only",
       "widget": "toggle",
-      "description": "开启后仅显示需要立即处理的紧急告警"
+      "description": "When enabled, only shows urgent alerts requiring immediate action"
     }
   ],
   "outputs": [
     {
       "id": "output-alerts",
       "outputKey": "alerts",
-      "label": "告警列表",
+      "label": "Alert List",
       "widget": "json"
     },
     {
       "id": "output-marketSnapshot",
       "outputKey": "marketSnapshot",
-      "label": "市场快照",
+      "label": "Market Snapshot",
       "widget": "json"
     }
   ],
   "actions": [
     {
       "id": "run",
-      "label": "执行监控",
+      "label": "ExecuteMonitor",
       "style": "primary"
     },
     {
       "id": "reset",
-      "label": "重置",
+      "label": "Reset",
       "style": "secondary"
     }
   ]

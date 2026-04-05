@@ -1,17 +1,23 @@
 {
   "schemaVersion": "1.0",
-  "title": "龙头股扫描器",
-  "description": "Identifies current market leader stocks (人气龙头) and their status.",
+  "title": "Leader Stock Scanner",
+  "description": "Identify and rank market leader stocks",
   "sections": [
     {
       "id": "params",
       "label": "Scan Parameters",
-      "fieldIds": ["scope", "sector", "sentimentPhase"]
+      "fieldIds": [
+        "scope",
+        "sector",
+        "sentimentPhase"
+      ]
     },
     {
       "id": "data",
       "label": "Market Data",
-      "fieldIds": ["marketData"]
+      "fieldIds": [
+        "marketData"
+      ]
     }
   ],
   "fields": [
@@ -21,9 +27,18 @@
       "label": "Scan Scope",
       "widget": "select",
       "options": [
-        { "value": "market_wide", "label": "Market Wide (全市场)" },
-        { "value": "sector", "label": "Sector (板块)" },
-        { "value": "watchlist", "label": "Watchlist (自选股)" }
+        {
+          "value": "market_wide",
+          "label": "Market Wide (Full Market)"
+        },
+        {
+          "value": "sector",
+          "label": "Sector (Sector)"
+        },
+        {
+          "value": "watchlist",
+          "label": "Watchlist (Watchlist)"
+        }
       ],
       "default": "market_wide"
     },
@@ -32,7 +47,7 @@
       "inputKey": "sector",
       "label": "Sector Filter",
       "widget": "text",
-      "placeholder": "e.g. AI, 机器人, 半导体"
+      "placeholder": "e.g. AI, Robotics, Semiconductor"
     },
     {
       "id": "sentimentPhase",
@@ -40,12 +55,30 @@
       "label": "Sentiment Phase",
       "widget": "select",
       "options": [
-        { "value": "", "label": "Auto-detect" },
-        { "value": "initiation", "label": "启动期 (Initiation)" },
-        { "value": "expansion", "label": "扩散期 (Expansion)" },
-        { "value": "divergence", "label": "分歧期 (Divergence)" },
-        { "value": "decline", "label": "退潮期 (Decline)" },
-        { "value": "ice", "label": "冰点期 (Ice)" }
+        {
+          "value": "",
+          "label": "Auto-detect"
+        },
+        {
+          "value": "initiation",
+          "label": "Startup Phase (Initiation)"
+        },
+        {
+          "value": "expansion",
+          "label": "Expansion Phase (Expansion)"
+        },
+        {
+          "value": "divergence",
+          "label": "Divergence Phase (Divergence)"
+        },
+        {
+          "value": "decline",
+          "label": "EbbPhase (Decline)"
+        },
+        {
+          "value": "ice",
+          "label": "Ice PointPhase (Ice)"
+        }
       ]
     },
     {
