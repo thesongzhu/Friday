@@ -2846,6 +2846,86 @@ describe("FridayAgentRuntime", () => {
     expect(result.response).toContain("AGENT_OUTPUT_CLOSURE_ERROR");
   });
 
+  it("forces one retry through skills_list when an installed starter skill strongly matches the request", async () => {
+    let llmCalls = 0;
+    const skillsListExecute = vi.fn(async () => ({
+      content: JSON.stringify({
+        count: 1,
+        skills: [
+          {
+            skillId: "workspace-diff-review",
+            ready: true,
+            blockers: [],
+          },
+        ],
+      }),
+    }));
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        llmCalls += 1;
+        if (llmCalls === 1) {
+          yield { type: "text_delta", text: "I reviewed the diff and it looks fine." };
+          yield { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 4 };
+          return;
+        }
+        if (llmCalls === 2) {
+          yield { type: "tool_use", id: "call-1", name: "skills_list", input: { q: "review this diff", installedOnly: true } };
+          yield { type: "message_end", stopReason: "tool_use", inputTokens: 6, outputTokens: 3 };
+          return;
+        }
+        if (llmCalls === 3) {
+          yield { type: "text_delta", text: "The installed starter skill workspace-diff-review matches this request." };
+          yield { type: "message_end", stopReason: "end_turn", inputTokens: 7, outputTokens: 4 };
+          return;
+        }
+        throw new Error(`Unexpected extra LLM call ${String(llmCalls)}`);
+      },
+    };
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [
+        {
+          name: "skills_list",
+          description: "List skills",
+          parameters: {
+            properties: {
+              q: { type: "string" },
+              installedOnly: { type: "boolean" },
+            },
+          },
+          execute: skillsListExecute,
+        },
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      starterSkillRouting: {
+        enabled: true,
+        skills: [
+          {
+            skillId: "workspace-diff-review",
+            purpose: "Review risky workspace changes",
+            triggerPhrases: ["review this diff"],
+            intents: ["workspace_diff_review"],
+            tags: ["starter", "starter.devops"],
+          },
+        ],
+      },
+    });
+
+    const result = await runtime.executeRun({ task: "Please review this diff before I land it." });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("workspace-diff-review");
+    expect(result.toolCallCount).toBe(1);
+    expect(llmCalls).toBe(3);
+    expect(skillsListExecute).toHaveBeenCalledTimes(1);
+  });
+
   it("returns explicit enablement hint when mcp tool is unavailable", async () => {
     const llmClient = createMockLlmClient([
       [
