@@ -15,6 +15,28 @@ export type SkillCategory =
 export type SkillRuntimeKind = "builtin" | "node" | "python" | "shell" | "remote-http";
 export type SkillInvocationMode = "intent" | "workflow";
 export type SkillStepType = "ask" | "infer" | "plan" | "act" | "confirm" | "finalize";
+export type SkillMcpRequirementAuth = "connected" | "authenticated";
+
+export interface SkillMcpServerRequirement {
+  name: string;
+  auth: SkillMcpRequirementAuth;
+}
+
+/**
+ * Design patterns that describe how a skill's instructions are structured.
+ *
+ * - tool-wrapper: Packages library/framework conventions as on-demand knowledge.
+ * - generator:    Produces structured output by filling a reusable template from assets/.
+ * - reviewer:     Evaluates code/content against a checklist in references/.
+ * - inversion:    Interviews the user before acting (structured question phases with gates).
+ * - pipeline:     Sequential steps with explicit gate conditions between them.
+ */
+export type SkillDesignPattern =
+  | "tool-wrapper"
+  | "generator"
+  | "reviewer"
+  | "inversion"
+  | "pipeline";
 
 export interface SkillStepDefinition {
   id: string;
@@ -50,6 +72,7 @@ export interface SkillManifestV2 {
   license?: string;
   repository?: string;
   tags: string[];
+  designPatterns?: SkillDesignPattern[];
 
   runtime: {
     kind: SkillRuntimeKind;
@@ -79,6 +102,7 @@ export interface SkillManifestV2 {
     env: string[];
     config: string[];
     os: Array<"darwin" | "linux" | "win32">;
+    mcpServers?: SkillMcpServerRequirement[];
   };
 
   inputs: Array<{

@@ -59,42 +59,6 @@ export interface FridayChannelStartSummary {
   failed: FridayChannelStartFailure[];
 }
 
-// ─── Per-Channel Message Length Limits ───
-
-/** Maximum message length per platform (chars). Undefined = no limit. */
-const CHANNEL_MESSAGE_MAX_LENGTH: Record<string, number | undefined> = {
-  discord: 2000,
-  telegram: 4096,
-  slack: 39_000, // Slack allows ~40k but leave margin
-  whatsapp: 4096,
-  signal: 6000,
-  lark: 30_000,
-  qq: 4500,
-  irc: 450, // IRC line limit ~512 minus protocol overhead
-  line: 5000,
-  webchat: undefined, // No platform limit
-};
-
-/** Split a long message into chunks at word boundaries, respecting maxLen. */
-function splitMessageToChunks(text: string, maxLen: number): string[] {
-  if (text.length <= maxLen) return [text];
-  const chunks: string[] = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLen) {
-      chunks.push(remaining);
-      break;
-    }
-    // Find last newline or space before maxLen
-    let splitAt = remaining.lastIndexOf("\n", maxLen);
-    if (splitAt < maxLen * 0.3) splitAt = remaining.lastIndexOf(" ", maxLen);
-    if (splitAt < maxLen * 0.3) splitAt = maxLen; // Hard split if no good break point
-    chunks.push(remaining.slice(0, splitAt));
-    remaining = remaining.slice(splitAt).trimStart();
-  }
-  return chunks;
-}
-
 export interface FridayChannelRegistry {
   /** Register a channel plugin with optional allowlist filtering. */
   register(plugin: FridayChannelPlugin, allowlist?: FridayChannelAllowlistConfig): void;
@@ -226,21 +190,8 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
   }
 
   function formatStartError(reason: unknown): string {
-    const message = reason instanceof Error ? reason.message : String(reason);
-    const lower = message.toLowerCase();
-
-    // Detect common auth/token failures and provide actionable guidance
-    if (
-      lower.includes("401") || lower.includes("403") ||
-      lower.includes("unauthorized") || lower.includes("forbidden") ||
-      lower.includes("invalid token") || lower.includes("authentication")
-    ) {
-      return `${message} — check that the channel bot token is valid and has not expired`;
-    }
-    if (lower.includes("enotfound") || lower.includes("getaddrinfo")) {
-      return `${message} — check network connectivity and API endpoint URL`;
-    }
-    return message;
+    if (reason instanceof Error) return reason.message;
+    return String(reason);
   }
 
   function buildAllowlistSummary(allowlist: FridayChannelAllowlistConfig) {
@@ -355,11 +306,9 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
           summary.startedKinds.push(kind);
           failedStart.delete(kind);
         } else {
-          const errorMessage = formatStartError(result.reason);
-          console.warn(`[friday][channel-registry] channel "${kind}" failed to start: ${errorMessage}`);
           summary.failed.push({
             kind,
-            message: errorMessage,
+            message: formatStartError(result.reason),
           });
           failedStart.add(kind);
         }
@@ -440,22 +389,6 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
       }
       if (!entry.running) {
         throw new FridayDomainError("NOT_INITIALIZED", `Channel kind "${kind}" is not running`, { httpStatus: 503 });
-      }
-
-      // Enforce per-channel message length limits to prevent silent platform truncation
-      const maxLen = CHANNEL_MESSAGE_MAX_LENGTH[kind];
-      if (maxLen && options.text && options.text.length > maxLen) {
-        const chunks = splitMessageToChunks(options.text, maxLen);
-        let lastResult: { messageId: string } = { messageId: "" };
-        for (const chunk of chunks) {
-          const chunkOpts = { ...options, text: chunk };
-          if (entry.plugin.adapters?.outbound) {
-            lastResult = await entry.plugin.adapters.outbound.send(chunkOpts);
-          } else {
-            lastResult = await entry.plugin.send(chunkOpts);
-          }
-        }
-        return lastResult;
       }
 
       // Use outbound adapter if available, otherwise legacy send

@@ -146,6 +146,40 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("scoping, design review, implementation plan review, QAing a page, benchmarking, canary checks, retros, reviewing a diff, or syncing release docs");
   });
 
+  it("only exposes hard starter-skill routing requirements when the rollout flag is enabled", () => {
+    const disabledPrompt = buildFridayAgentSystemPrompt({
+      toolNames: ["read", "skill_run", "skills_list"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+      starterSkills: [
+        {
+          skillId: "workspace-diff-review",
+          purpose: "Review risky changes",
+          triggerPhrases: ["review this diff"],
+          tags: ["starter", "starter.devops"],
+        },
+      ],
+    });
+    const enabledPrompt = buildFridayAgentSystemPrompt({
+      toolNames: ["read", "skill_run", "skills_list"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+      starterSkills: [
+        {
+          skillId: "workspace-diff-review",
+          purpose: "Review risky changes",
+          triggerPhrases: ["review this diff"],
+          tags: ["starter", "starter.devops"],
+        },
+      ],
+      enforceStarterSkillRouting: true,
+    });
+
+    expect(disabledPrompt).not.toContain("MUST call skills_list before replying directly");
+    expect(enabledPrompt).toContain("MUST call skills_list before replying directly");
+    expect(enabledPrompt).toContain("do not skip skills_list");
+  });
+
   it("describes messaging and MCP truthfully from runtime capabilities", () => {
     const withoutRuntimeSupport = buildFridayAgentSystemPrompt({
       toolNames: ["message", "mcp"],
@@ -209,6 +243,23 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("Sub-agents are not enabled in this deployment.");
     expect(prompt).toContain("Skill marketplace is not enabled in this deployment.");
     expect(prompt).toContain("Self-learning feedback capture is not enabled in this deployment.");
+  });
+
+  it("only advertises subagent fork mode when the rollout flag is enabled", () => {
+    const disabledPrompt = buildFridayAgentSystemPrompt({
+      toolNames: ["spawn_subagent"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+    });
+    const enabledPrompt = buildFridayAgentSystemPrompt({
+      toolNames: ["spawn_subagent"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+      subagentForkModeEnabled: true,
+    });
+
+    expect(disabledPrompt).not.toContain('mode="fork"');
+    expect(enabledPrompt).toContain('mode="fork"');
   });
 
   it("injects current time context and news timeliness rules", () => {

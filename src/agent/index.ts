@@ -82,6 +82,16 @@ export type {
   CreateFridayAgentRuntimeDeps,
 } from "./runtime/friday-agent-runtime.types.js";
 export { createFridayAgentRuntime } from "./runtime/friday-agent-runtime.js";
+export type {
+  FridayAgentStarterSkillDescriptor,
+  FridayAgentStarterSkillRoutingConfig,
+} from "./runtime/friday-agent-starter-skill-routing.js";
+export {
+  buildFridayStarterSkillRoutingRetryPrompt,
+  findFridayStarterSkillRoutingCandidate,
+  hasFridayStarterSkillRoutingEvidence,
+  shouldBypassFridayStarterSkillRouting,
+} from "./runtime/friday-agent-starter-skill-routing.js";
 export {
   createFridayWorkspaceContextEngine,
   notifyFridayContextEngineAfterTurn,
@@ -334,6 +344,14 @@ export {
   parseFridayMcpServersFromEnv,
 } from "./mcp/friday-mcp-adapter.js";
 export type {
+  FridayMcpServerReadiness,
+  FridaySkillMcpReadiness,
+} from "./mcp/friday-mcp-readiness.js";
+export {
+  evaluateFridaySkillMcpReadiness,
+  listFridayMcpServerReadiness,
+} from "./mcp/friday-mcp-readiness.js";
+export type {
   FridayIntegrationRecommendation,
   FridayIntegrationRecommendationInput,
   FridayIntegrationRecommendationResult,
@@ -402,6 +420,7 @@ export { createFridayAgentAutomationService } from "./services/friday-agent-auto
 
 export type {
   FridaySubagentRunStatus,
+  FridaySubagentSpawnMode,
   FridaySubagentOutcome,
   FridaySubagentSpawnInput,
   FridaySubagentRunRecord,
@@ -448,48 +467,6 @@ export { createFridayAgentReviewGate } from "./runtime/friday-agent-review-gate.
 // ─── Tool mutation ───
 
 export { isMutatingToolCall } from "./runtime/friday-agent-tool-mutation.js";
-
-// ─── Tool call recovery ───
-
-export type { ParsedTextToolCall } from "./runtime/friday-agent-tool-call-recovery.js";
-export { recoverToolCallsFromAssistantText, looksLikeJson, unwrapJsonCodeFence, extractJsonCodeBlocks } from "./runtime/friday-agent-tool-call-recovery.js";
-
-// ─── Time-sensitive handler ───
-
-export type { RunTimeContext, TimeSensitiveResponseDecision } from "./runtime/friday-agent-time-sensitive-handler.js";
-export {
-  buildRunTimeContext,
-  resolveAgentTimezone,
-  normalizeIanaTimezone,
-  readPreferredTimezone,
-  formatDateInTimezone,
-  hasTimeSensitiveNewsIntent,
-  textHasTimeSensitiveNewsIntent,
-  evaluateTimeSensitiveResponse,
-  extractMessageText,
-} from "./runtime/friday-agent-time-sensitive-handler.js";
-
-// ─── Closure gap detection ───
-
-export type { OutputClosureGap } from "./runtime/friday-agent-closure-gap-detector.js";
-export {
-  FRIDAY_DESKTOP_UNAVAILABLE_MESSAGE,
-  FRIDAY_SYSTEM_UNAVAILABLE_MESSAGE,
-  normalizeDefaultRouteSentinel,
-  hasSafeDiagnosticCompletionEvidence,
-  detectOutputClosureGap,
-  detectEvidenceClosureGap,
-  detectArtifactTruthGap,
-  enforceToolEvidenceForCompletionClaim,
-  enforceFeedbackPersistenceEvidence,
-  hasSuccessfulToolEvidence,
-  shouldEnforceToolEvidenceForTask,
-  enforceBoundaryClarityResponse,
-  taskRequiresReadOnlyDesktopInspection,
-  toolCallViolatesDesktopInspectionIntent,
-  buildEvidenceRetryPrompt,
-  buildArtifactTruthRetryPrompt,
-} from "./runtime/friday-agent-closure-gap-detector.js";
 
 // ─── SSRF guard ───
 

@@ -124,8 +124,6 @@ export function createFridayPreferenceFactService(
             lastConfirmedAt: nowIso,
             sourceEventId: event.eventId,
             nowIso,
-            emotionalValence: signal.emotionalValence,
-            metadata: signal.situationalContext,
           });
 
           updated.push(entity);

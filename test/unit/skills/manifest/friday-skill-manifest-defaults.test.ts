@@ -40,6 +40,7 @@ describe("applyFridaySkillManifestDefaults", () => {
     expect(result.requirements.env).toEqual([]);
     expect(result.requirements.config).toEqual([]);
     expect(result.requirements.os).toEqual(["darwin", "linux", "win32"]);
+    expect(result.requirements.mcpServers).toEqual([]);
     expect(result.inputs).toEqual([]);
     expect(result.outputs).toEqual([]);
     expect(result.permissions.grants).toEqual([]);
@@ -78,5 +79,21 @@ describe("applyFridaySkillManifestDefaults", () => {
 
   it("FRIDAY_SKILL_MANIFEST_DEFAULTS constant is frozen", () => {
     expect(Object.isFrozen(FRIDAY_SKILL_MANIFEST_DEFAULTS)).toBe(true);
+  });
+
+  it("preserves explicit MCP requirements over defaults", () => {
+    const result = applyFridaySkillManifestDefaults({
+      id: "mcp-skill",
+      name: "MCP Skill",
+      description: "Requires GitHub",
+      version: "1.0.0",
+      requirements: {
+        mcpServers: [{ name: "github", auth: "authenticated" }],
+      },
+    });
+
+    expect(result.requirements.mcpServers).toEqual([
+      { name: "github", auth: "authenticated" },
+    ]);
   });
 });

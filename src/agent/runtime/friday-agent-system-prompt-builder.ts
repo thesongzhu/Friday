@@ -25,8 +25,11 @@ export interface BuildFridayAgentSystemPromptParams {
     skillId: string;
     purpose: string;
     triggerPhrases: string[];
+    intents?: string[];
     tags?: string[];
   }>;
+  enforceStarterSkillRouting?: boolean;
+  subagentForkModeEnabled?: boolean;
   runtimeCapabilities?: {
     messagingEnabled?: boolean;
     messagingKinds?: string[];
@@ -47,7 +50,17 @@ export interface BuildFridayAgentSystemPromptParams {
 export function buildFridayAgentSystemPrompt(
   params: BuildFridayAgentSystemPromptParams,
 ): string {
-  const { toolNames, modelIdentity, version, workspaceContext, starterSkills, runtimeCapabilities, currentTime } = params;
+  const {
+    toolNames,
+    modelIdentity,
+    version,
+    workspaceContext,
+    starterSkills,
+    enforceStarterSkillRouting,
+    subagentForkModeEnabled,
+    runtimeCapabilities,
+    currentTime,
+  } = params;
   const toolList = toolNames.join(", ");
   const toolSet = new Set(toolNames);
   const hasTool = (name: string) => toolSet.has(name);
@@ -172,6 +185,9 @@ export function buildFridayAgentSystemPrompt(
     "- Local computer orchestration: use system first for snapshots, app/project handoff, approvals, and control leases; fall back to desktop only when system intent resolution is insufficient\n" +
     "- Provider/LLM management (switch model, add API key, configure OAuth): use provider tool\n" +
     "- Friday skills: use skills_list first to discover currently available skills, then use skill_run with the chosen skill ID\n" +
+    (enforceStarterSkillRouting
+      ? "- For operational, workflow, review, or QA requests that strongly match an installed starter skill, you MUST call skills_list before replying directly.\n"
+      : "") +
     "- For local repo and ops tasks, prefer CLI-backed starter skills before reaching for MCP or generating a new skill\n" +
     "- Diagnosis, recovery, and self-healing review requests: prefer existing starter skills such as issue review, runtime snapshot, and repair-readiness summaries before generating anything new\n" +
     "- Planning, scope review, design review, browser QA, diff review, release docs, benchmark, canary, retro, QA-fix, and security review requests: prefer the matching starter skill before inventing a new workflow or skill\n" +
@@ -184,7 +200,7 @@ export function buildFridayAgentSystemPrompt(
       ? "- Schedule recurring or delayed tasks: use cron\n"
       : "- Scheduled or delayed execution is unavailable in this deployment.\n") +
     (subagentsEnabled
-      ? "- Complex multi-step tasks that benefit from delegation: use spawn_subagent. Default to delegation for non-trivial operational work. If the user needs the child result now, use wait=true or keep polling get_subagent until terminal state instead of treating the initial delegated snapshot as final.\n"
+      ? `- Complex multi-step tasks that benefit from delegation: use spawn_subagent. Default to delegation for non-trivial operational work. If the user needs the child result now, use wait=true or keep polling get_subagent until terminal state instead of treating the initial delegated snapshot as final.${subagentForkModeEnabled ? " When a child must inherit the parent session context, you may explicitly use mode=\"fork\"." : ""}\n`
       : "- Sub-agent delegation is unavailable in this deployment.\n") +
     (selfLearningEnabled
       ? "- Record user corrections or stated preferences: use feedback\n"
@@ -199,6 +215,9 @@ export function buildFridayAgentSystemPrompt(
     "- When asked about your current deployment capabilities, use capabilities before answering. Use the prompt for model/version framing, not for guessing runtime state.\n" +
     "- Use the feedback tool when a user corrects you or states a preference.\n" +
     "- When a request matches an available starter skill, prefer that existing skill over generating or importing a new one.\n" +
+    (enforceStarterSkillRouting
+      ? "- For high-confidence operational matches to an installed starter skill, do not skip skills_list. Verify availability first, then decide whether to run the skill.\n"
+      : "") +
     "- When a matching CLI-backed starter skill exists for a local repo or ops task, prefer it before MCP.\n" +
     "- For requests about what is broken, what Friday already detected, or whether self-repair is safe, prefer diagnosis/recovery starter skills before broader planning.\n" +
     "- For requests about scoping, design review, implementation plan review, QAing a page, benchmarking, canary checks, retros, reviewing a diff, or syncing release docs, prefer the corresponding starter skill before broad freeform reasoning.\n" +

@@ -23,10 +23,6 @@ import { createFridayAutoFixRollbackService } from "../services/friday-auto-fix-
 import { createFridayApprovalWorkflowService } from "../services/friday-approval-workflow-service.js";
 import { createFridayAutoFixLessonExtractionService } from "../services/friday-auto-fix-lesson-extraction-service.js";
 import { createFridayAutoFixDispatcherService } from "../services/friday-auto-fix-dispatcher-service.js";
-import { createFridaySessionSatisfactionRepository } from "../persistence/friday-session-satisfaction-repository.js";
-import { createFridaySessionSatisfactionService } from "../services/friday-session-satisfaction-service.js";
-import { createFridayDeepPatternExtractionService } from "../services/friday-deep-pattern-extraction-service.js";
-import { createFridayIndividuationService } from "../services/friday-individuation-service.js";
 import type {
   CreateFridaySelfLearningRuntimeDeps,
   FridaySelfLearningRuntime,
@@ -186,36 +182,6 @@ export function createFridaySelfLearningRuntime(
     nowIso: deps.nowIso,
   });
 
-  // 13. Create satisfaction, individuation, and deep pattern services
-  const satisfactionRepo = createFridaySessionSatisfactionRepository();
-
-  const satisfaction = createFridaySessionSatisfactionService({
-    db: deps.db,
-    satisfactionRepo,
-  });
-
-  const individuation = createFridayIndividuationService({
-    db: deps.db,
-    factRepo,
-    satisfactionRepo,
-  });
-
-  const deepPatterns = createFridayDeepPatternExtractionService({
-    db: deps.db,
-    satisfactionRepo,
-    factRepo,
-    idGenerator: deps.idGenerator,
-  });
-
-  // 14. Wire individuation into context enrichment
-  const contextWithIndividuation = createFridayLearningContextEnrichmentService({
-    db: deps.db,
-    factService: facts,
-    patternService: patterns,
-    lifecycleService: lifecycle,
-    individuationService: individuation,
-  });
-
   return {
     events,
     extraction,
@@ -223,7 +189,7 @@ export function createFridaySelfLearningRuntime(
     patterns,
     feedback,
     lifecycle,
-    context: contextWithIndividuation,
+    context,
     metrics,
     pipeline,
     diagnosis,
@@ -233,8 +199,5 @@ export function createFridaySelfLearningRuntime(
     autoFixRollback,
     approvals,
     autoFixDispatcher,
-    satisfaction,
-    deepPatterns,
-    individuation,
   };
 }

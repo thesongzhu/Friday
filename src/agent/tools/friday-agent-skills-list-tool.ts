@@ -1,4 +1,5 @@
 import type { FridayRegisteredSkill, FridaySkillRegistry } from "#skills";
+import { evaluateFridaySkillMcpReadiness, type FridayMcpServerReadiness } from "../mcp/friday-mcp-readiness.js";
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
 import {
   errorResult,
@@ -9,6 +10,7 @@ import {
 
 export interface CreateFridayAgentSkillsListToolDeps {
   skillRegistry: FridaySkillRegistry;
+  listMcpServerReadiness?: () => readonly FridayMcpServerReadiness[];
 }
 
 function scoreSkill(skill: FridayRegisteredSkill): number {
@@ -68,6 +70,7 @@ export function createFridayAgentSkillsListTool(
         const origin = readStringParam(args, "origin")?.toLowerCase();
         const tag = readStringParam(args, "tag")?.toLowerCase();
         const query = readStringParam(args, "q")?.toLowerCase();
+        const mcpServers = deps.listMcpServerReadiness?.() ?? [];
 
         const skills = deps.skillRegistry.list()
           .filter((skill) => !installedOnly || skill.status === "installed")
@@ -95,19 +98,29 @@ export function createFridayAgentSkillsListTool(
 
         return jsonResult({
           count: skills.length,
-          skills: skills.map((skill) => ({
-            skillId: skill.manifest.id,
-            name: skill.manifest.name,
-            description: skill.manifest.description,
-            status: skill.status,
-            source: skill.source,
-            origin: skill.origin,
-            starter: (skill.manifest.tags ?? []).includes("starter"),
-            tags: skill.manifest.tags ?? [],
-            intents: skill.manifest.triggers.intents ?? [],
-            phrases: skill.manifest.triggers.phrases ?? [],
-            runtimeKind: skill.manifest.runtime.kind,
-          })),
+          skills: skills.map((skill) => {
+            const readiness = evaluateFridaySkillMcpReadiness({
+              manifest: skill.manifest,
+              servers: mcpServers,
+            });
+
+            return {
+              skillId: skill.manifest.id,
+              name: skill.manifest.name,
+              description: skill.manifest.description,
+              status: skill.status,
+              source: skill.source,
+              origin: skill.origin,
+              starter: (skill.manifest.tags ?? []).includes("starter"),
+              tags: skill.manifest.tags ?? [],
+              intents: skill.manifest.triggers.intents ?? [],
+              phrases: skill.manifest.triggers.phrases ?? [],
+              runtimeKind: skill.manifest.runtime.kind,
+              ready: readiness.ready,
+              blockers: readiness.blockers,
+              ...(readiness.requirements ? { requirements: readiness.requirements } : {}),
+            };
+          }),
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

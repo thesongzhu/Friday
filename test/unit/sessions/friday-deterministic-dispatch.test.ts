@@ -46,7 +46,14 @@ function createMockDeps(overrides?: Partial<FridayDeterministicDispatchDeps>): F
     capabilitySnapshotGetter: vi.fn().mockResolvedValue({
       readOnly: false,
       messaging: { enabled: true, kinds: ["discord"] },
-      mcp: { enabled: true, serverCount: 2 },
+      mcp: {
+        enabled: true,
+        serverCount: 2,
+        servers: [
+          { name: "filesystem", connected: true, authenticated: true },
+          { name: "github", connected: true, authenticated: false },
+        ],
+      },
       provider: { available: true, configuredCount: 1, mutationBlockedByReadOnly: false },
       browser: { activeMode: "puppeteer" },
       system: { enabled: true },
@@ -122,6 +129,7 @@ describe("dispatchDeterministic", () => {
       expect(result.response).toContain("Current capabilities:");
       expect(result.response).toContain("Messaging: enabled (discord)");
       expect(result.response).toContain("MCP: enabled (2 server(s))");
+      expect(result.response).toContain("filesystem (connected, authenticated)");
     });
 
     it("returns handled:false when snapshot getter throws", async () => {

@@ -33,6 +33,7 @@ describe("friday-agent-evidence-blocks", () => {
     mcp: {
       enabled: false,
       serverCount: 0,
+      servers: [],
     },
     provider: {
       available: true,

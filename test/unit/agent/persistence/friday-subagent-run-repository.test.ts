@@ -63,6 +63,7 @@ describe("FridaySubagentRunRepository", () => {
       expect(record.parentSessionKey).toBe("agent:run:parent-run-1");
       expect(record.childRunId).toBe("");
       expect(record.task).toBe("Test task");
+      expect(record.mode).toBe("fresh");
       expect(record.label).toBe("Test Label");
       expect(record.model).toBe("claude-3");
       expect(record.depth).toBe(1);
@@ -133,6 +134,23 @@ describe("FridaySubagentRunRepository", () => {
 
       expect(updated?.outcome).toEqual(outcome);
       expect(updated?.status).toBe("completed");
+    });
+
+    it("persists explicit fork metadata", () => {
+      const repo = createRepo();
+      const input = createRecord({
+        mode: "fork",
+        forkedFromMessageId: "msg-42",
+        inheritedMessageCount: 6,
+      });
+
+      const record = db.withWriteTransaction((writer) =>
+        repo.create(writer, input),
+      );
+
+      expect(record.mode).toBe("fork");
+      expect(record.forkedFromMessageId).toBe("msg-42");
+      expect(record.inheritedMessageCount).toBe(6);
     });
 
     it("updates childRunId", () => {

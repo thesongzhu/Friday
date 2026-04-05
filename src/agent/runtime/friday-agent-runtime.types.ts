@@ -25,6 +25,7 @@ import type {
   FridayAgentTaskProfileInput,
   FridayResolvedAgentTaskProfile,
 } from "./friday-agent-task-profile.js";
+import type { FridayAgentStarterSkillRoutingConfig } from "./friday-agent-starter-skill-routing.js";
 
 export interface FridayAgentExecutionContext {
   surface?: string;
@@ -215,8 +216,6 @@ export interface FridayAgentRuntimeResult {
   contextCostSummary?: FridayAgentContextCostSummary;
   /** Resolved task profile applied to the run. */
   taskProfile?: FridayResolvedAgentTaskProfile;
-  /** Count of non-fatal operations that failed during the run (e.g. event persistence, world state load). */
-  nonFatalWarningCount?: number;
 }
 
 export interface FridayAgentUsageTurn {
@@ -299,11 +298,7 @@ export interface CreateFridayAgentRuntimeDeps {
   /** Optional global rules evaluator used to gate run/tool execution. */
   evaluateRules?: (context: FridayEvaluationContext, signal?: AbortSignal) => Promise<FridayEvaluationResult>;
   /** Optional callback that returns learned user preferences to inject into the system prompt. */
-  learningContextBuilder?: (input: { userId: string; nowIso: string }) => {
-    preferences: Record<string, unknown>;
-    individuationStage?: string;
-    activePatterns?: Array<{ kind: string; key: string; strength: number }>;
-  };
+  learningContextBuilder?: (input: { userId: string; nowIso: string }) => { preferences: Record<string, unknown> };
   /** Optional callback that returns a communication persona prompt fragment for the current user. */
   communicationPromptBuilder?: (input: { userId: string; nowIso: string }) => string | null;
   /** Optional deterministic delegation hook for top-level coordinator runs. */
@@ -315,4 +310,6 @@ export interface CreateFridayAgentRuntimeDeps {
   decisionEngine?: FridayDecisionEngine;
   /** Optional world state manager for loading user context into decision engine. */
   worldStateManager?: FridayWorldStateManager;
+  /** Optional one-shot enforcement for installed starter-skill discovery on matching operational requests. */
+  starterSkillRouting?: FridayAgentStarterSkillRoutingConfig;
 }

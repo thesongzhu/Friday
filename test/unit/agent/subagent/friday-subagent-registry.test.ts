@@ -15,6 +15,7 @@ import type {
   CreateChildRuntimeParams,
   FridaySubagentRegistrySpawnInput,
 } from "#agent";
+import type { FridaySessionService } from "../../../../src/sessions/services/friday-session-service.types.js";
 import { buildFridaySubagentSessionKey } from "#sessions";
 import { FridayDomainError } from "#errors";
 
@@ -81,6 +82,7 @@ describe("FridaySubagentRegistry", () => {
       task: "Do something",
       parentRunId,
       parentSessionKey: "agent:run:parent-run-1",
+      mode: "fresh",
       depth: 0,
       rootRunId: "parent-run-1",
       signal: new AbortController().signal,
@@ -369,14 +371,55 @@ describe("FridaySubagentRegistry", () => {
       expect(records[0].requesterSessionKey).toBe("agent:run:parent-run-1");
       expect(records[0].rootRunId).toBe("root-123");
     });
+
+    it("uses session forking and persists fork metadata when mode=fork", async () => {
+      const executeRun = vi.fn().mockResolvedValue(makeResult());
+      const createChildRuntime = vi.fn().mockReturnValue({ executeRun });
+      const sessionService: FridaySessionService = {
+        forkSession: vi.fn().mockResolvedValue({
+          forkSession: { key: "agent:run:forked-child-1" },
+          inheritedMessageCount: 5,
+          forkedFromMessageId: "msg-42",
+        }),
+      } as unknown as FridaySessionService;
+
+      const registry = createRegistry({ createChildRuntime, sessionService });
+      await registry.spawn(spawnInput({
+        mode: "fork",
+        inheritMessageCount: 5,
+        forkFromMessageId: "msg-42",
+      }));
+
+      expect(sessionService.forkSession).toHaveBeenCalledWith("agent:run:parent-run-1", {
+        taskId: expect.any(String),
+        inheritMessageCount: 5,
+        forkFromMessageId: "msg-42",
+      });
+      const records = registry.listByParentRunId("parent-run-1");
+      expect(records[0].mode).toBe("fork");
+      expect(records[0].forkedFromMessageId).toBe("msg-42");
+      expect(records[0].inheritedMessageCount).toBe(5);
+      expect(records[0].childSessionKey).toBe("agent:run:forked-child-1");
+      expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+        sessionKey: "agent:run:forked-child-1",
+      }));
+    });
+
+    it("rejects fork mode when session forking is unavailable", async () => {
+      const registry = createRegistry();
+
+      await expect(
+        registry.spawn(spawnInput({ mode: "fork" })),
+      ).rejects.toThrow("fork mode is not available");
+    });
   });
 
   // ─── spawnDetached ───
 
   describe("spawnDetached", () => {
-    it("returns accepted immediately", () => {
+    it("returns accepted immediately", async () => {
       const registry = createRegistry();
-      const result = registry.spawnDetached(spawnInput());
+      const result = await registry.spawnDetached(spawnInput());
 
       expect(result.status).toBe("accepted");
       expect(result.subagentId).toBeTruthy();
@@ -387,9 +430,9 @@ describe("FridaySubagentRegistry", () => {
       );
     });
 
-    it("creates a pending/running record in DB", () => {
+    it("creates a pending/running record in DB", async () => {
       const registry = createRegistry();
-      const result = registry.spawnDetached(spawnInput());
+      const result = await registry.spawnDetached(spawnInput());
 
       const record = registry.getById(result.subagentId);
       expect(record).toBeTruthy();
@@ -399,7 +442,7 @@ describe("FridaySubagentRegistry", () => {
 
     it("eventually completes the child run", async () => {
       const registry = createRegistry();
-      const result = registry.spawnDetached(spawnInput());
+      const result = await registry.spawnDetached(spawnInput());
 
       // Wait for the detached run to complete
       const outcome = await registry.waitForCompletion(result.subagentId, 5000);
@@ -416,7 +459,7 @@ describe("FridaySubagentRegistry", () => {
         }),
       });
 
-      registry.spawnDetached(spawnInput());
+      await registry.spawnDetached(spawnInput());
 
       let settled = false;
       const draining = registry.drain(1000).then(() => {
