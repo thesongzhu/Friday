@@ -18,18 +18,7 @@
 
 import { readFileSync } from 'node:fs';
 
-const input = (() => {
-  const envInput = process.env.SKILL_INPUT;
-  if (envInput) {
-    try { return JSON.parse(envInput); } catch { /* fall through */ }
-  }
-  // Try reading from stdin (non-blocking)
-  try {
-    const data = readFileSync('/dev/stdin', 'utf8');
-    if (data.trim()) return JSON.parse(data);
-  } catch { /* fall through */ }
-  return {};
-})();
+const input = JSON.parse(readFileSync(0, 'utf-8').trim() || '{}');
 
 const scope = input.scope || 'market_wide';
 const sector = input.sector || null;

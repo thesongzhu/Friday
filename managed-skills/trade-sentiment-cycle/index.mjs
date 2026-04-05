@@ -185,19 +185,11 @@ const PHASES = {
 // Input parsing
 // ---------------------------------------------------------------------------
 
+import { readFileSync } from 'node:fs';
+
 function getMarketData() {
-  // Try FRIDAY_INPUT env var (JSON), then stdin, then argv
-  const raw =
-    process.env.FRIDAY_INPUT ||
-    process.env.SKILL_INPUT ||
-    (process.argv[2] ? process.argv[2] : null);
-
-  if (!raw) {
-    return null;
-  }
-
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(readFileSync(0, 'utf-8').trim() || '{}');
     // Accept either top-level or nested under .marketData
     return parsed.marketData || parsed;
   } catch {

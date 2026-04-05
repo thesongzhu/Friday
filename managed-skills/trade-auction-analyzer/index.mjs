@@ -30,7 +30,12 @@
 // Input parsing
 // ---------------------------------------------------------------------------
 
-const input = JSON.parse(process.env.SKILL_INPUT || '{}');
+// Read input from stdin (Friday runtime pipes JSON via stdin to run.sh)
+const _chunks = [];
+process.stdin.setEncoding('utf-8');
+process.stdin.on('data', (chunk) => _chunks.push(chunk));
+await new Promise((resolve) => process.stdin.on('end', resolve));
+const input = JSON.parse(_chunks.join('') || '{}');
 
 const symbols = input.symbols || null;
 const auctionData = input.auctionData || null;

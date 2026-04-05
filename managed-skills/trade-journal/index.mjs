@@ -38,15 +38,8 @@ function saveData(data) {
 // ---------------------------------------------------------------------------
 
 function getInput() {
-  const raw =
-    process.env.FRIDAY_INPUT ||
-    process.env.SKILL_INPUT ||
-    (process.argv[2] ? process.argv[2] : null);
-
-  if (!raw) return null;
-
   try {
-    return JSON.parse(raw);
+    return JSON.parse(readFileSync(0, 'utf-8').trim() || 'null');
   } catch {
     return null;
   }

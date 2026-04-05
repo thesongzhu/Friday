@@ -23,17 +23,7 @@ import { readFileSync } from 'node:fs';
 // Input handling
 // ---------------------------------------------------------------------------
 
-const input = (() => {
-  const envInput = process.env.SKILL_INPUT;
-  if (envInput) {
-    try { return JSON.parse(envInput); } catch { /* fall through */ }
-  }
-  try {
-    const data = readFileSync('/dev/stdin', 'utf8');
-    if (data.trim()) return JSON.parse(data);
-  } catch { /* fall through */ }
-  return {};
-})();
+const input = JSON.parse(readFileSync(0, 'utf-8').trim() || '{}');
 
 const mode = input.mode || 'full_scan';
 const symbol = input.symbol || null;

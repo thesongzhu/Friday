@@ -12,7 +12,7 @@ import pandas as pd
 
 def get_lhb_detail(date_str):
     """获取龙虎榜明细"""
-    df = ak.stock_lhb_detail_em(date=date_str)
+    df = ak.stock_lhb_detail_em(start_date=date_str, end_date=date_str)
     return df
 
 

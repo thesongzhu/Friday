@@ -195,19 +195,16 @@ export default async function execute(input) {
   return result;
 }
 
-// CLI entry point
-const args = process.argv[2];
-if (args) {
-  try {
-    const input = JSON.parse(args);
-    const result = await execute(input);
-    console.log(JSON.stringify(result));
-  } catch (err) {
-    console.log(JSON.stringify({
-      chunksIngested: 0,
-      categoryCounts: {},
-      topicCounts: {},
-      errors: [err.message],
-    }));
-  }
+// CLI entry point — read input from stdin
+try {
+  const input = JSON.parse(readFileSync(0, 'utf-8').trim() || '{}');
+  const result = await execute(input);
+  console.log(JSON.stringify(result));
+} catch (err) {
+  console.log(JSON.stringify({
+    chunksIngested: 0,
+    categoryCounts: {},
+    topicCounts: {},
+    errors: [err.message],
+  }));
 }

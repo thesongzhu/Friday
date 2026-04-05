@@ -19,15 +19,8 @@ const JOURNAL_DATA_FILE = join(__dirname, "..", "trade-journal", "journal-data.j
 // ---------------------------------------------------------------------------
 
 function getInput() {
-  const raw =
-    process.env.FRIDAY_INPUT ||
-    process.env.SKILL_INPUT ||
-    (process.argv[2] ? process.argv[2] : null);
-
-  if (!raw) return {};
-
   try {
-    return JSON.parse(raw);
+    return JSON.parse(readFileSync(0, 'utf-8').trim() || '{}');
   } catch {
     return {};
   }

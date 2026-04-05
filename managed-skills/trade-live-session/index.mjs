@@ -21,10 +21,11 @@ const dateStr = now.toLocaleDateString('zh-CN', {
   day: '2-digit',
 });
 
-// Parse input from env (Friday passes FRIDAY_INPUT_JSON)
+// Read input from stdin (Friday runtime pipes JSON via stdin)
+import { readFileSync } from 'node:fs';
 let inputs = {};
 try {
-  inputs = JSON.parse(process.env.FRIDAY_INPUT_JSON || '{}');
+  inputs = JSON.parse(readFileSync(0, 'utf-8').trim() || '{}');
 } catch (_) {
   // ignore
 }

@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
-INPUT=$(cat)
-python3 "$(dirname "$0")/main.py" <<< "$INPUT"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec python3 "${SCRIPT_DIR}/main.py"

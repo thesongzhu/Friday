@@ -49,7 +49,7 @@ def fetch_auction(symbols=None):
 def fetch_dragon_tiger():
     """获取龙虎榜"""
     today = datetime.now().strftime("%Y%m%d")
-    df = ak.stock_lhb_detail_em(date=today)
+    df = ak.stock_lhb_detail_em(start_date=today, end_date=today)
     return df
 
 
