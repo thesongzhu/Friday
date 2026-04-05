@@ -22,6 +22,22 @@ export interface SkillMcpServerRequirement {
   auth: SkillMcpRequirementAuth;
 }
 
+/**
+ * Design patterns that describe how a skill's instructions are structured.
+ *
+ * - tool-wrapper: Packages library/framework conventions as on-demand knowledge.
+ * - generator:    Produces structured output by filling a reusable template from assets/.
+ * - reviewer:     Evaluates code/content against a checklist in references/.
+ * - inversion:    Interviews the user before acting (structured question phases with gates).
+ * - pipeline:     Sequential steps with explicit gate conditions between them.
+ */
+export type SkillDesignPattern =
+  | "tool-wrapper"
+  | "generator"
+  | "reviewer"
+  | "inversion"
+  | "pipeline";
+
 export interface SkillStepDefinition {
   id: string;
   type: SkillStepType;
@@ -56,6 +72,7 @@ export interface SkillManifestV2 {
   license?: string;
   repository?: string;
   tags: string[];
+  designPatterns?: SkillDesignPattern[];
 
   runtime: {
     kind: SkillRuntimeKind;

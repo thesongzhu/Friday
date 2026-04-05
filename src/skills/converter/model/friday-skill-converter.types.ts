@@ -6,6 +6,7 @@ import type { FridaySkillUiSchemaV1 } from "../../generator/model/friday-skill-u
 export const FRIDAY_SKILL_SOURCE_FORMATS = [
   "friday-package",
   "clawdbot-skill-md",
+  "adk-skill",
   "n8n-node",
   "openai-gpt-action",
   "code-repo",
