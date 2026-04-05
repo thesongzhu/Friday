@@ -77,7 +77,7 @@ describe("FridayApiRuntime deterministic dispatch", () => {
       capabilitySnapshotGetter: () => ({
         readOnly: false,
         messaging: { enabled: false, kinds: [] },
-        mcp: { enabled: false, serverCount: 0 },
+        mcp: { enabled: false, serverCount: 0, servers: [] },
         provider: { available: true, configuredCount: 0, mutationBlockedByReadOnly: false },
         browser: {},
         system: { enabled: false },

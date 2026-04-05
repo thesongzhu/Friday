@@ -131,6 +131,7 @@ import {
   createFridayWorkspaceContextEngine,
   createFridayWorldStateManager,
   inferFridaySubagentProfile,
+  listFridayMcpServerReadiness,
   parseFridayMcpServersFromEnv,
   resolveFridayAgentTaskProfile,
   resolveFridayContextEnginePromptFragment,
@@ -156,6 +157,7 @@ import type {
   FridayAgentReviewMode,
   FridayAgentRunStatus,
   FridayAgentRuntime,
+  FridayAgentStarterSkillDescriptor,
   FridayAgentTaskStatusSnapshot,
   FridayContextEngineAfterTurnInput,
 } from "#agent";
@@ -595,21 +597,6 @@ export async function createFridayHub(
   let stateRuntime: FridayStateRuntime | null = null;
 
   // 1. Initialize state (SQLite + config)
-  // P2-CFG: Pre-validate stateDir accessibility before SQLite init to surface errors at the right layer.
-  if (config.stateDir) {
-    try {
-      if (!fs.existsSync(config.stateDir)) {
-        fs.mkdirSync(config.stateDir, { recursive: true });
-      }
-      fs.accessSync(config.stateDir, fs.constants.R_OK | fs.constants.W_OK);
-    } catch (err) {
-      throw new FridayDomainError(
-        "CONFIG_ERROR",
-        `State directory "${config.stateDir}" is not accessible (read/write): ${err instanceof Error ? err.message : String(err)}`,
-        { httpStatus: 500 },
-      );
-    }
-  }
   const stateOpts = config.stateDir
     ? { env: { ...process.env, FRIDAY_STATE_DIR: config.stateDir } as NodeJS.ProcessEnv }
     : undefined;
@@ -1548,11 +1535,48 @@ export async function createFridayHub(
       console.warn(`[friday] ${searchWarning}`);
     }
   }
+  const starterSkillRoutingEnforced = process.env.FRIDAY_AGENT_ENFORCE_STARTER_SKILL_ROUTING === "true";
+  const subagentForkModeEnabled = process.env.FRIDAY_SUBAGENT_FORK_MODE_ENABLED === "true";
+
+  const listInstalledStarterSkills = (): FridayAgentStarterSkillDescriptor[] =>
+    registry.list()
+      .filter((skill) =>
+        skill.status === "installed"
+        && (skill.manifest.tags ?? []).includes("starter"))
+      .sort((left, right) => {
+        const leftPriority =
+          (left.manifest.tags ?? []).includes("starter.recovery")
+            ? 0
+            : (left.manifest.tags ?? []).includes("starter.diagnosis")
+              ? 1
+              : 2;
+        const rightPriority =
+          (right.manifest.tags ?? []).includes("starter.recovery")
+            ? 0
+            : (right.manifest.tags ?? []).includes("starter.diagnosis")
+              ? 1
+              : 2;
+        if (leftPriority !== rightPriority) {
+          return leftPriority - rightPriority;
+        }
+        return left.manifest.name.localeCompare(right.manifest.name);
+      })
+      .map((skill) => ({
+        skillId: skill.manifest.id,
+        purpose: skill.manifest.description,
+        triggerPhrases: skill.manifest.triggers.phrases ?? [],
+        intents: skill.manifest.triggers.intents ?? [],
+        tags: skill.manifest.tags ?? [],
+      }));
 
   const getAgentCapabilitySnapshot = async (input: { readOnly: boolean }): Promise<FridayAgentCapabilitiesSnapshot> => {
     const messagingKinds = typeof channelRegistry !== "undefined"
       ? channelRegistry.list().filter((kind) => channelRegistry.status(kind) === "connected")
       : [];
+    const mcpServers = listFridayMcpServerReadiness({
+      servers: mcpAdapter?.listServers() ?? [],
+      serverStates: mcpAdapter?.listServerStates() ?? [],
+    });
     const providerCount = await providerService.listProviders()
       .then((providers) => providers.length)
       .catch(() => 0);
@@ -1568,8 +1592,13 @@ export async function createFridayHub(
         kinds: messagingKinds,
       },
       mcp: {
-        enabled: !!mcpAdapter && mcpAdapter.listServers().length > 0,
-        serverCount: mcpAdapter?.listServers().length ?? 0,
+        enabled: mcpServers.length > 0,
+        serverCount: mcpServers.length,
+        servers: mcpServers.map((server) => ({
+          name: server.name,
+          connected: server.connected,
+          authenticated: server.authenticated,
+        })),
       },
       provider: {
         available: true,
@@ -1674,6 +1703,9 @@ export async function createFridayHub(
         id: record.id,
         childRunId: record.childRunId,
         childSessionKey: record.childSessionKey,
+        mode: record.mode,
+        forkedFromMessageId: record.forkedFromMessageId,
+        inheritedMessageCount: record.inheritedMessageCount,
         status: record.status,
         task: record.task,
         label: record.label,
@@ -1696,6 +1728,9 @@ export async function createFridayHub(
         id: record.id,
         childRunId: record.childRunId,
         childSessionKey: record.childSessionKey,
+        mode: record.mode,
+        forkedFromMessageId: record.forkedFromMessageId,
+        inheritedMessageCount: record.inheritedMessageCount,
         status: record.status,
         task: record.task,
         label: record.label,
@@ -1864,6 +1899,7 @@ export async function createFridayHub(
     webSearchApiKey: process.env.FRIDAY_SERPER_API_KEY ?? process.env.FRIDAY_TAVILY_API_KEY,
     capabilitySnapshotGetter: getAgentCapabilitySnapshot,
     taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
+    subagentForkModeEnabled,
   });
 
   const mcpServer = (() => {
@@ -2486,39 +2522,15 @@ export async function createFridayHub(
         // Non-fatal: pattern loading failure should not block agent runs.
       }
     }
-    const starterSkills = registry.list()
-      .filter((skill) => (skill.manifest.tags ?? []).includes("starter"))
-      .sort((left, right) => {
-        const leftPriority =
-          (left.manifest.tags ?? []).includes("starter.recovery")
-            ? 0
-            : (left.manifest.tags ?? []).includes("starter.diagnosis")
-              ? 1
-              : 2;
-        const rightPriority =
-          (right.manifest.tags ?? []).includes("starter.recovery")
-            ? 0
-            : (right.manifest.tags ?? []).includes("starter.diagnosis")
-              ? 1
-              : 2;
-        if (leftPriority !== rightPriority) {
-          return leftPriority - rightPriority;
-        }
-        return left.manifest.name.localeCompare(right.manifest.name);
-      })
-      .slice(0, 8)
-      .map((skill) => ({
-        skillId: skill.manifest.id,
-        purpose: skill.manifest.description,
-        triggerPhrases: skill.manifest.triggers.phrases ?? [],
-        tags: skill.manifest.tags ?? [],
-      }));
+    const starterSkills = listInstalledStarterSkills().slice(0, 8);
     const prompt = buildFridayAgentSystemPrompt({
       toolNames: input.toolNames,
       modelIdentity: agentModelIdentity,
       version: FRIDAY_VERSION,
       workspaceContext,
       starterSkills,
+      enforceStarterSkillRouting: starterSkillRoutingEnforced,
+      subagentForkModeEnabled,
       currentTime: {
         nowIso: input.nowIso,
         timezone: input.timezone,
@@ -2650,10 +2662,7 @@ export async function createFridayHub(
     decisionEngine: worldModelDecisionEngine,
     worldStateManager: worldModelStateManager,
     learningContextBuilder: (input) => {
-      if (!_learningContextRef) {
-        console.warn("[friday][hub-bootstrap] learning-context-ref not initialized; returning empty preferences");
-        return { preferences: {} };
-      }
+      if (!_learningContextRef) return { preferences: {} };
       return _learningContextRef.buildContext(input);
     },
     communicationPromptBuilder: (input) => {
@@ -2669,9 +2678,13 @@ export async function createFridayHub(
       });
       return buildFridayCommunicationPromptFragment(persona);
     },
+    starterSkillRouting: {
+      enabled: starterSkillRoutingEnforced,
+      skills: listInstalledStarterSkills(),
+    },
     delegationHandler: async (input) => {
       const inferredProfile = inferFridaySubagentProfile(input.task);
-      const detached = subagentRegistry.spawnDetached({
+      const detached = await subagentRegistry.spawnDetached({
         task: input.task,
         taskPrompt: input.taskPrompt,
         providerId: input.providerId,
@@ -2782,6 +2795,7 @@ export async function createFridayHub(
 
   subagentRegistry = createFridaySubagentRegistry({
     db: stateRuntime!.sqlite,
+    sessionService: hubSessionService,
     createChildRuntime: (params) => {
       let childRuntimeRef: FridayAgentRuntime | undefined;
       const childRuntimeGetter = () => childRuntimeRef;
@@ -2818,6 +2832,7 @@ export async function createFridayHub(
         webSearchApiKey: process.env.FRIDAY_SERPER_API_KEY ?? process.env.FRIDAY_TAVILY_API_KEY,
         capabilitySnapshotGetter: getAgentCapabilitySnapshot,
         taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
+        subagentForkModeEnabled,
       });
       const childRuntime = createFridayAgentRuntime({
         db: stateRuntime!.sqlite,
@@ -2838,6 +2853,10 @@ export async function createFridayHub(
         workdir: workspaceRoot,
         artifactWriter: agentArtifactWriter,
         evaluateRules,
+        starterSkillRouting: {
+          enabled: starterSkillRoutingEnforced,
+          skills: listInstalledStarterSkills(),
+        },
         usageRecorder: async (usage) => {
           await providerService.recordUsage({
             providerId: usage.providerId,
@@ -2887,14 +2906,9 @@ export async function createFridayHub(
       Awaited<ReturnType<typeof hubSessionService.getConversationFocus>>,
   ): void => {
     void (async () => {
-      const current = await hubSessionService.getConversationFocus(sessionKey).catch((err) => {
-        console.warn("[friday][hub-bootstrap] get-conversation-focus:", err instanceof Error ? err.message : String(err));
-        return null;
-      });
+      const current = await hubSessionService.getConversationFocus(sessionKey).catch(() => null);
       const next = updater(current);
-      await hubSessionService.setConversationFocus(sessionKey, next).catch((err) => {
-        console.warn("[friday][hub-bootstrap] set-conversation-focus:", err instanceof Error ? err.message : String(err));
-      });
+      await hubSessionService.setConversationFocus(sessionKey, next).catch(() => undefined);
     })();
   };
 
@@ -3427,13 +3441,7 @@ export async function createFridayHub(
       // Lazy: learningEventWriter is defined after uixService, so use the pipeline directly.
       selfLearningRuntime.pipeline.processBatch(events);
     },
-    learningContextBuilder: (input) => {
-      if (!_learningContextRef) {
-        console.warn("[friday][hub-bootstrap] child-runtime learning-context-ref not initialized; returning empty preferences");
-        return { preferences: {} };
-      }
-      return _learningContextRef.buildContext(input);
-    },
+    learningContextBuilder: (input) => _learningContextRef?.buildContext(input) ?? { preferences: {} },
     diagnosticsBuilder: () => ({
       generatedAt: nowIso(),
       taskProfilePresets: [
@@ -4407,6 +4415,7 @@ export async function createFridayHub(
     const subagentTools = createFridayAgentSubagentTools({
       registry: subagentRegistry,
       subagentContext: topLevelSubagentContext,
+      forkModeEnabled: subagentForkModeEnabled,
     });
     for (const tool of subagentTools) {
       agentTools.push(tool);
@@ -4415,23 +4424,10 @@ export async function createFridayHub(
   }
 
   // 2. image_analysis — stub analyzeImages via provider service (vision model)
-  //
-  // Known vision-capable model name patterns — used to warn before sending
-  // a request that will certainly fail with a non-vision model.
-  const VISION_MODEL_RE =
-    /gpt-4o|gpt-4-turbo|gpt-4\.1|claude-3|claude-.*sonnet|claude-.*opus|claude-.*haiku|gemini|llava|pixtral|qwen-vl|qwen2-vl|yi-vision|internvl/i;
-
   const analyzeImages: FridayImageAnalysisFn = async (request, signal) => {
     // Use the provider service to resolve a vision-capable model and call it.
+    // For now, create a graceful stub that reports service availability.
     const resolvedModel = request.model ?? "gpt-4o";
-
-    // Pre-check: warn if model is unlikely to support vision
-    if (!VISION_MODEL_RE.test(resolvedModel)) {
-      console.warn(
-        `[friday][image-analysis] model "${resolvedModel}" may not support vision — ` +
-        "consider using a vision-capable model (gpt-4o, claude-3-*, gemini-*, etc.)",
-      );
-    }
     const { result, route } = await providerService.runWithFallback({
       requestedModel: resolvedModel,
       tenantContext: request.tenantContext,
@@ -4467,22 +4463,6 @@ export async function createFridayHub(
 
         if (!response.ok) {
           const body = await response.text().catch(() => "");
-          // Provide user-friendly message when model doesn't support vision
-          const lower = body.toLowerCase();
-          if (
-            lower.includes("does not support image") ||
-            lower.includes("image_url is not supported") ||
-            lower.includes("vision") ||
-            lower.includes("multimodal") ||
-            (response.status === 400 && lower.includes("invalid"))
-          ) {
-            throw new FridayDomainError(
-              "VALIDATION_ERROR",
-              `Model "${_route.model}" does not support image analysis. ` +
-              `Use a vision-capable model such as gpt-4o, claude-3-sonnet, or gemini-pro-vision.`,
-              { httpStatus: 400 },
-            );
-          }
           throw new FridayDomainError("INTERNAL_ERROR", `Vision API error ${String(response.status)}: ${body}`, { httpStatus: 500 });
         }
 
@@ -5205,64 +5185,41 @@ export async function createFridayHub(
       hubState = "stopping";
       upSince = null;
 
-      // P0-SHUT: Timeout wrapper prevents shutdown from hanging indefinitely
-      // if any single service is stuck. 30s per step is generous; if a service
-      // cannot stop in 30s it is effectively hung.
-      const SHUTDOWN_STEP_TIMEOUT_MS = 30_000;
-      const shutdownWithTimeout = async (
-        label: string,
-        step: () => Promise<void> | void,
-      ): Promise<void> => {
-        try {
-          await Promise.race([
-            Promise.resolve(step()),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error(`Shutdown step "${label}" timed out after ${SHUTDOWN_STEP_TIMEOUT_MS}ms`)), SHUTDOWN_STEP_TIMEOUT_MS),
-            ),
-          ]);
-        } catch (err) {
-          console.warn("[friday][hub-shutdown]", label, ":", err instanceof Error ? err.message : String(err));
-        }
-      };
-
       // P1-SHUT-001/002/003: Stop services started during bootstrap
-      if (observabilityService?.scheduler) {
-        await shutdownWithTimeout("observabilityService.scheduler.stop", () => observabilityService!.scheduler!.stop());
-      }
-      if (agentLearningBridge) {
-        await shutdownWithTimeout("agentLearningBridge.stop", () => agentLearningBridge!.stop());
-      }
-      if (mcpAdapter && "close" in mcpAdapter) {
-        await shutdownWithTimeout("mcpAdapter.close", () => (mcpAdapter as unknown as { close(): Promise<void> }).close());
-      }
+      try { observabilityService?.scheduler?.stop(); } catch (err) {
+      warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
+      try { agentLearningBridge?.stop(); } catch (err) {
+      warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
+      try { if (mcpAdapter && "close" in mcpAdapter) await (mcpAdapter as unknown as { close(): Promise<void> }).close(); } catch (err) {
+      warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
 
       // 1. Stop job scheduler (F11: await in-flight)
       if (jobScheduler) {
-        await shutdownWithTimeout("jobScheduler.stop", () => jobScheduler!.stop());
+        await jobScheduler.stop();
       }
 
       // 2. Stop memory file sync
       if (memoryFileSyncService) {
-        await shutdownWithTimeout("memoryFileSyncService.stop", () => memoryFileSyncService!.stop());
+        await memoryFileSyncService.stop();
       }
 
       // 3. Stop channel plugins
-      await shutdownWithTimeout("channelRegistry.stopAll", () => channelRegistry.stopAll());
+      await channelRegistry.stopAll();
       if (systemCompanionBridge?.isConnected()) {
-        await shutdownWithTimeout("systemCompanionBridge.disconnect", () => systemCompanionBridge!.disconnect());
+        await systemCompanionBridge.disconnect();
       }
       if (systemCompanionServer?.isRunning()) {
-        await shutdownWithTimeout("systemCompanionServer.stop", () => systemCompanionServer!.stop());
+        await systemCompanionServer.stop();
       }
       if (desktopSessionManager?.isConnected()) {
         desktopSessionManager.disconnect();
       }
-      await shutdownWithTimeout("browserManager.close", () => browserManager.close());
-      await shutdownWithTimeout("subagentRegistry.drain", () => subagentRegistry.drain());
+      await browserManager.close();
+      await subagentRegistry.drain();
       // 4. API runtime — no async teardown yet (HTTP server stop is CLI concern)
       // 5. Workflow runtime — scheduler now handles cron lifecycle
       // 6. Skills
-      await shutdownWithTimeout("registry.close", () => registry.close());
+      await registry.close();
       // 7. State
       stateRuntime?.close();
       hubState = "stopped";

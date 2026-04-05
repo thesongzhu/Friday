@@ -1,4 +1,4 @@
-import type { SkillManifestV2, SkillRuntimeKind } from "#skills";
+import type { SkillDesignPattern, SkillManifestV2, SkillRuntimeKind } from "#skills";
 
 import type { FridaySkillGenerationTurn } from "../model/friday-skill-generator.types.js";
 
@@ -7,6 +7,107 @@ import type { FridaySkillGenerationTurn } from "../model/friday-skill-generator.
 export interface FridaySkillGeneratorPrompt {
   system: string;
   user: string;
+}
+
+// ─── Design Pattern Scaffolding ───
+
+/**
+ * Maps a detected design pattern to SKILL.md structural guidance.
+ * Used by the requirements and code prompts to scaffold the right structure.
+ */
+const DESIGN_PATTERN_GUIDANCE: Record<SkillDesignPattern, string> = {
+  "tool-wrapper": `Design Pattern: TOOL WRAPPER
+Structure: Instructions reference conventions/docs in references/ directory. No templates, no scripts.
+- SKILL.md says WHEN to load WHAT rules from references/.
+- references/ holds detailed library/framework documentation.
+- Agent loads references on-demand (progressive loading).
+Example: A FastAPI skill that loads references/fastapi-conventions.md only when writing route handlers.`,
+
+  "generator": `Design Pattern: GENERATOR
+Structure: Produces structured output by filling a reusable template from assets/.
+- assets/ holds the output template (e.g., assets/report-template.md).
+- references/ holds quality rules / style guide.
+- SKILL.md instructions orchestrate the fill-in-the-blank process.
+Example: An incident brief skill that fills assets/incident-brief-template.md from collected evidence.`,
+
+  "reviewer": `Design Pattern: REVIEWER
+Structure: Evaluates code/content against a checklist, grouped by severity.
+- references/ holds review-checklist.md (what to check).
+- SKILL.md instructions define the review protocol (how to check).
+- Swap the checklist file to get a completely different review.
+- Output findings grouped by severity (critical > high > medium > low).
+Example: A code review skill using references/review-checklist.md with severity-based output.`,
+
+  "inversion": `Design Pattern: INVERSION
+Structure: The skill interviews the user before acting.
+- Define interview phases (understand goal, scope boundaries, define success).
+- Include a hard gate: "DO NOT start building until all phases are complete."
+- Prevents the agent from generating detailed output based on assumptions.
+Example: A project planner that asks 5 structured questions before producing a plan.`,
+
+  "pipeline": `Design Pattern: PIPELINE
+Structure: Sequential steps with explicit gate conditions between them.
+- Number each step clearly (Step 1, Step 2, ...).
+- Include gates: "Do NOT proceed to Step N until the user confirms Step N-1."
+- The most complex pattern but prevents agents from skipping validation.
+- Can include Reviewer steps or Generator steps within the pipeline.
+Example: An API doc pipeline: gather endpoints → generate docs → review → user confirms → publish.`,
+};
+
+/**
+ * Detects which design pattern best matches a user's goal description.
+ */
+export function detectDesignPatternFromGoal(goal: string): SkillDesignPattern | null {
+  const lower = goal.toLowerCase();
+
+  // Reviewer signals
+  if (
+    lower.includes("review") || lower.includes("audit") || lower.includes("check") ||
+    lower.includes("evaluate") || lower.includes("assess") || lower.includes("lint")
+  ) {
+    return "reviewer";
+  }
+
+  // Generator signals
+  if (
+    lower.includes("generate") || lower.includes("report") || lower.includes("template") ||
+    lower.includes("brief") || lower.includes("document") || lower.includes("summary")
+  ) {
+    return "generator";
+  }
+
+  // Pipeline signals
+  if (
+    lower.includes("pipeline") || lower.includes("multi-step") || lower.includes("workflow") ||
+    lower.includes("approval") || lower.includes("sequential")
+  ) {
+    return "pipeline";
+  }
+
+  // Inversion signals
+  if (
+    lower.includes("clarify") || lower.includes("interview") || lower.includes("gather requirements") ||
+    lower.includes("scope") || lower.includes("ask first") || lower.includes("collect information")
+  ) {
+    return "inversion";
+  }
+
+  // Tool Wrapper signals
+  if (
+    lower.includes("best practices") || lower.includes("conventions") || lower.includes("wrapper") ||
+    lower.includes("expert on") || lower.includes("library")
+  ) {
+    return "tool-wrapper";
+  }
+
+  return null;
+}
+
+/**
+ * Returns the scaffolding guidance for a design pattern.
+ */
+export function getDesignPatternGuidance(pattern: SkillDesignPattern): string {
+  return DESIGN_PATTERN_GUIDANCE[pattern];
 }
 
 // ─── Prompt A: Requirements / Clarification ───
@@ -30,6 +131,12 @@ export function buildRequirementsPrompt(
     ? `\nCurrent spec summary:\n${specSummary}`
     : "";
 
+  // Detect design pattern from the goal
+  const detectedPattern = detectDesignPatternFromGoal(goal);
+  const patternBlock = detectedPattern
+    ? `\n\n${getDesignPatternGuidance(detectedPattern)}\n\nUse this pattern to guide the skill structure. Include "designPattern": "${detectedPattern}" in the spec.`
+    : "";
+
   const system = `You are an AI skill requirements analyzer for the Friday automation platform.
 
 Your job is to extract a complete skill specification from the user's request.
@@ -41,6 +148,7 @@ Rules:
 4. Prefer deterministic automation over open-ended agent behavior.
 5. If all required fields are resolved, set state to "ready_for_generation".
 6. If critical information is missing, set state to "needs_clarification".
+7. Detect which design pattern best fits the skill (tool-wrapper, generator, reviewer, inversion, pipeline) and include it in the spec.${patternBlock}
 
 Response format (JSON only):
 {
@@ -48,6 +156,7 @@ Response format (JSON only):
   "questions": ["..."],
   "spec": {
     "goal": "string",
+    "designPattern": "tool-wrapper" | "generator" | "reviewer" | "inversion" | "pipeline" | null,
     "inputs": [{ "key": "string", "type": "string", "required": true, "label": "string" }],
     "outputs": [{ "key": "string", "type": "string", "description": "string" }],
     "triggers": { "intents": [], "phrases": [] },
@@ -83,7 +192,8 @@ Rules:
 9. schemaVersion must be "2.0" (string)
 10. Do NOT add any keys not in the schema. All objects use strict validation — extra keys will cause rejection.
 11. Minimize permissions (principle of least privilege).
-12. Defaults will be applied for omitted optional fields, so only provide fields you are confident about.`;
+12. Defaults will be applied for omitted optional fields, so only provide fields you are confident about.
+13. If the spec includes a designPattern, set "designPatterns": ["<pattern>"] in the manifest. Valid values: "tool-wrapper", "generator", "reviewer", "inversion", "pipeline". A skill may combine multiple patterns.`;
 
   // Extract repair context if present so it doesn't pollute the spec JSON
   const { _repairContext, ...cleanSpec } = spec as Record<string, unknown> & {
@@ -105,6 +215,32 @@ export function buildCodePrompt(
   manifest: SkillManifestV2,
   runtimeKind: SkillRuntimeKind,
 ): FridaySkillGeneratorPrompt {
+  // Build design-pattern-specific file guidance
+  const patterns = manifest.designPatterns ?? [];
+  const patternFileHints = patterns
+    .map((p) => {
+      switch (p) {
+        case "reviewer":
+          return "- Include a references/review-checklist.md with severity-grouped checklist items.\n- SKILL.md should reference the checklist and define a review protocol.";
+        case "generator":
+          return "- Include an assets/ directory with an output template file.\n- SKILL.md should define a generation protocol that fills the template.";
+        case "inversion":
+          return '- SKILL.md should define interview phases and a hard gate: "DO NOT start building until all phases are complete."';
+        case "pipeline":
+          return '- SKILL.md should define numbered steps with explicit gates: "Do NOT proceed to Step N until confirmed."';
+        case "tool-wrapper":
+          return "- Include a references/ directory with convention/best-practice docs.\n- SKILL.md should say when to load which reference files.";
+        default:
+          return "";
+      }
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  const patternSection = patternFileHints
+    ? `\n\nDesign pattern files to generate:\n${patternFileHints}`
+    : "";
+
   const system = `You are a code generator for the Friday automation platform.
 
 You generate executable code files for a skill based on the provided manifest.
@@ -121,6 +257,7 @@ Rules:
 7. Do not use TypeScript in generated files — output JavaScript (.mjs) or Bash (.sh) only.
 8. For Node runtime, the entrypoint must be "index.mjs".
 9. For Shell runtime, the entrypoint must be "run.sh" with proper shebang (#!/usr/bin/env bash).
+10. Generate a SKILL.md file that follows the skill's design pattern structure.${patternSection}
 
 Language values: "javascript", "bash", "json", "markdown".
 

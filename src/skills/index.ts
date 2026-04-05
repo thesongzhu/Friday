@@ -16,7 +16,10 @@ export type {
   SkillRuntimeKind,
   SkillInvocationMode,
   SkillStepType,
+  SkillMcpRequirementAuth,
+  SkillMcpServerRequirement,
   SkillStepDefinition,
+  SkillDesignPattern,
   SkillManifestV2,
 } from "./model/friday-skill-manifest-v2.types.js";
 

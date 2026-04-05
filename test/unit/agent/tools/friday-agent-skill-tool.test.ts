@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createFridayAgentSkillTool } from "#agent";
-import type { FridaySkillExecutor, FridaySkillExecuteResult } from "#skills";
+import type { FridaySkillExecutor, FridaySkillExecuteResult, FridaySkillRegistry } from "#skills";
+import { makeManifest } from "../../skills/_helpers/make-manifest.helper.js";
 
 function signal(): AbortSignal {
   return new AbortController().signal;
@@ -30,6 +31,56 @@ function mockExecutor(
     }),
     cancel: vi.fn(),
   };
+}
+
+function mockRegistry(overrides?: { requirements?: ReturnType<typeof makeManifest>["requirements"] }): FridaySkillRegistry {
+  const manifest = makeManifest({
+    id: "secure-skill",
+    requirements: overrides?.requirements,
+  });
+
+  return {
+    list: vi.fn(() => []),
+    get: vi.fn((skillId: string) => {
+      if (skillId !== manifest.id) {
+        return null;
+      }
+      return {
+        manifest,
+        skillDir: "/tmp/secure-skill",
+        source: "bundled",
+        origin: "bundled",
+        status: "installed",
+        loaded: {
+          skillDir: "/tmp/secure-skill",
+          manifest,
+          loadMode: "manifest-v2",
+          declaredFiles: [],
+        },
+        validation: {
+          ok: true,
+          issues: [],
+        },
+        trust: {
+          trustTier: "bundled",
+          executionMode: "trusted",
+          sandboxPolicy: {
+            trustTier: "bundled",
+            defaultExecutionMode: "trusted",
+            allowedExecutionModes: ["trusted", "restricted"],
+          },
+        },
+      };
+    }),
+    resolveByIntent: vi.fn(() => null),
+    validateAll: vi.fn(() => []),
+    reload: vi.fn(),
+    refresh: vi.fn(),
+    isCompatible: vi.fn(() => ({ compatible: true, reasons: [] })),
+    startWatching: vi.fn(),
+    stopWatching: vi.fn(),
+    close: vi.fn(),
+  } as unknown as FridaySkillRegistry;
 }
 
 describe("FridayAgentSkillTool", () => {
@@ -138,6 +189,42 @@ describe("FridayAgentSkillTool", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content).toContain("cancelled");
+  });
+
+  it("returns structured blockers instead of executing when required MCP auth is missing", async () => {
+    const executor = mockExecutor(makeResult());
+    const tool = createFridayAgentSkillTool({
+      skillExecutor: executor,
+      skillRegistry: mockRegistry({
+        requirements: {
+          bins: [],
+          env: [],
+          config: [],
+          os: ["darwin", "linux", "win32"],
+          mcpServers: [{ name: "github", auth: "authenticated" }],
+        },
+      }),
+      listMcpServerReadiness: () => [
+        { name: "github", connected: true, authenticated: false },
+      ],
+    });
+
+    const result = await tool.execute(
+      { skillId: "secure-skill", input: {} },
+      signal(),
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(executor.execute).not.toHaveBeenCalled();
+    expect(JSON.parse(result.content)).toEqual({
+      skillId: "secure-skill",
+      status: "blocked",
+      ready: false,
+      blockers: ['Required MCP server "github" is not authenticated.'],
+      requirements: {
+        mcpServers: [{ name: "github", auth: "authenticated" }],
+      },
+    });
   });
 
   // ─── Missing required param ───

@@ -36,6 +36,7 @@ function buildManifest(overrides: Partial<SkillManifestV2>): SkillManifestV2 {
       env: [],
       config: [],
       os: ["darwin", "linux"],
+      mcpServers: [],
     },
     inputs: [],
     outputs: [],
@@ -306,5 +307,41 @@ describe("createFridayAgentSkillsListTool", () => {
     expect(parsed.skills[0]?.tags).toEqual(
       expect.arrayContaining(["starter.cli", "cli-backed", "skill.stabilized"]),
     );
+  });
+
+  it("reports MCP blockers for skills that require authenticated servers", async () => {
+    const tool = createFridayAgentSkillsListTool({
+      skillRegistry: createRegistry([
+        buildRegisteredSkill({
+          manifest: buildManifest({
+            id: "secure-review",
+            name: "Secure Review",
+            description: "Review GitHub and SSO setup",
+            tags: ["starter", "starter.security"],
+            requirements: {
+              bins: [],
+              env: [],
+              config: [],
+              os: ["darwin", "linux"],
+              mcpServers: [{ name: "github", auth: "authenticated" }],
+            },
+          }),
+        }),
+      ]),
+      listMcpServerReadiness: () => [
+        { name: "github", connected: true, authenticated: false },
+      ],
+    });
+
+    const result = await tool.execute({}, new AbortController().signal);
+    const parsed = JSON.parse(result.content) as { skills: Array<Record<string, unknown>> };
+
+    expect(parsed.skills[0]?.ready).toBe(false);
+    expect(parsed.skills[0]?.blockers).toEqual([
+      'Required MCP server "github" is not authenticated.',
+    ]);
+    expect(parsed.skills[0]?.requirements).toEqual({
+      mcpServers: [{ name: "github", auth: "authenticated" }],
+    });
   });
 });

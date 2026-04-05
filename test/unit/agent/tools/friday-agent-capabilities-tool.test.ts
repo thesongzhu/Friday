@@ -16,7 +16,7 @@ describe("createFridayAgentCapabilitiesTool", () => {
     const getSnapshot = vi.fn(async ({ readOnly }: { readOnly: boolean }) => ({
       readOnly,
       messaging: { enabled: true, kinds: ["discord"] },
-      mcp: { enabled: false, serverCount: 0 },
+      mcp: { enabled: false, serverCount: 0, servers: [] },
       provider: {
         available: true,
         configuredCount: 2,
@@ -35,7 +35,7 @@ describe("createFridayAgentCapabilitiesTool", () => {
     const parsed = JSON.parse(result.content) as Record<string, unknown>;
     expect(parsed.readOnly).toBe(true);
     expect(parsed.messaging).toEqual({ enabled: true, kinds: ["discord"] });
-    expect(parsed.mcp).toEqual({ enabled: false, serverCount: 0 });
+    expect(parsed.mcp).toEqual({ enabled: false, serverCount: 0, servers: [] });
     expect(parsed.provider).toEqual({
       available: true,
       configuredCount: 2,
@@ -47,7 +47,7 @@ describe("createFridayAgentCapabilitiesTool", () => {
     const getSnapshot = vi.fn(async ({ readOnly }: { readOnly: boolean }) => ({
       readOnly,
       messaging: { enabled: false, kinds: [] },
-      mcp: { enabled: false, serverCount: 0 },
+      mcp: { enabled: false, serverCount: 0, servers: [] },
       provider: { available: true, configuredCount: 0, mutationBlockedByReadOnly: readOnly },
       browser: {},
       system: { enabled: false },

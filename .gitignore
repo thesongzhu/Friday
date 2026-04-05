@@ -30,6 +30,3 @@ reports/enablement/artifacts/*
 !reports/enablement/artifacts/.gitkeep
 artifacts/
 docs/CX*-FIX-PLAN*.md
-managed-skills/trade-user-profile/user-profile.json
-managed-skills/trade-portfolio-tracker/portfolio-data.json
-managed-skills/trade-journal/journal-data.json

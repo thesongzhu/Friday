@@ -249,7 +249,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
           contentText: responseText,
           idempotencyKey: resolveIdempotencyKey({ runId: input.runId, kind }),
         })
-        .catch((err) => { console.warn("[friday][run-executor] addMessage:", err instanceof Error ? err.message : String(err)); return undefined; });
+        .catch(() => undefined);
       await sessionDeps
         .setConversationFocus(
           input.sessionKey,
@@ -266,7 +266,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
             nowIso: nowIso(),
           }),
         )
-        .catch((err) => { console.warn("[friday][run-executor] setConversationFocus:", err instanceof Error ? err.message : String(err)); return undefined; });
+        .catch(() => undefined);
     }
 
     return result;
@@ -359,7 +359,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
                 status: decision.result.status,
               }),
             })
-            .catch((err) => { console.warn("[friday][run-executor] addMessage (planning):", err instanceof Error ? err.message : String(err)); return undefined; });
+            .catch(() => undefined);
           await sessionDeps
             .setConversationFocus(
               input.sessionKey,
@@ -376,7 +376,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
                 nowIso: nowIso(),
               }),
             )
-            .catch((err) => { console.warn("[friday][run-executor] setConversationFocus (planning):", err instanceof Error ? err.message : String(err)); return undefined; });
+            .catch(() => undefined);
         }
         return fromRuntimeResult(decision.result, turnKind);
       }
@@ -402,7 +402,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
         if (input.sessionKey && sessionDeps) {
           const latestFocus = await sessionDeps
             .getConversationFocus(input.sessionKey)
-            .catch((err) => { console.warn("[friday][run-executor] getConversationFocus (approve):", err instanceof Error ? err.message : String(err)); return prepared.focusState; });
+            .catch(() => prepared.focusState);
           await sessionDeps
             .setConversationFocus(
               input.sessionKey,
@@ -422,7 +422,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
                 nowIso: nowIso(),
               }),
             )
-            .catch((err) => { console.warn("[friday][run-executor] setConversationFocus (approve):", err instanceof Error ? err.message : String(err)); return undefined; });
+            .catch(() => undefined);
         }
         return fromRuntimeResult(approved, turnKind);
       }
@@ -437,7 +437,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
               contentText: rejected.response,
               idempotencyKey: resolveIdempotencyKey({ runId: rejected.runId, kind: "planning-reject" }),
             })
-            .catch((err) => { console.warn("[friday][run-executor] addMessage (reject):", err instanceof Error ? err.message : String(err)); return undefined; });
+            .catch(() => undefined);
           await sessionDeps
             .setConversationFocus(
               input.sessionKey,
@@ -454,7 +454,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
                 nowIso: nowIso(),
               }),
             )
-            .catch((err) => { console.warn("[friday][run-executor] setConversationFocus (reject):", err instanceof Error ? err.message : String(err)); return undefined; });
+            .catch(() => undefined);
         }
         return fromRuntimeResult(rejected, turnKind);
       }
@@ -489,7 +489,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
     if (input.sessionKey && sessionDeps && turnKind) {
       const latestFocus = await sessionDeps
         .getConversationFocus(input.sessionKey)
-        .catch((err) => { console.warn("[friday][run-executor] getConversationFocus (finalize):", err instanceof Error ? err.message : String(err)); return prepared.focusState; });
+        .catch(() => prepared.focusState);
       const pendingPlanRunId =
         runtimeResult.status === "awaiting_clarification" || runtimeResult.status === "awaiting_plan_approval"
           ? runtimeResult.runId
@@ -512,7 +512,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
             nowIso: nowIso(),
           }),
         )
-        .catch((err) => { console.warn("[friday][run-executor] setConversationFocus (finalize):", err instanceof Error ? err.message : String(err)); return undefined; });
+        .catch(() => undefined);
     }
 
     return fromRuntimeResult(runtimeResult, turnKind);

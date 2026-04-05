@@ -11,6 +11,11 @@ export interface FridayAgentCapabilitiesSnapshot {
   mcp: {
     enabled: boolean;
     serverCount: number;
+    servers: Array<{
+      name: string;
+      connected: boolean;
+      authenticated: boolean;
+    }>;
   };
   provider: {
     available: boolean;

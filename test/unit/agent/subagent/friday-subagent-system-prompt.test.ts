@@ -64,4 +64,21 @@ describe("buildFridaySubagentSystemPrompt", () => {
     expect(prompt).toContain("Read-only risk review");
     expect(prompt).toContain("Prioritize regressions first.");
   });
+
+  it("adds fork-specific context and guardrails when mode=fork", () => {
+    const prompt = buildFridaySubagentSystemPrompt({
+      task: "Continue the parent investigation",
+      parentSessionKey: "agent:run:parent-xyz",
+      depth: 1,
+      mode: "fork",
+      inheritedMessageCount: 6,
+      forkedFromMessageId: "msg-42",
+    });
+
+    expect(prompt).toContain("Spawn mode: fork");
+    expect(prompt).toContain("Inherited context messages: 6");
+    expect(prompt).toContain("Forked from message: msg-42");
+    expect(prompt).toContain("Do not guess the parent agent's final answer");
+    expect(prompt).toContain("Do not treat the delegated hand-off snapshot as the final result");
+  });
 });

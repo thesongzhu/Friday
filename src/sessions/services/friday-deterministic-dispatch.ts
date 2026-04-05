@@ -95,6 +95,13 @@ async function handleCapabilities(
     lines.push(`  Read-only mode: ${snap.readOnly ? "yes" : "no"}`);
     lines.push(`  Messaging: ${snap.messaging.enabled ? `enabled (${snap.messaging.kinds.join(", ")})` : "disabled"}`);
     lines.push(`  MCP: ${snap.mcp.enabled ? `enabled (${String(snap.mcp.serverCount)} server(s))` : "disabled"}`);
+    if (snap.mcp.servers.length > 0) {
+      lines.push(
+        `  MCP servers: ${snap.mcp.servers
+          .map((server) => `${server.name} (${server.connected ? "connected" : "disconnected"}, ${server.authenticated ? "authenticated" : "unauthenticated"})`)
+          .join("; ")}`,
+      );
+    }
     lines.push(`  Provider: ${snap.provider.available ? `available (${String(snap.provider.configuredCount)} configured)` : "not available"}`);
     if (snap.browser.activeMode) {
       lines.push(`  Browser: ${snap.browser.activeMode}${snap.browser.targetBrowser ? ` (${snap.browser.targetBrowser})` : ""}`);
