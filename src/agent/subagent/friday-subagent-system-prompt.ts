@@ -8,6 +8,9 @@ export interface BuildSubagentSystemPromptParams {
   profileInstructions?: string[];
   parentSessionKey: string;
   depth: number;
+  mode?: "fresh" | "fork";
+  inheritedMessageCount?: number;
+  forkedFromMessageId?: string;
 }
 
 // ─── Builder ───
@@ -40,6 +43,13 @@ export function buildFridaySubagentSystemPrompt(
       "## Context",
       `- You are a sub-agent at depth ${String(params.depth)}`,
       `- Parent session: ${params.parentSessionKey}`,
+      `- Spawn mode: ${params.mode ?? "fresh"}`,
+      ...(params.mode === "fork"
+        ? [
+            `- Inherited context messages: ${String(params.inheritedMessageCount ?? 0)}`,
+            ...(params.forkedFromMessageId ? [`- Forked from message: ${params.forkedFromMessageId}`] : []),
+          ]
+        : []),
       "- Complete your task and provide a clear, concise summary of your findings/results.",
     ].join("\n"),
   );
@@ -51,6 +61,13 @@ export function buildFridaySubagentSystemPrompt(
       "2. Be concise — your output will be delivered back to the parent agent.",
       "3. If you cannot complete the task, explain why clearly.",
       "4. Do not spawn sub-agents unless absolutely necessary for your task.",
+      ...(params.mode === "fork"
+        ? [
+            "5. Treat the inherited parent context as known facts for your task; do not restate the hand-off unless it materially affects your result.",
+            "6. Do not guess the parent agent's final answer or current overall status.",
+            "7. Do not treat the delegated hand-off snapshot as the final result. Report only your own verified findings and outputs.",
+          ]
+        : []),
     ].join("\n"),
   );
 

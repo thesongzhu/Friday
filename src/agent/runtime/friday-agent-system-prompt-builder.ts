@@ -200,7 +200,7 @@ export function buildFridayAgentSystemPrompt(
       ? "- Schedule recurring or delayed tasks: use cron\n"
       : "- Scheduled or delayed execution is unavailable in this deployment.\n") +
     (subagentsEnabled
-      ? "- Complex multi-step tasks that benefit from delegation: use spawn_subagent. Default to delegation for non-trivial operational work. If the user needs the child result now, use wait=true or keep polling get_subagent until terminal state instead of treating the initial delegated snapshot as final.\n"
+      ? `- Complex multi-step tasks that benefit from delegation: use spawn_subagent. Default to delegation for non-trivial operational work. If the user needs the child result now, use wait=true or keep polling get_subagent until terminal state instead of treating the initial delegated snapshot as final.${subagentForkModeEnabled ? " When a child must inherit the parent session context, you may explicitly use mode=\"fork\"." : ""}\n`
       : "- Sub-agent delegation is unavailable in this deployment.\n") +
     (selfLearningEnabled
       ? "- Record user corrections or stated preferences: use feedback\n"

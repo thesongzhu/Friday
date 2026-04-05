@@ -6,6 +6,9 @@ export interface FridayAgentTaskStatusSubagentSnapshot {
   id: string;
   childRunId: string;
   childSessionKey: string;
+  mode?: "fresh" | "fork";
+  forkedFromMessageId?: string;
+  inheritedMessageCount?: number;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   task: string;
   label?: string;

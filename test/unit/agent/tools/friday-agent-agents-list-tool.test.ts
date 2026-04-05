@@ -16,7 +16,9 @@ function makeRecord(overrides?: Partial<FridaySubagentRunRecord>): FridaySubagen
     depth: 1,
     parentRunId: "parent-run-1",
     parentSessionKey: "agent:main",
+    childRunId: "child-run-1",
     childSessionKey: "agent:sub:sub-1",
+    mode: "fresh",
     durationMs: 5000,
     outcome: {
       status: "completed",
@@ -76,6 +78,7 @@ describe("FridayAgentAgentsListTool", () => {
     expect(parsed.agents[1].id).toBe("sub-1");
     // Compact: no outcome field
     expect(parsed.agents[0]).not.toHaveProperty("outcome");
+    expect(parsed.agents[0]).toHaveProperty("mode", "fresh");
   });
 
   // ─── List with metadata ───
@@ -91,6 +94,7 @@ describe("FridayAgentAgentsListTool", () => {
     expect(parsed.agents[0]).toHaveProperty("outcome");
     expect(parsed.agents[0]).toHaveProperty("durationMs");
     expect(parsed.agents[0]).toHaveProperty("parentRunId");
+    expect(parsed.agents[0]).toHaveProperty("mode", "fresh");
   });
 
   // ─── Filter by query ───

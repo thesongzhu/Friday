@@ -245,6 +245,23 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("Self-learning feedback capture is not enabled in this deployment.");
   });
 
+  it("only advertises subagent fork mode when the rollout flag is enabled", () => {
+    const disabledPrompt = buildFridayAgentSystemPrompt({
+      toolNames: ["spawn_subagent"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+    });
+    const enabledPrompt = buildFridayAgentSystemPrompt({
+      toolNames: ["spawn_subagent"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+      subagentForkModeEnabled: true,
+    });
+
+    expect(disabledPrompt).not.toContain('mode="fork"');
+    expect(enabledPrompt).toContain('mode="fork"');
+  });
+
   it("injects current time context and news timeliness rules", () => {
     const prompt = buildFridayAgentSystemPrompt({
       toolNames: ["web_search", "web_fetch"],

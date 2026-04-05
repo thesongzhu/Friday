@@ -73,6 +73,17 @@ This document is the current architecture reference for steady-state Friday runt
 - Tool summaries are designed as world model training data: they capture execution patterns without leaking sensitive argument values or output content.
 - Workflow runtime events are now buffered in hub bootstrap before the API runtime publisher is ready, then flushed. `resolveWorkflowRealtimeStreamId()` routes events to the correct SSE stream by runId or workflowId.
 
+## Agent orchestration and rollout controls
+
+- Deterministic agent truth remains the primary answer path for runtime capability and progress questions. The agent must keep using `capabilities`, `task_status`, and `get_subagent` instead of guessing deployment state or delegated progress from prompt text alone.
+- Installed starter skills remain the preferred path for operational, workflow, review, QA, diff-risk, scope, design, release-readiness, and security-style requests.
+- Skill manifests may declare `requirements.mcpServers[]`, where each requirement names a server and an auth floor of `connected` or `authenticated`.
+- `capabilities` must surface MCP readiness as `mcp.servers[]` entries with `name`, `connected`, and `authenticated`.
+- `skills_list` must surface `ready`, `blockers`, and any MCP requirements for each listed skill. `skill_run` must fail closed with structured blockers when those MCP requirements are not satisfied.
+- `FRIDAY_AGENT_ENFORCE_STARTER_SKILL_ROUTING` defaults to off. When enabled, a high-confidence operational, workflow, review, or QA request that matches an installed starter skill must perform `skills_list` discovery before replying directly.
+- `spawn_subagent` defaults to `mode="fresh"`. Explicit `mode="fork"` is rollout-gated by `FRIDAY_SUBAGENT_FORK_MODE_ENABLED`, must fork through the session service lineage, and must not silently degrade back to `fresh`.
+- The rollout order and acceptance commands for these flags live in `docs/ops/friday-agent-orchestration-rollout.md`.
+
 ## Skills lifecycle and marketplace sources
 
 - `/v1/skills/*` is the canonical skill lifecycle surface for catalog, detail, install, update, delete, manifest validation, and verification.

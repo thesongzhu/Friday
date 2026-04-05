@@ -58,11 +58,14 @@ export function createFridaySubagentRegistry(
   }
 
   /** Shared validation + record creation for both spawn() and spawnDetached(). */
-  function prepareSpawn(input: FridaySubagentRegistrySpawnInput): {
+  async function prepareSpawn(input: FridaySubagentRegistrySpawnInput): Promise<{
     subagentRecordId: string;
     childRunId: string;
     childSessionKey: string;
-  } {
+    mode: "fresh" | "fork";
+    forkedFromMessageId?: string;
+    inheritedMessageCount?: number;
+  }> {
     // 1. Validate depth
     if (input.depth >= FRIDAY_SUBAGENT_MAX_DEPTH) {
       throw new FridayDomainError(
@@ -87,7 +90,36 @@ export function createFridaySubagentRegistry(
     // 3. Generate IDs
     const subagentRecordId = idGenerator();
     const childRunId = idGenerator();
-    const childSessionKey = buildFridaySubagentSessionKey(input.parentSessionKey, childRunId);
+    const mode = input.mode ?? "fresh";
+    let childSessionKey = buildFridaySubagentSessionKey(input.parentSessionKey, childRunId);
+    let forkedFromMessageId: string | undefined;
+    let inheritedMessageCount: number | undefined;
+
+    if (mode === "fork") {
+      if (!deps.sessionService) {
+        throw new FridayDomainError(
+          FRIDAY_SUBAGENT_ERROR_CODES.SPAWN_FAILED,
+          "Sub-agent fork mode is not available because session forking is not configured.",
+          { httpStatus: 400 },
+        );
+      }
+      if (!input.parentSessionKey || input.parentSessionKey.trim().length === 0) {
+        throw new FridayDomainError(
+          FRIDAY_SUBAGENT_ERROR_CODES.SPAWN_FAILED,
+          "Sub-agent fork mode requires a valid parent session key.",
+          { httpStatus: 400 },
+        );
+      }
+
+      const forkResult = await deps.sessionService.forkSession(input.parentSessionKey, {
+        taskId: childRunId,
+        inheritMessageCount: input.inheritMessageCount,
+        forkFromMessageId: input.forkFromMessageId,
+      });
+      childSessionKey = forkResult.forkSession.key;
+      forkedFromMessageId = forkResult.forkedFromMessageId;
+      inheritedMessageCount = forkResult.inheritedMessageCount;
+    }
 
     // 4. Create subagent record
     safeWrite((writer) =>
@@ -100,6 +132,9 @@ export function createFridaySubagentRegistry(
         task: input.task,
         label: input.label,
         model: input.model,
+        mode,
+        forkedFromMessageId,
+        inheritedMessageCount,
         depth: input.depth + 1,
         nowIso: nowIso(),
         requesterSessionKey: input.parentSessionKey,
@@ -117,7 +152,14 @@ export function createFridaySubagentRegistry(
       depth: input.depth + 1,
     });
 
-    return { subagentRecordId, childRunId, childSessionKey };
+    return {
+      subagentRecordId,
+      childRunId,
+      childSessionKey,
+      mode,
+      forkedFromMessageId,
+      inheritedMessageCount,
+    };
   }
 
   /** Execute the child run and finalize the record. Shared by spawn() and startRun(). */
@@ -126,6 +168,11 @@ export function createFridaySubagentRegistry(
     childRunId: string,
     input: FridaySubagentRegistrySpawnInput,
     childSessionKey: string,
+    spawnMeta: {
+      mode: "fresh" | "fork";
+      forkedFromMessageId?: string;
+      inheritedMessageCount?: number;
+    },
   ): Promise<FridaySubagentOutcome> {
     const resolvedProfile = resolveFridaySubagentProfile(
       input.profile ?? inferFridaySubagentProfile(input.task, input.label),
@@ -141,6 +188,9 @@ export function createFridaySubagentRegistry(
       profileInstructions: resolvedProfile.instructions,
       parentSessionKey: input.parentSessionKey,
       depth: input.depth + 1,
+      mode: spawnMeta.mode,
+      forkedFromMessageId: spawnMeta.forkedFromMessageId,
+      inheritedMessageCount: spawnMeta.inheritedMessageCount,
     });
 
     // Create child runtime
@@ -260,18 +310,25 @@ export function createFridaySubagentRegistry(
 
   return {
     async spawn(input: FridaySubagentRegistrySpawnInput): Promise<FridaySubagentOutcome> {
-      const { subagentRecordId, childRunId, childSessionKey } = prepareSpawn(input);
-      return executeChild(subagentRecordId, childRunId, input, childSessionKey);
+      const prepared = await prepareSpawn(input);
+      return executeChild(
+        prepared.subagentRecordId,
+        prepared.childRunId,
+        input,
+        prepared.childSessionKey,
+        prepared,
+      );
     },
 
-    spawnDetached(input: FridaySubagentRegistrySpawnInput): FridaySubagentDetachedResult {
-      const { subagentRecordId, childRunId, childSessionKey } = prepareSpawn(input);
+    async spawnDetached(input: FridaySubagentRegistrySpawnInput): Promise<FridaySubagentDetachedResult> {
+      const prepared = await prepareSpawn(input);
+      const { subagentRecordId, childRunId, childSessionKey } = prepared;
 
       // Store input for later startRun()
       detachedInputs.set(subagentRecordId, { input, childSessionKey });
 
       // Fire-and-forget the child execution
-      const execution = executeChild(subagentRecordId, childRunId, input, childSessionKey).finally(() => {
+      const execution = executeChild(subagentRecordId, childRunId, input, childSessionKey, prepared).finally(() => {
         detachedInputs.delete(subagentRecordId);
         inFlightExecutions.delete(subagentRecordId);
       });
@@ -286,6 +343,9 @@ export function createFridaySubagentRegistry(
         subagentId: subagentRecordId,
         childRunId,
         childSessionKey,
+        mode: prepared.mode,
+        forkedFromMessageId: prepared.forkedFromMessageId,
+        inheritedMessageCount: prepared.inheritedMessageCount,
         status: "accepted",
         statusSnapshot: record?.status ?? "pending",
         outcome: record?.outcome,
