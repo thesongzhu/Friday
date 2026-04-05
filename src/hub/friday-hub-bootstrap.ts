@@ -131,6 +131,7 @@ import {
   createFridayWorkspaceContextEngine,
   createFridayWorldStateManager,
   inferFridaySubagentProfile,
+  listFridayMcpServerReadiness,
   parseFridayMcpServersFromEnv,
   resolveFridayAgentTaskProfile,
   resolveFridayContextEnginePromptFragment,
@@ -157,6 +158,7 @@ import type {
   FridayAgentRunStatus,
   FridayAgentRuntime,
   FridayAgentTaskStatusSnapshot,
+  FridayAgentStarterSkillDescriptor,
   FridayContextEngineAfterTurnInput,
 } from "#agent";
 import {
@@ -1533,11 +1535,48 @@ export async function createFridayHub(
       console.warn(`[friday] ${searchWarning}`);
     }
   }
+  const starterSkillRoutingEnforced = process.env.FRIDAY_AGENT_ENFORCE_STARTER_SKILL_ROUTING === "true";
+  const subagentForkModeEnabled = process.env.FRIDAY_SUBAGENT_FORK_MODE_ENABLED === "true";
+
+  const listInstalledStarterSkills = (): FridayAgentStarterSkillDescriptor[] =>
+    registry.list()
+      .filter((skill) =>
+        skill.status === "installed"
+        && (skill.manifest.tags ?? []).includes("starter"))
+      .sort((left, right) => {
+        const leftPriority =
+          (left.manifest.tags ?? []).includes("starter.recovery")
+            ? 0
+            : (left.manifest.tags ?? []).includes("starter.diagnosis")
+              ? 1
+              : 2;
+        const rightPriority =
+          (right.manifest.tags ?? []).includes("starter.recovery")
+            ? 0
+            : (right.manifest.tags ?? []).includes("starter.diagnosis")
+              ? 1
+              : 2;
+        if (leftPriority !== rightPriority) {
+          return leftPriority - rightPriority;
+        }
+        return left.manifest.name.localeCompare(right.manifest.name);
+      })
+      .map((skill) => ({
+        skillId: skill.manifest.id,
+        purpose: skill.manifest.description,
+        triggerPhrases: skill.manifest.triggers.phrases ?? [],
+        intents: skill.manifest.triggers.intents ?? [],
+        tags: skill.manifest.tags ?? [],
+      }));
 
   const getAgentCapabilitySnapshot = async (input: { readOnly: boolean }): Promise<FridayAgentCapabilitiesSnapshot> => {
     const messagingKinds = typeof channelRegistry !== "undefined"
       ? channelRegistry.list().filter((kind) => channelRegistry.status(kind) === "connected")
       : [];
+    const mcpServers = listFridayMcpServerReadiness({
+      servers: mcpAdapter?.listServers() ?? [],
+      serverStates: mcpAdapter?.listServerStates() ?? [],
+    });
     const providerCount = await providerService.listProviders()
       .then((providers) => providers.length)
       .catch(() => 0);
@@ -1553,8 +1592,13 @@ export async function createFridayHub(
         kinds: messagingKinds,
       },
       mcp: {
-        enabled: !!mcpAdapter && mcpAdapter.listServers().length > 0,
-        serverCount: mcpAdapter?.listServers().length ?? 0,
+        enabled: mcpServers.length > 0,
+        serverCount: mcpServers.length,
+        servers: mcpServers.map((server) => ({
+          name: server.name,
+          connected: server.connected,
+          authenticated: server.authenticated,
+        })),
       },
       provider: {
         available: true,

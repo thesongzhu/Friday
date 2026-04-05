@@ -1,17 +1,20 @@
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
-import type { FridaySkillExecuteRequest, FridaySkillExecutor } from "#skills";
+import type { FridaySkillExecuteRequest, FridaySkillExecutor, FridaySkillRegistry } from "#skills";
 import { FRIDAY_AGENT_TOOL_TIMEOUT_MS } from "../friday-agent.constants.js";
+import { evaluateFridaySkillMcpReadiness, type FridayMcpServerReadiness } from "../mcp/friday-mcp-readiness.js";
 import {
-  errorResult,
   jsonResult,
   readNumberParam,
   readStringParam,
+  errorResult,
 } from "./friday-agent-tool-helpers.js";
 
 // ─── Options ───
 
 export interface CreateFridayAgentSkillToolDeps {
   skillExecutor: FridaySkillExecutor;
+  skillRegistry?: FridaySkillRegistry;
+  listMcpServerReadiness?: () => readonly FridayMcpServerReadiness[];
 }
 
 // ─── Factory ───
@@ -59,6 +62,23 @@ export function createFridayAgentSkillTool(
         },
         timeoutMs,
       };
+
+      const registeredSkill = deps.skillRegistry?.get(skillId);
+      if (registeredSkill) {
+        const readiness = evaluateFridaySkillMcpReadiness({
+          manifest: registeredSkill.manifest,
+          servers: deps.listMcpServerReadiness?.() ?? [],
+        });
+        if (!readiness.ready) {
+          return jsonResult({
+            skillId,
+            status: "blocked",
+            ready: false,
+            blockers: readiness.blockers,
+            ...(readiness.requirements ? { requirements: readiness.requirements } : {}),
+          });
+        }
+      }
 
       const handle = deps.skillExecutor.execute(request);
 

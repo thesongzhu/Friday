@@ -35,6 +35,7 @@ export function makeManifest(overrides: Partial<SkillManifestV2> = {}): SkillMan
       env: [],
       config: [],
       os: ["darwin", "linux", "win32"],
+      mcpServers: [],
     },
     inputs: [],
     outputs: [],

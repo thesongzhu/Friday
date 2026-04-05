@@ -15,6 +15,12 @@ export type SkillCategory =
 export type SkillRuntimeKind = "builtin" | "node" | "python" | "shell" | "remote-http";
 export type SkillInvocationMode = "intent" | "workflow";
 export type SkillStepType = "ask" | "infer" | "plan" | "act" | "confirm" | "finalize";
+export type SkillMcpRequirementAuth = "connected" | "authenticated";
+
+export interface SkillMcpServerRequirement {
+  name: string;
+  auth: SkillMcpRequirementAuth;
+}
 
 export interface SkillStepDefinition {
   id: string;
@@ -79,6 +85,7 @@ export interface SkillManifestV2 {
     env: string[];
     config: string[];
     os: Array<"darwin" | "linux" | "win32">;
+    mcpServers?: SkillMcpServerRequirement[];
   };
 
   inputs: Array<{

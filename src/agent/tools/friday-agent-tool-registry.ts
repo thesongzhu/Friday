@@ -43,6 +43,7 @@ import type { FridaySystemService } from "../../system/engine/friday-system-serv
 import { createFridayAgentSystemTool } from "./friday-agent-system-tool.js";
 import { createFridayAgentMemoryExtractTool } from "./friday-agent-memory-extract-tool.js";
 import type { FridayMcpAdapter } from "../mcp/friday-mcp-adapter.types.js";
+import { listFridayMcpServerReadiness } from "../mcp/friday-mcp-readiness.js";
 import type { FridaySessionMemoryExtractionService } from "#sessions";
 import type { FridayProviderService } from "../../providers/services/friday-provider-service.types.js";
 import { createFridayAgentProviderTool } from "./friday-agent-provider-tool.js";
@@ -122,6 +123,10 @@ export function createFridayAgentToolRegistry(
   options?: CreateFridayAgentToolRegistryOptions,
 ): FridayAgentToolDefinition[] {
   const workdir = options?.workdir ?? process.cwd();
+  const listMcpServerReadiness = () => listFridayMcpServerReadiness({
+    servers: options?.mcpAdapter?.listServers() ?? [],
+    serverStates: options?.mcpAdapter?.listServerStates() ?? [],
+  });
 
   const tools: FridayAgentToolDefinition[] = [
     createFridayAgentExecTool({ defaultWorkdir: workdir, workspaceRoot: workdir }),
@@ -135,8 +140,17 @@ export function createFridayAgentToolRegistry(
 
   if (options?.skillExecutor) {
     tools.push(
-      ...(options.skillRegistry ? [createFridayAgentSkillsListTool({ skillRegistry: options.skillRegistry })] : []),
-      createFridayAgentSkillTool({ skillExecutor: options.skillExecutor }),
+      ...(options.skillRegistry
+        ? [createFridayAgentSkillsListTool({
+          skillRegistry: options.skillRegistry,
+          listMcpServerReadiness,
+        })]
+        : []),
+      createFridayAgentSkillTool({
+        skillExecutor: options.skillExecutor,
+        skillRegistry: options.skillRegistry,
+        listMcpServerReadiness,
+      }),
     );
   }
 
