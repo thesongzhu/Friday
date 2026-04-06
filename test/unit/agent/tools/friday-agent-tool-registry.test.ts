@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { createFridayAgentToolRegistry } from "#agent";
+import { createFridayAgentToolRegistry, partitionFridayAgentTools } from "#agent";
+import type { FridayAgentToolDefinition } from "#agent";
 import type { FridaySkillRegistry } from "#skills";
 import type { FridaySessionService } from "../../../../src/sessions/services/friday-session-service.types.js";
 import type { FridayAgentRuntime } from "#agent";
@@ -215,5 +216,89 @@ describe("createFridayAgentToolRegistry", () => {
     });
     const names = tools.map((t) => t.name);
     expect(names).toContain("task_status");
+  });
+
+  // ─── operationalMode filtering ───
+
+  it("filters to read-only tools in plan mode", () => {
+    const tools = createFridayAgentToolRegistry({ operationalMode: "plan" });
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("read");
+    expect(names).toContain("web_fetch");
+    expect(names).not.toContain("exec");
+    expect(names).not.toContain("write");
+  });
+
+  it("returns all core tools in execute mode", () => {
+    const tools = createFridayAgentToolRegistry({ operationalMode: "execute" });
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("exec");
+    expect(names).toContain("read");
+    expect(names).toContain("web_fetch");
+  });
+
+  it("returns full set when no mode specified", () => {
+    const tools = createFridayAgentToolRegistry({});
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("exec");
+    expect(names).toContain("read");
+  });
+});
+
+describe("partitionFridayAgentTools", () => {
+  function mockTool(name: string): FridayAgentToolDefinition {
+    return {
+      name,
+      description: `Mock ${name}`,
+      parameters: {},
+      execute: async () => ({ content: "" }),
+    };
+  }
+
+  it("places core tools in alwaysLoad", () => {
+    const tools = [mockTool("exec"), mockTool("read"), mockTool("write"), mockTool("web_fetch")];
+    const result = partitionFridayAgentTools(tools);
+    const names = result.alwaysLoad.map((t) => t.name);
+    expect(names).toContain("exec");
+    expect(names).toContain("read");
+    expect(names).toContain("write");
+    expect(names).toContain("web_fetch");
+    expect(result.deferred).toHaveLength(0);
+  });
+
+  it("places non-core tools in deferred", () => {
+    const tools = [mockTool("desktop"), mockTool("browser"), mockTool("canvas"), mockTool("tts")];
+    const result = partitionFridayAgentTools(tools);
+    expect(result.alwaysLoad).toHaveLength(0);
+    const names = result.deferred.map((t) => t.name);
+    expect(names).toContain("desktop");
+    expect(names).toContain("browser");
+    expect(names).toContain("canvas");
+    expect(names).toContain("tts");
+  });
+
+  it("returns empty arrays for empty input", () => {
+    const result = partitionFridayAgentTools([]);
+    expect(result.alwaysLoad).toEqual([]);
+    expect(result.deferred).toEqual([]);
+  });
+
+  it("skill_run and skills_list are always-load", () => {
+    const tools = [mockTool("skill_run"), mockTool("skills_list")];
+    const result = partitionFridayAgentTools(tools);
+    const names = result.alwaysLoad.map((t) => t.name);
+    expect(names).toContain("skill_run");
+    expect(names).toContain("skills_list");
+    expect(result.deferred).toHaveLength(0);
+  });
+
+  it("partitions mixed tools correctly", () => {
+    const tools = [
+      mockTool("exec"), mockTool("read"), mockTool("desktop"),
+      mockTool("web_fetch"), mockTool("canvas"), mockTool("cron"),
+    ];
+    const result = partitionFridayAgentTools(tools);
+    expect(result.alwaysLoad.map((t) => t.name)).toEqual(["exec", "read", "web_fetch"]);
+    expect(result.deferred.map((t) => t.name)).toEqual(["desktop", "canvas", "cron"]);
   });
 });
