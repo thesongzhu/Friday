@@ -2777,13 +2777,13 @@ export async function createFridayHub(
   agentEventEmitter.on("agent.run.degraded", (payload) => {
     if (payload && typeof payload === "object" && "runId" in payload) {
       const p = payload as FridayAgentRunDegradedPayload;
-      logger.info({ runId: p.runId, level: p.level }, "agent run degraded");
+      console.info("[friday][agent] run degraded runId=%s level=%s", p.runId, p.level);
     }
   });
   agentEventEmitter.on("agent.run.mode_changed", (payload) => {
     if (payload && typeof payload === "object" && "runId" in payload) {
       const p = payload as FridayAgentModeChangedPayload;
-      logger.info({ runId: p.runId, mode: p.newMode }, "agent run mode changed");
+      console.info("[friday][agent] run mode changed runId=%s mode=%s", p.runId, p.newMode);
     }
   });
 

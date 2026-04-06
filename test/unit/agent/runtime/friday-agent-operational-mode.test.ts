@@ -119,14 +119,14 @@ describe("resolveToolCategory", () => {
     expect(resolveToolCategory("custom_plugin")).toBe("system");
   });
 
-  it("has explicit mapping for all 39 registered tools (no fallback to default)", () => {
+  it("has explicit mapping for all tool names used across agent and desktop subsystems", () => {
     const ALL_REGISTERED_TOOLS = [
       // read
       "read", "file_read", "file_list", "web_fetch", "web_search",
       "memory_search", "memory_query", "memory_get", "skills_list",
       "agents_list", "capabilities", "task_status", "image_analysis", "feedback",
       // write
-      "write", "edit", "file_write", "file_delete", "file_rename",
+      "write", "edit", "file_write", "file_delete",
       "memory_store", "memory_extract",
       // exec
       "exec", "autonomous",

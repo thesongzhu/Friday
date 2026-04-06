@@ -67,7 +67,6 @@ const TOOL_CATEGORY_MAP: Record<string, FridayToolCategory> = {
   edit: "write",
   file_write: "write",
   file_delete: "write",
-  file_rename: "write",
   memory_store: "write",
   memory_extract: "write",
   // exec
