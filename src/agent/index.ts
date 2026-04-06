@@ -60,6 +60,8 @@ export type {
   FridayAgentRunCancelledPayload,
   FridaySubagentSpawnedPayload,
   FridaySubagentCompletedPayload,
+  FridayAgentRunDegradedPayload,
+  FridayAgentModeChangedPayload,
 } from "./model/friday-agent.types.js";
 
 // ─── Runtime ───
@@ -196,8 +198,8 @@ export type {
 
 // ─── Tool registry ───
 
-export type { CreateFridayAgentToolRegistryOptions } from "./tools/friday-agent-tool-registry.js";
-export { createFridayAgentToolRegistry } from "./tools/friday-agent-tool-registry.js";
+export type { CreateFridayAgentToolRegistryOptions, FridayAgentToolRegistryPartitioned } from "./tools/friday-agent-tool-registry.js";
+export { createFridayAgentToolRegistry, partitionFridayAgentTools } from "./tools/friday-agent-tool-registry.js";
 
 // ─── Tools ───
 
@@ -467,6 +469,16 @@ export { createFridayAgentReviewGate } from "./runtime/friday-agent-review-gate.
 // ─── Tool mutation ───
 
 export { isMutatingToolCall } from "./runtime/friday-agent-tool-mutation.js";
+
+// ─── Operational mode ───
+
+export type { FridayOperationalMode, FridayToolCategory, FridayModeConfig } from "./runtime/friday-agent-operational-mode.js";
+export { FRIDAY_MODE_CONFIGS, filterToolsByMode, resolveToolCategory, validateModeTransition } from "./runtime/friday-agent-operational-mode.js";
+
+// ─── Degradation handler ───
+
+export type { FridayDegradationLevel } from "./runtime/friday-agent-degradation-handler.js";
+export { assessDegradation, getDegradationSystemPrompt } from "./runtime/friday-agent-degradation-handler.js";
 
 // ─── SSRF guard ───
 

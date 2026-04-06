@@ -100,6 +100,18 @@ export function createFridaySessionService(
         typeof candidate.lastHandoffArtifactId === "string" ? candidate.lastHandoffArtifactId : undefined,
       lastHarnessSummary:
         typeof candidate.lastHarnessSummary === "string" ? candidate.lastHarnessSummary : undefined,
+      operationalMode:
+        candidate.operationalMode === "plan"
+          || candidate.operationalMode === "execute"
+          || candidate.operationalMode === "restricted"
+          ? candidate.operationalMode
+          : undefined,
+      preModeRestore:
+        candidate.preModeRestore === "plan"
+          || candidate.preModeRestore === "execute"
+          || candidate.preModeRestore === "restricted"
+          ? candidate.preModeRestore
+          : undefined,
       updatedAt: candidate.updatedAt,
     };
   }

@@ -136,6 +136,10 @@ export interface FridaySessionConversationFocusState {
   lastHarnessStage?: string;
   lastHandoffArtifactId?: string;
   lastHarnessSummary?: string;
+  /** Current operational mode for the session (plan / execute / restricted). */
+  operationalMode?: "plan" | "execute" | "restricted";
+  /** Restore point: the mode to return to after exiting plan/restricted mode. */
+  preModeRestore?: "plan" | "execute" | "restricted";
   updatedAt: string;
 }
 

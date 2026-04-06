@@ -250,6 +250,8 @@ export interface FridayAgentActualTurn {
 
 export interface FridayAgentRunConstraints {
   readOnly?: boolean;
+  /** Operational mode override for this run. */
+  operationalMode?: "plan" | "execute" | "restricted";
 }
 
 // ─── Artifact ───
@@ -427,6 +429,20 @@ export interface FridayAgentRunCancelledPayload {
   reason?: string;
 }
 
+export interface FridayAgentRunDegradedPayload {
+  runId: string;
+  level: "nominal" | "degraded" | "minimal" | "conversational";
+  unavailableTools: string[];
+  reason: string;
+}
+
+export interface FridayAgentModeChangedPayload {
+  runId: string;
+  previousMode: "plan" | "execute" | "restricted";
+  newMode: "plan" | "execute" | "restricted";
+  reason: string;
+}
+
 export interface FridayAgentRouteSelectedPayload {
   runId: string;
   requestedProviderId?: string;
@@ -516,6 +532,8 @@ export interface FridayAgentEventMap {
   "agent.run.failed": FridayAgentRunFailedPayload;
   "agent.run.text_delta": FridayAgentTextDeltaPayload;
   "agent.run.cancelled": FridayAgentRunCancelledPayload;
+  "agent.run.degraded": FridayAgentRunDegradedPayload;
+  "agent.run.mode_changed": FridayAgentModeChangedPayload;
   "agent.subagent.spawned": FridaySubagentSpawnedPayload;
   "agent.subagent.completed": FridaySubagentCompletedPayload;
 }

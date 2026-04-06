@@ -24,6 +24,8 @@ describe("FRIDAY_ERROR_CODES", () => {
     expect(FRIDAY_ERROR_CODES.STATE_CONFLICT).toBe("STATE_CONFLICT");
     expect(FRIDAY_ERROR_CODES.STREAM_NOT_AUTHORIZED).toBe("STREAM_NOT_AUTHORIZED");
     expect(FRIDAY_ERROR_CODES.VALIDATION_ERROR).toBe("VALIDATION_ERROR");
+    expect(FRIDAY_ERROR_CODES.TOOL_UNAVAILABLE).toBe("TOOL_UNAVAILABLE");
+    expect(FRIDAY_ERROR_CODES.DEGRADED_MODE).toBe("DEGRADED_MODE");
   });
 });
 
@@ -128,6 +130,11 @@ describe("mapFridayErrorToHttpStatus", () => {
 
   it("maps unknown codes to 500", () => {
     expect(mapFridayErrorToHttpStatus("TOTALLY_UNKNOWN")).toBe(500);
+  });
+
+  it("maps TOOL_UNAVAILABLE and DEGRADED_MODE to 503", () => {
+    expect(mapFridayErrorToHttpStatus("TOOL_UNAVAILABLE")).toBe(503);
+    expect(mapFridayErrorToHttpStatus("DEGRADED_MODE")).toBe(503);
   });
 });
 

@@ -40,11 +40,12 @@ export interface FridayAgentPlanningGateService {
     providerId?: string;
     model?: string;
     taskProfile?: FridayResolvedAgentTaskProfile;
-    constraints?: { readOnly?: boolean };
+    constraints?: { readOnly?: boolean; operationalMode?: string };
     reviewRequired?: boolean;
     conversationContext?: FridayAgentConversationContext;
     focusState?: {
       pendingPlanRunId?: string;
+      operationalMode?: string;
     } | null;
   }): FridayAgentPlanningGateDecision;
   approvePlan(input: FridayAgentResumeRunParams): Promise<FridayAgentRuntimeResult>;
@@ -598,7 +599,11 @@ export function createFridayAgentPlanningGateService(
         return { action: "pass_through", pendingPlanRunId: null };
       }
 
-      const kind = detectPlanningKind(input.task, input.reviewRequired);
+      // ─── Plan mode bypass: force all tasks through the planning gate ───
+      const operationalMode = input.focusState?.operationalMode ?? input.constraints?.operationalMode;
+      const kind = operationalMode === "plan"
+        ? "major_decision" as FridayPlanningKind
+        : detectPlanningKind(input.task, input.reviewRequired);
       if (!kind) {
         return { action: "pass_through" };
       }
