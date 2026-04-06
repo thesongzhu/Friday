@@ -74,7 +74,7 @@ import {
 } from "./friday-agent-starter-skill-routing.js";
 import { summarizeToolCall } from "../services/friday-tool-call-summary.js";
 import { assessDegradation, getDegradationSystemPrompt } from "./friday-agent-degradation-handler.js";
-import { FRIDAY_MODE_CONFIGS, resolveToolCategory } from "./friday-agent-operational-mode.js";
+import { filterToolsByMode, FRIDAY_MODE_CONFIGS, resolveToolCategory } from "./friday-agent-operational-mode.js";
 import type { FridayOperationalMode } from "./friday-agent-operational-mode.js";
 import { partitionFridayAgentTools } from "../tools/friday-agent-tool-registry.js";
 
@@ -1342,6 +1342,11 @@ export function createFridayAgentRuntime(
             // Anthropic API rejects messages where tool_use blocks lack corresponding tool_result blocks.
             repairOrphanedToolUseBlocks(messages);
 
+            // Filter tools based on operational mode so the LLM only sees allowed tools
+            const llmTools = runOperationalMode && runOperationalMode !== "execute"
+              ? filterToolsByMode(tools, runOperationalMode)
+              : tools;
+
             try {
               streamResult = await streamLlmResponse({
                 llmClient,
@@ -1350,7 +1355,7 @@ export function createFridayAgentRuntime(
                 model: resolvedTaskProfile.model ?? requestedModel ?? "default",
                 systemPrompt: effectiveSystemPrompt,
                 messages,
-                tools,
+                tools: llmTools,
                 temperature: resolvedTaskProfile.temperature,
                 routingContext: estimateRoutingContext(),
                 signal: turnTimeoutController.signal,
@@ -1763,6 +1768,7 @@ export function createFridayAgentRuntime(
                   runId,
                   sessionKey,
                   readOnly: isReadOnly,
+                  operationalMode: runOperationalMode,
                   timezone: runTimeContext.timezone,
                   taskPrompt: llmTask,
                   conversationContext,
@@ -4228,6 +4234,7 @@ interface ExecuteToolCallParams {
   runId: string;
   sessionKey: string;
   readOnly: boolean;
+  operationalMode?: "plan" | "execute" | "restricted";
   timezone?: string;
   taskPrompt?: string;
   conversationContext?: FridayAgentConversationContext;
@@ -4529,6 +4536,7 @@ async function executeToolCall(
       runId,
       sessionKey,
       readOnly: params.readOnly,
+      operationalMode: params.operationalMode,
       timezone: params.timezone,
       taskPrompt: params.taskPrompt,
       conversationContext: params.conversationContext,

@@ -102,6 +102,34 @@ describe("isMutatingToolCall", () => {
     expect(isMutatingToolCall("browser", { action: "screenshot" })).toBe(false);
   });
 
+  // ─── OC-008: browser act sub-action inspection ───
+
+  it("classifies browser act+click as mutating (OC-008)", () => {
+    expect(isMutatingToolCall("browser", { action: "act", act: "click" })).toBe(true);
+  });
+
+  it("classifies browser act+type as mutating (OC-008)", () => {
+    expect(isMutatingToolCall("browser", { action: "act", act: "type" })).toBe(true);
+  });
+
+  it("classifies browser act+fill as mutating (OC-008)", () => {
+    expect(isMutatingToolCall("browser", { action: "act", act: "fill" })).toBe(true);
+  });
+
+  it("classifies browser act+submit as non-mutating when not in mutating set (OC-008)", () => {
+    // "submit" is not in the mutatingActions set, so it should be non-mutating
+    expect(isMutatingToolCall("browser", { action: "act", act: "submit" })).toBe(false);
+  });
+
+  it("classifies browser act+screenshot as non-mutating (OC-008)", () => {
+    expect(isMutatingToolCall("browser", { action: "act", act: "screenshot" })).toBe(false);
+  });
+
+  it("classifies browser act with no sub-action as non-mutating (OC-008)", () => {
+    // "act" alone is not in mutatingActions, so when args.act is missing, returns false
+    expect(isMutatingToolCall("browser", { action: "act" })).toBe(false);
+  });
+
   it("classifies readonly system actions as non-mutating", () => {
     expect(isMutatingToolCall("system", { action: "snapshot" })).toBe(false);
     expect(isMutatingToolCall("system", { action: "search_file" })).toBe(false);

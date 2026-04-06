@@ -150,8 +150,11 @@ function createSpawnSubagentTool(
           parentSessionKey: subagentContext.parentSessionKey,
           depth: subagentContext.depth,
           rootRunId: subagentContext.rootRunId,
-          constraints: toolExecutionContext?.readOnly
-            ? { readOnly: true }
+          constraints: (toolExecutionContext?.readOnly || toolExecutionContext?.operationalMode)
+            ? {
+                ...(toolExecutionContext.readOnly ? { readOnly: true } : {}),
+                ...(toolExecutionContext.operationalMode ? { operationalMode: toolExecutionContext.operationalMode } : {}),
+              }
             : undefined,
           principalId: toolExecutionContext?.principalId,
           tenantContext: toolExecutionContext?.tenantContext,
