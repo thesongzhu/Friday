@@ -2774,6 +2774,16 @@ export async function createFridayHub(
       agentPlanningGate.cleanupRun((payload as { runId: string }).runId);
     }
   });
+  agentEventEmitter.on("agent.run.degraded", (payload) => {
+    if (payload && typeof payload === "object" && "runId" in payload) {
+      logger.info({ runId: (payload as Record<string, unknown>).runId, level: (payload as Record<string, unknown>).level }, "agent run degraded");
+    }
+  });
+  agentEventEmitter.on("agent.run.mode_changed", (payload) => {
+    if (payload && typeof payload === "object" && "runId" in payload) {
+      logger.info({ runId: (payload as Record<string, unknown>).runId, mode: (payload as Record<string, unknown>).newMode }, "agent run mode changed");
+    }
+  });
 
   const resolveAgentMirrorIdempotencyKey = (input: {
     runId: string;

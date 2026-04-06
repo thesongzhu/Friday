@@ -47,8 +47,6 @@ describe("FRIDAY_MODE_CONFIGS", () => {
 describe("resolveToolCategory", () => {
   it("maps known read tools correctly", () => {
     expect(resolveToolCategory("read")).toBe("read");
-    expect(resolveToolCategory("file_read")).toBe("read");
-    expect(resolveToolCategory("file_list")).toBe("read");
     expect(resolveToolCategory("web_fetch")).toBe("read");
     expect(resolveToolCategory("web_search")).toBe("read");
     expect(resolveToolCategory("memory_search")).toBe("read");
@@ -60,8 +58,6 @@ describe("resolveToolCategory", () => {
   it("maps known write tools correctly", () => {
     expect(resolveToolCategory("write")).toBe("write");
     expect(resolveToolCategory("edit")).toBe("write");
-    expect(resolveToolCategory("file_write")).toBe("write");
-    expect(resolveToolCategory("file_delete")).toBe("write");
     expect(resolveToolCategory("memory_store")).toBe("write");
   });
 
@@ -122,11 +118,11 @@ describe("resolveToolCategory", () => {
   it("has explicit mapping for all 39 registered tools (no fallback to default)", () => {
     const ALL_REGISTERED_TOOLS = [
       // read
-      "read", "file_read", "file_list", "web_fetch", "web_search",
-      "memory_search", "memory_query", "memory_get", "skills_list",
+      "read", "web_fetch", "web_search",
+      "memory_search", "skills_list",
       "agents_list", "capabilities", "task_status", "image_analysis", "feedback",
       // write
-      "write", "edit", "file_write", "file_delete", "file_rename",
+      "write", "edit",
       "memory_store", "memory_extract",
       // exec
       "exec", "autonomous",
@@ -157,7 +153,7 @@ describe("resolveToolCategory", () => {
 describe("filterToolsByMode", () => {
   const mockTools = [
     { name: "read" },
-    { name: "file_read" },
+    { name: "memory_search" },
     { name: "web_search" },
     { name: "write" },
     { name: "exec" },
@@ -170,7 +166,7 @@ describe("filterToolsByMode", () => {
     const filtered = filterToolsByMode(mockTools, "plan");
     const names = filtered.map((t) => t.name);
     expect(names).toContain("read");
-    expect(names).toContain("file_read");
+    expect(names).toContain("memory_search");
     expect(names).toContain("web_search");
     expect(names).not.toContain("write");
     expect(names).not.toContain("exec");
@@ -188,7 +184,7 @@ describe("filterToolsByMode", () => {
     const filtered = filterToolsByMode(mockTools, "restricted");
     const names = filtered.map((t) => t.name);
     expect(names).toContain("read");
-    expect(names).toContain("file_read");
+    expect(names).toContain("memory_search");
     expect(names).not.toContain("write");
     expect(names).not.toContain("exec");
   });
