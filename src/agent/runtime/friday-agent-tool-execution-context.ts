@@ -5,6 +5,7 @@ export interface FridayAgentToolExecutionContext {
   runId: string;
   sessionKey: string;
   readOnly: boolean;
+  operationalMode?: "plan" | "execute" | "restricted";
   timezone?: string;
   taskPrompt?: string;
   conversationContext?: FridayAgentConversationContext;
@@ -38,6 +39,7 @@ export function getFridayAgentToolExecutionContext(
     typeof candidate.runId !== "string"
     || typeof candidate.sessionKey !== "string"
     || typeof candidate.readOnly !== "boolean"
+    || (candidate.operationalMode !== undefined && typeof candidate.operationalMode !== "string")
     || (candidate.timezone !== undefined && typeof candidate.timezone !== "string")
     || (candidate.taskPrompt !== undefined && typeof candidate.taskPrompt !== "string")
     || (candidate.principalId !== undefined && typeof candidate.principalId !== "string")
@@ -56,6 +58,7 @@ export function getFridayAgentToolExecutionContext(
     runId: candidate.runId,
     sessionKey: candidate.sessionKey,
     readOnly: candidate.readOnly,
+    operationalMode: candidate.operationalMode as FridayAgentToolExecutionContext["operationalMode"],
     timezone: candidate.timezone,
     taskPrompt: candidate.taskPrompt,
     conversationContext: candidate.conversationContext as FridayAgentConversationContext | undefined,

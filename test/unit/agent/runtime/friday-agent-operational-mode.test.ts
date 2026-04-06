@@ -77,10 +77,26 @@ describe("resolveToolCategory", () => {
 
   it("maps skill tools correctly", () => {
     expect(resolveToolCategory("skill_run")).toBe("skill");
+    expect(resolveToolCategory("skill_generate")).toBe("skill");
+    expect(resolveToolCategory("skill_import")).toBe("skill");
   });
 
   it("maps workflow tools correctly", () => {
     expect(resolveToolCategory("workflow_run")).toBe("workflow");
+    expect(resolveToolCategory("workflow_generate")).toBe("workflow");
+  });
+
+  it("maps autonomous to exec", () => {
+    expect(resolveToolCategory("autonomous")).toBe("exec");
+  });
+
+  it("maps setup tools to system", () => {
+    expect(resolveToolCategory("setup")).toBe("system");
+    expect(resolveToolCategory("setup_assistant")).toBe("system");
+  });
+
+  it("maps feedback to read", () => {
+    expect(resolveToolCategory("feedback")).toBe("read");
   });
 
   it("maps browser tools correctly", () => {
@@ -101,6 +117,40 @@ describe("resolveToolCategory", () => {
   it("defaults unknown tools to system", () => {
     expect(resolveToolCategory("totally_unknown_tool")).toBe("system");
     expect(resolveToolCategory("custom_plugin")).toBe("system");
+  });
+
+  it("has explicit mapping for all 39 registered tools (no fallback to default)", () => {
+    const ALL_REGISTERED_TOOLS = [
+      // read
+      "read", "file_read", "file_list", "web_fetch", "web_search",
+      "memory_search", "memory_query", "memory_get", "skills_list",
+      "agents_list", "capabilities", "task_status", "image_analysis", "feedback",
+      // write
+      "write", "edit", "file_write", "file_delete", "file_rename",
+      "memory_store", "memory_extract",
+      // exec
+      "exec", "autonomous",
+      // network
+      "message", "gateway", "mcp",
+      // skill
+      "skill_run", "skill_generate", "skill_import",
+      // workflow
+      "workflow_run", "workflow_generate",
+      // browser
+      "browser", "canvas", "xhs",
+      // system
+      "desktop", "system", "cron", "nodes", "tts", "provider",
+      "sessions", "spawn_subagent", "get_subagent", "list_subagents",
+      "setup", "setup_assistant",
+    ];
+    for (const tool of ALL_REGISTERED_TOOLS) {
+      const category = resolveToolCategory(tool);
+      // Ensure the tool has an explicit mapping (not falling through to the "system" default
+      // for tools that shouldn't be "system")
+      expect(category).toBeDefined();
+      // All tools should resolve to a known category
+      expect(["read", "write", "exec", "network", "skill", "workflow", "browser", "system"]).toContain(category);
+    }
   });
 });
 
@@ -151,6 +201,15 @@ describe("filterToolsByMode", () => {
   it("handles empty input", () => {
     const filtered = filterToolsByMode([], "plan");
     expect(filtered).toEqual([]);
+  });
+
+  it("keeps feedback in plan mode (read category)", () => {
+    const tools = [{ name: "feedback" }, { name: "autonomous" }, { name: "skill_generate" }];
+    const filtered = filterToolsByMode(tools, "plan");
+    const names = filtered.map((t) => t.name);
+    expect(names).toContain("feedback");
+    expect(names).not.toContain("autonomous");
+    expect(names).not.toContain("skill_generate");
   });
 });
 

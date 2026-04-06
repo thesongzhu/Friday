@@ -78,8 +78,11 @@ const TOOL_CATEGORY_MAP: Record<string, FridayToolCategory> = {
   mcp: "network",
   // skill
   skill_run: "skill",
+  skill_generate: "skill",
+  skill_import: "skill",
   // workflow
   workflow_run: "workflow",
+  workflow_generate: "workflow",
   // browser
   browser: "browser",
   canvas: "browser",
@@ -92,6 +95,10 @@ const TOOL_CATEGORY_MAP: Record<string, FridayToolCategory> = {
   tts: "system",
   provider: "system",
   sessions: "system",
+  autonomous: "exec",
+  setup: "system",
+  setup_assistant: "system",
+  feedback: "read",
   spawn_subagent: "system",
   get_subagent: "system",
   list_subagents: "system",

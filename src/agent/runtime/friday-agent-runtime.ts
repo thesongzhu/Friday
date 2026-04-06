@@ -1768,6 +1768,7 @@ export function createFridayAgentRuntime(
                   runId,
                   sessionKey,
                   readOnly: isReadOnly,
+                  operationalMode: runOperationalMode,
                   timezone: runTimeContext.timezone,
                   taskPrompt: llmTask,
                   conversationContext,
@@ -4233,6 +4234,7 @@ interface ExecuteToolCallParams {
   runId: string;
   sessionKey: string;
   readOnly: boolean;
+  operationalMode?: "plan" | "execute" | "restricted";
   timezone?: string;
   taskPrompt?: string;
   conversationContext?: FridayAgentConversationContext;
@@ -4534,6 +4536,7 @@ async function executeToolCall(
       runId,
       sessionKey,
       readOnly: params.readOnly,
+      operationalMode: params.operationalMode,
       timezone: params.timezone,
       taskPrompt: params.taskPrompt,
       conversationContext: params.conversationContext,

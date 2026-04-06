@@ -41,6 +41,26 @@ describe("friday-agent-tool-risk", () => {
       expect(classifyShellRisk("truncate -s 0 database.log")).toMatchObject({ level: "destructive", program: "truncate" });
     });
 
+    it("classifies dd as destructive", () => {
+      expect(classifyShellRisk("dd if=/dev/zero of=/dev/sda")).toMatchObject({ level: "destructive", program: "dd" });
+    });
+
+    it("classifies mkfs as destructive", () => {
+      expect(classifyShellRisk("mkfs.ext4 /dev/sda1")).toMatchObject({ level: "destructive", program: "mkfs.ext4" });
+    });
+
+    it("classifies kill as destructive", () => {
+      expect(classifyShellRisk("kill -9 1234")).toMatchObject({ level: "destructive", program: "kill" });
+    });
+
+    it("classifies killall as destructive", () => {
+      expect(classifyShellRisk("killall node")).toMatchObject({ level: "destructive", program: "killall" });
+    });
+
+    it("classifies pkill as destructive", () => {
+      expect(classifyShellRisk("pkill -f my-process")).toMatchObject({ level: "destructive", program: "pkill" });
+    });
+
     it("classifies known safe programs as safe", () => {
       expect(classifyShellRisk("ls -la")).toMatchObject({ level: "safe", program: "ls" });
       expect(classifyShellRisk("cat file.txt")).toMatchObject({ level: "safe", program: "cat" });
