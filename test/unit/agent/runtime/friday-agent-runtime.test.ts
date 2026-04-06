@@ -2538,12 +2538,18 @@ describe("FridayAgentRuntime", () => {
 
   // ─── Run handles LLM error ───
 
-  it("handles LLM errors gracefully", async () => {
+  it("handles LLM errors gracefully by degrading instead of crashing", async () => {
     const llmClient: FridayAgentLlmClient = {
       async *stream() {
         throw new Error("LLM request failed");
       },
     };
+
+    const emitter = createFridayAgentEventEmitter();
+    const degradedEvents: unknown[] = [];
+    emitter.on("agent.run.degraded", (p) => degradedEvents.push(p));
+    const modeChangedEvents: unknown[] = [];
+    emitter.on("agent.run.mode_changed", (p) => modeChangedEvents.push(p));
 
     const runtime = createFridayAgentRuntime({
       db,
@@ -2552,15 +2558,18 @@ describe("FridayAgentRuntime", () => {
       providerId: "test-provider",
       systemPrompt: "You are a test agent.",
       tools: [],
-      eventEmitter: createFridayAgentEventEmitter(),
+      eventEmitter: emitter,
       idGenerator,
       nowIso: () => NOW,
     });
 
-    const result = await runtime.executeRun({ task: "Should fail" });
+    const result = await runtime.executeRun({ task: "Should degrade gracefully" });
 
-    expect(result.status).toBe("failed");
-    expect(result.response).toContain("LLM request failed");
+    // First LLM failure now degrades to a completed run with synthetic response
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("temporary connection issue");
+    expect(degradedEvents.length).toBeGreaterThanOrEqual(1);
+    expect(modeChangedEvents.length).toBeGreaterThanOrEqual(1);
   });
 
   // ─── Emits events ───
@@ -4484,7 +4493,7 @@ describe("FridayAgentRuntime", () => {
     });
   });
 
-  it("persists actual execution metadata for failed runs", async () => {
+  it("persists actual execution metadata when LLM error is gracefully degraded", async () => {
     const llmClient: FridayAgentLlmClient = {
       async *stream() {
         throw new Error("provider exploded");
@@ -4504,19 +4513,19 @@ describe("FridayAgentRuntime", () => {
     });
 
     const result = await runtime.executeRun({
-      task: "Fail while keeping execution audit",
+      task: "Degrade while keeping execution audit",
       taskProfile: { id: "deterministic", model: "gpt-5.4-mini" },
     });
 
     const repo = createFridayAgentRunRepository();
     const run = db.withReadConnection((reader) => repo.getById(reader, result.runId));
-    expect(result.status).toBe("failed");
+    // First LLM error is now gracefully degraded — run completes with synthetic response
+    expect(result.status).toBe("completed");
     expect(run?.actualExecution).toMatchObject({
       requestedModel: "gpt-5.4-mini",
       taskProfileId: "deterministic",
       taskProfileModel: "gpt-5.4-mini",
       modelSelectionSource: "task_profile",
-      finalFailureReason: "provider exploded",
     });
   });
 

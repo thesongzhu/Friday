@@ -82,6 +82,8 @@ export interface FridayAgentRoutesDeps {
   cancelRun: (runId: string) => void;
   approvePlan: (runId: string) => Promise<FridayAgentRuntimeResult>;
   rejectPlan: (runId: string) => Promise<FridayAgentRuntimeResult>;
+  resolveToolApproval: (runId: string, toolCallId: string, approved: boolean, reason?: string) => { resolved: boolean };
+  rollbackRun?: (runId: string) => { restoredCount: number; errors: Array<{ filePath: string; error: string }> } | null;
   eventEmitter: FridayAgentEventEmitter;
   automationService: FridayAgentAutomationService;
 }
@@ -357,6 +359,50 @@ export function createFridayAgentRoutes(
       },
     },
 
+    // ─── GET /v1/agent/runs/summary ───
+    {
+      operationId: "agent.runs.summary",
+      method: "GET",
+      path: "/v1/agent/runs/summary",
+      auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
+      async handler(ctx) {
+        const query = ctx.query as { since?: string };
+        const allRuns = deps.listRuns({ limit: 100 });
+        const since = query.since ? new Date(query.since).getTime() : 0;
+        const recentRuns = since > 0
+          ? allRuns.filter((r) => new Date(r.createdAt).getTime() >= since)
+          : allRuns;
+
+        let totalCostUsd = 0;
+        let completedCount = 0;
+        let failedCount = 0;
+        let cancelledCount = 0;
+
+        for (const run of recentRuns) {
+          totalCostUsd += run.costUsd ?? 0;
+          if (run.status === "completed") completedCount++;
+          else if (run.status === "failed" || run.status === "failed_tests") failedCount++;
+          else if (run.status === "cancelled") cancelledCount++;
+        }
+
+        return {
+          since: query.since ?? null,
+          totalRuns: recentRuns.length,
+          completedCount,
+          failedCount,
+          cancelledCount,
+          totalCostUsd: Math.round(totalCostUsd * 10000) / 10000,
+          runs: recentRuns.slice(0, 20).map((r) => ({
+            id: r.id,
+            task: r.task,
+            status: r.status,
+            createdAt: r.createdAt,
+            durationMs: r.durationMs,
+          })),
+        };
+      },
+    },
+
     // ─── GET /v1/agent/runs/:runId ───
     {
       operationId: "agent.runs.get",
@@ -407,6 +453,85 @@ export function createFridayAgentRoutes(
       },
     },
 
+    // ─── GET /v1/agent/runs/:runId/audit ───
+    {
+      operationId: "agent.runs.audit",
+      method: "GET",
+      path: "/v1/agent/runs/:runId/audit",
+      auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
+      async handler(ctx) {
+        const { runId } = ctx.params as { runId: string };
+        const run = deps.getRun(runId);
+        if (!run) {
+          throw new FridayDomainError(
+            "AGENT_RUN_NOT_FOUND",
+            "Agent run not found",
+            { httpStatus: 404 },
+          );
+        }
+        const AUDIT_EVENT_NAMES = new Set([
+          "agent.run.started",
+          "agent.run.tool_start",
+          "agent.run.tool_end",
+          "agent.run.route_selected",
+          "agent.run.route_fallback",
+          "agent.run.route_mismatch",
+          "agent.run.degraded",
+          "agent.run.mode_changed",
+          "agent.run.awaiting_tool_approval",
+          "agent.run.completed",
+          "agent.run.failed",
+          "agent.run.cancelled",
+        ]);
+        const allEvents = deps.listRunEvents(runId);
+        const auditEvents = allEvents.filter((e) => AUDIT_EVENT_NAMES.has(e.eventName));
+        return {
+          runId,
+          events: auditEvents.map((e) => ({
+            seq: e.seq,
+            type: e.eventName,
+            timestamp: e.emittedAt,
+            payload: e.payload,
+          })),
+        };
+      },
+    },
+
+    // ─── POST /v1/agent/runs/:runId/rollback ───
+    {
+      operationId: "agent.runs.rollback",
+      method: "POST",
+      path: "/v1/agent/runs/:runId/rollback",
+      auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
+      async handler(ctx) {
+        const { runId } = ctx.params as { runId: string };
+        const run = deps.getRun(runId);
+        if (!run) {
+          throw new FridayDomainError(
+            "AGENT_RUN_NOT_FOUND",
+            "Agent run not found",
+            { httpStatus: 404 },
+          );
+        }
+        if (!deps.rollbackRun) {
+          throw new FridayDomainError(
+            "AGENT_ROLLBACK_NOT_AVAILABLE",
+            "File rollback is not available",
+            { httpStatus: 501 },
+          );
+        }
+        const result = deps.rollbackRun(runId);
+        if (!result) {
+          throw new FridayDomainError(
+            "AGENT_ROLLBACK_NO_CHECKPOINT",
+            "No checkpoint found for this run",
+            { httpStatus: 404 },
+          );
+        }
+        return result;
+      },
+    },
+
     // ─── POST /v1/agent/runs/:runId/approve-plan ───
     {
       operationId: "agent.runs.approve.plan",
@@ -444,6 +569,64 @@ export function createFridayAgentRoutes(
           );
         }
         return await deps.rejectPlan(runId);
+      },
+    },
+
+    // ─── POST /v1/agent/runs/:runId/approve-tool ───
+    {
+      operationId: "agent.runs.approve.tool",
+      method: "POST",
+      path: "/v1/agent/runs/:runId/approve-tool",
+      auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
+      async handler(ctx) {
+        const { runId } = ctx.params as { runId: string };
+        const body = ctx.body as { toolCallId?: string } | undefined;
+        const toolCallId = body?.toolCallId;
+        if (!toolCallId) {
+          throw new FridayDomainError(
+            "AGENT_TOOL_CALL_ID_REQUIRED",
+            "toolCallId is required in the request body",
+            { httpStatus: 400 },
+          );
+        }
+        const run = deps.getRun(runId);
+        if (!run) {
+          throw new FridayDomainError(
+            "AGENT_RUN_NOT_FOUND",
+            "Agent run not found",
+            { httpStatus: 404 },
+          );
+        }
+        return deps.resolveToolApproval(runId, toolCallId, true);
+      },
+    },
+
+    // ─── POST /v1/agent/runs/:runId/reject-tool ───
+    {
+      operationId: "agent.runs.reject.tool",
+      method: "POST",
+      path: "/v1/agent/runs/:runId/reject-tool",
+      auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
+      async handler(ctx) {
+        const { runId } = ctx.params as { runId: string };
+        const body = ctx.body as { toolCallId?: string; reason?: string } | undefined;
+        const toolCallId = body?.toolCallId;
+        if (!toolCallId) {
+          throw new FridayDomainError(
+            "AGENT_TOOL_CALL_ID_REQUIRED",
+            "toolCallId is required in the request body",
+            { httpStatus: 400 },
+          );
+        }
+        const run = deps.getRun(runId);
+        if (!run) {
+          throw new FridayDomainError(
+            "AGENT_RUN_NOT_FOUND",
+            "Agent run not found",
+            { httpStatus: 404 },
+          );
+        }
+        return deps.resolveToolApproval(runId, toolCallId, false, body?.reason);
       },
     },
 
@@ -504,6 +687,12 @@ export function createFridayAgentRoutes(
           "agent.run.awaiting_clarification",
           "agent.run.plan_ready",
           "agent.run.awaiting_plan_approval",
+          "agent.run.awaiting_tool_approval",
+          "agent.run.degraded",
+          "agent.run.mode_changed",
+          "agent.run.route_selected",
+          "agent.run.route_fallback",
+          "agent.run.route_mismatch",
           "agent.run.executing",
           "agent.run.tool_start",
           "agent.run.tool_end",

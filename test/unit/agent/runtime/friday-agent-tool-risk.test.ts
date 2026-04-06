@@ -189,9 +189,40 @@ describe("friday-agent-tool-risk", () => {
       expect(getApprovalRequiredReasonForToolCall("browser", { action: "evaluate" })).toContain("approval");
     });
 
+    it("blocks browser navigation to dangerous URL schemes", () => {
+      expect(getApprovalRequiredReasonForToolCall("browser", { action: "navigate", url: "file:///etc/passwd" })).toContain("approval");
+      expect(getApprovalRequiredReasonForToolCall("browser", { action: "navigate", url: "javascript:alert(1)" })).toContain("approval");
+      expect(getApprovalRequiredReasonForToolCall("browser", { action: "navigate", url: "data:text/html,<script>" })).toContain("approval");
+    });
+
+    it("allows browser navigation to https URLs", () => {
+      expect(getApprovalRequiredReasonForToolCall("browser", { action: "navigate", url: "https://example.com" })).toBeNull();
+    });
+
+    it("blocks canvas eval action", () => {
+      expect(getApprovalRequiredReasonForToolCall("canvas", { action: "eval" })).toContain("approval");
+      expect(getApprovalRequiredReasonForToolCall("canvas", { action: "evaluate" })).toContain("approval");
+    });
+
+    it("blocks xhs publish/post/comment actions", () => {
+      expect(getApprovalRequiredReasonForToolCall("xhs", { action: "post" })).toContain("approval");
+      expect(getApprovalRequiredReasonForToolCall("xhs", { action: "publish" })).toContain("approval");
+      expect(getApprovalRequiredReasonForToolCall("xhs", { action: "comment" })).toContain("approval");
+    });
+
+    it("allows xhs read actions", () => {
+      expect(getApprovalRequiredReasonForToolCall("xhs", { action: "search" })).toBeNull();
+      expect(getApprovalRequiredReasonForToolCall("xhs", { action: "read" })).toBeNull();
+    });
+
     it("blocks desktop launch_app and close_app", () => {
       expect(getApprovalRequiredReasonForToolCall("desktop", { action: "launch_app" })).toContain("approval");
       expect(getApprovalRequiredReasonForToolCall("desktop", { action: "close_app" })).toContain("approval");
+    });
+
+    it("blocks tts speak and synthesize", () => {
+      expect(getApprovalRequiredReasonForToolCall("tts", { action: "speak" })).toContain("approval");
+      expect(getApprovalRequiredReasonForToolCall("tts", { action: "synthesize" })).toContain("approval");
     });
 
     it("allows safe tool calls", () => {
@@ -199,6 +230,8 @@ describe("friday-agent-tool-risk", () => {
       expect(getApprovalRequiredReasonForToolCall("web_fetch", { url: "https://example.com" })).toBeNull();
       expect(getApprovalRequiredReasonForToolCall("browser", { action: "screenshot" })).toBeNull();
       expect(getApprovalRequiredReasonForToolCall("desktop", { action: "screenshot" })).toBeNull();
+      expect(getApprovalRequiredReasonForToolCall("canvas", { action: "render" })).toBeNull();
+      expect(getApprovalRequiredReasonForToolCall("tts", { action: "status" })).toBeNull();
     });
 
     it("allows exec with safe commands", () => {

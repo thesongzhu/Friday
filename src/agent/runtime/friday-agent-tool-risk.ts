@@ -186,11 +186,31 @@ export function getApprovalRequiredReasonForToolCall(
     return getApprovalRequiredReasonForFileMutation(filePath, [oldText, newText]);
   }
 
-  // P1-SEC-002: browser:evaluate requires approval — arbitrary JS execution
+  // P1-SEC-002: browser requires approval for JS execution and dangerous URLs
   if (toolName === "browser") {
     const action = typeof args.action === "string" ? args.action : "";
     if (action === "evaluate") {
       return "Executing arbitrary JavaScript in the browser requires explicit approval.";
+    }
+    const url = typeof args.url === "string" ? args.url : "";
+    if (url && /^(file:|javascript:|data:)/i.test(url)) {
+      return `Navigating to a potentially dangerous URL scheme (${url.split(":")[0]}:) requires explicit approval.`;
+    }
+  }
+
+  // P2-SEC-011: canvas:eval requires approval — arbitrary JS execution in canvas context
+  if (toolName === "canvas") {
+    const action = typeof args.action === "string" ? args.action : "";
+    if (action === "eval" || action === "evaluate") {
+      return "Executing arbitrary JavaScript in the canvas requires explicit approval.";
+    }
+  }
+
+  // P2-SEC-012: xhs:post requires approval — publishes content to social media
+  if (toolName === "xhs") {
+    const action = typeof args.action === "string" ? args.action : "";
+    if (action === "post" || action === "publish" || action === "comment") {
+      return "Publishing content to social media (Xiaohongshu) requires explicit approval.";
     }
   }
 
@@ -199,6 +219,14 @@ export function getApprovalRequiredReasonForToolCall(
     const action = typeof args.action === "string" ? args.action : "";
     if (action === "launch_app" || action === "close_app") {
       return "Launching or closing desktop applications requires explicit approval.";
+    }
+  }
+
+  // P2-SEC-011: tts:speak/synthesize requires approval — audio output
+  if (toolName === "tts") {
+    const action = typeof args.action === "string" ? args.action : "";
+    if (action === "speak" || action === "synthesize") {
+      return "Text-to-speech audio output requires explicit approval.";
     }
   }
 

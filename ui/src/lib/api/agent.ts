@@ -55,6 +55,18 @@ interface SaveAutomationResponse {
   automation: AgentAutomation;
 }
 
+export interface RunAuditEvent {
+  seq: number;
+  type: string;
+  timestamp: string;
+  payload: Record<string, unknown>;
+}
+
+export interface RunAuditResponse {
+  runId: string;
+  events: RunAuditEvent[];
+}
+
 interface ListSubagentsResponse {
   items: SubagentRecord[];
 }
@@ -112,6 +124,20 @@ export const agentApi = {
     );
   },
 
+  async approveTool(runId: string, toolCallId: string): Promise<{ resolved: boolean }> {
+    return apiClient.post<{ toolCallId: string }, { resolved: boolean }>(
+      `/v1/agent/runs/${encodeURIComponent(runId)}/approve-tool`,
+      { toolCallId },
+    );
+  },
+
+  async rejectTool(runId: string, toolCallId: string, reason?: string): Promise<{ resolved: boolean }> {
+    return apiClient.post<{ toolCallId: string; reason?: string }, { resolved: boolean }>(
+      `/v1/agent/runs/${encodeURIComponent(runId)}/reject-tool`,
+      { toolCallId, reason },
+    );
+  },
+
   async saveAutomation(input: SaveAutomationInput): Promise<AgentAutomation> {
     const data = await apiClient.post<SaveAutomationInput, SaveAutomationResponse>(
       "/v1/agent/automations",
@@ -125,5 +151,18 @@ export const agentApi = {
       `/v1/agent/runs/${encodeURIComponent(runId)}/subagents`,
     );
     return data.items;
+  },
+
+  async rollbackRun(runId: string): Promise<{ restoredCount: number; errors: Array<{ filePath: string; error: string }> }> {
+    return apiClient.post<Record<string, never>, { restoredCount: number; errors: Array<{ filePath: string; error: string }> }>(
+      `/v1/agent/runs/${encodeURIComponent(runId)}/rollback`,
+      {},
+    );
+  },
+
+  async getRunAudit(runId: string): Promise<RunAuditResponse> {
+    return apiClient.get<RunAuditResponse>(
+      `/v1/agent/runs/${encodeURIComponent(runId)}/audit`,
+    );
   },
 };

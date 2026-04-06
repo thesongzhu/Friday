@@ -198,6 +198,12 @@ export interface FridayAgentRuntime {
    * Returns the number of runs that were marked failed.
    */
   resumeStaleRunsOnBoot(): number;
+
+  /**
+   * Rollback file changes made during a specific run.
+   * Returns null if no checkpoint exists for the run.
+   */
+  rollbackRun(runId: string): { restoredCount: number; errors: Array<{ filePath: string; error: string }> } | null;
 }
 
 export interface FridayAgentRuntimeResult {
@@ -312,4 +318,19 @@ export interface CreateFridayAgentRuntimeDeps {
   worldStateManager?: FridayWorldStateManager;
   /** Optional one-shot enforcement for installed starter-skill discovery on matching operational requests. */
   starterSkillRouting?: FridayAgentStarterSkillRoutingConfig;
+  /** Optional callback that returns recent learned lessons for system prompt injection. */
+  learnedLessons?: () => Array<{ title: string; cause: string; fix: string }>;
+
+  /**
+   * Optional resolver that pauses execution when a tool call requires user approval.
+   * Returns `{ approved: true }` to proceed, `{ approved: false }` to block.
+   * When absent, risky tool calls are blocked immediately (existing behaviour).
+   */
+  toolApprovalResolver?: (prompt: {
+    runId: string;
+    toolName: string;
+    toolCallId: string;
+    params: Record<string, unknown>;
+    reason: string;
+  }) => Promise<{ approved: boolean; reason?: string }>;
 }

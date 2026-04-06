@@ -375,6 +375,15 @@ export interface FridayAgentRunAwaitingPlanApprovalPayload {
     | "major_decision";
 }
 
+export interface FridayAgentRunAwaitingToolApprovalPayload {
+  runId: string;
+  status: "awaiting_tool_approval";
+  toolName: string;
+  toolCallId: string;
+  params: Record<string, unknown>;
+  reason: string;
+}
+
 export interface FridayAgentToolStartPayload {
   runId: string;
   toolName: string;
@@ -524,6 +533,7 @@ export interface FridayAgentEventMap {
   "agent.run.awaiting_clarification": FridayAgentRunAwaitingClarificationPayload;
   "agent.run.plan_ready": FridayAgentRunPlanReadyPayload;
   "agent.run.awaiting_plan_approval": FridayAgentRunAwaitingPlanApprovalPayload;
+  "agent.run.awaiting_tool_approval": FridayAgentRunAwaitingToolApprovalPayload;
   "agent.run.executing": FridayAgentRunExecutingPayload;
   "agent.run.progress": FridayAgentRunProgressPayload;
   "agent.run.tool_start": FridayAgentToolStartPayload;
