@@ -50,9 +50,13 @@ export const FRIDAY_MODE_CONFIGS: Record<FridayOperationalMode, FridayModeConfig
 const TOOL_CATEGORY_MAP: Record<string, FridayToolCategory> = {
   // read
   read: "read",
+  file_read: "read",
+  file_list: "read",
   web_fetch: "read",
   web_search: "read",
   memory_search: "read",
+  memory_query: "read",
+  memory_get: "read",
   skills_list: "read",
   agents_list: "read",
   capabilities: "read",
@@ -61,6 +65,9 @@ const TOOL_CATEGORY_MAP: Record<string, FridayToolCategory> = {
   // write
   write: "write",
   edit: "write",
+  file_write: "write",
+  file_delete: "write",
+  file_rename: "write",
   memory_store: "write",
   memory_extract: "write",
   // exec

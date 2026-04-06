@@ -137,7 +137,7 @@ import {
   resolveFridayContextEnginePromptFragment,
   taskLikelyNeedsWriteAccessForSubagent,
 } from "#agent";
-import type { loadFridayWorkspaceContext } from "#agent";
+import type { FridayAgentModeChangedPayload, FridayAgentRunDegradedPayload, loadFridayWorkspaceContext } from "#agent";
 import { buildMcpServerToolFilter } from "./friday-mcp-safe-catalog.js";
 
 import { classifyFridayExecution } from "../sessions/services/friday-execution-classifier.js";
@@ -2776,12 +2776,14 @@ export async function createFridayHub(
   });
   agentEventEmitter.on("agent.run.degraded", (payload) => {
     if (payload && typeof payload === "object" && "runId" in payload) {
-      logger.info({ runId: (payload as Record<string, unknown>).runId, level: (payload as Record<string, unknown>).level }, "agent run degraded");
+      const p = payload as FridayAgentRunDegradedPayload;
+      logger.info({ runId: p.runId, level: p.level }, "agent run degraded");
     }
   });
   agentEventEmitter.on("agent.run.mode_changed", (payload) => {
     if (payload && typeof payload === "object" && "runId" in payload) {
-      logger.info({ runId: (payload as Record<string, unknown>).runId, mode: (payload as Record<string, unknown>).newMode }, "agent run mode changed");
+      const p = payload as FridayAgentModeChangedPayload;
+      logger.info({ runId: p.runId, mode: p.newMode }, "agent run mode changed");
     }
   });
 
