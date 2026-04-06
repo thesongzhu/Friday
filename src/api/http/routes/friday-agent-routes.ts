@@ -17,6 +17,7 @@ import type {
   FridayAgentEventName,
   FridayAgentRunRecord,
   FridayAgentRunStatus,
+  FridayAgentRunConstraints,
   FridayAgentRuntimeResult,
   FridayAgentTaskProfileInput,
 } from "#agent";
@@ -60,7 +61,7 @@ export interface FridayAgentRoutesDeps {
     timezone?: string;
     timeoutMs?: number;
     requireReview?: boolean;
-    constraints?: { readOnly?: boolean };
+    constraints?: FridayAgentRunConstraints;
     taskProfile?: FridayAgentTaskProfileInput;
     executionContext?: {
       surface?: string;

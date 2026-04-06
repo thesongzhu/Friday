@@ -17,7 +17,7 @@
  */
 
 import type { FridayAgentRuntimeResult } from "../agent/runtime/friday-agent-runtime.types.js";
-import type { FridayAgentRunStatus } from "../agent/model/friday-agent.types.js";
+import type { FridayAgentRunConstraints, FridayAgentRunStatus } from "../agent/model/friday-agent.types.js";
 import type { FridaySessionConversationFocusState } from "../sessions/model/friday-session.types.js";
 import type {
   FridayEngineRunInput,
@@ -47,7 +47,7 @@ export interface FridayEngineRunExecutorAgentRuntime {
     timeoutMs?: number;
     signal?: AbortSignal;
     reviewRequired?: boolean;
-    constraints?: { readOnly?: boolean };
+    constraints?: FridayAgentRunConstraints;
     principalId?: string;
     scopes?: string[];
     executionContext?: FridayEngineRunInput["executionContext"];
@@ -63,7 +63,7 @@ export interface FridayEnginePlanningGate {
     sessionKey?: string;
     providerId?: string;
     model?: string;
-    constraints?: { readOnly?: boolean };
+    constraints?: FridayAgentRunConstraints;
     reviewRequired?: boolean;
     conversationContext?: FridayPreparedEngineContext["conversationContext"];
     focusState?: { pendingPlanRunId?: string } | null;
@@ -78,7 +78,7 @@ export interface FridayEnginePlanningGate {
     timezone?: string;
     timeoutMs?: number;
     signal?: AbortSignal;
-    constraints?: { readOnly?: boolean };
+    constraints?: FridayAgentRunConstraints;
     principalId?: string;
     scopes?: string[];
     executionContext?: FridayEngineRunInput["executionContext"];
@@ -132,7 +132,7 @@ export interface CreateFridayEngineRunExecutorDeps {
     sessionKey?: string;
     providerId?: string;
     model?: string;
-    constraints?: { readOnly?: boolean };
+    constraints?: FridayAgentRunConstraints;
     responseText: string;
   }) => void | Promise<void>;
 
@@ -461,6 +461,19 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
     }
 
     // ── 4. Full agent runtime execution ──
+    // Merge operationalMode from session focusState when not explicitly provided
+    const sessionMode = prepared.focusState?.operationalMode;
+    const effectiveConstraints: FridayAgentRunConstraints | undefined = (() => {
+      const base = input.constraints ?? {};
+      const merged = sessionMode && !base.operationalMode
+        ? { ...base, operationalMode: sessionMode as FridayAgentRunConstraints["operationalMode"] }
+        : base;
+      if (turnKind === "status_check") {
+        return { ...merged, readOnly: true };
+      }
+      return Object.keys(merged).length > 0 ? merged : undefined;
+    })();
+
     const runtimeResult = await agentRuntime.executeRun({
       task,
       taskPrompt: prepared.taskPrompt,
@@ -474,10 +487,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
       timeoutMs: input.timeoutMs,
       signal: input.signal,
       reviewRequired: input.reviewRequired,
-      constraints:
-        turnKind === "status_check"
-          ? { ...(input.constraints ?? {}), readOnly: true }
-          : input.constraints,
+      constraints: effectiveConstraints,
       principalId: input.principalId,
       scopes: input.scopes,
       executionContext: input.executionContext,
