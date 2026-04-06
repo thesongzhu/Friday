@@ -53,6 +53,9 @@ function finiteOrUndef(value: unknown): number | undefined {
  * @returns The result of a successful attempt.
  * @throws The error from the last failed attempt.
  */
+/**
+ * @deprecated Use RetryOrchestrator from `src/retry/engine/` instead.
+ */
 export async function retryFridayAsync<T>(
   fn: (attempt: number) => Promise<T>,
   options?: FridayRetryOptions<T>,

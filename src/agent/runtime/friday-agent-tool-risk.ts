@@ -51,7 +51,9 @@ export function classifyShellRisk(command: string): FridayShellRiskClassificatio
   const program = parts[0]?.toLowerCase() ?? "";
 
   // Destructive programs always require approval
-  if (DESTRUCTIVE_PROGRAMS.has(program)) {
+  // Also match mkfs.* variants (mkfs.ext4, mkfs.xfs, etc.)
+  const programBase = program.includes(".") ? program.split(".")[0]! : program;
+  if (DESTRUCTIVE_PROGRAMS.has(program) || DESTRUCTIVE_PROGRAMS.has(programBase)) {
     return { level: "destructive", reason: `${program} is a destructive command`, program };
   }
 
@@ -83,7 +85,14 @@ export function classifyShellRisk(command: string): FridayShellRiskClassificatio
 
 const SENSITIVE_KEY_RE = /\b(api[_-]?token|access[_-]?token|refresh[_-]?token|secret|password|credential|private[_-]?key|token)\b/i;
 const SENSITIVE_ASSIGNMENT_RE = /(?:["']?(api[_-]?token|access[_-]?token|refresh[_-]?token|secret|password|credential|private[_-]?key|token)["']?\s*[:=]|(?:export\s+)?[A-Z0-9_]*(TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*=)/i;
-const DESTRUCTIVE_PROGRAMS = new Set(["rm", "unlink", "shred", "truncate"]);
+const DESTRUCTIVE_PROGRAMS = new Set([
+  "rm", "unlink", "shred", "truncate",
+  "dd",       // raw device/file write — data destruction
+  "mkfs",     // format filesystem
+  "kill",     // terminate process by PID
+  "killall",  // terminate processes by name
+  "pkill",    // terminate processes by pattern
+]);
 const MUTATING_PROGRAMS = new Set(["sed", "perl", "python", "python3", "node", "jq", "ruby"]);
 const HIGH_RISK_MUTATION_EXTENSION_RE = /\.(?:bak|backup|dump|sqlite|db|sql|tar|tgz|gz|zip)$/i;
 const HIGH_RISK_MUTATION_NAME_RE = /\b(database|backup|snapshot|restore)\b/i;
