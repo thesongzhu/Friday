@@ -831,6 +831,11 @@ export interface AgentRunStreamEvent {
   // status events
   output?: string;
   error?: string;
+  // GAP status events
+  reason?: string;
+  level?: string;
+  newMode?: string;
+  fallbackCount?: number;
 }
 
 // ─── Sub-agent types ───

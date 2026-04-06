@@ -319,7 +319,7 @@ export function useAgentRunEvents(
                   toolName: parsed.toolName ?? "unknown",
                   toolCallId: parsed.toolCallId!,
                   params: asRecord(parsed.params),
-                  reason: (parsed as Record<string, unknown>).reason as string
+                  reason: parsed.reason
                     ?? parsed.message ?? "This action requires approval.",
                   receivedAt: eventTime,
                 },
@@ -334,9 +334,8 @@ export function useAgentRunEvents(
 
           // Runtime status events → banners
           if (eventType === "agent.run.degraded") {
-            const p = parsed as Record<string, unknown>;
-            const level = typeof p.level === "string" ? p.level : "unknown";
-            const msg = typeof p.message === "string" ? p.message : `Service degraded to ${level} mode.`;
+            const level = typeof parsed.level === "string" ? parsed.level : "unknown";
+            const msg = typeof parsed.message === "string" ? parsed.message : `Service degraded to ${level} mode.`;
             setStatusBanners((prev) => [
               ...prev.filter((b) => b.kind !== "degraded"),
               { id: `degraded-${eventTime}`, kind: "degraded", message: msg, timestamp: eventTime, tone: "warning" },
@@ -344,9 +343,8 @@ export function useAgentRunEvents(
           }
 
           if (eventType === "agent.run.mode_changed") {
-            const p = parsed as Record<string, unknown>;
-            const newMode = typeof p.newMode === "string" ? p.newMode : "restricted";
-            const reason = typeof p.reason === "string" ? p.reason : "";
+            const newMode = typeof parsed.newMode === "string" ? parsed.newMode : "restricted";
+            const reason = typeof parsed.reason === "string" ? parsed.reason : "";
             setStatusBanners((prev) => [
               ...prev.filter((b) => b.kind !== "mode_changed"),
               {
@@ -360,8 +358,7 @@ export function useAgentRunEvents(
           }
 
           if (eventType === "agent.run.route_fallback") {
-            const p = parsed as Record<string, unknown>;
-            const count = typeof p.fallbackCount === "number" ? p.fallbackCount : 0;
+            const count = typeof parsed.fallbackCount === "number" ? parsed.fallbackCount : 0;
             setStatusBanners((prev) => [
               ...prev.filter((b) => b.kind !== "route_fallback"),
               {
@@ -375,8 +372,7 @@ export function useAgentRunEvents(
           }
 
           if (eventType === "agent.run.route_mismatch") {
-            const p = parsed as Record<string, unknown>;
-            const msg = typeof p.message === "string" ? p.message : "Model routing mismatch detected.";
+            const msg = typeof parsed.message === "string" ? parsed.message : "Model routing mismatch detected.";
             setStatusBanners((prev) => [
               ...prev.filter((b) => b.kind !== "route_mismatch"),
               {

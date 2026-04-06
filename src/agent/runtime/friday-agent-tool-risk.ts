@@ -222,5 +222,13 @@ export function getApprovalRequiredReasonForToolCall(
     }
   }
 
+  // P2-SEC-011: tts:speak/synthesize requires approval — audio output
+  if (toolName === "tts") {
+    const action = typeof args.action === "string" ? args.action : "";
+    if (action === "speak" || action === "synthesize") {
+      return "Text-to-speech audio output requires explicit approval.";
+    }
+  }
+
   return null;
 }

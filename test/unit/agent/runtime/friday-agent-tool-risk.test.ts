@@ -220,13 +220,18 @@ describe("friday-agent-tool-risk", () => {
       expect(getApprovalRequiredReasonForToolCall("desktop", { action: "close_app" })).toContain("approval");
     });
 
+    it("blocks tts speak and synthesize", () => {
+      expect(getApprovalRequiredReasonForToolCall("tts", { action: "speak" })).toContain("approval");
+      expect(getApprovalRequiredReasonForToolCall("tts", { action: "synthesize" })).toContain("approval");
+    });
+
     it("allows safe tool calls", () => {
       expect(getApprovalRequiredReasonForToolCall("read", { path: "file.txt" })).toBeNull();
       expect(getApprovalRequiredReasonForToolCall("web_fetch", { url: "https://example.com" })).toBeNull();
       expect(getApprovalRequiredReasonForToolCall("browser", { action: "screenshot" })).toBeNull();
       expect(getApprovalRequiredReasonForToolCall("desktop", { action: "screenshot" })).toBeNull();
       expect(getApprovalRequiredReasonForToolCall("canvas", { action: "render" })).toBeNull();
-      expect(getApprovalRequiredReasonForToolCall("tts", { action: "speak" })).toBeNull();
+      expect(getApprovalRequiredReasonForToolCall("tts", { action: "status" })).toBeNull();
     });
 
     it("allows exec with safe commands", () => {
