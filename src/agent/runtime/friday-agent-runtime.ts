@@ -74,8 +74,9 @@ import {
 } from "./friday-agent-starter-skill-routing.js";
 import { summarizeToolCall } from "../services/friday-tool-call-summary.js";
 import { assessDegradation, getDegradationSystemPrompt } from "./friday-agent-degradation-handler.js";
-import { FRIDAY_MODE_CONFIGS } from "./friday-agent-operational-mode.js";
+import { FRIDAY_MODE_CONFIGS, resolveToolCategory } from "./friday-agent-operational-mode.js";
 import type { FridayOperationalMode } from "./friday-agent-operational-mode.js";
+import { partitionFridayAgentTools } from "../tools/friday-agent-tool-registry.js";
 
 const RULES_EVALUATE_SCOPE = "rules:evaluate";
 const TERMINAL_CONTEXT_ENGINE_STATUSES: ReadonlySet<FridayAgentRunStatus> = new Set([
@@ -591,6 +592,7 @@ export function createFridayAgentRuntime(
             record.result.routeId === "agent.execute.tool.guard"
             || record.result.routeId === "agent.execute.tool.policy"
             || record.result.routeId === "agent.execute.tool.readonly"
+            || record.result.routeId === "agent.execute.tool.mode"
             || record.result.routeId === "agent.execute.tool.approval_required"
           ))
           .map((record) => ({
@@ -1198,24 +1200,47 @@ export function createFridayAgentRuntime(
         // ─── Degradation assessment ───
         // Only assess degradation when tools were configured but some are unavailable.
         // Skip when no tools were registered at all (e.g. minimal/test configurations).
-        const activeTool = [...toolMap.values()];
-        const degradationLevel = depsTools.length > 0 ? assessDegradation(activeTool) : "nominal" as const;
+        const activeToolValues = [...toolMap.values()];
+        const degradationLevel = depsTools.length > 0 ? assessDegradation(activeToolValues) : "nominal" as const;
         if (degradationLevel !== "nominal") {
+          const unavailable = depsTools
+            .filter((t) => !toolMap.has(t.name))
+            .map((t) => t.name);
           effectiveSystemPrompt += "\n\n[Degradation Notice] " + getDegradationSystemPrompt(degradationLevel);
           eventEmitter.emit("agent.run.degraded", {
             runId,
             level: degradationLevel,
-            unavailableTools: [],
+            unavailableTools: unavailable,
             reason: `Tool availability assessed as ${degradationLevel}`,
           });
         }
 
         // ─── Operational mode suffix ───
         const runOperationalMode: FridayOperationalMode | undefined = constraints?.operationalMode as FridayOperationalMode | undefined;
+        if (runOperationalMode && runOperationalMode !== "execute") {
+          eventEmitter.emit("agent.run.mode_changed", {
+            runId,
+            previousMode: "execute" as FridayOperationalMode,
+            newMode: runOperationalMode,
+            reason: `Operational mode set to ${runOperationalMode}`,
+          });
+        }
         if (runOperationalMode) {
           const modeConfig = FRIDAY_MODE_CONFIGS[runOperationalMode];
           if (modeConfig?.systemPromptSuffix) {
             effectiveSystemPrompt += `\n\n[Operational Mode] ${modeConfig.systemPromptSuffix}`;
+          }
+        }
+
+        // ─── Deferred tool hints ───
+        if (depsTools.length > 0) {
+          const partitioned = partitionFridayAgentTools(activeToolValues);
+          if (partitioned.deferred.length > 0) {
+            const hints = partitioned.deferred.map((t) => `- ${t.name}: ${t.description}`).join("\n");
+            effectiveSystemPrompt +=
+              "\n\nAdditional tools available on demand (not loaded in this prompt):\n" +
+              hints +
+              "\nIf you need one of these tools, inform the user which tool you require.";
           }
         }
 
@@ -1666,6 +1691,25 @@ export function createFridayAgentRuntime(
                   routeId: "agent.execute.tool.policy",
                   correlationId: runId,
                   message,
+                }));
+                continue;
+              }
+            }
+
+            // ─── Operational mode tool guard ───
+            if (runOperationalMode && runOperationalMode !== "execute") {
+              const toolCategory = resolveToolCategory(toolUse.name);
+              const allowedCategories = new Set(FRIDAY_MODE_CONFIGS[runOperationalMode].enabledToolCategories);
+              if (!allowedCategories.has(toolCategory)) {
+                toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                  toolUse,
+                  runId,
+                  nowIso,
+                  emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                  routeId: "agent.execute.tool.mode",
+                  correlationId: runId,
+                  errorCode: "TOOL_UNAVAILABLE",
+                  message: `Tool '${toolUse.name}' blocked: not available in ${runOperationalMode} mode`,
                 }));
                 continue;
               }

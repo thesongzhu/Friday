@@ -221,11 +221,16 @@ export function createFridayAgentRoutes(
         const requireReview = typeof body.requireReview === "boolean" ? body.requireReview : undefined;
 
         // IMPL-4: constraints
-        let constraints: { readOnly?: boolean } | undefined;
+        let constraints: { readOnly?: boolean; operationalMode?: "plan" | "execute" | "restricted" } | undefined;
         if (body.constraints !== undefined && typeof body.constraints === "object" && body.constraints !== null && !Array.isArray(body.constraints)) {
           const c = body.constraints as Record<string, unknown>;
+          const validModes = ["plan", "execute", "restricted"] as const;
+          const parsedMode = typeof c.operationalMode === "string" && (validModes as readonly string[]).includes(c.operationalMode)
+            ? (c.operationalMode as "plan" | "execute" | "restricted")
+            : undefined;
           constraints = {
             readOnly: typeof c.readOnly === "boolean" ? c.readOnly : undefined,
+            operationalMode: parsedMode,
           };
         }
 
