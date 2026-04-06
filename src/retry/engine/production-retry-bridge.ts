@@ -17,8 +17,6 @@ import { createFailureClassifier } from "./failure-classifier.js";
 import { createRetryStrategyEngine } from "./retry-strategy-engine.js";
 import { createRetryContextTracker } from "./retry-context.js";
 import { createRetryBudget, DEFAULT_RETRY_BUDGET_CONFIG } from "./retry-budget.js";
-import { createCircuitBreakerManager } from "./circuit-breaker.js";
-import { createDeadLetterQueue } from "./dead-letter-queue.js";
 import { createRetryOrchestrator } from "./retry-orchestrator.js";
 import type { RetryAttemptCostEstimatorArgs, RetryOrchestrator, RetryOrchestratorConfig , RetryWithPolicyConfig} from "./retry-orchestrator.js";
 import type { RetryBudgetInstance } from "./retry-budget.js";
