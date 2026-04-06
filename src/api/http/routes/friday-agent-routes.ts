@@ -15,9 +15,9 @@ import type {
   FridayAgentEventEmitter,
   FridayAgentEventMap,
   FridayAgentEventName,
+  FridayAgentRunConstraints,
   FridayAgentRunRecord,
   FridayAgentRunStatus,
-  FridayAgentRunConstraints,
   FridayAgentRuntimeResult,
   FridayAgentTaskProfileInput,
 } from "#agent";

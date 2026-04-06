@@ -74,7 +74,7 @@ import {
 } from "./friday-agent-starter-skill-routing.js";
 import { summarizeToolCall } from "../services/friday-tool-call-summary.js";
 import { assessDegradation, getDegradationSystemPrompt } from "./friday-agent-degradation-handler.js";
-import { FRIDAY_MODE_CONFIGS, resolveToolCategory, filterToolsByMode } from "./friday-agent-operational-mode.js";
+import { filterToolsByMode, FRIDAY_MODE_CONFIGS, resolveToolCategory } from "./friday-agent-operational-mode.js";
 import type { FridayOperationalMode } from "./friday-agent-operational-mode.js";
 import { partitionFridayAgentTools } from "../tools/friday-agent-tool-registry.js";
 
