@@ -52,6 +52,7 @@ export type {
   FridayAgentRunAwaitingClarificationPayload,
   FridayAgentRunPlanReadyPayload,
   FridayAgentRunAwaitingPlanApprovalPayload,
+  FridayAgentRunAwaitingToolApprovalPayload,
   FridayAgentToolStartPayload,
   FridayAgentToolEndPayload,
   FridayAgentRunCompletedPayload,

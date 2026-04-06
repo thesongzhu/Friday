@@ -57,6 +57,8 @@ import { evaluateFridayAnswerAlignment } from "./friday-agent-answer-alignment.j
 import { notifyFridayContextEngineAfterTurn } from "./friday-agent-context-engine.js";
 import type { FridayDecisionContext } from "./friday-agent-decision-engine.types.js";
 import { createFridayFileVersionTracker } from "./friday-agent-file-version-tracker.js";
+import { createFridayRunCheckpoint } from "./friday-agent-run-checkpoint.js";
+import type { FridayRunCheckpoint } from "./friday-agent-run-checkpoint.js";
 import {
   classifyToolBatchDependencies,
   executeToolBatch,
@@ -185,6 +187,9 @@ export function createFridayAgentRuntime(
   // ─── Per-run event sequence counter ───
   const runSeqCounters = new Map<string, number>();
 
+  // ─── Per-run file checkpoints (GAP 8) ───
+  const runCheckpoints = new Map<string, FridayRunCheckpoint>();
+
   function nextSeq(runId: string): number {
     let current = runSeqCounters.get(runId);
     if (current === undefined) {
@@ -276,6 +281,14 @@ export function createFridayAgentRuntime(
         failedCount++;
       }
       return failedCount;
+    },
+
+    rollbackRun(targetRunId: string) {
+      const checkpoint = runCheckpoints.get(targetRunId);
+      if (!checkpoint || checkpoint.size === 0) return null;
+      const result = checkpoint.rollback();
+      runCheckpoints.delete(targetRunId);
+      return result;
     },
 
     async executeRun(params) {
@@ -1189,6 +1202,25 @@ export function createFridayAgentRuntime(
           }
         }
 
+        // ── Inject learned lessons (GAP 5) ──
+        if (deps.learnedLessons) {
+          try {
+            const lessons = deps.learnedLessons();
+            if (lessons.length > 0) {
+              const recentLessons = lessons.slice(0, 5);
+              const lessonBlock = recentLessons
+                .map((l, i) => `${i + 1}. **${l.title}**: ${l.cause} → Fix: ${l.fix}`)
+                .join("\n");
+              effectiveSystemPrompt +=
+                "\n\n<learned-lessons>\nLessons from past runs (avoid repeating these mistakes):\n" +
+                lessonBlock +
+                "\n</learned-lessons>";
+            }
+          } catch (err) {
+            console.warn("[friday][agent-runtime] learned-lessons:", err instanceof Error ? err.message : String(err));
+          }
+        }
+
         // ── Disclose disabled tools so the LLM does not waste turns calling them ──
         if (disabledToolNames.size > 0) {
           effectiveSystemPrompt +=
@@ -1202,21 +1234,37 @@ export function createFridayAgentRuntime(
         // Skip when no tools were registered at all (e.g. minimal/test configurations).
         const activeToolValues = [...toolMap.values()];
         const degradationLevel = depsTools.length > 0 ? assessDegradation(activeToolValues) : "nominal" as const;
+        // Track which configured tools are actually unavailable at runtime.
+        const unavailableToolNames = degradationLevel !== "nominal"
+          ? depsTools.filter((t) => !toolMap.has(t.name)).map((t) => t.name)
+          : [];
         if (degradationLevel !== "nominal") {
-          const unavailable = depsTools
-            .filter((t) => !toolMap.has(t.name))
-            .map((t) => t.name);
           effectiveSystemPrompt += "\n\n[Degradation Notice] " + getDegradationSystemPrompt(degradationLevel);
           eventEmitter.emit("agent.run.degraded", {
             runId,
             level: degradationLevel,
-            unavailableTools: unavailable,
+            unavailableTools: unavailableToolNames,
             reason: `Tool availability assessed as ${degradationLevel}`,
           });
         }
 
         // ─── Operational mode suffix ───
-        const runOperationalMode: FridayOperationalMode | undefined = constraints?.operationalMode as FridayOperationalMode | undefined;
+        // Start from explicit constraint, then auto-restrict on severe degradation
+        // only when tools are genuinely missing (not just a minimal test config).
+        let runOperationalMode: FridayOperationalMode | undefined = constraints?.operationalMode as FridayOperationalMode | undefined;
+        if (
+          !runOperationalMode &&
+          unavailableToolNames.length > 0 &&
+          (degradationLevel === "minimal" || degradationLevel === "conversational")
+        ) {
+          runOperationalMode = "restricted";
+          eventEmitter.emit("agent.run.mode_changed", {
+            runId,
+            previousMode: "execute" as FridayOperationalMode,
+            newMode: "restricted" as FridayOperationalMode,
+            reason: `Auto-restricted due to degradation level: ${degradationLevel}`,
+          });
+        }
         if (runOperationalMode && runOperationalMode !== "execute") {
           eventEmitter.emit("agent.run.mode_changed", {
             runId,
@@ -1251,7 +1299,14 @@ export function createFridayAgentRuntime(
         let desktopInspectionRetries = 0;
         let artifactTruthRetries = 0;
         let starterSkillRoutingRetries = 0;
+        let llmConsecutiveFailures = 0;
         const fileVersionTracker = createFridayFileVersionTracker();
+        const runCheckpoint = deps.workdir
+          ? createFridayRunCheckpoint({ runId, stateDir: deps.workdir, nowIso })
+          : undefined;
+        if (runCheckpoint) {
+          runCheckpoints.set(runId, runCheckpoint);
+        }
 
         while (iterations < FRIDAY_AGENT_MAX_LOOP_ITERATIONS) {
           if (runAbortController.signal.aborted) {
@@ -1363,6 +1418,54 @@ export function createFridayAgentRuntime(
                 runId,
                 emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
               });
+              // Reset consecutive failure counter on success
+              llmConsecutiveFailures = 0;
+            } catch (llmError) {
+              // If the run itself was cancelled, don't attempt graceful degradation
+              if (runAbortController.signal.aborted) {
+                throw llmError;
+              }
+
+              llmConsecutiveFailures++;
+
+              // First failure: degrade gracefully — switch to restricted mode and synthesize a response
+              if (llmConsecutiveFailures <= 1) {
+                const llmErrorMsg = llmError instanceof Error ? llmError.message : String(llmError);
+                console.warn("[friday][agent-runtime] LLM call failed, degrading gracefully: %s", llmErrorMsg);
+
+                if (runOperationalMode !== "restricted") {
+                  const previousMode = runOperationalMode ?? "execute";
+                  runOperationalMode = "restricted";
+                  handleTrackedEvent("agent.run.mode_changed", {
+                    runId,
+                    previousMode: previousMode as FridayOperationalMode,
+                    newMode: "restricted" as FridayOperationalMode,
+                    reason: `Auto-restricted after LLM provider error: ${llmErrorMsg}`,
+                  });
+                }
+
+                handleTrackedEvent("agent.run.degraded", {
+                  runId,
+                  level: "conversational",
+                  unavailableTools: activeToolValues.map((t) => t.name),
+                  message: `LLM provider temporarily unavailable: ${llmErrorMsg}`,
+                });
+
+                // Synthesize a minimal response so the run completes instead of crashing
+                streamResult = {
+                  assistantText: "I'm experiencing a temporary connection issue with my AI service. " +
+                    "Based on the context available, I can still assist — please let me know how you'd like to proceed, " +
+                    "or try again in a moment.",
+                  toolUseBlocks: [],
+                  inputTokens: 0,
+                  outputTokens: 0,
+                  turnMeta: undefined,
+                };
+                // Continue without re-throwing — the loop will end naturally since there are no tool_use blocks
+              } else {
+                // Second consecutive failure: let the outer catch handle it as a terminal failure
+                throw llmError;
+              }
             } finally {
               clearTimeout(turnTimeout);
               runAbortController.signal.removeEventListener("abort", onParentAbort);
@@ -1735,6 +1838,40 @@ export function createFridayAgentRuntime(
 
             const approvalRequiredReason = getApprovalRequiredReasonForToolCall(toolUse.name, toolUse.input);
             if (approvalRequiredReason) {
+              if (deps.toolApprovalResolver) {
+                // Pause and ask the user for approval via the resolver callback.
+                handleTrackedEvent("agent.run.awaiting_tool_approval", {
+                  runId,
+                  status: "awaiting_tool_approval" as const,
+                  toolName: toolUse.name,
+                  toolCallId: toolUse.id,
+                  params: toolUse.input,
+                  reason: approvalRequiredReason,
+                });
+                const decision = await deps.toolApprovalResolver({
+                  runId,
+                  toolName: toolUse.name,
+                  toolCallId: toolUse.id,
+                  params: toolUse.input,
+                  reason: approvalRequiredReason,
+                });
+                if (decision.approved) {
+                  executableToolUses.push({ index: toolIndex, toolUse });
+                  continue;
+                }
+                // User rejected — block with their reason
+                toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                  toolUse,
+                  runId,
+                  nowIso,
+                  emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                  routeId: "agent.execute.tool.approval_required",
+                  correlationId: runId,
+                  message: `Tool '${toolUse.name}' rejected by user. ${decision.reason ?? approvalRequiredReason}`,
+                }));
+                continue;
+              }
+              // No resolver — block immediately (backwards-compatible default)
               toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
                 toolUse,
                 runId,
@@ -1751,6 +1888,22 @@ export function createFridayAgentRuntime(
           }
 
           if (executableToolUses.length > 0 && !runAbortController.signal.aborted) {
+            // GAP 8: Snapshot files before mutating tool calls for rollback safety
+            if (runCheckpoint) {
+              const WRITE_TOOLS = new Set(["write", "edit", "file_write", "file_delete"]);
+              for (const { toolUse } of executableToolUses) {
+                if (WRITE_TOOLS.has(toolUse.name)) {
+                  const filePath = typeof toolUse.input?.file_path === "string"
+                    ? toolUse.input.file_path
+                    : typeof toolUse.input?.path === "string"
+                      ? toolUse.input.path
+                      : undefined;
+                  if (filePath) {
+                    try { runCheckpoint.snapshotBeforeWrite(filePath); } catch { /* best-effort */ }
+                  }
+                }
+              }
+            }
             const executableBlocks = executableToolUses.map(({ toolUse }) => toolUse);
             const groups = classifyToolBatchDependencies(executableBlocks);
             if (executableToolUses.length > 1 && groups.some((group) => group.tools.length > 1)) {

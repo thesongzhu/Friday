@@ -66,6 +66,7 @@ export type AgentRunStatus =
   | "planning"
   | "awaiting_clarification"
   | "awaiting_plan_approval"
+  | "awaiting_tool_approval"
   | "executing"
   | "testing"
   | "fixing"
@@ -830,6 +831,11 @@ export interface AgentRunStreamEvent {
   // status events
   output?: string;
   error?: string;
+  // GAP status events
+  reason?: string;
+  level?: string;
+  newMode?: string;
+  fallbackCount?: number;
 }
 
 // ─── Sub-agent types ───

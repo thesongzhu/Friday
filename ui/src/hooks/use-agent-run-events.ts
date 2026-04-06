@@ -33,6 +33,23 @@ export interface SubagentNodeViewModel {
   durationMs?: number;
 }
 
+export interface PendingToolApprovalViewModel {
+  runId: string;
+  toolName: string;
+  toolCallId: string;
+  params?: Record<string, unknown>;
+  reason: string;
+  receivedAt: string;
+}
+
+export interface StatusBannerViewModel {
+  id: string;
+  kind: "degraded" | "mode_changed" | "route_fallback" | "route_mismatch";
+  message: string;
+  timestamp: string;
+  tone: "warning" | "info" | "error";
+}
+
 export interface RunProgressViewModel {
   phase?: AgentRunStatus;
   startedAt?: string;
@@ -61,6 +78,8 @@ export interface UseAgentRunEventsResult {
   events: AgentRunStreamEvent[];
   toolCalls: ToolCallViewModel[];
   subagents: SubagentNodeViewModel[];
+  pendingToolApprovals: PendingToolApprovalViewModel[];
+  statusBanners: StatusBannerViewModel[];
   progress: RunProgressViewModel;
   errorMessage?: string;
   reconnect: () => void;
@@ -111,6 +130,8 @@ export function useAgentRunEvents(
     activeSubagentIds: [],
     etaConfidence: "unavailable",
   });
+  const [pendingToolApprovals, setPendingToolApprovals] = React.useState<PendingToolApprovalViewModel[]>([]);
+  const [statusBanners, setStatusBanners] = React.useState<StatusBannerViewModel[]>([]);
   const [errorMessage, setErrorMessage] = React.useState<string | undefined>();
   const [reconnectTrigger, setReconnectTrigger] = React.useState(0);
 
@@ -287,8 +308,88 @@ export function useAgentRunEvents(
             }));
           }
 
-          // Tool start
+          // Tool approval request
+          if (eventType === "agent.run.awaiting_tool_approval" && parsed.toolCallId) {
+            setPendingToolApprovals((prev) => {
+              if (prev.some((p) => p.toolCallId === parsed.toolCallId)) return prev;
+              return [
+                ...prev,
+                {
+                  runId: parsed.runId ?? runId ?? "",
+                  toolName: parsed.toolName ?? "unknown",
+                  toolCallId: parsed.toolCallId!,
+                  params: asRecord(parsed.params),
+                  reason: parsed.reason
+                    ?? parsed.message ?? "This action requires approval.",
+                  receivedAt: eventTime,
+                },
+              ];
+            });
+            setProgress((prev) => ({
+              ...prev,
+              phase: "awaiting_tool_approval" as AgentRunStatus,
+              startedAt: prev.startedAt ?? eventTime,
+            }));
+          }
+
+          // Runtime status events → banners
+          if (eventType === "agent.run.degraded") {
+            const level = typeof parsed.level === "string" ? parsed.level : "unknown";
+            const msg = typeof parsed.message === "string" ? parsed.message : `Service degraded to ${level} mode.`;
+            setStatusBanners((prev) => [
+              ...prev.filter((b) => b.kind !== "degraded"),
+              { id: `degraded-${eventTime}`, kind: "degraded", message: msg, timestamp: eventTime, tone: "warning" },
+            ]);
+          }
+
+          if (eventType === "agent.run.mode_changed") {
+            const newMode = typeof parsed.newMode === "string" ? parsed.newMode : "restricted";
+            const reason = typeof parsed.reason === "string" ? parsed.reason : "";
+            setStatusBanners((prev) => [
+              ...prev.filter((b) => b.kind !== "mode_changed"),
+              {
+                id: `mode-${eventTime}`,
+                kind: "mode_changed",
+                message: `Switched to ${newMode} mode${reason ? `: ${reason}` : ""}`,
+                timestamp: eventTime,
+                tone: newMode === "restricted" ? "warning" : "info",
+              },
+            ]);
+          }
+
+          if (eventType === "agent.run.route_fallback") {
+            const count = typeof parsed.fallbackCount === "number" ? parsed.fallbackCount : 0;
+            setStatusBanners((prev) => [
+              ...prev.filter((b) => b.kind !== "route_fallback"),
+              {
+                id: `fallback-${eventTime}`,
+                kind: "route_fallback",
+                message: `Provider fallback occurred (${count} attempt${count !== 1 ? "s" : ""}).`,
+                timestamp: eventTime,
+                tone: "warning",
+              },
+            ]);
+          }
+
+          if (eventType === "agent.run.route_mismatch") {
+            const msg = typeof parsed.message === "string" ? parsed.message : "Model routing mismatch detected.";
+            setStatusBanners((prev) => [
+              ...prev.filter((b) => b.kind !== "route_mismatch"),
+              {
+                id: `mismatch-${eventTime}`,
+                kind: "route_mismatch",
+                message: msg,
+                timestamp: eventTime,
+                tone: "error",
+              },
+            ]);
+          }
+
+          // Tool start — also clears any pending approval for this tool call
           if (eventType === "agent.run.tool_start" && parsed.toolCallId) {
+            setPendingToolApprovals((prev) =>
+              prev.filter((p) => p.toolCallId !== parsed.toolCallId),
+            );
             const params = asRecord(parsed.params);
             setToolCalls((prev) => {
               if (prev.some((tc) => tc.id === parsed.toolCallId)) {
@@ -310,6 +411,9 @@ export function useAgentRunEvents(
 
           // Tool end
           if (eventType === "agent.run.tool_end" && parsed.toolCallId) {
+            setPendingToolApprovals((prev) =>
+              prev.filter((p) => p.toolCallId !== parsed.toolCallId),
+            );
             setToolCalls((prev) => {
               const existing = prev.find((tc) => tc.id === parsed.toolCallId);
               const nextTool = {
@@ -450,6 +554,8 @@ export function useAgentRunEvents(
     events,
     toolCalls,
     subagents,
+    pendingToolApprovals,
+    statusBanners,
     progress,
     errorMessage,
     reconnect,

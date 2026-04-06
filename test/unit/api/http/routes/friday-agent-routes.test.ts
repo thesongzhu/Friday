@@ -76,14 +76,15 @@ describe("FridayAgentRoutes", () => {
       cancelRun: vi.fn(),
       approvePlan: vi.fn<[string], Promise<FridayAgentRuntimeResult>>().mockResolvedValue(createStubResult()),
       rejectPlan: vi.fn<[string], Promise<FridayAgentRuntimeResult>>().mockResolvedValue(createStubResult({ status: "cancelled" })),
+      resolveToolApproval: vi.fn().mockReturnValue({ resolved: true }),
       eventEmitter: createStubEventEmitter(),
       automationService: createStubAutomationService(),
     };
   });
 
-  it("registers 13 agent routes", () => {
+  it("registers 18 agent routes", () => {
     const routes = createFridayAgentRoutes(stubDeps);
-    expect(routes).toHaveLength(13);
+    expect(routes).toHaveLength(18);
   });
 
   it("POST /v1/agent/runs requires agent.run scope with workflow.run compatibility", () => {
@@ -718,7 +719,7 @@ describe("FridayAgentRoutes", () => {
       await route.handler(ctx);
 
       // Should subscribe to 14 event types (12 run events + 2 subagent events)
-      expect(emitter.on).toHaveBeenCalledTimes(14);
+      expect(emitter.on).toHaveBeenCalledTimes(20);
       // Should register close handler
       expect(mockRes.on).toHaveBeenCalledWith("close", expect.any(Function));
     });
@@ -773,7 +774,7 @@ describe("FridayAgentRoutes", () => {
       expect(mockRes.write).toHaveBeenCalledWith(
         expect.stringContaining('"replayed":true'),
       );
-      expect(emitter.on).toHaveBeenCalledTimes(14);
+      expect(emitter.on).toHaveBeenCalledTimes(20);
     });
   });
 
