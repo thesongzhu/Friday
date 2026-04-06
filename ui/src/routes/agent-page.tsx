@@ -36,6 +36,10 @@ import type {
   FridaySystemRemoteSession,
 } from "@/lib/api/system-types";
 import { useAgentRunEvents } from "@/hooks/use-agent-run-events";
+import { ChatAuditDrawer } from "@/components/chat/chat-audit-drawer";
+import { ChatStatusBanner } from "@/components/chat/chat-status-banner";
+import { ActivitySummaryPanel } from "@/components/core/activity-summary-panel";
+import { BudgetIndicator } from "@/components/core/budget-indicator";
 import { useSystemEvents } from "@/hooks/use-system-events";
 import { systemKeys } from "@/lib/system/query-keys";
 import {
@@ -182,6 +186,7 @@ export function AgentPage() {
   const [task, setTask] = useState("");
   const [readOnly, setReadOnly] = useState(false);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
+  const [auditDrawerOpen, setAuditDrawerOpen] = useState(false);
   const [remoteLabel, setRemoteLabel] = useState("");
   const [remoteFingerprint, setRemoteFingerprint] = useState("");
   const passkeysSupported = typeof PublicKeyCredential !== "undefined";
@@ -386,6 +391,28 @@ export function AgentPage() {
     },
   });
 
+  const approveToolMutation = useMutation({
+    mutationFn: (input: { runId: string; toolCallId: string }) =>
+      agentApi.approveTool(input.runId, input.toolCallId),
+    onSuccess: () => {
+      toast.success("Tool approved");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to approve tool");
+    },
+  });
+
+  const rejectToolMutation = useMutation({
+    mutationFn: (input: { runId: string; toolCallId: string; reason?: string }) =>
+      agentApi.rejectTool(input.runId, input.toolCallId, input.reason),
+    onSuccess: () => {
+      toast.success("Tool rejected");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to reject tool");
+    },
+  });
+
   const systemIntentMutation = useMutation({
     mutationFn: (input: {
       action: FridaySystemIntentAction;
@@ -533,10 +560,16 @@ export function AgentPage() {
   return (
     <div className="grid gap-4 xl:grid-cols-[1.35fr_0.95fr]">
       <div className="space-y-4">
+        <ActivitySummaryPanel />
         <ShellCard
           eyebrow="Operator Console"
           title="Command Center"
-          aside={<StatusPill tone={mapTone(runEvents.connectionState)}>{runEvents.connectionState}</StatusPill>}
+          aside={
+            <div className="flex items-center gap-2">
+              <BudgetIndicator />
+              <StatusPill tone={mapTone(runEvents.connectionState)}>{runEvents.connectionState}</StatusPill>
+            </div>
+          }
         >
           <form
             className="space-y-4"
@@ -709,13 +742,21 @@ export function AgentPage() {
                     </ActionButton>
                   </div>
                 ) : currentRunId ? (
-                  <ActionButton
-                    tone="danger"
-                    onClick={() => cancelRunMutation.mutate(currentRunId)}
-                    disabled={cancelRunMutation.isPending}
-                  >
-                    Cancel
-                  </ActionButton>
+                  <div className="flex flex-wrap gap-2">
+                    <ActionButton
+                      tone="secondary"
+                      onClick={() => setAuditDrawerOpen(true)}
+                    >
+                      View Audit
+                    </ActionButton>
+                    <ActionButton
+                      tone="danger"
+                      onClick={() => cancelRunMutation.mutate(currentRunId)}
+                      disabled={cancelRunMutation.isPending}
+                    >
+                      Cancel
+                    </ActionButton>
+                  </div>
                 ) : null}
               </div>
               {currentRun?.status === "awaiting_clarification" && currentRun.planReview?.gate?.clarificationQuestions?.length ? (
@@ -728,6 +769,48 @@ export function AgentPage() {
                   {currentRun.planReview.gate.approvalPrompt}
                 </div>
               ) : null}
+              {runEvents.statusBanners.length > 0 && (
+                <div className="mb-3">
+                  <ChatStatusBanner banners={runEvents.statusBanners} />
+                </div>
+              )}
+              {runEvents.pendingToolApprovals.map((approval) => (
+                <div
+                  key={approval.toolCallId}
+                  className="mb-3 rounded-2xl border border-amber-400/30 bg-amber-400/[0.08] p-3 text-sm text-amber-100"
+                >
+                  <p className="mb-2 font-medium">
+                    Friday wants to use <span className="font-mono font-bold text-amber-200">{approval.toolName}</span>
+                  </p>
+                  <p className="mb-3 text-xs text-amber-100/70">{approval.reason}</p>
+                  <div className="flex gap-2">
+                    <ActionButton
+                      tone="secondary"
+                      onClick={() =>
+                        approveToolMutation.mutate({
+                          runId: approval.runId,
+                          toolCallId: approval.toolCallId,
+                        })
+                      }
+                      disabled={approveToolMutation.isPending || rejectToolMutation.isPending}
+                    >
+                      Approve
+                    </ActionButton>
+                    <ActionButton
+                      tone="danger"
+                      onClick={() =>
+                        rejectToolMutation.mutate({
+                          runId: approval.runId,
+                          toolCallId: approval.toolCallId,
+                        })
+                      }
+                      disabled={approveToolMutation.isPending || rejectToolMutation.isPending}
+                    >
+                      Reject
+                    </ActionButton>
+                  </div>
+                </div>
+              ))}
               <pre className="agent-console">
                 {runOutputText || "Start a run to stream live model output, tool activity, and terminal state here."}
               </pre>
@@ -1152,6 +1235,13 @@ export function AgentPage() {
           </div>
         </ShellCard>
       </div>
+      {currentRunId && (
+        <ChatAuditDrawer
+          runId={currentRunId}
+          open={auditDrawerOpen}
+          onClose={() => setAuditDrawerOpen(false)}
+        />
+      )}
     </div>
   );
 }

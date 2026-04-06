@@ -2064,6 +2064,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         }
         return result;
       },
+      resolveToolApproval: deps.resolveToolApproval
+        ? (runId, toolCallId, approved, reason) =>
+          deps.resolveToolApproval!(runId, toolCallId, approved, reason)
+        : (/* _runId, _toolCallId, _approved, _reason */) => ({ resolved: false }),
+      rollbackRun: deps.agentRuntime
+        ? (runId) => deps.agentRuntime!.rollbackRun(runId)
+        : undefined,
       eventEmitter: deps.agentEventEmitter,
       automationService: agentAutomationService,
     })) {

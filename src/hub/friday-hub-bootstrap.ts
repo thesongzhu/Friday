@@ -2639,6 +2639,39 @@ export async function createFridayHub(
   const uixUserPreferenceRepository = createFridayUixUserPreferenceRepository();
   const uixGuidedContextRepository = createFridayUixGuidedContextRepository();
 
+  // ─── Tool approval gates (GAP 2) ───
+  // Shared promise map for tool-level approval flow.
+  // The agent runtime awaits the resolver; the API routes resolve/reject the promise.
+  const toolApprovalGates = new Map<string, Map<string, { resolve: (v: { approved: boolean; reason?: string }) => void }>>();
+
+  const toolApprovalResolver = async (prompt: {
+    runId: string;
+    toolName: string;
+    toolCallId: string;
+    params: Record<string, unknown>;
+    reason: string;
+  }): Promise<{ approved: boolean; reason?: string }> => {
+    let runMap = toolApprovalGates.get(prompt.runId);
+    if (!runMap) {
+      runMap = new Map();
+      toolApprovalGates.set(prompt.runId, runMap);
+    }
+    return new Promise<{ approved: boolean; reason?: string }>((resolve) => {
+      runMap!.set(prompt.toolCallId, { resolve });
+    });
+  };
+
+  const resolveToolApproval = (runId: string, toolCallId: string, approved: boolean, reason?: string): { resolved: boolean } => {
+    const runMap = toolApprovalGates.get(runId);
+    if (!runMap) return { resolved: false };
+    const gate = runMap.get(toolCallId);
+    if (!gate) return { resolved: false };
+    gate.resolve({ approved, reason });
+    runMap.delete(toolCallId);
+    if (runMap.size === 0) toolApprovalGates.delete(runId);
+    return { resolved: true };
+  };
+
   const agentRuntime = createFridayAgentRuntime({
     db: stateRuntime!.sqlite,
     llmClient: agentLlmClient,
@@ -2743,6 +2776,21 @@ export async function createFridayHub(
         metadata: { source: "agent-runtime" },
       });
     },
+    toolApprovalResolver,
+    learnedLessons: () => {
+      try {
+        const repo = createFridayLearnedLessonRepository();
+        return stateRuntime!.sqlite.withReadConnection((db) =>
+          repo.listRecent(db, 5).map((l) => ({
+            title: l.title,
+            cause: l.cause,
+            fix: l.fix,
+          })),
+        );
+      } catch {
+        return [];
+      }
+    },
   });
 
   // Wire the lazy agentRuntime reference now that runtime is created (Issue 2 fix)
@@ -2758,20 +2806,31 @@ export async function createFridayHub(
     nowIso,
   });
 
-  // P2: Wire planning gate cleanup to agent run completion events
+  // P2: Wire planning gate + tool approval gate cleanup to agent run completion events
+  const cleanupRunGates = (runId: string) => {
+    agentPlanningGate.cleanupRun(runId);
+    // Reject any pending tool approval gates for this run
+    const runMap = toolApprovalGates.get(runId);
+    if (runMap) {
+      for (const gate of runMap.values()) {
+        gate.resolve({ approved: false, reason: "Run terminated" });
+      }
+      toolApprovalGates.delete(runId);
+    }
+  };
   agentEventEmitter.on("agent.run.completed", (payload) => {
     if (payload && typeof payload === "object" && "runId" in payload) {
-      agentPlanningGate.cleanupRun((payload as { runId: string }).runId);
+      cleanupRunGates((payload as { runId: string }).runId);
     }
   });
   agentEventEmitter.on("agent.run.failed", (payload) => {
     if (payload && typeof payload === "object" && "runId" in payload) {
-      agentPlanningGate.cleanupRun((payload as { runId: string }).runId);
+      cleanupRunGates((payload as { runId: string }).runId);
     }
   });
   agentEventEmitter.on("agent.run.cancelled", (payload) => {
     if (payload && typeof payload === "object" && "runId" in payload) {
-      agentPlanningGate.cleanupRun((payload as { runId: string }).runId);
+      cleanupRunGates((payload as { runId: string }).runId);
     }
   });
   agentEventEmitter.on("agent.run.degraded", (payload) => {
@@ -3817,6 +3876,7 @@ export async function createFridayHub(
     invokeSkill: invokeSkillForWorkflow,
     agentRuntime,
     agentEventEmitter,
+    resolveToolApproval,
     subagentRegistry,
   });
 

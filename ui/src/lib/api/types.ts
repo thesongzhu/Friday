@@ -66,6 +66,7 @@ export type AgentRunStatus =
   | "planning"
   | "awaiting_clarification"
   | "awaiting_plan_approval"
+  | "awaiting_tool_approval"
   | "executing"
   | "testing"
   | "fixing"
