@@ -55,6 +55,8 @@ import {
   createFridayAgentTaskStatusTool,
   type FridayAgentTaskStatusSnapshot,
 } from "./friday-agent-task-status-tool.js";
+import type { FridayOperationalMode } from "../runtime/friday-agent-operational-mode.js";
+import { filterToolsByMode } from "../runtime/friday-agent-operational-mode.js";
 
 // ─── Registry options ───
 
@@ -117,6 +119,8 @@ export interface CreateFridayAgentToolRegistryOptions {
     Promise<FridayAgentTaskStatusSnapshot> | FridayAgentTaskStatusSnapshot;
   /** Whether explicit subagent fork mode should be exposed in tool schema. */
   subagentForkModeEnabled?: boolean;
+  /** Operational mode — when set, tools are filtered by allowed categories. */
+  operationalMode?: FridayOperationalMode;
 }
 
 // ─── Factory ───
@@ -302,5 +306,65 @@ export function createFridayAgentToolRegistry(
     );
   }
 
+  // ─── Mode-based tool filtering ───
+  const mode = options?.operationalMode;
+  if (mode && mode !== "execute") {
+    return filterToolsByMode(tools, mode);
+  }
+
   return tools;
+}
+
+// ─── Deferred tool loading ───
+
+/**
+ * Tools that are always included in the initial LLM prompt.
+ * All others are considered deferred and only described by name.
+ */
+const ALWAYS_LOAD_TOOLS = new Set([
+  "exec",
+  "read",
+  "write",
+  "edit",
+  "file_read",
+  "file_write",
+  "file_list",
+  "file_delete",
+  "file_rename",
+  "web_fetch",
+  "web_search",
+  "skill_run",
+  "skills_list",
+  "memory_search",
+  "memory_store",
+  "capabilities",
+  "task_status",
+]);
+
+export interface FridayAgentToolRegistryPartitioned {
+  /** Tools whose full schema is sent in the initial prompt. */
+  alwaysLoad: FridayAgentToolDefinition[];
+  /** Tools available on demand — only names/descriptions sent initially. */
+  deferred: FridayAgentToolDefinition[];
+}
+
+/**
+ * Partition a tool array into always-load and deferred groups.
+ * Deferred tools are not sent to the LLM initially, saving tokens.
+ */
+export function partitionFridayAgentTools(
+  tools: FridayAgentToolDefinition[],
+): FridayAgentToolRegistryPartitioned {
+  const alwaysLoad: FridayAgentToolDefinition[] = [];
+  const deferred: FridayAgentToolDefinition[] = [];
+
+  for (const tool of tools) {
+    if (ALWAYS_LOAD_TOOLS.has(tool.name)) {
+      alwaysLoad.push(tool);
+    } else {
+      deferred.push(tool);
+    }
+  }
+
+  return { alwaysLoad, deferred };
 }

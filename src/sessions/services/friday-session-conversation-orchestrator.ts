@@ -1262,6 +1262,8 @@ export function finalizeFridayConversationFocus(
     lastHarnessStage: harnessStage,
     lastHandoffArtifactId: handoffArtifactId,
     lastHarnessSummary: harnessSummary,
+    operationalMode: previous?.operationalMode,
+    preModeRestore: previous?.preModeRestore,
     updatedAt: input.nowIso,
   };
 }
