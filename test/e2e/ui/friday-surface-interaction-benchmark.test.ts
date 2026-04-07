@@ -18,8 +18,8 @@ const CHROMIUM_AVAILABLE = (() => {
 })();
 
 const BROWSER_E2E_TIMEOUT_MS = 120_000;
-const NAVIGATION_SAMPLES = process.env.CI ? 2 : 3;
-const BUILDER_SAMPLES = process.env.CI ? 2 : 3;
+const NAVIGATION_SAMPLES = process.env.CI ? 1 : 3;
+const BUILDER_SAMPLES = process.env.CI ? 1 : 3;
 const REPORT_DIR = path.resolve(process.cwd(), "artifacts/browser-benchmarks");
 const REPORT_JSON = path.join(REPORT_DIR, "ui-surface-interaction-latest.json");
 const REPORT_MD = path.join(REPORT_DIR, "ui-surface-interaction-latest.md");

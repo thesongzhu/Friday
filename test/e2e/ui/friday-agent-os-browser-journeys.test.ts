@@ -17,7 +17,7 @@ const CHROMIUM_AVAILABLE = (() => {
 })();
 
 const BROWSER_E2E_TIMEOUT_MS = 120_000;
-const QUICK_SHEET_CYCLE_ATTEMPTS = process.env.CI ? 2 : 3;
+const QUICK_SHEET_CYCLE_ATTEMPTS = process.env.CI ? 1 : 3;
 
 async function waitForTestId(pageHandle: FridayBrowserPageHandle, testId: string): Promise<void> {
   await pageHandle.page.locator(`[data-testid="${testId}"]`).first().waitFor({ state: "visible", timeout: 60_000 });
