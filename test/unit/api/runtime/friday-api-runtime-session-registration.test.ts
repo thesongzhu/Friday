@@ -4,7 +4,7 @@ import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/c
 import { createFridayApiRuntime } from "#api";
 import type { FridayProviderService } from "#providers";
 import type { FridayMemoryService } from "#memory";
-import type { FridayAgentRuntime } from "#agent";
+import { createFridayAgentEventEmitter, type FridayAgentRuntime } from "#agent";
 
 describe("FridayApiRuntime — Session Registration", () => {
   let db: FridaySqliteLayer;
@@ -220,5 +220,81 @@ describe("FridayApiRuntime — Session Registration", () => {
         historyMessages: [],
       }),
     );
+  });
+
+  it("persists pack context into session metadata before agent execution", async () => {
+    const providerService = createMockProviderService();
+    let runtimeRef: ReturnType<typeof createFridayApiRuntime>;
+    const executeRun = vi.fn(async (params: { sessionKey?: string; executionContext?: { packId?: string } }) => {
+      const session = params.sessionKey
+        ? await runtimeRef.sessionService.getSession(params.sessionKey)
+        : null;
+      expect(session?.metadata).toMatchObject({
+        packContext: {
+          packId: "industry-creator-media",
+          surface: "chat",
+        },
+      });
+
+      return {
+        runId: "run-pack-context",
+        status: "completed" as const,
+        response: "ok",
+        toolCallCount: 0,
+        durationMs: 10,
+        usageInput: 1,
+        usageOutput: 1,
+      };
+    });
+
+    runtimeRef = createFridayApiRuntime({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => NOW,
+      providerService,
+      tokenSecret: "test-secret-key-that-is-at-least-32-chars-long!!",
+      computeChecksum: (s: string) => s,
+      resolveSkill: () => null,
+      invokeSkill: async () => ({}),
+      agentRuntime: {
+        executeRun,
+      } as unknown as FridayAgentRuntime,
+      agentEventEmitter: createFridayAgentEventEmitter(),
+    });
+
+    const route = runtimeRef.routes
+      .getRoutes()
+      .find((entry) => entry.operationId === "agent.runs.start");
+    expect(route).toBeDefined();
+
+    await route!.handler({
+      body: {
+        task: "Continue creator workflow",
+        sessionKey: "chat:default:pack-context",
+        executionContext: {
+          surface: "chat",
+          interactive: true,
+          packId: "industry-creator-media",
+        },
+      },
+    } as never);
+
+    expect(executeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: "chat:default:pack-context",
+        executionContext: expect.objectContaining({
+          packId: "industry-creator-media",
+        }),
+      }),
+    );
+
+    const session = await runtimeRef.sessionService.getSession("chat:default:pack-context");
+    expect(session?.metadata).toMatchObject({
+      packContext: {
+        packId: "industry-creator-media",
+        surface: "chat",
+      },
+    });
+    expect(typeof (session?.metadata as { packContext?: { updatedAt?: string } } | undefined)?.packContext?.updatedAt).toBe("string");
   });
 });

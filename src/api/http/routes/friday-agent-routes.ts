@@ -67,6 +67,7 @@ export interface FridayAgentRoutesDeps {
       surface?: string;
       interactive?: boolean;
       browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
+      packId?: string;
     };
     principalId?: string;
     scopes?: string[];
@@ -242,6 +243,7 @@ export function createFridayAgentRoutes(
             surface?: string;
             interactive?: boolean;
             browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
+            packId?: string;
           }
           | undefined;
         if (
@@ -262,10 +264,22 @@ export function createFridayAgentRoutes(
             || input.browserPresentationMode === "host_chrome_visible"
             ? input.browserPresentationMode
             : undefined;
+          const rawPackId = input.packId;
+          if (rawPackId !== undefined && (typeof rawPackId !== "string" || rawPackId.trim().length === 0)) {
+            throw new FridayDomainError(
+              "VALIDATION_ERROR",
+              "executionContext.packId must be a non-empty string when provided",
+              { httpStatus: 400 },
+            );
+          }
+          const packId = typeof rawPackId === "string" && rawPackId.trim().length > 0
+            ? rawPackId.trim()
+            : undefined;
           executionContext = {
             ...(surface ? { surface } : {}),
             ...(interactive !== undefined ? { interactive } : {}),
             ...(browserPresentationMode ? { browserPresentationMode } : {}),
+            ...(packId ? { packId } : {}),
           };
         }
 

@@ -30,6 +30,7 @@ import type {
   FridayAgentImageBlock,
   FridayAgentMessage,
   FridayAgentPlanReviewPayload,
+  FridayAgentRunMetadata,
   FridayAgentRunRecord,
   FridayAgentRunStatus,
   FridayAgentTestResult,
@@ -92,6 +93,24 @@ function hasCjkText(text: string): boolean {
   return /[\u4e00-\u9fff]/u.test(text);
 }
 
+function buildFridayAgentRunMetadata(params: {
+  executionContext?: FridayAgentExecutionContext;
+  updatedAt: string;
+}): FridayAgentRunMetadata | undefined {
+  const packId = params.executionContext?.packId?.trim();
+  if (!packId) {
+    return undefined;
+  }
+
+  return {
+    packContext: {
+      packId,
+      ...(params.executionContext?.surface ? { surface: params.executionContext.surface } : {}),
+      updatedAt: params.updatedAt,
+    },
+  };
+}
+
 function deriveReplyAnchorAssistantFact(
   conversationContext?: FridayAgentConversationContext,
 ): string | undefined {
@@ -143,6 +162,45 @@ function hasExplicitResearchIntent(task: string): boolean {
     || /(搜索|搜一下|查一下|查一查|上网查|最新|新闻|帮我找资料|对比|价格|多少钱|现在|当前|查查)/.test(task);
 }
 
+function describeAbortReason(reason: unknown): string {
+  if (reason instanceof Error && reason.message.trim().length > 0) {
+    return reason.message.trim();
+  }
+  if (typeof reason === "string" && reason.trim().length > 0) {
+    return reason.trim();
+  }
+  return "Run terminated";
+}
+
+function awaitToolApprovalDecision(params: {
+  approval: Promise<{ approved: boolean; reason?: string }>;
+  signal: AbortSignal;
+}): Promise<{ approved: boolean; reason?: string }> {
+  if (params.signal.aborted) {
+    return Promise.resolve({
+      approved: false,
+      reason: describeAbortReason(params.signal.reason),
+    });
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = <T>(handler: (value: T) => void) => (value: T) => {
+      if (settled) return;
+      settled = true;
+      params.signal.removeEventListener("abort", onAbort);
+      handler(value);
+    };
+    const onAbort = finish(() => resolve({
+      approved: false,
+      reason: describeAbortReason(params.signal.reason),
+    }));
+
+    params.signal.addEventListener("abort", onAbort, { once: true });
+    params.approval.then(finish(resolve), finish(reject));
+  });
+}
+
 // ─── Factory ───
 
 export function createFridayAgentRuntime(
@@ -189,6 +247,27 @@ export function createFridayAgentRuntime(
 
   // ─── Per-run file checkpoints (GAP 8) ───
   const runCheckpoints = new Map<string, FridayRunCheckpoint>();
+
+  function loadRunCheckpoint(runId: string): FridayRunCheckpoint | undefined {
+    const existing = runCheckpoints.get(runId);
+    if (existing) {
+      return existing;
+    }
+    if (!deps.workdir) {
+      return undefined;
+    }
+    const recovered = createFridayRunCheckpoint({
+      runId,
+      stateDir: deps.workdir,
+      db,
+      nowIso,
+    });
+    if (recovered.size === 0) {
+      return undefined;
+    }
+    runCheckpoints.set(runId, recovered);
+    return recovered;
+  }
 
   function nextSeq(runId: string): number {
     let current = runSeqCounters.get(runId);
@@ -284,11 +363,15 @@ export function createFridayAgentRuntime(
     },
 
     rollbackRun(targetRunId: string) {
-      const checkpoint = runCheckpoints.get(targetRunId);
+      const checkpoint = loadRunCheckpoint(targetRunId);
       if (!checkpoint || checkpoint.size === 0) return null;
       const result = checkpoint.rollback();
-      runCheckpoints.delete(targetRunId);
       return result;
+    },
+
+    hasRollbackCheckpoint(targetRunId: string) {
+      const checkpoint = loadRunCheckpoint(targetRunId);
+      return Boolean(checkpoint && checkpoint.entries().some((entry) => entry.rollbackAvailable));
     },
 
     async executeRun(params) {
@@ -312,6 +395,10 @@ export function createFridayAgentRuntime(
       const isReadOnly = constraints?.readOnly === true;
       const disabledToolNames = new Set(normalizeToolNameSet(params.disabledToolNames));
       const executionContext = params.executionContext;
+      const runMetadata = buildFridayAgentRunMetadata({
+        executionContext,
+        updatedAt: nowIso(),
+      });
       const conversationContext = params.conversationContext;
       const hasAnchoredAssistantFact = Boolean(
         deriveReplyAnchorAssistantFact(conversationContext),
@@ -518,6 +605,7 @@ export function createFridayAgentRuntime(
             maxAttempts,
             nowIso: nowIso(),
             constraints,
+            metadata: runMetadata,
           }),
         );
       }
@@ -1302,7 +1390,7 @@ export function createFridayAgentRuntime(
         let llmConsecutiveFailures = 0;
         const fileVersionTracker = createFridayFileVersionTracker();
         const runCheckpoint = deps.workdir
-          ? createFridayRunCheckpoint({ runId, stateDir: deps.workdir, nowIso })
+          ? createFridayRunCheckpoint({ runId, stateDir: deps.workdir, db, nowIso })
           : undefined;
         if (runCheckpoint) {
           runCheckpoints.set(runId, runCheckpoint);
@@ -1848,13 +1936,19 @@ export function createFridayAgentRuntime(
                   params: toolUse.input,
                   reason: approvalRequiredReason,
                 });
-                const decision = await deps.toolApprovalResolver({
-                  runId,
-                  toolName: toolUse.name,
-                  toolCallId: toolUse.id,
-                  params: toolUse.input,
-                  reason: approvalRequiredReason,
+                const decision = await awaitToolApprovalDecision({
+                  approval: deps.toolApprovalResolver({
+                    runId,
+                    toolName: toolUse.name,
+                    toolCallId: toolUse.id,
+                    params: toolUse.input,
+                    reason: approvalRequiredReason,
+                  }),
+                  signal: runAbortController.signal,
                 });
+                if (runAbortController.signal.aborted) {
+                  break;
+                }
                 if (decision.approved) {
                   executableToolUses.push({ index: toolIndex, toolUse });
                   continue;

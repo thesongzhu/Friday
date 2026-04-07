@@ -35,6 +35,8 @@ export type {
   FridayAgentMessage,
   FridayAgentToolCallRecord,
   FridayAgentRunRecord,
+  FridayAgentRunMetadata,
+  FridayAgentPackContextMetadata,
   FridayAgentArtifact,
   FridayAgentTestResult,
   FridayAgentTestError,
@@ -85,6 +87,15 @@ export type {
   CreateFridayAgentRuntimeDeps,
 } from "./runtime/friday-agent-runtime.types.js";
 export { createFridayAgentRuntime } from "./runtime/friday-agent-runtime.js";
+export type {
+  FridayAgentRunHealthState,
+  FridayAgentRunHealthSnapshot,
+  FridayAgentRunContextSummarySnapshot,
+} from "./runtime/friday-agent-run-presentation.js";
+export {
+  buildFridayAgentRunHealthSnapshot,
+  buildFridayAgentRunContextSummarySnapshot,
+} from "./runtime/friday-agent-run-presentation.js";
 export type {
   FridayAgentStarterSkillDescriptor,
   FridayAgentStarterSkillRoutingConfig,

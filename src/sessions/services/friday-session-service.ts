@@ -920,6 +920,37 @@ export function createFridaySessionService(
       return updated;
     },
 
+    async mergeMetadata(key, metadataPatch) {
+      key = canonicalizeFridaySessionKey(key);
+
+      const now = deps.nowIso();
+      const updated = deps.db.withWriteTransaction((db) => {
+        const session = sessionRepo.getByKey(db, key);
+        if (!session) {
+          return null;
+        }
+
+        return sessionRepo.updateMetadata(db, {
+          key,
+          metadata: {
+            ...session.metadata,
+            ...metadataPatch,
+          },
+          nowIso: now,
+        });
+      });
+
+      if (!updated) {
+        throw new FridayDomainError(
+          FRIDAY_SESSION_ERROR_CODES.NOT_FOUND,
+          `Session '${key}' not found`,
+          { httpStatus: 404 },
+        );
+      }
+
+      return updated;
+    },
+
     async setSendPolicy(key, policy) {
       key = canonicalizeFridaySessionKey(key);
 

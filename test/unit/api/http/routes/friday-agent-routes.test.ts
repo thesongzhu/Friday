@@ -231,6 +231,38 @@ describe("FridayAgentRoutes", () => {
       );
     });
 
+    it("forwards executionContext.packId when provided", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const ctx = {
+        body: {
+          task: "Continue with creator workflow",
+          executionContext: {
+            surface: "chat",
+            interactive: true,
+            packId: "industry-creator-media",
+          },
+        },
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+      await route.handler(ctx);
+      expect(stubDeps.startRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          task: "Continue with creator workflow",
+          executionContext: {
+            surface: "chat",
+            interactive: true,
+            packId: "industry-creator-media",
+          },
+        }),
+      );
+    });
+
     it("validates sessionKey is non-empty when provided", async () => {
       const routes = createFridayAgentRoutes(stubDeps);
       const route = routes.find((r) => r.operationId === "agent.runs.start")!;

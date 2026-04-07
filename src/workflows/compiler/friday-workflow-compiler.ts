@@ -9,6 +9,10 @@ import type { JsonValue, WorkflowFailurePolicyV2 } from "../model/friday-workflo
 import { FridayDomainError } from "#errors";
 import { createFridayWorkflowValidator } from "./friday-workflow-validator.js";
 import type { FridayWorkflowValidationResult } from "./friday-workflow-validator.js";
+import {
+  getFridayWorkflowStepIdFormatMessage,
+  isFridayWorkflowStepIdExpressionSafe,
+} from "../utils/friday-workflow-step-id.js";
 
 // ─── WorkflowSpecV1: the authoring DSL input ───
 
@@ -114,6 +118,14 @@ export function createFridayWorkflowCompiler(
 
   return {
     compile(spec, workflowVersionId) {
+      if (!isFridayWorkflowStepIdExpressionSafe(spec.startStepId)) {
+        throw new FridayDomainError(
+          "WORKFLOW_COMPILATION_ERROR",
+          `WORKFLOW_COMPILATION_ERROR: invalid startStepId '${spec.startStepId}'. ${getFridayWorkflowStepIdFormatMessage()}`,
+          { httpStatus: 400 },
+        );
+      }
+
       // Build trigger node
       const triggerNodeId = `__trigger__`;
       const triggerConfig: Record<string, JsonValue> = {
@@ -137,6 +149,13 @@ export function createFridayWorkflowCompiler(
       // Map steps to nodes
       const nodes: FridayWorkflowNode[] = [triggerNode];
       for (const step of spec.steps) {
+        if (!isFridayWorkflowStepIdExpressionSafe(step.id)) {
+          throw new FridayDomainError(
+            "WORKFLOW_COMPILATION_ERROR",
+            `WORKFLOW_COMPILATION_ERROR: invalid step id '${step.id}'. ${getFridayWorkflowStepIdFormatMessage()}`,
+            { httpStatus: 400 },
+          );
+        }
         const nodeType = STEP_TYPE_MAP[step.type];
         if (!nodeType) {
           throw new FridayDomainError(

@@ -127,6 +127,8 @@ export function createFridayWorkflowGeneratorRoutes(
   deps: FridayWorkflowGeneratorRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
   const { workflowGenerator } = deps;
+  const isFailureMode = (mode: "clarification_required" | "preview_ready" | "draft_needs_repair" | "retryable_provider_failure" | "generation_failed") =>
+    mode === "retryable_provider_failure" || mode === "generation_failed";
 
   async function reportGenerationFailure(input: {
     sessionId: string;
@@ -209,7 +211,7 @@ export function createFridayWorkflowGeneratorRoutes(
           channel: body.channel,
           tenantContext: buildTenantContext(ctx.principal, body.userId, body.channel),
         });
-        if (result.mode === "generation_failed") {
+        if (isFailureMode(result.mode)) {
           await reportGenerationFailure({
             sessionId: result.session.sessionId,
             userId: result.session.userId,
@@ -221,7 +223,7 @@ export function createFridayWorkflowGeneratorRoutes(
           userId: result.session.userId,
           event: "session_started",
           summary: `Started workflow generation session for ${result.session.goal}`,
-          ok: result.mode !== "generation_failed",
+          ok: !isFailureMode(result.mode),
         });
         return result;
       },
@@ -262,7 +264,7 @@ export function createFridayWorkflowGeneratorRoutes(
           message: body.message,
           requestedModel: body.requestedModel,
         });
-        if (result.mode === "generation_failed") {
+        if (isFailureMode(result.mode)) {
           await reportGenerationFailure({
             sessionId: result.session.sessionId,
             userId: result.session.userId,

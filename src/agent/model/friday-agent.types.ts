@@ -1,5 +1,9 @@
 import type { FridayResolvedAgentTaskProfile } from "../runtime/friday-agent-task-profile.js";
 import type { FridayAgentContextCostSummary } from "../runtime/friday-agent-runtime.types.js";
+import type {
+  FridayAgentRunContextSummarySnapshot,
+  FridayAgentRunHealthSnapshot,
+} from "../runtime/friday-agent-run-presentation.js";
 import type { FridayToolCallSummary } from "../services/friday-tool-call-summary.js";
 import type {
   FridayProviderAttempt,
@@ -170,6 +174,24 @@ export interface FridayAgentRunRecord {
   contextCostSummary?: FridayAgentContextCostSummary;
   /** Resolved task profile actually applied to this run. */
   taskProfile?: FridayResolvedAgentTaskProfile;
+  /** Machine-readable run metadata for UI/session affinity and future attribution. */
+  metadata?: FridayAgentRunMetadata;
+  /** Derived UI health classification for a run. */
+  health?: FridayAgentRunHealthSnapshot;
+  /** Derived context summary for UI explanation layers. */
+  contextSummary?: FridayAgentRunContextSummarySnapshot;
+  /** Whether a file rollback checkpoint is still available for this run. */
+  rollbackAvailable?: boolean;
+}
+
+export interface FridayAgentPackContextMetadata {
+  packId: string;
+  surface?: string;
+  updatedAt: string;
+}
+
+export interface FridayAgentRunMetadata {
+  packContext?: FridayAgentPackContextMetadata;
 }
 
 // ─── Plan review payload (IMPL-1) ───
