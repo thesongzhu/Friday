@@ -3,7 +3,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MarketplaceActionCard } from "../../../ui/src/routes/assistant-page";
+import { MarketplaceActionCard } from "../../../ui/src/components/assistant/marketplace-action-card";
 import { buildMarketplaceAssistantCards } from "../../../ui/src/lib/marketplace/view-models";
 
 function flush(): Promise<void> {
