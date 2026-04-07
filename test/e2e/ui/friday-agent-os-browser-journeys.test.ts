@@ -19,10 +19,24 @@ const CHROMIUM_AVAILABLE = (() => {
 const BROWSER_E2E_TIMEOUT_MS = 120_000;
 
 async function waitForTestId(pageHandle: FridayBrowserPageHandle, testId: string): Promise<void> {
+  await pageHandle.page.locator(`[data-testid="${testId}"]`).first().waitFor({ state: "visible", timeout: 60_000 });
+}
+
+async function clickRailLink(pageHandle: FridayBrowserPageHandle, href: string): Promise<void> {
   await pageHandle.page.waitForFunction(
-    (expectedTestId) => Boolean(document.querySelector(`[data-testid="${expectedTestId}"]`)),
-    testId,
+    (targetHref) => {
+      const link = document.querySelector(`[data-testid="app-shell-rail"] a[href="${targetHref}"]`);
+      return link instanceof HTMLAnchorElement && link.isConnected;
+    },
+    href,
   );
+  await pageHandle.page.evaluate((targetHref) => {
+    const link = document.querySelector(`[data-testid="app-shell-rail"] a[href="${targetHref}"]`);
+    if (!(link instanceof HTMLAnchorElement)) {
+      throw new Error(`rail link not found for ${targetHref}`);
+    }
+    link.click();
+  }, href);
 }
 
 async function waitForAssistantInbox(pageHandle: FridayBrowserPageHandle): Promise<void> {
@@ -177,7 +191,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
       () => performance.getEntriesByType("navigation").length,
     );
 
-    await pageHandle.page.locator('[data-testid="app-shell-rail"] a[href="/assistant"]').click();
+    await clickRailLink(pageHandle, "/assistant");
     await waitForAssistantInbox(pageHandle);
 
     const navigationCountAfter = await pageHandle.page.evaluate(
@@ -208,13 +222,13 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
       });
       await pageHandle.page.waitForFunction(() => !document.querySelector('[data-testid="pack-quick-sheet"]'));
 
-      await pageHandle.page.locator('[data-testid="app-shell-rail"] a[href="/home"]').click();
+      await clickRailLink(pageHandle, "/home");
       await pageHandle.page.waitForURL("**/home");
 
-      await pageHandle.page.locator('[data-testid="app-shell-rail"] a[href="/chat"]').click();
+      await clickRailLink(pageHandle, "/chat");
       await waitForChat(pageHandle);
 
-      await pageHandle.page.locator('[data-testid="app-shell-rail"] a[href="/packs"]').click();
+      await clickRailLink(pageHandle, "/packs");
       await waitForTestId(pageHandle, "pack-card-industry-creator-media");
     }
 

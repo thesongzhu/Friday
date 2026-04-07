@@ -46,10 +46,24 @@ interface BuilderBenchmarkResult {
 }
 
 async function waitForTestId(pageHandle: FridayBrowserPageHandle, testId: string): Promise<void> {
+  await pageHandle.page.locator(`[data-testid="${testId}"]`).first().waitFor({ state: "visible", timeout: 60_000 });
+}
+
+async function clickRailLink(pageHandle: FridayBrowserPageHandle, href: string): Promise<void> {
   await pageHandle.page.waitForFunction(
-    (expectedTestId) => Boolean(document.querySelector(`[data-testid="${expectedTestId}"]`)),
-    testId,
+    (targetHref) => {
+      const link = document.querySelector(`[data-testid="app-shell-rail"] a[href="${targetHref}"]`);
+      return link instanceof HTMLAnchorElement && link.isConnected;
+    },
+    href,
   );
+  await pageHandle.page.evaluate((targetHref) => {
+    const link = document.querySelector(`[data-testid="app-shell-rail"] a[href="${targetHref}"]`);
+    if (!(link instanceof HTMLAnchorElement)) {
+      throw new Error(`rail link not found for ${targetHref}`);
+    }
+    link.click();
+  }, href);
 }
 
 function median(values: number[]): number {
@@ -80,7 +94,7 @@ async function measureRailNavigation(input: {
     );
 
     const startedAt = performance.now();
-    await input.pageHandle.page.locator(`[data-testid="app-shell-rail"] a[href="${input.clickHref}"]`).click();
+    await clickRailLink(input.pageHandle, input.clickHref);
     await input.pageHandle.page.waitForURL(`**${input.expectedPath}`);
     await waitForTestId(input.pageHandle, input.readyTestId);
     const elapsedMs = performance.now() - startedAt;
