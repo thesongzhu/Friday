@@ -54,6 +54,7 @@ export default defineConfig({
   test: {
     pool: "forks",
     testTimeout: 10_000,
+    setupFiles: ["./test/_helpers/vitest-warning-env.setup.ts"],
     projects: [
       {
         extends: true,
