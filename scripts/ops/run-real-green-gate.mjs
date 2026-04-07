@@ -31,10 +31,17 @@ const CLAUDE_SKILL_TESTS = [
   "test/integration/skills/friday-skill-registry-lifecycle.test.ts",
 ];
 
+function resolveCurrentBranch(repoRoot) {
+  const envBranch = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME;
+  if (envBranch && envBranch.trim().length > 0) {
+    return envBranch.trim();
+  }
+  return runCommandCapture(repoRoot, "git", ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() || "main";
+}
+
 function parseArgs(argv) {
   const options = {
     repoRoot: process.cwd(),
-    branch: "claude/investigate-twitter-thread-4PNHG",
     mintLocalAdminToken: false,
     dailyCoreRepetitions: 1,
   };
@@ -76,6 +83,7 @@ function parseArgs(argv) {
         break;
     }
   }
+  options.branch ??= resolveCurrentBranch(options.repoRoot);
   return options;
 }
 
@@ -224,10 +232,10 @@ function deriveGateReasons({ preflight, smoke, dailyCore, branchConformance, ski
     reasons.push("daily core suite is not fully passed");
   }
   if (branchConformance?.shouldNoop !== true) {
-    reasons.push("claude branch is not a no-op relative to main");
+    reasons.push("branch under test is not a no-op relative to main");
   }
   if (skillConformance?.ok !== true) {
-    reasons.push("claude skill conformance tests failed");
+    reasons.push("skill conformance tests failed");
   }
   return reasons;
 }
