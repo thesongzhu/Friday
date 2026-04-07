@@ -410,7 +410,7 @@ export function SetupPage() {
   });
 
   return (
-    <div className="relative min-h-screen bg-[var(--bg-canvas)] px-4 py-6 text-white lg:px-6">
+    <div className="relative min-h-screen bg-[color:var(--color-bg-base)] px-4 py-6 text-[color:var(--color-text-primary)] lg:px-6">
       <div className="pointer-events-none absolute inset-0">
         <div className="agent-grid absolute inset-0 opacity-30" />
         <div className="agent-orb agent-orb-left" />
@@ -420,10 +420,10 @@ export function SetupPage() {
       <div className="relative mx-auto flex w-full max-w-[1480px] flex-col gap-4">
         <ShellCard>
           <p className="agent-eyebrow">Friday Agent OS Setup</p>
-          <h1 className="font-[var(--font-display)] text-4xl font-semibold tracking-tight text-white">
+          <h1 className="font-[var(--font-display)] text-4xl font-semibold tracking-tight text-[color:var(--color-text-primary)]">
             Bootstrap the new operator shell
           </h1>
-          <p className="mt-4 max-w-4xl text-base leading-7 text-white/60">
+          <p className="mt-4 max-w-4xl text-base leading-7 text-[color:var(--color-text-secondary)]">
             This setup flow has been rebuilt from scratch. It keeps the backend bootstrap APIs intact while removing the previous wizard UI and builder framing.
           </p>
         </ShellCard>
@@ -431,15 +431,15 @@ export function SetupPage() {
         <div className="grid gap-4 xl:grid-cols-2">
           <ShellCard eyebrow="1. Security" title="Operator acknowledgement">
             <div className="space-y-4">
-              <p className="text-sm leading-6 text-white/60">
+              <p className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
                 Friday Agent OS can request control leases, read local status, and orchestrate risky actions behind explicit approvals. Confirm that you are setting up a single-user local machine.
               </p>
-              <label className="inline-flex items-center gap-3 text-sm text-white">
+              <label className="inline-flex items-center gap-3 text-sm text-[color:var(--color-text-primary)]">
                 <input
                   type="checkbox"
                   checked={acknowledgedSecurity}
                   onChange={(event) => setAcknowledgedSecurity(event.target.checked)}
-                  className="rounded border-white/20 bg-white/10"
+                  className="rounded border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-surface)]"
                 />
                 I understand this is a supervised local operator shell, not a full operating system replacement.
               </label>
@@ -494,8 +494,8 @@ export function SetupPage() {
                 </StatusPill>
               </div>
               {providerModels.length > 0 ? (
-                <div className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-white/40">
+                <div className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
                     Models
                   </p>
                   <div className="flex flex-wrap gap-2">
@@ -507,23 +507,23 @@ export function SetupPage() {
                   </div>
                 </div>
               ) : null}
-              <div className="rounded-[22px] border border-cyan-300/20 bg-cyan-300/[0.06] p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100/70">
+              <div className="rounded-[22px] border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-secondary)]">
                   Recommended backend/auth
                 </p>
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <div>
-                    <p className="text-xs uppercase tracking-[0.16em] text-white/35">Backend</p>
-                    <p className="mt-1 text-sm font-medium text-white">{providerRecommendation.backend}</p>
+                    <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Backend</p>
+                    <p className="mt-1 text-sm font-medium text-[color:var(--color-text-primary)]">{providerRecommendation.backend}</p>
                   </div>
                   <div>
-                    <p className="text-xs uppercase tracking-[0.16em] text-white/35">Auth</p>
-                    <p className="mt-1 text-sm font-medium text-white">{providerRecommendation.auth}</p>
+                    <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Auth</p>
+                    <p className="mt-1 text-sm font-medium text-[color:var(--color-text-primary)]">{providerRecommendation.auth}</p>
                   </div>
                 </div>
-                <p className="mt-3 text-sm leading-6 text-white/72">{providerRecommendation.why}</p>
-                <p className="mt-3 text-sm leading-6 text-white/52">{providerRecommendation.boundary}</p>
-                <p className="mt-3 text-sm leading-6 text-cyan-100/70">{providerRecommendation.operatorNote}</p>
+                <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{providerRecommendation.why}</p>
+                <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-tertiary)]">{providerRecommendation.boundary}</p>
+                <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{providerRecommendation.operatorNote}</p>
               </div>
             </div>
           </ShellCard>
@@ -563,7 +563,7 @@ export function SetupPage() {
 
           <ShellCard eyebrow="4. Channels" title="Optional ingress surfaces">
             <div className="space-y-4">
-              <p className="text-sm text-white/60">
+              <p className="text-sm text-[color:var(--color-text-secondary)]">
                 Channel setup is optional in phase 1. Select only the kinds you want Friday to persist now.
               </p>
               <div className="flex flex-wrap gap-2">
@@ -583,8 +583,8 @@ export function SetupPage() {
                       }}
                       className={`rounded-full border px-3 py-2 text-sm transition ${
                         active
-                          ? "border-emerald-300/50 bg-emerald-300/10 text-white"
-                          : "border-white/[0.12] bg-white/[0.04] text-white/60 hover:border-white/[0.18] hover:text-white"
+                          ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-text-primary)]"
+                          : "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] text-[color:var(--color-text-secondary)] hover:border-[color:var(--color-border-strong)] hover:text-[color:var(--color-text-primary)]"
                       }`}
                     >
                       {titleCase(channel)}
@@ -601,7 +601,7 @@ export function SetupPage() {
 
           <ShellCard eyebrow="5. Communication" title="How Friday should guide you">
             <div className="space-y-4">
-              <p className="text-sm text-white/60">
+              <p className="text-sm text-[color:var(--color-text-secondary)]">
                 Pick a comfort-oriented communication template. You can skip this now and change it later in Settings.
               </p>
               <select
@@ -617,18 +617,18 @@ export function SetupPage() {
                   <option key={mbti} value={mbti}>{mbti}</option>
                 ))}
               </select>
-              <div className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+              <div className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                 {(() => {
                   const preview = buildPersonaPreview(getMbtiDefaults(communicationMbti || null));
                   return (
                     <>
-                      <div className="flex items-center gap-2 text-white">
+                      <div className="flex items-center gap-2 text-[color:var(--color-text-primary)]">
                         <MessageCircleMore className="h-4 w-4" />
                         <span className="font-medium">Preview</span>
                       </div>
-                      <p className="mt-3 text-sm text-white/50">{preview.styleLabel}</p>
-                      <p className="mt-3 text-sm text-white/80">{preview.sampleClarifier}</p>
-                      <p className="mt-3 text-sm text-white/60">{preview.sampleBoundary}</p>
+                      <p className="mt-3 text-sm text-[color:var(--color-text-tertiary)]">{preview.styleLabel}</p>
+                      <p className="mt-3 text-sm text-[color:var(--color-text-primary)]">{preview.sampleClarifier}</p>
+                      <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{preview.sampleBoundary}</p>
                     </>
                   );
                 })()}
@@ -649,34 +649,34 @@ export function SetupPage() {
         <ShellCard eyebrow="6. Starter Pack" title="Bundled skills ship ready">
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
             <div className="space-y-3">
-              <p className="text-sm leading-6 text-white/60">
+              <p className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
                 Friday now ships with a bundled starter pack for local development and diagnostics. These starter skills are already installed, model-invocable, and non-destructive by default.
               </p>
               <div className="grid gap-3 md:grid-cols-2">
                 {starterSkills.length === 0 ? (
-                  <p className="text-sm text-white/50">Starter pack inventory will appear once the local skill registry is available.</p>
+                  <p className="text-sm text-[color:var(--color-text-tertiary)]">Starter pack inventory will appear once the local skill registry is available.</p>
                 ) : starterSkills.map((skill) => (
                   <div key={skill.skillId} className="agent-subcard">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-white">{skill.name}</p>
-                        <p className="mt-2 text-sm leading-6 text-white/58">{skill.description ?? "Bundled starter skill."}</p>
+                        <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{skill.name}</p>
+                        <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">{skill.description ?? "Bundled starter skill."}</p>
                       </div>
                       <StatusPill tone="success">starter</StatusPill>
                     </div>
-                    <p className="mt-3 text-xs uppercase tracking-[0.18em] text-white/35">Example</p>
-                    <p className="mt-2 text-sm text-white/72">
+                    <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Example</p>
+                    <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
                       {STARTER_SKILL_EXAMPLES[skill.skillId] ?? "Run this starter skill from Assistant or Command Center."}
                     </p>
                   </div>
                 ))}
               </div>
             </div>
-            <div className="rounded-[24px] border border-white/[0.08] bg-black/20 p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/35">
+            <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--color-text-faint)]">
                 Default boundaries
               </p>
-              <div className="mt-4 space-y-3 text-sm leading-6 text-white/60">
+              <div className="mt-4 space-y-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">
                 <p>Starter skills are role-first: they can clarify ideas, review plans, inspect runtime health, and guide the next safe action without dropping you into a blank builder flow.</p>
                 <p>They are bundled with Friday, so there is nothing to install during setup.</p>
                 <p>They can clarify ideas, review plans, QA pages, inspect diffs, and sync bounded docs before they reach for heavier automation.</p>
@@ -688,14 +688,14 @@ export function SetupPage() {
         <ShellCard eyebrow="7. Finish" title="Enter Friday">
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
             <div className="space-y-4">
-              <div className="space-y-2 text-sm text-white/60">
+              <div className="space-y-2 text-sm text-[color:var(--color-text-secondary)]">
                 <p>Setup status: {setupStatus?.needsSetup ? "not completed" : "completed"}</p>
                 <p>Configured providers: {existingProviders.length}</p>
                 <p>Selected channels: {selectedChannels.size}</p>
                 <p>Communication style: {communicationSaved ? (communicationMbti || "default") : "default"}</p>
               </div>
-              <div className="rounded-[24px] border border-white/[0.08] bg-black/20 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/35">
+              <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--color-text-faint)]">
                   Pick a first task
                 </p>
                 <div className="mt-4 grid gap-3">
@@ -707,20 +707,20 @@ export function SetupPage() {
                         type="button"
                         onClick={() => setStarterTaskId(task.id)}
                         className={`text-left transition ${
-                          active ? "agent-selection-card ring-1 ring-emerald-300/30" : "agent-subcard hover:border-white/14"
+                          active ? "agent-selection-card ring-1 ring-[color:var(--color-focus-ring)]" : "agent-subcard hover:border-[color:var(--color-border-strong)]"
                         }`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <p className="text-sm font-semibold text-white">{task.title}</p>
-                            <p className="mt-2 text-sm leading-6 text-white/58">{task.description}</p>
+                            <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{task.title}</p>
+                            <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">{task.description}</p>
                           </div>
                           <StatusPill tone={active ? "success" : "neutral"}>
                             {active ? "selected" : "recommended"}
                           </StatusPill>
                         </div>
-                        <p className="mt-3 text-xs uppercase tracking-[0.18em] text-white/35">Outcome</p>
-                        <p className="mt-2 text-sm text-white/72">{task.outcome}</p>
+                        <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Outcome</p>
+                        <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{task.outcome}</p>
                       </button>
                     );
                   })}
@@ -728,21 +728,21 @@ export function SetupPage() {
               </div>
             </div>
             <div className="flex flex-col justify-between gap-4">
-              <div className="rounded-[24px] border border-white/[0.08] bg-black/20 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/35">
+              <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--color-text-faint)]">
                   What happens next
                 </p>
                 {(() => {
                   const selectedStarterTask = getAssistantStarterTask(starterTaskId);
                   return selectedStarterTask ? (
                     <div className="mt-4 space-y-3">
-                      <p className="text-sm font-semibold text-white">{selectedStarterTask.title}</p>
-                      <p className="text-sm leading-6 text-white/60">
+                      <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{selectedStarterTask.title}</p>
+                      <p className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
                         Friday will open the assistant with a skill-backed first task, so you can use the bundled starter pack immediately instead of starting from a generator flow.
                       </p>
                       <div className="agent-subcard">
-                        <p className="text-xs uppercase tracking-[0.18em] text-white/35">Goal Friday will start with</p>
-                        <p className="mt-2 text-sm text-white/78">{selectedStarterTask.goal}</p>
+                        <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Goal Friday will start with</p>
+                        <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{selectedStarterTask.goal}</p>
                       </div>
                     </div>
                   ) : null;

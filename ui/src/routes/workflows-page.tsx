@@ -267,7 +267,7 @@ export function WorkflowsPage() {
           }
         >
           {selectedWorkflow && overviewQuery.data && attentionSummary ? (
-            <div className="space-y-4 text-sm text-white/70">
+            <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
               <p>
                 Friday brings workflow recovery and deploy actions to the top first. The graph stays here as an
                 operator detail view, but you should not need DAG literacy before you know what to click.
@@ -278,9 +278,9 @@ export function WorkflowsPage() {
                 <WorkflowMetric label="Latest run" value={overviewQuery.data.latestRun?.status ?? "not run yet"} />
               </div>
               <div className="agent-subcard-strong p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-white/35">What needs attention now</p>
-                <p className="mt-2 text-base font-semibold text-white">{attentionSummary.title}</p>
-                <p className="mt-3 text-sm leading-6 text-white/64">{attentionSummary.summary}</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">What needs attention now</p>
+                <p className="mt-2 text-base font-semibold text-[color:var(--color-text-primary)]">{attentionSummary.title}</p>
+                <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{attentionSummary.summary}</p>
                 <div className="mt-4 flex flex-wrap gap-3">
                   <ActionButton onClick={handlePrimaryAction} disabled={deployMutation.isPending}>
                     {attentionSummary.focus === "deploy" || attentionSummary.focus === "export" ? (
@@ -297,13 +297,13 @@ export function WorkflowsPage() {
                     </ActionButton>
                   ) : null}
                   <Link
-                    className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                    className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                     to={buildWorkflowHref(selectedWorkflow.id, "details")}
                   >
                     Operator details
                   </Link>
                   <Link
-                    className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                    className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                     to={buildWorkflowBuilderHref({
                       workflowId: selectedWorkflow.id,
                       draftId: overviewQuery.data.latestDraft?.draftId,
@@ -313,7 +313,7 @@ export function WorkflowsPage() {
                     Open builder
                   </Link>
                   <Link
-                    className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                    className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                     to={buildObservabilityHref({
                       focus: overviewQuery.data.latestRun?.status === "failed" ? "traces" : "overview",
                     })}
@@ -324,7 +324,7 @@ export function WorkflowsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-white/60">Select a workflow to unlock click-first deploy and recovery guidance.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Select a workflow to unlock click-first deploy and recovery guidance.</p>
           )}
         </ShellCard>
 
@@ -337,7 +337,7 @@ export function WorkflowsPage() {
                 {workflows.length} tracked
               </StatusPill>
               <Link
-                className="inline-flex items-center rounded-2xl bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/[0.14]"
+                className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-3 py-1.5 text-xs text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                 to="/workflows/builder"
               >
                 Open builder
@@ -359,20 +359,20 @@ export function WorkflowsPage() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{workflow.name}</p>
-                      <p className="text-xs text-white/50">{workflow.slug}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{workflow.name}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{workflow.slug}</p>
                     </div>
                     <StatusPill tone={workflow.publishedVersionNumber ? "success" : "warning"}>
                       v{workflow.latestVersionNumber}
                     </StatusPill>
                   </div>
-                  <p className="mt-3 text-sm text-white/60">
+                  <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">
                     {workflow.description || "No description provided yet."}
                   </p>
                 </button>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Link
-                    className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                    className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                     to={buildWorkflowBuilderHref({
                       workflowId: workflow.id,
                       focus: workflow.id === selectedWorkflowId && overviewQuery.data?.latestDraft ? "draft" : "templates",
@@ -385,7 +385,7 @@ export function WorkflowsPage() {
                     Open builder
                   </Link>
                   <Link
-                    className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                    className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                     to={buildWorkflowHref(workflow.id, "details")}
                   >
                     Control plane
@@ -394,10 +394,10 @@ export function WorkflowsPage() {
               </div>
             ))}
             {workflows.length === 0 ? (
-              <div className="space-y-2 text-sm text-white/60">
+              <div className="space-y-2 text-sm text-[color:var(--color-text-secondary)]">
                 <p>No workflows have been created yet.</p>
                 <p>Describe what you want to automate in plain language and Friday will build it for you.</p>
-                <Link to="/chat" className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-200 hover:bg-emerald-400/20">Describe in Chat</Link>
+                <Link to="/chat" className="inline-flex items-center rounded-full border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-strong)]">Describe in Chat</Link>
               </div>
             ) : null}
           </div>
@@ -410,19 +410,19 @@ export function WorkflowsPage() {
                 <article key={step.id} className={index === 0 ? "agent-subcard-strong p-4" : "agent-subcard p-4"}>
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-xs uppercase tracking-[0.18em] text-white/35">
+                      <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
                         {index === 0 ? "Start here" : "Then"}
                       </p>
-                      <p className="mt-2 text-base font-semibold text-white">{step.title}</p>
+                      <p className="mt-2 text-base font-semibold text-[color:var(--color-text-primary)]">{step.title}</p>
                     </div>
                     <StatusPill tone={step.tone}>{step.tone}</StatusPill>
                   </div>
-                  <p className="mt-3 text-sm leading-6 text-white/64">{step.summary}</p>
+                  <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{step.summary}</p>
                 </article>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-white/60">Select a workflow to load Friday's guided recovery path.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Select a workflow to load Friday's guided recovery path.</p>
           )}
         </ShellCard>
 
@@ -433,21 +433,21 @@ export function WorkflowsPage() {
                 <div key={version.id} className="agent-subcard p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">Version {version.versionNumber}</p>
-                      <p className="text-xs text-white/50">{formatTimestamp(version.createdAt)}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">Version {version.versionNumber}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{formatTimestamp(version.createdAt)}</p>
                     </div>
                     <StatusPill tone={version.isPublished ? "success" : "neutral"}>
                       {version.isPublished ? "published" : "draft-only"}
                     </StatusPill>
                   </div>
-                  <p className="mt-3 text-sm text-white/60">
+                  <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">
                     {version.changeNote || "No change note recorded."}
                   </p>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-white/60">Select a workflow to inspect version history.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Select a workflow to inspect version history.</p>
           )}
         </ShellCard>
       </div>
@@ -465,7 +465,7 @@ export function WorkflowsPage() {
           }
         >
           {overviewQuery.data?.latestRun ? (
-            <div className="space-y-4 text-sm text-white/70">
+            <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
               <div className="grid gap-3 sm:grid-cols-3">
                 <WorkflowMetric label="Run status" value={overviewQuery.data.latestRun.status} />
                 <WorkflowMetric label="Started" value={formatTimestamp(overviewQuery.data.latestRun.startedAt)} />
@@ -475,13 +475,13 @@ export function WorkflowsPage() {
                 {visualizationQuery.data?.nodeTimeline.map((entry) => (
                   <div key={`${entry.nodeId}:${entry.attempt}`} className="agent-subcard p-4">
                     <div className="flex items-center justify-between gap-3">
-                      <p className="font-medium text-white">{entry.nodeId}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{entry.nodeId}</p>
                       <StatusPill tone={entry.status === "failed" ? "danger" : entry.status === "completed" ? "success" : "warning"}>
                         {entry.status}
                       </StatusPill>
                     </div>
-                    <p className="mt-2 text-white/60">{entry.message || "No failure message recorded."}</p>
-                    <p className="mt-2 text-xs text-white/45">
+                    <p className="mt-2 text-[color:var(--color-text-secondary)]">{entry.message || "No failure message recorded."}</p>
+                    <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
                       Attempt {entry.attempt} · Finished {formatTimestamp(entry.finishedAt)}
                     </p>
                   </div>
@@ -489,7 +489,7 @@ export function WorkflowsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-white/60">Friday has not run this workflow yet.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Friday has not run this workflow yet.</p>
           )}
         </ShellCard>
 
@@ -500,8 +500,8 @@ export function WorkflowsPage() {
                 <div key={run.id} className="agent-subcard p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{run.id.slice(0, 8)}</p>
-                      <p className="text-xs text-white/50">
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{run.id.slice(0, 8)}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">
                         {formatTimestamp(run.startedAt)}
                         {run.finishedAt ? ` — ${formatTimestamp(run.finishedAt)}` : ""}
                       </p>
@@ -539,7 +539,7 @@ export function WorkflowsPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-white/60">No runs recorded yet for this workflow.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">No runs recorded yet for this workflow.</p>
           )}
         </ShellCard>
 
@@ -556,17 +556,17 @@ export function WorkflowsPage() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{item.exportId}</p>
-                      <p className="text-xs text-white/50">{formatTimestamp(item.createdAt)}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{item.exportId}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{formatTimestamp(item.createdAt)}</p>
                     </div>
-                    <RefreshCcw className="h-4 w-4 text-white/45" />
+                    <RefreshCcw className="h-4 w-4 text-[color:var(--color-text-faint)]" />
                   </div>
-                  <p className="mt-3 break-all text-sm text-white/60">{item.checksum}</p>
+                  <p className="mt-3 break-all text-sm text-[color:var(--color-text-secondary)]">{item.checksum}</p>
                 </a>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-white/60">Export evidence will show up here after a bundle export or run evidence export.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Export evidence will show up here after a bundle export or run evidence export.</p>
           )}
         </ShellCard>
 
@@ -577,29 +577,29 @@ export function WorkflowsPage() {
         >
           {visualizationQuery.data ? (
             <div className="space-y-4">
-              <p className="text-sm text-white/60">
+              <p className="text-sm text-[color:var(--color-text-secondary)]">
                 Friday keeps the raw graph here as operator context. Recovery, deploy, rerun, and export stay above it so this page remains click-first for standard work.
               </p>
-              <div className="relative overflow-hidden rounded-[26px] border border-white/[0.08] bg-[linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-6">
+              <div className="relative overflow-hidden rounded-[26px] border border-[color:var(--color-border-soft)] bg-[linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-6">
                 <div className="relative min-h-[360px]">
                   {graphNodes.map((node) => (
                     <div
                       key={node.id}
-                      className="absolute w-40 rounded-[20px] border border-white/[0.1] bg-slate-950/80 p-3 shadow-[0_12px_32px_rgba(0,0,0,0.25)]"
+                      className="absolute w-40 rounded-[20px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] p-3 shadow-[0_12px_32px_rgba(0,0,0,0.25)]"
                       style={{ left: `${node.x / 1.6}px`, top: `${node.y / 1.6}px` }}
                     >
-                      <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/45">
+                      <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
                         <GitBranch className="h-3.5 w-3.5" />
                         {node.type}
                       </div>
-                      <p className="mt-2 font-medium text-white">{node.label}</p>
+                      <p className="mt-2 font-medium text-[color:var(--color-text-primary)]">{node.label}</p>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
           ) : (
-            <p className="text-sm text-white/60">Select a workflow to load its graph.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Select a workflow to load its graph.</p>
           )}
         </ShellCard>
       </div>
@@ -610,8 +610,8 @@ export function WorkflowsPage() {
 function WorkflowMetric(props: { label: string; value: string }) {
   return (
     <div className="agent-metric-card">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/45">{props.label}</p>
-      <p className="mt-3 text-sm text-white">{props.value}</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{props.label}</p>
+      <p className="mt-3 text-sm text-[color:var(--color-text-primary)]">{props.value}</p>
     </div>
   );
 }

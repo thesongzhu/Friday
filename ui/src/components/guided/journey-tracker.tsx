@@ -1,5 +1,7 @@
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { localize } from "@/lib/i18n/localized-text";
+import { useAppLocale } from "@/providers/locale-provider";
 import { StepProgress, type StepProgressStep } from "./step-progress";
 
 export type JourneyPhaseStatus =
@@ -38,6 +40,7 @@ function phaseToStepStatus(status: JourneyPhaseStatus): StepProgressStep["status
 }
 
 export function JourneyTracker(props: JourneyTrackerProps) {
+  const { locale } = useAppLocale();
   const { goalTitle, phases, currentPhaseIndex } = props;
   const currentPhase = phases[currentPhaseIndex];
 
@@ -49,16 +52,16 @@ export function JourneyTracker(props: JourneyTrackerProps) {
   }));
 
   return (
-    <div className="rounded-3xl border border-white/10 bg-white/[0.02] p-5">
+    <div className="rounded-3xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5 shadow-[var(--shadow-floating)]">
       <div className="flex items-center gap-2.5">
         {currentPhase && currentPhase.status !== "completed" && currentPhase.status !== "error" && (
-          <Loader2 className="h-4 w-4 animate-spin text-[var(--accent-strong)]" />
+          <Loader2 className="h-4 w-4 animate-spin text-[color:var(--color-accent)]" />
         )}
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/40">
-            Working on
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
+            {localize(locale, "正在处理", "Working On")}
           </p>
-          <p className="text-sm font-medium text-white">{goalTitle}</p>
+          <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{goalTitle}</p>
         </div>
       </div>
 
@@ -67,7 +70,7 @@ export function JourneyTracker(props: JourneyTrackerProps) {
       </div>
 
       {currentPhase?.detail && (
-        <p className={cn("mt-3 text-xs", currentPhase.status === "error" ? "text-rose-200/70" : "text-white/50")}>
+        <p className={cn("mt-3 text-xs", currentPhase.status === "error" ? "text-[color:var(--color-text-primary)]" : "text-[color:var(--color-text-tertiary)]")}>
           {currentPhase.detail}
         </p>
       )}

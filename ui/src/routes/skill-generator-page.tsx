@@ -233,9 +233,9 @@ export function SkillGeneratorPage() {
           title={session ? session.goal : "Start a new skill generator session"}
           aside={session ? <StatusPill tone={toneForSessionStatus(session.status)}>{session.status}</StatusPill> : undefined}
         >
-          <div className="space-y-4 text-sm text-white/70">
+          <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
             <label className="grid gap-2">
-              <span className="font-medium text-white">Goal</span>
+              <span className="font-medium text-[color:var(--color-text-primary)]">Goal</span>
               <textarea
                 value={goalInput}
                 onChange={(event) => setGoalInput(event.target.value)}
@@ -258,10 +258,10 @@ export function SkillGeneratorPage() {
               <GeneratorMetric label="Updated" value={formatTimestamp(session?.updatedAt)} />
             </div>
             <div className="agent-subcard p-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-white/38">Open questions</p>
-              <div className="mt-3 space-y-2 text-sm text-white/68">
+              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Open questions</p>
+              <div className="mt-3 space-y-2 text-sm text-[color:var(--color-text-secondary)]">
                 {questions.length > 0 ? questions.map((question) => (
-                  <div key={question} className="rounded-2xl border border-white/[0.08] bg-white/[0.03] px-3 py-2">
+                  <div key={question} className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-3 py-2">
                     {question}
                   </div>
                 )) : (
@@ -270,7 +270,7 @@ export function SkillGeneratorPage() {
               </div>
             </div>
             <label className="grid gap-2">
-              <span className="font-medium text-white">Continue the conversation</span>
+              <span className="font-medium text-[color:var(--color-text-primary)]">Continue the conversation</span>
               <textarea
                 value={messageInput}
                 onChange={(event) => setMessageInput(event.target.value)}
@@ -293,16 +293,16 @@ export function SkillGeneratorPage() {
         </ShellCard>
 
         <ShellCard eyebrow="Session Turns" title="Conversation history">
-          <div className="space-y-3 text-sm text-white/70">
+          <div className="space-y-3 text-sm text-[color:var(--color-text-secondary)]">
             {turns.length === 0 ? (
               <p>No turns yet. Start the session to begin the clarification loop.</p>
             ) : turns.map((turn) => (
-              <div key={turn.turnId} className="rounded-[22px] border border-white/[0.08] bg-white/[0.04] p-4" data-testid={`skill-generator-turn-${turn.turnId}`}>
+              <div key={turn.turnId} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4" data-testid={`skill-generator-turn-${turn.turnId}`}>
                 <div className="flex items-center justify-between gap-3">
                   <StatusPill>{turn.role}</StatusPill>
-                  <span className="text-xs text-white/45">{formatTimestamp(turn.createdAt)}</span>
+                  <span className="text-xs text-[color:var(--color-text-faint)]">{formatTimestamp(turn.createdAt)}</span>
                 </div>
-                <p className="mt-3 whitespace-pre-wrap leading-6 text-white/72">{turn.content}</p>
+                <p className="mt-3 whitespace-pre-wrap leading-6 text-[color:var(--color-text-secondary)]">{turn.content}</p>
               </div>
             ))}
           </div>
@@ -316,16 +316,16 @@ export function SkillGeneratorPage() {
           aside={draft ? <StatusPill tone={draft.validation.ok ? "success" : "warning"}>{draft.runtimeKind}</StatusPill> : undefined}
         >
           {draft ? (
-            <div className="space-y-4 text-sm text-white/72">
+            <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
               <div className="grid gap-3 sm:grid-cols-3">
                 <GeneratorMetric label="Skill ID" value={draft.manifest.id} />
                 <GeneratorMetric label="Version" value={draft.manifest.version} />
                 <GeneratorMetric label="Runtime" value={draft.runtimeKind} />
               </div>
               <div className="agent-subcard p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-white/38">Manifest summary</p>
-                <p className="mt-2 text-base font-semibold text-white">{draft.manifest.name}</p>
-                <p className="mt-2 text-sm text-white/68">{draft.manifest.description}</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Manifest summary</p>
+                <p className="mt-2 text-base font-semibold text-[color:var(--color-text-primary)]">{draft.manifest.name}</p>
+                <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{draft.manifest.description}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {draft.manifest.tags.map((tag) => (
                     <StatusPill key={tag}>{tag}</StatusPill>
@@ -334,24 +334,24 @@ export function SkillGeneratorPage() {
               </div>
               <div className="grid gap-3 lg:grid-cols-[0.46fr_0.54fr]">
                 <div className="space-y-3">
-                  <p className="text-xs uppercase tracking-[0.18em] text-white/38">Validation issues</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Validation issues</p>
                   {validationIssues.length === 0 ? (
-                    <div className="rounded-2xl border border-emerald-300/15 bg-emerald-300/[0.08] p-4 text-sm text-emerald-100">
+                    <div className="rounded-2xl border border-[color:var(--color-accent-soft)] bg-[color:var(--color-accent-muted)] p-4 text-sm text-[color:var(--color-text-primary)]">
                       Validation passed. Friday did not find manifest or runtime blockers in the current draft.
                     </div>
                   ) : validationIssues.map((issue) => (
-                    <div key={`${issue.code}:${issue.message}`} className="rounded-2xl border border-white/[0.08] bg-white/[0.04] p-4">
+                    <div key={`${issue.code}:${issue.message}`} className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                       <div className="flex items-center justify-between gap-3">
-                        <p className="font-medium text-white">{issue.code}</p>
+                        <p className="font-medium text-[color:var(--color-text-primary)]">{issue.code}</p>
                         <StatusPill tone={toneForIssueSeverity(issue.severity)}>{issue.severity}</StatusPill>
                       </div>
-                      <p className="mt-2 text-sm text-white/66">{issue.message}</p>
-                      {issue.path ? <p className="mt-2 text-xs text-white/45">{issue.path}</p> : null}
+                      <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{issue.message}</p>
+                      {issue.path ? <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">{issue.path}</p> : null}
                     </div>
                   ))}
                 </div>
                 <div className="space-y-3">
-                  <p className="text-xs uppercase tracking-[0.18em] text-white/38">Draft files</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Draft files</p>
                   <div className="grid gap-3 lg:grid-cols-[0.36fr_0.64fr]">
                     <div className="space-y-2">
                       {draft.files.map((file) => (
@@ -362,17 +362,17 @@ export function SkillGeneratorPage() {
                           className="agent-selection-card w-full text-left"
                           data-active={selectedFilePath === file.path}
                         >
-                          <p className="font-medium text-white">{file.path.split("/").pop()}</p>
-                          <p className="mt-1 text-xs text-white/50">{file.language}</p>
+                          <p className="font-medium text-[color:var(--color-text-primary)]">{file.path.split("/").pop()}</p>
+                          <p className="mt-1 text-xs text-[color:var(--color-text-tertiary)]">{file.language}</p>
                         </button>
                       ))}
                     </div>
-                    <div className="rounded-[24px] border border-white/[0.08] bg-slate-950/60 p-4">
+                    <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                       <div className="flex items-center justify-between gap-3">
-                        <p className="font-medium text-white">{selectedFile?.path ?? "No file selected"}</p>
+                        <p className="font-medium text-[color:var(--color-text-primary)]">{selectedFile?.path ?? "No file selected"}</p>
                         <StatusPill>{selectedFile?.language ?? "n/a"}</StatusPill>
                       </div>
-                      <pre className="mt-3 max-h-[420px] overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-white/70">
+                      <pre className="mt-3 max-h-[420px] overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-[color:var(--color-text-secondary)]">
                         {selectedFile?.content ?? "Select a generated file to inspect its contents."}
                       </pre>
                     </div>
@@ -381,7 +381,7 @@ export function SkillGeneratorPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-white/55">Generate a draft to inspect the manifest, validation issues, and generated files.</p>
+            <p className="text-sm text-[color:var(--color-text-tertiary)]">Generate a draft to inspect the manifest, validation issues, and generated files.</p>
           )}
         </ShellCard>
 
@@ -390,7 +390,7 @@ export function SkillGeneratorPage() {
           title="Test result and promotion evidence"
           aside={<StatusPill tone={toneForTestResult(testSummary)}>{testSummary ? "tested" : "pending"}</StatusPill>}
         >
-          <div className="space-y-4 text-sm text-white/72">
+          <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
             {testSummary ? (
               <div className="grid gap-3 sm:grid-cols-4">
                 <GeneratorMetric label="Executable" value={testSummary.executable ? "yes" : "no"} />
@@ -403,9 +403,9 @@ export function SkillGeneratorPage() {
             )}
 
             {approvalReceipt ? (
-              <div className="rounded-[24px] border border-emerald-300/18 bg-emerald-300/[0.08] p-4" data-testid="skill-generator-approve-receipt">
+              <div className="rounded-[24px] border border-[color:var(--color-accent-soft)] bg-[color:var(--color-accent-muted)] p-4" data-testid="skill-generator-approve-receipt">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-base font-semibold text-emerald-100">Approve success receipt</p>
+                  <p className="text-base font-semibold text-[color:var(--color-text-primary)]">Approve success receipt</p>
                   <StatusPill tone="success">{approvalReceipt.promotionStage}</StatusPill>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -425,18 +425,18 @@ export function SkillGeneratorPage() {
             {evidence ? (
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="agent-subcard p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-white/38">Validation summary</p>
-                  <p className="mt-2 text-sm text-white/68">
+                  <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Validation summary</p>
+                  <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
                     Ready: {evidence.approvalReadiness.ready ? "yes" : "no"} · {evidence.approvalReadiness.reason}
                   </p>
-                  <p className="mt-2 text-sm text-white/60">
+                  <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
                     Repair attempts: {evidence.repairSummary.attempts} · Issue count: {evidence.validationSummary.issueCount}
                   </p>
                 </div>
                 <div className="agent-subcard p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-white/38">Saved skill identity</p>
-                  <p className="mt-2 text-sm text-white/68">{savedSkillId ?? "Not saved yet"}</p>
-                  <p className="mt-2 text-xs text-white/48">{savedSkillDir ?? "Skill directory will appear after approve."}</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Saved skill identity</p>
+                  <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{savedSkillId ?? "Not saved yet"}</p>
+                  <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">{savedSkillDir ?? "Skill directory will appear after approve."}</p>
                 </div>
               </div>
             ) : (
@@ -448,7 +448,7 @@ export function SkillGeneratorPage() {
 
       <div className="space-y-4">
         <ShellCard eyebrow="Actions" title="Generate, test, approve, or cancel">
-          <div className="space-y-4 text-sm text-white/72">
+          <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
             <div className="grid gap-3 sm:grid-cols-2">
               <ActionButton
                 disabled={!requestedSessionId || generateMutation.isPending}
@@ -487,10 +487,10 @@ export function SkillGeneratorPage() {
             </div>
 
             <div className="agent-subcard p-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-white/38">Approve success CTAs</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Approve success CTAs</p>
               <div className="mt-3 flex flex-wrap gap-3">
                 <Link
-                  className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                  className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                   to={savedSkillId ? buildSkillHref(savedSkillId) : "/skills"}
                 >
                   <BadgeCheck className="mr-2 h-4 w-4" />
@@ -498,13 +498,13 @@ export function SkillGeneratorPage() {
                 </Link>
                 <button
                   type="button"
-                  className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                  className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                   onClick={beginAnotherSession}
                 >
                   Start another generator session
                 </button>
                 <Link
-                  className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                  className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                   to="/skills"
                 >
                   Return to skills
@@ -523,7 +523,7 @@ export function SkillGeneratorPage() {
               </ActionButton>
             ) : (
               <Link
-                className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                 to={buildSkillGeneratorHref({ sessionId: requestedSessionId ?? undefined, goal: goalInput || undefined, from: requestSource === "assistant" ? "assistant" : "skills" })}
               >
                 Copy deep link
@@ -539,8 +539,8 @@ export function SkillGeneratorPage() {
 function GeneratorMetric(props: { label: string; value: string }) {
   return (
     <div className="agent-metric-card">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/45">{props.label}</p>
-      <p className="mt-3 break-words text-sm text-white">{props.value}</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{props.label}</p>
+      <p className="mt-3 break-words text-sm text-[color:var(--color-text-primary)]">{props.value}</p>
     </div>
   );
 }

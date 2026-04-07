@@ -24,18 +24,18 @@ const EVENT_LABELS: Record<string, string> = {
 };
 
 const EVENT_DOTS: Record<string, string> = {
-  "agent.run.started": "bg-sky-400",
-  "agent.run.tool_start": "bg-violet-400",
-  "agent.run.tool_end": "bg-violet-400",
-  "agent.run.route_selected": "bg-emerald-400",
-  "agent.run.route_fallback": "bg-amber-400",
-  "agent.run.route_mismatch": "bg-red-400",
-  "agent.run.degraded": "bg-amber-400",
-  "agent.run.mode_changed": "bg-amber-400",
-  "agent.run.awaiting_tool_approval": "bg-orange-400",
-  "agent.run.completed": "bg-emerald-400",
-  "agent.run.failed": "bg-red-400",
-  "agent.run.cancelled": "bg-zinc-400",
+  "agent.run.started": "bg-[color:var(--color-accent)]",
+  "agent.run.tool_start": "bg-[color:var(--color-text-secondary)]",
+  "agent.run.tool_end": "bg-[color:var(--color-text-secondary)]",
+  "agent.run.route_selected": "bg-[color:var(--color-accent)]",
+  "agent.run.route_fallback": "bg-[color:var(--color-border-strong)]",
+  "agent.run.route_mismatch": "bg-[color:var(--color-text-primary)]",
+  "agent.run.degraded": "bg-[color:var(--color-border-strong)]",
+  "agent.run.mode_changed": "bg-[color:var(--color-border-strong)]",
+  "agent.run.awaiting_tool_approval": "bg-[color:var(--color-accent)]",
+  "agent.run.completed": "bg-[color:var(--color-accent)]",
+  "agent.run.failed": "bg-[color:var(--color-text-primary)]",
+  "agent.run.cancelled": "bg-[color:var(--color-text-tertiary)]",
 };
 
 function formatPayload(event: RunAuditEvent): string {
@@ -73,40 +73,40 @@ export function ChatAuditDrawer({ runId, open, onClose }: ChatAuditDrawerProps) 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-white/10 bg-zinc-900 shadow-2xl">
-      <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-        <h2 className="text-sm font-semibold text-white">Audit Trail</h2>
+    <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-base)] shadow-[0_20px_60px_rgba(51,41,34,0.18)]">
+      <div className="flex items-center justify-between border-b border-[color:var(--color-border-soft)] px-4 py-3">
+        <h2 className="text-sm font-semibold text-[color:var(--color-text-primary)]">Audit Trail</h2>
         <button
           onClick={onClose}
-          className="rounded-lg p-1 text-white/50 hover:bg-white/10 hover:text-white"
+          className="rounded-lg p-1 text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-surface)] hover:text-[color:var(--color-text-primary)]"
         >
           &times;
         </button>
       </div>
       <div className="flex-1 overflow-y-auto p-4">
         {isLoading && (
-          <p className="text-sm text-white/40">Loading audit events...</p>
+          <p className="text-sm text-[color:var(--color-text-secondary)]">Loading audit events...</p>
         )}
         {data && data.events.length === 0 && (
-          <p className="text-sm text-white/40">No audit events recorded.</p>
+          <p className="text-sm text-[color:var(--color-text-secondary)]">No audit events recorded.</p>
         )}
         {data && data.events.length > 0 && (
-          <ol className="relative border-l border-white/10 pl-4">
+          <ol className="relative border-l border-[color:var(--color-border-soft)] pl-4">
             {data.events.map((event) => {
               const label = EVENT_LABELS[event.type] ?? event.type;
-              const dot = EVENT_DOTS[event.type] ?? "bg-zinc-500";
+              const dot = EVENT_DOTS[event.type] ?? "bg-[color:var(--color-text-tertiary)]";
               const detail = formatPayload(event);
               return (
                 <li key={event.seq} className="mb-4 ml-2">
                   <span
                     className={`absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full ${dot}`}
                   />
-                  <time className="mb-1 block text-[10px] font-mono text-white/30">
+                  <time className="mb-1 block text-[10px] font-mono text-[color:var(--color-text-faint)]">
                     {event.timestamp}
                   </time>
-                  <p className="text-sm font-medium text-white/80">{label}</p>
+                  <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{label}</p>
                   {detail && (
-                    <p className="text-xs text-white/50">{detail}</p>
+                    <p className="text-xs text-[color:var(--color-text-secondary)]">{detail}</p>
                   )}
                 </li>
               );

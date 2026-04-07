@@ -1,225 +1,481 @@
-import { useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, ChevronRight, Loader2, Sparkles } from "lucide-react";
-import { agentApi } from "@/lib/api/agent";
-import { apiClient } from "@/lib/api/client";
-import { providerUsageApi } from "@/lib/api/provider-usage";
-import { systemApi } from "@/lib/api/system";
-import { GoalCard } from "@/components/guided/goal-card";
-import { OneClickAction } from "@/components/guided/one-click-action";
-import { JourneyTracker } from "@/components/guided/journey-tracker";
-import { ShellCard, StatusPill } from "@/components/core/primitives";
+import { ArrowRight, CheckCircle2, Clock3, ListFilter, Pin, Plus, Sparkles } from "lucide-react";
+import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
+import { PackCard } from "@/components/packs/pack-card";
+import { PackQuickSheet } from "@/components/packs/pack-quick-sheet";
+import { useAdaptivePollingInterval } from "@/hooks/use-adaptive-polling";
+import { useAppNavigate } from "@/hooks/use-app-navigate";
+import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences";
 import { useUserProfile } from "@/hooks/use-user-profile";
-import { getGoalCategoriesForProfile } from "@/lib/guided/goal-categories";
-import { buildGuidedFlowJourneyPhases, buildGuidedFlowCurrentPhaseIndex } from "@/lib/guided/flow-adapters";
-import type { FridayGoalCategory } from "@/lib/guided/goal-categories";
+import { uixSnapshotsApi, type UixScheduledAutomationSummary } from "@/lib/api/uix-snapshots";
+import { localize, resolveLocalizedText } from "@/lib/i18n/localized-text";
+import { findPackRuns } from "@/lib/packs/pack-assistant-receipt";
+import { buildPackAssistantHref, buildPackChatHref, buildPackFlowHref } from "@/lib/packs/pack-links";
+import { FRIDAY_PACKS, getPackById, type FridayPackDefinition, type HomeWidgetId } from "@/lib/packs/pack-registry";
+import { buildSkillHref } from "@/lib/skills/view-models";
+import {
+  describeRunHealth,
+  labelForRunHealth,
+  summarizeRunContext,
+  toneForRunHealth,
+} from "@/lib/runs/run-health";
+import { useAppLocale } from "@/providers/locale-provider";
 
-function greetingForTimeOfDay(): string {
-  const hour = new Date().getHours();
-  if (hour < 6) return "Late night?";
-  if (hour < 12) return "Good morning.";
-  if (hour < 18) return "Good afternoon.";
-  return "Good evening.";
+const ACTIVE_RUN_STATUSES = new Set([
+  "pending",
+  "planning",
+  "awaiting_clarification",
+  "awaiting_plan_approval",
+  "awaiting_tool_approval",
+  "executing",
+  "testing",
+  "fixing",
+]);
+
+function formatTimestamp(value: string | undefined, locale: "zh" | "en"): string {
+  if (!value) {
+    return locale === "zh" ? "刚刚" : "Just now";
+  }
+  const date = new Date(value);
+  return new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
 }
 
-function RunSummaryCard(props: {
-  task: string;
-  status: string;
-  startedAt?: string;
-}) {
-  const elapsed = props.startedAt
-    ? Math.floor((Date.now() - new Date(props.startedAt).getTime()) / 60_000)
-    : 0;
-  const timeLabel = elapsed < 1 ? "Just now" : elapsed < 60 ? `${String(elapsed)}m ago` : `${String(Math.floor(elapsed / 60))}h ago`;
+function formatAutomationNextRun(
+  automation: UixScheduledAutomationSummary,
+  locale: "zh" | "en",
+): string {
+  if (!automation.schedule) {
+    return locale === "zh" ? "手动触发" : "Manual";
+  }
 
-  return (
-    <div className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3">
-      <StatusPill
-        tone={
-          props.status === "completed"
-            ? "success"
-            : props.status === "failed"
-              ? "danger"
-              : "neutral"
-        }
-      >
-        {props.status}
-      </StatusPill>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm text-white/70">{props.task}</p>
-        <p className="mt-0.5 text-xs text-white/40">{timeLabel}</p>
-      </div>
-    </div>
-  );
+  if (!automation.nextRunAt) {
+    return `${automation.schedule.cron}${automation.schedule.timezone ? ` · ${automation.schedule.timezone}` : ""}`;
+  }
+
+  const formatter = new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: automation.schedule.timezone,
+  });
+  const label = locale === "zh" ? "下次" : "Next";
+  return `${label} ${formatter.format(new Date(automation.nextRunAt))}${automation.schedule.timezone ? ` · ${automation.schedule.timezone}` : ""}`;
 }
 
 export function HomePage() {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
+  const { locale } = useAppLocale();
   const { profileType } = useUserProfile();
-  const [hoveredGoal, setHoveredGoal] = useState<string | null>(null);
+  const {
+    pinnedPackIds,
+    widgetOrder,
+    visibleWidgets,
+    pinPack,
+    unpinPack,
+    movePack,
+    moveWidget,
+    toggleWidget,
+  } = useHomeSurfacePreferences(profileType);
+  const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
+  const [pendingPackPath, setPendingPackPath] = useState<string | null>(null);
+  const [editingWidgets, setEditingWidgets] = useState(false);
+  const [editingPacks, setEditingPacks] = useState(false);
+  const pollInterval = useAdaptivePollingInterval({ activeMs: 12_000, backgroundMs: 36_000 });
 
-  const goalCategories = useMemo(
-    () => getGoalCategoriesForProfile(profileType, 6),
-    [profileType],
+  const snapshotQuery = useQuery({
+    queryKey: ["home", "snapshot", "task-first"],
+    queryFn: () => uixSnapshotsApi.getHome(),
+    refetchInterval: pollInterval,
+  });
+
+  useEffect(() => {
+    if (!pendingPackPath) {
+      return;
+    }
+    const frameId = window.requestAnimationFrame(() => {
+      navigate(pendingPackPath);
+      setPendingPackPath(null);
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [navigate, pendingPackPath]);
+
+  const recentRuns = snapshotQuery.data?.runs ?? [];
+  const activeRuns = recentRuns.filter((run) => ACTIVE_RUN_STATUSES.has(run.status));
+  const recentResults = recentRuns.filter((run) => run.status === "completed" || run.status === "failed" || run.status === "failed_tests").slice(0, 3);
+  const pendingApprovals = snapshotQuery.data?.pendingApprovals ?? [];
+  const scheduledAutomations = useMemo(
+    () =>
+      (snapshotQuery.data?.scheduledAutomations ?? [])
+        .filter((automation) => automation.enabled && automation.schedule)
+        .sort((left, right) => {
+          const leftTime = left.nextRunAt ? new Date(left.nextRunAt).getTime() : Number.POSITIVE_INFINITY;
+          const rightTime = right.nextRunAt ? new Date(right.nextRunAt).getTime() : Number.POSITIVE_INFINITY;
+          return leftTime - rightTime;
+        })
+        .slice(0, 4),
+    [snapshotQuery.data?.scheduledAutomations],
   );
+  const pinnedPacks = pinnedPackIds
+    .map((packId) => getPackById(packId))
+    .filter((pack): pack is FridayPackDefinition => Boolean(pack));
+  const recommendedPacks = FRIDAY_PACKS
+    .filter((pack) => !pinnedPackIds.includes(pack.id))
+    .sort((left, right) => Number(right.kind === "industry") - Number(left.kind === "industry"))
+    .slice(0, 3);
+  const selectedPack = selectedPackId ? getPackById(selectedPackId) ?? null : null;
+  const selectedPackRunState = selectedPack ? findPackRuns(selectedPack, recentRuns) : { activeRun: null, recentRun: null };
 
-  const recentRunsQuery = useQuery({
-    queryKey: ["home", "recent-runs"],
-    queryFn: () => agentApi.listRuns({ limit: 3 }),
-    refetchInterval: 10_000,
-  });
+  const widgetLabels: Record<HomeWidgetId, string> = {
+    active_now: localize(locale, "正在进行", "Active Now"),
+    pending_approvals: localize(locale, "待确认", "Pending Approvals"),
+    scheduled_soon: localize(locale, "即将执行", "Scheduled"),
+    recent_results: localize(locale, "最近结果", "Recent Results"),
+    recommended_to_add: localize(locale, "推荐加入", "Recommended"),
+  };
 
-  const alertsQuery = useQuery({
-    queryKey: ["home", "alerts"],
-    queryFn: () => systemApi.listObservabilityAlerts({ status: "firing", limit: 2 }),
-    refetchInterval: 15_000,
-  });
-
-  const budgetQuery = useQuery({
-    queryKey: ["home", "budget"],
-    queryFn: () => providerUsageApi.getBudget(),
-    retry: 0,
-    refetchInterval: 60_000,
-  });
-
-  const learnedFactsQuery = useQuery({
-    queryKey: ["home", "learned-facts-count"],
-    queryFn: async () => {
-      const data = await apiClient.get<{ items: Array<{ key: string }> }>("/v1/uix/learned-facts");
-      return data.items.length;
-    },
-    retry: 0,
-    refetchInterval: 60_000,
-  });
-
-  const recentRuns = recentRunsQuery.data ?? [];
-  const activeRun = recentRuns.find(
-    (run) =>
-      run.status === "pending" ||
-      run.status === "executing" ||
-      run.status === "planning" ||
-      run.status === "awaiting_plan_approval" ||
-      run.status === "awaiting_clarification",
-  );
-
-  function handleGoalClick(category: FridayGoalCategory) {
-    navigate(`/flow/${encodeURIComponent(category.wizardId)}`);
-  }
+  const renderedWidgets = widgetOrder.filter((widgetId) => visibleWidgets.includes(widgetId));
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-8 py-4">
-      {/* Greeting */}
-      <div className="space-y-1">
-        <p className="text-sm text-white/40">{greetingForTimeOfDay()}</p>
-        <h1 className="font-[var(--font-display)] text-3xl font-semibold tracking-tight text-white">
-          What do you want to achieve?
-        </h1>
-        <p className="text-sm leading-6 text-white/50">
-          Pick a goal. Friday will investigate, present options, and guide you step by step.
-        </p>
-      </div>
-
-      {/* Status indicators */}
-      {(budgetQuery.data?.config || (learnedFactsQuery.data ?? 0) > 0) ? (
-        <div className="flex flex-wrap items-center gap-4 text-xs text-white/40">
-          {budgetQuery.data?.config ? (
-            <span className="flex items-center gap-1.5">
-              <span className={budgetQuery.data.state === "over_limit" ? "text-red-400" : budgetQuery.data.state === "near_limit" ? "text-yellow-400" : "text-emerald-400"}>
-                {budgetQuery.data.state === "ok" ? "\u2713" : budgetQuery.data.state === "near_limit" ? "\u26A0" : "\u2717"}
-              </span>
-              Budget: ${budgetQuery.data.spentUsd.toFixed(2)} / ${budgetQuery.data.config.monthlyLimitUsd.toFixed(2)}
-            </span>
-          ) : null}
-          {(learnedFactsQuery.data ?? 0) > 0 ? (
-            <span>
-              {(learnedFactsQuery.data ?? 0) >= 10
-                ? `Friday knows your preferences (${String(learnedFactsQuery.data)} facts)`
-                : `Friday is learning about you (${String(learnedFactsQuery.data)} facts recorded)`}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* Active flow */}
-      {activeRun && (
-        <JourneyTracker
-          goalTitle={activeRun.task}
-          phases={buildGuidedFlowJourneyPhases(null, false, activeRun.status === "executing")}
-          currentPhaseIndex={buildGuidedFlowCurrentPhaseIndex(
-            buildGuidedFlowJourneyPhases(null, false, activeRun.status === "executing"),
-          )}
-        />
-      )}
-
-      {/* Goal grid */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {goalCategories.map((category) => (
-          <GoalCard
-            key={category.id}
-            icon={category.icon}
-            title={category.title}
-            subtitle={category.subtitle}
-            outcome={category.outcome}
-            recommended={category.recommended}
-            onClick={() => handleGoalClick(category)}
-          />
-        ))}
-      </div>
-
-      {/* Show all goals link */}
-      {goalCategories.length < 10 && (
-        <button
-          type="button"
-          onClick={() => {
-            // Show all goals - could navigate to a goals index or expand the grid
-            navigate("/flow/browse");
-          }}
-          className="flex items-center gap-1.5 text-xs font-medium text-white/40 transition hover:text-white/70"
-        >
-          Show all goals
-          <ChevronRight className="h-3 w-3" />
-        </button>
-      )}
-
-      {/* Recent activity */}
-      {recentRuns.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/40">
-              Recent
+    <div className="space-y-5 pb-4">
+      <section
+        data-testid="home-surface-ready"
+        className="rounded-[30px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-5 shadow-[var(--shadow-floating)]"
+      >
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
+              {localize(locale, "任务首页", "Task Home")}
             </p>
-            <Link
-              to="/assistant"
-              className="flex items-center gap-1 text-xs text-white/40 transition hover:text-white/60"
-            >
-              Full dashboard
-              <ArrowRight className="h-3 w-3" />
-            </Link>
+            <h2 className="mt-1 text-2xl font-semibold tracking-tight text-[color:var(--color-text-primary)]">
+              {localize(locale, "继续你现在最该做的事", "Pick up the next thing that matters")}
+            </h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-[color:var(--color-text-secondary)]">
+              {localize(
+                locale,
+                "这里先显示正在进行中的任务、待确认事项，以及你自己固定在首页的行业与任务入口。",
+                "Home stays focused on live work, approvals, and the packs you chose to pin.",
+              )}
+            </p>
           </div>
-          <div className="space-y-2">
-            {recentRuns.slice(0, 3).map((run) => (
-              <RunSummaryCard
-                key={run.id}
-                task={run.task}
-                status={run.status}
-                startedAt={run.startedAt}
-              />
-            ))}
+          <div className="flex flex-wrap gap-2">
+            <ActionButton onClick={() => navigate("/chat")}>
+              <Sparkles className="mr-2 h-4 w-4" />
+              {localize(locale, "开始新任务", "Start A Task")}
+            </ActionButton>
+            <ActionButton tone="secondary" onClick={() => navigate("/packs")}>
+              <ListFilter className="mr-2 h-4 w-4" />
+              {localize(locale, "浏览行业与任务", "Browse Library")}
+            </ActionButton>
           </div>
         </div>
-      )}
+      </section>
 
-      {/* Expert mode link */}
-      <div className="border-t border-white/[0.06] pt-4">
-        <Link
-          to="/assistant"
-          className="flex items-center gap-2 text-xs text-white/30 transition hover:text-white/50"
-        >
-          <Sparkles className="h-3.5 w-3.5" />
-          Switch to full Assistant dashboard (expert mode)
-        </Link>
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+              {localize(locale, "首页模块", "Home Widgets")}
+            </p>
+            <p className="text-xs text-[color:var(--color-text-secondary)]">
+              {localize(locale, "只保留你想看到的状态模块。", "Keep only the modules you want to see.")}
+            </p>
+          </div>
+          <ActionButton tone="secondary" onClick={() => setEditingWidgets((value) => !value)}>
+            {editingWidgets ? localize(locale, "完成调整", "Done") : localize(locale, "编辑模块", "Edit Widgets")}
+          </ActionButton>
+        </div>
+
+        {editingWidgets ? (
+          <ShellCard>
+            <div className="space-y-3">
+              {widgetOrder.map((widgetId) => (
+                <div key={widgetId} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{widgetLabels[widgetId]}</p>
+                    <p className="text-xs text-[color:var(--color-text-secondary)]">{visibleWidgets.includes(widgetId) ? localize(locale, "当前显示在首页", "Visible on home") : localize(locale, "当前隐藏", "Hidden")}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <ActionButton tone="secondary" onClick={() => toggleWidget(widgetId)}>
+                      {visibleWidgets.includes(widgetId) ? localize(locale, "隐藏", "Hide") : localize(locale, "显示", "Show")}
+                    </ActionButton>
+                    <ActionButton tone="secondary" onClick={() => moveWidget(widgetId, "up")}>
+                      {localize(locale, "上移", "Up")}
+                    </ActionButton>
+                    <ActionButton tone="secondary" onClick={() => moveWidget(widgetId, "down")}>
+                      {localize(locale, "下移", "Down")}
+                    </ActionButton>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </ShellCard>
+        ) : null}
+
+        <div className="grid gap-4 lg:grid-cols-3">
+          {renderedWidgets.map((widgetId) => {
+            if (widgetId === "active_now") {
+              return (
+                <ShellCard key={widgetId} title={widgetLabels[widgetId]}>
+                  {activeRuns.length === 0 ? (
+                    <p className="text-sm text-[color:var(--color-text-secondary)]">
+                      {localize(locale, "现在没有正在运行的任务。", "No task is actively running right now.")}
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {activeRuns.slice(0, 3).map((run) => (
+                        <button
+                          key={run.id}
+                          type="button"
+                          onClick={() => navigate("/assistant")}
+                          className="w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-left transition hover:border-[color:var(--color-border-strong)]"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-[color:var(--color-text-primary)]">{run.task}</p>
+                              <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
+                                {summarizeRunContext(run, locale) ?? formatTimestamp(run.startedAt, locale)}
+                              </p>
+                            </div>
+                            <StatusPill tone={toneForRunHealth(run)}>{labelForRunHealth(run, locale)}</StatusPill>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </ShellCard>
+              );
+            }
+
+            if (widgetId === "pending_approvals") {
+              return (
+                <ShellCard key={widgetId} title={widgetLabels[widgetId]}>
+                  {pendingApprovals.length === 0 ? (
+                    <p className="text-sm text-[color:var(--color-text-secondary)]">
+                      {localize(locale, "当前没有需要你确认的自动修复。", "There are no approvals waiting on you right now.")}
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {pendingApprovals.slice(0, 2).map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => navigate("/assistant")}
+                          className="w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-left transition hover:border-[color:var(--color-border-strong)]"
+                        >
+                          <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{item.title}</p>
+                          <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">{item.summary}</p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </ShellCard>
+              );
+            }
+
+            if (widgetId === "scheduled_soon") {
+              return (
+                <ShellCard key={widgetId} title={widgetLabels[widgetId]}>
+                  {scheduledAutomations.length === 0 ? (
+                    <p className="text-sm text-[color:var(--color-text-secondary)]">
+                      {localize(locale, "还没有固定在跑的自动化。", "No recurring automation is pinned into your flow yet.")}
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {scheduledAutomations.map((automation) => (
+                        <button
+                          key={automation.id}
+                          type="button"
+                          onClick={() => navigate("/automations")}
+                          className="w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-left transition hover:border-[color:var(--color-border-strong)]"
+                        >
+                          <div className="flex items-center gap-2 text-xs text-[color:var(--color-text-secondary)]">
+                            <Clock3 className="h-4 w-4 text-[color:var(--color-accent)]" />
+                            <span>{formatAutomationNextRun(automation, locale)}</span>
+                          </div>
+                          <p className="mt-2 text-sm font-medium text-[color:var(--color-text-primary)]">{automation.name}</p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </ShellCard>
+              );
+            }
+
+            if (widgetId === "recent_results") {
+              return (
+                <ShellCard key={widgetId} title={widgetLabels[widgetId]}>
+                  {recentResults.length === 0 ? (
+                    <p className="text-sm text-[color:var(--color-text-secondary)]">
+                      {localize(locale, "还没有最近结果。", "There are no recent results yet.")}
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {recentResults.map((run) => (
+                        <div
+                          key={run.id}
+                          className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="min-w-0 truncate text-sm font-medium text-[color:var(--color-text-primary)]">{run.task}</p>
+                            <StatusPill tone={toneForRunHealth(run)}>{labelForRunHealth(run, locale)}</StatusPill>
+                          </div>
+                          <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
+                            {describeRunHealth(run, locale) || formatTimestamp(run.completedAt ?? run.startedAt, locale)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </ShellCard>
+              );
+            }
+
+            return (
+              <ShellCard key={widgetId} title={widgetLabels[widgetId]}>
+                <div className="space-y-3">
+                  {recommendedPacks.map((pack) => (
+                    <PackCard
+                      key={pack.id}
+                      pack={pack}
+                      compact
+                      note={pack.productCopy ? localize(locale, pack.productCopy.resultSummary.zh, pack.productCopy.resultSummary.en) : undefined}
+                      onOpen={() => setSelectedPackId(pack.id)}
+                      onPin={() => pinPack(pack.id)}
+                    />
+                  ))}
+                </div>
+              </ShellCard>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+              {localize(locale, "首页入口", "Pinned Packs")}
+            </p>
+            <p className="text-xs text-[color:var(--color-text-secondary)]">
+              {localize(locale, "你常用的行业与任务入口会固定在这里。", "Your chosen industry and task packs stay here for quick access.")}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <ActionButton tone="secondary" onClick={() => setEditingPacks((value) => !value)}>
+              {editingPacks ? localize(locale, "完成排序", "Done") : localize(locale, "编辑入口", "Edit Packs")}
+            </ActionButton>
+            <ActionButton tone="secondary" onClick={() => navigate("/packs")}>
+              <Plus className="mr-2 h-4 w-4" />
+              {localize(locale, "加入更多", "Add More")}
+            </ActionButton>
+          </div>
+        </div>
+
+        {pinnedPacks.length === 0 ? (
+          <ShellCard>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">
+              {localize(locale, "首页还没有固定入口，先去行业与任务库挑几个放上来。", "No pack is pinned yet. Open the library and pin a few to home.")}
+            </p>
+          </ShellCard>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            {pinnedPacks.map((pack) => {
+              const runState = findPackRuns(pack, recentRuns);
+              const note = runState.activeRun
+                ? `${localize(locale, "当前任务", "Current run")}: ${runState.activeRun.task}`
+                : runState.recentRun
+                  ? `${localize(locale, "上次处理", "Last activity")}: ${formatTimestamp(runState.recentRun.completedAt ?? runState.recentRun.startedAt, locale)}`
+                  : pack.productCopy
+                    ? localize(locale, pack.productCopy.resultSummary.zh, pack.productCopy.resultSummary.en)
+                    : localize(locale, "还没有开始过这个入口。", "You have not started this pack yet.");
+
+              return (
+                <PackCard
+                  key={pack.id}
+                  pack={pack}
+                  pinned
+                  note={note}
+                  statusLabel={runState.activeRun ? localize(locale, "正在进行", "Live") : runState.recentRun ? localize(locale, "最近记录", "Recent") : undefined}
+                  onOpen={() => setSelectedPackId(pack.id)}
+                  onUnpin={editingPacks ? () => unpinPack(pack.id) : undefined}
+                  onMoveUp={editingPacks ? () => movePack(pack.id, "up") : undefined}
+                  onMoveDown={editingPacks ? () => movePack(pack.id, "down") : undefined}
+                />
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <div className="flex items-center justify-between gap-3 rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-4 shadow-[var(--shadow-floating)]">
+        <div>
+          <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+            {localize(locale, "行业与任务库", "Industry & Tasks Library")}
+          </p>
+          <p className="text-xs text-[color:var(--color-text-secondary)]">
+            {localize(locale, "内置入口不会消失，只会从首页拿下或重新加入。", "Built-in packs always stay in the library and can be pinned again anytime.")}
+          </p>
+        </div>
+        <ActionButton onClick={() => navigate("/packs")}>
+          <Pin className="mr-2 h-4 w-4" />
+          {localize(locale, "管理首页入口", "Manage Home Packs")}
+        </ActionButton>
       </div>
+
+      <PackQuickSheet
+        open={Boolean(selectedPack)}
+        pack={selectedPack}
+        currentRunLabel={selectedPackRunState.activeRun ? formatTimestamp(selectedPackRunState.activeRun.startedAt, locale) : null}
+        continueLabel={selectedPackRunState.recentRun ? formatTimestamp(selectedPackRunState.recentRun.completedAt ?? selectedPackRunState.recentRun.startedAt, locale) : null}
+        onClose={() => setSelectedPackId(null)}
+        onOpenCurrent={selectedPackRunState.activeRun ? () => {
+          setSelectedPackId(null);
+          setPendingPackPath(selectedPack ? buildPackAssistantHref(selectedPack.id) : "/assistant");
+        } : undefined}
+        onContinue={selectedPackRunState.recentRun ? () => {
+          setSelectedPackId(null);
+          if (selectedPack) {
+            setPendingPackPath(buildPackFlowHref(selectedPack));
+          }
+        } : undefined}
+        onStartNow={() => {
+          setSelectedPackId(null);
+          if (selectedPack) {
+            setPendingPackPath(buildPackFlowHref(selectedPack));
+          }
+        }}
+        onAdjustBeforeStart={() => {
+          setSelectedPackId(null);
+          if (selectedPack) {
+            setPendingPackPath(buildPackFlowHref(selectedPack, { mode: "adjust" }));
+          }
+        }}
+        onOpenSkill={(skillId) => {
+          setSelectedPackId(null);
+          setPendingPackPath(buildSkillHref(skillId));
+        }}
+        onAskFriday={(prompt) => {
+          setSelectedPackId(null);
+          if (selectedPack) {
+            setPendingPackPath(buildPackChatHref(selectedPack.id, prompt));
+          }
+        }}
+        onOpenAssistant={selectedPack ? () => {
+          setSelectedPackId(null);
+          setPendingPackPath(buildPackAssistantHref(selectedPack.id));
+        } : undefined}
+        onRemoveFromHome={selectedPack && pinnedPackIds.includes(selectedPack.id) ? () => {
+          unpinPack(selectedPack.id);
+          setSelectedPackId(null);
+        } : undefined}
+      />
     </div>
   );
 }

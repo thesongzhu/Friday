@@ -1,13 +1,42 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, MessageSquarePlus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowRight, MessageSquarePlus, Trash2 } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { ChatMessageBubble } from "@/components/chat/chat-message";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ChatToolActivity } from "@/components/chat/chat-tool-activity";
 import { ChatActionCard, parseActionsFromText } from "@/components/chat/chat-action-card";
+import { ActionButton } from "@/components/core/primitives";
+import { PackAssistantHandoffCard } from "@/components/packs/pack-assistant-handoff-card";
+import { PackQuickSheet } from "@/components/packs/pack-quick-sheet";
+import { useAppNavigate } from "@/hooks/use-app-navigate";
+import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences";
+import { useUserProfile } from "@/hooks/use-user-profile";
+import { localize } from "@/lib/i18n/localized-text";
+import { buildPackAssistantHref, buildPackFlowHref } from "@/lib/packs/pack-links";
+import { getPackById } from "@/lib/packs/pack-registry";
 import { sessionsApi, type SessionUsageResponse } from "@/lib/api/sessions";
+import { buildSkillHref } from "@/lib/skills/view-models";
+import { useAppLocale } from "@/providers/locale-provider";
+
+function formatUsage(sessionUsage: SessionUsageResponse, locale: "zh" | "en"): string {
+  const tokenCount = ((sessionUsage.totalInputTokens + sessionUsage.totalOutputTokens) / 1000).toFixed(1);
+  if (locale === "zh") {
+    return `${tokenCount}K tokens`;
+  }
+  return `${tokenCount}K tokens`;
+}
 
 export function ChatPage() {
+  const navigate = useAppNavigate();
+  const { locale } = useAppLocale();
+  const { profileType } = useUserProfile();
+  const { pinnedPackIds } = useHomeSurfacePreferences(profileType);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const packIdParam = searchParams.get("packId");
+  const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
+  const [pendingPackPath, setPendingPackPath] = useState<string | null>(null);
+  const [draftText, setDraftText] = useState("");
   const {
     messages,
     sessionKey,
@@ -16,34 +45,91 @@ export function ChatPage() {
     isStreaming,
     clearHistory,
     startNewConversation,
-  } = useChatSession();
+  } = useChatSession({ packId: packIdParam });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
+  const lastCompletedMessageIdRef = useRef<string | null>(null);
   const [sessionUsage, setSessionUsage] = useState<SessionUsageResponse | null>(null);
+  const activePack = packIdParam ? getPackById(packIdParam) ?? null : null;
 
-  // Fetch session usage after each completed run
+  useEffect(() => {
+    const prompt = searchParams.get("prompt")?.trim();
+    if (!prompt) {
+      return;
+    }
+    setDraftText(prompt);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("prompt");
+      return next;
+    }, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   useEffect(() => {
     if (!sessionKey) {
       setSessionUsage(null);
       return;
     }
-    sessionsApi.getUsage(sessionKey).then(setSessionUsage).catch(() => { /* non-fatal */ });
+    sessionsApi.getUsage(sessionKey).then(setSessionUsage).catch(() => {});
   }, [messages.length, sessionKey]);
 
-  // Auto-scroll to bottom on new messages or streaming output
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, runEvents.outputText, runEvents.toolCalls.length]);
+    if (!pendingPackPath) {
+      return;
+    }
+    const frameId = window.requestAnimationFrame(() => {
+      navigate(pendingPackPath);
+      setPendingPackPath(null);
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [navigate, pendingPackPath]);
 
-  const handleSend = useCallback(
-    (text: string) => {
-      void sendMessage(text);
-    },
-    [sendMessage],
-  );
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) {
+      return;
+    }
 
-  // Parse actions from the latest streaming text
+    const updateAutoScrollState = () => {
+      const remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
+      shouldAutoScrollRef.current = remaining < 96;
+    };
+
+    updateAutoScrollState();
+    container.addEventListener("scroll", updateAutoScrollState, { passive: true });
+    return () => container.removeEventListener("scroll", updateAutoScrollState);
+  }, []);
+
+  useEffect(() => {
+    const latestMessage = messages[messages.length - 1];
+    if (!latestMessage || latestMessage.role !== "assistant") {
+      return;
+    }
+
+    const isNewCompletedMessage =
+      latestMessage.status === "done"
+      && latestMessage.id !== lastCompletedMessageIdRef.current;
+    if (isNewCompletedMessage) {
+      lastCompletedMessageIdRef.current = latestMessage.id;
+    }
+
+    if (!shouldAutoScrollRef.current && !isNewCompletedMessage) {
+      return;
+    }
+
+    bottomRef.current?.scrollIntoView({
+      behavior: isNewCompletedMessage ? "smooth" : "auto",
+      block: "end",
+    });
+  }, [messages, runEvents.progress.phase]);
+
+  const handleSend = useCallback((text: string) => {
+    setDraftText("");
+    void sendMessage(text);
+  }, [sendMessage]);
+
   const latestAssistantMsg = messages.length > 0
     ? messages[messages.length - 1]
     : undefined;
@@ -54,60 +140,103 @@ export function ChatPage() {
     ? parseActionsFromText(streamingContent)
     : { actions: [] };
 
-  return (
-    <div className="flex h-full min-h-[calc(100vh-8rem)] flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-white/10 px-1 pb-3">
-        <div>
-          <h2 className="text-lg font-semibold text-white">Chat with Friday</h2>
-          <p className="text-xs text-white/40">Ask anything or tell Friday what to do</p>
-        </div>
-        {messages.length > 0 && (
-          <div className="flex items-center gap-2">
-            {sessionUsage && sessionUsage.totalRuns > 0 && (
-              <span className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/40" title={`Input: ${sessionUsage.totalInputTokens.toLocaleString()} · Output: ${sessionUsage.totalOutputTokens.toLocaleString()}`}>
-                <Activity className="h-3 w-3" />
-                {((sessionUsage.totalInputTokens + sessionUsage.totalOutputTokens) / 1000).toFixed(1)}K tokens
-                {sessionUsage.totalCostUsd > 0 && ` · $${sessionUsage.totalCostUsd.toFixed(3)}`}
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={startNewConversation}
-              className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/50 transition-colors hover:border-emerald-400/30 hover:text-emerald-300"
-            >
-              <MessageSquarePlus className="h-3 w-3" />
-              New conversation
-            </button>
-            <button
-              type="button"
-              onClick={clearHistory}
-              className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/50 transition-colors hover:border-rose-400/30 hover:text-rose-300"
-            >
-              <Trash2 className="h-3 w-3" />
-              Clear all
-            </button>
-          </div>
-        )}
-      </div>
+  const pinnedPacks = useMemo(
+    () => pinnedPackIds
+      .map((packId) => getPackById(packId))
+      .filter((pack): pack is NonNullable<ReturnType<typeof getPackById>> => Boolean(pack))
+      .slice(0, 4),
+    [pinnedPackIds],
+  );
+  const selectedPack = selectedPackId ? getPackById(selectedPackId) ?? null : null;
 
-      {/* Messages area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto py-4">
-        {messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-400/10 text-2xl font-bold text-emerald-300">
-              F
-            </div>
-            <h3 className="text-xl font-semibold text-white">Hi, I'm Friday</h3>
-            <p className="max-w-md text-sm leading-relaxed text-white/50">
-              Your AI automation assistant. Ask me anything, or tell me what you'd like to automate.
-              I can create workflows, install skills, monitor systems, and more.
+  return (
+    <div className="flex min-h-[calc(100vh-10rem)] flex-col gap-4">
+      <section className="rounded-[30px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-5 shadow-[var(--shadow-floating)]">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
+              {localize(locale, "聊天入口", "Chat")}
+            </p>
+            <h2 className="mt-1 text-2xl font-semibold tracking-tight text-[color:var(--color-text-primary)]">
+              {localize(locale, "最快开始一个新任务", "Start a task in one message")}
+            </h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-[color:var(--color-text-secondary)]">
+              {localize(
+                locale,
+                "直接说你要完成什么。需要结构化入口时，再点下面这些固定的行业与任务包。",
+                "Tell Friday what you need. Use the pinned packs below when you want a more guided starting point.",
+              )}
             </p>
           </div>
+          {messages.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {sessionUsage && sessionUsage.totalRuns > 0 ? (
+                <span className="inline-flex min-h-[44px] items-center rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-3 text-sm text-[color:var(--color-text-secondary)]">
+                  {formatUsage(sessionUsage, locale)}
+                </span>
+              ) : null}
+              <ActionButton tone="secondary" onClick={startNewConversation}>
+                <MessageSquarePlus className="mr-2 h-4 w-4" />
+                {localize(locale, "新对话", "New Conversation")}
+              </ActionButton>
+              <ActionButton tone="secondary" onClick={clearHistory}>
+                <Trash2 className="mr-2 h-4 w-4" />
+                {localize(locale, "清空", "Clear")}
+              </ActionButton>
+            </div>
+          ) : null}
+        </div>
+
+        {pinnedPacks.length > 0 ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {pinnedPacks.map((pack) => (
+              <button
+                key={pack.id}
+                type="button"
+                onClick={() => setSelectedPackId(pack.id)}
+                className="inline-flex min-h-[44px] items-center rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 text-sm text-[color:var(--color-text-primary)] transition hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-bg-surface-strong)]"
+              >
+                {pack.icon ? <pack.icon className="mr-2 h-4 w-4 text-[color:var(--color-accent)]" /> : null}
+                {locale === "zh" ? pack.title.zh : pack.title.en}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      {activePack?.productCopy ? (
+        <PackAssistantHandoffCard
+          pack={activePack}
+          compact
+          onUsePrompt={(prompt) => setDraftText(prompt.prompt[locale])}
+          onOpenAssistant={() => navigate(buildPackAssistantHref(activePack.id))}
+        />
+      ) : null}
+
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        {messages.length === 0 ? (
+          <div className="flex h-full min-h-[360px] flex-col justify-center rounded-[30px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-6 py-6 text-center shadow-[var(--shadow-floating)]">
+            <p className="mx-auto max-w-2xl text-base leading-7 text-[color:var(--color-text-secondary)]">
+              {localize(
+                locale,
+                "例如：帮我整理这周要推进的事情；把这份材料变成周会摘要；看看这个问题现在应该先处理哪一步。",
+                "For example: organize what I should push this week; turn these notes into a weekly summary; tell me what to do next about this issue.",
+              )}
+            </p>
+            <div className="mt-5 flex justify-center">
+              <button
+                type="button"
+                onClick={() => navigate("/packs")}
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-full text-sm font-medium text-[color:var(--color-text-secondary)] transition hover:text-[color:var(--color-text-primary)]"
+              >
+                {localize(locale, "打开行业与任务库", "Open Industry & Tasks")}
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-4 py-1">
             {messages.map((msg) => {
-              // For completed assistant messages, check for action cards
               const { cleanText, actions } = msg.role === "assistant" && msg.status === "done" && msg.content
                 ? parseActionsFromText(msg.content)
                 : { cleanText: msg.content, actions: [] };
@@ -124,38 +253,69 @@ export function ChatPage() {
                         : undefined
                     }
                   />
-                  {actions.length > 0 && (
-                    <ChatActionCard actions={actions} />
-                  )}
+                  {actions.length > 0 ? <ChatActionCard actions={actions} /> : null}
                 </div>
               );
             })}
 
-            {/* Show tool activity during streaming */}
-            {isStreaming && runEvents.toolCalls.length > 0 && (
+            {isStreaming && runEvents.toolCalls.length > 0 ? (
               <ChatToolActivity
                 toolCalls={runEvents.toolCalls}
                 activeTool={runEvents.progress.activeTool}
               />
-            )}
+            ) : null}
 
-            {/* Show streaming actions as they appear */}
-            {isStreaming && streamingActions.length > 0 && (
-              <ChatActionCard actions={streamingActions} />
-            )}
+            {isStreaming && streamingActions.length > 0 ? <ChatActionCard actions={streamingActions} /> : null}
           </div>
         )}
         <div ref={bottomRef} />
       </div>
 
-      {/* Input area */}
-      <div className="border-t border-white/10 pt-3">
-        <ChatInput
-          onSend={handleSend}
-          disabled={isStreaming}
-          placeholder={isStreaming ? "Friday is thinking..." : undefined}
-        />
-      </div>
+      <ChatInput
+        onSend={handleSend}
+        disabled={isStreaming}
+        autoFocus
+        value={draftText}
+        onValueChange={setDraftText}
+        placeholder={isStreaming ? localize(locale, "Friday 正在处理…", "Friday is working…") : undefined}
+      />
+
+      <PackQuickSheet
+        open={Boolean(selectedPack)}
+        pack={selectedPack}
+        onClose={() => setSelectedPackId(null)}
+        onStartNow={() => {
+          setSelectedPackId(null);
+          if (selectedPack) {
+            setPendingPackPath(buildPackFlowHref(selectedPack));
+          }
+        }}
+        onAdjustBeforeStart={() => {
+          setSelectedPackId(null);
+          if (selectedPack) {
+            setPendingPackPath(buildPackFlowHref(selectedPack, { mode: "adjust" }));
+          }
+        }}
+        onOpenSkill={(skillId) => {
+          setSelectedPackId(null);
+          navigate(buildSkillHref(skillId));
+        }}
+        onAskFriday={(prompt) => {
+          if (selectedPack) {
+            setSearchParams((prev) => {
+              const next = new URLSearchParams(prev);
+              next.set("packId", selectedPack.id);
+              return next;
+            }, { replace: true });
+          }
+          setSelectedPackId(null);
+          setDraftText(prompt);
+        }}
+        onOpenAssistant={selectedPack ? () => {
+          setSelectedPackId(null);
+          setPendingPackPath(buildPackAssistantHref(selectedPack.id));
+        } : undefined}
+      />
     </div>
   );
 }

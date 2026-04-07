@@ -1,0 +1,157 @@
+import { useEffect, useMemo, useState } from "react";
+import { ActionButton, ShellCard } from "@/components/core/primitives";
+import { PackCard } from "@/components/packs/pack-card";
+import { PackQuickSheet } from "@/components/packs/pack-quick-sheet";
+import { useAppNavigate } from "@/hooks/use-app-navigate";
+import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences";
+import { useUserProfile } from "@/hooks/use-user-profile";
+import { localize } from "@/lib/i18n/localized-text";
+import { buildPackAssistantHref, buildPackChatHref, buildPackFlowHref } from "@/lib/packs/pack-links";
+import { getPackById, listPacksByKind } from "@/lib/packs/pack-registry";
+import { buildSkillHref } from "@/lib/skills/view-models";
+import { useAppLocale } from "@/providers/locale-provider";
+
+export function PacksPage() {
+  const navigate = useAppNavigate();
+  const { locale } = useAppLocale();
+  const { profileType } = useUserProfile();
+  const { pinnedPackIds, pinPack, unpinPack } = useHomeSurfacePreferences(profileType);
+  const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
+  const [pendingPackPath, setPendingPackPath] = useState<string | null>(null);
+  const [renderTaskSection, setRenderTaskSection] = useState(false);
+
+  const industries = useMemo(() => listPacksByKind("industry"), []);
+  const tasks = useMemo(() => listPacksByKind("task"), []);
+  const selectedPack = selectedPackId ? getPackById(selectedPackId) ?? null : null;
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      setRenderTaskSection(true);
+      return;
+    }
+    const browserWindow = window as Window & typeof globalThis & {
+      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (typeof browserWindow.requestIdleCallback === "function") {
+      const idleId = browserWindow.requestIdleCallback(() => setRenderTaskSection(true), { timeout: 180 });
+      return () => browserWindow.cancelIdleCallback?.(idleId);
+    }
+    const timeoutId = browserWindow.setTimeout(() => setRenderTaskSection(true), 120);
+    return () => browserWindow.clearTimeout(timeoutId);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingPackPath) {
+      return;
+    }
+    const frameId = window.requestAnimationFrame(() => {
+      navigate(pendingPackPath);
+      setPendingPackPath(null);
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [navigate, pendingPackPath]);
+
+  return (
+    <div className="space-y-5 pb-4">
+      <section
+        data-testid="packs-surface-ready"
+        className="rounded-[30px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-5 shadow-[var(--shadow-floating)]"
+      >
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
+          {localize(locale, "行业与任务库", "Industry & Tasks")}
+        </p>
+        <h2 className="mt-1 text-2xl font-semibold tracking-tight text-[color:var(--color-text-primary)]">
+          {localize(locale, "把常用入口加入首页，不用每次重新找", "Pin the entries you want on home")}
+        </h2>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-[color:var(--color-text-secondary)]">
+          {localize(
+            locale,
+            "Friday 自带的行业包和任务入口都保留在这里。你可以加入首页、拿下首页，或者直接从这里开始。",
+            "Built-in industry packs and task entries always live here. Pin them to home, remove them from home, or launch directly.",
+          )}
+        </p>
+      </section>
+
+      <ShellCard title={localize(locale, "行业包", "Industries")}>
+        <div className="grid gap-4 md:grid-cols-2">
+          {industries.map((pack) => (
+            <PackCard
+              key={pack.id}
+              pack={pack}
+              pinned={pinnedPackIds.includes(pack.id)}
+              note={pinnedPackIds.includes(pack.id)
+                ? localize(locale, "这个入口已经固定在首页。", "This pack is already pinned to home.")
+                : pack.productCopy
+                  ? localize(locale, pack.productCopy.resultSummary.zh, pack.productCopy.resultSummary.en)
+                  : localize(locale, "可以直接加入首页，或者先打开动作。", "You can pin this pack to home or open its actions first.")}
+              onOpen={() => setSelectedPackId(pack.id)}
+              onPin={!pinnedPackIds.includes(pack.id) ? () => pinPack(pack.id) : undefined}
+              onUnpin={pinnedPackIds.includes(pack.id) ? () => unpinPack(pack.id) : undefined}
+            />
+          ))}
+        </div>
+      </ShellCard>
+
+      {renderTaskSection ? (
+        <ShellCard title={localize(locale, "任务入口", "Tasks")}>
+          <div className="grid gap-4 md:grid-cols-2">
+            {tasks.map((pack) => (
+              <PackCard
+                key={pack.id}
+                pack={pack}
+                pinned={pinnedPackIds.includes(pack.id)}
+                compact
+                onOpen={() => setSelectedPackId(pack.id)}
+                onPin={!pinnedPackIds.includes(pack.id) ? () => pinPack(pack.id) : undefined}
+                onUnpin={pinnedPackIds.includes(pack.id) ? () => unpinPack(pack.id) : undefined}
+              />
+            ))}
+          </div>
+        </ShellCard>
+      ) : (
+        <ShellCard title={localize(locale, "任务入口", "Tasks")}>
+          <div className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-4 text-sm text-[color:var(--color-text-secondary)]">
+            {localize(locale, "正在加载更多入口。", "Loading more entries.")}
+          </div>
+        </ShellCard>
+      )}
+
+      <PackQuickSheet
+        open={Boolean(selectedPack)}
+        pack={selectedPack}
+        onClose={() => setSelectedPackId(null)}
+        onStartNow={() => {
+          setSelectedPackId(null);
+          if (selectedPack) {
+            setPendingPackPath(buildPackFlowHref(selectedPack));
+          }
+        }}
+        onAdjustBeforeStart={() => {
+          setSelectedPackId(null);
+          if (selectedPack) {
+            setPendingPackPath(buildPackFlowHref(selectedPack, { mode: "adjust" }));
+          }
+        }}
+        onOpenSkill={(skillId) => {
+          setSelectedPackId(null);
+          setPendingPackPath(buildSkillHref(skillId));
+        }}
+        onAskFriday={(prompt) => {
+          setSelectedPackId(null);
+          if (selectedPack) {
+            setPendingPackPath(buildPackChatHref(selectedPack.id, prompt));
+          }
+        }}
+        onOpenAssistant={selectedPack ? () => {
+          setSelectedPackId(null);
+          setPendingPackPath(buildPackAssistantHref(selectedPack.id));
+        } : undefined}
+        onRemoveFromHome={selectedPack && pinnedPackIds.includes(selectedPack.id) ? () => {
+          unpinPack(selectedPack.id);
+          setSelectedPackId(null);
+        } : undefined}
+      />
+    </div>
+  );
+}
