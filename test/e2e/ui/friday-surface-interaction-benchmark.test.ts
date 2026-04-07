@@ -77,7 +77,7 @@ function median(values: number[]): number {
 }
 
 async function measureRailNavigation(input: {
-  pageHandle: FridayBrowserPageHandle;
+  env: FridayBrowserE2eEnv;
   startPath: string;
   startReadyTestId: string;
   clickHref: string;
@@ -87,25 +87,29 @@ async function measureRailNavigation(input: {
   surface: NavBenchmarkResult["surface"];
 }): Promise<NavBenchmarkResult> {
   const samplesMs: number[] = [];
-
   for (let index = 0; index < input.samples; index += 1) {
-    await input.pageHandle.page.goto(input.startPath);
-    await waitForTestId(input.pageHandle, input.startReadyTestId);
-    const navigationCountBefore = await input.pageHandle.page.evaluate(
-      () => window.performance.getEntriesByType("navigation").length,
-    );
+    const pageHandle = await input.env.newPage();
+    try {
+      await pageHandle.page.goto(input.startPath);
+      await waitForTestId(pageHandle, input.startReadyTestId);
+      const navigationCountBefore = await pageHandle.page.evaluate(
+        () => window.performance.getEntriesByType("navigation").length,
+      );
 
-    const startedAt = performance.now();
-    await clickRailLink(input.pageHandle, input.clickHref);
-    await input.pageHandle.page.waitForURL(`**${input.expectedPath}`);
-    await waitForTestId(input.pageHandle, input.readyTestId);
-    const elapsedMs = performance.now() - startedAt;
-    const navigationCountAfter = await input.pageHandle.page.evaluate(
-      () => window.performance.getEntriesByType("navigation").length,
-    );
+      const startedAt = performance.now();
+      await clickRailLink(pageHandle, input.clickHref);
+      await pageHandle.page.waitForURL(`**${input.expectedPath}`);
+      await waitForTestId(pageHandle, input.readyTestId);
+      const elapsedMs = performance.now() - startedAt;
+      const navigationCountAfter = await pageHandle.page.evaluate(
+        () => window.performance.getEntriesByType("navigation").length,
+      );
 
-    expect(navigationCountAfter).toBe(navigationCountBefore);
-    samplesMs.push(elapsedMs);
+      expect(navigationCountAfter).toBe(navigationCountBefore);
+      samplesMs.push(elapsedMs);
+    } finally {
+      await pageHandle.close();
+    }
   }
 
   return {
@@ -301,10 +305,8 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday UI surface interaction benchmark", 
 
   it("records repeatable navigation timings for home, packs, assistant, and workflow builder", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
     env = await createFridayBrowserE2eEnv();
-    pageHandle = await env.newPage();
-
     const homeResult = await measureRailNavigation({
-      pageHandle,
+      env,
       startPath: "/packs",
       startReadyTestId: "packs-surface-ready",
       clickHref: "/home",
@@ -314,7 +316,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday UI surface interaction benchmark", 
       surface: "home",
     });
     const packsResult = await measureRailNavigation({
-      pageHandle,
+      env,
       startPath: "/home",
       startReadyTestId: "home-surface-ready",
       clickHref: "/packs",
@@ -324,7 +326,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday UI surface interaction benchmark", 
       surface: "packs",
     });
     const assistantResult = await measureRailNavigation({
-      pageHandle,
+      env,
       startPath: "/home",
       startReadyTestId: "home-surface-ready",
       clickHref: "/assistant",
@@ -333,6 +335,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday UI surface interaction benchmark", 
       samples: NAVIGATION_SAMPLES,
       surface: "assistant",
     });
+    pageHandle = await env.newPage();
     const builderResult = await measureBuilderNavigation({
       env,
       pageHandle,

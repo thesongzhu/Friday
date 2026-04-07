@@ -250,14 +250,16 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
       await waitForTestId(pageHandle, "pack-card-industry-creator-media");
     }
 
+    await waitForTestId(pageHandle, "packs-surface-ready");
+
     const finalState = await pageHandle.page.evaluate(() => ({
       navigationCount: performance.getEntriesByType("navigation").length,
-      rootChildren: document.getElementById("root")?.childElementCount ?? 0,
+      readyMarkerVisible: Boolean(document.querySelector('[data-testid="packs-surface-ready"]')),
       textLength: document.body.textContent?.trim().length ?? 0,
     }));
 
     expect(finalState.navigationCount).toBe(navigationCountBefore);
-    expect(finalState.rootChildren).toBeGreaterThan(0);
+    expect(finalState.readyMarkerVisible).toBe(true);
     expect(finalState.textLength).toBeGreaterThan(100);
   });
 
