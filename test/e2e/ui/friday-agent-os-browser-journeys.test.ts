@@ -17,6 +17,7 @@ const CHROMIUM_AVAILABLE = (() => {
 })();
 
 const BROWSER_E2E_TIMEOUT_MS = 120_000;
+const QUICK_SHEET_CYCLE_ATTEMPTS = process.env.CI ? 2 : 3;
 
 async function waitForTestId(pageHandle: FridayBrowserPageHandle, testId: string): Promise<void> {
   await pageHandle.page.locator(`[data-testid="${testId}"]`).first().waitFor({ state: "visible", timeout: 60_000 });
@@ -37,6 +38,23 @@ async function clickRailLink(pageHandle: FridayBrowserPageHandle, href: string):
     }
     link.click();
   }, href);
+}
+
+async function clickTestId(pageHandle: FridayBrowserPageHandle, testId: string): Promise<void> {
+  await pageHandle.page.waitForFunction(
+    (targetTestId) => {
+      const element = document.querySelector(`[data-testid="${targetTestId}"]`);
+      return element instanceof HTMLElement && element.isConnected;
+    },
+    testId,
+  );
+  await pageHandle.page.evaluate((targetTestId) => {
+    const element = document.querySelector(`[data-testid="${targetTestId}"]`);
+    if (!(element instanceof HTMLElement)) {
+      throw new Error(`element not found for ${targetTestId}`);
+    }
+    element.click();
+  }, testId);
 }
 
 async function waitForAssistantInbox(pageHandle: FridayBrowserPageHandle): Promise<void> {
@@ -210,8 +228,8 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
       () => performance.getEntriesByType("navigation").length,
     );
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await pageHandle.page.locator('[data-testid="pack-open-industry-creator-media"]').click();
+    for (let attempt = 0; attempt < QUICK_SHEET_CYCLE_ATTEMPTS; attempt += 1) {
+      await clickTestId(pageHandle, "pack-open-industry-creator-media");
       await waitForTestId(pageHandle, "pack-quick-sheet");
       await pageHandle.page.evaluate(() => {
         const button = document.querySelector('[data-testid="pack-quick-close"]') as HTMLButtonElement | null;

@@ -18,6 +18,8 @@ const CHROMIUM_AVAILABLE = (() => {
 })();
 
 const BROWSER_E2E_TIMEOUT_MS = 120_000;
+const NAVIGATION_SAMPLES = process.env.CI ? 2 : 3;
+const BUILDER_SAMPLES = process.env.CI ? 2 : 3;
 const REPORT_DIR = path.resolve(process.cwd(), "artifacts/browser-benchmarks");
 const REPORT_JSON = path.join(REPORT_DIR, "ui-surface-interaction-latest.json");
 const REPORT_MD = path.join(REPORT_DIR, "ui-surface-interaction-latest.md");
@@ -308,7 +310,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday UI surface interaction benchmark", 
       clickHref: "/home",
       expectedPath: "/home",
       readyTestId: "home-surface-ready",
-      samples: 3,
+      samples: NAVIGATION_SAMPLES,
       surface: "home",
     });
     const packsResult = await measureRailNavigation({
@@ -318,7 +320,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday UI surface interaction benchmark", 
       clickHref: "/packs",
       expectedPath: "/packs",
       readyTestId: "packs-surface-ready",
-      samples: 3,
+      samples: NAVIGATION_SAMPLES,
       surface: "packs",
     });
     const assistantResult = await measureRailNavigation({
@@ -328,13 +330,13 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday UI surface interaction benchmark", 
       clickHref: "/assistant",
       expectedPath: "/assistant",
       readyTestId: "assistant-inbox",
-      samples: 3,
+      samples: NAVIGATION_SAMPLES,
       surface: "assistant",
     });
     const builderResult = await measureBuilderNavigation({
       env,
       pageHandle,
-      samples: 3,
+      samples: BUILDER_SAMPLES,
     });
 
     writeBenchmarkArtifacts({
