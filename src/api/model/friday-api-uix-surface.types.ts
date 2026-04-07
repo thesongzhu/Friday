@@ -2,12 +2,18 @@ import type { FridayIssueCard } from "./friday-api-self-healing.types.js";
 import type { FridayAssistantWorkflowCard } from "./friday-api-workflow.types.js";
 import type { FridayTemplateHarnessSummary } from "#harness";
 import type {
+  FridayAgentAutomationRecord,
   FridayAgentContextCostSummary,
   FridayAgentPreprocessorKind,
+  FridayAgentRunRecord,
   FridayAgentRunStatus,
   FridayMcpServerState,
   FridayResolvedAgentTaskProfile,
 } from "#agent";
+import type {
+  FridayAlertSeverity,
+  FridayObservabilityModule,
+} from "../../observability/model/friday-observability.types.js";
 
 export interface FridayBeginnerIntentResolution {
   intent:
@@ -158,6 +164,9 @@ export interface FridayUixAssistantDiagnosticsRun {
   completedAt?: string;
   contextCostSummary?: FridayAgentContextCostSummary;
   taskProfile?: FridayResolvedAgentTaskProfile;
+  health?: FridayAgentRunRecord["health"];
+  contextSummary?: FridayAgentRunRecord["contextSummary"];
+  rollbackAvailable?: boolean;
 }
 
 export interface FridayUixAssistantDiagnostics {
@@ -170,4 +179,53 @@ export interface FridayUixAssistantDiagnostics {
 
 export interface FridayUixDiagnosticsResponse {
   assistant: FridayUixAssistantDiagnostics;
+}
+
+export interface FridayUixApprovalSummary {
+  id: string;
+  title: string;
+  summary: string;
+  createdAt: string;
+  actionId?: string;
+  approvalRequestId?: string;
+  severity?: string;
+}
+
+export interface FridayUixAlertSummary {
+  id: string;
+  title: string;
+  summary: string;
+  severity: FridayAlertSeverity;
+  module: FridayObservabilityModule;
+  detectedAt: string;
+}
+
+export interface FridayUixScheduledAutomationSummary {
+  id: string;
+  name: string;
+  enabled: boolean;
+  schedule?: FridayAgentAutomationRecord["schedule"];
+  nextRunAt: string | null;
+}
+
+export interface FridayUixHomeSnapshot {
+  generatedAt: string;
+  runs: FridayAgentRunRecord[];
+  pendingApprovals: FridayUixApprovalSummary[];
+  scheduledAutomations: FridayUixScheduledAutomationSummary[];
+}
+
+export interface FridayUixHomeSnapshotResponse {
+  snapshot: FridayUixHomeSnapshot;
+}
+
+export interface FridayUixAssistantInboxSnapshot {
+  generatedAt: string;
+  approvals: FridayUixApprovalSummary[];
+  alerts: FridayUixAlertSummary[];
+  recentRuns: FridayAgentRunRecord[];
+}
+
+export interface FridayUixAssistantInboxSnapshotResponse {
+  snapshot: FridayUixAssistantInboxSnapshot;
 }
