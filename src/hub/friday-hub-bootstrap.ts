@@ -3893,6 +3893,7 @@ export async function createFridayHub(
     agentLoop: { service: agentLoopService },
     observability: observabilityService.routes,
     observabilityService,
+    channels: { registry: channelRegistry },
     system: systemRouteDeps,
     uix: {
       service: uixService,

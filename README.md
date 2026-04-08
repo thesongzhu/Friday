@@ -35,6 +35,9 @@ For everything beyond the main product overview, use the [Documentation Hub](doc
 - **Workflow realtime events**: buffered event publishing enables live workflow progress tracking via SSE/WebSocket.
 - **Setup diagnostics**: user-friendly error messages and remediation hints for setup/auth failures in UI.
 - **Provider templates and lane health**: setup/settings now consume `/v1/providers/templates*` and `/v1/providers/health` for template-driven bootstrap, lane visibility, fallback/circuit state, and operator guidance.
+- **Skill preflight verdicts**: `/v1/skills/:skillId/verify` now returns grouped blocking/warning/advisory preflight checks across manifest, integrity, requirements, permissions, runtime dry-run, and trust.
+- **Capability management surfaces**: settings now expose MCP server load state plus channel supervisor health from `/v1/uix/diagnostics` and `/v1/channels*`, including credential status, restart counts, allowlists, and curated skill hints.
+- **Repo guard rails**: merge readiness now includes dedicated `check:architecture-boundaries`, `check:security-doctor`, and `check:audit-integrity` guards alongside provider and desktop pipeline checks.
 - **Non-cloud runtime stabilization**: graceful degradation for companion, providers, memory, sessions, skills, and UI mount failures.
 - **Rules audit canonicalization**: migration v059 unifies rule evaluation logs into canonical audit table.
 - **Release preflight and Docker E2E**: layered Docker smoke tests, release preflight checks, and cloud contract verification.
@@ -135,6 +138,7 @@ Detailed boundary docs:
 - **Declarative Public Marketplace** — Public marketplace assets are moving to a declarative-first model with explicit permission previews, signature/hash checks, and framework-owned execution instead of arbitrary executable packages.
 - **Agent Tools (21+)** — Browser, desktop control, file I/O, exec, image analysis, TTS, canvas, cron, MCP bridge, web fetch, sub-agents, and more.
 - **Channels (10 platforms)** — Discord, Slack, Telegram, WhatsApp, Signal, LINE, IRC, QQ, Lark/Feishu, Webchat. See [Channel Bridges](#channel-bridges) below.
+- **Capability Management UI** — Settings now shows capability gates, MCP server states, provider lanes, and channel supervisor health in one operator surface instead of splitting that truth across logs and hidden diagnostics.
 - **Browser Automation** — Headless Playwright tool (see [Browser Automation](#browser-automation) below).
 - **XHS Automation** — `xhs` tool for Xiaohongshu (see [XHS Automation](#xhs-automation) below).
 - **Skill Generator** — AI-generated skills from natural-language descriptions with validation, explicit self-test, evidence, and save flow.
@@ -250,6 +254,10 @@ The current native desktop packaging flow is available on macOS:
 - `DMG` and `zip` release artifacts from `bash scripts/ops/build-friday-companion-dmg.sh`
 - release record from `bash scripts/ops/release-friday-companion-app.sh`
 - release manifest from `node scripts/ops/write-friday-release-manifest.mjs`
+- release pipeline completeness gate from `npm run check:desktop-release-pipeline`
+- architecture boundary gate from `npm run check:architecture-boundaries`
+- security doctor gate from `npm run check:security-doctor`
+- audit integrity gate from `npm run check:audit-integrity`
 
 Required release channels for the current milestone:
 

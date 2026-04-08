@@ -58,6 +58,13 @@ export function summarizeSkillVerification(detail?: SkillLifecycleDetail | null)
   if (!evidence) {
     return "No verification evidence yet. Friday can validate the manifest, package integrity, runtime dry-run, and trust state.";
   }
+  const preflight = evidence.preflight;
+  if (preflight?.verdict === "blocked") {
+    return "Preflight found blocking issues across manifest, runtime, integrity, or trust checks.";
+  }
+  if (preflight?.verdict === "needs_review") {
+    return "Preflight passed the hard blockers, but operator review is still needed before wider rollout.";
+  }
   if (evidence.ok) {
     return "Verification passed across manifest validation, runtime dry-run, package integrity, and trust checks.";
   }

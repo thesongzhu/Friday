@@ -69,6 +69,7 @@ import { createFridaySubagentRoutes } from "../http/routes/friday-subagent-route
 import { createFridaySetupRoutes } from "../http/routes/friday-setup-routes.js";
 import { createFridaySkillRoutes } from "../http/routes/friday-skill-routes.js";
 import { createFridayDesktopRoutes } from "../http/routes/friday-desktop-routes.js";
+import { createFridayChannelRoutes } from "../http/routes/friday-channel-routes.js";
 import { createFridaySystemRoutes } from "../http/routes/friday-system-routes.js";
 import { createFridayUixRoutes } from "../http/routes/friday-uix-routes.js";
 import { createFridayDiscoveryRoutes } from "../http/routes/friday-discovery-routes.js";
@@ -1372,6 +1373,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // Register desktop runtime routes (optional)
   if (deps.desktop) {
     for (const route of createFridayDesktopRoutes(deps.desktop)) {
+      routes.register(route);
+    }
+  }
+
+  if (deps.channels) {
+    for (const route of createFridayChannelRoutes(deps.channels)) {
       routes.register(route);
     }
   }

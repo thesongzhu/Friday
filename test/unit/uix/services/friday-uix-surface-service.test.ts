@@ -157,6 +157,76 @@ describe("createFridayUixSurfaceService", () => {
     ]);
   });
 
+  it("persists canonical surface and locale preferences for task-first navigation", () => {
+    const persistence = createPreferencePersistenceHarness();
+    const service = createFridayUixSurfaceService({
+      db: persistence.db as never,
+      preferenceRepo: persistence.preferenceRepo as never,
+      idGenerator: (() => {
+        let counter = 0;
+        return () => `pref-nav-${++counter}`;
+      })(),
+      nowIso: () => "2026-04-08T17:00:00.000Z",
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+    });
+
+    const result = service.updatePreferences({
+      userId: "user-1",
+      request: {
+        preferences: [
+          { category: "uix", key: "display.locale", value: "zh" },
+          { category: "uix", key: "navigation.lastPrimarySurface", value: "assistant" },
+          { category: "uix", key: "home.pinnedPackIds", value: ["industry-creator-media"] },
+          { category: "uix", key: "home.packOrder", value: ["industry-creator-media"] },
+          { category: "uix", key: "home.widgetOrder", value: ["active_now", "pending_approvals", "recent_results"] },
+          { category: "uix", key: "home.visibleWidgets", value: ["active_now", "pending_approvals"] },
+        ],
+      },
+    });
+
+    expect(result.created).toBe(6);
+    expect(result.updated).toBe(0);
+    expect(service.listPreferences({ userId: "user-1", category: "uix" }).items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "uix", key: "display.locale", value: "zh" }),
+        expect.objectContaining({ category: "uix", key: "navigation.lastPrimarySurface", value: "assistant" }),
+        expect.objectContaining({ category: "uix", key: "home.pinnedPackIds", value: ["industry-creator-media"] }),
+        expect.objectContaining({ category: "uix", key: "home.packOrder", value: ["industry-creator-media"] }),
+        expect.objectContaining({
+          category: "uix",
+          key: "home.widgetOrder",
+          value: ["active_now", "pending_approvals", "recent_results"],
+        }),
+        expect.objectContaining({ category: "uix", key: "home.visibleWidgets", value: ["active_now", "pending_approvals"] }),
+      ]),
+    );
+  });
+
+  it("rejects unknown widget identifiers in persisted home preferences", () => {
+    const persistence = createPreferencePersistenceHarness();
+    const service = createFridayUixSurfaceService({
+      db: persistence.db as never,
+      preferenceRepo: persistence.preferenceRepo as never,
+      idGenerator: () => "pref-invalid-1",
+      nowIso: () => "2026-04-08T17:00:00.000Z",
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+    });
+
+    expect(() =>
+      service.updatePreferences({
+        userId: "user-1",
+        request: {
+          preferences: [
+            { category: "uix", key: "home.widgetOrder", value: ["active_now", "unknown_widget"] },
+          ],
+        },
+      })).toThrowError(FridayDomainError);
+  });
+
   it("writes harness focus for wizard clarification continuations", async () => {
     const sessionService = {
       getOrCreateSession: vi.fn(async () => ({ key: "ui:assistant:assistant-shell" })),

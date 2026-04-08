@@ -8,6 +8,7 @@ import type {
   CreateFridayApiRuntimeDeps,
   FridayAuthPrincipal,
   FridayDesktopRoutesDeps,
+  FridayChannelRoutesDeps,
   FridayDiagnosisRoutesDeps,
   FridayDiscoveryRoutesDeps,
   FridayMcpServerRoutesDeps,
@@ -143,6 +144,7 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(operationIds.some((id) => id.startsWith("config."))).toBe(false);
     expect(operationIds).not.toContain("audit.logs.list");
     expect(operationIds.some((id) => id.startsWith("desktop."))).toBe(false);
+    expect(operationIds.some((id) => id.startsWith("channels."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("system."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("discovery."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("mcp.server."))).toBe(false);
@@ -161,6 +163,12 @@ describe("API Runtime — Extended Route Registration", () => {
       multiTenantSecurity: {} as FridayMultiTenantSecurityRoutesDeps,
       observability: {} as FridayObservabilityRoutesDeps,
       desktop: {} as FridayDesktopRoutesDeps,
+      channels: {
+        registry: {
+          listViews: vi.fn(() => []),
+          describe: vi.fn(() => undefined),
+        },
+      } as unknown as FridayChannelRoutesDeps,
       system: {} as FridaySystemRoutesDeps,
       discovery: {} as FridayDiscoveryRoutesDeps,
       mcpServer: {} as FridayMcpServerRoutesDeps,
@@ -276,6 +284,7 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(operationIds).toContain("config.get");
     expect(operationIds).toContain("audit.logs.list");
     expect(operationIds).toContain("desktop.actions.execute");
+    expect(operationIds).toContain("channels.list");
     expect(operationIds).toContain("system.session.get");
     expect(operationIds).toContain("discovery.scan");
     expect(operationIds).toContain("mcp.server.rpc");

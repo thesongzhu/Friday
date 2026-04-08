@@ -170,6 +170,8 @@ export type { FridayObservabilityRoutesDeps } from "./http/routes/friday-observa
 // Desktop routes (C-003)
 export { createFridayDesktopRoutes } from "./http/routes/friday-desktop-routes.js";
 export type { FridayDesktopRoutesDeps } from "./http/routes/friday-desktop-routes.js";
+export { createFridayChannelRoutes } from "./http/routes/friday-channel-routes.js";
+export type { FridayChannelRoutesDeps } from "./http/routes/friday-channel-routes.js";
 
 // System routes (C-012)
 export { createFridaySystemRoutes } from "./http/routes/friday-system-routes.js";

@@ -99,6 +99,24 @@ function describeStabilizationPath(input: {
   return `draft -> ${input.maturity ?? "draft"}`;
 }
 
+function toneForPreflightVerdict(
+  verdict?: "ready" | "needs_review" | "blocked",
+): "success" | "warning" | "danger" | "neutral" {
+  if (verdict === "ready") return "success";
+  if (verdict === "needs_review") return "warning";
+  if (verdict === "blocked") return "danger";
+  return "neutral";
+}
+
+function labelForPreflightVerdict(
+  verdict?: "ready" | "needs_review" | "blocked",
+): string {
+  if (verdict === "ready") return "ready";
+  if (verdict === "needs_review") return "needs review";
+  if (verdict === "blocked") return "blocked";
+  return "unknown";
+}
+
 export function SkillsPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -630,18 +648,66 @@ export function SkillsPage() {
               </div>
 
               <div className="agent-subcard p-4">
-                <p className="font-medium text-[color:var(--color-text-primary)]">Verification evidence</p>
-                <p className="mt-2 text-[color:var(--color-text-secondary)]">
-                  {summarizeSkillVerification(detail)} Friday uses this evidence to decide whether a skill is ready to
-                  enable, needs repair, or should stay blocked.
-                </p>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-[color:var(--color-text-primary)]">Verification evidence</p>
+                    <p className="mt-2 text-[color:var(--color-text-secondary)]">
+                      {summarizeSkillVerification(detail)} Friday uses this evidence to decide whether a skill is ready to
+                      enable, needs repair, or should stay blocked.
+                    </p>
+                  </div>
+                  {detail.verification ? (
+                    <StatusPill tone={toneForPreflightVerdict(detail.verification.preflight.verdict)}>
+                      {labelForPreflightVerdict(detail.verification.preflight.verdict)}
+                    </StatusPill>
+                  ) : null}
+                </div>
                 {detail.verification ? (
-                  <div className="mt-4 grid gap-2 text-xs text-[color:var(--color-text-tertiary)]">
-                    <p>Manifest verdict: {detail.verification.manifestVerdict.ok ? "ok" : "issues found"}</p>
-                    <p>Package integrity: {detail.verification.packageIntegrity.available ? (detail.verification.packageIntegrity.ok ? "ok" : "mismatch") : "unavailable"}</p>
-                    <p>Runtime dry-run: {detail.verification.runtimeDryRun.ok ? "ok" : "failed"}</p>
-                    <p>Trust: {detail.verification.trustSummary.verdict}</p>
-                    <p>Verified at: {formatTimestamp(detail.verification.verifiedAt)}</p>
+                  <div className="mt-4 space-y-4">
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <SkillMetric label="Blocking" value={String(detail.verification.preflight.counts.blocking)} />
+                      <SkillMetric label="Warnings" value={String(detail.verification.preflight.counts.warning)} />
+                      <SkillMetric label="Advisories" value={String(detail.verification.preflight.counts.advisory)} />
+                      <SkillMetric label="Verified At" value={formatTimestamp(detail.verification.verifiedAt)} />
+                    </div>
+                    <div className="grid gap-2 text-xs text-[color:var(--color-text-tertiary)]">
+                      <p>Manifest verdict: {detail.verification.manifestVerdict.ok ? "ok" : "issues found"}</p>
+                      <p>Package integrity: {detail.verification.packageIntegrity.available ? (detail.verification.packageIntegrity.ok ? "ok" : "mismatch") : "unavailable"}</p>
+                      <p>Runtime dry-run: {detail.verification.runtimeDryRun.ok ? "ok" : "failed"}</p>
+                      <p>Trust: {detail.verification.trustSummary.verdict}</p>
+                    </div>
+                    <div className="space-y-2">
+                      {detail.verification.preflight.checks.map((check) => (
+                        <div key={check.id} className="rounded-[18px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{check.label}</p>
+                              <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">{check.summary}</p>
+                            </div>
+                            <StatusPill
+                              tone={
+                                check.level === "blocking"
+                                  ? "danger"
+                                  : check.level === "warning"
+                                    ? "warning"
+                                    : check.level === "advisory"
+                                      ? "neutral"
+                                      : "success"
+                              }
+                            >
+                              {check.level}
+                            </StatusPill>
+                          </div>
+                          {check.details.length > 0 ? (
+                            <div className="mt-3 space-y-1 text-xs text-[color:var(--color-text-tertiary)]">
+                              {check.details.map((line) => (
+                                <p key={line}>{line}</p>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
               </div>

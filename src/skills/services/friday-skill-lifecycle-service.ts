@@ -47,6 +47,7 @@ export interface FridaySkillVerificationEvidence {
   skillId: string;
   verifiedAt: string;
   ok: boolean;
+  preflight: FridaySkillPreflightSummary;
   manifestVerdict: {
     ok: boolean;
     issues: Array<{
@@ -81,6 +82,37 @@ export interface FridaySkillVerificationEvidence {
     signatureValid?: boolean;
     reasons: string[];
   };
+}
+
+export type FridaySkillPreflightCheckLevel =
+  | "pass"
+  | "blocking"
+  | "warning"
+  | "advisory";
+
+export interface FridaySkillPreflightCheck {
+  id:
+    | "manifest"
+    | "integrity"
+    | "dependencies"
+    | "requirements"
+    | "permissions"
+    | "runtime"
+    | "trust";
+  label: string;
+  level: FridaySkillPreflightCheckLevel;
+  summary: string;
+  details: string[];
+}
+
+export interface FridaySkillPreflightSummary {
+  verdict: "ready" | "needs_review" | "blocked";
+  counts: {
+    blocking: number;
+    warning: number;
+    advisory: number;
+  };
+  checks: FridaySkillPreflightCheck[];
 }
 
 export type FridaySkillOriginType =
@@ -334,6 +366,179 @@ function buildPermissionPreview(manifest?: SkillManifestV2): FridaySkillPermissi
     optional: uniqueStrings(grants.filter((grant) => !grant.required).map((grant) => grant.token)),
     promptOn: uniqueStrings(manifest?.permissions.promptOn ?? []),
     grants,
+  };
+}
+
+function buildSkillPreflightSummary(input: {
+  manifestVerdict: FridaySkillVerificationEvidence["manifestVerdict"];
+  packageIntegrity: FridaySkillVerificationEvidence["packageIntegrity"];
+  dependencyCheck: FridaySkillVerificationEvidence["dependencyCheck"];
+  runtimeDryRun: FridaySkillVerificationEvidence["runtimeDryRun"];
+  trustSummary: FridaySkillVerificationEvidence["trustSummary"];
+  requirementPreview: FridaySkillRequirementPreview;
+  permissionPreview: FridaySkillPermissionPreview;
+}): FridaySkillPreflightSummary {
+  const checks: FridaySkillPreflightCheck[] = [];
+
+  const manifestErrors = input.manifestVerdict.issues
+    .filter((issue) => issue.severity === "error")
+    .map((issue) => issue.message);
+  const manifestWarnings = input.manifestVerdict.issues
+    .filter((issue) => issue.severity === "warning")
+    .map((issue) => issue.message);
+  checks.push({
+    id: "manifest",
+    label: "Manifest",
+    level: manifestErrors.length > 0 ? "blocking" : manifestWarnings.length > 0 ? "warning" : "pass",
+    summary: manifestErrors.length > 0
+      ? `Manifest validation found ${String(manifestErrors.length)} blocking issue(s).`
+      : manifestWarnings.length > 0
+        ? `Manifest validation found ${String(manifestWarnings.length)} warning(s).`
+        : "Manifest schema and lifecycle checks passed.",
+    details: [...manifestErrors, ...manifestWarnings],
+  });
+
+  checks.push({
+    id: "integrity",
+    label: "Integrity",
+    level: !input.packageIntegrity.available
+      ? "advisory"
+      : input.packageIntegrity.ok
+        ? "pass"
+        : "blocking",
+    summary: !input.packageIntegrity.available
+      ? "Package checksum is unavailable until a packaged archive is present."
+      : input.packageIntegrity.ok
+        ? "Package checksum matches the archived package."
+        : "Package checksum does not match the archived package.",
+    details: [
+      ...(input.packageIntegrity.expectedChecksum
+        ? [`Expected checksum: ${input.packageIntegrity.expectedChecksum}`]
+        : []),
+      ...(input.packageIntegrity.actualChecksum
+        ? [`Actual checksum: ${input.packageIntegrity.actualChecksum}`]
+        : []),
+      ...(input.packageIntegrity.archivePath
+        ? [`Archive path: ${input.packageIntegrity.archivePath}`]
+        : []),
+    ],
+  });
+
+  checks.push({
+    id: "dependencies",
+    label: "Dependencies",
+    level: input.dependencyCheck.missingBins.length > 0
+      ? "blocking"
+      : input.dependencyCheck.checkedBins.length > 0
+        ? "pass"
+        : "advisory",
+    summary: input.dependencyCheck.missingBins.length > 0
+      ? `Missing required binaries: ${input.dependencyCheck.missingBins.join(", ")}`
+      : input.dependencyCheck.checkedBins.length > 0
+        ? "All declared external binaries are available."
+        : "No external binaries are declared by this skill.",
+    details: input.dependencyCheck.checkedBins.length > 0
+      ? [`Checked binaries: ${input.dependencyCheck.checkedBins.join(", ")}`]
+      : [],
+  });
+
+  const requirementIssues: string[] = [];
+  if (input.requirementPreview.unsupportedOs) {
+    requirementIssues.push("Current OS is not supported.");
+  }
+  if (input.requirementPreview.missingEnv.length > 0) {
+    requirementIssues.push(`Missing environment variables: ${input.requirementPreview.missingEnv.join(", ")}`);
+  }
+  if (input.requirementPreview.unresolvedConfig.length > 0) {
+    requirementIssues.push(`Requires config values: ${input.requirementPreview.unresolvedConfig.join(", ")}`);
+  }
+  if (input.requirementPreview.requiredCapabilities.length > 0) {
+    requirementIssues.push(`Requires capabilities: ${input.requirementPreview.requiredCapabilities.join(", ")}`);
+  }
+  checks.push({
+    id: "requirements",
+    label: "Runtime Requirements",
+    level: input.requirementPreview.unsupportedOs
+      ? "blocking"
+      : requirementIssues.length > 0
+        ? "warning"
+        : "pass",
+    summary: input.requirementPreview.unsupportedOs
+      ? "Runtime requirements block this skill on the current machine."
+      : requirementIssues.length > 0
+        ? "Runtime requirements need operator configuration before wider use."
+        : "Runtime requirements are satisfied.",
+    details: requirementIssues,
+  });
+
+  const permissionIssues: string[] = [];
+  if (input.permissionPreview.required.length > 0) {
+    permissionIssues.push(`Required grants: ${input.permissionPreview.required.join(", ")}`);
+  }
+  if (input.permissionPreview.promptOn.length > 0) {
+    permissionIssues.push(`Runtime prompts: ${input.permissionPreview.promptOn.join(", ")}`);
+  }
+  checks.push({
+    id: "permissions",
+    label: "Permissions",
+    level: permissionIssues.length > 0 ? "warning" : "pass",
+    summary: permissionIssues.length > 0
+      ? "Operator review is required for permissions before broader rollout."
+      : "No extra operator permission review is required right now.",
+    details: permissionIssues,
+  });
+
+  checks.push({
+    id: "runtime",
+    label: "Runtime Dry-Run",
+    level: !input.runtimeDryRun.attempted
+      ? "advisory"
+      : input.runtimeDryRun.ok
+        ? "pass"
+        : "blocking",
+    summary: input.runtimeDryRun.reason,
+    details: [
+      `Attempted: ${String(input.runtimeDryRun.attempted)}`,
+      `Executable: ${String(input.runtimeDryRun.executable)}`,
+    ],
+  });
+
+  checks.push({
+    id: "trust",
+    label: "Trust",
+    level: input.trustSummary.verdict === "blocked"
+      ? "blocking"
+      : input.trustSummary.verdict === "warning"
+        ? "warning"
+        : "pass",
+    summary: input.trustSummary.verdict === "blocked"
+      ? "Trust policy blocks this skill in its current state."
+      : input.trustSummary.verdict === "warning"
+        ? "Trust policy requires operator review before wider rollout."
+        : input.trustSummary.verdict === "local"
+          ? "Bundled or workspace-managed skill bypasses marketplace trust checks."
+          : "Trust policy checks passed.",
+    details: input.trustSummary.reasons,
+  });
+
+  const counts = checks.reduce(
+    (acc, check) => {
+      if (check.level === "blocking") acc.blocking += 1;
+      if (check.level === "warning") acc.warning += 1;
+      if (check.level === "advisory") acc.advisory += 1;
+      return acc;
+    },
+    { blocking: 0, warning: 0, advisory: 0 },
+  );
+
+  return {
+    verdict: counts.blocking > 0
+      ? "blocked"
+      : counts.warning > 0
+        ? "needs_review"
+        : "ready",
+    counts,
+    checks,
   };
 }
 
@@ -1300,11 +1505,21 @@ export function createFridaySkillLifecycleService(
         && (!packageIntegrity.available || packageIntegrity.ok)
         && runtimeDryRun.ok
         && trustSummary.verdict !== "blocked";
+      const preflight = buildSkillPreflightSummary({
+        manifestVerdict,
+        packageIntegrity,
+        dependencyCheck,
+        runtimeDryRun,
+        trustSummary,
+        requirementPreview: detail.requirementPreview,
+        permissionPreview: detail.permissionPreview,
+      });
 
       const evidence: FridaySkillVerificationEvidence = {
         skillId: input.skillId,
         verifiedAt: deps.nowIso(),
         ok,
+        preflight,
         manifestVerdict,
         packageIntegrity,
         dependencyCheck,
