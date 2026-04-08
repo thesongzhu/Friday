@@ -75,9 +75,21 @@ async function waitForSurfaceReady(pageHandle: FridayBrowserPageHandle, surface:
     }
   })();
 
-  await Promise.any(
-    candidates.map((locator) => locator.waitFor({ state: "visible", timeout: 60_000 })),
-  );
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    for (const locator of candidates) {
+      try {
+        if (await locator.isVisible()) {
+          return;
+        }
+      } catch {
+        // Ignore transient locator failures while the route is still settling.
+      }
+    }
+    await pageHandle.page.waitForTimeout(200);
+  }
+
+  throw new Error(`surface ${surface} did not become visible within 60000ms (url=${pageHandle.page.url()})`);
 }
 
 async function clickRailLink(pageHandle: FridayBrowserPageHandle, href: string): Promise<void> {
