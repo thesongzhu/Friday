@@ -58,7 +58,7 @@ export function LoginPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--bg-canvas)] px-4 py-8 text-white">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[color:var(--color-bg-base)] px-4 py-8 text-[color:var(--color-text-primary)]">
       <div className="pointer-events-none absolute inset-0">
         <div className="agent-grid absolute inset-0 opacity-30" />
         <div className="agent-orb agent-orb-left" />
@@ -68,10 +68,10 @@ export function LoginPage() {
       <div className="relative grid w-full max-w-[1120px] gap-4 lg:grid-cols-[0.95fr_1.05fr]">
         <ShellCard className="h-full">
           <p className="agent-eyebrow">Friday Agent OS</p>
-          <h1 className="font-[var(--font-display)] text-4xl font-semibold tracking-tight text-white">
+          <h1 className="font-[var(--font-display)] text-4xl font-semibold tracking-tight text-[color:var(--color-text-primary)]">
             Enter the operator shell
           </h1>
-          <p className="mt-4 max-w-xl text-base leading-7 text-white/60">
+          <p className="mt-4 max-w-xl text-base leading-7 text-[color:var(--color-text-secondary)]">
             This rebuilt UI is focused on system truth: live run control, approval surfaces,
             trusted-device state, and local machine orchestration above macOS.
           </p>
@@ -124,7 +124,7 @@ export function LoginPage() {
             </div>
           </ShellCard>
 
-          <div className="rounded-[28px] border border-white/10 bg-white/[0.04] px-5 py-4 text-sm text-white/50">
+          <div className="rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-5 py-4 text-sm text-[color:var(--color-text-secondary)]">
             Login routes are unchanged. Only the operator interface has been replaced.
             <ArrowRight className="ml-2 inline h-4 w-4" />
           </div>

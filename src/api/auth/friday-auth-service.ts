@@ -27,6 +27,7 @@ import { encodeToken } from "./friday-token-validator.js";
 import { createFridayUserRepository } from "../persistence/friday-user-repository.js";
 import type { FridayUserRow } from "../persistence/friday-user-repository.js";
 import { createFridayAuthSessionRepository } from "../persistence/friday-auth-session-repository.js";
+import { isFridayTestSecurityWarningSuppressed } from "#utilities";
 
 // ─── Helpers ───
 
@@ -194,8 +195,11 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
   const allowLocalBypassLogin = deps.allowLocalBypassLogin ?? false;
   const warn = deps.warn ?? console.warn;
   const warnOnce = createWarnOnce(warn);
-  const silenceExpectedTestWarnings = Boolean(process.env.VITEST) && warn === console.warn;
   const rateLimiter = deps.rateLimiter;
+  const warnSinkMeta = warn as unknown as { mock?: unknown };
+  const suppressExpectedTestWarnings = isFridayTestSecurityWarningSuppressed()
+    && warn === console.warn
+    && warnSinkMeta.mock === undefined;
 
   // P1-SEC-004: Warn if token secret is too short; enforce in production
   if (deps.tokenSecret.length < 32) {
@@ -205,11 +209,13 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
       );
     }
-    warnOnce("[friday][SECURITY] Token secret is shorter than recommended minimum (32 chars) — session tokens may be vulnerable to brute-force");
+    if (!suppressExpectedTestWarnings) {
+      warnOnce("[friday][SECURITY] Token secret is shorter than recommended minimum (32 chars) — session tokens may be vulnerable to brute-force");
+    }
   }
 
   // P1-SEC-005: Warn if rate limiter is not configured
-  if (!rateLimiter) {
+  if (!rateLimiter && !suppressExpectedTestWarnings) {
     warnOnce("[friday][SECURITY] Auth rate limiter not configured — brute-force protection disabled");
   }
 
@@ -502,11 +508,11 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
           );
         }
         if (requestedLocalBypass) {
-          if (!silenceExpectedTestWarnings) {
+          if (!suppressExpectedTestWarnings) {
             warnOnce("[friday] WARNING: Local bypass login used (no-signin mode).");
           }
         } else {
-          if (!silenceExpectedTestWarnings) {
+          if (!suppressExpectedTestWarnings) {
             warnOnce("[friday] WARNING: Passwordless local login used. This is allowed only in dev mode.");
           }
         }

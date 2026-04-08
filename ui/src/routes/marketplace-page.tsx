@@ -34,9 +34,9 @@ function toneForMaturity(
 function MarketplaceMetric(props: { label: string; value: string; detail: string }) {
   return (
     <div className="agent-metric-card">
-      <p className="text-2xl font-semibold text-white">{props.value}</p>
-      <p className="mt-3 text-sm font-medium text-white">{props.label}</p>
-      <p className="mt-1 text-xs leading-5 text-white/50">{props.detail}</p>
+      <p className="text-2xl font-semibold text-[color:var(--color-text-primary)]">{props.value}</p>
+      <p className="mt-3 text-sm font-medium text-[color:var(--color-text-primary)]">{props.label}</p>
+      <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-tertiary)]">{props.detail}</p>
     </div>
   );
 }
@@ -270,7 +270,7 @@ export function MarketplacePage() {
               detail="Post a personal skill, workflow, or agent request when nothing fits."
             />
           </div>
-          <div className="agent-detail-note mt-4 p-4 text-sm text-white/60">
+          <div className="agent-detail-note mt-4 p-4 text-sm text-[color:var(--color-text-secondary)]">
             Marketplace installs stay click-first and permission-aware. Public assets are safe-by-default,
             declarative-first, and separate from legacy executable packages.
           </div>
@@ -292,12 +292,12 @@ export function MarketplacePage() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="flex items-center gap-2">
-                        <h3 className="font-medium text-white">{asset.title}</h3>
+                        <h3 className="font-medium text-[color:var(--color-text-primary)]">{asset.title}</h3>
                         <StatusPill tone={toneForMaturity(asset.maturity)}>
                           {asset.maturity.replaceAll("_", " ")}
                         </StatusPill>
                       </div>
-                      <p className="mt-1 text-xs uppercase tracking-[0.18em] text-white/45">
+                      <p className="mt-1 text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
                         {asset.assetType} · {asset.publisherName}
                       </p>
                     </div>
@@ -305,8 +305,8 @@ export function MarketplacePage() {
                       {asset.installable ? "ready" : "review first"}
                     </StatusPill>
                   </div>
-                  <p className="mt-3 text-sm text-white/65">{compactText(asset.summary)}</p>
-                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/50">
+                  <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{compactText(asset.summary)}</p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-[color:var(--color-text-tertiary)]">
                     <span>Proof {asset.proofOfUseScore ?? "n/a"}</span>
                     <span>Trust {asset.trustScore ?? "n/a"}</span>
                     <span>Reliability {asset.outcomeReliabilityScore ?? "n/a"}</span>
@@ -315,17 +315,17 @@ export function MarketplacePage() {
                     <span>{asset.verificationStatus}</span>
                   </div>
                   <div className="mt-3 space-y-2">
-                    <div className="flex flex-wrap gap-2 text-xs text-white/55">
+                    <div className="flex flex-wrap gap-2 text-xs text-[color:var(--color-text-tertiary)]">
                       {(detail?.permissions.length
                         ? detail.permissions.slice(0, permissionExpanded ? detail.permissions.length : 4)
                         : []
                       ).map((permission) => (
-                        <span key={permission} className="rounded-full border border-white/10 px-2 py-1">
+                        <span key={permission} className="rounded-full border border-[color:var(--color-border-soft)] px-2 py-1">
                           {permission}
                         </span>
                       ))}
                       {!detail?.permissions.length ? (
-                        <span className="rounded-full border border-white/10 px-2 py-1 text-white/45">
+                        <span className="rounded-full border border-[color:var(--color-border-soft)] px-2 py-1 text-[color:var(--color-text-faint)]">
                           no additional permissions
                         </span>
                       ) : null}
@@ -333,7 +333,7 @@ export function MarketplacePage() {
                     {detail?.permissions.length ? (
                       <button
                         type="button"
-                        className="text-xs font-medium text-[var(--accent-soft)] transition hover:text-white"
+                        className="text-xs font-medium text-[color:var(--color-accent)] transition hover:text-[color:var(--color-text-primary)]"
                         data-testid={`marketplace-permissions-toggle-${asset.assetId}`}
                         onClick={() =>
                           setExpandedPermissionAssetId((current) =>
@@ -373,14 +373,14 @@ export function MarketplacePage() {
                     </ActionButton>
                     {asset.assetType === "skill" ? (
                       <Link
-                        className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                        className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                         to={buildSkillHref(asset.assetId.replace(/^skill:/, ""), "install")}
                       >
                         Details
                       </Link>
                     ) : asset.assetType === "workflow" ? (
                       <Link
-                        className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                        className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                         to="/workflows"
                       >
                         Workflow details
@@ -391,7 +391,7 @@ export function MarketplacePage() {
               );
             })}
             {featuredAssets.length === 0 ? (
-              <p className="text-sm text-white/60">No public declarative assets are available yet.</p>
+              <p className="text-sm text-[color:var(--color-text-secondary)]">No public declarative assets are available yet.</p>
             ) : null}
           </div>
         </ShellCard>
@@ -412,7 +412,7 @@ export function MarketplacePage() {
                     key={kind}
                     type="button"
                     onClick={() => setRequestAssetKind(kind)}
-                    className="inline-flex rounded-2xl border border-white/10 px-3 py-2 text-sm text-white/70 transition hover:border-white/20 hover:bg-white/[0.06]"
+                    className="inline-flex rounded-2xl border border-[color:var(--color-border-soft)] px-3 py-2 text-sm text-[color:var(--color-text-secondary)] transition hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-bg-surface)]"
                     data-testid={`marketplace-request-kind-${kind}`}
                     data-active={requestAssetKind === kind}
                   >
@@ -424,7 +424,7 @@ export function MarketplacePage() {
               <input
                 value={requestTitle}
                 onChange={(event) => setRequestTitle(event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none focus:border-[var(--accent-soft)]"
+                className="w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm text-[color:var(--color-text-primary)] outline-none focus:border-[color:var(--color-accent)]"
                 placeholder="Personal workflow for weekly client updates"
                 data-testid="marketplace-request-title"
               />
@@ -432,7 +432,7 @@ export function MarketplacePage() {
               <textarea
                 value={requestGoal}
                 onChange={(event) => setRequestGoal(event.target.value)}
-                className="min-h-28 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none focus:border-[var(--accent-soft)]"
+                className="min-h-28 w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm text-[color:var(--color-text-primary)] outline-none focus:border-[color:var(--color-accent)]"
                 placeholder="I need something that gathers updates, drafts a summary, and reminds me if data is missing."
                 data-testid="marketplace-request-goal"
               />
@@ -440,7 +440,7 @@ export function MarketplacePage() {
               <textarea
                 value={requestOutcome}
                 onChange={(event) => setRequestOutcome(event.target.value)}
-                className="min-h-24 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none focus:border-[var(--accent-soft)]"
+                className="min-h-24 w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm text-[color:var(--color-text-primary)] outline-none focus:border-[color:var(--color-accent)]"
                 placeholder="I can trigger it every Friday and it outputs a clean summary I can review."
                 data-testid="marketplace-request-outcome"
               />
@@ -448,7 +448,7 @@ export function MarketplacePage() {
               <textarea
                 value={requestConstraints}
                 onChange={(event) => setRequestConstraints(event.target.value)}
-                className="min-h-20 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none focus:border-[var(--accent-soft)]"
+                className="min-h-20 w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm text-[color:var(--color-text-primary)] outline-none focus:border-[color:var(--color-accent)]"
                 placeholder="No outbound network access&#10;Must stay inside existing workspace"
                 data-testid="marketplace-request-constraints"
               />
@@ -458,7 +458,7 @@ export function MarketplacePage() {
                   <input
                     value={requestBudget}
                     onChange={(event) => setRequestBudget(event.target.value)}
-                    className="mt-1 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none focus:border-[var(--accent-soft)]"
+                    className="mt-1 w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm text-[color:var(--color-text-primary)] outline-none focus:border-[color:var(--color-accent)]"
                     placeholder="$50 tip if it ships cleanly"
                     data-testid="marketplace-request-budget"
                   />
@@ -468,7 +468,7 @@ export function MarketplacePage() {
                   <input
                     value={requestRiskNotes}
                     onChange={(event) => setRequestRiskNotes(event.target.value)}
-                    className="mt-1 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none focus:border-[var(--accent-soft)]"
+                    className="mt-1 w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm text-[color:var(--color-text-primary)] outline-none focus:border-[color:var(--color-accent)]"
                     placeholder="No production write access"
                     data-testid="marketplace-request-risk-notes"
                   />
@@ -497,8 +497,8 @@ export function MarketplacePage() {
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <h3 className="font-medium text-white">{request.title}</h3>
-                        <p className="mt-1 text-xs uppercase tracking-[0.18em] text-white/45">
+                        <h3 className="font-medium text-[color:var(--color-text-primary)]">{request.title}</h3>
+                        <p className="mt-1 text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
                           {request.assetKind} · {request.status.replaceAll("_", " ")}
                         </p>
                       </div>
@@ -506,11 +506,11 @@ export function MarketplacePage() {
                         {request.status.replaceAll("_", " ")}
                       </StatusPill>
                     </div>
-                    <p className="mt-3 text-sm text-white/65">{compactText(request.goal)}</p>
-                    <p className="mt-2 text-xs text-white/45">
+                    <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{compactText(request.goal)}</p>
+                    <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
                       Desired outcome: {compactText(request.desiredOutcome)}
                     </p>
-                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/45">
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-[color:var(--color-text-faint)]">
                       <span>{request.privacy}</span>
                       <span>{request.publishability.replaceAll("_", " ")}</span>
                       {request.budgetSupportIntent ? <span>{request.budgetSupportIntent}</span> : null}
@@ -524,7 +524,7 @@ export function MarketplacePage() {
                             [request.id]: event.target.value,
                           }))
                         }
-                        className="min-h-20 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none focus:border-[var(--accent-soft)]"
+                        className="min-h-20 w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm text-[color:var(--color-text-primary)] outline-none focus:border-[color:var(--color-accent)]"
                         placeholder="Offer help, propose an approach, or ask a clarifying question."
                         data-testid={`marketplace-request-response-input-${request.id}`}
                       />
@@ -550,15 +550,15 @@ export function MarketplacePage() {
                             return (
                               <div
                                 key={response.id}
-                                className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-3"
+                                className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-3 py-3"
                                 data-testid={`marketplace-request-response-${response.id}`}
                               >
-                                <p className="text-xs uppercase tracking-[0.18em] text-white/40">
+                                <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
                                   {response.responderCreatorId
                                     ? `creator ${response.responderCreatorId}`
                                     : "community response"}
                                 </p>
-                                <p className="mt-2 text-sm text-white/70">{response.message}</p>
+                                <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{response.message}</p>
                                 <div className="mt-3 flex flex-wrap gap-2">
                                   {!accepted && request.status !== "closed" ? (
                                     <ActionButton
@@ -597,7 +597,7 @@ export function MarketplacePage() {
                 );
               })}
               {openRequests.length === 0 ? (
-                <p className="text-sm text-white/60">No open requests yet. Post one when the catalog does not fit.</p>
+                <p className="text-sm text-[color:var(--color-text-secondary)]">No open requests yet. Post one when the catalog does not fit.</p>
               ) : null}
             </div>
           </div>
@@ -611,15 +611,15 @@ export function MarketplacePage() {
               <article key={creator.id} className="agent-subcard p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h3 className="font-medium text-white">{creator.displayName}</h3>
-                    <p className="mt-1 text-xs text-white/45">{creator.verifiedPublisher ? "verified creator" : "community creator"}</p>
+                    <h3 className="font-medium text-[color:var(--color-text-primary)]">{creator.displayName}</h3>
+                    <p className="mt-1 text-xs text-[color:var(--color-text-faint)]">{creator.verifiedPublisher ? "verified creator" : "community creator"}</p>
                   </div>
                   <StatusPill tone={creator.reputation.overallScore >= 70 ? "success" : "warning"}>
                     score {creator.reputation.overallScore}
                   </StatusPill>
                 </div>
-                <p className="mt-3 text-sm text-white/65">{compactText(creator.bio)}</p>
-                <div className="mt-3 grid gap-2 text-xs text-white/50 sm:grid-cols-2">
+                <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{compactText(creator.bio)}</p>
+                <div className="mt-3 grid gap-2 text-xs text-[color:var(--color-text-tertiary)] sm:grid-cols-2">
                   <span>{creator.reputation.supportCount} supports</span>
                   <span>{formatMoney(creator.reputation.supportTotal)}</span>
                   <span>{creator.reputation.installCount} installs</span>
@@ -628,21 +628,21 @@ export function MarketplacePage() {
               </article>
             ))}
             {creators.length === 0 ? (
-              <p className="text-sm text-white/60">Creator profiles will appear here as public assets and support events accumulate.</p>
+              <p className="text-sm text-[color:var(--color-text-secondary)]">Creator profiles will appear here as public assets and support events accumulate.</p>
             ) : null}
           </div>
         </ShellCard>
 
         <ShellCard eyebrow="Safety boundary" title="What this marketplace is and is not">
-          <div className="space-y-3 text-sm text-white/65">
+          <div className="space-y-3 text-sm text-[color:var(--color-text-secondary)]">
             <div className="agent-detail-note p-4">
               Friday’s public marketplace is declarative-first and permission-aware. Public assets are meant to be
               inspectable, installable, and supportable without exposing users to arbitrary runtime packages.
             </div>
             <ul className="space-y-2">
-              <li className="flex gap-2"><ShieldCheck className="mt-0.5 size-4 text-emerald-200" /> Public assets show permissions before enable/install.</li>
-              <li className="flex gap-2"><Sparkles className="mt-0.5 size-4 text-amber-200" /> Friday does not take commission, provide guarantees, or offer after-sales support.</li>
-              <li className="flex gap-2"><Gift className="mt-0.5 size-4 text-sky-200" /> Support/tips are creator-first recognition, not a service warranty.</li>
+              <li className="flex gap-2"><ShieldCheck className="mt-0.5 size-4 text-[color:var(--color-text-primary)]" /> Public assets show permissions before enable/install.</li>
+              <li className="flex gap-2"><Sparkles className="mt-0.5 size-4 text-[color:var(--color-text-primary)]" /> Friday does not take commission, provide guarantees, or offer after-sales support.</li>
+              <li className="flex gap-2"><Gift className="mt-0.5 size-4 text-[color:var(--color-accent)]" /> Support/tips are creator-first recognition, not a service warranty.</li>
             </ul>
           </div>
         </ShellCard>

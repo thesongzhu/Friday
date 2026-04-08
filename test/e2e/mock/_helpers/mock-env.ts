@@ -243,6 +243,8 @@ export async function createMockHubEnv(opts?: {
 
   // Capture original fetch instance-locally to avoid races between multiple envs
   const originalFetch = globalThis.fetch;
+  const originalWarningSuppression = process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+  process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
 
   // 1. Create temp state dir
   const stateDir = fs.mkdtempSync(
@@ -354,6 +356,11 @@ export async function createMockHubEnv(opts?: {
         if (hub) await hub.stop();
         if (stateDir) fs.rmSync(stateDir, { recursive: true, force: true });
       } finally {
+        if (originalWarningSuppression === undefined) {
+          delete process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+        } else {
+          process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = originalWarningSuppression;
+        }
         clearTimeout(closeTimeout);
       }
     },

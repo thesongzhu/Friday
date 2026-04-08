@@ -114,6 +114,41 @@ export interface AgentContextCostSummary {
   components: AgentContextCostComponent[];
 }
 
+export type AgentRunHealthState =
+  | "healthy"
+  | "needs_approval"
+  | "degraded"
+  | "retryable"
+  | "failed"
+  | "rollback_available";
+
+export interface AgentRunHealthSnapshot {
+  state: AgentRunHealthState;
+  rollbackAvailable: boolean;
+  reasonCodes: string[];
+}
+
+export interface AgentRunContextSummarySnapshot {
+  taskProfileId?: string;
+  taskProfileLabel?: string;
+  totalEstimatedChars?: number;
+  dominantContextKinds: string[];
+  learningAdjusted: boolean;
+  fallbackAttemptCount: number;
+  blockedToolCount: number;
+  modelSelectionSource?: string;
+}
+
+export interface AgentPackContextMetadata {
+  packId: string;
+  surface?: string;
+  updatedAt?: string;
+}
+
+export interface AgentRunMetadata {
+  packContext?: AgentPackContextMetadata;
+}
+
 export interface AgentRunRecord {
   id: string;
   task: string;
@@ -205,6 +240,10 @@ export interface AgentRunRecord {
   artifactDir?: string;
   contextCostSummary?: AgentContextCostSummary;
   taskProfile?: ResolvedAgentTaskProfile;
+  metadata?: AgentRunMetadata;
+  health?: AgentRunHealthSnapshot;
+  contextSummary?: AgentRunContextSummarySnapshot;
+  rollbackAvailable?: boolean;
 }
 
 export interface AgentAutomation {
@@ -1327,7 +1366,9 @@ export type FridayWorkflowGeneratorSessionStatus =
   | "ready_for_review"
   | "approved"
   | "saved"
-  | "failed"
+  | "retryable_provider_failure"
+  | "draft_ready_needs_repair"
+  | "terminal_failed"
   | "cancelled";
 
 export interface FridayWorkflowGenerationSession {
@@ -1355,6 +1396,8 @@ export interface FridayWorkflowGenerationTurn {
 export type FridayWorkflowGenerationTurnMode =
   | "clarification_required"
   | "preview_ready"
+  | "draft_needs_repair"
+  | "retryable_provider_failure"
   | "generation_failed";
 
 export interface FridayGeneratedWorkflowValidationIssue {
@@ -1430,6 +1473,9 @@ export interface AssistantDiagnosticsRunSummary {
   completedAt?: string;
   contextCostSummary?: AgentContextCostSummary;
   taskProfile?: ResolvedAgentTaskProfile;
+  health?: AgentRunHealthSnapshot;
+  contextSummary?: AgentRunContextSummarySnapshot;
+  rollbackAvailable?: boolean;
 }
 
 export interface McpServerState {

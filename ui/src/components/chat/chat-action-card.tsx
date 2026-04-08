@@ -58,12 +58,12 @@ export function ChatActionCard({ actions, onAction }: ChatActionCardProps) {
               onAction?.(action);
             }}
             className={cn(
-              "rounded-xl border px-3 py-2 text-xs font-medium transition-colors",
+              "min-h-[44px] rounded-xl border px-3 py-2 text-xs font-medium transition-colors",
               action.type === "approve"
-                ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20"
+                ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-text-primary)] hover:opacity-90"
                 : action.type === "reject"
-                  ? "border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20"
-                  : "border-white/10 bg-white/[0.04] text-white/70 hover:border-emerald-400/30 hover:bg-emerald-400/10 hover:text-white",
+                  ? "border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-muted)]"
+                  : "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] text-[color:var(--color-text-secondary)] hover:border-[color:var(--color-accent)] hover:bg-[color:var(--color-bg-surface-strong)] hover:text-[color:var(--color-text-primary)]",
             )}
           >
             {action.label}

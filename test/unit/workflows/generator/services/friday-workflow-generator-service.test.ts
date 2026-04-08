@@ -778,10 +778,66 @@ describe("FridayWorkflowGeneratorService", () => {
       });
 
       expect(result.session).toBeDefined();
-      expect(result.mode).toBe("generation_failed");
-      expect(result.session.status).toBe("failed");
+      expect(result.mode).toBe("draft_needs_repair");
+      expect(result.session.status).toBe("draft_ready_needs_repair");
+      expect(result.draft).toBeDefined();
       expect(result.errors).toBeDefined();
       expect(result.errors!.length).toBeGreaterThan(0);
+    });
+
+    it("returns retryable_provider_failure when the provider rate-limits requirements analysis", async () => {
+      globalThis.fetch = vi.fn(async () => ({
+        ok: false,
+        status: 429,
+        json: async () => ({ error: { message: "rate limit" } }),
+        text: async () => JSON.stringify({ error: { message: "rate limit" } }),
+      })) as unknown as typeof fetch;
+
+      const result = await service.startSession({
+        goal: "Send emails",
+        userId: "u-1",
+        channel: "test",
+      });
+
+      expect(result.mode).toBe("retryable_provider_failure");
+      expect(result.session.status).toBe("retryable_provider_failure");
+      expect(result.errors?.[0]?.code).toBe("RETRYABLE_PROVIDER_FAILURE");
+    });
+
+    it("keeps a valid draft reviewable when regeneration hits a retryable provider error", async () => {
+      mockFetchForLlm([
+        makeRequirementsResponse("ready_for_generation"),
+        makeSpecResponse(),
+        makeVisualResponse(),
+        makeTestsResponse(),
+      ]);
+
+      const startResult = await service.startSession({
+        goal: "Send emails",
+        userId: "u-1",
+        channel: "test",
+      });
+
+      expect(startResult.session.status).toBe("ready_for_review");
+
+      globalThis.fetch = vi.fn(async () => ({
+        ok: false,
+        status: 429,
+        json: async () => ({ error: { message: "rate limit" } }),
+        text: async () => JSON.stringify({ error: { message: "rate limit" } }),
+      })) as unknown as typeof fetch;
+
+      await expect(
+        service.generateDraft(startResult.session.sessionId),
+      ).rejects.toThrow("returned 429");
+
+      const sessionData = await service.getSession(startResult.session.sessionId);
+      expect(sessionData?.session.status).toBe("ready_for_review");
+      expect(sessionData?.draft?.validation.ok).toBe(true);
+
+      await expect(
+        service.approveAndSave(startResult.session.sessionId),
+      ).resolves.toMatchObject({ published: true });
     });
   });
 

@@ -158,7 +158,7 @@ export function AutomationsPage() {
         </ShellCard>
 
         <ShellCard eyebrow="Queue Diagnostics" title="Operator Notes">
-          <div className="space-y-3 text-sm leading-6 text-white/60">
+          <div className="space-y-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">
             <p>
               This phase keeps task management intentionally lightweight. You can create manual or cron-backed tasks, trigger them on demand, and flip enablement without exposing the old automation builder UI.
             </p>
@@ -180,9 +180,9 @@ export function AutomationsPage() {
         }
       >
         {isLoading ? (
-          <p className="text-sm text-white/60">Loading task queue...</p>
+          <p className="text-sm text-[color:var(--color-text-secondary)]">Loading task queue...</p>
         ) : sortedAutomations.length === 0 ? (
-          <div className="rounded-[28px] border border-dashed border-white/[0.12] bg-black/20 p-8 text-center text-sm text-white/60">
+          <div className="rounded-[28px] border border-dashed border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-8 text-center text-sm text-[color:var(--color-text-secondary)]">
             No scheduled tasks exist yet.
           </div>
         ) : (
@@ -190,13 +190,13 @@ export function AutomationsPage() {
             {sortedAutomations.map((automation) => (
               <div
                 key={automation.id}
-                className="rounded-[26px] border border-white/10 bg-black/20 p-5"
+                className="rounded-[26px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-5"
                 data-testid={`automation-card-${automation.id}`}
               >
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
-                      <h2 className="text-lg font-semibold text-white">{automation.name}</h2>
+                      <h2 className="text-lg font-semibold text-[color:var(--color-text-primary)]">{automation.name}</h2>
                       <StatusPill tone={automation.enabled ? "success" : "neutral"}>
                         {automation.enabled ? "enabled" : "paused"}
                       </StatusPill>
@@ -205,9 +205,9 @@ export function AutomationsPage() {
                       </StatusPill>
                     </div>
                     {automation.description ? (
-                      <p className="text-sm text-white/60">{automation.description}</p>
+                      <p className="text-sm text-[color:var(--color-text-secondary)]">{automation.description}</p>
                     ) : null}
-                    <p className="text-sm text-white/40">{automation.taskTemplate}</p>
+                    <p className="text-sm text-[color:var(--color-text-faint)]">{automation.taskTemplate}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <ActionButton
@@ -235,7 +235,7 @@ export function AutomationsPage() {
                   <TaskMetric label="Reuse Count" value={String(automation.reuseCount)} icon={<RefreshCcw className="h-4 w-4" />} />
                   <TaskMetric label="Outcome Score" value={String(Math.round(automation.lastOutcomeScore))} icon={<Play className="h-4 w-4" />} />
                 </div>
-                <p className="mt-3 text-xs text-white/45">
+                <p className="mt-3 text-xs text-[color:var(--color-text-faint)]">
                   Last run {formatTimestamp(automation.lastRunAt)} · total runs {automation.runCount}
                 </p>
               </div>
@@ -249,12 +249,12 @@ export function AutomationsPage() {
 
 function TaskMetric(props: { label: string; value: string; icon: ReactNode }) {
   return (
-    <div className="rounded-[22px] border border-white/[0.08] bg-white/[0.04] p-4">
-      <div className="flex items-center gap-2 text-white/40">
+    <div className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+      <div className="flex items-center gap-2 text-[color:var(--color-text-faint)]">
         {props.icon}
         <span className="text-xs font-semibold uppercase tracking-[0.18em]">{props.label}</span>
       </div>
-      <p className="mt-3 text-sm text-white">{props.value}</p>
+      <p className="mt-3 text-sm text-[color:var(--color-text-primary)]">{props.value}</p>
     </div>
   );
 }

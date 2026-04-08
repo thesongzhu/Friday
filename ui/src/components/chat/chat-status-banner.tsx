@@ -1,9 +1,9 @@
 import type { StatusBannerViewModel } from "@/hooks/use-agent-run-events";
 
 const TONE_STYLES: Record<StatusBannerViewModel["tone"], string> = {
-  warning: "border-amber-400/30 bg-amber-400/[0.08] text-amber-100",
-  info: "border-sky-400/30 bg-sky-400/[0.08] text-sky-100",
-  error: "border-red-400/30 bg-red-400/[0.08] text-red-100",
+  warning: "border-[color:var(--color-border-strong)] bg-[color:var(--color-accent-muted)] text-[color:var(--color-text-primary)]",
+  info: "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] text-[color:var(--color-text-primary)]",
+  error: "border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] text-[color:var(--color-text-primary)]",
 };
 
 const KIND_LABELS: Record<StatusBannerViewModel["kind"], string> = {
@@ -27,7 +27,7 @@ export function ChatStatusBanner({ banners }: ChatStatusBannerProps) {
           key={banner.id}
           className={`rounded-2xl border p-3 text-sm ${TONE_STYLES[banner.tone]}`}
         >
-          <span className="mr-2 rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold uppercase tracking-wider">
+          <span className="mr-2 rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-secondary)]">
             {KIND_LABELS[banner.kind]}
           </span>
           {banner.message}

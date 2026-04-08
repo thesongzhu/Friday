@@ -9,6 +9,7 @@ import type {
   FridayAgentArtifact,
   FridayAgentPlanReviewPayload,
   FridayAgentRunConstraints,
+  FridayAgentRunMetadata,
   FridayAgentRunRecord,
   FridayAgentRunStatus,
   FridayAgentTestResult,
@@ -47,6 +48,15 @@ interface FridayAgentRunRow {
   artifact_dir: string | null;
   context_cost_summary_json: string | null;
   task_profile_json: string | null;
+  metadata_json: string | null;
+}
+
+function parseRunMetadata(raw: string | null): FridayAgentRunMetadata | undefined {
+  const parsed = safeJsonParse<FridayAgentRunMetadata>(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || Object.keys(parsed).length === 0) {
+    return undefined;
+  }
+  return parsed;
 }
 
 function rowToRecord(row: FridayAgentRunRow): FridayAgentRunRecord {
@@ -78,6 +88,7 @@ function rowToRecord(row: FridayAgentRunRow): FridayAgentRunRecord {
     artifactDir: row.artifact_dir ?? undefined,
     contextCostSummary: safeJsonParse<FridayAgentContextCostSummary>(row.context_cost_summary_json),
     taskProfile: safeJsonParse<FridayResolvedAgentTaskProfile>(row.task_profile_json),
+    metadata: parseRunMetadata(row.metadata_json),
   };
 }
 
@@ -95,6 +106,7 @@ export interface FridayAgentRunRepository {
       maxAttempts: number;
       nowIso: string;
       constraints?: FridayAgentRunConstraints;
+      metadata?: FridayAgentRunMetadata;
     },
   ): FridayAgentRunRecord;
 
@@ -127,6 +139,7 @@ export interface FridayAgentRunRepository {
       artifactDir?: string;
       contextCostSummary?: FridayAgentContextCostSummary;
       taskProfile?: FridayResolvedAgentTaskProfile;
+      metadata?: FridayAgentRunMetadata;
     },
   ): FridayAgentRunRecord | null;
 
@@ -151,8 +164,8 @@ export function createFridayAgentRunRepository(): FridayAgentRunRepository {
       db.prepare(
         `INSERT INTO friday_agent_runs (
           id, task, status, session_key, provider_id, model,
-          attempt, max_attempts, created_at, constraints_json
-        ) VALUES (?, ?, 'pending', ?, ?, ?, 0, ?, ?, ?)`,
+          attempt, max_attempts, created_at, constraints_json, metadata_json
+        ) VALUES (?, ?, 'pending', ?, ?, ?, 0, ?, ?, ?, ?)`,
       ).run(
         input.id,
         input.task,
@@ -162,6 +175,7 @@ export function createFridayAgentRunRepository(): FridayAgentRunRepository {
         input.maxAttempts,
         input.nowIso,
         input.constraints ? JSON.stringify(input.constraints) : "{}",
+        JSON.stringify(input.metadata ?? {}),
       );
 
       const row = db.prepare(
@@ -270,6 +284,10 @@ export function createFridayAgentRunRepository(): FridayAgentRunRepository {
       if (input.taskProfile !== undefined) {
         sets.push("task_profile_json = ?");
         params.push(JSON.stringify(input.taskProfile));
+      }
+      if (input.metadata !== undefined) {
+        sets.push("metadata_json = ?");
+        params.push(JSON.stringify(input.metadata ?? {}));
       }
 
       if (sets.length === 0) {

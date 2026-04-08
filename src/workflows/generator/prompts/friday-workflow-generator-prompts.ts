@@ -65,7 +65,7 @@ Response JSON:
     "trigger": { "type": "manual" | "schedule" | "event", "cron?": "string", "timezone?": "string", "source?": "string", "event?": "string" },
     "inputs": [{ "key": "string", "type": "string|number|boolean|object|array", "required": true, "defaultValue?": "unknown" }],
     "plannedSteps": [{
-      "id": "string",
+      "id": "string (must start with a letter and only use letters, numbers, underscores, or hyphens)",
       "intent": "string",
       "nodeTypeHint": "action|condition|data|ai|approval",
       "preferredSkillId?": "string",
@@ -127,6 +127,7 @@ Rules:
 1. Output strict JSON only.
 2. schemaVersion must be "1.0".
 3. workflowId must be slug-safe lowercase (letters, numbers, hyphens).
+3a. Every step id and startStepId must start with a letter and use only letters, numbers, underscores, or hyphens.
 4. startStepId must exist in steps.
 5. Allowed step types: "skill_call" | "tool_call" | "condition" | "transform" | "human_approval".
 6. For skill_call/tool_call, ref must be one of available skill IDs.

@@ -9,6 +9,7 @@
  *   friday start      [--skills-dir <path>] [--port <n>]   — boot hub, keep running
  *   friday list        [--skills-dir <path>]                — list loaded skills
  *   friday run         <skill-id> [--input k=v ...] [--skills-dir <path>] — run a skill
+ *   friday runs        backfill-pack-context [--dry-run|--apply] [--json]
  *   friday status                                           — show hub status
  *   friday import      <source> [--from <format>] [--target <path>] [--replace] [--dry-run]
  *   friday convert     <source> --out <dir> [--from <format>]
@@ -70,11 +71,12 @@ import {
   runFridayCliAuthLoginAnthropic,
   runFridayCliAuthStatus,
 } from "./friday-cli-auth.js";
+import { cmdRuns } from "./friday-cli-runs.js";
 
 // ─── Arg parser ───
 
 export interface ParsedArgs {
-  command: "start" | "list" | "run" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth" | "skills" | "daemon" | "phases" | "setup";
+  command: "start" | "list" | "run" | "runs" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth" | "skills" | "daemon" | "phases" | "setup";
   showHelp: boolean;
   skillDirs: string[];
   port: number | undefined;
@@ -111,6 +113,8 @@ export interface ParsedArgs {
   manifestPath: string | undefined;
   prepareNext: boolean;
   json: boolean;
+  apply: boolean;
+  runsSubcommand: "backfill-pack-context" | undefined;
 }
 
 function isHelpFlag(value: string | undefined): boolean {
@@ -155,6 +159,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     manifestPath: undefined,
     prepareNext: true,
     json: false,
+    apply: false,
+    runsSubcommand: undefined,
   };
 
   if (args.length === 0) {
@@ -168,7 +174,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     return result;
   }
 
-  const validCommands = ["start", "list", "run", "status", "import", "convert", "converters", "pack", "auth", "skills", "daemon", "phases", "setup"] as const;
+  const validCommands = ["start", "list", "run", "runs", "status", "import", "convert", "converters", "pack", "auth", "skills", "daemon", "phases", "setup"] as const;
   type ValidCommand = (typeof validCommands)[number];
 
   if ((validCommands as readonly string[]).includes(cmd)) {
@@ -209,6 +215,15 @@ export function parseArgs(argv: string[]): ParsedArgs {
     } else {
       i = 2;
     }
+  }
+
+  if (cmd === "runs") {
+    const sub = args[1];
+    const validSubs = ["backfill-pack-context"] as const;
+    if (sub && (validSubs as readonly string[]).includes(sub)) {
+      result.runsSubcommand = sub as (typeof validSubs)[number];
+    }
+    i = 2;
   }
 
   while (i < args.length) {
@@ -271,6 +286,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
     if (arg === "--dry-run") {
       result.dryRun = true;
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--apply") {
+      result.apply = true;
       i += 1;
       continue;
     }
@@ -448,6 +469,15 @@ Boot the hub, run a single skill, print result, then exit.
     return;
   }
 
+  if (command === "runs") {
+    console.log(`
+friday runs backfill-pack-context [--dry-run|--apply] [--json]
+
+Backfill historical packContext metadata onto agent runs using strict session evidence.
+    `.trim());
+    return;
+  }
+
   if (command === "setup") {
     console.log(`
 friday setup
@@ -561,6 +591,9 @@ Usage:
   friday run <skill-id> [--input key=value ...] [--skills-dir <path>]
       Boot the hub, run a single skill, print result, then exit.
 
+  friday runs backfill-pack-context [--dry-run|--apply] [--json]
+      Backfill historical packContext metadata onto agent runs using strict session evidence.
+
   friday status
       Show hub status (running / stopped).
 
@@ -604,6 +637,7 @@ Options:
   --json                Emit machine-readable JSON for supported phase/status commands.
   --replace             Overwrite existing skill on collision.
   --dry-run             Preview conversion without installing.
+  --apply               Apply a one-time maintenance command instead of previewing it.
   --prepare-next        After a successful promotion, mark the next phase as implementing.
   --no-prepare-next     Do not auto-unlock the next phase after promotion.
   --split-operations    Create one skill per OpenAPI operation (default).
@@ -2216,6 +2250,9 @@ async function main(): Promise<void> {
       break;
     case "run":
       await cmdRun(parsed);
+      break;
+    case "runs":
+      await cmdRuns(parsed);
       break;
     case "status":
       cmdStatus();

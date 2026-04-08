@@ -44,6 +44,19 @@ function makeService(): FridayUixSurfaceService {
         parameters: [],
       },
     ]),
+    getHomeSnapshot: vi.fn(() => ({
+      activeNow: [],
+      pendingApprovals: [],
+      scheduledAutomations: [],
+      recentResults: [],
+      recommendedToAdd: [],
+      runs: [],
+    })),
+    getAssistantInboxSnapshot: vi.fn(() => ({
+      approvals: [],
+      alerts: [],
+      recentRuns: [],
+    })),
     getDiagnostics: vi.fn(() => ({
       generatedAt: NOW,
       taskProfilePresets: [],
@@ -200,10 +213,12 @@ function makePreference(input: {
 describe("FridayUixRoutes", () => {
   it("creates assistant route definitions", () => {
     const routes = createFridayUixRoutes({ service: makeService() });
-    expect(routes).toHaveLength(15);
+    expect(routes).toHaveLength(17);
     expect(routes.map((route) => route.operationId)).toEqual([
       "uix.intents.resolve",
       "uix.templates.list",
+      "uix.home.snapshot.get",
+      "uix.assistant.inbox.snapshot.get",
       "uix.diagnostics.get",
       "uix.preferences.list",
       "uix.preferences.update",

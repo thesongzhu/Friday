@@ -5,11 +5,18 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRunId, ensureDir, writeJson, writeText } from "../../validation/real-world/lib/io.mjs";
 
+function resolveCurrentBranch(repoRoot) {
+  const envBranch = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME;
+  if (envBranch && envBranch.trim().length > 0) {
+    return envBranch.trim();
+  }
+  return git(repoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"], { allowFailure: true }) ?? "main";
+}
+
 function parseArgs(argv) {
   const options = {
     repoRoot: process.cwd(),
     base: "main",
-    branch: "claude/investigate-twitter-thread-4PNHG",
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -35,6 +42,7 @@ function parseArgs(argv) {
         break;
     }
   }
+  options.branch ??= resolveCurrentBranch(options.repoRoot);
   return options;
 }
 
@@ -135,9 +143,10 @@ function renderMarkdown(result) {
   ].join("\n");
 }
 
-export function checkBranchConformance({ repoRoot = process.cwd(), base = "main", branch = "claude/investigate-twitter-thread-4PNHG", reportRoot } = {}) {
+export function checkBranchConformance({ repoRoot = process.cwd(), base = "main", branch, reportRoot } = {}) {
+  const effectiveBranch = branch ?? resolveCurrentBranch(repoRoot);
   const resolvedBase = resolveRef(repoRoot, base);
-  const resolvedBranch = resolveRef(repoRoot, branch);
+  const resolvedBranch = resolveRef(repoRoot, effectiveBranch);
   const countText = git(repoRoot, ["rev-list", "--left-right", "--count", `${resolvedBase.resolved}...${resolvedBranch.resolved}`]);
   const [behindText = "0", aheadText = "0"] = countText.split(/\s+/);
   const behind = Number.parseInt(behindText, 10) || 0;
@@ -149,7 +158,7 @@ export function checkBranchConformance({ repoRoot = process.cwd(), base = "main"
   const patchEquivalentCount = cherryLines.filter((line) => line.startsWith("- ")).length;
   const uniqueCommitCount = cherryLines.filter((line) => line.startsWith("+ ")).length;
   const worktrees = parseWorktrees(git(repoRoot, ["worktree", "list", "--porcelain"]));
-  const worktree = worktrees.find((item) => item.branch === `refs/heads/${branch}`);
+  const worktree = worktrees.find((item) => item.branch === `refs/heads/${effectiveBranch}`);
   const branchStatus = worktree?.path
     ? git(repoRoot, ["-C", worktree.path, "status", "--short", "--branch"], { allowFailure: true })
     : null;

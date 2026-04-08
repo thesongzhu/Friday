@@ -25,7 +25,9 @@ export type FridayWorkflowGeneratorSessionStatus =
   | "ready_for_review"
   | "approved"
   | "saved"
-  | "failed"
+  | "retryable_provider_failure"
+  | "draft_ready_needs_repair"
+  | "terminal_failed"
   | "cancelled";
 
 // ─── Session entity ───
@@ -80,6 +82,8 @@ export interface FridayWorkflowGenerationTurnRequest {
 export type FridayWorkflowGenerationTurnMode =
   | "clarification_required"
   | "preview_ready"
+  | "draft_needs_repair"
+  | "retryable_provider_failure"
   | "generation_failed";
 
 // ─── Skill context for prompts ───

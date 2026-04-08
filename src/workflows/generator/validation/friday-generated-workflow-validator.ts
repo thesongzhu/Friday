@@ -8,6 +8,10 @@ import type {
   FridayWorkflowVisualGraphV1,
 } from "#workflows";
 import type { FridayGeneratedWorkflowValidationIssue } from "../model/friday-workflow-generator.types.js";
+import {
+  getFridayWorkflowStepIdFormatMessage,
+  isFridayWorkflowStepIdExpressionSafe,
+} from "../../utils/friday-workflow-step-id.js";
 
 // ─── Interface ───
 
@@ -63,6 +67,15 @@ export function createFridayGeneratedWorkflowValidator(
 
       // startStepId must exist in steps
       const stepIds = new Set(spec.steps.map((s) => s.id));
+      if (!isFridayWorkflowStepIdExpressionSafe(spec.startStepId)) {
+        issues.push({
+          code: "SPEC_INVALID_START_STEP_ID",
+          stage: "spec",
+          severity: "error",
+          message: `startStepId "${spec.startStepId}" is invalid. ${getFridayWorkflowStepIdFormatMessage()}`,
+          stepId: spec.startStepId,
+        });
+      }
       if (!stepIds.has(spec.startStepId)) {
         issues.push({
           code: "SPEC_START_STEP_MISSING",
@@ -74,6 +87,18 @@ export function createFridayGeneratedWorkflowValidator(
       }
 
       // Edge references valid steps
+      for (const step of spec.steps) {
+        if (!isFridayWorkflowStepIdExpressionSafe(step.id)) {
+          issues.push({
+            code: "SPEC_INVALID_STEP_ID",
+            stage: "spec",
+            severity: "error",
+            message: `Step "${step.id}" uses an invalid id. ${getFridayWorkflowStepIdFormatMessage()}`,
+            stepId: step.id,
+          });
+        }
+      }
+
       for (const edge of spec.edges) {
         if (!stepIds.has(edge.from)) {
           issues.push({

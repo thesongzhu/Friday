@@ -3,6 +3,7 @@ import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/
 import type { FridayAgentSsrfGuard } from "../security/friday-agent-ssrf-guard.js";
 import { fetchWithFridayAgentSsrfGuard } from "../security/friday-agent-fetch-guard.js";
 import { summarizeContent } from "../../link-understanding/friday-link-summarize.js";
+import { isFridayTestSecurityWarningSuppressed } from "../../utilities/friday-warning-flags.js";
 import {
   errorResult,
   readBooleanParam,
@@ -47,8 +48,8 @@ export function rewriteUrl(raw: string): string {
       return u.toString();
     }
   } catch (err) {
-    // Malformed URL — let fetch() handle the error downstream
-    console.warn("[friday][agent-web-fetch-tool] URL rewrite failed:", err instanceof Error ? err.message : String(err));
+    // Malformed URL — let fetch() handle the error downstream without
+    // adding another warning line on top of the eventual fetch error.
   }
   return raw;
 }
@@ -68,7 +69,7 @@ export function createFridayAgentWebFetchTool(
   const ssrfGuard = options?.ssrfGuard;
 
   // P1-SEC-001: Warn when SSRF guard is not configured
-  if (!ssrfGuard) {
+  if (!ssrfGuard && !isFridayTestSecurityWarningSuppressed()) {
     console.warn("[friday][SECURITY] web_fetch tool created without SSRF guard — internal network requests will not be blocked");
   }
 

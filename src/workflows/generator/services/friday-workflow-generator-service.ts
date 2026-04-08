@@ -32,6 +32,7 @@ import type {
   FridayWorkflowGenerationTurn,
   FridayWorkflowGenerationTurnRequest,
   FridayWorkflowGenerationTurnResponse,
+  FridayWorkflowGeneratorSessionStatus,
   FridayWorkflowGeneratorSkillContext,
 } from "../model/friday-workflow-generator.types.js";
 
@@ -525,7 +526,13 @@ export function createFridayWorkflowGeneratorService(
   }): FridayTemplateHarnessStage {
     if (input.session.status === "saved") return "completed";
     if (input.session.status === "approved") return "handoff_ready";
-    if (input.session.status === "ready_for_review" || input.qaVerdict) return "qa_verdict";
+    if (
+      input.session.status === "ready_for_review"
+      || input.session.status === "draft_ready_needs_repair"
+      || input.qaVerdict
+    ) {
+      return "qa_verdict";
+    }
     if (input.session.deliveryContractId) return "delivery_contract";
     return "planning_spec";
   }
@@ -546,6 +553,15 @@ export function createFridayWorkflowGeneratorService(
     }
     if (input.session.status === "ready_for_review") {
       return ["Approve and save the generated workflow."];
+    }
+    if (input.session.status === "draft_ready_needs_repair") {
+      return ["Review the draft issues, then repair or regenerate the workflow."];
+    }
+    if (input.session.status === "retryable_provider_failure") {
+      return ["Retry generation when the model provider is available again."];
+    }
+    if (input.session.status === "terminal_failed") {
+      return ["Fix the blocking generation issue, then restart generation."];
     }
     if (input.session.status === "needs_clarification") {
       return ["Answer the remaining clarification question(s)."];
@@ -775,6 +791,60 @@ export function createFridayWorkflowGeneratorService(
     return `${slug}-${deps.idGenerator().slice(0, 8)}`;
   }
 
+  function classifyProviderFailure(error: unknown): {
+    retryable: boolean;
+    message: string;
+  } {
+    const message = error instanceof Error ? error.message : String(error);
+    const retryable =
+      /\b(429|529|rate limit|rate-limited|overloaded|timeout|timed out|deadline exceeded|temporarily unavailable|econnreset|eai_again|etimedout)\b/i
+        .test(message)
+      || (error instanceof FridayDomainError && error.code === "PROVIDER_ERROR"
+        && /\b(502|503|504)\b/.test(String(error.httpStatus ?? "")));
+    return { retryable, message };
+  }
+
+  function resolveDraftSessionStatus(
+    draft: FridayGeneratedWorkflowDraft,
+  ): Extract<FridayWorkflowGeneratorSessionStatus, "ready_for_review" | "draft_ready_needs_repair"> {
+    return draft.validation.ok ? "ready_for_review" : "draft_ready_needs_repair";
+  }
+
+  async function persistFailureState(input: {
+    session: FridayWorkflowGenerationSession;
+    error: unknown;
+    stage: FridayGeneratedWorkflowValidationIssue["stage"];
+    draft?: FridayGeneratedWorkflowDraft;
+  }): Promise<FridayWorkflowGenerationTurnResponse> {
+    const failure = classifyProviderFailure(input.error);
+    const issue: FridayGeneratedWorkflowValidationIssue = {
+      code: failure.retryable ? "RETRYABLE_PROVIDER_FAILURE" : "GENERATION_ERROR",
+      stage: input.stage,
+      severity: "error",
+      message: failure.message,
+    };
+    const nextStatus: FridayWorkflowGeneratorSessionStatus = input.draft?.validation.ok
+      ? "ready_for_review"
+      : failure.retryable
+        ? "retryable_provider_failure"
+        : "terminal_failed";
+    const failedSession: FridayWorkflowGenerationSession = {
+      ...input.session,
+      status: nextStatus,
+      draftWorkflowId: input.draft?.spec.workflowId ?? input.session.draftWorkflowId,
+      updatedAt: deps.nowIso(),
+    };
+    const syncedFailed = await syncWorkflowHarness(failedSession, input.draft);
+    repo.updateSession(syncedFailed.session);
+
+    return {
+      session: syncedFailed.session,
+      mode: failure.retryable ? "retryable_provider_failure" : "generation_failed",
+      draft: input.draft,
+      errors: [issue],
+    };
+  }
+
   async function runRequirementsAnalyzer(
     session: FridayWorkflowGenerationSession,
     turns: FridayWorkflowGenerationTurn[],
@@ -853,7 +923,7 @@ export function createFridayWorkflowGeneratorService(
     if (draft) {
       return {
         session,
-        mode: draft.validation.ok ? "preview_ready" : "generation_failed",
+        mode: draft.validation.ok ? "preview_ready" : "draft_needs_repair",
         draft,
         errors: draft.validation.ok ? undefined : draft.validation.issues,
       };
@@ -862,7 +932,9 @@ export function createFridayWorkflowGeneratorService(
     if (errors && errors.length > 0) {
       return {
         session,
-        mode: "generation_failed",
+        mode: session.status === "retryable_provider_failure"
+          ? "retryable_provider_failure"
+          : "generation_failed",
         errors,
       };
     }
@@ -1090,11 +1162,20 @@ export function createFridayWorkflowGeneratorService(
       repo.addTurn(userTurn);
 
       // Run requirements analyzer
-      const analyzerResult = await runRequirementsAnalyzer(
-        session,
-        [userTurn],
-        input.requestedModel,
-      );
+      let analyzerResult: WorkflowRequirementsAnalyzerResponse;
+      try {
+        analyzerResult = await runRequirementsAnalyzer(
+          session,
+          [userTurn],
+          input.requestedModel,
+        );
+      } catch (error) {
+        return persistFailureState({
+          session,
+          error,
+          stage: "requirements",
+        });
+      }
 
       // Update session based on analyzer result
       const updatedSession: FridayWorkflowGenerationSession = {
@@ -1139,7 +1220,7 @@ export function createFridayWorkflowGeneratorService(
 
           const finalSession: FridayWorkflowGenerationSession = {
             ...syncedUpdated.session,
-            status: draft.validation.ok ? "ready_for_review" : "failed",
+            status: resolveDraftSessionStatus(draft),
             draftWorkflowId: draft.spec.workflowId,
             updatedAt: deps.nowIso(),
           };
@@ -1147,28 +1228,13 @@ export function createFridayWorkflowGeneratorService(
           repo.updateSession(syncedFinal.session);
 
           return buildTurnResponse(syncedFinal.session, analyzerResult, draft);
-        } catch (err) {
-          const failedSession: FridayWorkflowGenerationSession = {
-            ...syncedUpdated.session,
-            status: "failed",
-            updatedAt: deps.nowIso(),
-          };
-          const syncedFailed = await syncWorkflowHarness(failedSession);
-          repo.updateSession(syncedFailed.session);
-
-          return {
-            session: syncedFailed.session,
-            mode: "generation_failed",
-            errors: [
-              {
-                code: "GENERATION_ERROR",
-                stage: "spec",
-                severity: "error",
-                message:
-                  err instanceof Error ? err.message : String(err),
-              },
-            ],
-          };
+        } catch (error) {
+          return persistFailureState({
+            session: syncedUpdated.session,
+            error,
+            stage: "spec",
+            draft: loadDraft(sessionId),
+          });
         }
       }
 
@@ -1194,7 +1260,6 @@ export function createFridayWorkflowGeneratorService(
       }
 
       const now = deps.nowIso();
-      deleteDraft(sessionId);
 
       // Add user turn
       const userTurn: FridayWorkflowGenerationTurn = {
@@ -1210,11 +1275,21 @@ export function createFridayWorkflowGeneratorService(
       const allTurns = repo.getTurns(sessionId);
 
       // Run requirements analyzer with updated conversation
-      const analyzerResult = await runRequirementsAnalyzer(
-        session,
-        allTurns,
-        input.requestedModel,
-      );
+      let analyzerResult: WorkflowRequirementsAnalyzerResponse;
+      try {
+        analyzerResult = await runRequirementsAnalyzer(
+          session,
+          allTurns,
+          input.requestedModel,
+        );
+      } catch (error) {
+        return persistFailureState({
+          session,
+          error,
+          stage: "requirements",
+          draft: loadDraft(sessionId),
+        });
+      }
 
       // Update session
       const updatedSession: FridayWorkflowGenerationSession = {
@@ -1266,7 +1341,7 @@ export function createFridayWorkflowGeneratorService(
 
           const finalSession: FridayWorkflowGenerationSession = {
             ...syncedUpdated.session,
-            status: draft.validation.ok ? "ready_for_review" : "failed",
+            status: resolveDraftSessionStatus(draft),
             draftWorkflowId: draft.spec.workflowId,
             updatedAt: deps.nowIso(),
           };
@@ -1274,28 +1349,13 @@ export function createFridayWorkflowGeneratorService(
           repo.updateSession(syncedFinal.session);
 
           return buildTurnResponse(syncedFinal.session, analyzerResult, draft);
-        } catch (err) {
-          const failedSession: FridayWorkflowGenerationSession = {
-            ...syncedUpdated.session,
-            status: "failed",
-            updatedAt: deps.nowIso(),
-          };
-          const syncedFailed = await syncWorkflowHarness(failedSession);
-          repo.updateSession(syncedFailed.session);
-
-          return {
-            session: syncedFailed.session,
-            mode: "generation_failed",
-            errors: [
-              {
-                code: "GENERATION_ERROR",
-                stage: "spec",
-                severity: "error",
-                message:
-                  err instanceof Error ? err.message : String(err),
-              },
-            ],
-          };
+        } catch (error) {
+          return persistFailureState({
+            session: syncedUpdated.session,
+            error,
+            stage: "spec",
+            draft: loadDraft(sessionId),
+          });
         }
       }
 
@@ -1362,7 +1422,7 @@ export function createFridayWorkflowGeneratorService(
 
         const finalSession: FridayWorkflowGenerationSession = {
           ...syncedGenerating.session,
-          status: draft.validation.ok ? "ready_for_review" : "failed",
+          status: resolveDraftSessionStatus(draft),
           draftWorkflowId: draft.spec.workflowId,
           updatedAt: deps.nowIso(),
         };
@@ -1370,15 +1430,22 @@ export function createFridayWorkflowGeneratorService(
         repo.updateSession(syncedFinal.session);
 
         return draft;
-      } catch (err) {
+      } catch (error) {
+        const fallbackDraft = loadDraft(sessionId);
+        const failure = classifyProviderFailure(error);
         const failedSession: FridayWorkflowGenerationSession = {
           ...syncedGenerating.session,
-          status: "failed",
+          status: fallbackDraft?.validation.ok
+            ? "ready_for_review"
+            : failure.retryable
+              ? "retryable_provider_failure"
+              : "terminal_failed",
+          draftWorkflowId: fallbackDraft?.spec.workflowId,
           updatedAt: deps.nowIso(),
         };
-        const syncedFailed = await syncWorkflowHarness(failedSession);
+        const syncedFailed = await syncWorkflowHarness(failedSession, fallbackDraft);
         repo.updateSession(syncedFailed.session);
-        throw err;
+        throw error;
       }
     },
 

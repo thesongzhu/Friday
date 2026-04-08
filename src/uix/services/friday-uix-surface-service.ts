@@ -1,5 +1,8 @@
 import { FridayDomainError } from "#errors";
 import type { FridayAgentRuntime } from "#agent";
+import type { FridayAgentAutomationRecord } from "#agent";
+import type { FridayAgentRunRecord } from "#agent";
+import type { FridayAgentRunStatus } from "#agent";
 import type { FridayTemplateHarnessSummary } from "#harness";
 import type { FridaySessionService } from "#sessions";
 import type { FridaySqliteLayer } from "#state";
@@ -7,11 +10,16 @@ import type { FridaySkillExecutor } from "#skills";
 import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridayProviderTenantContext } from "#providers";
 import type { FridayWorkflowGeneratorService, FridayWorkflowProductService } from "#workflows";
+import { computeNextRunAtMs } from "../../jobs/scheduler/friday-job-schedule-utils.js";
 import type {
   FridayActionTemplateSummary,
   FridayBeginnerIntentResolution,
   FridayGuidedWizardState,
+  FridayUixAlertSummary,
+  FridayUixApprovalSummary,
   FridayUixAssistantDiagnostics,
+  FridayUixAssistantInboxSnapshot,
+  FridayUixHomeSnapshot,
   FridayUixTemplateExecutionResponse,
   FridayUixWizardResponse,
 } from "../../api/model/friday-api-uix-surface.types.js";
@@ -73,6 +81,12 @@ export interface FridayUixSurfaceService {
   getDiagnostics(input: {
     userId: string;
   }): FridayUixAssistantDiagnostics;
+  getHomeSnapshot(input: {
+    userId: string;
+  }): FridayUixHomeSnapshot;
+  getAssistantInboxSnapshot(input: {
+    userId: string;
+  }): FridayUixAssistantInboxSnapshot;
   executeTemplate(input: {
     templateId: string;
     userId: string;
@@ -115,6 +129,15 @@ export interface CreateFridayUixSurfaceServiceDeps {
   wizardContextRepo?: FridayUixGuidedContextRepository;
   learningContextBuilder?: (input: { userId: string; nowIso: string }) => { preferences: Record<string, unknown> };
   diagnosticsBuilder?: (input: { userId: string }) => FridayUixAssistantDiagnostics;
+  listAgentRuns?: (input: {
+    userId?: string;
+    status?: FridayAgentRunStatus;
+    limit?: number;
+  }) => FridayAgentRunRecord[];
+  listAutomations?: (input: {
+    enabled?: boolean;
+    limit?: number;
+  }) => FridayAgentAutomationRecord[];
   /** Optional writer to emit learning events when preferences are updated via API. */
   learningEventWriter?: (events: Array<{ eventId: string; ts: string; userId: string; kind: "user_correction"; payload: Record<string, unknown> }>) => void;
   nowIso?: () => string;
@@ -642,6 +665,40 @@ export function createFridayUixSurfaceService(
 ): FridayUixSurfaceService {
   const wizardContexts = new Map<string, FridayWizardContextRecord>();
   const nowIso = deps.nowIso ?? (() => new Date().toISOString());
+
+  function buildApprovalSummaries(userId: string, limit: number): FridayUixApprovalSummary[] {
+    return deps.selfHealing
+      .listIssueCards({ userId, limit: Math.max(limit * 2, limit) })
+      .filter((item) => item.kind === "approval_required")
+      .slice(0, limit)
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+        summary: item.summary,
+        createdAt: item.createdAt,
+        actionId: item.actionId,
+        approvalRequestId: item.approvalRequestId,
+        severity: item.severity,
+      }));
+  }
+
+  function buildAlertSummaries(limit: number): FridayUixAlertSummary[] {
+    return [...(deps.observability?.alerts.getActiveEvents() ?? [])]
+      .sort((left, right) => {
+        const leftDetected = new Date(left.detectedAt).getTime();
+        const rightDetected = new Date(right.detectedAt).getTime();
+        return rightDetected - leftDetected;
+      })
+      .slice(0, limit)
+      .map((event) => ({
+        id: event.id,
+        title: event.summary,
+        summary: event.details,
+        severity: event.severity,
+        module: event.module,
+        detectedAt: event.detectedAt,
+      }));
+  }
 
   function listCommunicationPreferences(userId: string): FridayUserPreference[] {
     if (!deps.db || !deps.preferenceRepo) {
@@ -1495,6 +1552,56 @@ export function createFridayUixSurfaceService(
         recentRuns: [],
         mcpServerStates: [],
         supportedPreprocessors: [],
+      };
+    },
+
+    getHomeSnapshot(input) {
+      const runs = deps.listAgentRuns?.({
+        userId: input.userId,
+        limit: 12,
+      }) ?? [];
+      const scheduledAutomations = (deps.listAutomations?.({
+        enabled: true,
+        limit: 20,
+      }) ?? [])
+        .filter((automation) => automation.enabled && automation.schedule)
+        .map((automation) => ({
+          id: automation.id,
+          name: automation.name,
+          enabled: automation.enabled,
+          schedule: automation.schedule,
+          nextRunAt: automation.schedule
+            ? (() => {
+              const nextRunAtMs = computeNextRunAtMs(
+                {
+                  kind: "cron",
+                  cronExpr: automation.schedule.cron,
+                  tz: automation.schedule.timezone,
+                },
+                Date.now(),
+              );
+              return nextRunAtMs == null ? null : new Date(nextRunAtMs).toISOString();
+            })()
+            : null,
+        }));
+
+      return {
+        generatedAt: nowIso(),
+        runs,
+        pendingApprovals: buildApprovalSummaries(input.userId, 6),
+        scheduledAutomations,
+      };
+    },
+
+    getAssistantInboxSnapshot(input) {
+      return {
+        generatedAt: nowIso(),
+        approvals: buildApprovalSummaries(input.userId, 10),
+        alerts: buildAlertSummaries(6),
+        recentRuns: deps.listAgentRuns?.({
+          userId: input.userId,
+          limit: 8,
+        }) ?? [],
       };
     },
 

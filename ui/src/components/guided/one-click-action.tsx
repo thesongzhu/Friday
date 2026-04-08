@@ -1,13 +1,18 @@
 import type { LucideIcon } from "lucide-react";
 import { Loader2 } from "lucide-react";
+import { useAppLocale } from "@/providers/locale-provider";
+import {
+  resolveLocalizedText,
+  type LocalizedText,
+} from "@/lib/i18n/localized-text";
 import { cn } from "@/lib/utils/cn";
 
 export interface OneClickActionProps {
   icon: LucideIcon;
-  title: string;
-  summary: string;
+  title: LocalizedText;
+  summary: LocalizedText;
   tone?: "neutral" | "success" | "warning" | "danger";
-  ctaLabel: string;
+  ctaLabel: LocalizedText;
   isPending?: boolean;
   disabled?: boolean;
   onExecute: () => void;
@@ -16,31 +21,32 @@ export interface OneClickActionProps {
 function toneBorder(tone: OneClickActionProps["tone"]) {
   switch (tone) {
     case "success":
-      return "border-emerald-400/20 hover:border-emerald-400/40";
+      return "border-[color:var(--color-accent)] hover:border-[color:var(--color-accent)]";
     case "warning":
-      return "border-amber-300/20 hover:border-amber-300/40";
+      return "border-[color:var(--color-border-strong)] hover:border-[color:var(--color-accent)]";
     case "danger":
-      return "border-rose-400/20 hover:border-rose-400/40";
+      return "border-[color:var(--color-border-strong)] hover:border-[color:var(--color-border-strong)]";
     default:
-      return "border-white/10 hover:border-white/20";
+      return "border-[color:var(--color-border-soft)] hover:border-[color:var(--color-border-strong)]";
   }
 }
 
 function toneIcon(tone: OneClickActionProps["tone"]) {
   switch (tone) {
     case "success":
-      return "text-emerald-300";
+      return "text-[color:var(--color-accent)]";
     case "warning":
-      return "text-amber-300";
+      return "text-[color:var(--color-text-primary)]";
     case "danger":
-      return "text-rose-300";
+      return "text-[color:var(--color-text-primary)]";
     default:
-      return "text-white/60";
+      return "text-[color:var(--color-text-secondary)]";
   }
 }
 
 export function OneClickAction(props: OneClickActionProps) {
   const { icon: Icon, title, summary, tone = "neutral", ctaLabel, isPending, disabled, onExecute } = props;
+  const { locale } = useAppLocale();
 
   return (
     <button
@@ -48,8 +54,8 @@ export function OneClickAction(props: OneClickActionProps) {
       disabled={disabled || isPending}
       onClick={onExecute}
       className={cn(
-        "flex w-full items-start gap-3 rounded-2xl border bg-white/[0.02] p-4 text-left transition-all",
-        "hover:bg-white/[0.05] active:scale-[0.99]",
+        "flex min-h-[88px] w-full items-start gap-3 rounded-2xl border bg-[color:var(--color-bg-surface)] p-4 text-left transition-all",
+        "hover:bg-[color:var(--color-bg-surface-strong)] active:scale-[0.99]",
         "disabled:pointer-events-none disabled:opacity-40",
         toneBorder(tone),
       )}
@@ -58,11 +64,15 @@ export function OneClickAction(props: OneClickActionProps) {
         {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-white">{title}</p>
-        <p className="mt-0.5 text-xs text-white/50">{summary}</p>
+        <p className="text-sm font-medium text-[color:var(--color-text-primary)]">
+          {resolveLocalizedText(title, locale)}
+        </p>
+        <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+          {resolveLocalizedText(summary, locale)}
+        </p>
       </div>
-      <span className="shrink-0 rounded-xl border border-white/10 bg-white/[0.06] px-2.5 py-1 text-[11px] font-medium text-white/70">
-        {ctaLabel}
+      <span className="shrink-0 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-text-secondary)]">
+        {resolveLocalizedText(ctaLabel, locale)}
       </span>
     </button>
   );

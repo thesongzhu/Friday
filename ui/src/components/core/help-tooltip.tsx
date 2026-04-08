@@ -29,15 +29,15 @@ export function HelpTooltip({ term, text, children, className }: HelpTooltipProp
       onMouseLeave={() => setVisible(false)}
     >
       {children ?? (
-        <span className="inline-flex items-center gap-1 border-b border-dashed border-white/20 text-inherit">
+        <span className="inline-flex items-center gap-1 border-b border-dashed border-[color:var(--color-border-soft)] text-inherit">
           {entry?.term ?? term}
-          <HelpCircle className="inline h-3 w-3 text-white/30" />
+          <HelpCircle className="inline h-3 w-3 text-[color:var(--color-text-faint)]" />
         </span>
       )}
 
       {visible && (
-        <span className="absolute bottom-full left-1/2 z-50 mb-2 w-64 -translate-x-1/2 rounded-xl border border-white/10 bg-[var(--bg-canvas)] px-3 py-2 text-xs leading-relaxed text-white/70 shadow-lg">
-          {entry?.term && <span className="mb-1 block font-semibold text-white">{entry.term}</span>}
+        <span className="absolute bottom-full left-1/2 z-50 mb-2 w-64 -translate-x-1/2 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-xs leading-relaxed text-[color:var(--color-text-secondary)] shadow-[var(--shadow-floating)]">
+          {entry?.term && <span className="mb-1 block font-semibold text-[color:var(--color-text-primary)]">{entry.term}</span>}
           {tooltipText}
         </span>
       )}

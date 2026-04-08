@@ -16,26 +16,26 @@ export interface StepProgressProps {
 function StepIcon(props: { status: StepProgressStep["status"] }) {
   switch (props.status) {
     case "completed":
-      return <Check className="h-3.5 w-3.5 text-emerald-300" />;
+      return <Check className="h-3.5 w-3.5 text-[color:var(--color-accent)]" />;
     case "error":
-      return <AlertTriangle className="h-3.5 w-3.5 text-rose-300" />;
+      return <AlertTriangle className="h-3.5 w-3.5 text-[color:var(--color-text-primary)]" />;
     case "active":
-      return <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--accent-strong)]" />;
+      return <Loader2 className="h-3.5 w-3.5 animate-spin text-[color:var(--color-accent)]" />;
     default:
-      return <div className="h-2 w-2 rounded-full bg-white/20" />;
+      return <div className="h-2 w-2 rounded-full bg-[color:var(--color-border-soft)]" />;
   }
 }
 
 function stepTone(status: StepProgressStep["status"]) {
   switch (status) {
     case "completed":
-      return "border-emerald-400/30 bg-emerald-400/10";
+      return "border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]";
     case "error":
-      return "border-rose-400/30 bg-rose-400/10";
+      return "border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)]";
     case "active":
-      return "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10";
+      return "border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]";
     default:
-      return "border-white/10 bg-white/[0.04]";
+      return "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)]";
   }
 }
 
@@ -60,7 +60,7 @@ export function StepProgress(props: StepProgressProps) {
                 <div
                   className={cn(
                     "w-px flex-1 min-h-6",
-                    step.status === "completed" ? "bg-emerald-400/30" : "bg-white/10",
+                    step.status === "completed" ? "bg-[color:var(--color-accent-soft)]" : "bg-[color:var(--color-border-soft)]",
                   )}
                 />
               )}
@@ -69,13 +69,13 @@ export function StepProgress(props: StepProgressProps) {
               <p
                 className={cn(
                   "text-sm font-medium",
-                  step.status === "active" ? "text-white" : step.status === "completed" ? "text-white/70" : "text-white/40",
+                  step.status === "active" ? "text-[color:var(--color-text-primary)]" : step.status === "completed" ? "text-[color:var(--color-text-secondary)]" : "text-[color:var(--color-text-faint)]",
                 )}
               >
                 {step.label}
               </p>
               {step.detail && (
-                <p className="mt-0.5 text-xs text-white/40">{step.detail}</p>
+                <p className="mt-0.5 text-xs text-[color:var(--color-text-faint)]">{step.detail}</p>
               )}
             </div>
           </div>
@@ -100,7 +100,7 @@ export function StepProgress(props: StepProgressProps) {
             <span
               className={cn(
                 "text-xs font-medium whitespace-nowrap",
-                step.status === "active" ? "text-white" : step.status === "completed" ? "text-white/60" : "text-white/30",
+                step.status === "active" ? "text-[color:var(--color-text-primary)]" : step.status === "completed" ? "text-[color:var(--color-text-secondary)]" : "text-[color:var(--color-text-faint)]",
               )}
             >
               {step.label}
@@ -110,7 +110,7 @@ export function StepProgress(props: StepProgressProps) {
             <div
               className={cn(
                 "h-px w-6",
-                step.status === "completed" ? "bg-emerald-400/30" : "bg-white/10",
+                step.status === "completed" ? "bg-[color:var(--color-accent-soft)]" : "bg-[color:var(--color-border-soft)]",
               )}
             />
           )}

@@ -50,6 +50,8 @@ export interface FridaySessionService {
     key: string,
     focusState: FridaySessionConversationFocusState | null,
   ): Promise<FridaySessionRecord>;
+  /** Merge top-level metadata keys into the persisted session metadata document. */
+  mergeMetadata(key: string, metadataPatch: Record<string, unknown>): Promise<FridaySessionRecord>;
 }
 
 export interface FridaySessionSweepResult {

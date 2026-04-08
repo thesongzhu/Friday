@@ -3687,6 +3687,56 @@ describe("FridayAgentRuntime", () => {
     expect(toolEndEvents[0].correlationId).toBe(result.runId);
   });
 
+  it("cancels runs waiting on tool approval without hanging", async () => {
+    const execExecute = vi.fn(async () => ({ content: "deleted" }));
+    const execTool: FridayAgentToolDefinition = {
+      name: "exec",
+      description: "Execute shell command",
+      parameters: { properties: { command: { type: "string" } } },
+      execute: execExecute,
+    };
+
+    const llmClient = createMockLlmClient([
+      [
+        { type: "tool_use", id: "call-1", name: "exec", input: { command: "rm database.dump" } },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 5, outputTokens: 3 },
+      ],
+    ]);
+
+    const emitter = createFridayAgentEventEmitter();
+    const abortController = new AbortController();
+    emitter.on("agent.run.awaiting_tool_approval", () => {
+      abortController.abort(new Error("Cancelled while awaiting approval"));
+    });
+
+    const toolApprovalResolver = vi.fn(async () =>
+      new Promise<{ approved: boolean; reason?: string }>(() => {
+        // Intentionally left pending; cancellation should unblock the run.
+      }));
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [execTool],
+      eventEmitter: emitter,
+      idGenerator,
+      nowIso: () => NOW,
+      toolApprovalResolver,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Delete the dump now",
+      signal: abortController.signal,
+    });
+
+    expect(result.status).toBe("cancelled");
+    expect(execExecute).not.toHaveBeenCalled();
+    expect(toolApprovalResolver).toHaveBeenCalledTimes(1);
+  });
+
   it("blocks tools listed in disabledToolNames", async () => {
     const browserExecute = vi.fn(async () => ({ content: "opened" }));
     const browserTool: FridayAgentToolDefinition = {
@@ -4976,5 +5026,122 @@ describe("FridayAgentRuntime", () => {
 
     expect(result.status).toBe("completed");
     expect(capturedSystemPrompt).toBe("You are a test agent.");
+  });
+
+  it("recovers rollback checkpoints after runtime restart", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-agent-runtime-checkpoint-"));
+    const filePath = join(tempDir, "tracked.txt");
+    writeFileSync(filePath, "before\n", "utf8");
+
+    const llmClient = createMockLlmClient([
+      [
+        { type: "tool_use", id: "call-write", name: "write", input: { path: filePath, content: "after\n" } },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 5, outputTokens: 3 },
+      ],
+      [
+        { type: "text_delta", text: "done" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 2 },
+      ],
+    ]);
+
+    const writeTool: FridayAgentToolDefinition = {
+      name: "write",
+      description: "Write file",
+      parameters: {
+        properties: {
+          path: { type: "string" },
+          content: { type: "string" },
+        },
+        required: ["path", "content"],
+      },
+      async execute(args) {
+        writeFileSync(String(args.path), String(args.content), "utf8");
+        return { content: "Written" };
+      },
+    };
+
+    try {
+      const runtimeA = createFridayAgentRuntime({
+        db,
+        llmClient,
+        model: "test-model",
+        providerId: "test-provider",
+        systemPrompt: "Test",
+        tools: [writeTool],
+        eventEmitter: createFridayAgentEventEmitter(),
+        idGenerator,
+        nowIso: () => NOW,
+        workdir: tempDir,
+      });
+
+      const result = await runtimeA.executeRun({ task: "Modify tracked file" });
+      expect(readFileSync(filePath, "utf8")).toBe("after\n");
+      expect(runtimeA.hasRollbackCheckpoint(result.runId)).toBe(true);
+
+      const runtimeB = createFridayAgentRuntime({
+        db,
+        llmClient: createMockLlmClient([]),
+        model: "test-model",
+        providerId: "test-provider",
+        systemPrompt: "Test",
+        tools: [writeTool],
+        eventEmitter: createFridayAgentEventEmitter(),
+        idGenerator,
+        nowIso: () => NOW,
+        workdir: tempDir,
+      });
+
+      expect(runtimeB.hasRollbackCheckpoint(result.runId)).toBe(true);
+      const rollback = runtimeB.rollbackRun(result.runId);
+      expect(rollback).not.toBeNull();
+      expect(rollback?.errors).toEqual([]);
+      expect(rollback?.restoredCount).toBe(1);
+      expect(readFileSync(filePath, "utf8")).toBe("before\n");
+      expect(runtimeB.hasRollbackCheckpoint(result.runId)).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("persists pack context metadata on agent runs", async () => {
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "Hello, " },
+        { type: "text_delta", text: "creator!" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 10, outputTokens: 5 },
+      ],
+    ]);
+    const runRepo = createFridayAgentRunRepository();
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Continue creator workflow",
+      sessionKey: "chat:default:pack-context",
+      executionContext: {
+        surface: "chat",
+        interactive: true,
+        packId: "industry-creator-media",
+      },
+    });
+
+    const run = db.withReadConnection((reader) => runRepo.getById(reader, result.runId));
+    expect(run?.metadata).toEqual({
+      packContext: {
+        packId: "industry-creator-media",
+        surface: "chat",
+        updatedAt: NOW,
+      },
+    });
   });
 });

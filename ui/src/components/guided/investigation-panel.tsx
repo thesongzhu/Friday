@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { localize } from "@/lib/i18n/localized-text";
+import { useAppLocale } from "@/providers/locale-provider";
 
 export interface InvestigationLine {
   id: string;
@@ -17,17 +19,18 @@ export interface InvestigationPanelProps {
 function lineColor(type: InvestigationLine["type"]) {
   switch (type) {
     case "discovery":
-      return "text-emerald-200/80";
+      return "text-[color:var(--color-accent)]";
     case "analysis":
-      return "text-amber-200/70";
+      return "text-[color:var(--color-text-secondary)]";
     case "conclusion":
-      return "text-white";
+      return "text-[color:var(--color-text-primary)]";
     default:
-      return "text-white/60";
+      return "text-[color:var(--color-text-tertiary)]";
   }
 }
 
 export function InvestigationPanel(props: InvestigationPanelProps) {
+  const { locale } = useAppLocale();
   const { lines, isStreaming, title } = props;
   const bottomRef = useRef<HTMLDivElement>(null);
   const [visibleCount, setVisibleCount] = useState(0);
@@ -46,11 +49,11 @@ export function InvestigationPanel(props: InvestigationPanelProps) {
   }, [visibleCount]);
 
   return (
-    <div className="rounded-3xl border border-white/10 bg-white/[0.02] p-5">
+    <div className="rounded-3xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5 shadow-[var(--shadow-floating)]">
       <div className="flex items-center gap-2.5">
-        {isStreaming && <Loader2 className="h-4 w-4 animate-spin text-[var(--accent-strong)]" />}
-        <p className="text-sm font-medium text-white/70">
-          {title ?? "Friday is investigating..."}
+        {isStreaming && <Loader2 className="h-4 w-4 animate-spin text-[color:var(--color-accent)]" />}
+        <p className="text-sm font-medium text-[color:var(--color-text-secondary)]">
+          {title ?? localize(locale, "Friday 正在分析", "Friday is investigating")}
         </p>
       </div>
 
@@ -68,7 +71,7 @@ export function InvestigationPanel(props: InvestigationPanelProps) {
           </p>
         ))}
         {isStreaming && visibleCount >= lines.length && (
-          <span className="inline-block h-4 w-1.5 animate-pulse bg-white/40" />
+          <span className="inline-block h-4 w-1.5 animate-pulse bg-[color:var(--color-accent-soft)]" />
         )}
         <div ref={bottomRef} />
       </div>

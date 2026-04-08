@@ -1,9 +1,9 @@
 import { useBudgetStatus } from "@/hooks/use-budget-status";
 
 const TONE_CLASSES = {
-  neutral: "text-white/50",
-  warning: "text-amber-300",
-  critical: "text-red-400",
+  neutral: "text-[color:var(--color-text-secondary)]",
+  warning: "text-[color:var(--color-text-primary)]",
+  critical: "text-[color:var(--color-text-primary)]",
 } as const;
 
 export function BudgetIndicator() {
@@ -14,19 +14,19 @@ export function BudgetIndicator() {
   }
 
   const label = budget.percentUsed !== null
-    ? `$${budget.spentUsd.toFixed(2)} / $${budget.limitUsd.toFixed(2)} (${budget.percentUsed.toFixed(0)}%)`
-    : `$${budget.spentUsd.toFixed(2)} spent`;
+    ? `已用 $${budget.spentUsd.toFixed(2)} / $${budget.limitUsd.toFixed(2)} (${budget.percentUsed.toFixed(0)}%)`
+    : `已用 $${budget.spentUsd.toFixed(2)} / spent`;
 
   return (
     <div
-      className={`flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium ${TONE_CLASSES[budget.tone]}`}
-      title={`Monthly budget: ${label}`}
+      className={`flex min-h-[32px] items-center gap-1.5 rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-1 text-xs font-medium shadow-[var(--shadow-floating)] ${TONE_CLASSES[budget.tone]}`}
+      title={`月度预算 / Monthly budget: ${label}`}
     >
       {budget.tone === "critical" && (
-        <span className="inline-block h-2 w-2 rounded-full bg-red-400 animate-pulse" />
+        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[color:var(--color-text-primary)]" />
       )}
       {budget.tone === "warning" && (
-        <span className="inline-block h-2 w-2 rounded-full bg-amber-300" />
+        <span className="inline-block h-2 w-2 rounded-full bg-[color:var(--color-accent)]" />
       )}
       {label}
     </div>

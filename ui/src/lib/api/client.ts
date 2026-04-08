@@ -1,4 +1,5 @@
 import { authStorage } from "@/lib/storage/auth-storage";
+import { recordClientApiError, recordClientApiEvent } from "@/lib/diagnostics/client-stability";
 import { ApiError, AuthExpiredError, type ApiEnvelope, type RefreshResponse } from "./types";
 
 // ─── Single-flight refresh guard ───
@@ -75,6 +76,7 @@ async function refreshSession(): Promise<void> {
 // ─── Core fetch wrapper ───
 
 async function apiFetch<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
+  const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
   const headers = new Headers(init.headers);
 
   const token = authStorage.getAccessToken();
@@ -90,6 +92,12 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, retry = true): 
   try {
     res = await fetch(path, { ...init, headers });
   } catch (error) {
+    recordClientApiError({
+      path,
+      method: init.method ?? "GET",
+      kind: "network",
+      durationMs: Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt),
+    });
     throw new ApiError(
       "NETWORK_ERROR",
       "Could not reach the Friday API.",
@@ -113,6 +121,14 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, retry = true): 
   const envelope = await readEnvelope<T>(path, res);
 
   if (!envelope.ok) {
+    recordClientApiError({
+      path,
+      method: init.method ?? "GET",
+      kind: "api",
+      status: res.status,
+      code: envelope.error.code,
+      durationMs: Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt),
+    });
     throw new ApiError(
       envelope.error.code,
       envelope.error.message,
@@ -121,6 +137,13 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, retry = true): 
       envelope.error.retryAfterMs,
     );
   }
+
+  recordClientApiEvent({
+    path,
+    method: init.method ?? "GET",
+    status: res.status,
+    durationMs: Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt),
+  });
 
   return envelope.data;
 }

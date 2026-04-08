@@ -52,41 +52,43 @@ export function ActivitySummaryPanel() {
   }
 
   return (
-    <div className="mb-4 rounded-2xl border border-sky-400/20 bg-sky-400/[0.06] p-4 text-sm text-sky-100">
+    <div className="mb-4 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4 text-sm text-[color:var(--color-text-secondary)] shadow-[var(--shadow-floating)]">
       <div className="mb-2 flex items-center justify-between">
-        <p className="font-semibold">While you were away</p>
+        <p className="font-semibold text-[color:var(--color-text-primary)]">你不在时 / While You Were Away</p>
         <button
-          className="text-xs text-sky-300/60 hover:text-sky-200"
+          className="text-xs text-[color:var(--color-text-faint)] hover:text-[color:var(--color-text-primary)]"
           onClick={() => setDismissed(true)}
         >
-          Dismiss
+          关闭 / Dismiss
         </button>
       </div>
-      <p className="mb-2 text-sky-100/70">
-        Friday completed <strong>{data.completedCount}</strong> task{data.completedCount !== 1 ? "s" : ""}
+      <p className="mb-2 text-[color:var(--color-text-secondary)]">
+        Friday 完成了 <strong className="text-[color:var(--color-text-primary)]">{data.completedCount}</strong> 个任务
+        {" / "}
+        Friday completed <strong className="text-[color:var(--color-text-primary)]">{data.completedCount}</strong> task{data.completedCount !== 1 ? "s" : ""}
         {data.failedCount > 0 && (
-          <>, <strong className="text-red-300">{data.failedCount}</strong> failed</>
+          <>，<strong className="text-[color:var(--color-text-primary)]">{data.failedCount}</strong> 个失败 / failed</>
         )}
         {data.cancelledCount > 0 && (
-          <>, <strong>{data.cancelledCount}</strong> cancelled</>
+          <>，<strong className="text-[color:var(--color-text-primary)]">{data.cancelledCount}</strong> 个取消 / cancelled</>
         )}
         {data.totalCostUsd > 0 && (
-          <> Total cost: <strong>${data.totalCostUsd.toFixed(2)}</strong>.</>
+          <>。总成本 / Total cost: <strong className="text-[color:var(--color-text-primary)]">${data.totalCostUsd.toFixed(2)}</strong>.</>
         )}
       </p>
       <ul className="space-y-1">
         {data.runs.slice(0, 5).map((run) => (
-          <li key={run.id} className="flex items-center gap-2 text-xs text-sky-100/60">
+          <li key={run.id} className="flex items-center gap-2 text-xs text-[color:var(--color-text-tertiary)]">
             <span
               className={`inline-block h-1.5 w-1.5 rounded-full ${
-                run.status === "completed" ? "bg-emerald-400"
-                  : run.status === "failed" || run.status === "failed_tests" ? "bg-red-400"
-                    : "bg-zinc-400"
+                run.status === "completed" ? "bg-[color:var(--color-accent)]"
+                  : run.status === "failed" || run.status === "failed_tests" ? "bg-[color:var(--color-text-primary)]"
+                    : "bg-[color:var(--color-text-faint)]"
               }`}
             />
-            <span className="truncate">{run.task}</span>
+            <span className="truncate text-[color:var(--color-text-secondary)]">{run.task}</span>
             {run.durationMs !== undefined && (
-              <span className="shrink-0 text-[10px] text-sky-100/40">
+              <span className="shrink-0 text-[10px] text-[color:var(--color-text-faint)]">
                 {(run.durationMs / 1000).toFixed(1)}s
               </span>
             )}

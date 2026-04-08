@@ -1,11 +1,13 @@
 import type { LucideIcon } from "lucide-react";
+import { resolveLocalizedText, type LocalizedText } from "@/lib/i18n/localized-text";
 import { cn } from "@/lib/utils/cn";
+import { useAppLocale } from "@/providers/locale-provider";
 
 export interface GoalCardProps {
   icon: LucideIcon;
-  title: string;
-  subtitle: string;
-  outcome: string;
+  title: LocalizedText;
+  subtitle: LocalizedText;
+  outcome: LocalizedText;
   recommended?: boolean;
   active?: boolean;
   disabled?: boolean;
@@ -13,6 +15,7 @@ export interface GoalCardProps {
 }
 
 export function GoalCard(props: GoalCardProps) {
+  const { locale } = useAppLocale();
   const { icon: Icon, title, subtitle, outcome, recommended, active, disabled, onClick } = props;
 
   return (
@@ -21,19 +24,19 @@ export function GoalCard(props: GoalCardProps) {
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "group relative flex flex-col gap-3 rounded-3xl border p-5 text-left transition-all",
+        "group relative flex min-h-[220px] flex-col gap-3 rounded-3xl border p-5 text-left transition-all",
         "hover:scale-[1.02] active:scale-[0.98]",
         "disabled:pointer-events-none disabled:opacity-40",
         active
-          ? "border-[var(--accent-strong)]/40 bg-[var(--accent-strong)]/10"
+          ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]"
           : recommended
-            ? "border-emerald-300/30 bg-emerald-300/[0.06] hover:border-emerald-300/50 hover:bg-emerald-300/10"
-            : "border-white/10 bg-white/[0.04] hover:border-white/[0.18] hover:bg-white/[0.07]",
+            ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent-muted)] hover:bg-[color:var(--color-accent-soft)]"
+            : "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-bg-surface-strong)]",
       )}
     >
       {recommended && (
-        <span className="absolute -top-2.5 right-4 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100">
-          Recommended
+        <span className="absolute -top-2.5 right-4 rounded-full border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-primary)]">
+          {locale === "zh" ? "推荐" : "Recommended"}
         </span>
       )}
 
@@ -42,21 +45,24 @@ export function GoalCard(props: GoalCardProps) {
           className={cn(
             "rounded-2xl border p-2.5",
             recommended
-              ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-200"
-              : "border-white/10 bg-white/[0.07] text-white/70 group-hover:text-white",
+              ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-text-primary)]"
+              : "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] text-[color:var(--color-text-secondary)] group-hover:text-[color:var(--color-text-primary)]",
           )}
         >
           <Icon className="h-5 w-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-white">{title}</p>
-          <p className="mt-1 text-xs leading-5 text-white/50">{subtitle}</p>
+          <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{resolveLocalizedText(title, locale)}</p>
+          <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-secondary)]">{resolveLocalizedText(subtitle, locale)}</p>
         </div>
       </div>
 
-      <p className="text-[11px] leading-4 text-white/40">
-        <span className="font-medium text-white/50">Outcome:</span> {outcome}
-      </p>
+      <div className="mt-auto rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-3 py-3">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
+          {locale === "zh" ? "结果" : "Outcome"}
+        </p>
+        <p className="mt-2 text-[11px] leading-5 text-[color:var(--color-text-secondary)]">{resolveLocalizedText(outcome, locale)}</p>
+      </div>
     </button>
   );
 }

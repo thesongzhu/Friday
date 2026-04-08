@@ -240,14 +240,14 @@ export function SkillsPage() {
           title="Package a skill from a guided session"
           aside={<StatusPill tone={recentGeneratorSessionId ? "success" : "neutral"}>{recentGeneratorSessionId ? "resume ready" : "new session"}</StatusPill>}
         >
-          <div className="space-y-4 text-sm text-white/70">
+          <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
             <p>
               Use the dedicated generator surface when you want clarification questions, draft generation, test evidence,
               and the final approve receipt in one place.
             </p>
             <div className="flex flex-wrap gap-3">
               <Link
-                className="inline-flex items-center rounded-2xl bg-[var(--accent-strong)] px-4 py-2 text-sm font-medium text-slate-950 hover:bg-[var(--accent-soft)]"
+                className="inline-flex items-center rounded-2xl bg-[color:var(--color-accent)] px-4 py-2 text-sm font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-strong)]"
                 to={buildSkillGeneratorHref({
                   goal: detail ? `Create or stabilize a reusable skill for: ${detail.name}` : undefined,
                   from: "skills",
@@ -258,7 +258,7 @@ export function SkillsPage() {
               </Link>
               {recentGeneratorSessionId ? (
                 <Link
-                  className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                  className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                   to={buildSkillGeneratorHref({
                     sessionId: recentGeneratorSessionId,
                     from: "skills",
@@ -292,7 +292,7 @@ export function SkillsPage() {
           }
         >
           {selectedSkillId ? (
-            <div className="space-y-4 text-sm text-white/70">
+            <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
               <p>
                 Friday uses this page as the operator detail view for a skill that Assistant has already recommended.
                 The core lifecycle stays click-first: starter pack first, then managed installs, trust evidence, updates, and repair actions.
@@ -305,7 +305,7 @@ export function SkillsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-white/60">Pick a skill to see the next best install, verify, or repair action.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Pick a skill to see the next best install, verify, or repair action.</p>
           )}
         </ShellCard>
 
@@ -316,7 +316,7 @@ export function SkillsPage() {
         >
           <div className="space-y-3">
             {sections.starter.length === 0 ? (
-              <p className="text-sm text-white/60">No bundled starter skills are visible yet.</p>
+              <p className="text-sm text-[color:var(--color-text-secondary)]">No bundled starter skills are visible yet.</p>
             ) : (
               sections.starter.map((skill) => (
                 <button
@@ -328,8 +328,8 @@ export function SkillsPage() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{skill.name}</p>
-                      <p className="text-xs text-white/50">{skill.skillId}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{skill.name}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{skill.skillId}</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <StatusPill tone="success">starter</StatusPill>
@@ -339,7 +339,7 @@ export function SkillsPage() {
                       {isCliFirstSkill(skill) ? <StatusPill tone="success">CLI-first</StatusPill> : null}
                     </div>
                   </div>
-                  <p className="mt-2 text-sm text-white/60">
+                  <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
                     {skill.description || "Bundled starter skill."}
                   </p>
                 </button>
@@ -355,10 +355,10 @@ export function SkillsPage() {
         >
           <div className="space-y-3">
             {sections.installed.length === 0 ? (
-              <div className="space-y-2 text-sm text-white/60">
+              <div className="space-y-2 text-sm text-[color:var(--color-text-secondary)]">
                 <p>No managed skills yet. Friday can still use the bundled starter pack immediately.</p>
                 <p>Tell Friday what you want to automate and it will create or install the right skill.</p>
-                <Link to="/chat" className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-200 hover:bg-emerald-400/20">Ask Friday in Chat</Link>
+                <Link to="/chat" className="inline-flex items-center rounded-full border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-strong)]">Ask Friday in Chat</Link>
               </div>
             ) : (
               sections.installed.map((skill) => (
@@ -371,8 +371,8 @@ export function SkillsPage() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{skill.name}</p>
-                      <p className="text-xs text-white/50">{skill.skillId}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{skill.name}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{skill.skillId}</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <StatusPill tone={toneForSkillLifecycle(skill)}>
@@ -382,11 +382,11 @@ export function SkillsPage() {
                       <StatusPill tone={toneForMaturity(skill.maturity)}>{formatMaturity(skill.maturity)}</StatusPill>
                     </div>
                   </div>
-                  <p className="mt-2 text-sm text-white/60">
+                  <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
                     {skill.description || "No description available."}
                   </p>
                   {isCliFirstSkill(skill) ? (
-                    <p className="mt-2 text-xs text-emerald-100/75">
+                    <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">
                       CLI-first: this skill is already shaped to prefer direct local execution over heavier tool bridges.
                     </p>
                   ) : null}
@@ -403,14 +403,14 @@ export function SkillsPage() {
         >
           <div className="space-y-3">
             {sections.updates.length === 0 ? (
-              <p className="text-sm text-white/60">All installed skills are at the latest tracked version.</p>
+              <p className="text-sm text-[color:var(--color-text-secondary)]">All installed skills are at the latest tracked version.</p>
             ) : (
               sections.updates.map((skill) => (
                 <div key={skill.skillId} className="agent-subcard p-4">
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <p className="font-medium text-white">{skill.name}</p>
-                      <p className="mt-1 text-sm text-white/60">
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{skill.name}</p>
+                      <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
                         Installed {skill.installedVersion ?? "unknown"} · Latest {skill.latestVersion ?? "unknown"}
                       </p>
                     </div>
@@ -435,7 +435,7 @@ export function SkillsPage() {
         >
           <div className="space-y-3">
             {sections.available.length === 0 ? (
-              <p className="text-sm text-white/60">Friday does not currently see any catalog entries beyond the installed set.</p>
+              <p className="text-sm text-[color:var(--color-text-secondary)]">Friday does not currently see any catalog entries beyond the installed set.</p>
             ) : (
               sections.available.slice(0, 8).map((item) => (
                 <button
@@ -446,14 +446,14 @@ export function SkillsPage() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{item.skillName}</p>
-                      <p className="text-xs text-white/50">{item.skillId}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{item.skillName}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{item.skillId}</p>
                     </div>
                     <StatusPill tone={item.signatureValid ? "success" : "warning"}>
                       trust {item.trustScore}
                     </StatusPill>
                   </div>
-                  <p className="mt-2 text-sm text-white/60">
+                  <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
                     Version {item.version} · {item.publisher ?? "Unknown publisher"}
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -482,14 +482,14 @@ export function SkillsPage() {
           }
         >
           {!selectedSkillId ? (
-            <p className="text-sm text-white/60">Select an installed skill or catalog item to inspect lifecycle evidence.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Select an installed skill or catalog item to inspect lifecycle evidence.</p>
           ) : detail ? (
-            <div className="space-y-4 text-sm text-white/75">
+            <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
               <div className="agent-subcard p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="font-medium text-white">{detail.name}</p>
-                    <p className="text-xs text-white/50">{detail.skillId}</p>
+                    <p className="font-medium text-[color:var(--color-text-primary)]">{detail.name}</p>
+                    <p className="text-xs text-[color:var(--color-text-tertiary)]">{detail.skillId}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     {detail.starter ? <StatusPill tone="success">starter pack</StatusPill> : null}
@@ -501,10 +501,10 @@ export function SkillsPage() {
                     {isCliFirstSkill(detail) ? <StatusPill tone="success">CLI-first</StatusPill> : null}
                   </div>
                 </div>
-                <p className="mt-3 text-white/60">
+                <p className="mt-3 text-[color:var(--color-text-secondary)]">
                   {detail.description || "No description recorded for this skill."}
                 </p>
-                <div className="mt-4 grid gap-2 text-xs text-white/55">
+                <div className="mt-4 grid gap-2 text-xs text-[color:var(--color-text-tertiary)]">
                   <p>Source: {detail.source}</p>
                   <p>Origin: {detail.origin}</p>
                   <p>Publisher: {detail.publisher ?? "Unknown"}</p>
@@ -554,7 +554,7 @@ export function SkillsPage() {
                     </ActionButton>
                   ) : null}
                   <Link
-                    className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]"
+                    className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                     to={buildObservabilityHref({ focus: "assistant" })}
                   >
                     Open diagnostics
@@ -563,13 +563,13 @@ export function SkillsPage() {
               </div>
 
               <div className="agent-subcard p-4">
-                <p className="font-medium text-white">Verification evidence</p>
-                <p className="mt-2 text-white/60">
+                <p className="font-medium text-[color:var(--color-text-primary)]">Verification evidence</p>
+                <p className="mt-2 text-[color:var(--color-text-secondary)]">
                   {summarizeSkillVerification(detail)} Friday uses this evidence to decide whether a skill is ready to
                   enable, needs repair, or should stay blocked.
                 </p>
                 {detail.verification ? (
-                  <div className="mt-4 grid gap-2 text-xs text-white/55">
+                  <div className="mt-4 grid gap-2 text-xs text-[color:var(--color-text-tertiary)]">
                     <p>Manifest verdict: {detail.verification.manifestVerdict.ok ? "ok" : "issues found"}</p>
                     <p>Package integrity: {detail.verification.packageIntegrity.available ? (detail.verification.packageIntegrity.ok ? "ok" : "mismatch") : "unavailable"}</p>
                     <p>Runtime dry-run: {detail.verification.runtimeDryRun.ok ? "ok" : "failed"}</p>
@@ -581,8 +581,8 @@ export function SkillsPage() {
 
               <div className="grid gap-4 lg:grid-cols-2">
                 <div className="agent-subcard p-4">
-                  <p className="font-medium text-white">Versions</p>
-                  <div className="mt-3 space-y-2 text-xs text-white/55">
+                  <p className="font-medium text-[color:var(--color-text-primary)]">Versions</p>
+                  <div className="mt-3 space-y-2 text-xs text-[color:var(--color-text-tertiary)]">
                     {detail.versions.length === 0 ? (
                       <p>No version history recorded yet.</p>
                     ) : (
@@ -595,8 +595,8 @@ export function SkillsPage() {
                   </div>
                 </div>
                 <div className="agent-subcard p-4">
-                  <p className="font-medium text-white">Installations</p>
-                  <div className="mt-3 space-y-2 text-xs text-white/55">
+                  <p className="font-medium text-[color:var(--color-text-primary)]">Installations</p>
+                  <div className="mt-3 space-y-2 text-xs text-[color:var(--color-text-tertiary)]">
                     {detail.installations.length === 0 ? (
                       <p>No installation records yet.</p>
                     ) : (
@@ -612,8 +612,8 @@ export function SkillsPage() {
 
               <div className="grid gap-4 lg:grid-cols-2">
                 <div className="agent-subcard p-4">
-                  <p className="font-medium text-white">Stabilization</p>
-                  <div className="mt-3 space-y-2 text-xs text-white/55">
+                  <p className="font-medium text-[color:var(--color-text-primary)]">Stabilization</p>
+                  <div className="mt-3 space-y-2 text-xs text-[color:var(--color-text-tertiary)]">
                     <p>Path: {describeStabilizationPath(detail)}</p>
                     <p>Promotion stage: {detail.originType === "generated" ? "draft" : "stabilized"}</p>
                     <p>Lifecycle tags: {detail.tags.length > 0 ? detail.tags.join(", ") : "none"}</p>
@@ -623,8 +623,8 @@ export function SkillsPage() {
                   </div>
                 </div>
                 <div className="agent-subcard p-4">
-                  <p className="font-medium text-white">Integration Mode</p>
-                  <div className="mt-3 space-y-2 text-xs text-white/55">
+                  <p className="font-medium text-[color:var(--color-text-primary)]">Integration Mode</p>
+                  <div className="mt-3 space-y-2 text-xs text-[color:var(--color-text-tertiary)]">
                     <p>Recommendation: {describeIntegrationMode(detail)}</p>
                     <p>
                       CLI-first reason: {isCliFirstSkill(detail)
@@ -641,7 +641,7 @@ export function SkillsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-white/60">Friday knows about this skill from the catalog, but the detailed lifecycle record is still loading.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Friday knows about this skill from the catalog, but the detailed lifecycle record is still loading.</p>
           )}
         </ShellCard>
 
@@ -652,20 +652,20 @@ export function SkillsPage() {
         >
           <div className="space-y-3">
             {(sourcesQuery.data ?? []).length === 0 ? (
-              <p className="text-sm text-white/60">No marketplace sources configured yet.</p>
+              <p className="text-sm text-[color:var(--color-text-secondary)]">No marketplace sources configured yet.</p>
             ) : (
               (sourcesQuery.data ?? []).map((source) => (
-                <div key={source.id} className="agent-subcard p-4 text-sm text-white/75">
+                <div key={source.id} className="agent-subcard p-4 text-sm text-[color:var(--color-text-secondary)]">
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <p className="font-medium text-white">{source.name}</p>
-                      <p className="mt-1 text-white/60">{source.baseUrl}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{source.name}</p>
+                      <p className="mt-1 text-[color:var(--color-text-secondary)]">{source.baseUrl}</p>
                     </div>
                     <StatusPill tone={source.enabled ? "success" : "warning"}>
                       {source.enabled ? "enabled" : "disabled"}
                     </StatusPill>
                   </div>
-                  <div className="mt-3 grid gap-2 text-xs text-white/55">
+                  <div className="mt-3 grid gap-2 text-xs text-[color:var(--color-text-tertiary)]">
                     <p>Trust policy: {source.trustPolicy}</p>
                     <p>Pinned keys: {source.pinnedKeyIds.length}</p>
                     <p>Updated: {formatTimestamp(source.updatedAt)}</p>
@@ -693,8 +693,8 @@ export function SkillsPage() {
 function SkillMetric(props: { label: string; value: string }) {
   return (
     <div className="agent-metric-card">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/45">{props.label}</p>
-      <p className="mt-3 text-sm text-white">{props.value}</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{props.label}</p>
+      <p className="mt-3 text-sm text-[color:var(--color-text-primary)]">{props.value}</p>
     </div>
   );
 }

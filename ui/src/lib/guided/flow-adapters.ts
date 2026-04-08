@@ -3,6 +3,7 @@ import type { ChoiceCardProps } from "@/components/guided/choice-card";
 import type { JourneyPhase } from "@/components/guided/journey-tracker";
 import type { PlanStep } from "@/components/guided/plan-review-visual";
 import type { FridayGuidedWizardState } from "@/lib/api/system-types";
+import type { LocalizedText } from "@/lib/i18n/localized-text";
 
 export function wizardStepsToProgress(wizard: FridayGuidedWizardState): StepProgressStep[] {
   const currentIndex = wizard.steps.findIndex((step) => step.id === wizard.currentStepId);
@@ -21,12 +22,12 @@ export function wizardStepsToProgress(wizard: FridayGuidedWizardState): StepProg
 
 export interface WizardStepChoice {
   value: string;
-  label: string;
-  description: string;
-  outcome: string;
+  label: LocalizedText;
+  description: LocalizedText;
+  outcome: LocalizedText;
   risk?: "low" | "medium" | "high";
   recommended?: boolean;
-  reason?: string;
+  reason?: LocalizedText;
 }
 
 export function wizardStepToChoiceCards(
