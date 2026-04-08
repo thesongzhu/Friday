@@ -10,6 +10,10 @@ import type {
 import type { FridayWorkflowCompiler } from "../../compiler/friday-workflow-compiler.js";
 import type { FridayWorkflowValidator } from "../../compiler/friday-workflow-validator.js";
 import type { FridaySkillRepository } from "#skills";
+import {
+  getFridayWorkflowStepIdFormatMessage,
+  isFridayWorkflowStepIdExpressionSafe,
+} from "../../utils/friday-workflow-step-id.js";
 
 // ─── Interface ───
 
@@ -69,6 +73,14 @@ function validateSpecSchema(spec: FridayWorkflowSpecV1): FridayWorkflowBuilderVa
       severity: "error",
       message: "startStepId is required",
     });
+  } else if (!isFridayWorkflowStepIdExpressionSafe(spec.startStepId)) {
+    issues.push({
+      code: "SPEC_INVALID_START_STEP_ID",
+      stage: "spec_schema",
+      severity: "error",
+      message: `startStepId '${spec.startStepId}' is invalid. ${getFridayWorkflowStepIdFormatMessage()}`,
+      stepId: spec.startStepId,
+    });
   }
 
   if (!spec.steps || spec.steps.length === 0) {
@@ -95,6 +107,15 @@ function validateSpecSchema(spec: FridayWorkflowSpecV1): FridayWorkflowBuilderVa
     // Check for duplicate step IDs
     const seen = new Set<string>();
     for (const step of spec.steps) {
+      if (!isFridayWorkflowStepIdExpressionSafe(step.id)) {
+        issues.push({
+          code: "SPEC_INVALID_STEP_ID",
+          stage: "spec_schema",
+          severity: "error",
+          message: `Step id '${step.id}' is invalid. ${getFridayWorkflowStepIdFormatMessage()}`,
+          stepId: step.id,
+        });
+      }
       if (seen.has(step.id)) {
         issues.push({
           code: "SPEC_DUPLICATE_STEP_ID",

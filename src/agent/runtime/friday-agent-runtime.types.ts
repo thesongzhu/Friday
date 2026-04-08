@@ -31,6 +31,7 @@ export interface FridayAgentExecutionContext {
   surface?: string;
   interactive?: boolean;
   browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
+  packId?: string;
 }
 
 export interface FridayAgentConversationContext {
@@ -204,6 +205,12 @@ export interface FridayAgentRuntime {
    * Returns null if no checkpoint exists for the run.
    */
   rollbackRun(runId: string): { restoredCount: number; errors: Array<{ filePath: string; error: string }> } | null;
+
+  /**
+   * Returns true when the run still has a rollback checkpoint available,
+   * including checkpoints recovered after process restart.
+   */
+  hasRollbackCheckpoint(runId: string): boolean;
 }
 
 export interface FridayAgentRuntimeResult {

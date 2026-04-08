@@ -1,14 +1,19 @@
 import { Suspense, lazy, useEffect, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Navigate, Outlet, createBrowserRouter, useLocation } from "react-router-dom";
 import { AppShell } from "@/components/layout/app-shell";
 import { useAuth } from "@/hooks/use-auth";
+import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences";
 import { useSetupStatusQuery } from "@/hooks/use-setup";
 import { useUserProfile } from "@/hooks/use-user-profile";
+import { uixSnapshotsApi } from "@/lib/api/uix-snapshots";
+import { localizedText, resolveLocalizedText, type LocalizedText } from "@/lib/i18n/localized-text";
 import { resolveLegacyRedirect } from "@/lib/routes/legacy-routes";
 import { describeSetupStatusFailure } from "@/lib/setup/setup-status-diagnostics";
+import { useAppLocale } from "@/providers/locale-provider";
 
 const AgentPage = lazy(async () => import("@/routes/agent-page").then((module) => ({ default: module.AgentPage })));
-const AssistantPage = lazy(async () => import("@/routes/assistant-page").then((module) => ({ default: module.AssistantPage })));
+const AssistantInboxPage = lazy(async () => import("@/routes/assistant-inbox-page").then((module) => ({ default: module.AssistantInboxPage })));
 const AutomationsPage = lazy(async () => import("@/routes/automations-page").then((module) => ({ default: module.AutomationsPage })));
 const FleetPage = lazy(async () => import("@/routes/fleet-page").then((module) => ({ default: module.FleetPage })));
 const GuidedFlowPage = lazy(async () => import("@/routes/guided-flow-page").then((module) => ({ default: module.GuidedFlowPage })));
@@ -17,6 +22,7 @@ const LoginPage = lazy(async () => import("@/routes/login-page").then((module) =
 const MarketplacePage = lazy(async () => import("@/routes/marketplace-page").then((module) => ({ default: module.MarketplacePage })));
 const ObservabilityPage = lazy(async () => import("@/routes/observability-page").then((module) => ({ default: module.ObservabilityPage })));
 const OnboardingPage = lazy(async () => import("@/routes/onboarding-page").then((module) => ({ default: module.OnboardingPage })));
+const PacksPage = lazy(async () => import("@/routes/packs-page").then((module) => ({ default: module.PacksPage })));
 const SettingsPage = lazy(async () => import("@/routes/settings-page").then((module) => ({ default: module.SettingsPage })));
 const SetupPage = lazy(async () => import("@/routes/setup-page").then((module) => ({ default: module.SetupPage })));
 const SkillsPage = lazy(async () => import("@/routes/skills-page").then((module) => ({ default: module.SkillsPage })));
@@ -26,21 +32,24 @@ const ChatPage = lazy(async () => import("@/routes/chat-page").then((module) => 
 const MemoryPage = lazy(async () => import("@/routes/memory-page").then((module) => ({ default: module.MemoryPage })));
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
 
-function FullscreenMessage(props: { title: string; detail: string; actions?: string[] }) {
+function FullscreenMessage(props: { title: string | LocalizedText; detail: string | LocalizedText; actions?: Array<string | LocalizedText> }) {
+  const { locale } = useAppLocale();
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[var(--bg-canvas)] px-6 text-white">
+    <div className="flex min-h-screen items-center justify-center bg-[color:var(--color-bg-base)] px-6 text-[color:var(--color-text-primary)]">
       <div className="max-w-xl text-center">
-        <p className="agent-eyebrow">Friday Agent OS</p>
+        <p className="agent-eyebrow">Friday</p>
         <h1 className="font-[var(--font-display)] text-3xl font-semibold tracking-tight">
-          {props.title}
+          {typeof props.title === "string" ? props.title : resolveLocalizedText(props.title, locale)}
         </h1>
-        <p className="mt-4 text-sm leading-7 text-white/60">{props.detail}</p>
+        <p className="mt-4 text-sm leading-7 text-[color:var(--color-text-secondary)]">
+          {typeof props.detail === "string" ? props.detail : resolveLocalizedText(props.detail, locale)}
+        </p>
         {props.actions && props.actions.length > 0
           ? (
-            <ul className="mt-6 space-y-3 text-left text-sm leading-6 text-white/70">
+            <ul className="mt-6 space-y-3 text-left text-sm leading-6 text-[color:var(--color-text-secondary)]">
               {props.actions.map((action) => (
-                <li key={action} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                  {action}
+                <li key={typeof action === "string" ? action : `${action.zh}:${action.en}`} className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-3">
+                  {typeof action === "string" ? action : resolveLocalizedText(action, locale)}
                 </li>
               ))}
             </ul>
@@ -68,8 +77,8 @@ function RequireAuth({ children }: { children: ReactNode }) {
   if (isLoading || (!isAuthenticated && retrying)) {
     return (
       <FullscreenMessage
-        title="Starting Friday"
-        detail="Friday is preparing your local session."
+        title={localizedText("启动 Friday", "Starting Friday")}
+        detail={localizedText("Friday 正在准备你的本地会话。", "Friday is preparing your local session.")}
       />
     );
   }
@@ -81,12 +90,56 @@ function RequireAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-function RouteSuspense(props: { title: string; detail: string; children: ReactNode }) {
+function RouteSuspense(props: { title: string | LocalizedText; detail: string | LocalizedText; children: ReactNode }) {
   return (
     <Suspense fallback={<FullscreenMessage title={props.title} detail={props.detail} />}>
       {props.children}
     </Suspense>
   );
+}
+
+function DefaultEntryRedirect() {
+  const { profileType, isFirstVisit, isLoading: profileLoading } = useUserProfile();
+  const { lastPrimarySurface } = useHomeSurfacePreferences(profileType);
+  const homeSnapshotQuery = useQuery({
+    queryKey: ["router", "default-entry", "home-snapshot"],
+    queryFn: () => uixSnapshotsApi.getHome(),
+    staleTime: 15_000,
+  });
+
+  if (profileLoading || homeSnapshotQuery.isLoading) {
+    return (
+      <FullscreenMessage
+        title={localizedText("正在整理你的入口", "Choosing your entry point")}
+        detail={localizedText("Friday 正在根据你最近的任务和待处理事项决定先把你带到哪里。", "Friday is choosing the best surface based on your recent work and pending actions.")}
+      />
+    );
+  }
+
+  const snapshot = homeSnapshotQuery.data;
+  const runs = snapshot?.runs ?? [];
+  const hasLiveWork = runs.some((run) =>
+    run.status === "pending"
+    || run.status === "planning"
+    || run.status === "awaiting_clarification"
+    || run.status === "awaiting_plan_approval"
+    || run.status === "awaiting_tool_approval"
+    || run.status === "executing"
+    || run.status === "testing"
+    || run.status === "fixing",
+  );
+  const hasPendingApprovals = (snapshot?.pendingApprovals.length ?? 0) > 0;
+  const hasScheduledSoon = (snapshot?.scheduledAutomations ?? []).some((automation) =>
+    automation.enabled
+    && automation.nextRunAt != null
+    && (new Date(automation.nextRunAt).getTime() - Date.now()) <= 2 * 60 * 60 * 1000
+  );
+
+  if (isFirstVisit || hasLiveWork || hasPendingApprovals || hasScheduledSoon || lastPrimarySurface === "home") {
+    return <Navigate to="/home" replace />;
+  }
+
+  return <Navigate to="/chat" replace />;
 }
 
 function SetupGate() {
@@ -97,8 +150,8 @@ function SetupGate() {
   if (isLoading || profileLoading) {
     return (
       <FullscreenMessage
-        title="Inspecting local setup"
-        detail="Friday is verifying whether the local machine has already completed bootstrap."
+        title={localizedText("检查本地环境", "Inspecting local setup")}
+        detail={localizedText("Friday 正在确认这台机器是否已经完成引导配置。", "Friday is verifying whether this machine has already completed bootstrap.")}
       />
     );
   }
@@ -138,7 +191,10 @@ export const router = createBrowserRouter([
   {
     path: "/login",
     element: (
-      <RouteSuspense title="Loading login" detail="Friday is preparing the sign-in surface.">
+      <RouteSuspense
+        title={localizedText("加载登录", "Loading login")}
+        detail={localizedText("Friday 正在准备登录界面。", "Friday is preparing the sign-in surface.")}
+      >
         <LoginPage />
       </RouteSuspense>
     ),
@@ -154,7 +210,10 @@ export const router = createBrowserRouter([
       {
         path: "setup",
         element: (
-          <RouteSuspense title="Loading setup" detail="Friday is preparing the local setup workflow.">
+          <RouteSuspense
+            title={localizedText("加载设置", "Loading setup")}
+            detail={localizedText("Friday 正在准备本地设置流程。", "Friday is preparing the local setup workflow.")}
+          >
             <SetupPage />
           </RouteSuspense>
         ),
@@ -162,7 +221,10 @@ export const router = createBrowserRouter([
       {
         path: "onboarding",
         element: (
-          <RouteSuspense title="Welcome" detail="Friday is preparing your onboarding experience.">
+          <RouteSuspense
+            title={localizedText("欢迎使用", "Welcome")}
+            detail={localizedText("Friday 正在准备首次引导。", "Friday is preparing your onboarding experience.")}
+          >
             <OnboardingPage />
           </RouteSuspense>
         ),
@@ -173,7 +235,10 @@ export const router = createBrowserRouter([
           {
             path: "chat",
             element: (
-              <RouteSuspense title="Loading chat" detail="Friday is preparing your conversation.">
+              <RouteSuspense
+                title={localizedText("加载聊天", "Loading chat")}
+                detail={localizedText("Friday 正在准备新任务入口。", "Friday is preparing your conversation.")}
+              >
                 <ChatPage />
               </RouteSuspense>
             ),
@@ -181,15 +246,32 @@ export const router = createBrowserRouter([
           {
             path: "home",
             element: (
-              <RouteSuspense title="Loading home" detail="Friday is preparing your goal-first home screen.">
+              <RouteSuspense
+                title={localizedText("加载首页", "Loading home")}
+                detail={localizedText("Friday 正在准备你的任务首页。", "Friday is preparing your goal-first home screen.")}
+              >
                 <HomePage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "packs",
+            element: (
+              <RouteSuspense
+                title={localizedText("加载行业与任务", "Loading packs")}
+                detail={localizedText("Friday 正在准备行业与任务库。", "Friday is preparing the industry and task library.")}
+              >
+                <PacksPage />
               </RouteSuspense>
             ),
           },
           {
             path: "flow/:wizardId",
             element: (
-              <RouteSuspense title="Loading guided flow" detail="Friday is preparing your guided experience.">
+              <RouteSuspense
+                title={localizedText("加载引导流程", "Loading guided flow")}
+                detail={localizedText("Friday 正在准备你的分步引导。", "Friday is preparing your guided experience.")}
+              >
                 <GuidedFlowPage />
               </RouteSuspense>
             ),
@@ -197,14 +279,17 @@ export const router = createBrowserRouter([
           {
             path: "assistant",
             element: (
-              <RouteSuspense title="Loading assistant" detail="Friday is preparing the beginner-first assistant surface.">
-                <AssistantPage />
+              <RouteSuspense
+                title={localizedText("加载助手收件箱", "Loading assistant")}
+                detail={localizedText("Friday 正在准备审批、问题和恢复入口。", "Friday is preparing the assistant inbox.")}
+              >
+                <AssistantInboxPage />
               </RouteSuspense>
             ),
           },
           {
             index: true,
-            element: <Navigate to="/chat" replace />,
+            element: <DefaultEntryRedirect />,
           },
           {
             path: "command-center",
@@ -303,5 +388,5 @@ export const router = createBrowserRouter([
       },
     ],
   },
-  { path: "*", element: <Navigate to="/chat" replace /> },
+  { path: "*", element: <Navigate to="/" replace /> },
 ]);

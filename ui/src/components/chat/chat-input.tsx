@@ -1,27 +1,37 @@
-import { useCallback, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Send } from "lucide-react";
+import { localize } from "@/lib/i18n/localized-text";
 import { cn } from "@/lib/utils/cn";
+import { useAppLocale } from "@/providers/locale-provider";
 
 interface ChatInputProps {
   onSend: (text: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  autoFocus?: boolean;
+  value?: string;
+  onValueChange?: (value: string) => void;
 }
 
-const QUICK_ACTIONS = [
-  { label: "System status", text: "What is the current system status?" },
-  { label: "Create workflow", text: "Help me create a new workflow" },
-  { label: "Install a skill", text: "What skills can I install?" },
-  { label: "Help", text: "What can you do?" },
-  { label: "Diagnose errors", text: "Check recent errors and suggest fixes" },
-  { label: "Schedule a task", text: "Help me schedule a recurring task" },
-  { label: "Monitor health", text: "Run a system health check" },
-  { label: "Automate something", text: "I want to automate a repetitive task" },
-];
-
-export function ChatInput({ onSend, disabled = false, placeholder }: ChatInputProps) {
-  const [text, setText] = useState("");
+export function ChatInput({
+  onSend,
+  disabled = false,
+  placeholder,
+  autoFocus = false,
+  value,
+  onValueChange,
+}: ChatInputProps) {
+  const { locale } = useAppLocale();
+  const [internalText, setInternalText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const text = value ?? internalText;
+
+  const setText = useCallback((nextValue: string) => {
+    if (value === undefined) {
+      setInternalText(nextValue);
+    }
+    onValueChange?.(nextValue);
+  }, [onValueChange, value]);
 
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
@@ -51,47 +61,40 @@ export function ChatInput({ onSend, disabled = false, placeholder }: ChatInputPr
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, []);
 
-  const showQuickActions = text.length === 0;
+  useEffect(() => {
+    handleInput();
+  }, [handleInput, text]);
 
   return (
-    <div className="space-y-3">
-      {showQuickActions && (
-        <div className="flex flex-wrap gap-2">
-          {QUICK_ACTIONS.map((action) => (
-            <button
-              key={action.label}
-              type="button"
-              onClick={() => onSend(action.text)}
-              disabled={disabled}
-              className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/60 transition-colors hover:border-emerald-400/30 hover:bg-emerald-400/10 hover:text-white/80 disabled:opacity-50"
-            >
-              {action.label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="flex items-end gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
+    <div className="rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-3 shadow-[var(--shadow-floating)]">
+      <div className="flex items-end gap-2">
         <textarea
+          data-testid="chat-task-input"
           ref={textareaRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           onInput={handleInput}
-          placeholder={placeholder ?? "Ask Friday anything, or tell it what to do..."}
+          autoFocus={autoFocus}
+          placeholder={placeholder ?? localize(
+            locale,
+            "告诉 Friday 你要完成什么，或者直接描述你想处理的事情…",
+            "Tell Friday what you want to get done or describe the task directly…",
+          )}
           disabled={disabled}
           rows={1}
-          className="min-h-[24px] flex-1 resize-none bg-transparent text-sm text-white placeholder:text-white/30 focus:outline-none disabled:opacity-50"
+          className="min-h-[32px] flex-1 resize-none bg-transparent text-sm leading-6 text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:outline-none disabled:opacity-50"
         />
         <button
+          data-testid="chat-send-button"
           type="button"
           onClick={handleSend}
           disabled={disabled || text.trim().length === 0}
           className={cn(
             "flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors",
             text.trim().length > 0 && !disabled
-              ? "bg-emerald-500 text-white hover:bg-emerald-400"
-              : "bg-white/10 text-white/30",
+              ? "bg-[color:var(--color-accent)] text-[color:var(--color-bg-base)] hover:opacity-90"
+              : "bg-[color:var(--color-bg-subtle)] text-[color:var(--color-text-faint)]",
           )}
         >
           <Send className="h-4 w-4" />

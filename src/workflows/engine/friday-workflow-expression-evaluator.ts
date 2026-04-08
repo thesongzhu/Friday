@@ -84,7 +84,7 @@ function tokenize(expr: string): Token[] {
     if (ch === "$") {
       let ref = "";
       i++; // skip $
-      while (i < expr.length && /[a-zA-Z0-9_.]/.test(expr[i]!)) {
+      while (i < expr.length && /[a-zA-Z0-9_.-]/.test(expr[i]!)) {
         ref += expr[i];
         i++;
       }

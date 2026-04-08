@@ -529,6 +529,8 @@ export function useAgentRunEvents(
     setEvents([]);
     setToolCalls([]);
     setSubagents([]);
+    setPendingToolApprovals([]);
+    setStatusBanners([]);
     setProgress({
       elapsedMs: 0,
       subagentCount: 0,

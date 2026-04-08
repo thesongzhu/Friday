@@ -280,28 +280,28 @@ export function SettingsPage() {
                 <DiagnosticTile icon={<Shield className="h-4 w-4" />} label="System Enabled" value={String(Boolean(health.capabilities?.system?.enabled))} />
                 <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label="Uptime" value={`${health.uptime}s`} />
               </div>
-              <p className="text-sm text-white/60">
+              <p className="text-sm text-[color:var(--color-text-secondary)]">
                 The web shell reflects the backend truth. If native companion features are missing, this page reports them directly rather than hiding them behind placeholders.
               </p>
             </div>
           ) : (
-            <p className="text-sm text-white/60">Loading diagnostics...</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Loading diagnostics...</p>
           )}
         </ShellCard>
 
         <ShellCard eyebrow="Identity" title="Operator Access">
           {me ? (
-            <div className="space-y-3 text-sm text-white/70">
+            <div className="space-y-3 text-sm text-[color:var(--color-text-secondary)]">
               <div className="flex items-center justify-between gap-4">
                 <span>User</span>
-                <span className="font-medium text-white">{me.user.displayName}</span>
+                <span className="font-medium text-[color:var(--color-text-primary)]">{me.user.displayName}</span>
               </div>
               <div className="flex items-center justify-between gap-4">
                 <span>Role</span>
                 <StatusPill>{me.user.role}</StatusPill>
               </div>
               <div>
-                <p className="mb-2 text-white/50">Scopes</p>
+                <p className="mb-2 text-[color:var(--color-text-tertiary)]">Scopes</p>
                 <div className="flex flex-wrap gap-2">
                   {me.scopes.map((scope) => (
                     <StatusPill key={scope}>{scope}</StatusPill>
@@ -310,27 +310,27 @@ export function SettingsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-white/60">Loading identity...</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Loading identity...</p>
           )}
         </ShellCard>
 
         <ShellCard eyebrow="Providers" title="Model Routing Basics">
           {providers.length === 0 ? (
-            <p className="text-sm text-white/60">No providers configured yet.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">No providers configured yet.</p>
           ) : (
             <div className="space-y-3">
               {providers.map((provider) => (
-                <div key={provider.id} className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+                <div key={provider.id} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{provider.name}</p>
-                      <p className="text-xs text-white/50">{provider.kind} · {provider.baseUrl}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{provider.name}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{provider.kind} · {provider.baseUrl}</p>
                     </div>
                     <StatusPill tone={provider.enabled ? "success" : "neutral"}>
                       {provider.enabled ? "enabled" : "disabled"}
                     </StatusPill>
                   </div>
-                  <p className="mt-3 text-sm text-white/60">
+                  <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">
                     Default model: {provider.defaultModel ?? provider.config.supportedModels[0] ?? "Not set"}
                   </p>
                 </div>
@@ -342,17 +342,17 @@ export function SettingsPage() {
         <ShellCard eyebrow="Operator" title="Routing Explainability">
           {routingExplain ? (
             <div className="space-y-4">
-              <div className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+              <div className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="font-medium text-white">Current decision</p>
-                    <p className="text-xs text-white/50">{routingExplain.reasonCode} · history window {routingExplain.historyWindow.sampleLimit}</p>
+                    <p className="font-medium text-[color:var(--color-text-primary)]">Current decision</p>
+                    <p className="text-xs text-[color:var(--color-text-tertiary)]">{routingExplain.reasonCode} · history window {routingExplain.historyWindow.sampleLimit}</p>
                   </div>
                   <StatusPill tone={routingExplain.learningAdjusted ? "success" : routingExplain.learningSignalsPresent ? "warning" : "neutral"}>
                     {routingExplain.learningAdjusted ? "adjusted" : routingExplain.learningSignalsPresent ? "signals present" : "configured"}
                   </StatusPill>
                 </div>
-                <p className="mt-3 text-sm text-white/70">{routingExplain.reasonText}</p>
+                <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{routingExplain.reasonText}</p>
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <DiagnosticRow
                     label="Before learning"
@@ -366,31 +366,31 @@ export function SettingsPage() {
               </div>
               <div className="space-y-3">
                 {routingExplain.candidateScores.slice(0, 4).map((candidate) => (
-                  <div key={`${candidate.providerId}:${candidate.model}:${candidate.backendKind}`} className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+                  <div key={`${candidate.providerId}:${candidate.model}:${candidate.backendKind}`} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="font-medium text-white">{candidate.providerId} / {candidate.model}</p>
-                        <p className="text-xs text-white/50">{candidate.backendKind} · rank {candidate.originalRank} → {candidate.finalRank}</p>
+                        <p className="font-medium text-[color:var(--color-text-primary)]">{candidate.providerId} / {candidate.model}</p>
+                        <p className="text-xs text-[color:var(--color-text-tertiary)]">{candidate.backendKind} · rank {candidate.originalRank} → {candidate.finalRank}</p>
                       </div>
                       <StatusPill tone={candidate.selected ? "success" : candidate.eligible ? "neutral" : "warning"}>
                         {candidate.selected ? "selected" : candidate.eligible ? "eligible" : "blocked"}
                       </StatusPill>
                     </div>
-                    <p className="mt-2 text-xs text-white/50">
+                    <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">
                       score {candidate.finalScore.toFixed(2)} = base {candidate.baseRankScore.toFixed(2)} + history {candidate.historyScore.toFixed(2)} + lesson {candidate.lessonScore.toFixed(2)} + pattern {candidate.patternScore.toFixed(2)} + pin {candidate.pinBonus.toFixed(2)} + penalty {candidate.routePenaltyScore.toFixed(2)}
                     </p>
                     {candidate.historyStats ? (
-                      <p className="mt-2 text-xs text-white/45">
+                      <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
                         history {candidate.historyStats.sampleCount} samples · success {(candidate.historyStats.successRate * 100).toFixed(0)}% · failure {(candidate.historyStats.failureRate * 100).toFixed(0)}%
                       </p>
                     ) : null}
                     {(candidate.matchedLessonIds.length > 0 || candidate.matchedPatternIds.length > 0) ? (
-                      <p className="mt-2 text-xs text-white/45">
+                      <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
                         matched lessons {candidate.matchedLessonIds.length} · matched patterns {candidate.matchedPatternIds.length}
                       </p>
                     ) : null}
                     {candidate.ineligibilityReasons.length > 0 ? (
-                      <p className="mt-2 text-xs text-yellow-300">{candidate.ineligibilityReasons.join(", ")}</p>
+                      <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">{candidate.ineligibilityReasons.join(", ")}</p>
                     ) : null}
                     <div className="mt-3 flex flex-wrap gap-2">
                       <ActionButton
@@ -423,17 +423,17 @@ export function SettingsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-white/60">Routing explain preview unavailable.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Routing explain preview unavailable.</p>
           )}
         </ShellCard>
 
         <ShellCard eyebrow="Communication" title="Persona">
           <div className="space-y-4">
-            <p className="text-sm text-white/60">
+            <p className="text-sm text-[color:var(--color-text-secondary)]">
               MBTI is a comfort-oriented starting template. The actual behavior comes from the settings below, and it never weakens safety or approval boundaries.
             </p>
             <div className="grid gap-3 md:grid-cols-2">
-              <label className="space-y-2 text-sm text-white/60">
+              <label className="space-y-2 text-sm text-[color:var(--color-text-secondary)]">
                 <span>MBTI template</span>
                 <select
                   value={draft.mbti}
@@ -507,16 +507,16 @@ export function SettingsPage() {
                 options={["none", "light"]}
               />
             </div>
-            <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
-              <div className="flex items-center gap-2 text-white">
+            <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+              <div className="flex items-center gap-2 text-[color:var(--color-text-primary)]">
                 <MessageCircleMore className="h-4 w-4" />
                 <p className="font-medium">Preview</p>
               </div>
-              <p className="mt-3 text-sm text-white/50">Style: {preview.styleLabel}</p>
-              <p className="mt-3 text-sm text-white/80">{preview.sampleClarifier}</p>
-              <p className="mt-3 text-sm text-white/60">{preview.sampleBoundary}</p>
+              <p className="mt-3 text-sm text-[color:var(--color-text-tertiary)]">Style: {preview.styleLabel}</p>
+              <p className="mt-3 text-sm text-[color:var(--color-text-primary)]">{preview.sampleClarifier}</p>
+              <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{preview.sampleBoundary}</p>
               {persona ? (
-                <p className="mt-3 text-xs text-white/40">
+                <p className="mt-3 text-xs text-[color:var(--color-text-faint)]">
                   Current resolved persona: {persona.mbti ?? "Default"} · tone from {persona.inheritedFrom.settings.tone}
                 </p>
               ) : null}
@@ -546,11 +546,11 @@ export function SettingsPage() {
                 <DiagnosticTile icon={<Shield className="h-4 w-4" />} label="Health" value={systemState.health.status} />
                 <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label="Started" value={formatTimestamp(systemSession.startedAt)} />
               </div>
-              <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+              <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="font-medium text-white">Companion bridge</p>
-                    <p className="text-sm text-white/50">
+                    <p className="font-medium text-[color:var(--color-text-primary)]">Companion bridge</p>
+                    <p className="text-sm text-[color:var(--color-text-tertiary)]">
                       {systemSession.companion.runtimeKind} · {systemSession.companion.transport.mode} · {systemSession.companion.transport.protocol}
                     </p>
                   </div>
@@ -558,27 +558,27 @@ export function SettingsPage() {
                     {systemSession.health.status}
                   </StatusPill>
                 </div>
-                <p className="mt-3 text-sm text-white/60">{summarizeHealthReasons(systemSession.health)}</p>
+                <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{summarizeHealthReasons(systemSession.health)}</p>
               </div>
               <div className="space-y-3">
                 {systemState.permissions.map((permission) => (
-                  <div key={permission.id} className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+                  <div key={permission.id} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="font-medium text-white">{permission.permission}</p>
-                        <p className="text-xs text-white/40">{permission.grantInstructions ?? "No extra instructions reported."}</p>
+                        <p className="font-medium text-[color:var(--color-text-primary)]">{permission.permission}</p>
+                        <p className="text-xs text-[color:var(--color-text-faint)]">{permission.grantInstructions ?? "No extra instructions reported."}</p>
                       </div>
                       <StatusPill tone={toneForStatus(permission.status)}>{permission.status}</StatusPill>
                     </div>
                   </div>
                 ))}
                 {systemState.permissions.length === 0 ? (
-                  <p className="text-sm text-white/60">No desktop permission telemetry is currently available.</p>
+                  <p className="text-sm text-[color:var(--color-text-secondary)]">No desktop permission telemetry is currently available.</p>
                 ) : null}
               </div>
             </div>
           ) : (
-            <p className="text-sm text-white/60">Agent OS routes are not responding yet.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Agent OS routes are not responding yet.</p>
           )}
         </ShellCard>
 
@@ -592,7 +592,7 @@ export function SettingsPage() {
               <DiagnosticRow label="Permissions Updated" value={formatTimestamp(systemState.health.updatedAt)} />
             </div>
           ) : (
-            <p className="text-sm text-white/60">Waiting for a system snapshot.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Waiting for a system snapshot.</p>
           )}
         </ShellCard>
 
@@ -623,7 +623,7 @@ export function SettingsPage() {
                 />
               </div>
               {budgetStatus.state !== "ok" ? (
-                <div className={`rounded-2xl border p-3 text-sm ${budgetStatus.state === "over_limit" ? "border-red-500/20 bg-red-500/5 text-red-300" : "border-yellow-500/20 bg-yellow-500/5 text-yellow-300"}`}>
+                <div className={`rounded-2xl border p-3 text-sm ${budgetStatus.state === "over_limit" ? "border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] text-[color:var(--color-text-primary)]" : "border-[color:var(--color-accent-soft)] bg-[color:var(--color-accent-muted)] text-[color:var(--color-text-primary)]"}`}>
                   {budgetStatus.state === "over_limit"
                     ? "Budget exceeded — Friday will prefer local models (Ollama) until the next billing cycle."
                     : "Approaching budget limit — Friday will prefer cheaper models when possible."}
@@ -631,31 +631,31 @@ export function SettingsPage() {
               ) : null}
             </div>
           ) : (
-            <p className="text-sm text-white/60">Budget data unavailable.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Budget data unavailable.</p>
           )}
         </ShellCard>
 
         {learnedFacts.length > 0 ? (
           <ShellCard eyebrow="Learning" title="What Friday Knows About You">
             <div className="space-y-3">
-              <p className="text-sm text-white/60">
+              <p className="text-sm text-[color:var(--color-text-secondary)]">
                 These are preferences and facts Friday has learned from your interactions.
               </p>
               {learnedFacts.map((fact) => (
-                <div key={fact.key} className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+                <div key={fact.key} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <Brain className="h-3.5 w-3.5 text-white/40" />
-                        <p className="text-sm font-medium text-white">{fact.key}</p>
+                        <Brain className="h-3.5 w-3.5 text-[color:var(--color-text-faint)]" />
+                        <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{fact.key}</p>
                       </div>
-                      <p className="mt-1 text-sm text-white/70">{String(fact.value)}</p>
+                      <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">{String(fact.value)}</p>
                     </div>
                     <StatusPill tone={fact.confidence >= 0.7 ? "success" : fact.confidence >= 0.4 ? "warning" : "neutral"}>
                       {(fact.confidence * 100).toFixed(0)}%
                     </StatusPill>
                   </div>
-                  <p className="mt-2 text-xs text-white/30">
+                  <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
                     {String(fact.evidenceCount)} evidence · last confirmed {formatTimestamp(fact.lastConfirmedAt)}
                   </p>
                 </div>
@@ -674,19 +674,19 @@ export function SettingsPage() {
                 <DiagnosticTile icon={<AlertTriangle className="h-4 w-4" />} label="Blocked Routes" value={String(learningOverview.coverage.blockedRoutes)} />
               </div>
               <div className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">Lessons</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Lessons</p>
                 {learningOverview.lessons.slice(0, 3).map((record) => (
-                  <div key={record.lesson.id} className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+                  <div key={record.lesson.id} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="font-medium text-white">{record.lesson.title}</p>
-                        <p className="text-xs text-white/50">{record.lesson.cause}</p>
+                        <p className="font-medium text-[color:var(--color-text-primary)]">{record.lesson.title}</p>
+                        <p className="text-xs text-[color:var(--color-text-tertiary)]">{record.lesson.cause}</p>
                       </div>
                       <StatusPill tone={record.disabled ? "warning" : "success"}>
                         {record.disabled ? "disabled" : "enabled"}
                       </StatusPill>
                     </div>
-                    <p className="mt-2 text-sm text-white/70">{record.lesson.fix}</p>
+                    <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{record.lesson.fix}</p>
                     <div className="mt-3 flex gap-2">
                       <ActionButton
                         tone="secondary"
@@ -703,13 +703,13 @@ export function SettingsPage() {
                 ))}
               </div>
               <div className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">Patterns</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Patterns</p>
                 {learningOverview.patterns.slice(0, 3).map((record) => (
-                  <div key={record.patternId} className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+                  <div key={record.patternId} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="font-medium text-white">{record.description}</p>
-                        <p className="text-xs text-white/50">{record.kind} · samples {record.sampleCount}</p>
+                        <p className="font-medium text-[color:var(--color-text-primary)]">{record.description}</p>
+                        <p className="text-xs text-[color:var(--color-text-tertiary)]">{record.kind} · samples {record.sampleCount}</p>
                       </div>
                       <StatusPill tone={record.demoted ? "warning" : "neutral"}>
                         {record.demoted ? "demoted" : "active"}
@@ -729,7 +729,7 @@ export function SettingsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-white/60">Learning controls unavailable.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Learning controls unavailable.</p>
           )}
         </ShellCard>
 
@@ -742,13 +742,13 @@ export function SettingsPage() {
               </div>
               {securityCenter.findings.length > 0 ? (
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">Findings</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Findings</p>
                   {securityCenter.findings.map((finding) => (
-                    <div key={finding.id} className="rounded-[22px] border border-white/[0.08] bg-black/20 p-3">
+                    <div key={finding.id} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2">
-                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-white/40" />
-                          <p className="text-sm text-white/80">{finding.message}</p>
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[color:var(--color-text-faint)]" />
+                          <p className="text-sm text-[color:var(--color-text-primary)]">{finding.message}</p>
                         </div>
                         <StatusPill tone={finding.severity === "high" ? "danger" : finding.severity === "medium" ? "warning" : "neutral"}>
                           {finding.severity}
@@ -758,11 +758,11 @@ export function SettingsPage() {
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-white/60">No security findings detected.</p>
+                <p className="text-sm text-[color:var(--color-text-secondary)]">No security findings detected.</p>
               )}
             </div>
           ) : (
-            <p className="text-sm text-white/60">Security data unavailable.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Security data unavailable.</p>
           )}
         </ShellCard>
 
@@ -776,10 +776,10 @@ export function SettingsPage() {
                 { name: "Commerce", enabled: health.capabilities?.marketplace?.commerceEnabled === true },
                 { name: "Channels", enabled: (health.capabilities?.channels?.enabledKinds?.length ?? 0) > 0 },
               ].map((tool) => (
-                <div key={tool.name} className="flex items-center justify-between rounded-[22px] border border-white/[0.08] bg-black/20 px-4 py-3 text-sm">
+                <div key={tool.name} className="flex items-center justify-between rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm">
                   <div className="flex items-center gap-2">
-                    <Wrench className="h-3.5 w-3.5 text-white/40" />
-                    <span className="text-white/70">{tool.name}</span>
+                    <Wrench className="h-3.5 w-3.5 text-[color:var(--color-text-faint)]" />
+                    <span className="text-[color:var(--color-text-secondary)]">{tool.name}</span>
                   </div>
                   <StatusPill tone={tool.enabled ? "success" : "neutral"}>
                     {tool.enabled ? "enabled" : "disabled"}
@@ -788,7 +788,7 @@ export function SettingsPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-white/60">Loading tool status...</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Loading tool status...</p>
           )}
         </ShellCard>
 
@@ -819,12 +819,12 @@ export function SettingsPage() {
               <DiagnosticRow label="Require acceptance check" value={agentLoopPolicy.requireAcceptanceCheck ? "yes" : "no"} />
             </div>
           ) : (
-            <p className="text-sm text-white/60">Agent loop policy unavailable.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Agent loop policy unavailable.</p>
           )}
           {expertMode ? (
-            <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
+            <div className="mt-4 space-y-2 border-t border-[color:var(--color-border-soft)] pt-4">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">Expert Mode</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Expert Mode</p>
                 <ActionButton
                   tone={expertMode.enabled ? "danger" : "primary"}
                   disabled={toggleExpertMutation.isPending}
@@ -854,7 +854,7 @@ function PersonaField(props: {
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="space-y-2 text-sm text-white/60">
+    <label className="space-y-2 text-sm text-[color:var(--color-text-secondary)]">
       <span>{props.label}</span>
       <select
         value={props.value}
@@ -876,21 +876,21 @@ function DiagnosticTile(props: {
   mono?: boolean;
 }) {
   return (
-    <div className="rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
-      <div className="flex items-center gap-2 text-white/40">
+    <div className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+      <div className="flex items-center gap-2 text-[color:var(--color-text-faint)]">
         {props.icon}
         <span className="text-xs font-semibold uppercase tracking-[0.18em]">{props.label}</span>
       </div>
-      <p className={`mt-3 text-sm text-white ${props.mono ? "font-mono" : ""}`}>{props.value}</p>
+      <p className={`mt-3 text-sm text-[color:var(--color-text-primary)] ${props.mono ? "font-mono" : ""}`}>{props.value}</p>
     </div>
   );
 }
 
 function DiagnosticRow(props: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-[22px] border border-white/[0.08] bg-black/20 px-4 py-3 text-sm">
-      <span className="text-white/50">{props.label}</span>
-      <span className="max-w-[60%] truncate text-right text-white">{props.value}</span>
+    <div className="flex items-center justify-between gap-4 rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm">
+      <span className="text-[color:var(--color-text-tertiary)]">{props.label}</span>
+      <span className="max-w-[60%] truncate text-right text-[color:var(--color-text-primary)]">{props.value}</span>
     </div>
   );
 }

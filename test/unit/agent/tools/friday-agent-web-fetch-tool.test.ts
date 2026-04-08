@@ -1,12 +1,26 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { beforeEach, describe, it, expect, vi, afterEach } from "vitest";
 import { createFridayAgentWebFetchTool, createFridayAgentSsrfGuard, rewriteUrl } from "#agent";
 import type { FridayAgentSsrfGuard } from "#agent";
 
 describe("FridayAgentWebFetchTool", () => {
   const originalFetch = globalThis.fetch;
+  const originalSuppression = process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+  let warnSpy: ReturnType<typeof vi.spyOn> | null = null;
+
+  beforeEach(() => {
+    process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    if (originalSuppression === undefined) {
+      delete process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+    } else {
+      process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = originalSuppression;
+    }
+    warnSpy?.mockRestore();
+    warnSpy = null;
   });
 
   function signal(): AbortSignal {
@@ -124,6 +138,14 @@ describe("FridayAgentWebFetchTool", () => {
     expect(tool.name).toBe("web_fetch");
     expect(tool.description).toBeTruthy();
     expect(tool.parameters).toBeDefined();
+  });
+
+  it("suppresses the missing SSRF guard warning in explicit test-warning suppression mode", () => {
+    process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
+    createFridayAgentWebFetchTool();
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("web_fetch tool created without SSRF guard"),
+    );
   });
 
   // ─── SSRF guard: blocks localhost/private ───

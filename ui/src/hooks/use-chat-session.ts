@@ -24,6 +24,10 @@ export interface UseChatSessionResult {
   startNewConversation: () => void;
 }
 
+export interface UseChatSessionOptions {
+  packId?: string | null;
+}
+
 // ─── Persistent session key ───
 
 const SESSION_KEY_STORAGE = "friday-chat-session-key";
@@ -119,7 +123,7 @@ function saveHistory(messages: ChatMessage[]) {
 
 // ─── Hook ───
 
-export function useChatSession(): UseChatSessionResult {
+export function useChatSession(options: UseChatSessionOptions = {}): UseChatSessionResult {
   const [messages, setMessages] = useState<ChatMessage[]>(loadHistory);
   const [sessionKey, setSessionKey] = useState<string>(() => getOrCreateSessionKey());
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
@@ -183,6 +187,7 @@ export function useChatSession(): UseChatSessionResult {
         executionContext: {
           surface: "chat",
           interactive: true,
+          ...(options.packId ? { packId: options.packId } : {}),
         },
       });
 
@@ -241,7 +246,7 @@ export function useChatSession(): UseChatSessionResult {
         return updated;
       });
     }
-  }, []);
+  }, [options.packId]);
 
   const clearHistory = useCallback(() => {
     setMessages([]);

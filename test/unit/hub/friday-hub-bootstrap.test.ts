@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { beforeEach, describe, it, expect, afterEach, vi } from "vitest";
 import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
 import { FridayAuthError } from "#api";
@@ -12,6 +12,7 @@ describe("createFridayHub", () => {
   let stateDir: string | null = null;
   let bundledSkillsDir: string | null = null;
   let managedSkillsDir: string | null = null;
+  const originalSuppression = process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
 
   async function createIsolatedHub(): Promise<FridayHub> {
     stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-hub-bootstrap-"));
@@ -26,7 +27,16 @@ describe("createFridayHub", () => {
     return hub;
   }
 
+  beforeEach(() => {
+    process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
+  });
+
   afterEach(async () => {
+    if (originalSuppression === undefined) {
+      delete process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+    } else {
+      process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = originalSuppression;
+    }
     if (hub) {
       await hub.stop();
       hub = null;
@@ -115,6 +125,18 @@ describe("createFridayHub", () => {
     }
   });
 
+  it("suppresses passwordless admin warning when test security warning suppression is enabled", async () => {
+    process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      hub = await createIsolatedHub();
+      const warnings = warnSpy.mock.calls.map(([message]) => String(message));
+      expect(warnings.filter((message) => message.includes("Created default admin user"))).toHaveLength(0);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("executor returns failed for unknown skill", async () => {
     hub = await createIsolatedHub();
     await hub.start();
@@ -133,13 +155,16 @@ describe("createFridayHub", () => {
   });
 
   it("does not allow local bypass login from remote IP (allowLocalBypassLogin defaults to false)", async () => {
-    hub = await createIsolatedHub();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
+      hub = await createIsolatedHub();
       hub!.apiRuntime.auth.login({ local: true }, "203.0.113.20");
       throw new Error("expected local bypass login to throw");
     } catch (err) {
       expect(err).toBeInstanceOf(FridayAuthError);
       expect((err as FridayAuthError).code).toBe("PASSWORDLESS_LOCALHOST_ONLY");
+    } finally {
+      warnSpy.mockRestore();
     }
   });
 });

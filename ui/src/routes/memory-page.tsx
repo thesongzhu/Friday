@@ -82,14 +82,14 @@ export function MemoryPage() {
     <div className="space-y-4">
       <ShellCard eyebrow="Memory Store" title="Stored Knowledge">
         <div className="space-y-4">
-          <p className="text-sm text-white/60">
+          <p className="text-sm text-[color:var(--color-text-secondary)]">
             Friday remembers facts, preferences, and context across sessions.
             Items shown here are stored in the memory subsystem and used to personalize responses.
           </p>
 
           <div className="flex gap-2">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--color-text-faint)]" />
               <input
                 type="text"
                 placeholder="Search memories..."
@@ -98,7 +98,7 @@ export function MemoryPage() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") handleSearch();
                 }}
-                className="w-full rounded-2xl border border-white/10 bg-black/30 py-2 pl-10 pr-4 text-sm text-white placeholder:text-white/30 focus:border-white/20 focus:outline-none"
+                className="agent-input py-2 pl-10 pr-4 text-sm"
               />
             </div>
             <ActionButton onClick={handleSearch} disabled={searchQuery.trim().length === 0}>
@@ -118,7 +118,7 @@ export function MemoryPage() {
           </div>
 
           <div className="flex items-center justify-between">
-            <p className="text-xs text-white/40">
+            <p className="text-xs text-[color:var(--color-text-faint)]">
               {activeSearch
                 ? `${String(displayItems.length)} results for "${activeSearch}"`
                 : `${String(displayItems.length)} items total`}
@@ -146,13 +146,13 @@ export function MemoryPage() {
 
       {isLoading ? (
         <ShellCard>
-          <p className="text-sm text-white/60">Loading memories...</p>
+          <p className="text-sm text-[color:var(--color-text-secondary)]">Loading memories...</p>
         </ShellCard>
       ) : displayItems.length === 0 ? (
         <ShellCard>
           <div className="flex flex-col items-center gap-3 py-8 text-center">
-            <Brain className="h-8 w-8 text-white/20" />
-            <p className="text-sm text-white/50">
+            <Brain className="h-8 w-8 text-[color:var(--color-text-faint)]" />
+            <p className="text-sm text-[color:var(--color-text-secondary)]">
               {activeSearch ? "No memories match your search." : "No memories stored yet. Friday will learn as you interact."}
             </p>
           </div>
@@ -168,38 +168,38 @@ export function MemoryPage() {
                       <StatusPill tone={toneForNamespace(item.namespace)}>{item.namespace}</StatusPill>
                       {item.source ? <StatusPill>{item.source}</StatusPill> : null}
                       {item.expiresAt ? (
-                        <span className="text-xs text-white/30">
+                        <span className="text-xs text-[color:var(--color-text-faint)]">
                           expires {formatTimestamp(item.expiresAt)}
                         </span>
                       ) : null}
                     </div>
-                    <p className="mt-2 text-sm font-medium text-white">{item.key}</p>
+                    <p className="mt-2 text-sm font-medium text-[color:var(--color-text-primary)]">{item.key}</p>
                   </div>
                   <button
                     type="button"
                     onClick={() => deleteMutation.mutate(item.id)}
                     disabled={deleteMutation.isPending}
-                    className="shrink-0 rounded-xl p-2 text-white/30 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                    className="shrink-0 rounded-xl p-2 text-[color:var(--color-text-faint)] transition-colors hover:bg-[color:var(--color-bg-contrast)] hover:text-[color:var(--color-text-primary)]"
                     title="Delete this memory"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
 
-                <p className="whitespace-pre-wrap text-sm text-white/70">{item.content}</p>
+                <p className="whitespace-pre-wrap text-sm text-[color:var(--color-text-secondary)]">{item.content}</p>
 
                 {item.tags.length > 0 ? (
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <Tag className="h-3 w-3 text-white/20" />
+                    <Tag className="h-3 w-3 text-[color:var(--color-text-faint)]" />
                     {item.tags.map((tag) => (
-                      <span key={tag} className="rounded-full bg-white/5 px-2 py-0.5 text-xs text-white/40">
+                      <span key={tag} className="rounded-full bg-[color:var(--color-bg-subtle)] px-2 py-0.5 text-xs text-[color:var(--color-text-tertiary)]">
                         {tag}
                       </span>
                     ))}
                   </div>
                 ) : null}
 
-                <p className="text-xs text-white/30">
+                <p className="text-xs text-[color:var(--color-text-faint)]">
                   Created {formatTimestamp(item.createdAt)}
                   {item.updatedAt !== item.createdAt ? ` · Updated ${formatTimestamp(item.updatedAt)}` : ""}
                 </p>
@@ -225,15 +225,15 @@ function AddMemoryForm(props: {
   const canSubmit = key.trim().length > 0 && content.trim().length > 0;
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/30 p-4 space-y-3">
-      <p className="text-xs uppercase tracking-[0.16em] text-white/40">Add memory item</p>
+    <div className="space-y-3 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+      <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Add memory item</p>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="mb-1 block text-xs text-white/50">Namespace</label>
+          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Namespace</label>
           <select
             value={namespace}
             onChange={(e) => setNamespace(e.target.value)}
-            className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white focus:border-white/20 focus:outline-none"
+            className="agent-select px-3 py-2 text-sm"
           >
             <option value="user">user</option>
             <option value="preference">preference</option>
@@ -242,34 +242,34 @@ function AddMemoryForm(props: {
           </select>
         </div>
         <div>
-          <label className="mb-1 block text-xs text-white/50">Key</label>
+          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Key</label>
           <input
             type="text"
             placeholder="e.g. favorite-language"
             value={key}
             onChange={(e) => setKey(e.target.value)}
-            className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/20 focus:outline-none"
+            className="agent-input px-3 py-2 text-sm"
           />
         </div>
       </div>
       <div>
-        <label className="mb-1 block text-xs text-white/50">Content</label>
+        <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Content</label>
         <textarea
           rows={3}
           placeholder="The information to remember..."
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/20 focus:outline-none resize-none"
+          className="agent-textarea resize-none px-3 py-2 text-sm"
         />
       </div>
       <div>
-        <label className="mb-1 block text-xs text-white/50">Tags (comma-separated)</label>
+        <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Tags (comma-separated)</label>
         <input
           type="text"
           placeholder="e.g. lang, preference"
           value={tagsInput}
           onChange={(e) => setTagsInput(e.target.value)}
-          className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/20 focus:outline-none"
+          className="agent-input px-3 py-2 text-sm"
         />
       </div>
       <div className="flex gap-2">

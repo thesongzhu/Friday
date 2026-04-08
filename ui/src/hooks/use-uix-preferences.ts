@@ -1,0 +1,146 @@
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { uixPreferencesApi, type UixPreferenceRecord } from "@/lib/api/uix-preferences";
+
+const UIX_PREFERENCES_QUERY_KEY = ["uix", "preferences", "uix"] as const;
+const UIX_PREFERENCES_STORAGE_KEY = "friday.uix.preferences.v1";
+
+type UixPreferenceMap = Record<string, unknown>;
+
+function readFallbackPreferences(): UixPreferenceMap {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(UIX_PREFERENCES_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as UixPreferenceMap) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeFallbackPreferences(data: UixPreferenceMap): void {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(UIX_PREFERENCES_STORAGE_KEY, JSON.stringify(data));
+  }
+}
+
+function mapRecordsToValues(items: UixPreferenceRecord[]): UixPreferenceMap {
+  return items.reduce<UixPreferenceMap>((result, item) => {
+    result[item.key] = item.value;
+    return result;
+  }, {});
+}
+
+function mergePreferenceMaps(current: UixPreferenceMap, patch: UixPreferenceMap): UixPreferenceMap {
+  return {
+    ...current,
+    ...patch,
+  };
+}
+
+export interface UseUixPreferencesResult {
+  values: UixPreferenceMap;
+  isLoading: boolean;
+  setPreference: (key: string, value: unknown) => void;
+  setPreferences: (patch: UixPreferenceMap) => void;
+}
+
+export function useUixPreferences(): UseUixPreferencesResult {
+  const queryClient = useQueryClient();
+  const pendingPatchRef = useRef<UixPreferenceMap>({});
+  const flushTimerRef = useRef<number | null>(null);
+
+  const preferencesQuery = useQuery({
+    queryKey: UIX_PREFERENCES_QUERY_KEY,
+    queryFn: async () => {
+      try {
+        return await uixPreferencesApi.list();
+      } catch {
+        return [] as UixPreferenceRecord[];
+      }
+    },
+    staleTime: 30_000,
+  });
+
+  const values = useMemo<UixPreferenceMap>(() => {
+    const remoteValues = mapRecordsToValues(preferencesQuery.data ?? []);
+    return mergePreferenceMaps(readFallbackPreferences(), remoteValues);
+  }, [preferencesQuery.data]);
+
+  const flushPendingPreferences = useCallback(async () => {
+    const patch = pendingPatchRef.current;
+    pendingPatchRef.current = {};
+    const entries = Object.entries(patch);
+    if (entries.length === 0) {
+      return;
+    }
+    try {
+      await uixPreferencesApi.update(
+        entries.map(([key, value]) => ({
+          category: "uix" as const,
+          key,
+          value,
+        })),
+      );
+    } catch {
+      // Local fallback already applied.
+    }
+  }, []);
+
+  const scheduleFlush = useCallback(() => {
+    if (typeof window === "undefined" || flushTimerRef.current !== null) {
+      return;
+    }
+    flushTimerRef.current = window.setTimeout(() => {
+      flushTimerRef.current = null;
+      void flushPendingPreferences();
+    }, 240);
+  }, [flushPendingPreferences]);
+
+  useEffect(() => () => {
+    if (flushTimerRef.current !== null && typeof window !== "undefined") {
+      window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+  }, []);
+
+  const setPreferences = useCallback((patch: UixPreferenceMap) => {
+    const current = mergePreferenceMaps(readFallbackPreferences(), mapRecordsToValues(preferencesQuery.data ?? []));
+    const next = mergePreferenceMaps(current, patch);
+    writeFallbackPreferences(next);
+
+    queryClient.setQueryData<UixPreferenceRecord[]>(
+      UIX_PREFERENCES_QUERY_KEY,
+      (existing = []) => {
+        const byKey = new Map(existing.map((item) => [item.key, item] as const));
+        for (const [key, value] of Object.entries(patch)) {
+          const currentRecord = byKey.get(key);
+          byKey.set(key, {
+            id: currentRecord?.id ?? `local-${key}`,
+            category: "uix",
+            key,
+            value,
+            createdAt: currentRecord?.createdAt,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+        return [...byKey.values()];
+      },
+    );
+
+    pendingPatchRef.current = mergePreferenceMaps(pendingPatchRef.current, patch);
+    scheduleFlush();
+  }, [preferencesQuery.data, queryClient, scheduleFlush]);
+
+  const setPreference = useCallback((key: string, value: unknown) => {
+    setPreferences({ [key]: value });
+  }, [setPreferences]);
+
+  return useMemo(() => ({
+    values,
+    isLoading: preferencesQuery.isLoading,
+    setPreference,
+    setPreferences,
+  }), [preferencesQuery.isLoading, setPreference, setPreferences, values]);
+}

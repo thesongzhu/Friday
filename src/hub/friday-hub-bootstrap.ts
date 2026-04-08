@@ -28,7 +28,7 @@ import {
 } from "../setup/index.js";
 import { createOnboardingEngine } from "../uix/engine/index.js";
 import { FridayDomainError } from "#errors";
-import { safeJsonParse } from "#utilities";
+import { isFridayTestSecurityWarningSuppressed, safeJsonParse } from "#utilities";
 import { initializeFridayState } from "#state";
 import type { FridayStateRuntime } from "#state";
 import { createFridayLocalDaemonService } from "#daemon";
@@ -100,11 +100,14 @@ import {
 import type { FridayConversationBlock } from "#sessions";
 import type { FridayMemoryFileSyncService, FridayMemoryService } from "#memory";
 import {
+  buildFridayAgentRunContextSummarySnapshot,
+  buildFridayAgentRunHealthSnapshot,
   buildFridayAgentSystemPrompt,
   buildFridayEvidenceBlocks,
   createDefaultFridayDecisionEngine,
   createFridayAgentAgentsListTool,
   createFridayAgentArtifactWriter,
+  createFridayAgentAutomationRepository,
   createFridayAgentCronTool,
   createFridayAgentEventEmitter,
   createFridayAgentFeedbackTool,
@@ -155,6 +158,7 @@ import type {
   FridayAgentLlmStreamEvent,
   FridayAgentMessage,
   FridayAgentReviewMode,
+  FridayAgentRunRecord,
   FridayAgentRunStatus,
   FridayAgentRuntime,
   FridayAgentStarterSkillDescriptor,
@@ -626,9 +630,11 @@ export async function createFridayHub(
         ).run("admin-001", "admin@friday.dev", "Admin", "admin", nowIso, nowIso);
       });
       // P2: Always warn when creating passwordless admin (password_hash = NULL)
-      warnHubBootstrapOnce(
-        "[friday][SECURITY] Created default admin user (admin@friday.dev) with NO password — set a passphrase via the setup wizard for production use",
-      );
+      if (!isFridayTestSecurityWarningSuppressed()) {
+        warnHubBootstrapOnce(
+          "[friday][SECURITY] Created default admin user (admin@friday.dev) with NO password — set a passphrase via the setup wizard for production use",
+        );
+      }
     }
   }
 
@@ -1007,6 +1013,7 @@ export async function createFridayHub(
   // IMPL-3: Durable run event repository
   const agentRunEventRepository = createFridayAgentRunEventRepository();
   const agentRunRepo = createFridayAgentRunRepository();
+  const agentAutomationRepo = createFridayAgentAutomationRepository();
 
   // IMPL-4: SSRF guard
   const agentSsrfGuard = createFridayAgentSsrfGuard(config.ssrfPolicy);
@@ -1580,10 +1587,12 @@ export async function createFridayHub(
     const providerCount = await providerService.listProviders()
       .then((providers) => providers.length)
       .catch(() => 0);
-    const systemSnapshot = systemService
-      ? await systemService.getState().catch(() => undefined)
-      : undefined;
     const browserDiagnostics = browserManager?.getDiagnostics();
+    // Keep deterministic capability responses fast. A full system snapshot can
+    // fan out into companion status and desktop probes that are appropriate for
+    // operator pages, but too expensive for sync-immediate dispatch.
+    const desktopConnected = desktopSessionManager?.isConnected() ?? false;
+    const companionConnected = systemCompanionBridge?.isConnected() ?? false;
 
     return {
       readOnly: input.readOnly,
@@ -1613,10 +1622,10 @@ export async function createFridayHub(
         enabled: !!systemService,
       },
       desktop: {
-        connected: systemSnapshot?.health.desktopConnected ?? false,
+        connected: desktopConnected,
       },
       companion: {
-        connected: systemSnapshot?.health.companionConnected ?? false,
+        connected: companionConnected,
       },
     };
   };
@@ -3495,6 +3504,20 @@ export async function createFridayHub(
     idGenerator,
     nowIso,
   });
+
+  const enrichAgentRunForUi = (run: FridayAgentRunRecord): FridayAgentRunRecord => {
+    const rollbackAvailable = agentRuntime.hasRollbackCheckpoint(run.id);
+    return {
+      ...run,
+      rollbackAvailable,
+      health: buildFridayAgentRunHealthSnapshot({
+        run,
+        rollbackAvailable,
+      }),
+      contextSummary: buildFridayAgentRunContextSummarySnapshot(run),
+    };
+  };
+
   const uixService = createFridayUixSurfaceService({
     db: stateRuntime.sqlite,
     idGenerator,
@@ -3524,6 +3547,7 @@ export async function createFridayHub(
       ],
       recentRuns: stateRuntime.sqlite.withReadConnection((db) =>
         agentRunRepo.list(db, { limit: 8 }).map((run) => ({
+          rollbackAvailable: agentRuntime.hasRollbackCheckpoint(run.id),
           runId: run.id,
           task: run.task,
           status: run.status,
@@ -3531,6 +3555,11 @@ export async function createFridayHub(
           completedAt: run.completedAt,
           contextCostSummary: run.contextCostSummary,
           taskProfile: run.taskProfile,
+          health: buildFridayAgentRunHealthSnapshot({
+            run,
+            rollbackAvailable: agentRuntime.hasRollbackCheckpoint(run.id),
+          }),
+          contextSummary: buildFridayAgentRunContextSummarySnapshot(run),
         }))),
       mcpServerStates: [...(mcpAdapter?.listServerStates() ?? [])],
       supportedPreprocessors: [
@@ -3540,6 +3569,18 @@ export async function createFridayHub(
         "diff_excerpt",
       ],
     }),
+    listAgentRuns: (input) =>
+      stateRuntime.sqlite.withReadConnection((db) =>
+        agentRunRepo.list(db, {
+          status: input.status,
+          limit: input.limit,
+        }).map(enrichAgentRunForUi)),
+    listAutomations: (input) =>
+      stateRuntime.sqlite.withReadConnection((db) =>
+        agentAutomationRepo.findMany(db, {
+          enabled: input.enabled,
+          limit: input.limit,
+        })),
     nowIso,
   });
 

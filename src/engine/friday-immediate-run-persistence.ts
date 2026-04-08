@@ -82,5 +82,16 @@ export function createFridayImmediateRunPersistence(
         createdAt: now,
       });
     });
+
+    // Keep deterministic runs immediately visible to the read pool so getRun and
+    // SSE replay remain consistent under full-suite load.
+    try {
+      deps.db.checkpoint("PASSIVE");
+    } catch (err) {
+      console.warn(
+        "[friday][immediate-run-persistence] checkpoint:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   };
 }

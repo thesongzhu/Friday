@@ -6,7 +6,9 @@ import type { FridayRouteDefinition } from "../../model/friday-api-common.types.
 import type {
   FridayBeginnerIntentResolution,
   FridayInvestigateResponse,
+  FridayUixAssistantInboxSnapshotResponse,
   FridayUixDiagnosticsResponse,
+  FridayUixHomeSnapshotResponse,
   FridayUixIssuesResponse,
   FridayUixTemplateExecutionResponse,
   FridayUixTemplatesResponse,
@@ -135,6 +137,30 @@ export function createFridayUixRoutes(
       async handler(ctx): Promise<FridayUixTemplatesResponse> {
         requireUserId(ctx.principal);
         return { templates: deps.service.listTemplates() };
+      },
+    },
+    {
+      operationId: "uix.home.snapshot.get",
+      method: "GET",
+      path: "/v1/uix/home-snapshot",
+      auth: { public: false, anyOfScopes: ["agent.run"] },
+      async handler(ctx): Promise<FridayUixHomeSnapshotResponse> {
+        const userId = requireUserId(ctx.principal);
+        return {
+          snapshot: deps.service.getHomeSnapshot({ userId }),
+        };
+      },
+    },
+    {
+      operationId: "uix.assistant.inbox.snapshot.get",
+      method: "GET",
+      path: "/v1/uix/assistant-inbox-snapshot",
+      auth: { public: false, anyOfScopes: ["agent.run"] },
+      async handler(ctx): Promise<FridayUixAssistantInboxSnapshotResponse> {
+        const userId = requireUserId(ctx.principal);
+        return {
+          snapshot: deps.service.getAssistantInboxSnapshot({ userId }),
+        };
       },
     },
     {

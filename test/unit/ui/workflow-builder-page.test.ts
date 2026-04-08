@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { WorkflowBuilderPage } from "../../../ui/src/routes/workflow-builder-page";
+import { WorkflowBuilderWorkspace } from "../../../ui/src/components/workflows/workflow-builder-workspace";
 
 const mocks = vi.hoisted(() => ({
   listTemplates: vi.fn(),
@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
   setCenter: vi.fn(),
+  setViewport: vi.fn(),
   screenToFlowPosition: vi.fn((input: { x: number; y: number }) => input),
 }));
 
@@ -158,6 +159,7 @@ vi.mock("@xyflow/react", async () => {
     useReactFlow: () => ({
       screenToFlowPosition: mocks.screenToFlowPosition,
       setCenter: mocks.setCenter,
+      setViewport: mocks.setViewport,
     }),
   };
 });
@@ -293,7 +295,7 @@ describe("workflow builder page", () => {
           createElement(
             QueryClientProvider,
             { client: queryClient },
-            createElement(WorkflowBuilderPage),
+            createElement(WorkflowBuilderWorkspace),
           ),
         ),
       );
@@ -305,6 +307,10 @@ describe("workflow builder page", () => {
     const element = container?.querySelector<T>(`[data-testid="${testId}"]`);
     expect(element, `Missing test id ${testId}`).not.toBeNull();
     return element!;
+  }
+
+  function queryByTestId<T extends HTMLElement = HTMLElement>(testId: string): T | null {
+    return container?.querySelector<T>(`[data-testid="${testId}"]`) ?? null;
   }
 
   function getButtonByText(label: string): HTMLButtonElement {
@@ -493,8 +499,8 @@ describe("workflow builder page", () => {
     await renderPage();
 
     const initialText = await waitFor(
-      () => getByTestId("workflow-builder-node-library").textContent ?? "",
-      (value) => value.includes("Node Library"),
+      () => queryByTestId("workflow-builder-node-library")?.textContent ?? "",
+      (value) => value.includes("Execution") && value.includes("Approval"),
     );
 
     expect(initialText).toContain("Execution");

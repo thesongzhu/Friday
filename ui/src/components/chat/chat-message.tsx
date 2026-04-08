@@ -21,7 +21,7 @@ export function ChatMessageBubble({ message, streamingText }: ChatMessageBubbleP
       )}
     >
       {!isUser && (
-        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-400/10 text-xs font-bold text-emerald-300">
+        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-xs font-bold text-[color:var(--color-text-primary)]">
           F
         </div>
       )}
@@ -30,16 +30,16 @@ export function ChatMessageBubble({ message, streamingText }: ChatMessageBubbleP
         className={cn(
           "max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
           isUser
-            ? "border border-white/10 bg-white/10 text-white"
-            : "border border-emerald-400/20 bg-emerald-400/[0.06] text-white/90",
-          message.status === "error" && "border-rose-400/30 bg-rose-400/10 text-rose-100",
+            ? "border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] text-[color:var(--color-text-primary)]"
+            : "border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-text-primary)]",
+          message.status === "error" && "border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] text-[color:var(--color-text-primary)]",
         )}
       >
         {message.status === "streaming" && !displayText && (
-          <div className="flex items-center gap-1.5 text-white/40">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" style={{ animationDelay: "150ms" }} />
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" style={{ animationDelay: "300ms" }} />
+          <div className="flex items-center gap-1.5 text-[color:var(--color-text-tertiary)]">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[color:var(--color-accent)]" />
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[color:var(--color-accent)]" style={{ animationDelay: "150ms" }} />
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[color:var(--color-accent)]" style={{ animationDelay: "300ms" }} />
           </div>
         )}
         {displayText && (
@@ -50,7 +50,7 @@ export function ChatMessageBubble({ message, streamingText }: ChatMessageBubbleP
       </div>
 
       {isUser && (
-        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/10 text-xs font-bold text-white/70">
+        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] text-xs font-bold text-[color:var(--color-text-secondary)]">
           U
         </div>
       )}
@@ -72,9 +72,9 @@ function MarkdownContent({ text }: { text: string }) {
   for (const segment of segments) {
     if (segment.startsWith("```")) {
       // Code block
-      const content = segment.replace(/^```\w*\n?/, "").replace(/\n?```$/, "");
+        const content = segment.replace(/^```\w*\n?/, "").replace(/\n?```$/, "");
       parts.push(
-        <pre key={key++} className="my-2 overflow-x-auto rounded-lg bg-black/30 p-3 text-xs text-emerald-200">
+        <pre key={key++} className="my-2 overflow-x-auto rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-contrast)] p-3 text-xs text-[color:var(--color-text-primary)]">
           <code>{content}</code>
         </pre>,
       );
@@ -87,11 +87,11 @@ function MarkdownContent({ text }: { text: string }) {
 
         // Headers
         if (line.startsWith("### ")) {
-          parts.push(<strong key={key++} className="text-white">{line.slice(4)}</strong>);
+          parts.push(<strong key={key++} className="text-[color:var(--color-text-primary)]">{line.slice(4)}</strong>);
           continue;
         }
         if (line.startsWith("## ")) {
-          parts.push(<strong key={key++} className="text-base text-white">{line.slice(3)}</strong>);
+          parts.push(<strong key={key++} className="text-base text-[color:var(--color-text-primary)]">{line.slice(3)}</strong>);
           continue;
         }
 
@@ -130,13 +130,13 @@ function renderInline(text: string, baseKey: number): React.ReactNode[] {
     }
     if (match[2] !== undefined) {
       // Bold
-      nodes.push(<strong key={k++} className="font-semibold text-white">{match[2]}</strong>);
+      nodes.push(<strong key={k++} className="font-semibold text-[color:var(--color-text-primary)]">{match[2]}</strong>);
     } else if (match[4] !== undefined) {
       // Inline code
-      nodes.push(<code key={k++} className="rounded bg-black/30 px-1 py-0.5 text-emerald-200">{match[4]}</code>);
+      nodes.push(<code key={k++} className="rounded bg-[color:var(--color-bg-contrast)] px-1 py-0.5 text-[color:var(--color-text-primary)]">{match[4]}</code>);
     } else if (match[6] !== undefined && match[7] !== undefined) {
       // Link
-      nodes.push(<span key={k++} className="text-emerald-400 underline">{match[6]}</span>);
+      nodes.push(<span key={k++} className="text-[color:var(--color-accent)] underline">{match[6]}</span>);
     }
     lastIndex = match.index + match[0].length;
   }

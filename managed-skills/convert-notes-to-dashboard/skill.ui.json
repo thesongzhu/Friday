@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Operator Dashboard Generator",
+  "description": "Converts scattered admin, finance, and hiring notes into a concise operator dashboard with urgent items and delegation recommendations.",
+  "sections": [
+    {
+      "id": "main",
+      "label": "Inputs",
+      "fieldIds": [
+        "notes-field"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "notes-field",
+      "inputKey": "notes",
+      "kind": "text",
+      "label": "Scattered Notes",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "dashboard-output",
+      "outputKey": "dashboard",
+      "label": "dashboard",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Run",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

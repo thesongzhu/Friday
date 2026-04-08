@@ -41,13 +41,13 @@ function FleetMetricCard(props: {
   return (
     <div className="agent-metric-card">
       <div className="flex items-center justify-between gap-3">
-        <div className="rounded-2xl border border-white/10 bg-white/[0.07] p-2 text-emerald-200">
+        <div className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-2 text-[color:var(--color-text-primary)]">
           {props.icon}
         </div>
-        <p className="text-2xl font-semibold text-white">{props.value}</p>
+        <p className="text-2xl font-semibold text-[color:var(--color-text-primary)]">{props.value}</p>
       </div>
-      <p className="mt-3 text-sm font-medium text-white">{props.label}</p>
-      <p className="mt-1 text-xs leading-5 text-white/50">{props.detail}</p>
+      <p className="mt-3 text-sm font-medium text-[color:var(--color-text-primary)]">{props.label}</p>
+      <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-tertiary)]">{props.detail}</p>
     </div>
   );
 }
@@ -146,7 +146,7 @@ export function FleetPage() {
           }
         >
           {overview ? (
-            <div className="space-y-4 text-sm text-white/70">
+            <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
               <p>
                 Friday uses this page as the deep fleet console after Assistant has already found a node, queue, or
                 placement issue. Start from the degraded or blocked satellite below, then use the recovery loop and
@@ -174,7 +174,7 @@ export function FleetPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-white/60">Loading fleet guidance...</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Loading fleet guidance...</p>
           )}
         </ShellCard>
 
@@ -207,14 +207,14 @@ export function FleetPage() {
                   detail={`${overview.workflows.completed1h} completed / ${overview.workflows.failed1h} failed in 1h`}
                 />
               </div>
-              <div className="agent-detail-note p-4 text-sm text-white/60">
-                Fleet health is <span className="font-medium text-white">{overview.health.state}</span> with score{" "}
-                <span className="font-medium text-white">{overview.health.score}</span>. Reasons:{" "}
+              <div className="agent-detail-note p-4 text-sm text-[color:var(--color-text-secondary)]">
+                Fleet health is <span className="font-medium text-[color:var(--color-text-primary)]">{overview.health.state}</span> with score{" "}
+                <span className="font-medium text-[color:var(--color-text-primary)]">{overview.health.score}</span>. Reasons:{" "}
                 {overview.health.reasons.length > 0 ? overview.health.reasons.join(" · ") : "No active concerns."}
               </div>
             </div>
           ) : (
-            <p className="text-sm text-white/60">Loading fleet overview...</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Loading fleet overview...</p>
           )}
         </ShellCard>
 
@@ -230,8 +230,8 @@ export function FleetPage() {
               >
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="font-medium text-white">{satellite.displayName}</p>
-                    <p className="text-xs text-white/50">{satellite.satelliteId}</p>
+                    <p className="font-medium text-[color:var(--color-text-primary)]">{satellite.displayName}</p>
+                    <p className="text-xs text-[color:var(--color-text-tertiary)]">{satellite.satelliteId}</p>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <StatusPill tone={toneForFleetPairing(satellite.pairingStatus)}>{satellite.pairingStatus}</StatusPill>
@@ -239,22 +239,22 @@ export function FleetPage() {
                     <StatusPill tone={toneForFleetHealth(satellite.healthState)}>{satellite.healthState}</StatusPill>
                   </div>
                 </div>
-                <div className="mt-3 grid gap-2 text-xs text-white/55 sm:grid-cols-2">
+                <div className="mt-3 grid gap-2 text-xs text-[color:var(--color-text-tertiary)] sm:grid-cols-2">
                   <p>Last seen: {formatFleetTimestamp(satellite.lastSeenAt)}</p>
                   <p>Heartbeat: {formatFleetHeartbeatAge(satellite.heartbeatAgeMs)}</p>
                   <p>Queue depth: {satellite.queueDepth ?? 0}</p>
                   <p>Active runs: {satellite.activeRuns ?? 0}</p>
                 </div>
                 {satellite.alerts.length > 0 ? (
-                  <p className="mt-3 text-xs text-amber-100">{satellite.alerts.join(" · ")}</p>
+                  <p className="mt-3 text-xs text-[color:var(--color-text-primary)]">{satellite.alerts.join(" · ")}</p>
                 ) : null}
               </button>
             ))}
             {satellites.length === 0 ? (
-              <div className="space-y-2 text-sm text-white/60">
+              <div className="space-y-2 text-sm text-[color:var(--color-text-secondary)]">
                 <p>No satellites have registered yet.</p>
                 <p>Friday can help you set up remote devices to extend your automation reach.</p>
-                <Link to="/chat" className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-200 hover:bg-emerald-400/20">Learn more in Chat</Link>
+                <Link to="/chat" className="inline-flex items-center rounded-full border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-strong)]">Learn more in Chat</Link>
               </div>
             ) : null}
           </div>
@@ -267,10 +267,10 @@ export function FleetPage() {
                 <div key={record.run.loopRunId} className="agent-subcard p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">
+                      <p className="font-medium text-[color:var(--color-text-primary)]">
                         {record.action?.summary.title ?? record.incident?.summary.rootCauseSummary ?? "Fleet recovery run"}
                       </p>
-                      <p className="text-xs text-white/50">
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">
                         {record.run.loopRunId} · attempt {record.run.attemptNumber}
                       </p>
                     </div>
@@ -278,7 +278,7 @@ export function FleetPage() {
                       {record.run.status.replaceAll("_", " ")}
                     </StatusPill>
                   </div>
-                  <div className="mt-3 grid gap-2 text-xs text-white/55 sm:grid-cols-2">
+                  <div className="mt-3 grid gap-2 text-xs text-[color:var(--color-text-tertiary)] sm:grid-cols-2">
                     <p>Risk tier: {record.run.riskTier}</p>
                     <p>Verification: {record.run.verificationPassed === undefined ? "pending" : record.run.verificationPassed ? "passed" : "failed"}</p>
                     {record.run.haltReason ? <p className="sm:col-span-2">Halt reason: {record.run.haltReason.replaceAll("_", " ")}</p> : null}
@@ -287,7 +287,7 @@ export function FleetPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-white/60">No active fleet remediation loops are recorded right now.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">No active fleet remediation loops are recorded right now.</p>
           )}
         </ShellCard>
       </div>
@@ -307,28 +307,28 @@ export function FleetPage() {
           {detail ? (
             <div className="space-y-4">
               <div className="agent-subcard-strong p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-white/45">Recovery ladder</p>
-                <h3 className="mt-2 text-lg font-semibold text-white">Start with the safest next recovery step</h3>
+                <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--color-text-faint)]">Recovery ladder</p>
+                <h3 className="mt-2 text-lg font-semibold text-[color:var(--color-text-primary)]">Start with the safest next recovery step</h3>
                 <div className="mt-4 space-y-3">
                   {recoverySteps.map((step, index) => (
                     <article key={step.id} className="agent-subcard p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="text-xs uppercase tracking-[0.16em] text-white/35">
+                          <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">
                             {index === 0 ? "Start here" : "Then"}
                           </p>
-                          <h4 className="mt-2 font-medium text-white">{step.title}</h4>
+                          <h4 className="mt-2 font-medium text-[color:var(--color-text-primary)]">{step.title}</h4>
                         </div>
                         <div className="flex flex-wrap items-center justify-end gap-2">
                           <StatusPill tone={step.tone}>{step.status ?? step.tone}</StatusPill>
                           {step.riskClass ? <StatusPill tone="neutral">{step.riskClass}</StatusPill> : null}
                         </div>
                       </div>
-                      <p className="mt-3 text-sm text-white/65">{step.summary}</p>
-                      <p className="mt-3 text-xs uppercase tracking-[0.16em] text-white/35">Why Friday suggests this</p>
-                      <p className="mt-2 text-sm text-white/60">{step.reason}</p>
+                      <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{step.summary}</p>
+                      <p className="mt-3 text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Why Friday suggests this</p>
+                      <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{step.reason}</p>
                       {step.requiresApproval ? (
-                        <p className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+                        <p className="mt-4 rounded-2xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] px-3 py-2 text-xs text-[color:var(--color-text-primary)]">
                           Requires approval before Friday can apply this recovery step.
                         </p>
                       ) : null}
@@ -336,7 +336,7 @@ export function FleetPage() {
                         {selectedSatelliteId && step.actionId && step.status === "ready" ? (
                           <button
                             type="button"
-                            className="inline-flex items-center rounded-2xl border border-emerald-300/35 bg-emerald-300/12 px-4 py-2 text-sm font-medium text-emerald-100 hover:border-emerald-200/55 hover:bg-emerald-300/18 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="inline-flex items-center rounded-2xl border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-4 py-2 text-sm font-medium text-[color:var(--color-text-primary)] hover:border-[color:var(--color-accent)] hover:bg-[color:var(--color-accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
                             disabled={remediationMutation.isPending}
                             onClick={() =>
                               remediationMutation.mutate({
@@ -349,7 +349,7 @@ export function FleetPage() {
                           </button>
                         ) : null}
                         <Link
-                          className="inline-flex items-center rounded-2xl bg-[var(--accent-soft)] px-4 py-2 text-sm font-medium text-black hover:bg-white"
+                          className="inline-flex items-center rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                           to={
                             step.routeTarget === "/assistant"
                               ? step.routeTarget
@@ -370,12 +370,12 @@ export function FleetPage() {
                   ))}
                 </div>
                 {remediationMutation.error ? (
-                  <div className="mt-4 rounded-3xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-xs text-rose-100">
+                  <div className="mt-4 rounded-3xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] px-4 py-3 text-xs text-[color:var(--color-text-primary)]">
                     Recovery step failed: {remediationMutation.error instanceof Error ? remediationMutation.error.message : "Unknown error"}
                   </div>
                 ) : null}
                 {remediationMutation.data ? (
-                  <div className="mt-4 rounded-3xl border border-emerald-300/30 bg-emerald-300/10 px-4 py-3 text-xs text-emerald-100">
+                  <div className="mt-4 rounded-3xl border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-4 py-3 text-xs text-[color:var(--color-text-primary)]">
                     {remediationMutation.data.summary}
                     {remediationMutation.data.affectedCount > 0
                       ? ` (${remediationMutation.data.affectedCount} item${remediationMutation.data.affectedCount === 1 ? "" : "s"} affected)`
@@ -385,16 +385,16 @@ export function FleetPage() {
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="agent-subcard p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-white/45">Trust</p>
-                  <p className="mt-2 text-2xl font-semibold text-white">{detail.trustBreakdown.finalScore}</p>
-                  <p className="mt-1 text-sm text-white/60">{detail.trustBreakdown.band} band</p>
-                  <p className="mt-3 text-xs text-white/50">{detail.trustBreakdown.reasons.join(" · ") || "No trust warnings."}</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--color-text-faint)]">Trust</p>
+                  <p className="mt-2 text-2xl font-semibold text-[color:var(--color-text-primary)]">{detail.trustBreakdown.finalScore}</p>
+                  <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">{detail.trustBreakdown.band} band</p>
+                  <p className="mt-3 text-xs text-[color:var(--color-text-tertiary)]">{detail.trustBreakdown.reasons.join(" · ") || "No trust warnings."}</p>
                 </div>
                 <div className="agent-subcard p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-white/45">Health</p>
-                  <p className="mt-2 text-2xl font-semibold text-white">{detail.healthBreakdown.finalScore}</p>
-                  <p className="mt-1 text-sm text-white/60">{detail.healthBreakdown.state}</p>
-                  <p className="mt-3 text-xs text-white/50">
+                  <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--color-text-faint)]">Health</p>
+                  <p className="mt-2 text-2xl font-semibold text-[color:var(--color-text-primary)]">{detail.healthBreakdown.finalScore}</p>
+                  <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">{detail.healthBreakdown.state}</p>
+                  <p className="mt-3 text-xs text-[color:var(--color-text-tertiary)]">
                     Heartbeat {detail.healthBreakdown.heartbeatScore} · Queue {detail.healthBreakdown.queueScore} · Reliability {detail.healthBreakdown.reliabilityScore}
                   </p>
                 </div>
@@ -404,8 +404,8 @@ export function FleetPage() {
                 <div className="agent-subcard p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-white/45">Runtime boundary</p>
-                      <h3 className="mt-2 text-lg font-semibold text-white">{runtimeRecoveryCard.title}</h3>
+                      <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--color-text-faint)]">Runtime boundary</p>
+                      <h3 className="mt-2 text-lg font-semibold text-[color:var(--color-text-primary)]">{runtimeRecoveryCard.title}</h3>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusPill tone={runtimeRecoveryCard.tone}>{detail.runtimeRecovery.state.replaceAll("_", " ")}</StatusPill>
@@ -414,38 +414,38 @@ export function FleetPage() {
                       </StatusPill>
                     </div>
                   </div>
-                  <p className="mt-3 text-sm text-white/65">{runtimeRecoveryCard.summary}</p>
+                  <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{runtimeRecoveryCard.summary}</p>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4">
-                      <p className="text-xs uppercase tracking-[0.16em] text-white/35">Continuation boundary</p>
-                      <p className="mt-2 text-sm font-medium text-white">{runtimeRecoveryCard.continuationLabel}</p>
-                      <p className="mt-2 text-xs text-white/55">
+                    <div className="rounded-3xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Continuation boundary</p>
+                      <p className="mt-2 text-sm font-medium text-[color:var(--color-text-primary)]">{runtimeRecoveryCard.continuationLabel}</p>
+                      <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">
                         Friday only continues work that was already dispatched before the node went offline.
                       </p>
                     </div>
-                    <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4">
-                      <p className="text-xs uppercase tracking-[0.16em] text-white/35">Offline planning</p>
-                      <p className="mt-2 text-sm font-medium text-white">{runtimeRecoveryCard.offlinePlanningLabel}</p>
-                      <p className="mt-2 text-xs text-white/55">
+                    <div className="rounded-3xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Offline planning</p>
+                      <p className="mt-2 text-sm font-medium text-[color:var(--color-text-primary)]">{runtimeRecoveryCard.offlinePlanningLabel}</p>
+                      <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">
                         New offline planning remains deferred until the node returns to a healthy trust domain.
                       </p>
                     </div>
-                    <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4">
-                      <p className="text-xs uppercase tracking-[0.16em] text-white/35">Queue recovery</p>
-                      <p className="mt-2 text-sm font-medium text-white">{runtimeRecoveryCard.queueRecoveryLabel}</p>
+                    <div className="rounded-3xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Queue recovery</p>
+                      <p className="mt-2 text-sm font-medium text-[color:var(--color-text-primary)]">{runtimeRecoveryCard.queueRecoveryLabel}</p>
                     </div>
-                    <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4">
-                      <p className="text-xs uppercase tracking-[0.16em] text-white/35">Sync recovery</p>
-                      <p className="mt-2 text-sm font-medium text-white">{runtimeRecoveryCard.syncRecoveryLabel}</p>
+                    <div className="rounded-3xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Sync recovery</p>
+                      <p className="mt-2 text-sm font-medium text-[color:var(--color-text-primary)]">{runtimeRecoveryCard.syncRecoveryLabel}</p>
                     </div>
                   </div>
-                  <div className="mt-4 rounded-3xl border border-emerald-300/20 bg-emerald-300/8 px-4 py-3 text-sm text-emerald-50">
+                  <div className="mt-4 rounded-3xl border border-[color:var(--color-accent-soft)] bg-[color:var(--color-accent-muted)] px-4 py-3 text-sm text-[color:var(--color-text-primary)]">
                     Friday's next operator action: <span className="font-medium">{runtimeRecoveryCard.nextActionLabel}</span>
                   </div>
                   {runtimeRecoveryCard.reasons.length > 0 ? (
                     <div className="mt-4">
-                      <p className="text-xs uppercase tracking-[0.16em] text-white/35">Why this boundary is active</p>
-                      <ul className="mt-2 space-y-2 text-sm text-white/60">
+                      <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Why this boundary is active</p>
+                      <ul className="mt-2 space-y-2 text-sm text-[color:var(--color-text-secondary)]">
                         {runtimeRecoveryCard.reasons.map((reason) => (
                           <li key={reason}>• {reason}</li>
                         ))}
@@ -453,7 +453,7 @@ export function FleetPage() {
                     </div>
                   ) : null}
                   {runtimeRecoveryCard.requiresOperatorIntervention ? (
-                    <div className="mt-4 rounded-3xl border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-xs text-amber-100">
+                    <div className="mt-4 rounded-3xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] px-4 py-3 text-xs text-[color:var(--color-text-primary)]">
                       Operator intervention is still required before Friday can move beyond bounded continuation.
                     </div>
                   ) : null}
@@ -482,7 +482,7 @@ export function FleetPage() {
               </div>
 
               <div className="agent-subcard p-4">
-                <p className="text-sm font-medium text-white">Capability directory</p>
+                <p className="text-sm font-medium text-[color:var(--color-text-primary)]">Capability directory</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {detail.capabilities.map((capability) => (
                     <StatusPill
@@ -493,13 +493,13 @@ export function FleetPage() {
                     </StatusPill>
                   ))}
                   {detail.capabilities.length === 0 ? (
-                    <span className="text-sm text-white/60">No capabilities reported yet.</span>
+                    <span className="text-sm text-[color:var(--color-text-secondary)]">No capabilities reported yet.</span>
                   ) : null}
                 </div>
               </div>
             </div>
           ) : (
-            <p className="text-sm text-white/60">
+            <p className="text-sm text-[color:var(--color-text-secondary)]">
               Select a satellite to inspect trust, queue, placement, and capability detail before taking a recovery
               action.
             </p>

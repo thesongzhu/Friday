@@ -6,3 +6,4 @@ export type { FridayBackoffOptions } from "./friday-backoff.js";
 export { retryFridayAsync } from "./friday-retry.js";
 export type { FridayRetryOptions, FridayRetryInfo } from "./friday-retry.js";
 export { safeJsonParse } from "./friday-safe-json.js";
+export { isFridayTestSecurityWarningSuppressed } from "./friday-warning-flags.js";

@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, it, expect } from "vitest";
 import {
+  cmdRuns,
   finalizeCliCommand,
   isCliEntrypointPath,
   parseArgs,
@@ -12,6 +13,7 @@ import {
   readSetupNetworkBinding,
   resolveStartupNetworkBinding,
 } from "#cli";
+import { FRIDAY_SQLITE_MIGRATIONS, runFridayMigrations } from "#state";
 import Database from "better-sqlite3";
 
 describe("parseArgs", () => {
@@ -319,6 +321,41 @@ describe("parseArgs", () => {
     });
   });
 
+  describe("runs command", () => {
+    it("parses runs backfill-pack-context", () => {
+      const result = parseArgs(argv("runs", "backfill-pack-context"));
+      expect(result.command).toBe("runs");
+      expect(result.runsSubcommand).toBe("backfill-pack-context");
+      expect(result.dryRun).toBe(false);
+      expect(result.apply).toBe(false);
+      expect(result.json).toBe(false);
+    });
+
+    it("parses runs backfill-pack-context with dry-run and json", () => {
+      const result = parseArgs(argv("runs", "backfill-pack-context", "--dry-run", "--json"));
+      expect(result.command).toBe("runs");
+      expect(result.runsSubcommand).toBe("backfill-pack-context");
+      expect(result.dryRun).toBe(true);
+      expect(result.apply).toBe(false);
+      expect(result.json).toBe(true);
+    });
+
+    it("parses runs backfill-pack-context with apply", () => {
+      const result = parseArgs(argv("runs", "backfill-pack-context", "--apply"));
+      expect(result.command).toBe("runs");
+      expect(result.runsSubcommand).toBe("backfill-pack-context");
+      expect(result.dryRun).toBe(false);
+      expect(result.apply).toBe(true);
+    });
+
+    it("preserves runs subcommand parsing when help is requested", () => {
+      const result = parseArgs(argv("runs", "backfill-pack-context", "--help"));
+      expect(result.command).toBe("runs");
+      expect(result.runsSubcommand).toBe("backfill-pack-context");
+      expect(result.showHelp).toBe(true);
+    });
+  });
+
   describe("new flags default values", () => {
     it("replace defaults to false", () => {
       const result = parseArgs(argv("start"));
@@ -467,6 +504,91 @@ describe("finalizeCliCommand", () => {
       exitCode = code;
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("cmdRuns", () => {
+  it("rejects simultaneous dry-run and apply flags", async () => {
+    const originalExitCode = process.exitCode;
+    const originalError = console.error;
+    const errors: string[] = [];
+    process.exitCode = undefined;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map((value) => String(value)).join(" "));
+    };
+
+    try {
+      await cmdRuns({
+        runsSubcommand: "backfill-pack-context",
+        dryRun: true,
+        apply: true,
+        json: false,
+      });
+    } finally {
+      process.exitCode = originalExitCode;
+      console.error = originalError;
+    }
+
+    expect(errors.some((line) => line.includes("--dry-run and --apply cannot be used together"))).toBe(true);
+  });
+
+  it("dry-run backfill migrates a temp copy instead of mutating a v065 state database", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-cli-runs-backfill-"));
+    const dbPath = path.join(tempDir, "friday.db");
+    const db = new Database(dbPath);
+    const originalStdout = console.log;
+    const originalExitCode = process.exitCode;
+    const originalStateDir = process.env.FRIDAY_STATE_DIR;
+    const stdout: string[] = [];
+
+    try {
+      const throughV065 = FRIDAY_SQLITE_MIGRATIONS.filter((migration) => migration.version <= 65);
+      runFridayMigrations({ db, migrations: throughV065 });
+      db.close();
+
+      process.env.FRIDAY_STATE_DIR = tempDir;
+      process.exitCode = undefined;
+      console.log = (...args: unknown[]) => {
+        stdout.push(args.map((value) => String(value)).join(" "));
+      };
+
+      await cmdRuns({
+        runsSubcommand: "backfill-pack-context",
+        dryRun: true,
+        apply: false,
+        json: true,
+      });
+    } finally {
+      console.log = originalStdout;
+      process.exitCode = originalExitCode;
+      if (originalStateDir === undefined) {
+        delete process.env.FRIDAY_STATE_DIR;
+      } else {
+        process.env.FRIDAY_STATE_DIR = originalStateDir;
+      }
+      try {
+        db.close();
+      } catch {
+        // no-op
+      }
+    }
+
+    const payload = JSON.parse(stdout.join("\n")) as {
+      dbPath: string;
+      mode: string;
+      report: { scannedRuns: number };
+    };
+    expect(payload.dbPath).toBe(dbPath);
+    expect(payload.mode).toBe("dry_run");
+    expect(payload.report.scannedRuns).toBe(0);
+
+    const reopened = new Database(dbPath, { readonly: true });
+    try {
+      const columns = reopened.prepare("PRAGMA table_info(friday_agent_runs)").all() as Array<{ name: string }>;
+      expect(columns.some((column) => column.name === "metadata_json")).toBe(false);
+    } finally {
+      reopened.close();
+    }
   });
 });
 

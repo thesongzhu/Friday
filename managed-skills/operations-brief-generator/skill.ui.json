@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Operations Brief Generator",
+  "description": "Creates a concise operations brief from daily metrics with anomalies and root-cause prompts, including a JSON block for Feishu distribution.",
+  "sections": [
+    {
+      "id": "main",
+      "label": "Inputs",
+      "fieldIds": [
+        "dailyMetrics-field"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "dailyMetrics-field",
+      "inputKey": "dailyMetrics",
+      "kind": "text",
+      "label": "Daily Metrics",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "operationsBrief-output",
+      "outputKey": "operationsBrief",
+      "label": "operationsBrief",
+      "widget": "text"
+    },
+    {
+      "id": "feishuJSON-output",
+      "outputKey": "feishuJSON",
+      "label": "feishuJSON",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Run",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

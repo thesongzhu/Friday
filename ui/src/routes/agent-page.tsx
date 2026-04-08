@@ -50,6 +50,12 @@ import {
 } from "@/lib/system/view-models";
 import { buildSkillHref } from "@/lib/skills/view-models";
 import { trackStarterSkillBatch, trackStarterSkillEvent } from "@/lib/skills/starter-skill-telemetry";
+import {
+  describeRunHealth,
+  labelForRunHealth,
+  summarizeRunContext,
+  toneForRunHealth,
+} from "@/lib/runs/run-health";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 
 const OPERATOR_ID = "ui-operator";
@@ -579,9 +585,9 @@ export function AgentPage() {
               startRunMutation.mutate({ task: task.trim(), readOnly });
             }}
           >
-            <div className="rounded-[28px] border border-white/10 bg-black/20 p-4">
-              <label className="mb-2 flex items-center gap-2 text-sm font-medium text-white">
-                <Command className="h-4 w-4 text-[var(--accent-strong)]" />
+            <div className="rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+              <label className="mb-2 flex items-center gap-2 text-sm font-medium text-[color:var(--color-text-primary)]">
+                <Command className="h-4 w-4 text-[color:var(--color-accent)]" />
                 Send a new operator task
               </label>
               <textarea
@@ -592,12 +598,12 @@ export function AgentPage() {
                 placeholder="Example: open the workspace, inspect system permissions, and prepare the next build task."
               />
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <label className="inline-flex items-center gap-2 text-sm text-white/70">
+                <label className="inline-flex items-center gap-2 text-sm text-[color:var(--color-text-secondary)]">
                   <input
                     type="checkbox"
                     checked={readOnly}
                     onChange={(event) => setReadOnly(event.target.checked)}
-                    className="rounded border-white/20 bg-white/10"
+                    className="rounded border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-surface)]"
                   />
                   Start in read-only mode
                 </label>
@@ -630,13 +636,13 @@ export function AgentPage() {
         >
           <div className="grid gap-3">
             {recommendedStarterSkills.length === 0 ? (
-              <p className="text-sm text-white/50">Starter recommendations will appear once the skill registry is loaded.</p>
+              <p className="text-sm text-[color:var(--color-text-tertiary)]">Starter recommendations will appear once the skill registry is loaded.</p>
             ) : recommendedStarterSkills.map((skill) => (
               <div key={skill.skillId} className="agent-subcard">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-white">{skill.name}</p>
-                    <p className="mt-2 text-sm leading-6 text-white/58">{skill.description ?? "Bundled starter skill."}</p>
+                    <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{skill.name}</p>
+                    <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">{skill.description ?? "Bundled starter skill."}</p>
                   </div>
                   <StatusPill tone="success">starter</StatusPill>
                 </div>
@@ -716,11 +722,11 @@ export function AgentPage() {
             />
           </div>
           <div className="grid gap-4 lg:grid-cols-[1.25fr_0.75fr]">
-            <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+            <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-semibold text-white">Run output</p>
-                  <p className="text-xs text-white/50">
+                  <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">Run output</p>
+                  <p className="text-xs text-[color:var(--color-text-tertiary)]">
                     {currentRunId ? `Run ${currentRunId}` : "No active run selected"}
                   </p>
                 </div>
@@ -760,12 +766,12 @@ export function AgentPage() {
                 ) : null}
               </div>
               {currentRun?.status === "awaiting_clarification" && currentRun.planReview?.gate?.clarificationQuestions?.length ? (
-                <div className="mb-3 rounded-2xl border border-amber-300/20 bg-amber-300/[0.08] p-3 text-sm text-amber-100">
+                <div className="mb-3 rounded-2xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] p-3 text-sm text-[color:var(--color-text-primary)]">
                   Waiting for clarification. Next question: {currentRun.planReview.gate.clarificationQuestions[0]}
                 </div>
               ) : null}
               {currentRun?.status === "awaiting_plan_approval" && currentRun.planReview?.gate?.approvalPrompt ? (
-                <div className="mb-3 rounded-2xl border border-emerald-300/20 bg-emerald-300/[0.08] p-3 text-sm text-emerald-100">
+                <div className="mb-3 rounded-2xl border border-[color:var(--color-accent-soft)] bg-[color:var(--color-accent-muted)] p-3 text-sm text-[color:var(--color-text-primary)]">
                   {currentRun.planReview.gate.approvalPrompt}
                 </div>
               ) : null}
@@ -777,12 +783,12 @@ export function AgentPage() {
               {runEvents.pendingToolApprovals.map((approval) => (
                 <div
                   key={approval.toolCallId}
-                  className="mb-3 rounded-2xl border border-amber-400/30 bg-amber-400/[0.08] p-3 text-sm text-amber-100"
+                  className="mb-3 rounded-2xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] p-3 text-sm text-[color:var(--color-text-primary)]"
                 >
                   <p className="mb-2 font-medium">
-                    Friday wants to use <span className="font-mono font-bold text-amber-200">{approval.toolName}</span>
+                    Friday wants to use <span className="font-mono font-bold text-[color:var(--color-text-primary)]">{approval.toolName}</span>
                   </p>
-                  <p className="mb-3 text-xs text-amber-100/70">{approval.reason}</p>
+                  <p className="mb-3 text-xs text-[color:var(--color-text-secondary)]">{approval.reason}</p>
                   <div className="flex gap-2">
                     <ActionButton
                       tone="secondary"
@@ -817,18 +823,18 @@ export function AgentPage() {
             </div>
 
             <div className="space-y-3">
-              <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">
+              <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
                   Tools and Subagents
                 </p>
                 <div className="mt-3 space-y-2">
                   {runEvents.toolCalls.length === 0 && runEvents.subagents.length === 0 ? (
-                    <p className="text-sm text-white/50">No tool activity yet.</p>
+                    <p className="text-sm text-[color:var(--color-text-tertiary)]">No tool activity yet.</p>
                   ) : null}
                   {runEvents.toolCalls.slice(-4).map((tool) => (
-                    <div key={tool.id} className="rounded-2xl border border-white/[0.08] bg-white/[0.04] p-3">
+                    <div key={tool.id} className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="font-medium text-white">{tool.toolName}</span>
+                        <span className="font-medium text-[color:var(--color-text-primary)]">{tool.toolName}</span>
                         <div className="flex flex-wrap items-center gap-2">
                           {tool.toolName === "browser" && tool.presentationMode ? (
                             <StatusPill tone={browserModeTone(tool.presentationMode)}>
@@ -838,32 +844,32 @@ export function AgentPage() {
                           <StatusPill tone={mapTone(tool.status)}>{tool.status}</StatusPill>
                         </div>
                       </div>
-                      <p className="mt-2 text-xs text-white/50">
+                      <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">
                         {tool.summary
                           ?? (tool.toolName === "browser"
                             ? tool.targetUrl ?? "Browser action in progress."
                             : "Tool call completed without a summary.")}
                       </p>
                       {tool.toolName === "browser" && tool.browserTarget ? (
-                        <p className="mt-2 text-[11px] text-white/35">
+                        <p className="mt-2 text-[11px] text-[color:var(--color-text-faint)]">
                           Target: {tool.browserTarget}
                         </p>
                       ) : null}
                       {tool.toolName === "browser" && tool.fallbackReason ? (
-                        <p className="mt-2 text-[11px] text-amber-200/90">
+                        <p className="mt-2 text-[11px] text-[color:var(--color-text-secondary)]">
                           Fallback: {tool.fallbackReason}
                         </p>
                       ) : null}
                     </div>
                   ))}
                   {runEvents.subagents.slice(-4).map((subagent) => (
-                    <div key={subagent.id} className="rounded-2xl border border-emerald-300/10 bg-emerald-300/[0.05] p-3">
+                    <div key={subagent.id} className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-accent-muted)] p-3">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="font-medium text-white">subagent</span>
+                        <span className="font-medium text-[color:var(--color-text-primary)]">subagent</span>
                         <StatusPill tone={mapTone(subagent.status)}>{subagent.status}</StatusPill>
                       </div>
-                      <p className="mt-2 text-xs text-white/50">{subagent.task || subagent.id}</p>
-                      <p className="mt-2 text-[11px] text-white/35">
+                      <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">{subagent.task || subagent.id}</p>
+                      <p className="mt-2 text-[11px] text-[color:var(--color-text-faint)]">
                         Started {formatTimestamp(subagent.startedAt)}
                         {subagent.durationMs ? ` · ${formatDuration(subagent.durationMs)}` : ""}
                       </p>
@@ -872,29 +878,33 @@ export function AgentPage() {
                 </div>
               </div>
 
-              <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">
+              <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
                   Recent runs
                 </p>
                 <div className="mt-3 space-y-2">
                   {deferredRuns.length === 0 ? (
-                    <p className="text-sm text-white/50">No runs recorded yet.</p>
+                    <p className="text-sm text-[color:var(--color-text-tertiary)]">No runs recorded yet.</p>
                   ) : deferredRuns.map((run) => (
                     <button
                       key={run.id}
                       type="button"
                       onClick={() => setCurrentRunId(run.id)}
-                      className="w-full rounded-2xl border border-white/[0.08] bg-white/[0.04] p-3 text-left transition hover:border-white/[0.16] hover:bg-white/[0.08]"
+                      className="w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3 text-left transition hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-bg-surface-strong)]"
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <span className="line-clamp-1 font-medium text-white">{run.task}</span>
-                        <StatusPill tone={mapTone(run.status)}>{run.status}</StatusPill>
+                        <span className="line-clamp-1 font-medium text-[color:var(--color-text-primary)]">{run.task}</span>
+                        <StatusPill tone={toneForRunHealth(run)}>{labelForRunHealth(run, "en")}</StatusPill>
                       </div>
-                      <p className="mt-2 text-xs text-white/50">
+                      <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">
                         {formatTimestamp(run.startedAt)}
-                        {run.status === "awaiting_plan_approval" && run.planReview?.gate?.planSummary
-                          ? ` · ${run.planReview.gate.planSummary}`
-                          : ""}
+                        {describeRunHealth(run, "en")
+                          ? ` · ${describeRunHealth(run, "en")}`
+                          : summarizeRunContext(run, "en")
+                            ? ` · ${summarizeRunContext(run, "en")}`
+                            : run.status === "awaiting_plan_approval" && run.planReview?.gate?.planSummary
+                              ? ` · ${run.planReview.gate.planSummary}`
+                              : ""}
                       </p>
                     </button>
                   ))}
@@ -907,7 +917,7 @@ export function AgentPage() {
         <div className="grid gap-4 lg:grid-cols-2">
           <ShellCard eyebrow="System Truth" title="Current Session">
             {commandCenterError ? (
-              <p className="text-sm text-rose-200">
+              <p className="text-sm text-[color:var(--color-text-primary)]">
                 Agent OS routes are unavailable: {commandCenterError instanceof Error ? commandCenterError.message : "unknown error"}
               </p>
             ) : session && state ? (
@@ -924,11 +934,11 @@ export function AgentPage() {
                   />
                   <Metric label="Browser Target" value={state.browser?.browserTarget ?? state.browser?.targetBrowser ?? "unknown"} />
                 </div>
-                <p className="text-sm leading-6 text-white/60">
+                <p className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
                   {summarizeHealthReasons(state.health)}
                 </p>
                 {state.browser?.fallbackReason ? (
-                  <p className="text-sm leading-6 text-amber-200/90">
+                  <p className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
                     Browser fallback: {state.browser.fallbackReason}
                   </p>
                 ) : null}
@@ -954,7 +964,7 @@ export function AgentPage() {
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-white/50">Loading system session...</p>
+              <p className="text-sm text-[color:var(--color-text-tertiary)]">Loading system session...</p>
             )}
           </ShellCard>
 
@@ -997,12 +1007,12 @@ export function AgentPage() {
                     ))}
                   </div>
                 </div>
-                <p className="text-sm text-white/60">
+                <p className="text-sm text-[color:var(--color-text-secondary)]">
                   Window arrangement, app focus, and notification actions route through the companion bridge first. A native panic override now drives safe mode into the shared system state so the web console reflects native companion state instead of guessing.
                 </p>
               </div>
             ) : (
-              <p className="text-sm text-white/50">No companion snapshot available.</p>
+              <p className="text-sm text-[color:var(--color-text-tertiary)]">No companion snapshot available.</p>
             )}
           </ShellCard>
         </div>
@@ -1016,11 +1026,11 @@ export function AgentPage() {
         >
           <div className="space-y-3">
             {approvalCards.map((card) => (
-              <div key={card.action} className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+              <div key={card.action} className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <p className="font-medium text-white">{card.label}</p>
-                    <p className="mt-1 text-sm leading-6 text-white/60">{card.summary}</p>
+                    <p className="font-medium text-[color:var(--color-text-primary)]">{card.label}</p>
+                    <p className="mt-1 text-sm leading-6 text-[color:var(--color-text-secondary)]">{card.summary}</p>
                   </div>
                   <StatusPill tone={mapTone(card.decision === "missing" ? "neutral" : card.decision)}>
                     {card.decision}
@@ -1049,13 +1059,13 @@ export function AgentPage() {
                   </ActionButton>
                 </div>
                 {card.updatedAt ? (
-                  <p className="mt-3 text-xs text-white/40">Updated {formatRelative(card.updatedAt)}</p>
+                  <p className="mt-3 text-xs text-[color:var(--color-text-faint)]">Updated {formatRelative(card.updatedAt)}</p>
                 ) : null}
               </div>
             ))}
           </div>
           {approvalRules.length === 0 ? (
-            <p className="mt-4 text-sm text-white/50">
+            <p className="mt-4 text-sm text-[color:var(--color-text-tertiary)]">
               No persistent approval rules exist yet. Sensitive actions will block until you allow them.
             </p>
           ) : null}
@@ -1068,12 +1078,12 @@ export function AgentPage() {
         >
           <div className="space-y-3">
             {state?.notifications.length ? state.notifications.slice(0, 4).map((notification) => (
-              <div key={notification.id} className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+              <div key={notification.id} className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <p className="font-medium text-white">{notification.title}</p>
-                    <p className="mt-1 text-sm text-white/60">{notification.body ?? "No body provided."}</p>
-                    <p className="mt-2 text-xs text-white/40">
+                    <p className="font-medium text-[color:var(--color-text-primary)]">{notification.title}</p>
+                    <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">{notification.body ?? "No body provided."}</p>
+                    <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
                       {notification.sourceApp ?? "Unknown source"} · {formatRelative(notification.receivedAt)}
                     </p>
                   </div>
@@ -1118,7 +1128,7 @@ export function AgentPage() {
                 </div>
               </div>
             )) : (
-              <p className="text-sm text-white/50">
+              <p className="text-sm text-[color:var(--color-text-tertiary)]">
                 No notifications are currently surfaced by the companion.
               </p>
             )}
@@ -1131,7 +1141,7 @@ export function AgentPage() {
           aside={<StatusPill tone={remoteDevices.some((item) => item.status === "active") ? "success" : "neutral"}>{remoteDevices.length} devices / {remoteSessions.filter((item) => item.status === "active").length} sessions</StatusPill>}
         >
           <form
-            className="space-y-3 rounded-[24px] border border-white/10 bg-black/20 p-4"
+            className="space-y-3 rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4"
             onSubmit={(event) => {
               event.preventDefault();
               if (!remoteLabel.trim() || !remoteFingerprint.trim()) {
@@ -1155,7 +1165,7 @@ export function AgentPage() {
                 className="agent-input"
               />
             </div>
-            <p className="text-sm text-white/55">
+            <p className="text-sm text-[color:var(--color-text-tertiary)]">
               Register the browser as a trusted device first, then enroll a passkey on the device card below.
             </p>
             <ActionButton type="submit" disabled={remoteRegisterMutation.isPending}>
@@ -1165,7 +1175,7 @@ export function AgentPage() {
 
           <div className="mt-4 space-y-3">
             {remoteDevices.length === 0 ? (
-              <p className="text-sm text-white/50">No trusted devices registered yet.</p>
+              <p className="text-sm text-[color:var(--color-text-tertiary)]">No trusted devices registered yet.</p>
             ) : remoteDevices.map((device) => (
               <RemoteDeviceCard
                 key={device.id}
@@ -1186,11 +1196,11 @@ export function AgentPage() {
           </div>
 
           <div className="mt-4 space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
               Remote sessions
             </p>
             {remoteSessions.length === 0 ? (
-              <p className="text-sm text-white/50">
+              <p className="text-sm text-[color:var(--color-text-tertiary)]">
                 No remote sessions recorded yet. Active trusted-device sessions will appear here once connected from a private network.
               </p>
             ) : remoteSessions.map((sessionItem) => (
@@ -1217,19 +1227,19 @@ export function AgentPage() {
           }
         >
           {systemEvents.errorMessage ? (
-            <p className="mb-3 text-sm text-amber-200">{systemEvents.errorMessage}</p>
+            <p className="mb-3 text-sm text-[color:var(--color-text-primary)]">{systemEvents.errorMessage}</p>
           ) : null}
           <div className="space-y-3">
             {timelineItems.length === 0 ? (
-              <p className="text-sm text-white/50">Waiting for system activity.</p>
+              <p className="text-sm text-[color:var(--color-text-tertiary)]">Waiting for system activity.</p>
             ) : timelineItems.map((item) => (
-              <div key={item.id} className="rounded-[22px] border border-white/10 bg-black/20 p-4">
+              <div key={item.id} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="font-medium text-white">{item.title}</p>
+                  <p className="font-medium text-[color:var(--color-text-primary)]">{item.title}</p>
                   <StatusPill tone={item.tone}>{item.tone}</StatusPill>
                 </div>
-                {item.detail ? <p className="mt-2 text-sm text-white/60">{item.detail}</p> : null}
-                <p className="mt-2 text-xs text-white/40">{formatTimestamp(item.timestamp)}</p>
+                {item.detail ? <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{item.detail}</p> : null}
+                <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">{formatTimestamp(item.timestamp)}</p>
               </div>
             ))}
           </div>
@@ -1254,12 +1264,12 @@ function Metric(props: {
   detail?: string;
 }) {
   return (
-    <div className="rounded-[22px] border border-white/[0.08] bg-white/[0.04] p-4">
-      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/40">{props.label}</p>
-      <p className={`mt-2 text-sm ${props.mono ? "font-mono" : "font-medium"} text-white`}>
+    <div className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">{props.label}</p>
+      <p className={`mt-2 text-sm ${props.mono ? "font-mono" : "font-medium"} text-[color:var(--color-text-primary)]`}>
         {props.value}
       </p>
-      {props.detail ? <p className="mt-2 text-xs text-white/45">{props.detail}</p> : null}
+      {props.detail ? <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">{props.detail}</p> : null}
       {props.tone ? <StatusPill tone={props.tone} className="mt-3">{props.tone}</StatusPill> : null}
     </div>
   );
@@ -1279,11 +1289,11 @@ function RemoteDeviceCard(props: {
 }) {
   const passkey = buildRemoteDevicePasskeySummary(props.device);
   return (
-    <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+    <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="font-medium text-white">{props.device.label}</p>
-          <p className="mt-1 break-all font-mono text-xs text-white/50">{props.device.fingerprint}</p>
+          <p className="font-medium text-[color:var(--color-text-primary)]">{props.device.label}</p>
+          <p className="mt-1 break-all font-mono text-xs text-[color:var(--color-text-tertiary)]">{props.device.fingerprint}</p>
         </div>
         <StatusPill tone={mapTone(props.device.status)}>{props.device.status}</StatusPill>
       </div>
@@ -1311,7 +1321,7 @@ function RemoteDeviceCard(props: {
         />
       </div>
       {!props.passkeysSupported ? (
-        <p className="mt-4 text-sm text-amber-200">
+        <p className="mt-4 text-sm text-[color:var(--color-text-primary)]">
           This browser does not support passkey registration or assertion.
         </p>
       ) : null}
@@ -1345,7 +1355,7 @@ function RemoteDeviceCard(props: {
         </div>
       ) : null}
       {props.device.status === "active" && !props.device.credentialId ? (
-        <p className="mt-3 text-xs text-white/45">
+        <p className="mt-3 text-xs text-[color:var(--color-text-faint)]">
           Remote sessions stay locked until this trusted device completes passkey enrollment.
         </p>
       ) : null}
@@ -1358,11 +1368,11 @@ function RemoteSessionCard(props: {
   onClose: () => void;
 }) {
   return (
-    <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+    <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="font-medium text-white">{props.session.ipAddress ?? "Unknown origin"}</p>
-          <p className="mt-1 line-clamp-2 text-xs text-white/50">
+          <p className="font-medium text-[color:var(--color-text-primary)]">{props.session.ipAddress ?? "Unknown origin"}</p>
+          <p className="mt-1 line-clamp-2 text-xs text-[color:var(--color-text-tertiary)]">
             {props.session.userAgent ?? "No user agent captured"}
           </p>
         </div>
@@ -1380,7 +1390,7 @@ function RemoteSessionCard(props: {
           </ActionButton>
         </div>
       ) : props.session.closedReason ? (
-        <p className="mt-4 text-xs text-white/40">Closed: {props.session.closedReason}</p>
+        <p className="mt-4 text-xs text-[color:var(--color-text-faint)]">Closed: {props.session.closedReason}</p>
       ) : null}
     </div>
   );

@@ -84,6 +84,8 @@ import { createFridaySatellitePairingRoutes } from "../http/routes/friday-satell
 import { createFridaySatelliteRuntimeRoutes } from "../http/routes/friday-satellite-runtime-routes.js";
 import { createFridayChannelWebhookRoutes } from "../http/routes/friday-channel-webhook-routes.js";
 import {
+  buildFridayAgentRunContextSummarySnapshot,
+  buildFridayAgentRunHealthSnapshot,
   createFridayAgentAutomationRepository,
   createFridayAgentAutomationService,
   createFridayAgentPlanningGateService,
@@ -1658,6 +1660,25 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   const agentRepo = deps.agentRuntime ? createFridayAgentRunRepository() : undefined;
   const agentRunEventRepo = deps.agentRuntime ? createFridayAgentRunEventRepository() : undefined;
+  const enrichAgentRun = <T extends ReturnType<NonNullable<typeof agentRepo>["getById"]> | ReturnType<NonNullable<typeof agentRepo>["list"]>[number] | null | undefined>(
+    run: T,
+  ): T => {
+    if (!run || !deps.agentRuntime) {
+      return run;
+    }
+    const rollbackAvailable = typeof deps.agentRuntime.hasRollbackCheckpoint === "function"
+      ? deps.agentRuntime.hasRollbackCheckpoint(run.id)
+      : false;
+    return {
+      ...run,
+      rollbackAvailable,
+      health: buildFridayAgentRunHealthSnapshot({
+        run,
+        rollbackAvailable,
+      }),
+      contextSummary: buildFridayAgentRunContextSummarySnapshot(run),
+    } as T;
+  };
   const agentPlanningGate = deps.agentRuntime && deps.agentEventEmitter && agentRepo
     ? createFridayAgentPlanningGateService({
       repo: agentRepo,
@@ -1804,9 +1825,22 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       taskAlreadyInHistory?: boolean;
       idempotencyPrefix: "api-agent-run" | "api-session-run";
     }) => {
-      const sessionRecord = input.sessionKey
-        ? await sessionService.getSession(input.sessionKey).catch(() => null)
-        : null;
+      const packId = input.executionContext?.packId?.trim();
+      let sessionRecord = null;
+      if (input.sessionKey) {
+        sessionRecord = packId
+          ? await sessionService.getOrCreateSession(input.sessionKey)
+          : await sessionService.getSession(input.sessionKey).catch(() => null);
+      }
+      if (packId && sessionRecord) {
+        sessionRecord = await sessionService.mergeMetadata(sessionRecord.key, {
+          packContext: {
+            packId,
+            ...(input.executionContext?.surface ? { surface: input.executionContext.surface } : {}),
+            updatedAt: deps.nowIso(),
+          },
+        });
+      }
       const tenantContext = resolveRunTenantContext({
         tenantContext: input.tenantContext,
         session: sessionRecord,
@@ -1984,12 +2018,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       startRun,
       getRun: (runId) => {
         return deps.db.withReadConnection((db) =>
-          agentRepo.getById(db, runId),
+          enrichAgentRun(agentRepo.getById(db, runId)),
         );
       },
       listRuns: (query) => {
         return deps.db.withReadConnection((db) =>
-          agentRepo.list(db, query),
+          agentRepo.list(db, query).map((run) => enrichAgentRun(run)),
         );
       },
       listRunEvents: (runId, afterSeq) => {

@@ -21,6 +21,7 @@ interface StartRunInput {
     surface?: string;
     interactive?: boolean;
     browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
+    packId?: string;
   };
   taskProfile?: AgentTaskProfileInput;
 }

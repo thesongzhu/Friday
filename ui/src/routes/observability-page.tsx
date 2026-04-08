@@ -28,6 +28,12 @@ import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { learningApi } from "@/lib/api/learning";
 import { systemApi } from "@/lib/api/system";
 import {
+  describeRunHealth,
+  labelForRunHealth,
+  summarizeRunContext,
+  toneForRunHealth,
+} from "@/lib/runs/run-health";
+import {
   buildObservabilityActionQueue,
   buildObservabilityHref,
   formatObservabilityFocusLabel,
@@ -105,8 +111,8 @@ function FocusChip(props: {
     <Link
       className={
         props.active
-          ? "rounded-full border border-emerald-300/40 bg-emerald-300/15 px-3 py-1 text-xs font-medium text-emerald-100"
-          : "rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-white/60 hover:bg-white/[0.08]"
+          ? "rounded-full border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-3 py-1 text-xs font-medium text-[color:var(--color-text-primary)]"
+          : "rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-1 text-xs font-medium text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-surface-strong)]"
       }
       to={props.to}
     >
@@ -123,12 +129,12 @@ function ObservabilityTile(props: {
 }) {
   return (
     <div className="agent-metric-card">
-      <div className="flex items-center gap-2 text-white/40">
+      <div className="flex items-center gap-2 text-[color:var(--color-text-secondary)]">
         {props.icon}
         <span className="text-xs font-semibold uppercase tracking-[0.18em]">{props.label}</span>
       </div>
-      <p className="mt-3 text-xl font-semibold text-white">{props.value}</p>
-      <p className="mt-2 text-xs leading-5 text-white/55">{props.detail}</p>
+      <p className="mt-3 text-xl font-semibold text-[color:var(--color-text-primary)]">{props.value}</p>
+      <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-secondary)]">{props.detail}</p>
     </div>
   );
 }
@@ -148,20 +154,20 @@ function ObservabilityActionCard(props: {
     <div className="agent-subcard p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-white/40">{props.affectedArea}</p>
-          <h3 className="mt-1 text-base font-semibold text-white">{props.title}</h3>
+          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{props.affectedArea}</p>
+          <h3 className="mt-1 text-base font-semibold text-[color:var(--color-text-primary)]">{props.title}</h3>
         </div>
         <StatusPill tone={props.tone}>{props.tone}</StatusPill>
       </div>
-      <p className="text-sm text-white/70">{props.summary}</p>
-      <p className="mt-3 text-xs leading-5 text-white/50">{props.detail}</p>
+      <p className="text-sm text-[color:var(--color-text-secondary)]">{props.summary}</p>
+      <p className="mt-3 text-xs leading-5 text-[color:var(--color-text-tertiary)]">{props.detail}</p>
       <div className="mt-4 flex flex-wrap gap-2">
-        <Link className="inline-flex items-center rounded-2xl bg-emerald-300/20 px-4 py-2 text-sm text-emerald-50 hover:bg-emerald-300/30" to={props.routeTarget}>
+        <Link className="inline-flex min-h-[44px] items-center rounded-2xl border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:opacity-90" to={props.routeTarget}>
           {props.ctaLabel}
           <ArrowRight className="ml-2 h-4 w-4" />
         </Link>
         {props.secondaryLabel && props.secondaryRouteTarget ? (
-          <Link className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]" to={props.secondaryRouteTarget}>
+          <Link className="inline-flex min-h-[44px] items-center rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-surface-strong)] hover:text-[color:var(--color-text-primary)]" to={props.secondaryRouteTarget}>
             {props.secondaryLabel}
           </Link>
         ) : null}
@@ -657,7 +663,7 @@ export function ObservabilityPage() {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-white/60">No urgent action cards are open right now.</p>
+          <p className="text-sm text-[color:var(--color-text-secondary)]">No urgent action cards are open right now.</p>
         )}
       </ShellCard>
 
@@ -665,22 +671,22 @@ export function ObservabilityPage() {
         <ShellCard eyebrow="Current focus" title={formatObservabilityFocusLabel(focus)}>
           {focusSummary ? (
             <div className="space-y-4">
-              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+              <div className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-white">{focusSummary.title}</p>
-                    <p className="mt-1 text-sm text-white/65">{focusSummary.summary}</p>
+                    <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{focusSummary.title}</p>
+                    <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">{focusSummary.summary}</p>
                   </div>
                   <StatusPill tone={focusSummary.tone}>{focusSummary.tone}</StatusPill>
                 </div>
-                <p className="text-xs leading-5 text-white/50">{focusSummary.detail}</p>
+                <p className="text-xs leading-5 text-[color:var(--color-text-tertiary)]">{focusSummary.detail}</p>
               </div>
-              <p className="text-sm text-white/60">
+              <p className="text-sm text-[color:var(--color-text-secondary)]">
                 Friday keeps this page action-first: solve the highlighted problem here, then drill into traces, audit, and history only when you need the deeper evidence.
               </p>
             </div>
           ) : (
-            <p className="text-sm text-white/60">No detail is available for this focus yet.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">No detail is available for this focus yet.</p>
           )}
         </ShellCard>
 
@@ -713,12 +719,12 @@ export function ObservabilityPage() {
                   detail={`${Object.keys(overview.audit.byOutcome).length} tracked outcomes`}
                 />
               </div>
-              <p className="text-xs text-white/50">
+              <p className="text-xs text-[color:var(--color-text-tertiary)]">
                 Generated at {formatTimestamp(overview.generatedAt)}. This page stays aligned with `/assistant`: action queue first, telemetry second.
               </p>
             </div>
           ) : (
-            <p className="text-sm text-white/60">Loading the current system state...</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Loading the current system state...</p>
           )}
         </ShellCard>
       </div>
@@ -745,14 +751,14 @@ export function ObservabilityPage() {
                 <div key={record.runId} className="agent-subcard p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{record.reasonCode ?? "configured"}</p>
-                      <p className="text-xs text-white/50">{formatTimestamp(record.createdAt)}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{record.reasonCode ?? "configured"}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{formatTimestamp(record.createdAt)}</p>
                     </div>
                     <StatusPill tone={record.learningAdjusted ? "success" : "warning"}>
                       {record.learningAdjusted ? "selection changed" : "signals present"}
                     </StatusPill>
                   </div>
-                  <p className="mt-3 text-sm text-white/70">
+                  <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">
                     {record.selectedBeforeLearning
                       ? `${record.selectedBeforeLearning.providerId} / ${record.selectedBeforeLearning.model}`
                       : "n/a"} → {record.selectedAfterLearning
@@ -760,13 +766,13 @@ export function ObservabilityPage() {
                       : "n/a"}
                   </p>
                   {record.reasonText ? (
-                    <p className="mt-2 text-xs text-white/50">{record.reasonText}</p>
+                    <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">{record.reasonText}</p>
                   ) : null}
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-white/60">Learning overview is loading...</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Learning overview is loading...</p>
           )}
         </ShellCard>
 
@@ -804,16 +810,18 @@ export function ObservabilityPage() {
                   <div className="agent-subcard p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="font-medium text-white">{latestAssistantRun.task}</p>
-                        <p className="text-xs text-white/50">
-                          {latestAssistantRun.taskProfile?.label ?? "No task profile"} · {latestAssistantRun.status}
+                        <p className="font-medium text-[color:var(--color-text-primary)]">{latestAssistantRun.task}</p>
+                        <p className="text-xs text-[color:var(--color-text-tertiary)]">
+                          {summarizeRunContext(latestAssistantRun, "en")
+                            ?? `${latestAssistantRun.taskProfile?.label ?? "No task profile"} · ${labelForRunHealth(latestAssistantRun, "en")}`}
                         </p>
                       </div>
-                      <StatusPill tone={latestAssistantRun.status === "completed" ? "success" : latestAssistantRun.status === "failed" ? "danger" : "warning"}>
-                        {latestAssistantRun.status}
+                      <StatusPill tone={toneForRunHealth(latestAssistantRun)}>
+                        {labelForRunHealth(latestAssistantRun, "en")}
                       </StatusPill>
                     </div>
-                    <div className="mt-3 grid gap-2 text-xs text-white/55">
+                    <div className="mt-3 grid gap-2 text-xs text-[color:var(--color-text-tertiary)]">
+                      <p>{describeRunHealth(latestAssistantRun, "en")}</p>
                       <p>Workspace context: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "workspace_context")?.estimatedChars ?? 0} chars</p>
                       <p>Starter skills: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "starter_skills")?.estimatedChars ?? 0} chars</p>
                       <p>MCP: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "mcp")?.estimatedChars ?? 0} chars</p>
@@ -821,18 +829,18 @@ export function ObservabilityPage() {
                     </div>
                   </div>
                 ) : (
-                  <p className="text-sm text-white/60">No recent assistant runs have been recorded yet.</p>
+                  <p className="text-sm text-[color:var(--color-text-secondary)]">No recent assistant runs have been recorded yet.</p>
                 )}
                 <div className="space-y-3">
                   {(assistantDiagnostics.mcpServerStates ?? []).length === 0 ? (
-                    <p className="text-sm text-white/60">No MCP servers are configured for this runtime.</p>
+                    <p className="text-sm text-[color:var(--color-text-secondary)]">No MCP servers are configured for this runtime.</p>
                   ) : (
                     assistantDiagnostics.mcpServerStates.map((state) => (
                       <div key={state.serverId} className="agent-subcard p-4">
                         <div className="flex items-center justify-between gap-3">
                           <div>
-                            <p className="font-medium text-white">{state.serverId}</p>
-                            <p className="text-xs text-white/50">
+                            <p className="font-medium text-[color:var(--color-text-primary)]">{state.serverId}</p>
+                            <p className="text-xs text-[color:var(--color-text-tertiary)]">
                               {state.transport} · {state.lazyDiscovery ? "lazy discovery" : "eager discovery"}
                             </p>
                           </div>
@@ -840,7 +848,7 @@ export function ObservabilityPage() {
                             {state.state}
                           </StatusPill>
                         </div>
-                        <p className="mt-3 text-xs text-white/55">
+                        <p className="mt-3 text-xs text-[color:var(--color-text-tertiary)]">
                           Tools {state.toolCount ?? 0} · Resources {state.resourceCount ?? 0} · Prompts {state.promptCount ?? 0}
                         </p>
                       </div>
@@ -849,7 +857,7 @@ export function ObservabilityPage() {
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-white/60">Loading assistant diagnostics...</p>
+              <p className="text-sm text-[color:var(--color-text-secondary)]">Loading assistant diagnostics...</p>
             )}
           </ShellCard>
         ) : null}
@@ -861,24 +869,24 @@ export function ObservabilityPage() {
                 <div key={alert.id} className="agent-subcard p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{alert.summary}</p>
-                      <p className="text-xs text-white/50">{alert.ruleName} · {alert.module}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{alert.summary}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{alert.ruleName} · {alert.module}</p>
                     </div>
                     <StatusPill tone={toneForAlert(alert.status, alert.severity)}>
                       {alert.severity} · {alert.status}
                     </StatusPill>
                   </div>
-                  <p className="mt-3 text-sm text-white/60">Detected {formatTimestamp(alert.detectedAt)}</p>
+                  <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">Detected {formatTimestamp(alert.detectedAt)}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <Link className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]" to={buildObservabilityHref({ focus: "alerts", alertId: alert.id })}>
+                    <Link className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]" to={buildObservabilityHref({ focus: "alerts", alertId: alert.id })}>
                       Investigate
                     </Link>
-                    <Link className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]" to="/assistant">
+                    <Link className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]" to="/assistant">
                       Open guided recovery
                     </Link>
                     {alert.status !== "acknowledged" && alert.status !== "resolved" ? (
                       <button
-                        className="inline-flex items-center rounded-2xl bg-emerald-300/20 px-4 py-2 text-sm text-emerald-50 hover:bg-emerald-300/30 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex items-center rounded-2xl bg-[color:var(--color-accent-soft)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
                         disabled={acknowledgeAlertMutation.isPending}
                         onClick={() =>
                           acknowledgeAlertMutation.mutate({
@@ -891,7 +899,7 @@ export function ObservabilityPage() {
                       </button>
                     ) : null}
                     <button
-                      className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)] disabled:cursor-not-allowed disabled:opacity-60"
                       disabled={testAlertDispatchMutation.isPending}
                       onClick={() => testAlertDispatchMutation.mutate({ alertId: alert.id })}
                       type="button"
@@ -903,7 +911,7 @@ export function ObservabilityPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-white/60">No active alerts are firing right now.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">No active alerts are firing right now.</p>
           )}
         </ShellCard>
 
@@ -914,19 +922,19 @@ export function ObservabilityPage() {
                 <div key={issue.id} className="agent-subcard p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{issue.title}</p>
-                      <p className="text-xs text-white/50">{issue.kind.replaceAll("_", " ")}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{issue.title}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{issue.kind.replaceAll("_", " ")}</p>
                     </div>
                     <StatusPill tone={toneForIssueSeverity(issue.severity)}>
                       {issue.severity}
                     </StatusPill>
                   </div>
-                  <p className="mt-3 text-sm text-white/60">{issue.summary}</p>
+                  <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{issue.summary}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <Link className="inline-flex items-center rounded-2xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/[0.14]" to={buildObservabilityHref({ focus: "alerts", issueId: issue.id })}>
+                    <Link className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]" to={buildObservabilityHref({ focus: "alerts", issueId: issue.id })}>
                       Inspect evidence
                     </Link>
-                    <Link className="inline-flex items-center rounded-2xl bg-emerald-300/20 px-4 py-2 text-sm text-emerald-50 hover:bg-emerald-300/30" to="/assistant">
+                    <Link className="inline-flex items-center rounded-2xl bg-[color:var(--color-accent-soft)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-strong)]" to="/assistant">
                       Continue in assistant
                     </Link>
                   </div>
@@ -934,7 +942,7 @@ export function ObservabilityPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-white/60">No guided issues are open right now.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">No guided issues are open right now.</p>
           )}
         </ShellCard>
       </div>
@@ -956,7 +964,7 @@ export function ObservabilityPage() {
                 detail={`${retryCircuitBreakers.filter((item) => item.state !== "closed").length} non-closed circuit breakers`}
               />
               {retryCostSummary ? (
-                <div className="agent-detail-note p-4 text-xs text-white/55">
+                <div className="agent-detail-note p-4 text-xs text-[color:var(--color-text-tertiary)]">
                   <p>Total retry records: {retryCostSummary.summary.recordCount}</p>
                   <p>Budget exceeded: {retryCostSummary.summary.budgetExceeded ? "yes" : "no"}</p>
                   <p>Token cost: {retryCostSummary.summary.totalCost.tokens}</p>
@@ -966,8 +974,8 @@ export function ObservabilityPage() {
                 <div key={escalation.id} className="agent-subcard p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{escalation.reason}</p>
-                      <p className="text-xs text-white/50">{escalation.channel} · {escalation.failureCategory}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{escalation.reason}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{escalation.channel} · {escalation.failureCategory}</p>
                     </div>
                     <StatusPill tone={escalation.acknowledged ? "success" : "warning"}>
                       {escalation.acknowledged ? "acknowledged" : "open"}
@@ -977,7 +985,7 @@ export function ObservabilityPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-white/60">No acceptance or retry pressure is active right now.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">No acceptance or retry pressure is active right now.</p>
           )}
         </ShellCard>
 
@@ -995,8 +1003,8 @@ export function ObservabilityPage() {
                 />
               ))}
               {expertLoopRuns.length > 0 && (
-                <div className="border-t border-white/8 pt-3">
-                  <p className="mb-2 text-xs uppercase tracking-[0.16em] text-white/40">Expert mode runs</p>
+                <div className="border-t border-[color:var(--color-border-soft)] pt-3">
+                  <p className="mb-2 text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Expert mode runs</p>
                   {expertLoopRuns.slice(0, 3).map((record) => (
                     <LoopRunCard
                       key={record.run.loopRunId}
@@ -1013,8 +1021,8 @@ export function ObservabilityPage() {
                 <div key={entry.id} className="agent-subcard p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{entry.resource} · {entry.action}</p>
-                      <p className="text-xs text-white/50">{entry.ruleId ?? "bundle-eval"}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{entry.resource} · {entry.action}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{entry.ruleId ?? "bundle-eval"}</p>
                     </div>
                     <StatusPill tone={entry.decision === "allow" ? "success" : entry.decision === "warn" ? "warning" : "danger"}>
                       {entry.decision}
@@ -1024,7 +1032,7 @@ export function ObservabilityPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-white/60">No loop or rules events need attention right now.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">No loop or rules events need attention right now.</p>
           )}
         </ShellCard>
       </div>
@@ -1035,24 +1043,24 @@ export function ObservabilityPage() {
             <div className="space-y-3">
               <div className="grid gap-2">
                 {series.points.map((point) => (
-                  <div key={point.timestamp} className="grid grid-cols-[104px_1fr_48px] items-center gap-3 text-xs text-white/60">
+                  <div key={point.timestamp} className="grid grid-cols-[104px_1fr_48px] items-center gap-3 text-xs text-[color:var(--color-text-secondary)]">
                     <span>{new Date(point.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                    <div className="h-2 rounded-full bg-white/[0.08]">
+                    <div className="h-2 rounded-full bg-[color:var(--color-bg-surface-strong)]">
                       <div
-                        className="h-2 rounded-full bg-emerald-300/70"
+                        className="h-2 rounded-full bg-[color:var(--color-accent)]"
                         style={{ width: `${Math.max(4, (point.value / maxPoint) * 100)}%` }}
                       />
                     </div>
-                    <span className="text-right text-white">{point.value}</span>
+                    <span className="text-right text-[color:var(--color-text-primary)]">{point.value}</span>
                   </div>
                 ))}
               </div>
-              <p className="text-xs text-white/50">
+              <p className="text-xs text-[color:var(--color-text-tertiary)]">
                 Metric: {series.metricName} · Bucket {series.bucketSize}
               </p>
             </div>
           ) : (
-            <p className="text-sm text-white/60">Loading time-series data...</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Loading time-series data...</p>
           )}
         </ShellCard>
 
@@ -1063,33 +1071,33 @@ export function ObservabilityPage() {
                 <div key={trace.traceId} className="agent-subcard p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{trace.name}</p>
-                      <p className="text-xs text-white/50">{trace.module} · {trace.traceId}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{trace.name}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{trace.module} · {trace.traceId}</p>
                     </div>
                     <StatusPill tone={trace.status === "error" ? "danger" : trace.status === "ok" ? "success" : "neutral"}>
                       {trace.status}
                     </StatusPill>
                   </div>
-                  <p className="mt-3 text-xs text-white/55">{trace.spanCount} spans · {formatDurationMs(trace.durationMs)}</p>
+                  <p className="mt-3 text-xs text-[color:var(--color-text-tertiary)]">{trace.spanCount} spans · {formatDurationMs(trace.durationMs)}</p>
                 </div>
               ))}
               {auditEntries.slice(0, 3).map((entry) => (
                 <div key={entry.id} className="agent-subcard p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-white">{entry.description}</p>
-                      <p className="text-xs text-white/50">{entry.action} · {entry.resourceType}</p>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{entry.description}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{entry.action} · {entry.resourceType}</p>
                     </div>
                     <StatusPill tone={entry.outcome === "success" ? "success" : entry.outcome === "failure" ? "danger" : "warning"}>
                       {entry.outcome}
                     </StatusPill>
                   </div>
-                  <p className="mt-3 text-xs text-white/55">{entry.actorDisplayName} · {formatTimestamp(entry.recordedAt)}</p>
+                  <p className="mt-3 text-xs text-[color:var(--color-text-tertiary)]">{entry.actorDisplayName} · {formatTimestamp(entry.recordedAt)}</p>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-white/60">Trace and audit evidence will appear here when the system has more history.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">Trace and audit evidence will appear here when the system has more history.</p>
           )}
         </ShellCard>
       </div>
@@ -1124,7 +1132,7 @@ export function ObservabilityPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-white/60">No SLO definitions are configured yet. Click &quot;Add SLO&quot; to create one.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">No SLO definitions are configured yet. Click &quot;Add SLO&quot; to create one.</p>
           )}
         </ShellCard>
 
@@ -1145,18 +1153,18 @@ export function ObservabilityPage() {
                 <div key={destination.id} className="agent-subcard p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-3">
-                      <div className="rounded-full border border-white/[0.08] bg-white/[0.04] p-2 text-white/70">
+                      <div className="rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-2 text-[color:var(--color-text-secondary)]">
                         {destination.type === "slack" ? <BellRing className="h-4 w-4" /> : <Mail className="h-4 w-4" />}
                       </div>
                       <div className="min-w-0">
-                        <p className="truncate font-medium text-white">{destination.name}</p>
-                        <p className="text-xs text-white/50">{destination.type}</p>
+                        <p className="truncate font-medium text-[color:var(--color-text-primary)]">{destination.name}</p>
+                        <p className="text-xs text-[color:var(--color-text-tertiary)]">{destination.type}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition ${destination.enabled ? "bg-emerald-300/15 text-emerald-200 hover:bg-emerald-300/25" : "bg-white/[0.06] text-white/50 hover:bg-white/10"}`}
+                        className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition ${destination.enabled ? "bg-[color:var(--color-accent-soft)] text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-strong)]" : "bg-[color:var(--color-bg-surface)] text-[color:var(--color-text-tertiary)] hover:bg-[color:var(--color-bg-surface)]"}`}
                         disabled={updateDestinationMutation.isPending}
                         onClick={() => updateDestinationMutation.mutate({ id: destination.id, enabled: !destination.enabled })}
                       >
@@ -1164,7 +1172,7 @@ export function ObservabilityPage() {
                       </button>
                       <button
                         type="button"
-                        className="rounded-lg p-1.5 text-white/30 transition hover:bg-white/10 hover:text-red-400"
+                        className="rounded-lg p-1.5 text-[color:var(--color-text-faint)] transition hover:bg-[color:var(--color-bg-surface)] hover:text-[color:var(--color-text-primary)]"
                         disabled={deleteDestinationMutation.isPending}
                         onClick={() => deleteDestinationMutation.mutate(destination.id)}
                       >
@@ -1176,7 +1184,7 @@ export function ObservabilityPage() {
               ))}
             </div>
           ) : !showCreateDest ? (
-            <p className="text-sm text-white/60">No alert destinations are configured yet.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">No alert destinations are configured yet.</p>
           ) : null}
         </ShellCard>
       </div>
@@ -1203,14 +1211,14 @@ function LoopRunCard(props: {
     <div className="agent-subcard p-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="font-medium text-white">{record.action?.summary.title ?? record.incident?.summary.rootCauseSummary ?? "Loop run"}</p>
-          <p className="text-xs text-white/50">{record.run.loopRunId}</p>
+          <p className="font-medium text-[color:var(--color-text-primary)]">{record.action?.summary.title ?? record.incident?.summary.rootCauseSummary ?? "Loop run"}</p>
+          <p className="text-xs text-[color:var(--color-text-tertiary)]">{record.run.loopRunId}</p>
         </div>
         <StatusPill tone={record.run.status === "verified" ? "success" : record.run.status === "halted" ? "warning" : "neutral"}>
           {record.run.status.replaceAll("_", " ")}
         </StatusPill>
       </div>
-      <p className="mt-3 text-xs text-white/55">
+      <p className="mt-3 text-xs text-[color:var(--color-text-tertiary)]">
         Verification: {record.run.verificationPassed === undefined ? "pending" : record.run.verificationPassed ? "passed" : "failed"} ·
         Rollback: {record.run.rollbackAttempted ? (record.run.rollbackSucceeded ? " succeeded" : " attempted") : " not needed"}
       </p>
@@ -1228,14 +1236,14 @@ function LoopRunCard(props: {
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1 text-xs font-medium text-white/50 transition hover:text-white/80"
+          className="flex items-center gap-1 text-xs font-medium text-[color:var(--color-text-tertiary)] transition hover:text-[color:var(--color-text-primary)]"
         >
           <ChevronRight className={`h-3 w-3 transition ${expanded ? "rotate-90" : ""}`} />
           {expanded ? "Less" : "Detail"}
         </button>
       </div>
       {expanded && detailQuery.data ? (
-        <div className="mt-3 rounded-xl border border-white/8 bg-white/[0.02] p-3 text-xs text-white/55 space-y-1">
+        <div className="mt-3 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3 text-xs text-[color:var(--color-text-tertiary)] space-y-1">
           <p>Risk tier: {detailQuery.data.run.riskTier}</p>
           <p>Attempt: {detailQuery.data.run.attemptNumber}</p>
           <p>Approval required: {detailQuery.data.run.approvalRequired ? "yes" : "no"}</p>
@@ -1244,7 +1252,7 @@ function LoopRunCard(props: {
           {detailQuery.data.run.correlationId ? <p>Correlation: {detailQuery.data.run.correlationId}</p> : null}
         </div>
       ) : expanded && detailQuery.isLoading ? (
-        <p className="mt-3 text-xs text-white/40">Loading...</p>
+        <p className="mt-3 text-xs text-[color:var(--color-text-faint)]">Loading...</p>
       ) : null}
     </div>
   );
@@ -1258,16 +1266,16 @@ function CreateDestinationForm(props: {
   const [name, setName] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
   return (
-    <div className="mb-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/40">New Slack destination</p>
+    <div className="mb-3 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4 space-y-3">
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">New Slack destination</p>
       <input
-        className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-emerald-300/40 focus:outline-none"
+        className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-sm text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:border-[color:var(--color-accent)] focus:outline-none"
         placeholder="Name"
         value={name}
         onChange={(e) => setName(e.target.value)}
       />
       <input
-        className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-emerald-300/40 focus:outline-none"
+        className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-sm text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:border-[color:var(--color-accent)] focus:outline-none"
         placeholder="Webhook URL"
         value={webhookUrl}
         onChange={(e) => setWebhookUrl(e.target.value)}
@@ -1299,8 +1307,8 @@ function SloCard(props: {
     <div className="agent-subcard p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate font-medium text-white">{slo.name}</p>
-          <p className="text-xs text-white/50">{slo.sliMetricName}</p>
+          <p className="truncate font-medium text-[color:var(--color-text-primary)]">{slo.name}</p>
+          <p className="text-xs text-[color:var(--color-text-tertiary)]">{slo.sliMetricName}</p>
         </div>
         <div className="flex items-center gap-2">
           <StatusPill tone={slo.status === "healthy" ? "success" : slo.status === "warning" ? "warning" : "danger"}>
@@ -1309,7 +1317,7 @@ function SloCard(props: {
           {detailQuery.data?.slo.etag && (
             <button
               type="button"
-              className="rounded-lg p-1.5 text-white/30 transition hover:bg-white/10 hover:text-red-400"
+              className="rounded-lg p-1.5 text-[color:var(--color-text-faint)] transition hover:bg-[color:var(--color-bg-surface)] hover:text-[color:var(--color-text-primary)]"
               disabled={props.deletePending}
               onClick={() => props.onDelete(slo.id, detailQuery.data!.slo.etag)}
             >
@@ -1318,7 +1326,7 @@ function SloCard(props: {
           )}
         </div>
       </div>
-      <div className="mt-3 grid gap-2 text-xs text-white/55">
+      <div className="mt-3 grid gap-2 text-xs text-[color:var(--color-text-tertiary)]">
         <p>Target: {slo.target}%</p>
         <p>Current value: {slo.currentValue?.toFixed(2) ?? "n/a"}%</p>
         <p>Budget consumed: {slo.budgetConsumedPercent?.toFixed(2) ?? "0"}%</p>
@@ -1326,13 +1334,13 @@ function SloCard(props: {
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="mt-3 flex items-center gap-1 text-xs font-medium text-white/50 transition hover:text-white/80"
+        className="mt-3 flex items-center gap-1 text-xs font-medium text-[color:var(--color-text-tertiary)] transition hover:text-[color:var(--color-text-primary)]"
       >
         <ChevronRight className={`h-3 w-3 transition ${expanded ? "rotate-90" : ""}`} />
         {expanded ? "Hide detail" : "Show detail"}
       </button>
       {expanded && detailQuery.data ? (
-        <div className="mt-3 rounded-xl border border-white/8 bg-white/[0.02] p-3 text-xs text-white/55">
+        <div className="mt-3 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3 text-xs text-[color:var(--color-text-tertiary)]">
           <div className="grid gap-2">
             {detailQuery.data.slo.description ? <p>{detailQuery.data.slo.description}</p> : null}
             <p>Compliance window: {detailQuery.data.slo.complianceWindowDays} days</p>
@@ -1345,7 +1353,7 @@ function SloCard(props: {
             ) : null}
             {detailQuery.data.burnRates.length > 0 ? (
               <div>
-                <p className="font-medium text-white/70">Burn rates:</p>
+                <p className="font-medium text-[color:var(--color-text-secondary)]">Burn rates:</p>
                 {detailQuery.data.burnRates.map((rate) => (
                   <p key={rate.windowLabel}>{rate.windowLabel}: {rate.rate.toFixed(2)}x</p>
                 ))}
@@ -1354,7 +1362,7 @@ function SloCard(props: {
           </div>
         </div>
       ) : expanded && detailQuery.isLoading ? (
-        <p className="mt-3 text-xs text-white/40">Loading...</p>
+        <p className="mt-3 text-xs text-[color:var(--color-text-faint)]">Loading...</p>
       ) : null}
     </div>
   );
@@ -1373,26 +1381,26 @@ function CreateSloForm(props: {
   const canSubmit = name.trim().length > 0 && Number(target) > 0 && Number(target) <= 100;
 
   return (
-    <div className="mb-3 rounded-2xl border border-white/10 bg-black/30 p-4 space-y-3">
-      <p className="text-xs uppercase tracking-[0.16em] text-white/40">Create SLO</p>
+    <div className="mb-3 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] p-4 space-y-3">
+      <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Create SLO</p>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="mb-1 block text-xs text-white/50">Name</label>
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. API Availability" className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/20 focus:outline-none" />
+          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Name</label>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. API Availability" className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-sm text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:border-[color:var(--color-border-strong)] focus:outline-none" />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-white/50">Target (%)</label>
-          <input type="number" value={target} onChange={(e) => setTarget(e.target.value)} min={0} max={100} step={0.1} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white focus:border-white/20 focus:outline-none" />
+          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Target (%)</label>
+          <input type="number" value={target} onChange={(e) => setTarget(e.target.value)} min={0} max={100} step={0.1} className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-sm text-[color:var(--color-text-primary)] focus:border-[color:var(--color-border-strong)] focus:outline-none" />
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="mb-1 block text-xs text-white/50">Description</label>
-          <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/20 focus:outline-none" />
+          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Description</label>
+          <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-sm text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:border-[color:var(--color-border-strong)] focus:outline-none" />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-white/50">Compliance window (days)</label>
-          <input type="number" value={windowDays} onChange={(e) => setWindowDays(e.target.value)} min={1} max={365} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white focus:border-white/20 focus:outline-none" />
+          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Compliance window (days)</label>
+          <input type="number" value={windowDays} onChange={(e) => setWindowDays(e.target.value)} min={1} max={365} className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-sm text-[color:var(--color-text-primary)] focus:border-[color:var(--color-border-strong)] focus:outline-none" />
         </div>
       </div>
       <div className="flex gap-2">

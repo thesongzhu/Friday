@@ -41,11 +41,11 @@ jobs:
         run: npm run validate:real-world:catalog
 
       - name: Check branch conformance
-        run: node scripts/ops/check-branch-conformance.mjs --branch claude/investigate-twitter-thread-4PNHG --report-root "$RUNNER_TEMP/real-green-gate/branch"
+        run: node scripts/ops/check-branch-conformance.mjs --branch "${{ github.ref_name }}" --report-root "$RUNNER_TEMP/real-green-gate/branch"
 
       - name: Run real green gate
         if: env.FRIDAY_BASE_URL != '' || env.FRIDAY_ACCESS_TOKEN != '' || env.FRIDAY_LOCAL_PASSPHRASE != '' || env.FRIDAY_REAL_WORLD_MINT_LOCAL_ADMIN_TOKEN != ''
-        run: npm run ops:real-green-gate -- --branch claude/investigate-twitter-thread-4PNHG --report-root "$RUNNER_TEMP/real-green-gate"
+        run: npm run ops:real-green-gate -- --branch "${{ github.ref_name }}" --report-root "$RUNNER_TEMP/real-green-gate"
 
       - name: Record skipped live gate
         if: env.FRIDAY_BASE_URL == '' && env.FRIDAY_ACCESS_TOKEN == '' && env.FRIDAY_LOCAL_PASSPHRASE == '' && env.FRIDAY_REAL_WORLD_MINT_LOCAL_ADMIN_TOKEN == ''
