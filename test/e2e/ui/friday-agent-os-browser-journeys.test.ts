@@ -26,32 +26,36 @@ async function waitForTestId(pageHandle: FridayBrowserPageHandle, testId: string
 type SurfaceId = "home" | "packs" | "assistant" | "chat";
 
 async function waitForSurfaceReady(pageHandle: FridayBrowserPageHandle, surface: SurfaceId): Promise<void> {
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    const ready = await pageHandle.page.evaluate((targetSurface) => {
-      const has = (selector: string) => Boolean(document.querySelector(selector));
-      switch (targetSurface) {
-        case "home":
-          return has('[data-testid="home-surface-ready"]')
-            && (has('[data-testid="home-start-task"]') || has('[data-testid="home-browse-library"]'));
-        case "packs":
-          return has('[data-testid="packs-surface-ready"]')
-            && (has('[data-testid^="pack-open-"]') || has('[data-testid^="pack-card-"]'));
-        case "assistant":
-          return has('[data-testid="assistant-inbox"]');
-        case "chat": {
+  try {
+    switch (surface) {
+      case "home":
+        await pageHandle.page.locator('[data-testid="home-surface-ready"]').waitFor({ state: "visible", timeout: 60_000 });
+        await pageHandle.page
+          .locator('[data-testid="home-start-task"], [data-testid="home-browse-library"]')
+          .first()
+          .waitFor({ state: "visible", timeout: 60_000 });
+        return;
+      case "packs":
+        await pageHandle.page.locator('[data-testid="packs-surface-ready"]').waitFor({ state: "visible", timeout: 60_000 });
+        await pageHandle.page
+          .locator('[data-testid="pack-card-industry-creator-media"], [data-testid="pack-open-industry-creator-media"]')
+          .first()
+          .waitFor({ state: "visible", timeout: 60_000 });
+        return;
+      case "assistant":
+        await pageHandle.page.locator('[data-testid="assistant-inbox"]').first().waitFor({ state: "visible", timeout: 60_000 });
+        return;
+      case "chat":
+        await pageHandle.page.locator('[data-testid="chat-task-input"]').first().waitFor({ state: "visible", timeout: 60_000 });
+        await pageHandle.page.waitForFunction(() => {
           const input = document.querySelector('[data-testid="chat-task-input"]') as HTMLTextAreaElement | null;
           return Boolean(input) && !input.disabled;
-        }
-      }
-    }, surface);
-    if (ready) {
-      return;
+        });
+        return;
     }
-    await pageHandle.page.waitForTimeout(200);
+  } catch {
+    throw new Error(`surface ${surface} did not become visible within 60000ms (url=${pageHandle.page.url()})`);
   }
-
-  throw new Error(`surface ${surface} did not become visible within 60000ms (url=${pageHandle.page.url()})`);
 }
 
 async function clickRailLink(pageHandle: FridayBrowserPageHandle, href: string): Promise<void> {
