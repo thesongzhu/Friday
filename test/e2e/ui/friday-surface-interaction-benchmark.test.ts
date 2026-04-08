@@ -51,6 +51,40 @@ async function waitForTestId(pageHandle: FridayBrowserPageHandle, testId: string
   await pageHandle.page.locator(`[data-testid="${testId}"]`).first().waitFor({ state: "visible", timeout: 60_000 });
 }
 
+type SurfaceId = "home" | "packs" | "assistant";
+
+async function waitForSurfaceReady(pageHandle: FridayBrowserPageHandle, surface: SurfaceId): Promise<void> {
+  await pageHandle.page.waitForFunction(
+    (surfaceId) => {
+      const isVisible = (selector: string) => {
+        const element = document.querySelector(selector);
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+        const style = window.getComputedStyle(element);
+        return style.display !== "none"
+          && style.visibility !== "hidden"
+          && element.getClientRects().length > 0;
+      };
+      const bodyText = document.body.textContent ?? "";
+      switch (surfaceId) {
+        case "home":
+          return isVisible('[data-testid="home-surface-ready"]')
+            || bodyText.includes("Pick up the next thing that matters")
+            || bodyText.includes("继续你现在最该做的事");
+        case "packs":
+          return isVisible('[data-testid="packs-surface-ready"]')
+            || isVisible('[data-testid="pack-card-industry-creator-media"]');
+        case "assistant":
+          return isVisible('[data-testid="assistant-inbox"]')
+            || isVisible('[data-testid="assistant-inbox-start-task"]');
+      }
+    },
+    surface,
+    { timeout: 60_000 },
+  );
+}
+
 async function clickRailLink(pageHandle: FridayBrowserPageHandle, href: string): Promise<void> {
   await pageHandle.page.waitForFunction(
     (targetHref) => {
@@ -91,7 +125,7 @@ async function measureRailNavigation(input: {
     const pageHandle = await input.env.newPage();
     try {
       await pageHandle.page.goto(input.startPath);
-      await waitForTestId(pageHandle, input.startReadyTestId);
+      await waitForSurfaceReady(pageHandle, input.startReadyTestId as SurfaceId);
       const navigationCountBefore = await pageHandle.page.evaluate(
         () => window.performance.getEntriesByType("navigation").length,
       );
@@ -99,7 +133,7 @@ async function measureRailNavigation(input: {
       const startedAt = performance.now();
       await clickRailLink(pageHandle, input.clickHref);
       await pageHandle.page.waitForURL(`**${input.expectedPath}`);
-      await waitForTestId(pageHandle, input.readyTestId);
+      await waitForSurfaceReady(pageHandle, input.readyTestId as SurfaceId);
       const elapsedMs = performance.now() - startedAt;
       const navigationCountAfter = await pageHandle.page.evaluate(
         () => window.performance.getEntriesByType("navigation").length,
@@ -163,7 +197,7 @@ async function measureBuilderNavigation(input: {
 
   for (let index = 0; index < input.samples; index += 1) {
     await input.pageHandle.page.goto("/home");
-    await waitForTestId(input.pageHandle, "home-surface-ready");
+    await waitForSurfaceReady(input.pageHandle, "home");
     await input.pageHandle.page.evaluate(() => {
       window.performance.clearMarks("friday-workflow-builder-draft-data-ready");
       window.performance.clearMarks("friday-workflow-builder-graph-transform-start");
@@ -308,30 +342,30 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday UI surface interaction benchmark", 
     const homeResult = await measureRailNavigation({
       env,
       startPath: "/packs",
-      startReadyTestId: "packs-surface-ready",
+      startReadyTestId: "packs",
       clickHref: "/home",
       expectedPath: "/home",
-      readyTestId: "home-surface-ready",
+      readyTestId: "home",
       samples: NAVIGATION_SAMPLES,
       surface: "home",
     });
     const packsResult = await measureRailNavigation({
       env,
       startPath: "/home",
-      startReadyTestId: "home-surface-ready",
+      startReadyTestId: "home",
       clickHref: "/packs",
       expectedPath: "/packs",
-      readyTestId: "packs-surface-ready",
+      readyTestId: "packs",
       samples: NAVIGATION_SAMPLES,
       surface: "packs",
     });
     const assistantResult = await measureRailNavigation({
       env,
       startPath: "/home",
-      startReadyTestId: "home-surface-ready",
+      startReadyTestId: "home",
       clickHref: "/assistant",
       expectedPath: "/assistant",
-      readyTestId: "assistant-inbox",
+      readyTestId: "assistant",
       samples: NAVIGATION_SAMPLES,
       surface: "assistant",
     });

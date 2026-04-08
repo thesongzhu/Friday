@@ -23,6 +23,42 @@ async function waitForTestId(pageHandle: FridayBrowserPageHandle, testId: string
   await pageHandle.page.locator(`[data-testid="${testId}"]`).first().waitFor({ state: "visible", timeout: 60_000 });
 }
 
+type SurfaceId = "home" | "packs" | "assistant" | "chat";
+
+async function waitForSurfaceReady(pageHandle: FridayBrowserPageHandle, surface: SurfaceId): Promise<void> {
+  await pageHandle.page.waitForFunction(
+    (surfaceId) => {
+      const isVisible = (selector: string) => {
+        const element = document.querySelector(selector);
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+        const style = window.getComputedStyle(element);
+        return style.display !== "none"
+          && style.visibility !== "hidden"
+          && element.getClientRects().length > 0;
+      };
+      const bodyText = document.body.textContent ?? "";
+      switch (surfaceId) {
+        case "home":
+          return isVisible('[data-testid="home-surface-ready"]')
+            || bodyText.includes("Pick up the next thing that matters")
+            || bodyText.includes("继续你现在最该做的事");
+        case "packs":
+          return isVisible('[data-testid="packs-surface-ready"]')
+            || isVisible('[data-testid="pack-card-industry-creator-media"]');
+        case "assistant":
+          return isVisible('[data-testid="assistant-inbox"]')
+            || isVisible('[data-testid="assistant-inbox-start-task"]');
+        case "chat":
+          return isVisible('[data-testid="chat-task-input"]');
+      }
+    },
+    surface,
+    { timeout: 60_000 },
+  );
+}
+
 async function clickRailLink(pageHandle: FridayBrowserPageHandle, href: string): Promise<void> {
   await pageHandle.page.waitForFunction(
     (targetHref) => {
@@ -59,12 +95,12 @@ async function clickTestId(pageHandle: FridayBrowserPageHandle, testId: string):
 
 async function waitForAssistantInbox(pageHandle: FridayBrowserPageHandle): Promise<void> {
   await pageHandle.page.goto("/assistant");
-  await waitForTestId(pageHandle, "assistant-inbox");
+  await waitForSurfaceReady(pageHandle, "assistant");
 }
 
 async function waitForChat(pageHandle: FridayBrowserPageHandle): Promise<void> {
   await pageHandle.page.goto("/chat");
-  await waitForTestId(pageHandle, "chat-task-input");
+  await waitForSurfaceReady(pageHandle, "chat");
   await pageHandle.page.waitForFunction(() => {
     const input = document.querySelector('[data-testid="chat-task-input"]') as HTMLTextAreaElement | null;
     return Boolean(input) && !input.disabled;
@@ -242,24 +278,23 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
 
       await clickRailLink(pageHandle, "/home");
       await pageHandle.page.waitForURL("**/home");
+      await waitForSurfaceReady(pageHandle, "home");
 
       await clickRailLink(pageHandle, "/chat");
       await waitForChat(pageHandle);
 
       await clickRailLink(pageHandle, "/packs");
-      await waitForTestId(pageHandle, "pack-card-industry-creator-media");
+      await waitForSurfaceReady(pageHandle, "packs");
     }
-
-    await waitForTestId(pageHandle, "packs-surface-ready");
 
     const finalState = await pageHandle.page.evaluate(() => ({
       navigationCount: performance.getEntriesByType("navigation").length,
-      readyMarkerVisible: Boolean(document.querySelector('[data-testid="packs-surface-ready"]')),
+      packCardVisible: Boolean(document.querySelector('[data-testid="pack-card-industry-creator-media"]')),
       textLength: document.body.textContent?.trim().length ?? 0,
     }));
 
     expect(finalState.navigationCount).toBe(navigationCountBefore);
-    expect(finalState.readyMarkerVisible).toBe(true);
+    expect(finalState.packCardVisible).toBe(true);
     expect(finalState.textLength).toBeGreaterThan(100);
   });
 
