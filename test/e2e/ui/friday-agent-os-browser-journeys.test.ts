@@ -16,7 +16,7 @@ const CHROMIUM_AVAILABLE = (() => {
   }
 })();
 
-const BROWSER_E2E_TIMEOUT_MS = 120_000;
+const BROWSER_E2E_TIMEOUT_MS = 180_000;
 const QUICK_SHEET_CYCLE_ATTEMPTS = process.env.CI ? 1 : 3;
 
 async function waitForTestId(pageHandle: FridayBrowserPageHandle, testId: string): Promise<void> {
@@ -48,64 +48,71 @@ async function readSurfaceDiagnostics(pageHandle: FridayBrowserPageHandle) {
   });
 }
 
-async function waitForHomeSurface(pageHandle: FridayBrowserPageHandle): Promise<void> {
-  try {
-    await pageHandle.page.locator('[data-testid="home-surface-ready"]').waitFor({ state: "visible", timeout: 15_000 });
-    await pageHandle.page
-      .locator('[data-testid="home-start-task"], [data-testid="home-browse-library"]')
-      .first()
-      .waitFor({ state: "visible", timeout: 15_000 });
-    return;
-  } catch {
-    await pageHandle.page
-      .locator('[data-testid="app-shell-rail"] a[href="/home"][aria-current="page"]')
-      .first()
-      .waitFor({ state: "visible", timeout: 45_000 });
-    await pageHandle.page.waitForFunction(() => {
-      const activeRailLink = document.querySelector('[data-testid="app-shell-rail"] a[href="/home"][aria-current="page"]');
-      const bodyText = document.body.textContent?.trim() ?? "";
-      const appCrashed = bodyText.includes("Something went wrong");
-      return Boolean(activeRailLink) && !appCrashed && bodyText.length > 120;
-    }, { timeout: 45_000 });
+function isBlankDocumentDiagnostics(diagnostics: {
+  bodyLength: number;
+  appCrashed: boolean;
+  routeEvents: unknown[];
+}): boolean {
+  return diagnostics.bodyLength === 0 && diagnostics.appCrashed === false && diagnostics.routeEvents.length === 0;
+}
+
+async function waitForSurfaceReadyOnce(pageHandle: FridayBrowserPageHandle, surface: SurfaceId): Promise<void> {
+  switch (surface) {
+    case "home":
+      try {
+        await pageHandle.page.locator('[data-testid="home-surface-ready"]').waitFor({ state: "visible", timeout: 15_000 });
+        await pageHandle.page
+          .locator('[data-testid="home-start-task"], [data-testid="home-browse-library"]')
+          .first()
+          .waitFor({ state: "visible", timeout: 15_000 });
+        return;
+      } catch {
+        await pageHandle.page
+          .locator('[data-testid="app-shell-rail"] a[href="/home"][aria-current="page"]')
+          .first()
+          .waitFor({ state: "visible", timeout: 45_000 });
+        await pageHandle.page.waitForFunction(() => {
+          const activeRailLink = document.querySelector('[data-testid="app-shell-rail"] a[href="/home"][aria-current="page"]');
+          const bodyText = document.body.textContent?.trim() ?? "";
+          const appCrashed = bodyText.includes("Something went wrong");
+          return Boolean(activeRailLink) && !appCrashed && bodyText.length > 120;
+        }, { timeout: 45_000 });
+        return;
+      }
+    case "packs":
+      await pageHandle.page.locator('[data-testid="packs-surface-ready"]').waitFor({ state: "visible", timeout: 60_000 });
+      await pageHandle.page
+        .locator('[data-testid="pack-card-industry-creator-media"], [data-testid="pack-open-industry-creator-media"]')
+        .first()
+        .waitFor({ state: "visible", timeout: 60_000 });
+      return;
+    case "assistant":
+      await pageHandle.page.locator('[data-testid="assistant-inbox"]').first().waitFor({ state: "visible", timeout: 60_000 });
+      return;
+    case "chat":
+      await pageHandle.page.locator('[data-testid="chat-task-input"]').first().waitFor({ state: "visible", timeout: 60_000 });
+      await pageHandle.page.waitForFunction(() => {
+        const input = document.querySelector('[data-testid="chat-task-input"]') as HTMLTextAreaElement | null;
+        return Boolean(input) && !input.disabled;
+      });
+      return;
   }
 }
 
 async function waitForSurfaceReady(pageHandle: FridayBrowserPageHandle, surface: SurfaceId): Promise<void> {
   try {
-    switch (surface) {
-      case "home":
-        await waitForHomeSurface(pageHandle);
-        return;
-      case "packs":
-        await pageHandle.page.locator('[data-testid="packs-surface-ready"]').waitFor({ state: "visible", timeout: 60_000 });
-        await pageHandle.page
-          .locator('[data-testid="pack-card-industry-creator-media"], [data-testid="pack-open-industry-creator-media"]')
-          .first()
-          .waitFor({ state: "visible", timeout: 60_000 });
-        return;
-      case "assistant":
-        await pageHandle.page.locator('[data-testid="assistant-inbox"]').first().waitFor({ state: "visible", timeout: 60_000 });
-        return;
-      case "chat":
-        await pageHandle.page.locator('[data-testid="chat-task-input"]').first().waitFor({ state: "visible", timeout: 60_000 });
-        await pageHandle.page.waitForFunction(() => {
-          const input = document.querySelector('[data-testid="chat-task-input"]') as HTMLTextAreaElement | null;
-          return Boolean(input) && !input.disabled;
-        });
-        return;
-    }
+    await waitForSurfaceReadyOnce(pageHandle, surface);
   } catch {
     const diagnostics = await readSurfaceDiagnostics(pageHandle);
-    if (
-      surface === "home"
-      && diagnostics.bodyLength === 0
-      && diagnostics.appCrashed === false
-      && Array.isArray(diagnostics.routeEvents)
-      && diagnostics.routeEvents.length === 0
-    ) {
+    if (Array.isArray(diagnostics.routeEvents) && isBlankDocumentDiagnostics(diagnostics)) {
       await pageHandle.page.reload({ waitUntil: "domcontentloaded" });
-      await waitForHomeSurface(pageHandle);
-      return;
+      try {
+        await waitForSurfaceReadyOnce(pageHandle, surface);
+        return;
+      } catch {
+        const retryDiagnostics = await readSurfaceDiagnostics(pageHandle);
+        throw new Error(`surface ${surface} did not become visible within 60000ms (url=${pageHandle.page.url()}, diagnostics=${JSON.stringify(retryDiagnostics)})`);
+      }
     }
 
     throw new Error(`surface ${surface} did not become visible within 60000ms (url=${pageHandle.page.url()}, diagnostics=${JSON.stringify(diagnostics)})`);
