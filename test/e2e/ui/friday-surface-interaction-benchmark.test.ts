@@ -54,42 +54,22 @@ async function waitForTestId(pageHandle: FridayBrowserPageHandle, testId: string
 type SurfaceId = "home" | "packs" | "assistant";
 
 async function waitForSurfaceReady(pageHandle: FridayBrowserPageHandle, surface: SurfaceId): Promise<void> {
-  const candidates = (() => {
-    switch (surface) {
-      case "home":
-        return [
-          pageHandle.page.locator('[data-testid="home-surface-ready"]').first(),
-          pageHandle.page.getByRole("button", { name: "Start A Task" }),
-          pageHandle.page.getByRole("button", { name: "开始新任务" }),
-        ];
-      case "packs":
-        return [
-          pageHandle.page.locator('[data-testid="packs-surface-ready"]').first(),
-          pageHandle.page.locator('[data-testid="pack-card-industry-creator-media"]').first(),
-        ];
-      case "assistant":
-        return [
-          pageHandle.page.locator('[data-testid="assistant-inbox"]').first(),
-          pageHandle.page.locator('[data-testid="assistant-inbox-start-task"]').first(),
-        ];
-    }
-  })();
-
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    for (const locator of candidates) {
-      try {
-        if (await locator.isVisible()) {
-          return;
-        }
-      } catch {
-        // Ignore transient locator failures while the route is still settling.
+  await pageHandle.page.waitForFunction(
+    (targetSurface) => {
+      const textLength = document.body.textContent?.trim().length ?? 0;
+      switch (targetSurface) {
+        case "home":
+          return Boolean(document.querySelector('[data-testid="home-surface-ready"]')) && textLength > 120;
+        case "packs":
+          return Boolean(document.querySelector('[data-testid="packs-surface-ready"]'))
+            && Boolean(document.querySelector('[data-testid^="pack-open-"]'));
+        case "assistant":
+          return Boolean(document.querySelector('[data-testid="assistant-inbox"]'));
       }
-    }
-    await pageHandle.page.waitForTimeout(200);
-  }
-
-  throw new Error(`surface ${surface} did not become visible within 60000ms (url=${pageHandle.page.url()})`);
+    },
+    surface,
+    { timeout: 60_000 },
+  );
 }
 
 async function clickRailLink(pageHandle: FridayBrowserPageHandle, href: string): Promise<void> {
