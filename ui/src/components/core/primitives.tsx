@@ -79,3 +79,19 @@ export function FieldLabel(props: { label: string; hint?: string }) {
     </label>
   );
 }
+
+export function LiveIndicator(props: { label: string; active?: boolean; className?: string }) {
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-secondary)]", props.className)}>
+      <span
+        className={cn(
+          "inline-block h-2 w-2 rounded-full",
+          props.active
+            ? "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.4)] animate-pulse"
+            : "bg-[color:var(--color-text-faint)]",
+        )}
+      />
+      {props.label}
+    </span>
+  );
+}
