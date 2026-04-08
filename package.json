@@ -40,6 +40,7 @@
     "publish:homebrew:cask": "bash scripts/ops/publish-friday-homebrew-cask.sh",
     "check:companion:release-env": "bash scripts/ops/check-friday-companion-release-env.sh",
     "build": "npm run build:api && npm run build:ui",
+    "prestart": "npm run build",
     "start": "node dist/cli/friday-cli.js start",
     "start:companion": "node dist/system/companion/friday-system-companion-daemon.js",
     "demo:minimal": "node scripts/demo/minimal-workflow-demo.mjs",

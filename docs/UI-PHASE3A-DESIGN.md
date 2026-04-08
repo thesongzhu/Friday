@@ -538,6 +538,7 @@ Auth flow:
     "build:api": "tsc",
     "build:ui": "vite build --config ui/vite.config.ts",
     "build": "npm run build:api && npm run build:ui",
+    "prestart": "npm run build",
     "start": "node dist/cli/friday-cli.js start",
     "ui:dev": "vite --config ui/vite.config.ts",
     "ui:preview": "vite preview --config ui/vite.config.ts"
@@ -547,7 +548,7 @@ Auth flow:
 
 ### 10.2 Runtime serving behavior
 1. `npm run build` creates API in `dist/**` and SPA in `dist/ui/**`.
-2. `npm run start` launches Friday server.
+2. `npm run start` first rebuilds `dist/**`, then launches Friday server.
 3. Requests to `/v1/*` hit API routes.
 4. Requests to `/assets/*` or other static paths hit `dist/ui`.
 5. Any non-API route without file match falls back to `dist/ui/index.html` (SPA history fallback).
@@ -579,7 +580,7 @@ Auth flow:
 15. Wire `uiStaticDir` in CLI run loop and config.
 16. Add tests for static serving + SPA fallback + SSE raw takeover.
 17. Validate manually:
-- `npm run build && npm run start`
+- `npm run start`
 - open `http://localhost:3141`
 - login (dev local)
 - run task
