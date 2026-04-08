@@ -28,13 +28,28 @@ type SurfaceId = "home" | "packs" | "assistant" | "chat";
 async function waitForSurfaceReady(pageHandle: FridayBrowserPageHandle, surface: SurfaceId): Promise<void> {
   try {
     switch (surface) {
-      case "home":
-        await pageHandle.page.locator('[data-testid="home-surface-ready"]').waitFor({ state: "visible", timeout: 60_000 });
-        await pageHandle.page
-          .locator('[data-testid="home-start-task"], [data-testid="home-browse-library"]')
-          .first()
-          .waitFor({ state: "visible", timeout: 60_000 });
-        return;
+      case "home": {
+        try {
+          await pageHandle.page.locator('[data-testid="home-surface-ready"]').waitFor({ state: "visible", timeout: 15_000 });
+          await pageHandle.page
+            .locator('[data-testid="home-start-task"], [data-testid="home-browse-library"]')
+            .first()
+            .waitFor({ state: "visible", timeout: 15_000 });
+          return;
+        } catch {
+          await pageHandle.page
+            .locator('[data-testid="app-shell-rail"] a[href="/home"][aria-current="page"]')
+            .first()
+            .waitFor({ state: "visible", timeout: 45_000 });
+          await pageHandle.page.waitForFunction(() => {
+            const activeRailLink = document.querySelector('[data-testid="app-shell-rail"] a[href="/home"][aria-current="page"]');
+            const bodyText = document.body.textContent?.trim() ?? "";
+            const appCrashed = bodyText.includes("Something went wrong");
+            return Boolean(activeRailLink) && !appCrashed && bodyText.length > 120;
+          }, { timeout: 45_000 });
+          return;
+        }
+      }
       case "packs":
         await pageHandle.page.locator('[data-testid="packs-surface-ready"]').waitFor({ state: "visible", timeout: 60_000 });
         await pageHandle.page
@@ -54,7 +69,27 @@ async function waitForSurfaceReady(pageHandle: FridayBrowserPageHandle, surface:
         return;
     }
   } catch {
-    throw new Error(`surface ${surface} did not become visible within 60000ms (url=${pageHandle.page.url()})`);
+    const diagnostics = await pageHandle.page.evaluate(() => {
+      const bodyText = document.body.textContent?.trim() ?? "";
+      const stored = window.sessionStorage.getItem("friday.client.stability.export.v1");
+      let routeEvents: unknown[] = [];
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as Array<{ type?: string; payload?: Record<string, unknown> }>;
+          routeEvents = parsed
+            .filter((entry) => entry.type === "route_transition_start" || entry.type === "route_transition_complete")
+            .slice(-6);
+        } catch {
+          routeEvents = ["sessionStorage_parse_failed"];
+        }
+      }
+      return {
+        bodyLength: bodyText.length,
+        appCrashed: bodyText.includes("Something went wrong"),
+        routeEvents,
+      };
+    });
+    throw new Error(`surface ${surface} did not become visible within 60000ms (url=${pageHandle.page.url()}, diagnostics=${JSON.stringify(diagnostics)})`);
   }
 }
 
