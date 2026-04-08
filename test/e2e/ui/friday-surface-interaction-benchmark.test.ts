@@ -54,34 +54,29 @@ async function waitForTestId(pageHandle: FridayBrowserPageHandle, testId: string
 type SurfaceId = "home" | "packs" | "assistant";
 
 async function waitForSurfaceReady(pageHandle: FridayBrowserPageHandle, surface: SurfaceId): Promise<void> {
-  await pageHandle.page.waitForFunction(
-    (surfaceId) => {
-      const isVisible = (selector: string) => {
-        const element = document.querySelector(selector);
-        if (!(element instanceof HTMLElement)) {
-          return false;
-        }
-        const style = window.getComputedStyle(element);
-        return style.display !== "none"
-          && style.visibility !== "hidden"
-          && element.getClientRects().length > 0;
-      };
-      const bodyText = document.body.textContent ?? "";
-      switch (surfaceId) {
-        case "home":
-          return isVisible('[data-testid="home-surface-ready"]')
-            || bodyText.includes("Pick up the next thing that matters")
-            || bodyText.includes("继续你现在最该做的事");
-        case "packs":
-          return isVisible('[data-testid="packs-surface-ready"]')
-            || isVisible('[data-testid="pack-card-industry-creator-media"]');
-        case "assistant":
-          return isVisible('[data-testid="assistant-inbox"]')
-            || isVisible('[data-testid="assistant-inbox-start-task"]');
-      }
-    },
-    surface,
-    { timeout: 60_000 },
+  const candidates = (() => {
+    switch (surface) {
+      case "home":
+        return [
+          pageHandle.page.locator('[data-testid="home-surface-ready"]').first(),
+          pageHandle.page.getByRole("button", { name: "Start A Task" }),
+          pageHandle.page.getByRole("button", { name: "开始新任务" }),
+        ];
+      case "packs":
+        return [
+          pageHandle.page.locator('[data-testid="packs-surface-ready"]').first(),
+          pageHandle.page.locator('[data-testid="pack-card-industry-creator-media"]').first(),
+        ];
+      case "assistant":
+        return [
+          pageHandle.page.locator('[data-testid="assistant-inbox"]').first(),
+          pageHandle.page.locator('[data-testid="assistant-inbox-start-task"]').first(),
+        ];
+    }
+  })();
+
+  await Promise.any(
+    candidates.map((locator) => locator.waitFor({ state: "visible", timeout: 60_000 })),
   );
 }
 
