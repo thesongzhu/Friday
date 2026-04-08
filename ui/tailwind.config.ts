@@ -46,11 +46,17 @@ const config: Config = {
         warning: "var(--color-text-secondary)",
         destructive: "var(--color-ink)",
       },
+      spacing: {
+        "density-card": "var(--density-card-padding)",
+        "density-section": "var(--density-section-gap)",
+        "density-grid": "var(--density-grid-gap)",
+      },
       width: {
         sidebar: "200px",
       },
       borderRadius: {
         card: "1.5rem",
+        "density-card": "var(--density-card-radius)",
         btn: "0.75rem",
         lg: "1.25rem",
         md: "1rem",
