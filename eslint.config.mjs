@@ -31,9 +31,17 @@ export default [
           allowSeparatedGroups: true,
         },
       ],
+      // Ban console.log in src/ (warn/error allowed). Warn-only to avoid blocking existing code.
+      "no-console": ["warn", { "allow": ["warn", "error"] }],
+      // Flag overly complex functions
+      "complexity": ["warn", 25],
+      // Keep functions reasonably sized
+      "max-lines-per-function": ["warn", { "max": 200, "skipBlankLines": true, "skipComments": true }],
       // Baseline security linting with low churn.
       "security/detect-eval-with-expression": "error",
       "security/detect-new-buffer": "error",
+      "security/detect-object-injection": "warn",
+      "security/detect-non-literal-fs-filename": "warn",
     },
   },
   {

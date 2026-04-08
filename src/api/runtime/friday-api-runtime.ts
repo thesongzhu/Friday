@@ -70,6 +70,7 @@ import { createFridaySetupRoutes } from "../http/routes/friday-setup-routes.js";
 import { createFridaySkillRoutes } from "../http/routes/friday-skill-routes.js";
 import { createFridayDesktopRoutes } from "../http/routes/friday-desktop-routes.js";
 import { createFridayChannelRoutes } from "../http/routes/friday-channel-routes.js";
+import { createFridayDeepLinkRoutes } from "../http/routes/friday-deeplink-routes.js";
 import { createFridaySystemRoutes } from "../http/routes/friday-system-routes.js";
 import { createFridayUixRoutes } from "../http/routes/friday-uix-routes.js";
 import { createFridayDiscoveryRoutes } from "../http/routes/friday-discovery-routes.js";
@@ -1381,6 +1382,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     for (const route of createFridayChannelRoutes(deps.channels)) {
       routes.register(route);
     }
+  }
+
+  // Register deep link routes (always available)
+  for (const route of createFridayDeepLinkRoutes({})) {
+    routes.register(route);
   }
 
   // Register self-healing routes (optional)
