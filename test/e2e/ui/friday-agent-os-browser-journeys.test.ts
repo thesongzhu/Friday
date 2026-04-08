@@ -29,11 +29,11 @@ async function waitForSurfaceReady(pageHandle: FridayBrowserPageHandle, surface:
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     const ready = await pageHandle.page.evaluate((targetSurface) => {
-      const textLength = document.body.textContent?.trim().length ?? 0;
       const has = (selector: string) => Boolean(document.querySelector(selector));
       switch (targetSurface) {
         case "home":
-          return has('[data-testid="home-surface-ready"]') && textLength > 120;
+          return has('[data-testid="home-surface-ready"]')
+            && (has('[data-testid="home-start-task"]') || has('[data-testid="home-browse-library"]'));
         case "packs":
           return has('[data-testid="packs-surface-ready"]')
             && (has('[data-testid^="pack-open-"]') || has('[data-testid^="pack-card-"]'));

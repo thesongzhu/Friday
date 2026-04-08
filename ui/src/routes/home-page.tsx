@@ -165,11 +165,11 @@ export function HomePage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <ActionButton onClick={() => navigate("/chat")}>
+            <ActionButton data-testid="home-start-task" onClick={() => navigate("/chat")}>
               <Sparkles className="mr-2 h-4 w-4" />
               {localize(locale, "开始新任务", "Start A Task")}
             </ActionButton>
-            <ActionButton tone="secondary" onClick={() => navigate("/packs")}>
+            <ActionButton data-testid="home-browse-library" tone="secondary" onClick={() => navigate("/packs")}>
               <ListFilter className="mr-2 h-4 w-4" />
               {localize(locale, "浏览行业与任务", "Browse Library")}
             </ActionButton>
