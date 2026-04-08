@@ -42,7 +42,9 @@ export function AppShell() {
   }, [location.pathname, rememberPrimarySurface]);
 
   useEffect(() => {
-    if (locale !== "zh") {
+    if (locale === "zh") {
+      setShowMore(true);
+    } else {
       setShowMore(false);
     }
   }, [location.pathname, locale]);

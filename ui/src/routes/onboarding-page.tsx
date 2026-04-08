@@ -13,6 +13,15 @@ import { useAppLocale } from "@/providers/locale-provider";
 
 type OnboardingStep = "language" | "profile" | "packs" | "widgets";
 
+const ONBOARDING_STEP_ORDER: OnboardingStep[] = ["language", "profile", "packs", "widgets"];
+
+const ONBOARDING_STEP_LABELS: Record<OnboardingStep, { zh: string; en: string }> = {
+  language: { zh: "语言", en: "Language" },
+  profile: { zh: "画像", en: "Profile" },
+  packs: { zh: "入口", en: "Packs" },
+  widgets: { zh: "模块", en: "Widgets" },
+};
+
 const PROFILE_OPTIONS: Array<{
   type: UserProfileType;
   title: { zh: string; en: string };
@@ -119,23 +128,12 @@ export function OnboardingPage() {
     navigate("/home", { replace: true });
   }
 
-  const STEP_ORDER: OnboardingStep[] = ["language", "profile", "packs", "widgets"];
-
-  const onboardingSteps: StepProgressStep[] = STEP_ORDER.map((s) => {
-    const idx = STEP_ORDER.indexOf(s);
-    const currentIdx = STEP_ORDER.indexOf(step);
-    const labels: Record<OnboardingStep, { zh: string; en: string }> = {
-      language: { zh: "语言", en: "Language" },
-      profile: { zh: "画像", en: "Profile" },
-      packs: { zh: "入口", en: "Packs" },
-      widgets: { zh: "模块", en: "Widgets" },
-    };
-    return {
-      id: s,
-      label: locale === "zh" ? labels[s].zh : labels[s].en,
-      status: idx < currentIdx ? "completed" as const : idx === currentIdx ? "active" as const : "pending" as const,
-    };
-  });
+  const currentStepIdx = ONBOARDING_STEP_ORDER.indexOf(step);
+  const onboardingSteps: StepProgressStep[] = ONBOARDING_STEP_ORDER.map((s, idx) => ({
+    id: s,
+    label: locale === "zh" ? ONBOARDING_STEP_LABELS[s].zh : ONBOARDING_STEP_LABELS[s].en,
+    status: idx < currentStepIdx ? "completed" as const : idx === currentStepIdx ? "active" as const : "pending" as const,
+  }));
 
   return (
     <div className="flex min-h-[calc(100vh-7rem)] items-center justify-center pb-6">
