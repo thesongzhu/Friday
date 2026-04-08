@@ -271,7 +271,7 @@ import { createFridayUixGuidedContextRepository } from "../uix/persistence/frida
 import { createFridayUixUserPreferenceRepository } from "../uix/persistence/friday-uix-user-preference-repository.js";
 import { createFridayOnboardingSessionRepository } from "../uix/persistence/friday-onboarding-session-repository.js";
 import { createFridayUixSurfaceService } from "../uix/services/friday-uix-surface-service.js";
-import { resolveFridayAuditLogPath } from "./services/friday-hub-audit-log-writer.js";
+import { appendFridayAuditLog, resolveFridayAuditLogPath } from "./services/friday-hub-audit-log-writer.js";
 import { createFridayGatewayService } from "./services/friday-gateway-service.js";
 import { createFridaySkillMarketplaceRuntime } from "#skills";
 import { createFridayMarketplaceCommercePersistence } from "../marketplace/persistence/index.js";
@@ -2651,10 +2651,100 @@ export async function createFridayHub(
   // ─── Tool approval gates (GAP 2) ───
   // Shared promise map for tool-level approval flow.
   // The agent runtime awaits the resolver; the API routes resolve/reject the promise.
-  const toolApprovalGates = new Map<string, Map<string, { resolve: (v: { approved: boolean; reason?: string }) => void }>>();
+  const toolApprovalGates = new Map<string, Map<string, {
+    resolve: (v: { approved: boolean; reason?: string }) => void;
+    prompt: {
+      grantId: string;
+      expiresAt: string;
+      toolName: string;
+      toolCallId: string;
+      reason: string;
+      principalId?: string;
+      scopes?: string[];
+      sessionKey?: string;
+      surface?: string;
+    };
+  }>>();
+
+  const appendAgentRunEventOutsideRuntime = (
+    runId: string,
+    eventName: "agent.run.capability_grant_issued" | "agent.run.capability_grant_denied",
+    payload: Record<string, unknown>,
+  ): void => {
+    const emittedAt = nowIso();
+    try {
+      const seq = stateRuntime.sqlite.withReadConnection((db) =>
+        (agentRunEventRepository.list(db, runId).at(-1)?.seq ?? 0) + 1,
+      );
+      stateRuntime.sqlite.withWriteTransaction((db) => {
+        agentRunEventRepository.append(db, {
+          eventId: idGenerator(),
+          runId,
+          seq,
+          eventName,
+          payload,
+          emittedAt,
+          createdAt: emittedAt,
+        });
+      });
+    } catch (err) {
+      warnHubBootstrapOperationFailureOnce(err);
+    }
+    agentEventEmitter.emit(eventName as never, payload as never);
+  };
+
+  const appendCapabilityGrantAudit = (input: {
+    runId: string;
+    grantId: string;
+    toolCallId: string;
+    toolName: string;
+    decision: "issued" | "denied";
+    reason: string;
+    denialReason?: string;
+    principalId?: string;
+    scopes?: string[];
+    sessionKey?: string;
+    surface?: string;
+    expiresAt?: string;
+  }): void => {
+    appendFridayAuditLog(auditLogPath, {
+      id: idGenerator(),
+      ts: nowIso(),
+      actorType: input.principalId ? "user" : "service",
+      ...(input.principalId ? { actorId: input.principalId } : {}),
+      action: input.decision === "issued"
+        ? "agent.capability_grant.issue"
+        : "agent.capability_grant.deny",
+      resourceType: "agent-capability-grant",
+      resourceId: input.grantId,
+      result: input.decision === "issued" ? "success" : "denied",
+      ...(input.decision === "denied" ? { errorCode: "CAPABILITY_GRANT_DENIED" } : {}),
+      ...(input.decision === "denied" && input.denialReason
+        ? { errorMessage: input.denialReason }
+        : {}),
+      caller: "hub.tool-approval",
+      details: {
+        runId: input.runId,
+        toolCallId: input.toolCallId,
+        toolName: input.toolName,
+        approvalReason: input.reason,
+        denialReason: input.denialReason,
+        expiresAt: input.expiresAt,
+        sessionKey: input.sessionKey,
+        surface: input.surface,
+        scopes: input.scopes,
+      },
+    }).catch((err: unknown) => warnHubBootstrapOnce(`[friday] audit-append: ${err instanceof Error ? err.message : String(err)}`));
+  };
 
   const toolApprovalResolver = async (prompt: {
     runId: string;
+    sessionKey?: string;
+    principalId?: string;
+    scopes?: string[];
+    surface?: string;
+    grantId: string;
+    expiresAt: string;
     toolName: string;
     toolCallId: string;
     params: Record<string, unknown>;
@@ -2666,19 +2756,73 @@ export async function createFridayHub(
       toolApprovalGates.set(prompt.runId, runMap);
     }
     return new Promise<{ approved: boolean; reason?: string }>((resolve) => {
-      runMap!.set(prompt.toolCallId, { resolve });
+      runMap!.set(prompt.toolCallId, {
+        resolve,
+        prompt: {
+          grantId: prompt.grantId,
+          expiresAt: prompt.expiresAt,
+          toolName: prompt.toolName,
+          toolCallId: prompt.toolCallId,
+          reason: prompt.reason,
+          ...(prompt.principalId ? { principalId: prompt.principalId } : {}),
+          ...(prompt.scopes?.length ? { scopes: prompt.scopes } : {}),
+          ...(prompt.sessionKey ? { sessionKey: prompt.sessionKey } : {}),
+          ...(prompt.surface ? { surface: prompt.surface } : {}),
+        },
+      });
     });
   };
 
-  const resolveToolApproval = (runId: string, toolCallId: string, approved: boolean, reason?: string): { resolved: boolean } => {
+  const resolveToolApproval = (
+    runId: string,
+    toolCallId: string,
+    approved: boolean,
+    reason?: string,
+  ): { resolved: boolean; grantId?: string; decision?: "approved" | "rejected" } => {
     const runMap = toolApprovalGates.get(runId);
     if (!runMap) return { resolved: false };
     const gate = runMap.get(toolCallId);
     if (!gate) return { resolved: false };
+    const grantPayloadBase = {
+      runId,
+      grantId: gate.prompt.grantId,
+      toolCallId,
+      toolName: gate.prompt.toolName,
+      reason: gate.prompt.reason,
+      expiresAt: gate.prompt.expiresAt,
+      ...(gate.prompt.principalId ? { principalId: gate.prompt.principalId } : {}),
+      ...(gate.prompt.scopes?.length ? { scopes: gate.prompt.scopes } : {}),
+      ...(gate.prompt.sessionKey ? { sessionKey: gate.prompt.sessionKey } : {}),
+      ...(gate.prompt.surface ? { surface: gate.prompt.surface } : {}),
+    };
+    if (approved) {
+      appendAgentRunEventOutsideRuntime(runId, "agent.run.capability_grant_issued", {
+        ...grantPayloadBase,
+        approvalProvenance: "user_approval",
+      });
+      appendCapabilityGrantAudit({
+        ...grantPayloadBase,
+        decision: "issued",
+      });
+    } else {
+      appendAgentRunEventOutsideRuntime(runId, "agent.run.capability_grant_denied", {
+        ...grantPayloadBase,
+        ...(reason ? { denialReason: reason } : {}),
+      });
+      appendCapabilityGrantAudit({
+        ...grantPayloadBase,
+        decision: "denied",
+        denialReason: reason,
+      });
+    }
     gate.resolve({ approved, reason });
     runMap.delete(toolCallId);
     if (runMap.size === 0) toolApprovalGates.delete(runId);
-    return { resolved: true };
+    return {
+      resolved: true,
+      grantId: gate.prompt.grantId,
+      decision: approved ? "approved" : "rejected",
+    };
   };
 
   const agentRuntime = createFridayAgentRuntime({

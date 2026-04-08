@@ -1926,19 +1926,34 @@ export function createFridayAgentRuntime(
 
             const approvalRequiredReason = getApprovalRequiredReasonForToolCall(toolUse.name, toolUse.input);
             if (approvalRequiredReason) {
+              const grantId = `capgrant:${runId}:${toolUse.id}`;
+              const expiresAt = new Date(Date.parse(nowIso()) + 15 * 60 * 1000).toISOString();
+              const approvalScopes = scopes ?? [];
               if (deps.toolApprovalResolver) {
                 // Pause and ask the user for approval via the resolver callback.
                 handleTrackedEvent("agent.run.awaiting_tool_approval", {
                   runId,
                   status: "awaiting_tool_approval" as const,
+                  grantId,
                   toolName: toolUse.name,
                   toolCallId: toolUse.id,
                   params: toolUse.input,
                   reason: approvalRequiredReason,
+                  expiresAt,
+                  ...(principalId ? { principalId } : {}),
+                  ...(approvalScopes.length > 0 ? { scopes: approvalScopes } : {}),
+                  ...(sessionKey ? { sessionKey } : {}),
+                  ...(executionContext?.surface ? { surface: executionContext.surface } : {}),
                 });
                 const decision = await awaitToolApprovalDecision({
                   approval: deps.toolApprovalResolver({
                     runId,
+                    ...(sessionKey ? { sessionKey } : {}),
+                    ...(principalId ? { principalId } : {}),
+                    ...(approvalScopes.length > 0 ? { scopes: approvalScopes } : {}),
+                    ...(executionContext?.surface ? { surface: executionContext.surface } : {}),
+                    grantId,
+                    expiresAt,
                     toolName: toolUse.name,
                     toolCallId: toolUse.id,
                     params: toolUse.input,
@@ -1950,6 +1965,16 @@ export function createFridayAgentRuntime(
                   break;
                 }
                 if (decision.approved) {
+                  handleTrackedEvent("agent.run.capability_grant_used", {
+                    runId,
+                    grantId,
+                    toolCallId: toolUse.id,
+                    toolName: toolUse.name,
+                    ...(principalId ? { principalId } : {}),
+                    ...(approvalScopes.length > 0 ? { scopes: approvalScopes } : {}),
+                    ...(sessionKey ? { sessionKey } : {}),
+                    ...(executionContext?.surface ? { surface: executionContext.surface } : {}),
+                  });
                   executableToolUses.push({ index: toolIndex, toolUse });
                   continue;
                 }

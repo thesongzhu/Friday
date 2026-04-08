@@ -3735,6 +3735,13 @@ describe("FridayAgentRuntime", () => {
     expect(result.status).toBe("cancelled");
     expect(execExecute).not.toHaveBeenCalled();
     expect(toolApprovalResolver).toHaveBeenCalledTimes(1);
+    expect(toolApprovalResolver).toHaveBeenCalledWith(expect.objectContaining({
+      runId: expect.any(String),
+      grantId: expect.stringMatching(/^capgrant:/),
+      expiresAt: expect.any(String),
+      toolName: "exec",
+      toolCallId: "call-1",
+    }));
   });
 
   it("blocks tools listed in disabledToolNames", async () => {

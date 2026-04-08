@@ -23,13 +23,12 @@ import {
   FRIDAY_CHANNEL_SECRET_SCOPE,
   FRIDAY_SUPPORTED_CHANNEL_KINDS,
   getFridayChannelSecretFieldDescriptors,
-  isFridayEnvSecretRef,
   parseFridayChannelsConfig,
-  parseFridayChannelSecretRef,
 } from "#channels";
 import type { FridaySupportedChannelKind } from "#channels";
 import { FridayDomainError } from "#errors";
 import { validateGatewayUrl } from "../../../agent/tools/friday-agent-gateway-validation.js";
+import { parseFridaySecretInput } from "../../../security/friday-secret-ref.js";
 
 // ─── Types ───
 
@@ -759,7 +758,10 @@ export function createFridaySetupRoutes(
               continue;
             }
 
-            if (isFridayEnvSecretRef(value) || parseFridayChannelSecretRef(value) !== null) {
+            const parsedSecret = parseFridaySecretInput(value, {
+              secretRefPrefixes: ["secret://channel/", "secret://"],
+            });
+            if (parsedSecret.kind !== "inline") {
               config[field.field] = value;
               continue;
             }

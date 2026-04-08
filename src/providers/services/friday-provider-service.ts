@@ -63,6 +63,7 @@ import {
 } from "../model/friday-provider-capabilities.js";
 import { FridayDomainError } from "#errors";
 import { getFridayProviderPreset } from "../model/friday-provider-catalog.js";
+import { parseFridaySecretInput, resolveFridaySecretInput } from "../../security/friday-secret-ref.js";
 
 import type { FridayEncryptedEnvelope } from "../security/friday-secret-crypto.js";
 
@@ -212,16 +213,43 @@ export function createFridayProviderService(
 
   // ─── Key source resolution ───
 
-  function resolveKeySource(apiKey: string | undefined): FridayProviderKeySource {
+  function resolveKeySourceInput(apiKey: string | undefined): {
+    keySource: FridayProviderKeySource;
+    inlineSecret: string | null;
+  } {
     if (!apiKey) {
-      return { kind: "none" };
+      return { keySource: { kind: "none" }, inlineSecret: null };
     }
-    // $ENV_VAR pattern → env-ref
-    if (apiKey.startsWith("$")) {
-      return { kind: "env-ref", envVar: apiKey.slice(1) };
+    const parsed = parseFridaySecretInput(apiKey, {
+      secretRefPrefixes: ["secret://"],
+    });
+    switch (parsed.kind) {
+      case "env-ref":
+        return {
+          keySource: { kind: "env-ref", envVar: parsed.envVar },
+          inlineSecret: null,
+        };
+      case "secret-ref":
+        return {
+          keySource: { kind: "secret-ref", refKey: parsed.refKey },
+          inlineSecret: null,
+        };
+      case "file-ref":
+        return {
+          keySource: { kind: "file-ref", path: parsed.path },
+          inlineSecret: null,
+        };
+      case "command-ref":
+        return {
+          keySource: { kind: "command-ref", command: parsed.command },
+          inlineSecret: null,
+        };
+      case "inline":
+        return {
+          keySource: { kind: "secret-ref", refKey: "" },
+          inlineSecret: parsed.value,
+        };
     }
-    // Raw key → will be encrypted, ref stored
-    return { kind: "secret-ref", refKey: "" }; // refKey filled after ID is known
   }
 
   function persistApiKey(
@@ -293,37 +321,44 @@ export function createFridayProviderService(
       return null;
     }
 
-    const ks = effectiveKeySource;
-    switch (ks.kind) {
-      case "none":
-        return null;
-      case "env-ref": {
-        const val = process.env[ks.envVar];
-        if (!val) {
-          throw new FridayDomainError(
-            "PROVIDER_ENV_VAR_MISSING",
-            `Environment variable '${ks.envVar}' is not set`,
-            { httpStatus: 400 },
-          );
-        }
-        return val;
-      }
-      case "secret-ref": {
+    if (effectiveKeySource.kind === "none") {
+      return null;
+    }
+
+    const resolved = await resolveFridaySecretInput(effectiveKeySource, {
+      env: process.env,
+      allowCommandRefs: true,
+      readSecretRef: async (refKey) => {
         const secret = deps.db.withReadConnection((db) =>
-          secretRepo.getByRef(db, SECRET_SCOPE, ks.refKey),
+          secretRepo.getByRef(db, SECRET_SCOPE, refKey),
         );
         if (!secret) {
-          throw new FridayDomainError(
-            "PROVIDER_AUTH_INVALID",
-            "Stored API key not found",
-            { httpStatus: 500 },
-          );
+          return null;
         }
         const masterKey = getMasterKey();
         const envelope = JSON.parse(secret.encryptedValue) as FridayEncryptedEnvelope;
         return decryptSecret(envelope, masterKey);
-      }
+      },
+    });
+
+    if (!resolved.ok) {
+      const blocker = resolved.blocker;
+      const errorCode = blocker.code === "SECRET_ENV_VAR_MISSING"
+        ? "PROVIDER_ENV_VAR_MISSING"
+        : blocker.code === "SECRET_REF_NOT_FOUND"
+          ? "PROVIDER_AUTH_INVALID"
+          : blocker.code === "SECRET_FILE_PATH_INVALID" || blocker.code === "SECRET_FILE_READ_FAILED" || blocker.code === "SECRET_FILE_EMPTY"
+            ? "PROVIDER_FILE_REF_INVALID"
+            : blocker.code === "SECRET_COMMAND_DISABLED" || blocker.code === "SECRET_COMMAND_FAILED" || blocker.code === "SECRET_COMMAND_EMPTY"
+              ? "PROVIDER_COMMAND_REF_INVALID"
+              : "PROVIDER_AUTH_INVALID";
+      throw new FridayDomainError(errorCode, blocker.message, {
+        httpStatus: errorCode === "PROVIDER_AUTH_INVALID" ? 500 : 400,
+        details: blocker.details,
+      });
     }
+
+    return resolved.value;
   }
 
   function buildRouteHistoryKey(
@@ -940,27 +975,43 @@ export function createFridayProviderService(
     };
   }
 
-  /**
-   * Resolve the raw API key value from the patch string.
-   * - `$ENV_VAR` → read from process.env
-   * - Otherwise → use the literal key
-   * - Empty string / undefined → null (no credential)
-   */
-  function resolveRawApiKey(rawApiKey: string | undefined): string | null {
+  async function resolveRawApiKeyAsync(rawApiKey: string | undefined): Promise<string | null> {
     if (!rawApiKey) return null;
-    if (rawApiKey.startsWith("$")) {
-      const envVar = rawApiKey.slice(1);
-      const val = process.env[envVar];
-      if (!val) {
-        throw new FridayDomainError(
-          "PROVIDER_ENV_VAR_MISSING",
-          `Environment variable '${envVar}' is not set`,
-          { httpStatus: 400 },
+    const parsed = parseFridaySecretInput(rawApiKey, {
+      secretRefPrefixes: ["secret://"],
+    });
+    const resolved = await resolveFridaySecretInput(parsed, {
+      env: process.env,
+      allowCommandRefs: true,
+      readSecretRef: async (refKey) => {
+        const secret = deps.db.withReadConnection((db) =>
+          secretRepo.getByRef(db, SECRET_SCOPE, refKey),
         );
-      }
-      return val;
+        if (!secret) {
+          return null;
+        }
+        const masterKey = getMasterKey();
+        const envelope = JSON.parse(secret.encryptedValue) as FridayEncryptedEnvelope;
+        return decryptSecret(envelope, masterKey);
+      },
+    });
+    if (!resolved.ok) {
+      const blocker = resolved.blocker;
+      const errorCode = blocker.code === "SECRET_ENV_VAR_MISSING"
+        ? "PROVIDER_ENV_VAR_MISSING"
+        : blocker.code === "SECRET_REF_NOT_FOUND"
+          ? "PROVIDER_AUTH_INVALID"
+          : blocker.code === "SECRET_FILE_PATH_INVALID" || blocker.code === "SECRET_FILE_READ_FAILED" || blocker.code === "SECRET_FILE_EMPTY"
+            ? "PROVIDER_FILE_REF_INVALID"
+            : blocker.code === "SECRET_COMMAND_DISABLED" || blocker.code === "SECRET_COMMAND_FAILED" || blocker.code === "SECRET_COMMAND_EMPTY"
+              ? "PROVIDER_COMMAND_REF_INVALID"
+              : "PROVIDER_AUTH_INVALID";
+      throw new FridayDomainError(errorCode, blocker.message, {
+        httpStatus: errorCode === "PROVIDER_AUTH_INVALID" ? 500 : 400,
+        details: blocker.details,
+      });
     }
-    return rawApiKey;
+    return resolved.value;
   }
 
   function assertProviderCompatibility(input: {
@@ -1353,11 +1404,11 @@ export function createFridayProviderService(
         baseUrl: input.baseUrl,
       });
 
-      // OAuth mode forces keySource to none — credential comes from token manager
-      let keySource: FridayProviderKeySource =
+      const keyInput =
         input.authMode === "oauth" || input.authMode === "external-session"
-          ? { kind: "none" }
-          : resolveKeySource(input.apiKey);
+          ? { keySource: { kind: "none" } satisfies FridayProviderKeySource, inlineSecret: null }
+          : resolveKeySourceInput(input.apiKey);
+      let keySource = keyInput.keySource;
 
       const config: FridayProviderConfigJson = {
         api: input.api,
@@ -1366,7 +1417,7 @@ export function createFridayProviderService(
         deploymentKind: input.deploymentKind ?? preset.deploymentKind,
         regionTag: input.regionTag ?? preset.regionTag,
         ...(input.authMode === "oauth" ? { oauthProvider: "anthropic" as const } : {}),
-        keySource: keySource.kind === "secret-ref"
+        keySource: keySource.kind === "secret-ref" && keyInput.inlineSecret !== null
           ? { kind: "secret-ref", refKey: secretRefKey(id) }
           : keySource,
         supportedModels: input.supportedModels,
@@ -1408,20 +1459,9 @@ export function createFridayProviderService(
         // Validate BEFORE persistence (if requested, default: true)
         try {
           // For validation, resolve credential from input directly
-          let credential: string | null = null;
-          if (keySource.kind === "env-ref") {
-            const val = process.env[keySource.envVar];
-            if (!val) {
-              throw new FridayDomainError(
-                "PROVIDER_ENV_VAR_MISSING",
-                `Environment variable '${keySource.envVar}' is not set`,
-                { httpStatus: 400 },
-              );
-            }
-            credential = val;
-          } else if (keySource.kind === "secret-ref" && input.apiKey) {
-            credential = input.apiKey;
-          }
+          const credential = input.apiKey !== undefined
+            ? await resolveRawApiKeyAsync(input.apiKey)
+            : null;
 
           const validationState = await validator.validate({
             kind: input.kind,
@@ -1453,8 +1493,8 @@ export function createFridayProviderService(
       }
 
       // Persist raw key if needed (after validation passes)
-      if (keySource.kind === "secret-ref") {
-        keySource = persistApiKey(id, input.apiKey, keySource);
+      if (keySource.kind === "secret-ref" && keyInput.inlineSecret !== null) {
+        keySource = persistApiKey(id, keyInput.inlineSecret, keySource);
         profile.config.keySource = keySource;
       }
 
@@ -1495,12 +1535,15 @@ export function createFridayProviderService(
 
       // Handle key update
       let keySource = existing.config.keySource;
+      let inlineSecret: string | null = null;
       if (newAuthMode === "oauth" || newAuthMode === "external-session") {
         // OAuth mode forces keySource to none
         keySource = { kind: "none" };
       } else if (patch.apiKey !== undefined) {
-        keySource = resolveKeySource(patch.apiKey);
-        if (keySource.kind === "secret-ref") {
+        const nextKeyInput = resolveKeySourceInput(patch.apiKey);
+        keySource = nextKeyInput.keySource;
+        inlineSecret = nextKeyInput.inlineSecret;
+        if (keySource.kind === "secret-ref" && inlineSecret !== null) {
           keySource = { kind: "secret-ref", refKey: secretRefKey(providerId) };
         }
       }
@@ -1581,7 +1624,7 @@ export function createFridayProviderService(
       if (shouldValidate && nextBackendKind !== "cli") {
         try {
           const credential = patch.apiKey !== undefined
-            ? resolveRawApiKey(patch.apiKey)
+            ? await resolveRawApiKeyAsync(patch.apiKey)
             : await resolveCredential(updated);
           const validationState = await validator.validate({
             kind: updated.kind,
@@ -1622,8 +1665,8 @@ export function createFridayProviderService(
       }
 
       // Persist raw key if needed (after validation passes)
-      if (patch.apiKey !== undefined && keySource.kind === "secret-ref") {
-        keySource = persistApiKey(providerId, patch.apiKey, keySource);
+      if (patch.apiKey !== undefined && keySource.kind === "secret-ref" && inlineSecret !== null) {
+        keySource = persistApiKey(providerId, inlineSecret, keySource);
         updated.config.keySource = keySource;
       }
 

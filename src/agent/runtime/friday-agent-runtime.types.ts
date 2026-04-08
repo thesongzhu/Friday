@@ -335,6 +335,12 @@ export interface CreateFridayAgentRuntimeDeps {
    */
   toolApprovalResolver?: (prompt: {
     runId: string;
+    sessionKey?: string;
+    principalId?: string;
+    scopes?: string[];
+    surface?: string;
+    grantId: string;
+    expiresAt: string;
     toolName: string;
     toolCallId: string;
     params: Record<string, unknown>;

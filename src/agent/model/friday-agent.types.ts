@@ -400,10 +400,54 @@ export interface FridayAgentRunAwaitingPlanApprovalPayload {
 export interface FridayAgentRunAwaitingToolApprovalPayload {
   runId: string;
   status: "awaiting_tool_approval";
+  grantId: string;
   toolName: string;
   toolCallId: string;
   params: Record<string, unknown>;
   reason: string;
+  expiresAt: string;
+  principalId?: string;
+  scopes?: string[];
+  sessionKey?: string;
+  surface?: string;
+}
+
+export interface FridayAgentCapabilityGrantIssuedPayload {
+  runId: string;
+  grantId: string;
+  toolCallId: string;
+  toolName: string;
+  reason: string;
+  approvalProvenance: "user_approval";
+  expiresAt: string;
+  principalId?: string;
+  scopes?: string[];
+  sessionKey?: string;
+  surface?: string;
+}
+
+export interface FridayAgentCapabilityGrantDeniedPayload {
+  runId: string;
+  grantId: string;
+  toolCallId: string;
+  toolName: string;
+  reason: string;
+  denialReason?: string;
+  principalId?: string;
+  scopes?: string[];
+  sessionKey?: string;
+  surface?: string;
+}
+
+export interface FridayAgentCapabilityGrantUsedPayload {
+  runId: string;
+  grantId: string;
+  toolCallId: string;
+  toolName: string;
+  principalId?: string;
+  scopes?: string[];
+  sessionKey?: string;
+  surface?: string;
 }
 
 export interface FridayAgentToolStartPayload {
@@ -556,6 +600,9 @@ export interface FridayAgentEventMap {
   "agent.run.plan_ready": FridayAgentRunPlanReadyPayload;
   "agent.run.awaiting_plan_approval": FridayAgentRunAwaitingPlanApprovalPayload;
   "agent.run.awaiting_tool_approval": FridayAgentRunAwaitingToolApprovalPayload;
+  "agent.run.capability_grant_issued": FridayAgentCapabilityGrantIssuedPayload;
+  "agent.run.capability_grant_denied": FridayAgentCapabilityGrantDeniedPayload;
+  "agent.run.capability_grant_used": FridayAgentCapabilityGrantUsedPayload;
   "agent.run.executing": FridayAgentRunExecutingPayload;
   "agent.run.progress": FridayAgentRunProgressPayload;
   "agent.run.tool_start": FridayAgentToolStartPayload;

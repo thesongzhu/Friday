@@ -164,7 +164,12 @@ export interface CreateFridayApiRuntimeDeps {
   /** Optional: agent event emitter for SSE streaming. */
   agentEventEmitter?: FridayAgentEventEmitter;
   /** Optional: resolves a pending tool approval gate (approve or reject). */
-  resolveToolApproval?: (runId: string, toolCallId: string, approved: boolean, reason?: string) => { resolved: boolean };
+  resolveToolApproval?: (
+    runId: string,
+    toolCallId: string,
+    approved: boolean,
+    reason?: string,
+  ) => { resolved: boolean; grantId?: string; decision?: "approved" | "rejected" };
   /** Optional: learning event sink used by runtime-originated automation signals. */
   learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
   /** Optional: default user id used for runtime-originated automation learning events. */

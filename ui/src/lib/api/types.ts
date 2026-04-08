@@ -1761,7 +1761,7 @@ export interface FridayProviderConfigJson {
   deploymentKind?: "hosted" | "local" | "self-hosted" | "consumer-cli";
   regionTag?: "global" | "us" | "china" | "local" | "custom";
   oauthProvider?: string;
-  keySource: { kind: string; refKey?: string; envVar?: string };
+  keySource: { kind: string; refKey?: string; envVar?: string; path?: string; command?: string };
   supportedModels: string[];
   headers?: Record<string, string>;
   cliConfig?: FridayProviderCliConfig;
@@ -1784,7 +1784,7 @@ export interface FridayProviderTemplateSecretRequirement {
   key: string;
   label: string;
   required: boolean;
-  acceptedRefs: Array<"inline" | "env-ref" | "secret-ref">;
+  acceptedRefs: Array<"inline" | "env-ref" | "secret-ref" | "file-ref" | "command-ref">;
   helpText?: string;
 }
 

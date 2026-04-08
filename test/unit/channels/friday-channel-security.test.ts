@@ -17,7 +17,12 @@ describe("Friday channel security policy helpers", () => {
 
   it("parses env secret refs", () => {
     expect(parseFridayEnvSecretRef("$DISCORD_BOT_TOKEN")).toBe("DISCORD_BOT_TOKEN");
+    expect(parseFridayEnvSecretRef("env:DISCORD_BOT_TOKEN")).toBe("DISCORD_BOT_TOKEN");
     expect(parseFridayEnvSecretRef("DISCORD_BOT_TOKEN")).toBeNull();
+  });
+
+  it("accepts generic secret:// refs for channel secrets", () => {
+    expect(parseFridayChannelSecretRef("secret://channel%3Adiscord%3A0%3Atoken")).toBe("channel:discord:0:token");
   });
 
   it("resolves secret policy with strict default", () => {

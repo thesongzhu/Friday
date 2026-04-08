@@ -98,6 +98,11 @@ describe("FridayChannelRegistry", () => {
       expect(registry.describe("discord")).toMatchObject({
         kind: "discord",
         status: "connected",
+        health: {
+          state: "connected",
+          restartCount: 0,
+          credentialStatus: "unknown",
+        },
         contract: {
           supports: { threads: true },
           curatedSkillIds: ["discord-channel-status"],
