@@ -627,6 +627,12 @@ export interface SkillCatalogItem {
   trustScore: number;
   starter: boolean;
   manifest: Record<string, unknown>;
+  trustTier?: "bundled" | "managed" | "workspace" | "extra";
+  implementationStatus?: "bundled" | "installed" | "catalog-only" | "generated-draft";
+  blockedReasons?: string[];
+  shadowedBy?: string[];
+  recommendedNextAction?: string;
+  firstUsePrompts?: string[];
   installed: boolean;
   installedVersion?: string;
   updateAvailable: boolean;
@@ -1729,6 +1735,9 @@ export type FridayProviderBackendKind = "http" | "cli" | "sdk";
 
 export type FridayProviderAuthMode = "api-key" | "bearer-token" | "oauth" | "token" | "external-session" | "none";
 
+export type FridayProviderTemplateTier = "official" | "verified" | "community" | "experimental";
+export type FridayProviderTemplateStatus = "ready" | "requires_configuration" | "experimental";
+
 export interface FridayProviderCliConfig {
   backendId: "codex-cli" | "claude-cli" | "gemini-cli";
   binaryPath?: string;
@@ -1769,6 +1778,55 @@ export interface FridayProviderProfile {
   config: FridayProviderConfigJson;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface FridayProviderTemplateSecretRequirement {
+  key: string;
+  label: string;
+  required: boolean;
+  acceptedRefs: Array<"inline" | "env-ref" | "secret-ref">;
+  helpText?: string;
+}
+
+export interface FridayProviderTemplate {
+  id: string;
+  providerKind: FridayProviderKind;
+  displayName: string;
+  description: string;
+  tier: FridayProviderTemplateTier;
+  status: FridayProviderTemplateStatus;
+  api: FridayProviderApi;
+  backendKind: FridayProviderBackendKind;
+  deploymentKind: "hosted" | "local" | "self-hosted" | "consumer-cli";
+  regionTag: "global" | "us" | "china" | "local" | "custom";
+  authModes: FridayProviderAuthMode[];
+  baseUrlHints: string[];
+  modelDefaults: {
+    recommended?: string;
+    fallback?: string;
+    examples: string[];
+  };
+  reasoningHints: string[];
+  requiredSecrets: FridayProviderTemplateSecretRequirement[];
+}
+
+export interface FridayProviderHealthSnapshotItem {
+  providerId: string;
+  providerKind: FridayProviderKind;
+  lane: "primary" | "fallback" | "standby" | "disabled";
+  enabled: boolean;
+  defaultModel?: string;
+  backendKind: FridayProviderBackendKind;
+  authMode: FridayProviderAuthMode;
+  backendHealth: "healthy" | "degraded" | "missing" | "unsupported" | "status_unknown";
+  authHealth: "healthy" | "degraded" | "missing" | "unsupported" | "status_unknown";
+  routingEligible: boolean;
+  validationStatus: "never" | "ok" | "failed";
+  circuitState: "closed" | "cooldown" | "unknown";
+  cooldownRemainingMs?: number;
+  lastFailureAt?: string;
+  reasons: string[];
+  suggestedAction: string;
 }
 
 export interface FridayModelRoutingConfig {

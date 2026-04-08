@@ -11,10 +11,12 @@ import type {
   FridayProviderCliConfig,
   FridayProviderDeploymentKind,
   FridayProviderDoctorReport,
+  FridayProviderHealthSnapshotItem,
   FridayProviderKind,
   FridayProviderProfile,
   FridayProviderRegionTag,
   FridayProviderRoutingExplainReport,
+  FridayProviderTemplate,
   FridayProviderUsageSummary,
   FridayProviderValidationState,
 } from "#providers";
@@ -72,8 +74,20 @@ export interface FridayListProvidersResponse {
   items: FridayProviderProfile[];
 }
 
+export interface FridayListProviderTemplatesResponse {
+  items: FridayProviderTemplate[];
+}
+
+export interface FridayGetProviderTemplateResponse {
+  template: FridayProviderTemplate;
+}
+
 export interface FridayGetProviderResponse {
   provider: FridayProviderProfile;
+}
+
+export interface FridayGetProviderHealthSnapshotResponse {
+  items: FridayProviderHealthSnapshotItem[];
 }
 
 export interface FridayCreateProviderResponse {

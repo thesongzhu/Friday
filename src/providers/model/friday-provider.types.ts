@@ -112,6 +112,54 @@ export type FridayProviderKeySource =
   | { kind: "env-ref"; envVar: string }
   | { kind: "none" };
 
+export type FridayProviderTemplateTier =
+  | "official"
+  | "verified"
+  | "community"
+  | "experimental";
+
+export type FridayProviderTemplateStatus =
+  | "ready"
+  | "requires_configuration"
+  | "experimental";
+
+export type FridayProviderTemplateSecretRefKind =
+  | "inline"
+  | "env-ref"
+  | "secret-ref";
+
+export interface FridayProviderTemplateSecretRequirement {
+  key: string;
+  label: string;
+  required: boolean;
+  acceptedRefs: FridayProviderTemplateSecretRefKind[];
+  helpText?: string;
+}
+
+export interface FridayProviderTemplateModelDefaults {
+  recommended?: string;
+  fallback?: string;
+  examples: string[];
+}
+
+export interface FridayProviderTemplate {
+  id: string;
+  providerKind: FridayProviderKind;
+  displayName: string;
+  description: string;
+  tier: FridayProviderTemplateTier;
+  status: FridayProviderTemplateStatus;
+  api: FridayProviderApi;
+  backendKind: FridayProviderBackendKind;
+  deploymentKind: FridayProviderDeploymentKind;
+  regionTag: FridayProviderRegionTag;
+  authModes: FridayProviderAuthMode[];
+  baseUrlHints: string[];
+  modelDefaults: FridayProviderTemplateModelDefaults;
+  reasoningHints: string[];
+  requiredSecrets: FridayProviderTemplateSecretRequirement[];
+}
+
 // ─── Validation state ───
 
 export interface FridayProviderValidationState {
@@ -309,6 +357,36 @@ export interface FridayProviderDoctorReport {
   reasons: string[];
   activeProfileKey?: string;
   cliSession?: FridayCliSessionStatus;
+}
+
+export type FridayProviderLane =
+  | "primary"
+  | "fallback"
+  | "standby"
+  | "disabled";
+
+export type FridayProviderCircuitState =
+  | "closed"
+  | "cooldown"
+  | "unknown";
+
+export interface FridayProviderHealthSnapshotItem {
+  providerId: string;
+  providerKind: FridayProviderKind;
+  lane: FridayProviderLane;
+  enabled: boolean;
+  defaultModel?: string;
+  backendKind: FridayProviderBackendKind;
+  authMode: FridayProviderAuthMode;
+  backendHealth: FridayProviderHealthStatus;
+  authHealth: FridayProviderHealthStatus;
+  routingEligible: boolean;
+  validationStatus: FridayProviderValidationState["status"];
+  circuitState: FridayProviderCircuitState;
+  cooldownRemainingMs?: number;
+  lastFailureAt?: string;
+  reasons: string[];
+  suggestedAction: string;
 }
 
 export type FridayProviderRoutingReasonCode =

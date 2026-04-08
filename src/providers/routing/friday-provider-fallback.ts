@@ -3,6 +3,7 @@ import type {
   FridayModelRoutingConfig,
   FridayProviderAttempt,
   FridayProviderAttemptReason,
+  FridayProviderCircuitState,
   FridayProviderProfile,
   FridayResolvedProviderRoute,
 } from "../model/friday-provider.types.js";
@@ -206,6 +207,16 @@ export interface FridayProviderFallback {
    * Returns true if a provider is currently in cooldown (recently failed).
    */
   isInCooldown(providerId: string): boolean;
+
+  /**
+   * Returns provider-level circuit-breaker state when the implementation tracks it.
+   */
+  describeProvider?(providerId: string): {
+    providerId: string;
+    circuitState: FridayProviderCircuitState;
+    lastFailureAt?: string;
+    cooldownRemainingMs?: number;
+  };
 }
 
 // ─── Factory options ───
@@ -369,6 +380,30 @@ export function createFridayProviderFallback(
 
     isInCooldown(providerId) {
       return isInCooldown(providerId);
+    },
+
+    describeProvider(providerId) {
+      const failedAt = cooldownMap.get(providerId);
+      if (failedAt === undefined) {
+        return {
+          providerId,
+          circuitState: "closed",
+        };
+      }
+      const remainingMs = cooldownMs - (nowMs() - failedAt);
+      if (remainingMs <= 0) {
+        cooldownMap.delete(providerId);
+        return {
+          providerId,
+          circuitState: "closed",
+        };
+      }
+      return {
+        providerId,
+        circuitState: "cooldown",
+        lastFailureAt: new Date(failedAt).toISOString(),
+        cooldownRemainingMs: remainingMs,
+      };
     },
   };
 }

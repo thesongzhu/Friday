@@ -9,13 +9,16 @@ import type {
   FridayCreateProviderResponse,
   FridayDeleteProviderResponse,
   FridayGetProviderDoctorResponse,
+  FridayGetProviderHealthSnapshotResponse,
   FridayGetProviderResponse,
   FridayGetProviderRoutingExplainResponse,
+  FridayGetProviderTemplateResponse,
   FridayGetRoutingConfigResponse,
   FridayInitiateAnthropicOAuthRequest,
   FridayInitiateAnthropicOAuthResponse,
   FridayListProviderAuthProfilesResponse,
   FridayListProvidersResponse,
+  FridayListProviderTemplatesResponse,
   FridayPinProviderRouteResponse,
   FridaySetRoutingConfigRequest,
   FridaySetRoutingConfigResponse,
@@ -24,11 +27,13 @@ import type {
   FridayValidateProviderResponse,
 } from "../../model/friday-api-provider.types.js";
 
-import type { FridayProviderService } from "#providers";
+import type { FridayModelRoutingConfig, FridayProviderLane, FridayProviderService } from "#providers";
 import {
   FRIDAY_PROVIDER_APIS,
   FRIDAY_PROVIDER_BACKEND_KINDS,
   FRIDAY_PROVIDER_KINDS,
+  getFridayProviderTemplate,
+  listFridayProviderTemplates,
 } from "#providers";
 import { FridayDomainError } from "#errors";
 import {
@@ -195,7 +200,99 @@ export interface FridayProviderRoutesDeps {
 export function createFridayProviderRoutes(
   deps: FridayProviderRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  async function listHealthSnapshot(): Promise<FridayGetProviderHealthSnapshotResponse> {
+    const providers = await deps.providerService.listProviders();
+    const routing = await deps.providerService.getRoutingConfig().catch((): FridayModelRoutingConfig => ({
+      defaultProviderId: "",
+      fallbackProviderIds: [],
+    }));
+    const healthCapable = deps.providerService as FridayProviderService & {
+      getProviderFallbackState?: (
+        providerId: string,
+      ) => {
+        circuitState: "closed" | "cooldown" | "unknown";
+        lastFailureAt?: string;
+        cooldownRemainingMs?: number;
+      };
+    };
+
+    const items = await Promise.all(
+      providers.map(async (provider) => {
+        const doctor = await deps.providerService.doctorProvider(provider.id);
+        const fallbackState = healthCapable.getProviderFallbackState?.(provider.id);
+        const lane: FridayProviderLane = !provider.enabled
+          ? "disabled"
+          : provider.id === routing.defaultProviderId
+            ? "primary"
+            : routing.fallbackProviderIds.includes(provider.id)
+              ? "fallback"
+              : "standby";
+        const validationStatus = provider.config.validation?.status ?? "never";
+        const reasons = Array.from(new Set([
+          ...doctor.reasons,
+          ...(validationStatus === "failed" ? ["validation_failed"] : []),
+        ]));
+        const suggestedAction = !provider.enabled
+          ? "Enable the provider before using it for routing."
+          : fallbackState?.circuitState === "cooldown"
+            ? "Wait for cooldown to expire or route around this provider for now."
+            : validationStatus === "failed"
+              ? "Re-validate credentials or base URL before promoting this provider."
+              : doctor.routingEligible
+                ? lane === "primary"
+                  ? "Keep this provider healthy; it is the current default lane."
+                  : "Promote this provider into fallback or primary only when you need broader resilience."
+                : "Fix the reported doctor reasons before using this provider in routing.";
+
+        return {
+          providerId: provider.id,
+          providerKind: provider.kind,
+          lane,
+          enabled: provider.enabled,
+          defaultModel: provider.defaultModel,
+          backendKind: doctor.backendKind,
+          authMode: doctor.authMode,
+          backendHealth: doctor.backendHealth,
+          authHealth: doctor.authHealth,
+          routingEligible: doctor.routingEligible,
+          validationStatus,
+          circuitState: fallbackState?.circuitState ?? "unknown",
+          cooldownRemainingMs: fallbackState?.cooldownRemainingMs,
+          lastFailureAt: fallbackState?.lastFailureAt,
+          reasons,
+          suggestedAction,
+        };
+      }),
+    );
+    return { items };
+  }
+
   return [
+    {
+      operationId: "providers.templates.list",
+      method: "GET",
+      path: "/v1/providers/templates",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      async handler(): Promise<FridayListProviderTemplatesResponse> {
+        return { items: listFridayProviderTemplates() };
+      },
+    },
+
+    {
+      operationId: "providers.templates.get",
+      method: "GET",
+      path: "/v1/providers/templates/:templateId",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      async handler(ctx): Promise<FridayGetProviderTemplateResponse> {
+        const { templateId } = ctx.params as { templateId: string };
+        const template = getFridayProviderTemplate(templateId);
+        if (!template) {
+          throw new FridayDomainError("PROVIDER_NOT_FOUND", "Provider template not found", { httpStatus: 404 });
+        }
+        return { template };
+      },
+    },
+
     // ─── List providers ───
     {
       operationId: "providers.list",
@@ -205,6 +302,16 @@ export function createFridayProviderRoutes(
       async handler(): Promise<FridayListProvidersResponse> {
         const items = await deps.providerService.listProviders();
         return { items };
+      },
+    },
+
+    {
+      operationId: "providers.health.list",
+      method: "GET",
+      path: "/v1/providers/health",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      async handler(): Promise<FridayGetProviderHealthSnapshotResponse> {
+        return listHealthSnapshot();
       },
     },
 

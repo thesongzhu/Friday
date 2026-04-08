@@ -2091,5 +2091,21 @@ export function createFridayProviderService(
     },
   };
 
+  (
+    service as FridayProviderService & {
+      getProviderFallbackState: (
+        providerId: string,
+      ) => {
+        circuitState: "closed" | "cooldown" | "unknown";
+        lastFailureAt?: string;
+        cooldownRemainingMs?: number;
+      };
+    }
+  ).getProviderFallbackState = (providerId) => {
+    return fallback.describeProvider?.(providerId) ?? {
+      circuitState: "unknown",
+    };
+  };
+
   return service;
 }
