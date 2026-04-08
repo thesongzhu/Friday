@@ -17,6 +17,7 @@ const CHROMIUM_AVAILABLE = (() => {
 })();
 
 const BROWSER_E2E_TIMEOUT_MS = 180_000;
+const BLANK_DOCUMENT_EARLY_TIMEOUT_MS = 1_500;
 const QUICK_SHEET_CYCLE_ATTEMPTS = process.env.CI ? 1 : 3;
 
 async function waitForTestId(pageHandle: FridayBrowserPageHandle, testId: string): Promise<void> {
@@ -54,6 +55,28 @@ function isBlankDocumentDiagnostics(diagnostics: {
   routeEvents: unknown[];
 }): boolean {
   return diagnostics.bodyLength === 0 && diagnostics.appCrashed === false && diagnostics.routeEvents.length === 0;
+}
+
+async function detectBlankDocumentEarly(pageHandle: FridayBrowserPageHandle): Promise<boolean> {
+  try {
+    await pageHandle.page.waitForFunction(() => {
+      const bodyText = document.body.textContent?.trim() ?? "";
+      const stored = window.sessionStorage.getItem("friday.client.stability.export.v1");
+      let routeEventsLength = 0;
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as Array<{ type?: string }>;
+          routeEventsLength = parsed.filter((entry) => entry.type === "route_transition_start" || entry.type === "route_transition_complete").length;
+        } catch {
+          routeEventsLength = 1;
+        }
+      }
+      return document.readyState !== "loading" && bodyText.length === 0 && routeEventsLength === 0;
+    }, { timeout: BLANK_DOCUMENT_EARLY_TIMEOUT_MS });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function waitForSurfaceReadyOnce(pageHandle: FridayBrowserPageHandle, surface: SurfaceId): Promise<void> {
@@ -100,8 +123,24 @@ async function waitForSurfaceReadyOnce(pageHandle: FridayBrowserPageHandle, surf
 }
 
 async function waitForSurfaceReady(pageHandle: FridayBrowserPageHandle, surface: SurfaceId): Promise<void> {
-  try {
+  const readyPromise = waitForSurfaceReadyOnce(pageHandle, surface);
+  const earlyOutcome = await Promise.race([
+    readyPromise.then(() => "ready" as const).catch(() => "pending-error" as const),
+    detectBlankDocumentEarly(pageHandle).then((blankDetected) => (blankDetected ? "blank" as const : "continue" as const)),
+  ]);
+
+  if (earlyOutcome === "ready") {
+    return;
+  }
+
+  if (earlyOutcome === "blank") {
+    await pageHandle.page.reload({ waitUntil: "domcontentloaded" });
     await waitForSurfaceReadyOnce(pageHandle, surface);
+    return;
+  }
+
+  try {
+    await readyPromise;
   } catch {
     const diagnostics = await readSurfaceDiagnostics(pageHandle);
     if (Array.isArray(diagnostics.routeEvents) && isBlankDocumentDiagnostics(diagnostics)) {
