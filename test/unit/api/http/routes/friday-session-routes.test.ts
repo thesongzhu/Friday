@@ -92,10 +92,10 @@ async function expectRouteError(fn: Promise<unknown>, code: string): Promise<voi
 }
 
 describe("FridaySessionRoutes", () => {
-  it("creates 18 routes (10 core + 1 reset + 3 fork + 4 extraction)", () => {
+  it("creates 19 routes (10 core + 1 export + 1 reset + 3 fork + 4 extraction)", () => {
     const svc = createMockService();
     const routes = createFridaySessionRoutes({ sessionService: svc });
-    expect(routes).toHaveLength(18);
+    expect(routes).toHaveLength(19);
   });
 
   it("all routes have unique operationIds", () => {
@@ -970,6 +970,7 @@ describe("FridaySessionRoutes", () => {
       expect(routeMap).toContainEqual({ id: "sessions.prune", method: "POST", path: "/v1/sessions/prune" });
       expect(routeMap).toContainEqual({ id: "sessions.sweep", method: "POST", path: "/v1/sessions/sweep" });
       expect(routeMap).toContainEqual({ id: "sessions.messages.list", method: "GET", path: "/v1/sessions/:sessionKey/messages" });
+      expect(routeMap).toContainEqual({ id: "sessions.export", method: "GET", path: "/v1/sessions/:sessionKey/export" });
       expect(routeMap).toContainEqual({ id: "sessions.messages.create", method: "POST", path: "/v1/sessions/:sessionKey/messages" });
       expect(routeMap).toContainEqual({ id: "sessions.run", method: "POST", path: "/v1/sessions/:sessionKey/run" });
       expect(routeMap).toContainEqual({ id: "sessions.memory.namespace.get", method: "GET", path: "/v1/sessions/:sessionKey/memory-namespace" });

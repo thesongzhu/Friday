@@ -346,4 +346,6 @@ export interface CreateFridayAgentRuntimeDeps {
     params: Record<string, unknown>;
     reason: string;
   }) => Promise<{ approved: boolean; reason?: string }>;
+  /** Optional policy extensions evaluated before tool execution. Extensions can only deny, never allow what core denied. */
+  policyExtensions?: Array<{ name: string; evaluate: (context: { principalId: string; resource: string; action: string; resourceId?: string }) => "pass" | "deny" | "abstain" }>;
 }

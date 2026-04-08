@@ -224,6 +224,46 @@ This document is the current architecture reference for steady-state Friday runt
 - Anthropic provider auth now has three real runtime modes: `api-key`, `oauth`, and `token`. The `token` mode is a compatibility path for pasted/setup subscription tokens and does not imply refresh semantics.
 - OpenAI subscription/Codex account sign-in is **not** a current steady-state auth surface for Friday's `api.openai.com` provider path. The active OpenAI provider contract remains API-scoped `api-key` / `bearer-token` credentials. Subscription-based Codex access should be treated as a future Codex client/backend integration rather than a drop-in OAuth mode for the current HTTP provider path.
 
+## Deep link protocol
+
+- `friday://` is the canonical import protocol for provider templates, skill sources, MCP server configs, workflow templates, and marketplace assets.
+- All deep link imports must go through `POST /v1/deeplink/preview` (parse + validate + permission summary) before `POST /v1/deeplink/apply` (confirmed import).
+- Deep link payloads require `version: 1`, a valid resource type, and type-specific required fields. Incomplete or high-risk payloads are rejected by the validator.
+- Private/localhost URLs in deep link payloads produce warnings. Missing integrity hashes produce advisories.
+- The deep link parser accepts both URI format (`friday://skill-source?url=...`) and JSON payload format for POST bodies.
+- Deep link implementation: `src/deeplink/` (parser, validator, types). Route registration: `src/api/http/routes/friday-deeplink-routes.ts`.
+
+## Policy extension chain
+
+- `PolicyExtensionChain` (`src/security/policy-extension-chain.ts`) evaluates authorization decisions through a chain: core policy first, then extensions.
+- Extensions can only tighten (deny) decisions, never loosen (allow) what core denied. This is a non-negotiable invariant.
+- Each extension returns `pass`, `deny`, or `abstain`. First deny wins. All abstain preserves the core decision.
+- Evaluation results include which extension triggered a denial, for audit trail purposes.
+
+## Shell safety scanner
+
+- `scanShellScript()` (`src/skills/safety/friday-shell-safety-scanner.ts`) scans shell-based skill scripts for dangerous patterns before installation.
+- Three severity levels: `blocking` (rm -rf, sudo, curl|sh, eval, mkfs), `warning` (external curl/wget, netcat, path traversal), `advisory` (unbounded find, chmod/chown).
+- Verdicts: `safe`, `needs_review`, `dangerous`. Blocking findings trigger `dangerous` verdict.
+- This is a rules-based first version (regex + string matching), not tree-sitter AST analysis.
+
+## Engineering doctrine
+
+- `BELIEFS.md` documents 10 engineering principles that govern all contributions: task-first surfaces, skills-first, truthful release status, deny-precedence, no silent drops, server-shaped UI, additive evolution, mechanical enforcement, YAGNI, repo as authoritative source.
+- ESLint config (`eslint.config.mjs`) enforces: no-console (warn), complexity limit 25 (warn), max-lines-per-function 200 (warn), security/detect-object-injection (warn), security/detect-non-literal-fs-filename (warn).
+- Architecture boundary check (`scripts/quality/check-architecture-boundaries.mjs`) enforces import rules for `state`, `security`, `channels`, and `providers` layers.
+
+## MCP management and session browser
+
+- `/mcp` is the operator-facing UI for MCP server status, connection health, tool/resource counts, and configuration guidance.
+- `/sessions` is the session browser UI for browsing, searching, viewing transcripts, and exporting session history (JSON and Markdown formats).
+- Session export is client-side (blob download); no server-side export endpoint is required for the initial implementation.
+
+## WebDAV sync deferral
+
+- WebDAV-based cross-device configuration sync is deferred to post-release. The infrastructure does not exist in the current codebase.
+- Rationale: Requires significant new infrastructure with low priority relative to core stability and governance features.
+
 ## Compatibility retirement policy
 
 - Keep compat shims only when there is a named migration need or a guarded test proving the shim contract.

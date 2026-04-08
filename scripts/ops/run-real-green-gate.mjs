@@ -31,6 +31,13 @@ const CLAUDE_SKILL_TESTS = [
   "test/integration/skills/friday-skill-registry-lifecycle.test.ts",
 ];
 
+const CONVERGENCE_FEATURE_TESTS = [
+  "test/unit/deeplink/friday-deeplink-parser.test.ts",
+  "test/unit/deeplink/friday-deeplink-validator.test.ts",
+  "test/unit/security/policy-extension-chain.test.ts",
+  "test/unit/skills/safety/friday-shell-safety-scanner.test.ts",
+];
+
 function resolveCurrentBranch(repoRoot) {
   const envBranch = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME;
   if (envBranch && envBranch.trim().length > 0) {

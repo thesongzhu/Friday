@@ -647,6 +647,34 @@ export function createFridaySessionRoutes(
       },
     },
 
+    // 7b. GET /v1/sessions/:sessionKey/export — export session transcript
+    {
+      operationId: "sessions.export",
+      method: "GET",
+      path: "/v1/sessions/:sessionKey/export",
+      auth: { public: false, anyOfScopes: ["session.read"] },
+      async handler(ctx): Promise<{ content: string; format: string }> {
+        const { sessionKey } = ctx.params as { sessionKey: string };
+        const key = decodeSessionKeyParam(sessionKey);
+        const query = ctx.query as Record<string, string | undefined>;
+        const format = query.format === "markdown" ? "markdown" : "json";
+        const messages = await deps.sessionService.getMessages(key, FRIDAY_MAX_LIST_LIMIT);
+        if (format === "markdown") {
+          const lines = [`# Friday Session: ${key}\n`];
+          for (const msg of messages) {
+            const obj = msg as unknown as Record<string, unknown>;
+            const role = typeof obj.role === "string" ? obj.role : "unknown";
+            const msgContent = typeof obj.content === "string" ? obj.content : "";
+            const createdAt = typeof obj.createdAt === "string" ? obj.createdAt : "";
+            lines.push(`## ${role} (${createdAt})\n`);
+            lines.push(`${msgContent}\n`);
+          }
+          return { content: lines.join("\n"), format: "markdown" };
+        }
+        return { content: JSON.stringify({ sessionKey: key, messages }, null, 2), format: "json" };
+      },
+    },
+
     // 8. POST /v1/sessions/:sessionKey/messages — create message
     {
       operationId: "sessions.messages.create",

@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# AppImage entry point — resolve the app directory and launch Friday.
 APPDIR="$(cd "$(dirname "$0")" && pwd)"
+export FRIDAY_APPDIR="${APPDIR}"
+export PATH="${APPDIR}/usr/bin:${PATH}"
+
 exec "${APPDIR}/usr/bin/friday" start "$@"

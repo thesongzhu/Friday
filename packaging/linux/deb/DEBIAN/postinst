@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Make the main binary executable.
+chmod +x /usr/lib/friday/bin/friday
+
+# Create a convenience symlink so `friday` is available on PATH.
+ln -sf /usr/lib/friday/bin/friday /usr/local/bin/friday
+
+echo "friday: post-install complete"
