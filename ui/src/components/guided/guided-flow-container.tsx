@@ -31,8 +31,10 @@ export function GuidedFlowContainer(props: GuidedFlowContainerProps) {
   const titleText = typeof title === "string" ? null : title;
   const titleLabel = typeof title === "string" ? title : resolveLocalizedText(title, locale);
 
+  const showSidebar = locale === "zh" && steps.length > 1;
+
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-5">
+    <div className={cn("mx-auto w-full space-y-5", showSidebar ? "max-w-5xl" : "max-w-3xl")}>
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           {showBack && onBack && currentStepIndex > 0 && (
@@ -59,12 +61,24 @@ export function GuidedFlowContainer(props: GuidedFlowContainerProps) {
         )}
       </div>
 
-      {steps.length > 1 && (
+      {steps.length > 1 && !showSidebar && (
         <StepProgress steps={steps} orientation="horizontal" />
       )}
 
-      <div className={cn("transition-opacity duration-200")}>
-        {children}
+      <div className={cn("transition-opacity duration-200", showSidebar && "flex gap-6")}>
+        {showSidebar && (
+          <aside className="hidden w-[180px] shrink-0 pt-1 lg:block">
+            <StepProgress steps={steps} orientation="vertical" />
+          </aside>
+        )}
+        <div className={cn(showSidebar && "min-w-0 flex-1")}>
+          {showSidebar && (
+            <div className="mb-4 lg:hidden">
+              <StepProgress steps={steps} orientation="horizontal" />
+            </div>
+          )}
+          {children}
+        </div>
       </div>
     </div>
   );

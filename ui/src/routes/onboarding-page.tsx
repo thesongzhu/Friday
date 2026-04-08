@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, CheckCircle2, Globe2, LayoutGrid, UserRound } from "lucide-react";
 import { ActionButton, ShellCard } from "@/components/core/primitives";
+import { StepProgress, type StepProgressStep } from "@/components/guided/step-progress";
 import { PackCard } from "@/components/packs/pack-card";
 import { useUixPreferences } from "@/hooks/use-uix-preferences";
 import { useUserProfile, type UserProfileType } from "@/hooks/use-user-profile";
@@ -118,6 +119,24 @@ export function OnboardingPage() {
     navigate("/home", { replace: true });
   }
 
+  const STEP_ORDER: OnboardingStep[] = ["language", "profile", "packs", "widgets"];
+
+  const onboardingSteps: StepProgressStep[] = STEP_ORDER.map((s) => {
+    const idx = STEP_ORDER.indexOf(s);
+    const currentIdx = STEP_ORDER.indexOf(step);
+    const labels: Record<OnboardingStep, { zh: string; en: string }> = {
+      language: { zh: "语言", en: "Language" },
+      profile: { zh: "画像", en: "Profile" },
+      packs: { zh: "入口", en: "Packs" },
+      widgets: { zh: "模块", en: "Widgets" },
+    };
+    return {
+      id: s,
+      label: locale === "zh" ? labels[s].zh : labels[s].en,
+      status: idx < currentIdx ? "completed" as const : idx === currentIdx ? "active" as const : "pending" as const,
+    };
+  });
+
   return (
     <div className="flex min-h-[calc(100vh-7rem)] items-center justify-center pb-6">
       <div className="w-full max-w-4xl space-y-5">
@@ -135,6 +154,11 @@ export function OnboardingPage() {
               "These four steps only set your initial language, pinned packs, and default home widgets. You can change them later.",
             )}
           </p>
+          {locale === "zh" && (
+            <div className="mt-4">
+              <StepProgress steps={onboardingSteps} orientation="horizontal" />
+            </div>
+          )}
         </section>
 
         {step === "language" ? (

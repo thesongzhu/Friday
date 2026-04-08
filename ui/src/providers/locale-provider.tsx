@@ -37,6 +37,11 @@ export function LocaleProvider(props: { children: React.ReactNode }) {
     setLocaleState(nextLocale);
   }, [preferredLocale]);
 
+  React.useEffect(() => {
+    document.documentElement.setAttribute("data-locale", locale);
+    document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
+  }, [locale]);
+
   const setLocale = React.useCallback((nextLocale: AppLocale) => {
     writeLocalLocale(nextLocale);
     setLocaleState(nextLocale);

@@ -52,7 +52,14 @@ export function ChoiceCard(props: ChoiceCardProps) {
           <div className="flex items-center gap-2">
             <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{resolveLocalizedText(title, locale)}</p>
             {recommended && (
-              <span className="rounded-full border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-primary)]">
+              <span
+                className={cn(
+                  "rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em]",
+                  locale === "zh"
+                    ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent)] text-white"
+                    : "border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-text-primary)]",
+                )}
+              >
                 {localize(locale, "推荐", "Recommended")}
               </span>
             )}

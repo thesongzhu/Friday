@@ -7,9 +7,10 @@ import { useUserProfile } from "@/hooks/use-user-profile";
 import { completeClientRouteTransition } from "@/lib/diagnostics/client-stability";
 import { resolveLocalizedText, localize } from "@/lib/i18n/localized-text";
 import { AGENT_OS_NAV_PRIMARY, AGENT_OS_NAV_ADVANCED, resolvePageTitle } from "@/lib/routes/agent-os-nav";
-import { ActionButton } from "@/components/core/primitives";
+import { ActionButton, LiveIndicator } from "@/components/core/primitives";
 import { cn } from "@/lib/utils/cn";
 import { useAppLocale } from "@/providers/locale-provider";
+import { QuickAccessBar } from "@/components/layout/quick-access-bar";
 
 const PRIMARY_NAV_ICONS: Record<string, LucideIcon> = {
   "/home": Home,
@@ -24,7 +25,7 @@ export function AppShell() {
   const { profileType } = useUserProfile();
   const { rememberPrimarySurface } = useHomeSurfacePreferences(profileType);
   const { locale, setLocale } = useAppLocale();
-  const [showMore, setShowMore] = useState(false);
+  const [showMore, setShowMore] = useState(locale === "zh");
 
   const pageTitle = resolvePageTitle(location.pathname);
 
@@ -41,8 +42,10 @@ export function AppShell() {
   }, [location.pathname, rememberPrimarySurface]);
 
   useEffect(() => {
-    setShowMore(false);
-  }, [location.pathname]);
+    if (locale !== "zh") {
+      setShowMore(false);
+    }
+  }, [location.pathname, locale]);
 
   useEffect(() => {
     completeClientRouteTransition(location.pathname);
@@ -85,7 +88,10 @@ export function AppShell() {
                   key={item.path}
                   to={item.path}
                   className={({ isActive }) => cn(
-                    "flex min-h-[48px] items-center gap-3 rounded-[18px] px-3 py-3 transition-colors",
+                    "flex items-center gap-3 px-3 transition-colors",
+                    locale === "zh"
+                      ? "min-h-[44px] rounded-[14px] py-2.5"
+                      : "min-h-[48px] rounded-[18px] py-3",
                     isActive
                       ? "bg-[color:var(--color-accent-soft)] text-[color:var(--color-text-primary)]"
                       : "text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-subtle)] hover:text-[color:var(--color-text-primary)]",
@@ -126,6 +132,9 @@ export function AppShell() {
             </div>
 
             <div className="mt-auto space-y-2 border-t border-[color:var(--color-border-soft)] pt-4">
+              {locale === "zh" && (
+                <LiveIndicator label="Friday 运行中" active className="px-3 pb-1" />
+              )}
               <button
                 type="button"
                 onClick={() => setLocale(locale === "zh" ? "en" : "zh")}
@@ -212,6 +221,9 @@ export function AppShell() {
 
           <main className="flex w-full flex-1 justify-start pt-4 lg:pt-2">
             <div className="w-full max-w-5xl">
+              {locale === "zh" && (
+                <QuickAccessBar items={AGENT_OS_NAV_ADVANCED} locale={locale} />
+              )}
               <Outlet />
             </div>
           </main>

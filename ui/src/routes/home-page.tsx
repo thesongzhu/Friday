@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, Clock3, ListFilter, Pin, Plus, Sparkles } from "lucide-react";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
+import { ContextualHelp } from "@/components/core/contextual-help";
 import { PackCard } from "@/components/packs/pack-card";
 import { PackQuickSheet } from "@/components/packs/pack-quick-sheet";
 import { useAdaptivePollingInterval } from "@/hooks/use-adaptive-polling";
@@ -20,6 +21,7 @@ import {
   summarizeRunContext,
   toneForRunHealth,
 } from "@/lib/runs/run-health";
+import { cn } from "@/lib/utils/cn";
 import { useAppLocale } from "@/providers/locale-provider";
 
 const ACTIVE_RUN_STATUSES = new Set([
@@ -108,7 +110,7 @@ export function HomePage() {
 
   const recentRuns = snapshotQuery.data?.runs ?? [];
   const activeRuns = recentRuns.filter((run) => ACTIVE_RUN_STATUSES.has(run.status));
-  const recentResults = recentRuns.filter((run) => run.status === "completed" || run.status === "failed" || run.status === "failed_tests").slice(0, 3);
+  const recentResults = recentRuns.filter((run) => run.status === "completed" || run.status === "failed" || run.status === "failed_tests").slice(0, locale === "zh" ? 5 : 3);
   const pendingApprovals = snapshotQuery.data?.pendingApprovals ?? [];
   const scheduledAutomations = useMemo(
     () =>
@@ -128,7 +130,7 @@ export function HomePage() {
   const recommendedPacks = FRIDAY_PACKS
     .filter((pack) => !pinnedPackIds.includes(pack.id))
     .sort((left, right) => Number(right.kind === "industry") - Number(left.kind === "industry"))
-    .slice(0, 3);
+    .slice(0, locale === "zh" ? 5 : 3);
   const selectedPack = selectedPackId ? getPackById(selectedPackId) ?? null : null;
   const selectedPackRunState = selectedPack ? findPackRuns(selectedPack, recentRuns) : { activeRun: null, recentRun: null };
 
@@ -163,6 +165,27 @@ export function HomePage() {
                 "Home stays focused on live work, approvals, and the packs you chose to pin.",
               )}
             </p>
+            {locale === "zh" && recentRuns.length > 0 && (() => {
+              const completed = recentRuns.filter((r) => r.status === "completed").length;
+              const total = recentRuns.filter((r) => r.status === "completed" || r.status === "failed" || r.status === "failed_tests").length;
+              const rate = total > 0 ? Math.round((completed / total) * 100) : 100;
+              return (
+                <p className="mt-2 flex flex-wrap items-center gap-3 text-xs text-[color:var(--color-text-tertiary)]">
+                  <span>{`已完成 ${completed} 个任务`}</span>
+                  <span className="text-[color:var(--color-border-strong)]">&middot;</span>
+                  <span>{`成功率 ${rate}%`}</span>
+                  {activeRuns.length > 0 && (
+                    <>
+                      <span className="text-[color:var(--color-border-strong)]">&middot;</span>
+                      <span className="inline-flex items-center gap-1">
+                        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-green-500" />
+                        {`${activeRuns.length} 个任务运行中`}
+                      </span>
+                    </>
+                  )}
+                </p>
+              );
+            })()}
           </div>
           <div className="flex flex-wrap gap-2">
             <ActionButton data-testid="home-start-task" onClick={() => navigate("/chat")}>
@@ -180,8 +203,9 @@ export function HomePage() {
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+            <p className="flex items-center gap-1 text-sm font-semibold text-[color:var(--color-text-primary)]">
               {localize(locale, "首页模块", "Home Widgets")}
+              <ContextualHelp locale={locale} text="首页模块可以自由显示或隐藏，点击右侧「编辑模块」调整。" />
             </p>
             <p className="text-xs text-[color:var(--color-text-secondary)]">
               {localize(locale, "只保留你想看到的状态模块。", "Keep only the modules you want to see.")}
@@ -385,7 +409,7 @@ export function HomePage() {
             </p>
           </ShellCard>
         ) : (
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className={cn("grid gap-4 md:grid-cols-2", locale === "zh" && "lg:grid-cols-3")}>
             {pinnedPacks.map((pack) => {
               const runState = findPackRuns(pack, recentRuns);
               const note = runState.activeRun
