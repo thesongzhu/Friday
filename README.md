@@ -4,7 +4,7 @@
 <p>
   <img src="https://img.shields.io/badge/Node-%E2%89%A522-brightgreen?style=for-the-badge" alt="Node ≥22">
   <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="MIT License">
-  <img src="https://img.shields.io/badge/Tests-8900%2B-success?style=for-the-badge" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-9900%2B-success?style=for-the-badge" alt="Tests">
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=for-the-badge" alt="TypeScript strict">
   <img src="https://github.com/thesongzhu/Friday/actions/workflows/ci.yml/badge.svg" alt="CI">
   <img src="https://github.com/thesongzhu/Friday/actions/workflows/release.yml/badge.svg" alt="Release">
@@ -20,7 +20,21 @@ For everything beyond the main product overview, use the [Documentation Hub](doc
 
 ---
 
-## Latest Updates (2026-03-27)
+## Latest Updates (2026-04-08)
+
+- **Deep link protocol**: `friday://` import protocol for provider templates, skill sources, MCP server configs, workflow templates, and marketplace assets. Preview + validate + confirm flow via `/v1/deeplink/preview` and `/v1/deeplink/apply`.
+- **PolicyExtensionChain**: Authorization chain where extensions can only tighten (deny) decisions, never loosen core policy. Full audit trail for every evaluation.
+- **Shell safety scanner**: Rules-based preflight scanner for shell-based skills — detects `rm -rf`, `sudo`, `curl | sh`, path traversal, and 20+ other dangerous patterns with blocking/warning/advisory verdicts.
+- **MCP management UI**: `/mcp` page for viewing MCP server status, transport, tool/resource counts, and configuration guidance.
+- **Session browser**: `/sessions` page with status filtering, transcript viewer, and JSON/Markdown export.
+- **Cost dashboard**: `/usage` page with provider health, request counts, error rates, and cost estimation.
+- **Engineering doctrine**: `BELIEFS.md` codifies 10 engineering principles. ESLint strict rules added for console, complexity, function size, and security patterns.
+- **Capability grant lifecycle**: SQLite persistence, revoke API, and grant routes for full issue → use → expire → revoke flow.
+- **SIEM export**: JSONL file export and HTTP webhook export sinks on the existing hash-chained audit trail.
+- **Linux packaging**: Complete .deb and .AppImage packaging with build scripts.
+
+<details>
+<summary>Previous updates (2026-03-27)</summary>
 
 - **Communication persona system**: MBTI-based communication persona with 16 personality templates, 9 configurable dimensions (tone, verbosity, structure, question style, directness, emoji style, jargon tolerance, assumption style, confirmation style), explicit/learned/template/default priority cascade, and real-time injection into the agent system prompt.
 - **Learning-adaptive communication**: Learned preference facts from the self-learning pipeline now feed directly into persona resolution, enabling Friday to adapt communication style based on observed user behavior with confidence-decaying Bayesian-inspired updates.
@@ -41,6 +55,8 @@ For everything beyond the main product overview, use the [Documentation Hub](doc
 - **Non-cloud runtime stabilization**: graceful degradation for companion, providers, memory, sessions, skills, and UI mount failures.
 - **Rules audit canonicalization**: migration v059 unifies rule evaluation logs into canonical audit table.
 - **Release preflight and Docker E2E**: layered Docker smoke tests, release preflight checks, and cloud contract verification.
+
+</details>
 
 <details>
 <summary>Previous updates (2026-02-24)</summary>
@@ -1207,6 +1223,7 @@ export FRIDAY_MCP_SERVERS='[
 - **Learning feedback is not user-visible**: While Friday learns user preferences and applies them to communication style, there is no UI surface that shows users what has been learned or lets them review/edit learned facts directly.
 - **Auto-fix execution is still partially directive-level**: The default executor/verifier path now covers `retry_node`, `switch_model_fallback`, `trim_payload`, `apply_config_patch`, `grant_permission`, and `pause_workflow` with deterministic payload markers and verification evidence, rather than returning `false` unconditionally. `disable_skill` is the main hub-wired side-effect today. The remaining step kinds still need richer hub/runtime wiring before they count as fully automated operational repairs.
 - **Cross-platform releases**: Only macOS native companion exists. iOS, Android, and Windows are planned but not yet implemented. The Node.js hub runs on any platform with Node 22+.
+- **WebDAV sync**: Cross-device configuration synchronization via WebDAV is planned but deferred to post-release.
 
 ---
 

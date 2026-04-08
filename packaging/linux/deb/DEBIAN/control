@@ -1,0 +1,10 @@
+Package: friday
+Version: 0.4.2
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Friday Maintainers <opensource@friday.local>
+Depends: nodejs (>= 18)
+Description: Friday Agent OS
+ Friday is a visual AI automation platform that bundles the Node hub,
+ web Operator Console, and local runtime for autonomous task execution.

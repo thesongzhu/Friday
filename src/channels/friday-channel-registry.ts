@@ -131,7 +131,12 @@ export interface FridayChannelRegistry {
 
 const HEALTH_CHECK_DEFAULT_INTERVAL_MS = 30_000;
 
-export function createFridayChannelRegistry(): FridayChannelRegistry {
+export interface FridayChannelRegistryOptions {
+  /** Optional grant check called before register/unregister mutations. Throws if denied. */
+  checkMutationGrant?: (action: "register" | "unregister", kind: string) => void;
+}
+
+export function createFridayChannelRegistry(options?: FridayChannelRegistryOptions): FridayChannelRegistry {
   const entries = new Map<string, FridayChannelRegistryEntry>();
   const healthState = new Map<string, {
     restartCount: number;
@@ -254,6 +259,7 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
 
   return {
     register(plugin, allowlist = {}) {
+      options?.checkMutationGrant?.("register", plugin.kind);
       if (entries.has(plugin.kind)) {
         throw new FridayDomainError("CONFLICT", `Channel kind "${plugin.kind}" is already registered`, { httpStatus: 409 });
       }
@@ -262,6 +268,7 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
     },
 
     async unregister(kind) {
+      options?.checkMutationGrant?.("unregister", kind);
       const entry = entries.get(kind);
       if (!entry) return;
       if (entry.running) {

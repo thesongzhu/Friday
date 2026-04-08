@@ -65,6 +65,7 @@ import { V063_AUTH_PROFILES_MIGRATION } from "./v063-auth-profiles.js";
 import { V064_SUBAGENT_FORK_MODE_MIGRATION } from "./v064-subagent-fork-mode.js";
 import { V065_AGENT_RUN_CHECKPOINT_MANIFEST_MIGRATION } from "./v065-agent-run-checkpoint-manifest.js";
 import { V066_AGENT_RUN_METADATA_MIGRATION } from "./v066-agent-run-metadata.js";
+import { V067_CAPABILITY_GRANTS_MIGRATION } from "./v067-capability-grants.js";
 
 /**
  * Ordered migration list, always ascending by version.
@@ -136,6 +137,7 @@ export const FRIDAY_SQLITE_MIGRATIONS: readonly FridaySqliteMigration[] = [
   V064_SUBAGENT_FORK_MODE_MIGRATION,
   V065_AGENT_RUN_CHECKPOINT_MANIFEST_MIGRATION,
   V066_AGENT_RUN_METADATA_MIGRATION,
+  V067_CAPABILITY_GRANTS_MIGRATION,
 ];
 
 export { V003_PROVIDER_USAGE_COST_ROUTING_MIGRATION };
@@ -202,3 +204,4 @@ export { V063_AUTH_PROFILES_MIGRATION };
 export { V064_SUBAGENT_FORK_MODE_MIGRATION };
 export { V065_AGENT_RUN_CHECKPOINT_MANIFEST_MIGRATION };
 export { V066_AGENT_RUN_METADATA_MIGRATION };
+export { V067_CAPABILITY_GRANTS_MIGRATION };

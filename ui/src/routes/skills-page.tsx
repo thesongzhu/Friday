@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BadgeCheck, Download, Package, RefreshCcw, ShieldCheck, Trash2 } from "lucide-react";
+import { BadgeCheck, Download, Link2, Package, RefreshCcw, ShieldCheck, Trash2 } from "lucide-react";
+import { DeepLinkPreviewDialog } from "@/components/deeplink/deeplink-preview-dialog";
 import { toast } from "sonner";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { HelpTooltip } from "@/components/core/help-tooltip";
@@ -122,6 +123,7 @@ export function SkillsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
   const [recentGeneratorSessionId, setRecentGeneratorSessionId] = useState<string | null>(null);
+  const [showImportDialog, setShowImportDialog] = useState(false);
   const requestedSkillId = searchParams.get("skillId");
   const requestedFocus = searchParams.get("focus");
   const focus: FridaySkillFocus =
@@ -279,6 +281,24 @@ export function SkillsPage() {
   return (
     <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
       <div className="space-y-4">
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setShowImportDialog(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-1.5 text-sm text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-hover)]"
+          >
+            <Link2 className="h-3.5 w-3.5" />
+            Import from URL
+          </button>
+        </div>
+        {showImportDialog ? (
+          <DeepLinkPreviewDialog
+            onClose={() => setShowImportDialog(false)}
+            onApplied={() => {
+              void queryClient.invalidateQueries({ queryKey: ["skills"] });
+            }}
+          />
+        ) : null}
         <ShellCard
           eyebrow="Generator"
           title="Package a skill from a guided session"

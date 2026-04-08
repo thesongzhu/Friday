@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Remove the convenience symlink created during post-install.
+if [ -L /usr/local/bin/friday ]; then
+  rm -f /usr/local/bin/friday
+fi
+
+echo "friday: pre-remove cleanup complete"

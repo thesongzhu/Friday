@@ -450,6 +450,17 @@ export interface FridayAgentCapabilityGrantUsedPayload {
   surface?: string;
 }
 
+export interface FridayAgentCapabilityGrantRevokedPayload {
+  runId?: string;
+  grantId: string;
+  toolName?: string;
+  revokedBy: "manual" | "expiration" | "policy";
+  reason?: string;
+  principalId?: string;
+  sessionKey?: string;
+  surface?: string;
+}
+
 export interface FridayAgentToolStartPayload {
   runId: string;
   toolName: string;
@@ -603,6 +614,7 @@ export interface FridayAgentEventMap {
   "agent.run.capability_grant_issued": FridayAgentCapabilityGrantIssuedPayload;
   "agent.run.capability_grant_denied": FridayAgentCapabilityGrantDeniedPayload;
   "agent.run.capability_grant_used": FridayAgentCapabilityGrantUsedPayload;
+  "agent.run.capability_grant_revoked": FridayAgentCapabilityGrantRevokedPayload;
   "agent.run.executing": FridayAgentRunExecutingPayload;
   "agent.run.progress": FridayAgentRunProgressPayload;
   "agent.run.tool_start": FridayAgentToolStartPayload;

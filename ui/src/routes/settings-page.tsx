@@ -218,7 +218,7 @@ export function SettingsPage() {
         model: input.model,
         backendKind: input.backendKind,
         taskProfileId: input.taskProfileId,
-        reason: "Pinned from settings operator console",
+        reason: "Pinned from settings admin",
       }),
     onSuccess: async () => {
       toast.success("Route pinned");
@@ -252,7 +252,7 @@ export function SettingsPage() {
       learningApi.setLessonEnabled({
         lessonId: input.lessonId,
         enabled: input.enabled,
-        reason: "Updated from settings operator console",
+        reason: "Updated from settings admin",
       }),
     onSuccess: async () => {
       toast.success("Lesson updated");
@@ -268,7 +268,7 @@ export function SettingsPage() {
       learningApi.demotePattern({
         patternId,
         factor: 0.5,
-        reason: "Demoted from settings operator console",
+        reason: "Demoted from settings admin",
       }),
     onSuccess: async () => {
       toast.success("Pattern demoted");

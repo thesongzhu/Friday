@@ -65,6 +65,10 @@ export type {
   FridaySubagentCompletedPayload,
   FridayAgentRunDegradedPayload,
   FridayAgentModeChangedPayload,
+  FridayAgentCapabilityGrantIssuedPayload,
+  FridayAgentCapabilityGrantDeniedPayload,
+  FridayAgentCapabilityGrantUsedPayload,
+  FridayAgentCapabilityGrantRevokedPayload,
 } from "./model/friday-agent.types.js";
 
 // ─── Runtime ───

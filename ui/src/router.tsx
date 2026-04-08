@@ -28,6 +28,9 @@ const SetupPage = lazy(async () => import("@/routes/setup-page").then((module) =
 const SkillsPage = lazy(async () => import("@/routes/skills-page").then((module) => ({ default: module.SkillsPage })));
 const SkillGeneratorPage = lazy(async () => import("@/routes/skill-generator-page").then((module) => ({ default: module.SkillGeneratorPage })));
 const WorkflowBuilderPage = lazy(async () => import("@/routes/workflow-builder-page").then((module) => ({ default: module.WorkflowBuilderPage })));
+const McpPage = lazy(async () => import("@/routes/mcp-page").then((module) => ({ default: module.McpPage })));
+const UsagePage = lazy(async () => import("@/routes/usage-page").then((module) => ({ default: module.UsagePage })));
+const SessionsPage = lazy(async () => import("@/routes/sessions-page").then((module) => ({ default: module.SessionsPage })));
 const ChatPage = lazy(async () => import("@/routes/chat-page").then((module) => ({ default: module.ChatPage })));
 const MemoryPage = lazy(async () => import("@/routes/memory-page").then((module) => ({ default: module.MemoryPage })));
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
@@ -365,6 +368,22 @@ export const router = createBrowserRouter([
           },
           { path: "automations/:automationId", element: <LegacyRedirectPage /> },
           {
+            path: "mcp",
+            element: (
+              <RouteSuspense title="Loading MCP" detail="Friday is preparing the MCP server management surface.">
+                <McpPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "usage",
+            element: (
+              <RouteSuspense title="Loading usage" detail="Friday is preparing the usage and cost dashboard.">
+                <UsagePage />
+              </RouteSuspense>
+            ),
+          },
+          {
             path: "settings",
             element: (
               <RouteSuspense title="Loading settings" detail="Friday is preparing runtime settings and diagnostics.">
@@ -374,8 +393,14 @@ export const router = createBrowserRouter([
           },
           { path: "skills/*", element: <Navigate to="/skills" replace /> },
           { path: "workflows/*", element: <LegacyRedirectPage /> },
-          { path: "sessions", element: <LegacyRedirectPage /> },
-          { path: "sessions/*", element: <LegacyRedirectPage /> },
+          {
+            path: "sessions",
+            element: (
+              <RouteSuspense title="Loading sessions" detail="Friday is preparing the session browser.">
+                <SessionsPage />
+              </RouteSuspense>
+            ),
+          },
           {
             path: "memory",
             element: (
