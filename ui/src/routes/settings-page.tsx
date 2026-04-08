@@ -9,6 +9,8 @@ import type {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Brain, Cpu, DollarSign, KeyRound, MessageCircleMore, Shield, Sliders, Wifi, Wrench } from "lucide-react";
 import { toast } from "sonner";
+import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
+import { channelsApi } from "@/lib/api/channels";
 import { healthApi } from "@/lib/api/health";
 import { learningApi } from "@/lib/api/learning";
 import { providerUsageApi } from "@/lib/api/provider-usage";
@@ -41,6 +43,26 @@ function toneForStatus(value?: string): "neutral" | "success" | "warning" | "dan
 function toneForProviderLane(value: "primary" | "fallback" | "standby" | "disabled"): "neutral" | "success" | "warning" {
   if (value === "primary") return "success";
   if (value === "fallback") return "warning";
+  return "neutral";
+}
+
+function toneForMcpState(value: "configured" | "discoverable" | "loaded" | "deferred"): "neutral" | "success" | "warning" {
+  if (value === "loaded") return "success";
+  if (value === "deferred") return "warning";
+  return "neutral";
+}
+
+function toneForChannelState(value: "disconnected" | "connecting" | "connected" | "error"): "neutral" | "success" | "warning" | "danger" {
+  if (value === "connected") return "success";
+  if (value === "connecting") return "warning";
+  if (value === "error") return "danger";
+  return "neutral";
+}
+
+function toneForCredentialStatus(value: "unknown" | "configured" | "missing" | "invalid"): "neutral" | "success" | "warning" | "danger" {
+  if (value === "configured") return "success";
+  if (value === "missing") return "warning";
+  if (value === "invalid") return "danger";
   return "neutral";
 }
 
@@ -92,6 +114,20 @@ export function SettingsPage() {
   const { data: providerHealth = [] } = useQuery({
     queryKey: ["settings", "provider-health"],
     queryFn: () => providersApi.listHealth(),
+    retry: 0,
+    refetchInterval: 15_000,
+  });
+
+  const { data: assistantDiagnostics } = useQuery({
+    queryKey: ["settings", "assistant-diagnostics"],
+    queryFn: () => assistantDiagnosticsApi.get(),
+    retry: 0,
+    refetchInterval: 15_000,
+  });
+
+  const { data: channels = [] } = useQuery({
+    queryKey: ["settings", "channels"],
+    queryFn: () => channelsApi.list(),
     retry: 0,
     refetchInterval: 15_000,
   });
@@ -287,6 +323,15 @@ export function SettingsPage() {
   });
 
   const preview = buildPersonaPreview(draft.settings);
+  const mcpStates = assistantDiagnostics?.mcpServerStates ?? [];
+  const loadedMcpCount = mcpStates.filter((state) => state.state === "loaded").length;
+  const connectedChannelCount = channels.filter((channel) => channel.health.state === "connected").length;
+  const channelAttentionCount = channels.filter((channel) =>
+    channel.health.state === "error"
+    || channel.health.credentialStatus === "missing"
+    || channel.health.credentialStatus === "invalid"
+    || Boolean(channel.health.blockedReason),
+  ).length;
 
   return (
     <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
@@ -812,6 +857,96 @@ export function SettingsPage() {
           ) : (
             <p className="text-sm text-[color:var(--color-text-secondary)]">Security data unavailable.</p>
           )}
+        </ShellCard>
+
+        <ShellCard eyebrow="Capability Management" title="MCP And Channel Surfaces">
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <DiagnosticTile icon={<Wrench className="h-4 w-4" />} label="MCP Loaded" value={`${loadedMcpCount}/${mcpStates.length}`} />
+              <DiagnosticTile icon={<MessageCircleMore className="h-4 w-4" />} label="Channels Connected" value={`${connectedChannelCount}/${channels.length}`} />
+              <DiagnosticTile icon={<AlertTriangle className="h-4 w-4" />} label="Attention Needed" value={String(channelAttentionCount)} />
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">MCP servers</p>
+              {mcpStates.length === 0 ? (
+                <p className="text-sm text-[color:var(--color-text-secondary)]">No MCP servers configured for this runtime.</p>
+              ) : (
+                mcpStates.map((state) => (
+                  <div key={state.serverId} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-[color:var(--color-text-primary)]">{state.serverId}</p>
+                        <p className="text-xs text-[color:var(--color-text-tertiary)]">{state.transport} transport</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <StatusPill tone={toneForMcpState(state.state)}>{state.state}</StatusPill>
+                        <StatusPill tone={state.lazyDiscovery ? "warning" : "neutral"}>
+                          {state.lazyDiscovery ? "lazy" : "eager"}
+                        </StatusPill>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <DiagnosticRow label="Tools" value={String(state.toolCount ?? 0)} />
+                      <DiagnosticRow label="Resources" value={String(state.resourceCount ?? 0)} />
+                      <DiagnosticRow label="Prompts" value={String(state.promptCount ?? 0)} />
+                      <DiagnosticRow label="Last Loaded" value={formatTimestamp(state.lastLoadedAt)} />
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Channel health</p>
+              {channels.length === 0 ? (
+                <p className="text-sm text-[color:var(--color-text-secondary)]">No channels are registered in this runtime.</p>
+              ) : (
+                channels.map((channel) => (
+                  <div key={channel.kind} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-[color:var(--color-text-primary)]">{channel.kind}</p>
+                        <p className="text-xs text-[color:var(--color-text-tertiary)]">
+                          running {String(channel.running)} · restarts {channel.health.restartCount}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <StatusPill tone={toneForChannelState(channel.health.state)}>{channel.health.state}</StatusPill>
+                        <StatusPill tone={toneForCredentialStatus(channel.health.credentialStatus)}>
+                          {channel.health.credentialStatus}
+                        </StatusPill>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <DiagnosticRow label="Blocked Reason" value={channel.health.blockedReason ?? "None"} />
+                      <DiagnosticRow label="Last Error" value={channel.health.lastError ?? "None"} />
+                      <DiagnosticRow
+                        label="Allowlist"
+                        value={`users ${channel.allowlist.allowedUsersCount} · chats ${channel.allowlist.allowedChatsCount}`}
+                      />
+                      <DiagnosticRow
+                        label="Support"
+                        value={channel.contract?.supports
+                          ? [
+                              channel.contract.supports.directMessages ? "DM" : null,
+                              channel.contract.supports.groupMessages ? "Group" : null,
+                              channel.contract.supports.threads ? "Threads" : null,
+                              channel.contract.supports.typing ? "Typing" : null,
+                            ].filter(Boolean).join(", ") || "None"
+                          : "Unknown"}
+                      />
+                    </div>
+                    {channel.contract?.curatedSkillIds && channel.contract.curatedSkillIds.length > 0 ? (
+                      <p className="mt-3 text-xs text-[color:var(--color-text-tertiary)]">
+                        Curated skills: {channel.contract.curatedSkillIds.join(", ")}
+                      </p>
+                    ) : null}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </ShellCard>
 
         <ShellCard eyebrow="Capabilities" title="Tool Availability">

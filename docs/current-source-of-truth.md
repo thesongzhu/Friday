@@ -78,6 +78,7 @@ This document is the current architecture reference for steady-state Friday runt
 
 ## Channel secret and supervisor truth
 
+- `/v1/channels*` is the canonical operator-facing read surface for channel supervisor state, credential posture, allowlist summary, and capability contract truth.
 - Canonical channel secret refs follow the same secret-input family as providers: `env:NAME`, legacy `$NAME`, `file:/absolute/path`, `secret://...`, and operator-gated `command:...`.
 - In strict mode, plaintext channel secrets are blocked. Setup and bootstrap may preserve refs, but runtime channel init must resolve them before handing config to the channel plugin.
 - `FridayChannelRegistryView` is expected to surface both transport status and supervisor health. Health includes `state`, `restartCount`, `lastError`, `blockedReason`, and `credentialStatus` so skills, diagnostics, and operator surfaces do not need to infer restart state heuristically.
@@ -108,6 +109,7 @@ This document is the current architecture reference for steady-state Friday runt
 - `/v1/marketplace/assets*` is the canonical public catalog and detail read surface for marketplace `skill`, `workflow`, and `agent` assets. It unifies discovery and detail views while keeping the skills lifecycle as the install/verify/enable backbone.
 - `/v1/marketplace/creators*` and `/v1/marketplace/assets/:assetId/support` are the canonical creator-support surfaces for asset-backed support events, creator profiles, and reputation summaries.
 - `/skills` is the operator-facing lifecycle surface for installed skills, updates, verification evidence, source policy, and generated-skill handoff from `/assistant`.
+- Skill verification evidence now includes a canonical `preflight` summary with `ready`, `needs_review`, or `blocked` verdicts plus blocking/warning/advisory checks across manifest, integrity, runtime requirements, permissions, dry-run, and trust.
 - The **skills lifecycle is the primary marketplace backbone**. It remains the canonical trust, verification, install, enable, update, delete, and source-management path for marketplace-delivered capabilities.
 - Public marketplace support for `workflow` and `agent` assets extends this same backbone instead of replacing it with a separate store or commerce-first contract.
 - Public marketplace assets are **declarative-first**. Publicly listed `skill`, `workflow`, and `agent` assets must use framework-owned execution plus explicit permission manifests; arbitrary executable package runtimes are not part of the primary public marketplace contract.
@@ -207,6 +209,10 @@ This document is the current architecture reference for steady-state Friday runt
 - `GET /v1/workflow-versions/:versionId` is the canonical direct fetch route for workflow versions alongside `/v1/workflows/:workflowId/versions`.
 - `/v1/realtime/*` is the canonical realtime transport surface. WebSocket clients may connect through `/v1/realtime/ws`, and `/v1/ws` remains a thin compatibility alias for the same gateway.
 - `/v1/workflow-approvals*` is the canonical workflow approval surface; `/v1/approvals*` remains a compatibility alias for legacy or SSD-shaped clients.
+- `npm run check:architecture-boundaries` is the canonical repo-level import guard for core infrastructure layers (`state`, `security`, `channels`, `providers`) and must stay green before merge.
+- `npm run check:security-doctor` is the canonical repo-level guard for secret refs, capability-grant evidence, provider/channel doctor surfaces, and their targeted safety tests.
+- `npm run check:audit-integrity` is the canonical repo-level audit integrity guard for JSONL audit writer invariants, wrapper coverage, and audit-path documentation.
+- `npm run check:desktop-release-pipeline` is the canonical repo-level release completeness check for the current macOS desktop pipeline wiring. It validates required scripts, packaging inputs, runbook presence, and local-mode release environment readiness.
 
 ## Canonical semantics
 
@@ -233,8 +239,12 @@ Every contract-affecting cleanup batch must pass:
 - `npm run typecheck`
 - `npm run test:contracts`
 - `npm run test:adversarial`
+- `npm run check:architecture-boundaries`
+- `npm run check:security-doctor`
+- `npm run check:audit-integrity`
 - `npm test`
 - `npm run check:provider-reliability`
+- `npm run check:desktop-release-pipeline`
 - `npm run closeout:phase1`
 - `npm run closeout:phase2`
 - `npm run closeout:phase3`

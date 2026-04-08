@@ -33,6 +33,7 @@ import type { FridayAgentCapabilitiesSnapshot } from "#agent";
 import type { FridayAgentTaskStatusSnapshot } from "#agent";
 import type { FridayDeterministicPipelineRoutesDeps } from "../http/routes/friday-deterministic-pipeline-routes.js";
 import type { FridayDesktopRoutesDeps } from "../http/routes/friday-desktop-routes.js";
+import type { FridayChannelRoutesDeps } from "../http/routes/friday-channel-routes.js";
 import type { FridayDiscoveryRoutesDeps } from "../http/routes/friday-discovery-routes.js";
 import type { FridayMcpServerRoutesDeps } from "../http/routes/friday-mcp-server-routes.js";
 import type { FridayMarketplaceCommerceRoutesDeps } from "../http/routes/friday-marketplace-commerce-routes.js";
@@ -90,6 +91,7 @@ export interface FridayApiRuntime {
   agentLoop?: FridayAgentLoopRoutesDeps;
   uix?: FridayUixRoutesDeps;
   system?: FridaySystemRoutesDeps;
+  channels?: FridayChannelRoutesDeps;
 }
 
 export interface CreateFridayApiRuntimeDeps {
@@ -194,6 +196,8 @@ export interface CreateFridayApiRuntimeDeps {
   agentLoop?: FridayAgentLoopRoutesDeps;
   /** Optional: desktop control route surface. */
   desktop?: FridayDesktopRoutesDeps;
+  /** Optional: channel health and capability route surface. */
+  channels?: FridayChannelRoutesDeps;
   /** Optional: Agent OS system route surface. */
   system?: FridaySystemRoutesDeps;
   /** Optional: beginner-friendly UIX route surface. */

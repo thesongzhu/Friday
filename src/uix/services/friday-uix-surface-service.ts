@@ -456,7 +456,29 @@ const TEMPLATE_DEFINITIONS: FridayActionTemplateSummary[] = [
 ];
 
 const FRIDAY_UIX_PROFILE_TYPES = new Set(["beginner", "developer", "creator", "business"]);
-const FRIDAY_UIX_PREFERENCE_KEYS = new Set(["user.profile_type", "user.onboarded_at"]);
+const FRIDAY_UIX_DISPLAY_LOCALES = new Set(["zh", "en"]);
+const FRIDAY_UIX_PRIMARY_SURFACES = new Set(["home", "chat", "packs", "assistant"]);
+const FRIDAY_UIX_HOME_WIDGET_IDS = new Set([
+  "active_now",
+  "pending_approvals",
+  "scheduled_soon",
+  "recent_results",
+  "recommended_to_add",
+]);
+const FRIDAY_UIX_PREFERENCE_KEYS = new Set([
+  "user.profile_type",
+  "user.onboarded_at",
+  "display.locale",
+  "navigation.lastPrimarySurface",
+  "home.pinnedPackIds",
+  "home.packOrder",
+  "home.widgetOrder",
+  "home.visibleWidgets",
+]);
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
 
 const HIGH_RISK_KEYWORDS = [
   "delete",
@@ -558,6 +580,18 @@ function isValidUixPreference(
   }
   if (key === "user.onboarded_at") {
     return typeof value === "string" && value.trim().length > 0 && Number.isFinite(Date.parse(value));
+  }
+  if (key === "display.locale") {
+    return typeof value === "string" && FRIDAY_UIX_DISPLAY_LOCALES.has(value);
+  }
+  if (key === "navigation.lastPrimarySurface") {
+    return typeof value === "string" && FRIDAY_UIX_PRIMARY_SURFACES.has(value);
+  }
+  if (key === "home.pinnedPackIds" || key === "home.packOrder") {
+    return isStringArray(value);
+  }
+  if (key === "home.widgetOrder" || key === "home.visibleWidgets") {
+    return isStringArray(value) && value.every((item) => FRIDAY_UIX_HOME_WIDGET_IDS.has(item));
   }
   return false;
 }

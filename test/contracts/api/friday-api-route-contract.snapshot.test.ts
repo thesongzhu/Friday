@@ -21,6 +21,7 @@ import {
 
 import type {
   FridayAutoFixRoutesDeps,
+  FridayChannelRoutesDeps,
   FridayDesktopRoutesDeps,
   FridayDiagnosisRoutesDeps,
   FridayDiscoveryRoutesDeps,
@@ -117,6 +118,7 @@ const EXTENDED_ROUTE_SENTINELS = {
   multiTenantSecurity: "security.tenants.list",
   observability: "observability.traces.search",
   desktop: "desktop.actions.execute",
+  channels: "channels.list",
   system: "system.session.get",
   discovery: "discovery.scan",
   mcpServer: "mcp.server.rpc",
@@ -537,6 +539,12 @@ function createContractRuntime(options: { includeExtendedRouteFamilies?: boolean
         multiTenantSecurity: {} as FridayMultiTenantSecurityRoutesDeps,
         observability: {} as FridayObservabilityRoutesDeps,
         desktop: {} as FridayDesktopRoutesDeps,
+        channels: {
+          registry: {
+            listViews: () => [],
+            describe: () => undefined,
+          },
+        } as FridayChannelRoutesDeps,
         system: {} as FridaySystemRoutesDeps,
         discovery: {} as FridayDiscoveryRoutesDeps,
         mcpServer: {} as FridayMcpServerRoutesDeps,
@@ -669,6 +677,7 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         multiTenantSecurity: false,
         observability: false,
         desktop: false,
+        channels: false,
         system: false,
         discovery: false,
         mcpServer: false,
@@ -684,6 +693,7 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         multiTenantSecurity: true,
         observability: true,
         desktop: true,
+        channels: true,
         system: true,
         discovery: true,
         mcpServer: true,

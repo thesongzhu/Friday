@@ -171,6 +171,7 @@ function renderMarkdown(summary) {
     `- Branch: ${summary.branchConformance?.branch?.input ?? "n/a"}`,
     `- Ahead: ${String(summary.branchConformance?.ahead ?? 0)}`,
     `- Behind: ${String(summary.branchConformance?.behind ?? 0)}`,
+    `- Merge ready: ${String(summary.branchConformance?.shouldMerge ?? false)}`,
     `- No-op: ${String(summary.branchConformance?.shouldNoop ?? false)}`,
     "",
   ].join("\n");
@@ -231,8 +232,9 @@ function deriveGateReasons({ preflight, smoke, dailyCore, branchConformance, ski
   if (!hasOnlyPassed(dailyCore)) {
     reasons.push("daily core suite is not fully passed");
   }
-  if (branchConformance?.shouldNoop !== true) {
-    reasons.push("branch under test is not a no-op relative to main");
+  const branchReady = branchConformance?.shouldNoop === true || branchConformance?.shouldMerge === true;
+  if (!branchReady) {
+    reasons.push("branch under test is neither merge-ready nor patch-equivalent to main");
   }
   if (skillConformance?.ok !== true) {
     reasons.push("skill conformance tests failed");

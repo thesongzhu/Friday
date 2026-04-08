@@ -664,6 +664,28 @@ export interface SkillVerificationEvidence {
   skillId: string;
   verifiedAt: string;
   ok: boolean;
+  preflight: {
+    verdict: "ready" | "needs_review" | "blocked";
+    counts: {
+      blocking: number;
+      warning: number;
+      advisory: number;
+    };
+    checks: Array<{
+      id:
+        | "manifest"
+        | "integrity"
+        | "dependencies"
+        | "requirements"
+        | "permissions"
+        | "runtime"
+        | "trust";
+      label: string;
+      level: "pass" | "blocking" | "warning" | "advisory";
+      summary: string;
+      details: string[];
+    }>;
+  };
   manifestVerdict: {
     ok: boolean;
     issues: Array<{
@@ -1493,6 +1515,39 @@ export interface McpServerState {
   resourceCount?: number;
   promptCount?: number;
   lastLoadedAt?: string;
+}
+
+export interface ChannelRegistryView {
+  kind: string;
+  running: boolean;
+  status: "disconnected" | "connecting" | "connected" | "error";
+  health: {
+    state: "disconnected" | "connecting" | "connected" | "error";
+    restartCount: number;
+    lastError?: string;
+    blockedReason?: string;
+    credentialStatus: "unknown" | "configured" | "missing" | "invalid";
+  };
+  diagnostics?: Record<string, unknown>;
+  contract?: {
+    curatedSkillIds?: string[];
+    supports?: {
+      directMessages: boolean;
+      groupMessages: boolean;
+      threads: boolean;
+      typing: boolean;
+    };
+    toolRestrictions?: {
+      allowlist?: string[];
+      blocklist?: string[];
+    };
+  };
+  allowlist: {
+    hasAllowedUsers: boolean;
+    allowedUsersCount: number;
+    hasAllowedChats: boolean;
+    allowedChatsCount: number;
+  };
 }
 
 export interface AssistantDiagnostics {
