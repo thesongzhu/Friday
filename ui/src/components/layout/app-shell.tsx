@@ -76,7 +76,7 @@ export function AppShell() {
     <div className="min-h-screen bg-[color:var(--color-bg-base)] text-[color:var(--color-text-primary)]">
       <div className="relative flex min-h-screen w-full pb-24 lg:pb-0">
         <aside data-testid="app-shell-rail" className="hidden lg:block lg:w-[248px] lg:shrink-0">
-          <div className="sticky top-0 flex min-h-screen flex-col border-r border-[color:var(--color-border-soft)] bg-[rgba(252,247,240,0.94)] px-4 py-5 shadow-[inset_-1px_0_0_rgba(51,41,34,0.04)] backdrop-blur-md">
+          <div className="sticky top-0 flex min-h-screen flex-col border-r border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-chrome)] px-4 py-5 shadow-[inset_-1px_0_0_rgba(51,41,34,0.04)] backdrop-blur-md">
             <div className="border-b border-[color:var(--color-border-soft)] pb-4">
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[color:var(--color-text-faint)]">Friday</p>
               <h1 className="mt-2 text-xl font-semibold tracking-tight text-[color:var(--color-text-primary)]">
@@ -154,7 +154,7 @@ export function AppShell() {
         </aside>
 
         <div className="min-w-0 flex flex-1 flex-col px-4 pt-4 lg:px-8 lg:pt-5">
-          <header className="sticky top-4 z-30 rounded-[28px] border border-[color:var(--color-border-soft)] bg-[rgba(252,247,240,0.94)] px-4 py-3 shadow-[var(--shadow-floating)] backdrop-blur-md lg:hidden">
+          <header className="sticky top-4 z-30 rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-chrome)] px-4 py-3 shadow-[var(--shadow-floating)] backdrop-blur-md lg:hidden">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Friday</p>
@@ -232,7 +232,7 @@ export function AppShell() {
         </div>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-[color:var(--color-border-soft)] bg-[rgba(252,247,240,0.92)] px-3 py-2 backdrop-blur-xl lg:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-chrome-strong)] px-3 py-2 backdrop-blur-xl lg:hidden">
         <div className="mx-auto grid max-w-2xl grid-cols-5 gap-2">
           {primaryNav.map((item) => (
             <NavLink

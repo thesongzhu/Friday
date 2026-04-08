@@ -56,7 +56,7 @@ export function ChoiceCard(props: ChoiceCardProps) {
                 className={cn(
                   "rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em]",
                   locale === "zh"
-                    ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent)] text-white"
+                    ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent-strong)] text-[color:var(--color-text-primary)] font-bold"
                     : "border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-text-primary)]",
                 )}
               >

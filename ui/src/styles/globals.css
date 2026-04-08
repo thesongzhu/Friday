@@ -37,6 +37,9 @@
   --density-section-gap: 1.25rem;
   --density-grid-gap: 1rem;
 
+  --color-bg-chrome: rgba(252, 247, 240, 0.94);
+  --color-bg-chrome-strong: rgba(252, 247, 240, 0.92);
+
   color-scheme: light;
 }
 
@@ -70,6 +73,9 @@
   --shadow-floating: 0 9px 26px rgba(88, 68, 42, 0.07);
 
   --font-display: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+
+  --color-bg-chrome: rgba(253, 247, 240, 0.95);
+  --color-bg-chrome-strong: rgba(253, 247, 240, 0.93);
 
   --density-card-padding: 1.15rem;
   --density-card-radius: 22px;
@@ -113,9 +119,9 @@
     min-height: 100vh;
     margin: 0;
     background:
-      radial-gradient(circle at top left, rgba(108, 127, 146, 0.08), transparent 28%),
+      radial-gradient(circle at top left, var(--color-accent-muted), transparent 28%),
       radial-gradient(circle at bottom right, rgba(51, 41, 34, 0.05), transparent 24%),
-      linear-gradient(180deg, #faf2e7 0%, #f6eee3 100%);
+      linear-gradient(180deg, var(--color-bg-base) 0%, var(--color-bg-elevated) 100%);
     color: var(--color-text-primary);
     font-family: var(--font-display);
     font-feature-settings: "rlig" 1, "calt" 1;
