@@ -37,6 +37,8 @@ export default [
       "complexity": ["warn", 25],
       // Keep functions reasonably sized
       "max-lines-per-function": ["warn", { "max": 200, "skipBlankLines": true, "skipComments": true }],
+      // Discourage explicit any — warn first, escalate to error later.
+      "@typescript-eslint/no-explicit-any": "warn",
       // Baseline security linting with low churn.
       "security/detect-eval-with-expression": "error",
       "security/detect-new-buffer": "error",

@@ -71,6 +71,7 @@ import { createFridaySkillRoutes } from "../http/routes/friday-skill-routes.js";
 import { createFridayDesktopRoutes } from "../http/routes/friday-desktop-routes.js";
 import { createFridayChannelRoutes } from "../http/routes/friday-channel-routes.js";
 import { createFridayDeepLinkRoutes } from "../http/routes/friday-deeplink-routes.js";
+import { createFridayGrantRoutes } from "../http/routes/friday-grant-routes.js";
 import { createFridaySystemRoutes } from "../http/routes/friday-system-routes.js";
 import { createFridayUixRoutes } from "../http/routes/friday-uix-routes.js";
 import { createFridayDiscoveryRoutes } from "../http/routes/friday-discovery-routes.js";
@@ -1386,6 +1387,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register deep link routes (always available)
   for (const route of createFridayDeepLinkRoutes({})) {
+    routes.register(route);
+  }
+
+  // Register grant routes (always available)
+  for (const route of createFridayGrantRoutes({ listActiveGrants: async () => [], revokeGrant: async () => ({ revoked: false }) })) {
     routes.register(route);
   }
 

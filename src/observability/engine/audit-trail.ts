@@ -399,4 +399,53 @@ export class FridayAuditTrail {
     this.checkpoints.length = 0;
     this.nextSequenceNumber = 1;
   }
+
+  // ─── SIEM Export Adapters ───
+
+  /**
+   * Export all entries as JSONL (JSON Lines) string.
+   * Each line is a self-contained JSON object suitable for SIEM ingestion.
+   */
+  exportJsonl(filters?: Parameters<FridayAuditTrail["query"]>[0]): string {
+    const entries = filters ? this.query(filters) : this.getEntries();
+    return entries.map((entry) => JSON.stringify(entry)).join("\n");
+  }
+
+  /**
+   * Export entries via HTTP webhook POST.
+   * Sends a batch of entries as a JSON array to the given URL.
+   * Returns the number of entries sent.
+   */
+  async exportWebhook(
+    url: string,
+    options?: {
+      filters?: Parameters<FridayAuditTrail["query"]>[0];
+      headers?: Record<string, string>;
+      batchSize?: number;
+    },
+  ): Promise<{ sent: number; batches: number }> {
+    const entries = options?.filters ? this.query(options.filters) : this.getEntries();
+    const batchSize = options?.batchSize ?? 100;
+    let sent = 0;
+    let batches = 0;
+
+    for (let i = 0; i < entries.length; i += batchSize) {
+      const batch = entries.slice(i, i + batchSize);
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...options?.headers,
+        },
+        body: JSON.stringify({ entries: batch, exportedAt: new Date().toISOString() }),
+      });
+      if (!response.ok) {
+        throw new Error(`SIEM webhook export failed: ${String(response.status)} ${response.statusText}`);
+      }
+      sent += batch.length;
+      batches += 1;
+    }
+
+    return { sent, batches };
+  }
 }

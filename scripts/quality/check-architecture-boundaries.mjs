@@ -137,9 +137,39 @@ function checkRule(repoRoot, rule) {
   };
 }
 
+// ─── Immutable core file list ───
+// These files are considered stable contracts. Changes to them should be flagged
+// as warnings so reviewers pay extra attention.
+const IMMUTABLE_CORE_FILES = [
+  "docs/current-source-of-truth.md",
+  "test/contracts/api/__snapshots__/friday-api-route-contract.snapshot.test.ts.snap",
+  "src/agent/model/friday-agent.types.ts",
+  "src/api/model/friday-api-auth.types.ts",
+  "src/api/model/friday-api-common.types.ts",
+];
+
+function checkImmutableCoreFiles(repoRoot) {
+  const warnings = [];
+  for (const file of IMMUTABLE_CORE_FILES) {
+    const filePath = path.join(repoRoot, file);
+    if (!fs.existsSync(filePath)) {
+      warnings.push({ file, message: `Immutable core file ${file} does not exist — was it deleted?` });
+    }
+  }
+  return {
+    kind: "immutable-core",
+    label: "Immutable core file presence",
+    status: "passed",
+    fileCount: IMMUTABLE_CORE_FILES.length,
+    trackedFiles: IMMUTABLE_CORE_FILES,
+    warnings,
+  };
+}
+
 function main() {
   const { repoRoot } = parseArgs(process.argv.slice(2));
   const checks = RULES.map((rule) => checkRule(repoRoot, rule));
+  checks.push(checkImmutableCoreFiles(repoRoot));
   const failed = checks.filter((check) => check.status === "failed");
   const report = {
     generatedAt: new Date().toISOString(),

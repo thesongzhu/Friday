@@ -98,7 +98,8 @@ export interface FridaySkillPreflightCheck {
     | "requirements"
     | "permissions"
     | "runtime"
-    | "trust";
+    | "trust"
+    | "shell-safety";
   label: string;
   level: FridaySkillPreflightCheckLevel;
   summary: string;
@@ -209,6 +210,8 @@ export interface FridaySkillLifecycleService {
   deleteSkill(input: { skillId: string; deletedBy: string }): Promise<FridaySkillDeleteOutcome>;
   verifySkill(input: { skillId: string; userId: string }): Promise<FridaySkillVerificationEvidence>;
   validateManifest(manifest: unknown): FridayManifestValidationOutcome;
+  /** Install a skill from a GitHub repository URL. Fetches manifest, validates via preflight, installs. */
+  installFromGitHubUrl(url: string, userId: string): Promise<FridaySkillInstallOutcome>;
 }
 
 export interface CreateFridaySkillLifecycleServiceDeps {
@@ -377,6 +380,7 @@ function buildSkillPreflightSummary(input: {
   trustSummary: FridaySkillVerificationEvidence["trustSummary"];
   requirementPreview: FridaySkillRequirementPreview;
   permissionPreview: FridaySkillPermissionPreview;
+  shellSafety?: { verdict: "safe" | "needs_review" | "dangerous"; findingCount: number; blockingCount: number };
 }): FridaySkillPreflightSummary {
   const checks: FridaySkillPreflightCheck[] = [];
 
@@ -520,6 +524,24 @@ function buildSkillPreflightSummary(input: {
           : "Trust policy checks passed.",
     details: input.trustSummary.reasons,
   });
+
+  if (input.shellSafety) {
+    checks.push({
+      id: "shell-safety",
+      label: "Shell Safety",
+      level: input.shellSafety.verdict === "dangerous"
+        ? "blocking"
+        : input.shellSafety.verdict === "needs_review"
+          ? "warning"
+          : "pass",
+      summary: input.shellSafety.verdict === "dangerous"
+        ? `Shell safety scanner found ${String(input.shellSafety.blockingCount)} dangerous pattern(s).`
+        : input.shellSafety.verdict === "needs_review"
+          ? `Shell safety scanner found ${String(input.shellSafety.findingCount)} pattern(s) requiring review.`
+          : "Shell safety scanner found no concerning patterns.",
+      details: [],
+    });
+  }
 
   const counts = checks.reduce(
     (acc, check) => {
@@ -1553,6 +1575,29 @@ export function createFridaySkillLifecycleService(
           path: issue.path.join("."),
         })),
       };
+    },
+
+    async installFromGitHubUrl(url: string, userId: string): Promise<FridaySkillInstallOutcome> {
+      // Parse GitHub URL to extract owner/repo
+      const match = url.match(/github\.com\/([^/]+)\/([^/\s#?]+)/);
+      if (!match) {
+        return {
+          installed: false,
+          skill: null as unknown as FridaySkillInstallOutcome["skill"],
+          installation: null as unknown as FridaySkillInstallOutcome["installation"],
+          evidence: null as unknown as FridaySkillInstallOutcome["evidence"],
+          reason: "Invalid GitHub URL. Expected format: https://github.com/owner/repo",
+        } as unknown as FridaySkillInstallOutcome;
+      }
+      const [, owner, repo] = match;
+      const skillId = `github:${owner}/${repo}`;
+
+      // Attempt standard install by skill ID
+      return this.install({
+        skillId,
+        version: "latest",
+        userId,
+      });
     },
   };
 }
