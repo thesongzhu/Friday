@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { FridaySqliteLayer } from "#state";
 import { createFridayProviderService } from "#providers";
 import { resetMasterKeyCache } from "#providers";
@@ -91,6 +94,42 @@ describe("FridayProviderService", () => {
       });
 
       expect(profile.config.keySource.kind).toBe("secret-ref");
+    });
+
+    it("creates a provider with a file-ref key source", async () => {
+      const profile = await service.createProvider({
+        kind: "openai",
+        name: "OpenAI File Ref",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "file:/tmp/provider.key",
+        supportedModels: ["gpt-4o"],
+        validateOnSave: false,
+      });
+
+      expect(profile.config.keySource).toEqual({
+        kind: "file-ref",
+        path: "/tmp/provider.key",
+      });
+    });
+
+    it("creates a provider with a command-ref key source", async () => {
+      const profile = await service.createProvider({
+        kind: "openai",
+        name: "OpenAI Command Ref",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "command:printf test-command-key",
+        supportedModels: ["gpt-4o"],
+        validateOnSave: false,
+      });
+
+      expect(profile.config.keySource).toEqual({
+        kind: "command-ref",
+        command: "printf test-command-key",
+      });
     });
 
     it("creates a provider with no key (ollama)", async () => {
@@ -1876,6 +1915,46 @@ describe("FridayProviderService", () => {
       expect(updated.config.validation?.status).toBe("ok");
       expect(capturedHeaders["Authorization"]).toBe("Bearer test-ant-token-switch");
       expect(capturedHeaders["x-api-key"]).toBeUndefined();
+    });
+
+    it("validates file-ref credentials during provider revalidation", async () => {
+      const tempDir = mkdtempSync(path.join(tmpdir(), "friday-provider-"));
+      const keyPath = path.join(tempDir, "openai.key");
+      writeFileSync(keyPath, "file-key-123\n", "utf8");
+
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI File Ref",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: `file:${keyPath}`,
+          supportedModels: ["gpt-4o"],
+          validateOnSave: false,
+        });
+
+        const state = await service.validateProvider("test-id-0001");
+        expect(state.status).toBe("ok");
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it("validates command-ref credentials during provider revalidation", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI Command Ref",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "command:printf command-key-123",
+        supportedModels: ["gpt-4o"],
+        validateOnSave: false,
+      });
+
+      const state = await service.validateProvider("test-id-0001");
+      expect(state.status).toBe("ok");
     });
   });
 });

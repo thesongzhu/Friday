@@ -83,7 +83,12 @@ export interface FridayAgentRoutesDeps {
   cancelRun: (runId: string) => void;
   approvePlan: (runId: string) => Promise<FridayAgentRuntimeResult>;
   rejectPlan: (runId: string) => Promise<FridayAgentRuntimeResult>;
-  resolveToolApproval: (runId: string, toolCallId: string, approved: boolean, reason?: string) => { resolved: boolean };
+  resolveToolApproval: (
+    runId: string,
+    toolCallId: string,
+    approved: boolean,
+    reason?: string,
+  ) => { resolved: boolean; grantId?: string; decision?: "approved" | "rejected" };
   rollbackRun?: (runId: string) => { restoredCount: number; errors: Array<{ filePath: string; error: string }> } | null;
   eventEmitter: FridayAgentEventEmitter;
   automationService: FridayAgentAutomationService;
@@ -493,6 +498,9 @@ export function createFridayAgentRoutes(
           "agent.run.degraded",
           "agent.run.mode_changed",
           "agent.run.awaiting_tool_approval",
+          "agent.run.capability_grant_issued",
+          "agent.run.capability_grant_denied",
+          "agent.run.capability_grant_used",
           "agent.run.completed",
           "agent.run.failed",
           "agent.run.cancelled",

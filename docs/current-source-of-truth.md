@@ -73,12 +73,20 @@ This document is the current architecture reference for steady-state Friday runt
 - `/v1/providers/health` is the canonical operator-facing provider lane and health snapshot surface. It exposes lane (`primary`, `fallback`, `standby`, `disabled`), doctor summary, validation status, and fallback circuit state.
 - Provider template truth is tiered as `official`, `verified`, `community`, or `experimental`; setup UI may highlight official and verified templates first but must not hide the rest of the catalog.
 - Provider templates may recommend default and fallback models plus required secret-reference shapes, but they must not silently override the operator's final provider configuration choice.
+- Canonical secret-ref inputs for provider credentials are `env:NAME`, legacy `$NAME`, `file:/absolute/path`, `secret://...`, and operator-gated `command:...`. Raw inline secrets remain compatibility input only and should be converted into managed secret refs when persisted.
 - Friday's provider reliability plane is Friday-owned. It may normalize supported provider request/response contracts, expose provider health, and drive fallback/circuit state, but it is not a general-purpose reverse proxy for unrelated external AI CLIs or consumer OAuth products.
+
+## Channel secret and supervisor truth
+
+- Canonical channel secret refs follow the same secret-input family as providers: `env:NAME`, legacy `$NAME`, `file:/absolute/path`, `secret://...`, and operator-gated `command:...`.
+- In strict mode, plaintext channel secrets are blocked. Setup and bootstrap may preserve refs, but runtime channel init must resolve them before handing config to the channel plugin.
+- `FridayChannelRegistryView` is expected to surface both transport status and supervisor health. Health includes `state`, `restartCount`, `lastError`, `blockedReason`, and `credentialStatus` so skills, diagnostics, and operator surfaces do not need to infer restart state heuristically.
 
 ## Tool call observability
 
 - The tool call summary service (`src/agent/services/friday-tool-call-summary.ts`) captures privacy-safe metadata for each tool execution: tool name, argument keys (never values), result shape, error status, and tool category (read/write/query/mutate/navigate).
 - Tool summaries are injected into the agent runtime's `buildToolEndEventPayload()` and published through the realtime event surface.
+- Approval-gated tool calls now carry a capability-grant evidence trail. `agent.run.awaiting_tool_approval` must include a stable `grantId`, and approval resolution must emit `agent.run.capability_grant_issued` or `agent.run.capability_grant_denied` before the eventual `agent.run.capability_grant_used` event when the tool actually executes.
 - Tool summaries are designed as world model training data: they capture execution patterns without leaking sensitive argument values or output content.
 - Workflow runtime events are now buffered in hub bootstrap before the API runtime publisher is ready, then flushed. `resolveWorkflowRealtimeStreamId()` routes events to the correct SSE stream by runId or workflowId.
 

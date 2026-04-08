@@ -6,6 +6,7 @@
  */
 
 import * as crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -19,8 +20,6 @@ import {
   FRIDAY_CHANNEL_CAPABILITY_MATRIX,
   FRIDAY_SUPPORTED_CHANNEL_KINDS,
   getFridayChannelSecretFieldDescriptors,
-  parseFridayChannelSecretRef,
-  parseFridayEnvSecretRef,
 } from "#channels";
 import type {
   FridayEvaluationContext,
@@ -51,6 +50,7 @@ import type { FridayApiRuntime } from "#api";
 import type { FridayChannelRegistry, WebchatWsService } from "#channels";
 import type { FridaySatelliteRuntime } from "#satellites";
 import type { FridayBrowserPresentationMode } from "#browser";
+import { parseFridaySecretInput } from "../../security/friday-secret-ref.js";
 
 // ─── Constants ───
 
@@ -487,35 +487,84 @@ export function resolveChannelInitConfigWithSecretPolicy(params: {
       continue;
     }
 
-    const envVar = parseFridayEnvSecretRef(value);
-    if (envVar) {
-      const envValue = env[envVar];
-      if (!envValue || envValue.trim().length === 0) {
-        errors.push(
-          `Environment variable "${envVar}" is not set for channel ${instance.kind}.${field.field}`,
-        );
-      } else {
-        config[field.field] = envValue;
+    const parsed = parseFridaySecretInput(value, {
+      secretRefPrefixes: ["secret://channel/", "secret://"],
+    });
+    if (parsed.kind !== "inline") {
+      if (parsed.kind === "env-ref") {
+        const envValue = env[parsed.envVar];
+        if (!envValue || envValue.trim().length === 0) {
+          errors.push(
+            `Environment variable "${parsed.envVar}" is not set for channel ${instance.kind}.${field.field}`,
+          );
+        } else {
+          config[field.field] = envValue.trim();
+        }
+        continue;
       }
-      continue;
-    }
 
-    const refKey = parseFridayChannelSecretRef(value);
-    if (refKey) {
-      const resolved = resolveSecretRef(refKey);
-      if (!resolved) {
-        errors.push(
-          `Stored secret ref "${refKey}" was not found for channel ${instance.kind}.${field.field}`,
-        );
-      } else {
-        config[field.field] = resolved;
+      if (parsed.kind === "secret-ref") {
+        const resolved = resolveSecretRef(parsed.refKey);
+        if (!resolved) {
+          errors.push(
+            `Stored secret ref "${parsed.refKey}" was not found for channel ${instance.kind}.${field.field}`,
+          );
+        } else {
+          config[field.field] = resolved;
+        }
+        continue;
       }
-      continue;
+
+      if (parsed.kind === "file-ref") {
+        if (!parsed.path.startsWith("/")) {
+          errors.push(
+            `File secret ref must use an absolute path for channel ${instance.kind}.${field.field}`,
+          );
+          continue;
+        }
+        try {
+          const fileValue = fs.readFileSync(parsed.path, "utf8").trim();
+          if (fileValue.length === 0) {
+            errors.push(
+              `Secret file "${parsed.path}" is empty for channel ${instance.kind}.${field.field}`,
+            );
+          } else {
+            config[field.field] = fileValue;
+          }
+        } catch (err) {
+          errors.push(
+            `Failed to read secret file "${parsed.path}" for channel ${instance.kind}.${field.field}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        continue;
+      }
+
+      if (parsed.kind === "command-ref") {
+        try {
+          const output = execFileSync("/bin/sh", ["-lc", parsed.command], {
+            timeout: 5_000,
+            encoding: "utf8",
+            maxBuffer: 1024 * 1024,
+          }).trim();
+          if (output.length === 0) {
+            errors.push(
+              `Secret command returned empty output for channel ${instance.kind}.${field.field}`,
+            );
+          } else {
+            config[field.field] = output;
+          }
+        } catch (err) {
+          errors.push(
+            `Failed to execute secret command for channel ${instance.kind}.${field.field}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        continue;
+      }
     }
 
     if (secretPolicy === "strict") { // pragma: allowlist secret
       errors.push(
-        `Plaintext secret is blocked by policy for channel ${instance.kind}.${field.field}; use $ENV_VAR or secret://channel/...`,
+        `Plaintext secret is blocked by policy for channel ${instance.kind}.${field.field}; use env:, $ENV_VAR, file:, command:, or secret://...`,
       );
       continue;
     }

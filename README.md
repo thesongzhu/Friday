@@ -970,7 +970,7 @@ Channels are configured via `FRIDAY_CHANNELS_JSON` env var or the `channels` blo
 }
 ```
 
-Credentials can reference environment variables (`$VAR`) or secure secret references (`secret://channel/...`).
+Credentials can reference environment variables (`$VAR` or `env:VAR`), absolute file refs (`file:/absolute/path`), secure secret references (`secret://channel/...` or `secret://...`), and operator-only command refs (`command:...`).
 For production and stable local runtime, set `FRIDAY_CHANNEL_SECRET_POLICY=strict` to block plaintext secrets.
 
 ## XHS Automation

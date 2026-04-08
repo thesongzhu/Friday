@@ -33,10 +33,25 @@ export interface FridayChannelRegistryEntry {
   running: boolean;
 }
 
+export type FridayChannelCredentialStatus =
+  | "unknown"
+  | "configured"
+  | "missing"
+  | "invalid";
+
+export interface FridayChannelHealthSummary {
+  state: FridayChannelStatus;
+  restartCount: number;
+  lastError?: string;
+  blockedReason?: string;
+  credentialStatus: FridayChannelCredentialStatus;
+}
+
 export interface FridayChannelRegistryView {
   kind: string;
   running: boolean;
   status: FridayChannelStatus;
+  health: FridayChannelHealthSummary;
   diagnostics?: Record<string, unknown>;
   contract?: FridayChannelCapabilityContract;
   allowlist: {
@@ -118,6 +133,11 @@ const HEALTH_CHECK_DEFAULT_INTERVAL_MS = 30_000;
 
 export function createFridayChannelRegistry(): FridayChannelRegistry {
   const entries = new Map<string, FridayChannelRegistryEntry>();
+  const healthState = new Map<string, {
+    restartCount: number;
+    lastError?: string;
+    blockedReason?: string;
+  }>();
   let healthMonitorTimer: ReturnType<typeof setInterval> | null = null;
   let healthHandler: FridayChannelMessageHandler | null = null;
   // Track channels currently being restarted to avoid duplicate restart attempts
@@ -145,10 +165,23 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
   function buildStartPromise(
     entry: FridayChannelRegistryEntry,
     handler: FridayChannelMessageHandler,
+    options: { restart?: boolean } = {},
   ): Promise<void> {
     const { plugin } = entry;
     const lifecycle = plugin.adapters?.lifecycle;
     const inbound = plugin.adapters?.inbound;
+    const health = healthState.get(plugin.kind);
+
+    const markConnected = () => {
+      entry.running = true;
+      if (health) {
+        if (options.restart) {
+          health.restartCount += 1;
+        }
+        health.lastError = undefined;
+        health.blockedReason = undefined;
+      }
+    };
 
     if (lifecycle) {
       const wrappedEventHandler = (rawEvent: unknown) => {
@@ -174,9 +207,7 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
         handler(msg);
       };
 
-      return lifecycle.connect(wrappedEventHandler).then(() => {
-        entry.running = true;
-      });
+      return lifecycle.connect(wrappedEventHandler).then(markConnected);
     }
 
     const wrappedHandler = (msg: FridayChannelMessage) => {
@@ -184,9 +215,7 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
       handler(msg);
     };
 
-    return plugin.start(wrappedHandler).then(() => {
-      entry.running = true;
-    });
+    return plugin.start(wrappedHandler).then(markConnected);
   }
 
   function formatStartError(reason: unknown): string {
@@ -203,12 +232,33 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
     };
   }
 
+  function inferCredentialStatus(
+    diagnostics: Record<string, unknown> | undefined,
+    lastError: string | undefined,
+  ): FridayChannelCredentialStatus {
+    const raw = typeof diagnostics?.credentialStatus === "string"
+      ? diagnostics.credentialStatus.trim().toLowerCase()
+      : "";
+    if (raw === "configured" || raw === "missing" || raw === "invalid" || raw === "unknown") {
+      return raw;
+    }
+    const normalizedError = lastError?.toLowerCase() ?? "";
+    if (/\b(missing|not set|not found)\b/.test(normalizedError)) {
+      return "missing";
+    }
+    if (/\b(invalid|unauthorized|forbidden|expired)\b/.test(normalizedError)) {
+      return "invalid";
+    }
+    return "unknown";
+  }
+
   return {
     register(plugin, allowlist = {}) {
       if (entries.has(plugin.kind)) {
         throw new FridayDomainError("CONFLICT", `Channel kind "${plugin.kind}" is already registered`, { httpStatus: 409 });
       }
       entries.set(plugin.kind, { plugin, allowlist, running: false });
+      healthState.set(plugin.kind, { restartCount: 0 });
     },
 
     async unregister(kind) {
@@ -223,6 +273,7 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
         }
       }
       entries.delete(kind);
+      healthState.delete(kind);
     },
 
     async startAll(handler) {
@@ -249,6 +300,11 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
       for (const [index, result] of results.entries()) {
         if (result.status !== "rejected") continue;
         const kind = attempts[index]?.kind ?? "unknown";
+        const health = healthState.get(kind);
+        if (health) {
+          health.lastError = formatStartError(result.reason);
+          health.blockedReason = "start_failed";
+        }
         failures.push({
           kind,
           message: formatStartError(result.reason),
@@ -305,7 +361,17 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
         if (result.status === "fulfilled") {
           summary.startedKinds.push(kind);
           failedStart.delete(kind);
+          const health = healthState.get(kind);
+          if (health) {
+            health.blockedReason = undefined;
+            health.lastError = undefined;
+          }
         } else {
+          const health = healthState.get(kind);
+          if (health) {
+            health.lastError = formatStartError(result.reason);
+            health.blockedReason = "start_failed";
+          }
           summary.failed.push({
             kind,
             message: formatStartError(result.reason),
@@ -370,6 +436,16 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
         kind,
         running: entry.running,
         status: this.status(kind),
+        health: {
+          state: this.status(kind),
+          restartCount: healthState.get(kind)?.restartCount ?? 0,
+          lastError: healthState.get(kind)?.lastError,
+          blockedReason: healthState.get(kind)?.blockedReason,
+          credentialStatus: inferCredentialStatus(
+            this.diagnostics(kind),
+            healthState.get(kind)?.lastError,
+          ),
+        },
         diagnostics: this.diagnostics(kind),
         contract: entry.plugin.contract,
         allowlist: buildAllowlistSummary(entry.allowlist),
@@ -458,6 +534,10 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
               `[friday] Channel "${kind}" is ${channelStatus} while marked running — attempting restart`,
             );
             entry.running = false;
+            const health = healthState.get(kind);
+            if (health) {
+              health.blockedReason = `status:${channelStatus}`;
+            }
           } else if (failedStart.has(kind)) {
             // Channel was attempted by startAllBestEffort but failed (e.g. network down at boot)
             console.warn(
@@ -470,12 +550,17 @@ export function createFridayChannelRegistry(): FridayChannelRegistry {
 
           restarting.add(kind);
 
-          buildStartPromise(entry, healthHandler!)
+          buildStartPromise(entry, healthHandler!, { restart: true })
             .then(() => {
               failedStart.delete(kind);
               console.log(`[friday] Channel "${kind}" auto-restarted successfully`);
             })
             .catch((err: unknown) => {
+              const health = healthState.get(kind);
+              if (health) {
+                health.lastError = err instanceof Error ? err.message : String(err);
+                health.blockedReason = "restart_failed";
+              }
               console.error(
                 `[friday] Channel "${kind}" auto-restart failed:`,
                 err instanceof Error ? err.message : String(err),

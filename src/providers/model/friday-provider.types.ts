@@ -110,6 +110,8 @@ export function isFridayAnthropicBearerAuthMode(
 export type FridayProviderKeySource =
   | { kind: "secret-ref"; refKey: string }
   | { kind: "env-ref"; envVar: string }
+  | { kind: "file-ref"; path: string }
+  | { kind: "command-ref"; command: string }
   | { kind: "none" };
 
 export type FridayProviderTemplateTier =
@@ -126,7 +128,9 @@ export type FridayProviderTemplateStatus =
 export type FridayProviderTemplateSecretRefKind =
   | "inline"
   | "env-ref"
-  | "secret-ref";
+  | "secret-ref"
+  | "file-ref"
+  | "command-ref";
 
 export interface FridayProviderTemplateSecretRequirement {
   key: string;

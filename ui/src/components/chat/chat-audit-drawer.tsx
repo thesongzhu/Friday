@@ -18,6 +18,9 @@ const EVENT_LABELS: Record<string, string> = {
   "agent.run.degraded": "Degraded",
   "agent.run.mode_changed": "Mode changed",
   "agent.run.awaiting_tool_approval": "Awaiting approval",
+  "agent.run.capability_grant_issued": "Grant issued",
+  "agent.run.capability_grant_denied": "Grant denied",
+  "agent.run.capability_grant_used": "Grant used",
   "agent.run.completed": "Run completed",
   "agent.run.failed": "Run failed",
   "agent.run.cancelled": "Run cancelled",
@@ -33,6 +36,9 @@ const EVENT_DOTS: Record<string, string> = {
   "agent.run.degraded": "bg-[color:var(--color-border-strong)]",
   "agent.run.mode_changed": "bg-[color:var(--color-border-strong)]",
   "agent.run.awaiting_tool_approval": "bg-[color:var(--color-accent)]",
+  "agent.run.capability_grant_issued": "bg-[color:var(--color-accent)]",
+  "agent.run.capability_grant_denied": "bg-[color:var(--color-text-primary)]",
+  "agent.run.capability_grant_used": "bg-[color:var(--color-border-strong)]",
   "agent.run.completed": "bg-[color:var(--color-accent)]",
   "agent.run.failed": "bg-[color:var(--color-text-primary)]",
   "agent.run.cancelled": "bg-[color:var(--color-text-tertiary)]",
@@ -59,6 +65,15 @@ function formatPayload(event: RunAuditEvent): string {
   }
   if (event.type === "agent.run.awaiting_tool_approval") {
     return `${String(p.toolName ?? "?")} — ${String(p.reason ?? "")}`;
+  }
+  if (event.type === "agent.run.capability_grant_issued") {
+    return `${String(p.toolName ?? "?")} — ${String(p.grantId ?? "")}`;
+  }
+  if (event.type === "agent.run.capability_grant_denied") {
+    return `${String(p.toolName ?? "?")} — ${String(p.denialReason ?? p.reason ?? "")}`;
+  }
+  if (event.type === "agent.run.capability_grant_used") {
+    return `${String(p.toolName ?? "?")} — ${String(p.grantId ?? "")}`;
   }
   return "";
 }

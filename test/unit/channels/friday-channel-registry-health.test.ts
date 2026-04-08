@@ -121,6 +121,11 @@ describe("FridayChannelRegistry Health Monitor", () => {
     // Plugin should have been restarted
     expect(plugin._startCount).toBe(2);
     expect(registry.get("discord")!.running).toBe(true);
+    expect(registry.describe("discord")?.health).toMatchObject({
+      state: "connected",
+      restartCount: 1,
+      blockedReason: undefined,
+    });
   });
 
   it("detects channel reporting 'error' and auto-restarts", async () => {
@@ -354,6 +359,12 @@ describe("FridayChannelRegistry Health Monitor", () => {
     expect(summary.failed[0].kind).toBe("discord");
     expect(registry.get("discord")!.running).toBe(false);
     expect(connectAttempts).toBe(1);
+    expect(registry.describe("discord")?.health).toMatchObject({
+      state: "disconnected",
+      restartCount: 0,
+      lastError: "fetch failed",
+      blockedReason: "start_failed",
+    });
 
     // Start health monitor — should retry failed channels
     registry.startHealthMonitor(handler, { intervalMs: 100 });
@@ -364,6 +375,11 @@ describe("FridayChannelRegistry Health Monitor", () => {
     // Second connect attempt should succeed
     expect(connectAttempts).toBe(2);
     expect(registry.get("discord")!.running).toBe(true);
+    expect(registry.describe("discord")?.health).toMatchObject({
+      state: "connected",
+      restartCount: 1,
+      blockedReason: undefined,
+    });
   });
 
   it("does not retry channels that were never attempted", async () => {

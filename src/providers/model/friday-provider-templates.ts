@@ -173,8 +173,8 @@ function buildRequiredSecrets(authModes: readonly FridayProviderAuthMode[]): Fri
       key: "apiKey",
       label: "API key",
       required: true,
-      acceptedRefs: ["inline", "env-ref", "secret-ref"],
-      helpText: "Use a raw key, $ENV ref, or a managed secret reference.",
+      acceptedRefs: ["inline", "env-ref", "file-ref", "secret-ref"],
+      helpText: "Use a raw key, env: or $ENV, file:, or a managed secret reference.",
     });
   }
   if (authModes.includes("bearer-token")) {
@@ -182,8 +182,8 @@ function buildRequiredSecrets(authModes: readonly FridayProviderAuthMode[]): Fri
       key: "bearerToken",
       label: "Bearer token",
       required: true,
-      acceptedRefs: ["inline", "env-ref", "secret-ref"],
-      helpText: "For OpenAI-compatible bearer auth paths.",
+      acceptedRefs: ["inline", "env-ref", "file-ref", "secret-ref"],
+      helpText: "For OpenAI-compatible bearer auth paths. Supports env:, file:, and managed refs.",
     });
   }
   if (authModes.includes("token")) {
@@ -191,8 +191,8 @@ function buildRequiredSecrets(authModes: readonly FridayProviderAuthMode[]): Fri
       key: "setupToken",
       label: "Setup token",
       required: true,
-      acceptedRefs: ["inline", "env-ref", "secret-ref"],
-      helpText: "Compatibility path for pasted or setup-phase provider tokens.",
+      acceptedRefs: ["inline", "env-ref", "file-ref", "secret-ref"],
+      helpText: "Compatibility path for pasted or setup-phase provider tokens, including env: and file: refs.",
     });
   }
   return requirements;
