@@ -102,19 +102,8 @@ function statusBadge(status?: string) {
   }
 }
 
-// ─── Bar chart helper ───
-
-function PercentBar({ value, max, color }: { value: number; max: number; color: string }) {
-  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
-  return (
-    <div className="h-3 w-full rounded-full bg-zinc-100 dark:bg-zinc-800">
-      <div
-        className="h-3 rounded-full transition-all duration-300"
-        style={{ width: `${String(pct)}%`, backgroundColor: color }}
-      />
-    </div>
-  );
-}
+// Re-export from extracted chart module for direct use
+import { PercentBar } from "@/components/usage/usage-charts";
 
 // ─── Page ───
 

@@ -1,31 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { apiClient } from "@/lib/api/client";
-
-interface McpServerState {
-  id: string;
-  transport?: string;
-  status?: "connected" | "disconnected" | "error" | "unknown";
-  toolCount?: number;
-  resourceCount?: number;
-  lastError?: string;
-}
-
-interface McpHealthResponse {
-  servers: McpServerState[];
-}
+import { mcpApi } from "@/lib/api/mcp";
+import type { McpServerState } from "@/lib/api/mcp";
 
 function useMcpServers() {
   return useQuery({
     queryKey: ["mcp-servers"],
-    queryFn: async (): Promise<McpServerState[]> => {
-      try {
-        const data = await apiClient.get<McpHealthResponse>("/v1/health");
-        // MCP server states are typically embedded in health response
-        return (data as unknown as { mcpServerStates?: McpServerState[] }).mcpServerStates ?? [];
-      } catch {
-        return [];
-      }
-    },
+    queryFn: () => mcpApi.listServers(),
     refetchInterval: 15_000,
   });
 }

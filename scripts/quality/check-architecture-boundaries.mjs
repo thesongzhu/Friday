@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -154,11 +155,30 @@ function checkImmutableCoreFiles(repoRoot) {
     const filePath = path.join(repoRoot, file);
     if (!fs.existsSync(filePath)) {
       warnings.push({ file, message: `Immutable core file ${file} does not exist — was it deleted?` });
+      continue;
+    }
+    // Check for uncommitted modifications via git
+    try {
+      const diff = execFileSync("git", ["diff", "--name-only", "--", file], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 5_000,
+      }).trim();
+      const staged = execFileSync("git", ["diff", "--cached", "--name-only", "--", file], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 5_000,
+      }).trim();
+      if (diff || staged) {
+        warnings.push({ file, message: `Immutable core file ${file} has uncommitted modifications — review carefully before merge.` });
+      }
+    } catch {
+      // git not available or not a git repo — skip modification check
     }
   }
   return {
     kind: "immutable-core",
-    label: "Immutable core file presence",
+    label: "Immutable core file presence and stability",
     status: "passed",
     fileCount: IMMUTABLE_CORE_FILES.length,
     trackedFiles: IMMUTABLE_CORE_FILES,
