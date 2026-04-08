@@ -81,21 +81,18 @@ async function waitForSurfaceReady(pageHandle: FridayBrowserPageHandle, surface:
 
 async function clickRailLink(pageHandle: FridayBrowserPageHandle, href: string): Promise<void> {
   const deadline = Date.now() + 30_000;
+  const locator = pageHandle.page
+    .locator(`[data-testid="app-shell-rail"] a[href="${href}"], nav a[href="${href}"]`)
+    .first();
   while (Date.now() < deadline) {
-    const clicked = await pageHandle.page.evaluate((targetHref) => {
-      const link = document.querySelector(
-        `[data-testid="app-shell-rail"] a[href="${targetHref}"], nav a[href="${targetHref}"]`,
-      );
-      if (!(link instanceof HTMLAnchorElement)) {
-        return false;
-      }
-      link.click();
-      return true;
-    }, href);
-    if (clicked) {
+    try {
+      await locator.waitFor({ state: "visible", timeout: 2_000 });
+      await locator.scrollIntoViewIfNeeded();
+      await locator.click({ timeout: 2_000 });
       return;
+    } catch {
+      await pageHandle.page.waitForTimeout(200);
     }
-    await pageHandle.page.waitForTimeout(200);
   }
 
   throw new Error(`rail link not found for ${href} within 30000ms`);
