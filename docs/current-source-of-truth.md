@@ -65,6 +65,15 @@ This document is the current architecture reference for steady-state Friday runt
 - Diagnosis and auto-fix lifecycle updates are part of the realtime event surface and must stay consumable by both Operator Console and `/assistant`.
 - The expected utility calculator (`src/learning/services/friday-expected-utility-calculator.ts`) is a steady-state component of the auto-fix decision pipeline. It computes `EU = benefit * P(success) - cost * P(failure) - riskPenalty` and returns `auto_apply`, `suggest`, or `defer` recommendations. The `FridayUtilityStrategy` interface is pluggable and may be replaced with trained ML models without changing callers.
 - Setup status diagnostics (`ui/src/lib/setup/setup-status-diagnostics.ts`) provide user-friendly error messages and remediation hints for setup/auth failures in the UI, covering AuthExpired, 401, 403, 404, INVALID_RESPONSE, and NETWORK_ERROR states.
+- The task-first web IA remains `/home`, `/chat`, `/packs`, and `/assistant`. `/assistant` is the approval, recovery, and guided handoff surface, not the primary place to start a brand-new task.
+
+## Provider templates and routing health
+
+- `/v1/providers/templates*` is the canonical setup-time provider bootstrap surface. Setup and settings should prefer template-driven provider creation over blank provider forms.
+- `/v1/providers/health` is the canonical operator-facing provider lane and health snapshot surface. It exposes lane (`primary`, `fallback`, `standby`, `disabled`), doctor summary, validation status, and fallback circuit state.
+- Provider template truth is tiered as `official`, `verified`, `community`, or `experimental`; setup UI may highlight official and verified templates first but must not hide the rest of the catalog.
+- Provider templates may recommend default and fallback models plus required secret-reference shapes, but they must not silently override the operator's final provider configuration choice.
+- Friday's provider reliability plane is Friday-owned. It may normalize supported provider request/response contracts, expose provider health, and drive fallback/circuit state, but it is not a general-purpose reverse proxy for unrelated external AI CLIs or consumer OAuth products.
 
 ## Tool call observability
 
@@ -101,6 +110,7 @@ This document is the current architecture reference for steady-state Friday runt
 - Marketplace closeout evidence for this creator-support direction is archived in [../docs/reports/closeout/marketplace-creator-ecosystem/latest.md](./reports/closeout/marketplace-creator-ecosystem/latest.md).
 - Skill generation is not a terminal leaf product. Generated skills must be able to flow directly into verification, install or enable recommendation, diagnosis, and recovery.
 - Skill verification evidence must remain structured around manifest verdict, package integrity, dependency checks, runtime dry-run, and trust summary.
+- `/v1/skills/catalog` and skill detail responses must expose machine-readable lifecycle guidance for operator surfaces, including trust tier, implementation status, blocked reasons, recommended next action, and first-use prompts. UI surfaces must consume that server-shaped guidance instead of reverse-engineering install state client-side.
 
 ## Plugin distribution and marketplace commerce
 
@@ -216,6 +226,7 @@ Every contract-affecting cleanup batch must pass:
 - `npm run test:contracts`
 - `npm run test:adversarial`
 - `npm test`
+- `npm run check:provider-reliability`
 - `npm run closeout:phase1`
 - `npm run closeout:phase2`
 - `npm run closeout:phase3`

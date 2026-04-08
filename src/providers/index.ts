@@ -18,6 +18,10 @@ export {
   getFridayProviderPreset,
   detectFridayProviderKindFromApiKey,
 } from "./model/friday-provider-catalog.js";
+export {
+  listFridayProviderTemplates,
+  getFridayProviderTemplate,
+} from "./model/friday-provider-templates.js";
 export type {
   FridayProviderFamily,
   FridayProviderCapability,

@@ -1,6 +1,7 @@
 import type { SkillManifestV2 } from "./friday-skill-manifest-v2.types.js";
 import type { SkillLifecycleStatus } from "./friday-skill-lifecycle.types.js";
 import type { SkillOrigin, SkillSource } from "./friday-skill-source.types.js";
+import type { SkillTrustTier } from "./friday-skill-trust.types.js";
 
 // ─── Re-export foundational value types ───
 
@@ -231,6 +232,12 @@ export interface FridaySkillCatalogItem {
   trustScore: number;
   starter: boolean;
   manifest: SkillManifestV2;
+  trustTier?: SkillTrustTier;
+  implementationStatus?: "bundled" | "installed" | "catalog-only" | "generated-draft";
+  blockedReasons?: string[];
+  shadowedBy?: string[];
+  recommendedNextAction?: string;
+  firstUsePrompts?: string[];
 }
 
 export type FridaySkillVerificationStatus =

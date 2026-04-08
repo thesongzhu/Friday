@@ -128,6 +128,12 @@ function titleCase(value: string): string {
     .join(" ");
 }
 
+function toneForTemplateTier(tier?: "official" | "verified" | "community" | "experimental"): "success" | "warning" | "neutral" {
+  if (tier === "official") return "success";
+  if (tier === "verified") return "warning";
+  return "neutral";
+}
+
 export function SetupPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -174,6 +180,13 @@ export function SetupPage() {
     retry: 0,
   });
 
+  const { data: providerTemplates = [] } = useQuery({
+    queryKey: ["setup", "provider-templates"],
+    queryFn: () => providersApi.listTemplates(),
+    retry: 0,
+    staleTime: 30_000,
+  });
+
   const { data: persona } = useQuery({
     queryKey: ["setup", "persona"],
     queryFn: () => systemApi.getCommunicationPersona(),
@@ -217,6 +230,13 @@ export function SetupPage() {
   }, [existingProviders]);
 
   useEffect(() => {
+    if (existingProviders.length > 0) return;
+    if (providerTemplates.length === 0) return;
+    if (providerBaseUrl.trim().length > 0 || providerModels.length > 0) return;
+    applyProviderTemplate(providerKind);
+  }, [existingProviders.length, providerBaseUrl, providerKind, providerModels.length, providerTemplates]);
+
+  useEffect(() => {
     if (!persona) return;
     setCommunicationMbti(persona.mbti ?? "");
     setCommunicationSaved(true);
@@ -242,6 +262,33 @@ export function SetupPage() {
     () => getProviderBootstrapRecommendation(providerKind),
     [providerKind],
   );
+
+  const selectedTemplate = useMemo(
+    () => providerTemplates.find((template) => template.providerKind === providerKind) ?? null,
+    [providerKind, providerTemplates],
+  );
+
+  function applyProviderTemplate(templateId: ProviderKind): void {
+    const template = providerTemplates.find((item) => item.providerKind === templateId);
+    setProviderKind(templateId);
+    if (!template) {
+      setProviderValidated(false);
+      return;
+    }
+    setProviderName((current) => current.trim().length > 0 ? current : `${template.displayName} Provider`);
+    setProviderBaseUrl(template.baseUrlHints[0] ?? "");
+    setProviderApi(template.api);
+    setProviderAuthMode(template.authModes[0] ?? "api-key");
+    const modelExamples = template.modelDefaults.examples ?? [];
+    setProviderModels(modelExamples);
+    setProviderDefaultModel(
+      template.modelDefaults.recommended
+        ?? template.modelDefaults.fallback
+        ?? modelExamples[0]
+        ?? "",
+    );
+    setProviderValidated(false);
+  }
 
   const detectProviderMutation = useMutation({
     mutationFn: () =>
@@ -450,15 +497,42 @@ export function SetupPage() {
             <div className="space-y-3">
               <select
                 value={providerKind}
-                onChange={(event) => setProviderKind(event.target.value as ProviderKind)}
+                onChange={(event) => applyProviderTemplate(event.target.value as ProviderKind)}
                 className="agent-select"
               >
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="google">Google</option>
-                <option value="ollama">Ollama</option>
-                <option value="openai-compatible">OpenAI-compatible</option>
+                {providerTemplates.length > 0 ? providerTemplates.map((template) => (
+                  <option key={template.id} value={template.providerKind}>
+                    {template.displayName} ({template.tier})
+                  </option>
+                )) : (
+                  <>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                    <option value="google">Google</option>
+                    <option value="ollama">Ollama</option>
+                    <option value="openai-compatible">OpenAI-compatible</option>
+                  </>
+                )}
               </select>
+              {providerTemplates.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {providerTemplates
+                    .filter((template) => template.tier === "official" || template.tier === "verified")
+                    .slice(0, 8)
+                    .map((template) => (
+                      <button
+                        key={template.id}
+                        type="button"
+                        onClick={() => applyProviderTemplate(template.providerKind)}
+                        className="rounded-2xl border border-[color:var(--color-border-soft)] px-3 py-2 text-left text-xs text-[color:var(--color-text-secondary)] transition hover:border-[color:var(--color-border-strong)] hover:text-[color:var(--color-text-primary)]"
+                        data-active={template.providerKind === providerKind}
+                      >
+                        <span className="font-medium text-[color:var(--color-text-primary)]">{template.displayName}</span>
+                        <span className="ml-2 text-[color:var(--color-text-faint)]">{template.tier}</span>
+                      </button>
+                    ))}
+                </div>
+              ) : null}
               <input
                 value={providerName}
                 onChange={(event) => setProviderName(event.target.value)}
@@ -476,7 +550,7 @@ export function SetupPage() {
                 onChange={(event) => setProviderApiKey(event.target.value)}
                 type="password"
                 className="agent-input"
-                placeholder="API key"
+                placeholder={selectedTemplate?.requiredSecrets[0]?.label ?? "API key"}
               />
               <div className="flex flex-wrap gap-2">
                 <ActionButton tone="secondary" onClick={() => detectProviderMutation.mutate()}>
@@ -505,6 +579,39 @@ export function SetupPage() {
                       </StatusPill>
                     ))}
                   </div>
+                </div>
+              ) : null}
+              {selectedTemplate ? (
+                <div className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-[color:var(--color-text-primary)]">{selectedTemplate.displayName}</p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">
+                        {selectedTemplate.providerKind} · {selectedTemplate.backendKind} · {selectedTemplate.regionTag}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <StatusPill tone={toneForTemplateTier(selectedTemplate.tier)}>{selectedTemplate.tier}</StatusPill>
+                      <StatusPill>{selectedTemplate.status}</StatusPill>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{selectedTemplate.description}</p>
+                  {selectedTemplate.baseUrlHints.length > 0 ? (
+                    <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
+                      Base URL hint: {selectedTemplate.baseUrlHints.join(" · ")}
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
+                      This template needs an explicit base URL before validation.
+                    </p>
+                  )}
+                  {selectedTemplate.reasoningHints.length > 0 ? (
+                    <ul className="mt-3 space-y-2 text-xs text-[color:var(--color-text-secondary)]">
+                      {selectedTemplate.reasoningHints.slice(0, 2).map((hint) => (
+                        <li key={hint}>{hint}</li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </div>
               ) : null}
               <div className="rounded-[22px] border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] p-4">

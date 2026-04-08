@@ -11,7 +11,9 @@ import type {
   FridayProviderBackendKind,
   FridayProviderCliConfig,
   FridayProviderDoctorReport,
+  FridayProviderHealthSnapshotItem,
   FridayProviderRoutingExplainReport,
+  FridayProviderTemplate,
 } from "./types";
 
 // ─── Request types ───
@@ -63,8 +65,20 @@ interface ListProvidersResponse {
   items: FridayProviderProfile[];
 }
 
+interface ListProviderTemplatesResponse {
+  items: FridayProviderTemplate[];
+}
+
+interface GetProviderTemplateResponse {
+  template: FridayProviderTemplate;
+}
+
 interface GetProviderResponse {
   provider: FridayProviderProfile;
+}
+
+interface GetProviderHealthSnapshotResponse {
+  items: FridayProviderHealthSnapshotItem[];
 }
 
 interface CreateProviderResponse {
@@ -156,8 +170,25 @@ interface ClearRoutePenaltyInput {
 // ─── API ───
 
 export const providersApi = {
+  async listTemplates(): Promise<FridayProviderTemplate[]> {
+    const data = await apiClient.get<ListProviderTemplatesResponse>("/v1/providers/templates");
+    return data.items;
+  },
+
+  async getTemplate(templateId: string): Promise<FridayProviderTemplate> {
+    const data = await apiClient.get<GetProviderTemplateResponse>(
+      `/v1/providers/templates/${encodeURIComponent(templateId)}`,
+    );
+    return data.template;
+  },
+
   async list(): Promise<FridayProviderProfile[]> {
     const data = await apiClient.get<ListProvidersResponse>("/v1/providers");
+    return data.items;
+  },
+
+  async listHealth(): Promise<FridayProviderHealthSnapshotItem[]> {
+    const data = await apiClient.get<GetProviderHealthSnapshotResponse>("/v1/providers/health");
     return data.items;
   },
 

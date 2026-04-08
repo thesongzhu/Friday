@@ -209,6 +209,11 @@ describe("FridaySkillLifecycleService", () => {
     expect(catalog.items[0]?.requirementPreview.unresolvedConfig).toEqual(["alpha.region"]);
     expect(catalog.items[0]?.permissionPreview.required).toContain("network.connect");
     expect(catalog.items[0]?.installPlan.sourceTrustPolicy).toBe("warn");
+    expect(catalog.items[0]?.trustTier).toBe("managed");
+    expect(catalog.items[0]?.implementationStatus).toBe("installed");
+    expect(catalog.items[0]?.blockedReasons).toContain("Missing environment variables: ALPHA_TOKEN");
+    expect(catalog.items[0]?.recommendedNextAction).toContain("Review requirements and permissions");
+    expect(catalog.items[0]?.firstUsePrompts?.length).toBeGreaterThan(0);
 
     const detail = lifecycle.getSkill("skill.alpha");
     expect(detail).toMatchObject({
@@ -227,6 +232,13 @@ describe("FridaySkillLifecycleService", () => {
     expect(detail?.installations).toHaveLength(1);
     expect(detail?.installPlan.targetVersion).toBe("1.1.0");
     expect(detail?.latestFailure).toBeUndefined();
+    expect(detail?.catalogEntry).toMatchObject({
+      trustTier: "managed",
+      implementationStatus: "installed",
+    });
+    expect(detail?.catalogEntry?.blockedReasons).toContain("Missing environment variables: ALPHA_TOKEN");
+    expect(detail?.catalogEntry?.recommendedNextAction).toContain("Review requirements and permissions");
+    expect(detail?.catalogEntry?.firstUsePrompts?.length).toBeGreaterThan(0);
   });
 
   it("derives cli-backed origin and verified maturity for shell-oriented skills", () => {

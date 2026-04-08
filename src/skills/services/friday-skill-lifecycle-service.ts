@@ -28,6 +28,7 @@ import type {
   FridayTrustScoreBreakdown,
   JsonValue,
 } from "../model/friday-skill-marketplace.types.js";
+import type { SkillOrigin } from "../model/friday-skill-source.types.js";
 import type { FridayMarketplaceCacheRepository } from "../persistence/friday-marketplace-cache-repository.js";
 import type { FridayMarketplaceSourceRepository } from "../persistence/friday-marketplace-source-repository.js";
 import type { FridaySkillInstallationRepository } from "../persistence/friday-skill-installation-repository.js";
@@ -40,6 +41,7 @@ import type { FridaySkillPackageInstaller } from "./friday-skill-package-install
 import type { FridaySkillSignatureVerifier } from "./friday-skill-signature-verifier.js";
 import type { FridaySkillTrustScoringService } from "./friday-skill-trust-scoring-service.js";
 import { validateFridaySkillPackage } from "../validation/friday-skill-validation-pipeline.js";
+import { mapFridaySkillOriginToTrustTier } from "../trust/friday-skill-trust-enforcer.js";
 
 export interface FridaySkillVerificationEvidence {
   skillId: string;
@@ -235,6 +237,13 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
 }
 
+function buildFirstUsePrompts(manifest?: SkillManifestV2): string[] {
+  return uniqueStrings([
+    ...(manifest?.triggers.phrases ?? []),
+    ...(manifest?.triggers.intents ?? []),
+  ]).slice(0, 3);
+}
+
 function deriveSkillOriginType(manifest?: SkillManifestV2): FridaySkillOriginType {
   const tags = manifest?.tags ?? [];
   const tagSet = new Set(tags.map((tag) => tag.toLowerCase()));
@@ -401,6 +410,47 @@ function buildEligibility(input: {
     reviewRequired,
     reasons,
   };
+}
+
+function buildRecommendedNextAction(input: {
+  installed: boolean;
+  updateAvailable: boolean;
+  eligibility: FridaySkillEligibility;
+  verificationStatus: FridaySkillVerificationStatus;
+}): string {
+  if (input.eligibility.verdict === "blocked") {
+    return "Resolve the blocked reasons before installing or enabling this skill.";
+  }
+  if (input.eligibility.verdict === "needs_configuration") {
+    return "Review requirements and permissions, then retry install with the missing grants or config in place.";
+  }
+  if (!input.installed) {
+    return "Install this skill, then run one of the suggested first-use prompts from chat or assistant.";
+  }
+  if (input.updateAvailable) {
+    return "Update this skill to the latest verified version before relying on it for repeated runs.";
+  }
+  if (input.verificationStatus === "warning" || input.verificationStatus === "unverified") {
+    return "Run verification and review trust evidence before wider rollout.";
+  }
+  return "Use this skill from chat, packs, or assistant and keep it pinned if it becomes part of your primary flow.";
+}
+
+function buildImplementationStatus(input: {
+  registryLoaded: boolean;
+  installedVersion?: string;
+  maturity: FridaySkillMaturity;
+}): "bundled" | "installed" | "catalog-only" | "generated-draft" {
+  if (input.registryLoaded) {
+    return "bundled";
+  }
+  if (input.installedVersion) {
+    return "installed";
+  }
+  if (input.maturity === "draft") {
+    return "generated-draft";
+  }
+  return "catalog-only";
 }
 
 function buildInstallPlan(input: {
@@ -762,6 +812,65 @@ export function createFridaySkillLifecycleService(
     return null;
   }
 
+  function buildCatalogViewItem(
+    item: FridaySkillCatalogItem,
+    summary: FridaySkillLifecycleSummary | null = buildSummary(item.skillId),
+  ): FridaySkillCatalogViewItem {
+    const requirementPreview = summary?.requirementPreview ?? buildRequirementPreview(item.manifest);
+    const permissionPreview = summary?.permissionPreview ?? buildPermissionPreview(item.manifest);
+    const sourceDetails = getSource(item.sourceId);
+    const verificationStatus = summary?.verificationStatus ?? buildVerificationStatus({
+      registered: null,
+      source: sourceDetails,
+      catalogEntry: item,
+    });
+    const installPlan = summary?.installPlan ?? buildInstallPlan({
+      sourceId: item.sourceId,
+      source: sourceDetails,
+      installedVersion: summary?.installedVersion,
+      targetVersion: item.version,
+      requirements: requirementPreview,
+      permissions: permissionPreview,
+      verificationStatus,
+    });
+    const installed = Boolean(summary?.installedVersion || summary?.registryLoaded);
+    const updateAvailable = compareVersions(item.version, summary?.installedVersion);
+    const maturity = summary?.maturity ?? "draft";
+    const eligibility = summary?.eligibility ?? installPlan.eligibility;
+    const implementationStatus = buildImplementationStatus({
+      registryLoaded: Boolean(summary?.registryLoaded),
+      installedVersion: summary?.installedVersion,
+      maturity,
+    });
+
+    return {
+      ...item,
+      installed,
+      installedVersion: summary?.installedVersion,
+      updateAvailable,
+      sourceDetails,
+      originType: summary?.originType ?? deriveSkillOriginType(item.manifest),
+      maturity,
+      verificationStatus,
+      requirementPreview,
+      permissionPreview,
+      eligibility,
+      installPlan,
+      latestFailure: summary?.latestFailure,
+      trustTier: item.trustTier ?? mapFridaySkillOriginToTrustTier((summary?.origin ?? "managed") as SkillOrigin),
+      implementationStatus: item.implementationStatus ?? implementationStatus,
+      blockedReasons: item.blockedReasons ?? (eligibility.verdict === "eligible" ? [] : eligibility.reasons),
+      shadowedBy: item.shadowedBy ?? (updateAvailable ? [`${item.skillId}@${item.version}`] : []),
+      recommendedNextAction: item.recommendedNextAction ?? buildRecommendedNextAction({
+        installed,
+        updateAvailable,
+        eligibility,
+        verificationStatus,
+      }),
+      firstUsePrompts: item.firstUsePrompts ?? buildFirstUsePrompts(item.manifest),
+    };
+  }
+
   async function refreshRegistry(): Promise<void> {
     await deps.registry.refresh();
   }
@@ -938,41 +1047,7 @@ export function createFridaySkillLifecycleService(
 
     listCatalog(query) {
       const result = deps.discovery.search(query);
-      const items = result.items.map((item) => {
-        const summary = buildSummary(item.skillId);
-        const requirementPreview = summary?.requirementPreview ?? buildRequirementPreview(item.manifest);
-        const permissionPreview = summary?.permissionPreview ?? buildPermissionPreview(item.manifest);
-        const sourceDetails = getSource(item.sourceId);
-        const verificationStatus = summary?.verificationStatus ?? buildVerificationStatus({
-          registered: null,
-          source: sourceDetails,
-          catalogEntry: item,
-        });
-        const installPlan = summary?.installPlan ?? buildInstallPlan({
-          sourceId: item.sourceId,
-          source: sourceDetails,
-          installedVersion: summary?.installedVersion,
-          targetVersion: item.version,
-          requirements: requirementPreview,
-          permissions: permissionPreview,
-          verificationStatus,
-        });
-        return {
-          ...item,
-          installed: Boolean(summary?.installedVersion || summary?.registryLoaded),
-          installedVersion: summary?.installedVersion,
-          updateAvailable: compareVersions(item.version, summary?.installedVersion),
-          sourceDetails,
-          originType: summary?.originType ?? deriveSkillOriginType(item.manifest),
-          maturity: summary?.maturity ?? "draft",
-          verificationStatus,
-          requirementPreview,
-          permissionPreview,
-          eligibility: summary?.eligibility ?? installPlan.eligibility,
-          installPlan,
-          latestFailure: summary?.latestFailure,
-        };
-      });
+      const items = result.items.map((item) => buildCatalogViewItem(item));
       return {
         ...result,
         items,
@@ -995,7 +1070,7 @@ export function createFridaySkillLifecycleService(
         sourceDetails: getSource(summary.sourceId ?? catalogEntry?.sourceId),
         versions: getVersions(skillId),
         installations: getInstallations(skillId),
-        catalogEntry: catalogEntry ?? undefined,
+        catalogEntry: catalogEntry ? buildCatalogViewItem(catalogEntry, summary) : undefined,
       };
     },
 

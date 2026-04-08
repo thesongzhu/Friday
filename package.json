@@ -66,6 +66,7 @@
     "test:contracts": "npm run test:contracts:routes && npm run test:contracts:types",
     "test:contracts:update": "vitest run -u test/contracts/api",
     "check:all": "npm run check:migrations && npm run check:adversarial && npm run check:ssd && npm run check:alignment",
+    "check:provider-reliability": "vitest run test/unit/providers/model/friday-provider-templates.test.ts test/unit/providers/api/friday-provider-routes.test.ts",
     "setup:hooks": "bash scripts/setup-hooks.sh",
     "ops:converge-runtime": "bash scripts/ops/friday-converge-runtime.sh",
     "ops:doctor:runtime": "node scripts/ops/friday-local-runtime-doctor.mjs",

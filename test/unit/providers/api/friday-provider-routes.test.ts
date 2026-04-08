@@ -251,11 +251,11 @@ describe("FridayProviderRoutes", () => {
     };
   }
 
-  it("creates 16 route definitions", () => {
+  it("creates 19 route definitions", () => {
     const routes = createFridayProviderRoutes({
       providerService: makeMockService(),
     });
-    expect(routes).toHaveLength(16);
+    expect(routes).toHaveLength(19);
   });
 
   it("has correct operation ids", () => {
@@ -277,6 +277,9 @@ describe("FridayProviderRoutes", () => {
     expect(operationIds).toContain("providers.auth.profiles.activate");
     expect(operationIds).toContain("providers.routing.get");
     expect(operationIds).toContain("providers.routing.set");
+    expect(operationIds).toContain("providers.templates.list");
+    expect(operationIds).toContain("providers.templates.get");
+    expect(operationIds).toContain("providers.health.list");
   });
 
   it("all routes require hub.admin scope", () => {
@@ -690,11 +693,56 @@ describe("FridayProviderRoutes", () => {
   });
 
   describe("OAuth route operation ids", () => {
+    it("lists provider templates", async () => {
+      const routes = createFridayProviderRoutes({
+        providerService: makeMockService(),
+      });
+      const route = routes.find((entry) => entry.operationId === "providers.templates.list")!;
+
+      const result = await route.handler(makeCtx());
+
+      expect(result).toHaveProperty("items");
+      expect((result as { items: Array<{ id: string }> }).items.length).toBeGreaterThan(5);
+      expect((result as { items: Array<{ id: string }> }).items.some((item) => item.id === "openai")).toBe(true);
+    });
+
+    it("lists provider health snapshots", async () => {
+      const mockService = makeMockService();
+      mockService.getRoutingConfig = vi.fn(async () => ({
+        defaultProviderId: "anth-001",
+        fallbackProviderIds: ["prov-001"],
+      }));
+      const routes = createFridayProviderRoutes({
+        providerService: Object.assign(mockService, {
+          getProviderFallbackState: vi.fn((providerId: string) =>
+            providerId === "prov-001"
+              ? { circuitState: "cooldown" as const, cooldownRemainingMs: 42_000, lastFailureAt: NOW }
+              : { circuitState: "closed" as const },
+          ),
+        }),
+      });
+      const route = routes.find((entry) => entry.operationId === "providers.health.list")!;
+
+      const result = await route.handler(makeCtx());
+      const items = (result as { items: Array<{ providerId: string; lane: string; circuitState: string }> }).items;
+
+      expect(items).toHaveLength(2);
+      expect(items.find((item) => item.providerId === "prov-001")).toMatchObject({
+        lane: "fallback",
+        circuitState: "cooldown",
+      });
+      expect(items.find((item) => item.providerId === "anth-001")).toMatchObject({
+        lane: "primary",
+      });
+    });
+
     it("includes OAuth route operation ids", () => {
       const routes = createFridayProviderRoutes({
         providerService: makeMockService(),
       });
       const operationIds = routes.map((r) => r.operationId);
+      expect(operationIds).toContain("providers.templates.list");
+      expect(operationIds).toContain("providers.health.list");
       expect(operationIds).toContain("auth.oauth.anthropic.initiate");
       expect(operationIds).toContain("auth.oauth.anthropic.callback");
     });

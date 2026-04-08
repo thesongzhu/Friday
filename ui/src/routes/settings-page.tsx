@@ -38,6 +38,12 @@ function toneForStatus(value?: string): "neutral" | "success" | "warning" | "dan
   return "neutral";
 }
 
+function toneForProviderLane(value: "primary" | "fallback" | "standby" | "disabled"): "neutral" | "success" | "warning" {
+  if (value === "primary") return "success";
+  if (value === "fallback") return "warning";
+  return "neutral";
+}
+
 function applyDraftToPreferencePayload(draft: {
   mbti: FridayCommunicationPersona["mbti"] | "";
   settings: FridayCommunicationPersonaSettings;
@@ -74,6 +80,20 @@ export function SettingsPage() {
   const { data: providers = [] } = useQuery({
     queryKey: ["settings", "providers"],
     queryFn: () => providersApi.list(),
+  });
+
+  const { data: providerTemplates = [] } = useQuery({
+    queryKey: ["settings", "provider-templates"],
+    queryFn: () => providersApi.listTemplates(),
+    retry: 0,
+    staleTime: 30_000,
+  });
+
+  const { data: providerHealth = [] } = useQuery({
+    queryKey: ["settings", "provider-health"],
+    queryFn: () => providersApi.listHealth(),
+    retry: 0,
+    refetchInterval: 15_000,
   });
 
   const { data: systemSession } = useQuery({
@@ -321,18 +341,46 @@ export function SettingsPage() {
             <div className="space-y-3">
               {providers.map((provider) => (
                 <div key={provider.id} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                  {(() => {
+                    const template = providerTemplates.find((item) => item.providerKind === provider.kind);
+                    const healthItem = providerHealth.find((item) => item.providerId === provider.id);
+                    return (
+                      <>
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="font-medium text-[color:var(--color-text-primary)]">{provider.name}</p>
                       <p className="text-xs text-[color:var(--color-text-tertiary)]">{provider.kind} · {provider.baseUrl}</p>
                     </div>
-                    <StatusPill tone={provider.enabled ? "success" : "neutral"}>
-                      {provider.enabled ? "enabled" : "disabled"}
-                    </StatusPill>
+                    <div className="flex flex-wrap gap-2">
+                      <StatusPill tone={provider.enabled ? "success" : "neutral"}>
+                        {provider.enabled ? "enabled" : "disabled"}
+                      </StatusPill>
+                      {template ? <StatusPill tone={template.tier === "official" ? "success" : template.tier === "verified" ? "warning" : "neutral"}>{template.tier}</StatusPill> : null}
+                      {healthItem ? <StatusPill tone={toneForProviderLane(healthItem.lane)}>{healthItem.lane}</StatusPill> : null}
+                    </div>
                   </div>
                   <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">
                     Default model: {provider.defaultModel ?? provider.config.supportedModels[0] ?? "Not set"}
                   </p>
+                  {healthItem ? (
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <DiagnosticRow label="Backend health" value={healthItem.backendHealth} />
+                      <DiagnosticRow label="Auth health" value={healthItem.authHealth} />
+                      <DiagnosticRow label="Validation" value={healthItem.validationStatus} />
+                      <DiagnosticRow label="Circuit" value={healthItem.circuitState} />
+                    </div>
+                  ) : null}
+                  {healthItem?.cooldownRemainingMs ? (
+                    <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
+                      Cooldown remaining: {Math.ceil(healthItem.cooldownRemainingMs / 1000)}s
+                    </p>
+                  ) : null}
+                  {healthItem?.suggestedAction ? (
+                    <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">{healthItem.suggestedAction}</p>
+                  ) : null}
+                      </>
+                    );
+                  })()}
                 </div>
               ))}
             </div>

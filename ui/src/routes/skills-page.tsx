@@ -47,6 +47,32 @@ function formatMaturity(maturity?: "draft" | "verified" | "stable"): string {
   return "Draft";
 }
 
+function toneForCatalogReadiness(item: {
+  blockedReasons?: string[];
+  recommendedNextAction?: string;
+}): "success" | "warning" | "neutral" {
+  if ((item.blockedReasons?.length ?? 0) > 0) {
+    return "warning";
+  }
+  if (item.recommendedNextAction) {
+    return "success";
+  }
+  return "neutral";
+}
+
+function labelForCatalogReadiness(item: {
+  blockedReasons?: string[];
+  recommendedNextAction?: string;
+}): string {
+  if ((item.blockedReasons?.length ?? 0) > 0) {
+    return "needs review";
+  }
+  if (item.recommendedNextAction) {
+    return "ready";
+  }
+  return "catalog";
+}
+
 function describeIntegrationMode(input: {
   originType?: "generated" | "stabilized" | "cli-backed" | "mcp-backed";
   tags: string[];
@@ -431,7 +457,7 @@ export function SkillsPage() {
         <ShellCard
           eyebrow="Marketplace"
           title="New skills you can install"
-          aside={<StatusPill tone={sections.available.length > 0 ? "neutral" : "success"}>{sections.available.length} installable</StatusPill>}
+          aside={<StatusPill tone={sections.available.length > 0 ? "neutral" : "success"}>{sections.available.length} discoverable</StatusPill>}
         >
           <div className="space-y-3">
             {sections.available.length === 0 ? (
@@ -449,18 +475,37 @@ export function SkillsPage() {
                       <p className="font-medium text-[color:var(--color-text-primary)]">{item.skillName}</p>
                       <p className="text-xs text-[color:var(--color-text-tertiary)]">{item.skillId}</p>
                     </div>
-                    <StatusPill tone={item.signatureValid ? "success" : "warning"}>
-                      trust {item.trustScore}
-                    </StatusPill>
+                    <div className="flex flex-wrap gap-2">
+                      <StatusPill tone={toneForCatalogReadiness(item)}>
+                        {labelForCatalogReadiness(item)}
+                      </StatusPill>
+                      <StatusPill tone={item.signatureValid ? "success" : "warning"}>
+                        trust {item.trustScore}
+                      </StatusPill>
+                    </div>
                   </div>
                   <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
                     Version {item.version} · {item.publisher ?? "Unknown publisher"}
                   </p>
+                  {item.recommendedNextAction ? (
+                    <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">
+                      {item.recommendedNextAction}
+                    </p>
+                  ) : null}
+                  {item.blockedReasons && item.blockedReasons.length > 0 ? (
+                    <p className="mt-1 text-xs text-[color:var(--color-text-tertiary)]">
+                      Blocked: {item.blockedReasons[0]}
+                    </p>
+                  ) : null}
                   <div className="mt-2 flex flex-wrap gap-2">
                     {item.originType ? <StatusPill>{formatOriginType(item.originType)}</StatusPill> : null}
                     {item.maturity ? (
                       <StatusPill tone={toneForMaturity(item.maturity)}>{formatMaturity(item.maturity)}</StatusPill>
                     ) : null}
+                    {item.trustTier ? <StatusPill>{item.trustTier}</StatusPill> : null}
+                    {item.firstUsePrompts?.slice(0, 2).map((prompt) => (
+                      <StatusPill key={prompt} tone="neutral">{prompt}</StatusPill>
+                    ))}
                   </div>
                 </button>
               ))
@@ -509,12 +554,34 @@ export function SkillsPage() {
                   <p>Origin: {detail.origin}</p>
                   <p>Publisher: {detail.publisher ?? "Unknown"}</p>
                   <p>Source trust: {detail.sourceDetails?.trustPolicy ?? "local"}</p>
+                  <p>Trust tier: {detail.catalogEntry?.trustTier ?? "local"}</p>
                   <p>Installed version: {detail.installedVersion ?? "not installed"}</p>
                   <p>Latest version: {detail.latestVersion ?? "unknown"}</p>
                   <p>Starter pack: {detail.starter ? "yes" : "no"}</p>
                   <p>Origin type: {formatOriginType(detail.originType)}</p>
                   <p>Maturity: {formatMaturity(detail.maturity)}</p>
+                  <p>Implementation status: {detail.catalogEntry?.implementationStatus ?? "installed"}</p>
                 </div>
+                {detail.catalogEntry?.recommendedNextAction ? (
+                  <div className="mt-4 rounded-[20px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4 text-sm text-[color:var(--color-text-secondary)]">
+                    <p className="font-medium text-[color:var(--color-text-primary)]">Next best action</p>
+                    <p className="mt-2">{detail.catalogEntry.recommendedNextAction}</p>
+                    {detail.catalogEntry.blockedReasons && detail.catalogEntry.blockedReasons.length > 0 ? (
+                      <div className="mt-3 space-y-1 text-xs text-[color:var(--color-text-tertiary)]">
+                        {detail.catalogEntry.blockedReasons.map((reason) => (
+                          <p key={reason}>Blocked: {reason}</p>
+                        ))}
+                      </div>
+                    ) : null}
+                    {detail.catalogEntry.firstUsePrompts && detail.catalogEntry.firstUsePrompts.length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {detail.catalogEntry.firstUsePrompts.map((prompt) => (
+                          <StatusPill key={prompt}>{prompt}</StatusPill>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="mt-4 flex flex-wrap gap-3">
                   {detail.installedVersion ? (
                     <ActionButton

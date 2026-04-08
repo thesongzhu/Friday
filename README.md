@@ -34,6 +34,7 @@ For everything beyond the main product overview, use the [Documentation Hub](doc
 - **Warn-once architecture**: cross-module log deduplication (7+ modules) for cleaner runtime output without losing critical warnings.
 - **Workflow realtime events**: buffered event publishing enables live workflow progress tracking via SSE/WebSocket.
 - **Setup diagnostics**: user-friendly error messages and remediation hints for setup/auth failures in UI.
+- **Provider templates and lane health**: setup/settings now consume `/v1/providers/templates*` and `/v1/providers/health` for template-driven bootstrap, lane visibility, fallback/circuit state, and operator guidance.
 - **Non-cloud runtime stabilization**: graceful degradation for companion, providers, memory, sessions, skills, and UI mount failures.
 - **Rules audit canonicalization**: migration v059 unifies rule evaluation logs into canonical audit table.
 - **Release preflight and Docker E2E**: layered Docker smoke tests, release preflight checks, and cloud contract verification.
@@ -150,7 +151,7 @@ Detailed boundary docs:
 - **Expert Mode** — Opt-in bounded autonomy for assumption-aware planning, safe probes, and stronger guided troubleshooting across `/assistant`, self-healing, workflows, skills, fleet, and observability.
 - **Observability** — Operator-facing `/observability` surface for traces, audit, alerts, default SLOs, alert destinations, health summaries, and time-series tied to self-healing and assistant flows.
 - **Acceptance / Retry / Rules** — Sandboxed acceptance checks with version history, provider-level retry circuit breakers with replay evidence, and explainable rules simulation and audit.
-- **Providers (BYOK)** — Register, validate, and route to any LLM provider with usage tracking.
+- **Providers (BYOK)** — Register, validate, template-bootstrap, and route to any LLM provider with usage tracking and lane health visibility.
 - **Rules Engine** — Rule-based automation alongside workflows.
 - **Daemon & TUI** — Long-running daemon mode with terminal UI for interactive operation.
 - **Communication Persona** — MBTI-based adaptive communication with 16 personality templates, 9 dimensions, and learned preference integration. See [Communication Persona & Adaptive Learning](#communication-persona--adaptive-learning) below.
@@ -582,6 +583,9 @@ All routes are prefixed with `/v1`. Auth uses JWT Bearer tokens unless marked **
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `GET` | `/v1/providers` | token | List providers |
+| `GET` | `/v1/providers/templates` | token | List curated provider bootstrap templates |
+| `GET` | `/v1/providers/templates/:templateId` | token | Get a single provider template |
+| `GET` | `/v1/providers/health` | token | List provider lane health, validation, and fallback circuit state |
 | `POST` | `/v1/providers` | token | Register a provider |
 | `GET` | `/v1/providers/:providerId` | token | Get provider details |
 | `PATCH` | `/v1/providers/:providerId` | token | Update a provider |

@@ -1,0 +1,251 @@
+import type {
+  FridayProviderAuthMode,
+  FridayProviderKind,
+  FridayProviderTemplate,
+  FridayProviderTemplateModelDefaults,
+  FridayProviderTemplateSecretRequirement,
+  FridayProviderTemplateStatus,
+  FridayProviderTemplateTier,
+} from "./friday-provider.types.js";
+import { FRIDAY_PROVIDER_KINDS } from "./friday-provider.types.js";
+import { getFridayProviderAuthModesForBackend, getFridayProviderCapability } from "./friday-provider-capabilities.js";
+import { getFridayProviderPreset } from "./friday-provider-catalog.js";
+
+interface FridayProviderTemplateMeta {
+  displayName?: string;
+  description?: string;
+  tier?: FridayProviderTemplateTier;
+  status?: FridayProviderTemplateStatus;
+  baseUrlHints?: string[];
+  modelDefaults?: Partial<FridayProviderTemplateModelDefaults>;
+  reasoningHints?: string[];
+}
+
+const TEMPLATE_META: Partial<Record<FridayProviderKind, FridayProviderTemplateMeta>> = {
+  openai: {
+    displayName: "OpenAI API",
+    description: "Friday's default hosted path for native-tool runs, explainable routing, and broad model coverage.",
+    tier: "official",
+    status: "ready",
+    modelDefaults: {
+      recommended: "gpt-4o",
+      fallback: "gpt-4o-mini",
+      examples: ["gpt-4o", "gpt-4o-mini", "o4-mini"],
+    },
+    reasoningHints: [
+      "Use the recommended fallback model when latency or budget matters.",
+      "Keep HTTP routing as the canonical setup path even if Codex CLI is attached later.",
+    ],
+  },
+  anthropic: {
+    displayName: "Anthropic API",
+    description: "Claude HTTP path with support for API keys, OAuth, and setup tokens inside Friday's supervised runtime.",
+    tier: "official",
+    status: "ready",
+    modelDefaults: {
+      recommended: "claude-sonnet-4-20250514",
+      fallback: "claude-haiku-3.5",
+      examples: ["claude-sonnet-4-20250514", "claude-opus-4"],
+    },
+    reasoningHints: [
+      "Prefer HTTP for tool-capable runs; attach Claude CLI later only for text-only workflows.",
+    ],
+  },
+  google: {
+    displayName: "Google AI Studio",
+    description: "Gemini API path for tool-capable runs without assuming Gemini CLI is present.",
+    tier: "official",
+    status: "ready",
+    modelDefaults: {
+      recommended: "gemini-2.5-pro",
+      fallback: "gemini-2.5-flash",
+      examples: ["gemini-2.5-pro", "gemini-2.5-flash"],
+    },
+    reasoningHints: [
+      "Use API key auth first; add CLI-backed workflows later only if the local environment really has Gemini CLI.",
+    ],
+  },
+  ollama: {
+    displayName: "Ollama Local",
+    description: "Local-only runtime path for no-egress and self-hosted workflows.",
+    tier: "official",
+    status: "ready",
+    baseUrlHints: ["http://localhost:11434"],
+    modelDefaults: {
+      recommended: "llama3.2",
+      fallback: "qwen2.5-coder",
+      examples: ["llama3.2", "qwen2.5-coder", "mistral"],
+    },
+    reasoningHints: [
+      "Use local-only routing policies when privacy outweighs absolute model capability.",
+    ],
+  },
+  "openai-compatible": {
+    displayName: "OpenAI-compatible Gateway",
+    description: "Gateway or self-hosted proxy that follows Friday's canonical OpenAI-compatible HTTP contract.",
+    tier: "official",
+    status: "requires_configuration",
+    modelDefaults: {
+      examples: ["gpt-4o", "qwen2.5-coder", "llama3.1"],
+    },
+    reasoningHints: [
+      "Only configure gateways that genuinely follow the OpenAI-compatible contract; Friday does not infer hidden OAuth flows.",
+    ],
+  },
+  openrouter: {
+    displayName: "OpenRouter",
+    description: "OpenAI-compatible hosted router with broad model coverage and straightforward bearer auth.",
+    tier: "verified",
+    status: "ready",
+    modelDefaults: {
+      recommended: "openai/gpt-4o-mini",
+      fallback: "anthropic/claude-3.5-haiku",
+      examples: ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet"],
+    },
+  },
+  groq: {
+    displayName: "Groq",
+    description: "High-speed OpenAI-compatible route for latency-sensitive tasks.",
+    tier: "verified",
+    status: "ready",
+    modelDefaults: {
+      recommended: "llama-3.3-70b-versatile",
+      fallback: "llama-3.1-8b-instant",
+      examples: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+    },
+  },
+  mistral: {
+    displayName: "Mistral",
+    description: "Hosted OpenAI-compatible route with solid European-region coverage.",
+    tier: "verified",
+    status: "ready",
+    modelDefaults: {
+      recommended: "mistral-large-latest",
+      fallback: "ministral-8b-latest",
+      examples: ["mistral-large-latest", "ministral-8b-latest"],
+    },
+  },
+  vllm: {
+    displayName: "vLLM",
+    description: "Self-hosted OpenAI-compatible runtime for dedicated deployments.",
+    tier: "verified",
+    status: "ready",
+    baseUrlHints: ["http://127.0.0.1:8000"],
+  },
+  litellm: {
+    displayName: "LiteLLM",
+    description: "OpenAI-compatible router that can front multiple upstream model providers.",
+    tier: "verified",
+    status: "ready",
+    baseUrlHints: ["http://127.0.0.1:4000"],
+  },
+  bedrock: {
+    displayName: "AWS Bedrock (compat)",
+    description: "Bring your own compatibility bridge or gateway for Bedrock-backed routing.",
+    tier: "verified",
+    status: "requires_configuration",
+  },
+  "github-copilot": {
+    displayName: "GitHub Copilot Gateway",
+    description: "Compatibility-only path. Friday does not ship a Copilot reverse proxy or consumer OAuth bridge.",
+    tier: "experimental",
+    status: "experimental",
+  },
+  synthetic: {
+    displayName: "Synthetic",
+    description: "Experimental Anthropic-compatible provider preset.",
+    tier: "experimental",
+    status: "experimental",
+  },
+};
+
+function titleCaseProviderKind(kind: FridayProviderKind): string {
+  return kind
+    .split(/[-_]/g)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function buildRequiredSecrets(authModes: readonly FridayProviderAuthMode[]): FridayProviderTemplateSecretRequirement[] {
+  const requirements: FridayProviderTemplateSecretRequirement[] = [];
+  if (authModes.includes("api-key")) {
+    requirements.push({
+      key: "apiKey",
+      label: "API key",
+      required: true,
+      acceptedRefs: ["inline", "env-ref", "secret-ref"],
+      helpText: "Use a raw key, $ENV ref, or a managed secret reference.",
+    });
+  }
+  if (authModes.includes("bearer-token")) {
+    requirements.push({
+      key: "bearerToken",
+      label: "Bearer token",
+      required: true,
+      acceptedRefs: ["inline", "env-ref", "secret-ref"],
+      helpText: "For OpenAI-compatible bearer auth paths.",
+    });
+  }
+  if (authModes.includes("token")) {
+    requirements.push({
+      key: "setupToken",
+      label: "Setup token",
+      required: true,
+      acceptedRefs: ["inline", "env-ref", "secret-ref"],
+      helpText: "Compatibility path for pasted or setup-phase provider tokens.",
+    });
+  }
+  return requirements;
+}
+
+function defaultReasoningHints(kind: FridayProviderKind): string[] {
+  if (kind === "ollama" || kind === "vllm" || kind === "litellm") {
+    return ["Prefer local-only or no-egress policies when these runtimes handle sensitive tasks."];
+  }
+  if (kind === "openai-compatible") {
+    return ["Verify the base URL and model naming contract before making it the default route."];
+  }
+  return ["Start with the stable HTTP path first, then add advanced routing or CLI sidecars later if needed."];
+}
+
+function defaultModelDefaults(): FridayProviderTemplateModelDefaults {
+  return { examples: [] };
+}
+
+export function listFridayProviderTemplates(): FridayProviderTemplate[] {
+  return FRIDAY_PROVIDER_KINDS.map((kind) => {
+    const preset = getFridayProviderPreset(kind);
+    const capability = getFridayProviderCapability(kind);
+    const meta = TEMPLATE_META[kind] ?? {};
+    const authModes = [...getFridayProviderAuthModesForBackend(kind, preset.backendKind)];
+    const baseUrlHints = meta.baseUrlHints ?? (preset.baseUrl.trim().length > 0 ? [preset.baseUrl] : []);
+    const modelDefaults: FridayProviderTemplateModelDefaults = {
+      ...defaultModelDefaults(),
+      ...(meta.modelDefaults ?? {}),
+      examples: meta.modelDefaults?.examples ?? [],
+    };
+    return {
+      id: kind,
+      providerKind: kind,
+      displayName: meta.displayName ?? titleCaseProviderKind(kind),
+      description: meta.description ?? `Bootstrap ${titleCaseProviderKind(kind)} through Friday's ${capability.family} provider path.`,
+      tier: meta.tier ?? (preset.baseUrl.trim().length > 0 ? "verified" : "community"),
+      status: meta.status ?? (capability.requiresBaseUrl ? "requires_configuration" : "ready"),
+      api: preset.api,
+      backendKind: preset.backendKind,
+      deploymentKind: preset.deploymentKind,
+      regionTag: preset.regionTag,
+      authModes,
+      baseUrlHints,
+      modelDefaults,
+      reasoningHints: meta.reasoningHints ?? defaultReasoningHints(kind),
+      requiredSecrets: buildRequiredSecrets(authModes),
+    };
+  });
+}
+
+export function getFridayProviderTemplate(
+  templateId: string,
+): FridayProviderTemplate | null {
+  return listFridayProviderTemplates().find((template) => template.id === templateId) ?? null;
+}
