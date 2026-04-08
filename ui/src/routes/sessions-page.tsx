@@ -1,20 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiClient } from "@/lib/api/client";
-
-interface SessionSummary {
-  sessionKey: string;
-  status: string;
-  channelKind?: string;
-  createdAt: string;
-  updatedAt?: string;
-  messageCount?: number;
-  title?: string;
-}
-
-interface SessionListResponse {
-  items: SessionSummary[];
-}
+import { sessionsApi } from "@/lib/api/sessions";
+import type { FridaySessionStatus } from "@/lib/api/types";
 
 interface SessionMessage {
   id: string;
@@ -30,13 +17,7 @@ interface SessionMessageListResponse {
 function useSessionList(filter: { status?: string }) {
   return useQuery({
     queryKey: ["sessions", filter],
-    queryFn: async (): Promise<SessionSummary[]> => {
-      const params = new URLSearchParams();
-      if (filter.status) params.set("status", filter.status);
-      const qs = params.toString();
-      const data = await apiClient.get<SessionListResponse>(`/v1/sessions${qs ? `?${qs}` : ""}`);
-      return data.items;
-    },
+    queryFn: () => sessionsApi.list({ status: filter.status as FridaySessionStatus | undefined }),
     refetchInterval: 30_000,
   });
 }
@@ -46,8 +27,8 @@ function useSessionMessages(sessionKey: string | null) {
     queryKey: ["session-messages", sessionKey],
     queryFn: async (): Promise<SessionMessage[]> => {
       if (!sessionKey) return [];
-      const data = await apiClient.get<SessionMessageListResponse>(`/v1/sessions/${encodeURIComponent(sessionKey)}/messages`);
-      return data.items;
+      const records = await sessionsApi.listMessages(sessionKey);
+      return records as unknown as SessionMessage[];
     },
     enabled: sessionKey !== null,
   });
@@ -134,21 +115,21 @@ export function SessionsPage() {
             <div className="space-y-2">
               {sessions.map((session) => (
                 <button
-                  key={session.sessionKey}
+                  key={session.key}
                   type="button"
-                  onClick={() => setSelectedSession(session.sessionKey)}
+                  onClick={() => setSelectedSession(session.key)}
                   className={`w-full rounded-xl border p-3 text-left transition-colors ${
-                    selectedSession === session.sessionKey
+                    selectedSession === session.key
                       ? "border-indigo-300 bg-indigo-50 dark:border-indigo-700 dark:bg-indigo-900/20"
                       : "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] hover:bg-[color:var(--color-bg-hover)]"
                   }`}
                 >
                   <p className="text-sm font-medium text-[color:var(--color-text-primary)] truncate">
-                    {session.title ?? session.sessionKey}
+                    {session.key}
                   </p>
                   <div className="mt-1 flex items-center gap-2 text-xs text-[color:var(--color-text-secondary)]">
                     <span>{session.status}</span>
-                    {session.channelKind ? <span>via {session.channelKind}</span> : null}
+                    {session.channel ? <span>via {session.channel}</span> : null}
                     <span>{formatDate(session.createdAt)}</span>
                   </div>
                 </button>

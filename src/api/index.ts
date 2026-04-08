@@ -22,6 +22,17 @@ export type * from "./model/friday-api-self-healing.types.js";
 export type * from "./model/friday-api-uix-surface.types.js";
 export type * from "./model/friday-api-runtime-admin.types.js";
 
+// Deep link types
+export type {
+  FridayDeepLinkResourceType,
+  FridayDeepLinkPayload,
+  FridayDeepLinkCheck,
+  FridayDeepLinkCheckLevel,
+  FridayDeepLinkPreviewResult,
+  FridayDeepLinkApplyResult,
+} from "../deeplink/index.js";
+export type { FridayDeepLinkParseResult } from "../deeplink/index.js";
+
 // Auth
 export { createFridayAuthService, FridayAuthError, hashPasswordScrypt } from "./auth/friday-auth-service.js";
 export type { FridayAuthService } from "./auth/friday-auth-service.types.js";

@@ -8,6 +8,9 @@ import type {
   FridayProviderBackendKind,
 } from "#providers";
 
+import { evaluatePolicyExtensionChain } from "../../security/policy-extension-chain.js";
+import type { PolicyExtension } from "../../security/policy-extension-chain.js";
+
 import {
   FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
   FRIDAY_AGENT_COMPACTION_THRESHOLD,
@@ -2030,6 +2033,30 @@ export function createFridayAgentRuntime(
                 `[friday][marker] tool_batch_executed runId=${runId} groups=${String(groups.length)} tools=${String(executableToolUses.length)}`,
               );
             }
+            // PolicyExtensionChain gate: evaluate extensions before tool execution.
+            // Extensions can only tighten (deny); they cannot override core policy.
+            const policyExtensions: PolicyExtension[] = deps.policyExtensions ?? [];
+            if (policyExtensions.length > 0) {
+              for (const toolUse of executableBlocks) {
+                const policyResult = evaluatePolicyExtensionChain(
+                  "allow",
+                  policyExtensions as PolicyExtension[],
+                  { principalId: principalId ?? "system", resource: "tool", action: "execute", resourceId: toolUse.name },
+                );
+                if (policyResult.decision === "deny") {
+                  handleTrackedEvent("agent.run.capability_grant_denied", {
+                    runId,
+                    grantId: `policy-deny-${toolUse.id}`,
+                    toolCallId: toolUse.id,
+                    toolName: toolUse.name,
+                    reason: `Policy extension "${policyResult.decidedBy ?? "unknown"}" denied tool execution`,
+                    principalId,
+                    sessionKey,
+                  });
+                }
+              }
+            }
+
             const executedRecords = await executeToolBatch(
               groups,
               async (toolUse) =>

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { scanShellScript } from "../safety/friday-shell-safety-scanner.js";
 import semver from "semver";
 import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
@@ -1527,6 +1528,29 @@ export function createFridaySkillLifecycleService(
         && (!packageIntegrity.available || packageIntegrity.ok)
         && runtimeDryRun.ok
         && trustSummary.verdict !== "blocked";
+      // Shell safety scan: check entry point for dangerous patterns (shell/python skills)
+      let shellSafety: { verdict: "safe" | "needs_review" | "dangerous"; findingCount: number; blockingCount: number } | undefined;
+      try {
+        const skillDir = join(deps.managedSkillsDir, input.skillId);
+        // Find the entry point — try common names
+        const candidates = ["index.sh", "index.bash", "run.sh", "main.sh", "index.mjs", "index.js"];
+        for (const candidate of candidates) {
+          const entryPath = join(skillDir, candidate);
+          if (existsSync(entryPath)) {
+            const entryContent = readFileSync(entryPath, "utf8");
+            const scanResult = scanShellScript(entryContent);
+            shellSafety = {
+              verdict: scanResult.verdict,
+              findingCount: scanResult.findings.length,
+              blockingCount: scanResult.findings.filter((f) => f.level === "blocking").length,
+            };
+            break;
+          }
+        }
+      } catch {
+        // Shell safety scan is best-effort; don't block verification on scanner errors
+      }
+
       const preflight = buildSkillPreflightSummary({
         manifestVerdict,
         packageIntegrity,
@@ -1535,6 +1559,7 @@ export function createFridaySkillLifecycleService(
         trustSummary,
         requirementPreview: detail.requirementPreview,
         permissionPreview: detail.permissionPreview,
+        shellSafety,
       });
 
       const evidence: FridaySkillVerificationEvidence = {
