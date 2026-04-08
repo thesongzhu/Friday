@@ -1,4 +1,4 @@
-import { ArrowRight, GripVertical, Pin, Play, Sparkles, X } from "lucide-react";
+import { ArrowRight, GripVertical, Pin, Play, ShieldCheck, Sparkles, X } from "lucide-react";
 import { ActionButton } from "@/components/core/primitives";
 import { resolveLocalizedText } from "@/lib/i18n/localized-text";
 import type { FridayPackDefinition } from "@/lib/packs/pack-registry";
@@ -38,7 +38,15 @@ export function PackCard(props: PackCardProps) {
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h3 className="text-sm font-semibold text-[color:var(--color-text-primary)]">{title}</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-[color:var(--color-text-primary)]">{title}</h3>
+                {locale === "zh" && (
+                  <span className="inline-flex items-center gap-0.5 rounded-full bg-[color:var(--color-accent-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[color:var(--color-accent)]">
+                    <ShieldCheck className="h-3 w-3" />
+                    官方
+                  </span>
+                )}
+              </div>
               <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-secondary)]">{summary}</p>
             </div>
             {props.pinned ? (

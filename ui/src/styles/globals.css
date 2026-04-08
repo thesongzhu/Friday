@@ -32,7 +32,76 @@
   --font-display: "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
   --font-mono: "IBM Plex Mono", "SFMono-Regular", monospace;
 
+  --density-card-padding: 1.35rem;
+  --density-card-radius: 28px;
+  --density-section-gap: 1.25rem;
+  --density-grid-gap: 1rem;
+
+  --color-bg-chrome: rgba(252, 247, 240, 0.94);
+  --color-bg-chrome-strong: rgba(252, 247, 240, 0.92);
+
   color-scheme: light;
+}
+
+/* ── Chinese locale: warm palette, moderate density, CJK typography ── */
+[data-locale="zh"] {
+  --color-bg-base: #fbf4ea;
+  --color-ink: #2d2118;
+  --color-accent: #c87a3c;
+
+  --color-bg-elevated: #fdf7f0;
+  --color-bg-surface: rgba(255, 255, 255, 0.60);
+  --color-bg-surface-strong: rgba(255, 255, 255, 0.78);
+  --color-bg-subtle: rgba(255, 248, 238, 0.45);
+  --color-bg-contrast: rgba(45, 33, 24, 0.05);
+
+  --color-border-soft: rgba(45, 33, 24, 0.10);
+  --color-border-strong: rgba(45, 33, 24, 0.18);
+
+  --color-text-primary: #2d2118;
+  --color-text-secondary: rgba(45, 33, 24, 0.74);
+  --color-text-tertiary: rgba(45, 33, 24, 0.56);
+  --color-text-faint: rgba(45, 33, 24, 0.36);
+
+  --color-accent-soft: rgba(200, 122, 60, 0.14);
+  --color-accent-muted: rgba(200, 122, 60, 0.08);
+  --color-accent-strong: rgba(200, 122, 60, 0.24);
+  --color-focus-ring: rgba(200, 122, 60, 0.20);
+
+  --shadow-card: 0 14px 32px rgba(88, 68, 42, 0.09);
+  --shadow-card-strong: 0 22px 48px rgba(88, 68, 42, 0.11);
+  --shadow-floating: 0 9px 26px rgba(88, 68, 42, 0.07);
+
+  --font-display: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+
+  --color-bg-chrome: rgba(253, 247, 240, 0.95);
+  --color-bg-chrome-strong: rgba(253, 247, 240, 0.93);
+
+  --density-card-padding: 1.15rem;
+  --density-card-radius: 22px;
+  --density-section-gap: 1rem;
+  --density-grid-gap: 0.85rem;
+
+  line-height: 1.7;
+}
+
+[data-locale="zh"] body {
+  background:
+    radial-gradient(circle at top left, rgba(200, 122, 60, 0.06), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(45, 33, 24, 0.04), transparent 24%),
+    linear-gradient(180deg, #fbf4ea 0%, #f7ede1 100%);
+}
+
+[data-locale="zh"] .agent-eyebrow {
+  letter-spacing: 0.12em;
+  text-transform: none;
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+[data-locale="zh"] .agent-card-title {
+  font-weight: 800;
+  letter-spacing: 0;
 }
 
 @layer base {
@@ -50,9 +119,9 @@
     min-height: 100vh;
     margin: 0;
     background:
-      radial-gradient(circle at top left, rgba(108, 127, 146, 0.08), transparent 28%),
+      radial-gradient(circle at top left, var(--color-accent-muted), transparent 28%),
       radial-gradient(circle at bottom right, rgba(51, 41, 34, 0.05), transparent 24%),
-      linear-gradient(180deg, #faf2e7 0%, #f6eee3 100%);
+      linear-gradient(180deg, var(--color-bg-base) 0%, var(--color-bg-elevated) 100%);
     color: var(--color-text-primary);
     font-family: var(--font-display);
     font-feature-settings: "rlig" 1, "calt" 1;
@@ -95,7 +164,7 @@
 .agent-orb-left {
   left: -9rem;
   top: -8rem;
-  background: rgba(108, 127, 146, 0.2);
+  background: var(--color-accent-strong);
 }
 
 .agent-orb-right {
@@ -110,8 +179,8 @@
     linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.56)),
     var(--color-bg-surface);
   backdrop-filter: blur(20px);
-  border-radius: 28px;
-  padding: 1.35rem;
+  border-radius: var(--density-card-radius);
+  padding: var(--density-card-padding);
   box-shadow: var(--shadow-card);
 }
 
@@ -126,7 +195,7 @@
     linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.62)),
     var(--color-bg-surface-strong);
   backdrop-filter: blur(18px);
-  border-radius: 28px;
+  border-radius: var(--density-card-radius);
   padding: 1rem 1.2rem;
   box-shadow: var(--shadow-floating);
 }
@@ -193,9 +262,9 @@
   min-height: 22rem;
   overflow: auto;
   border: 1px solid var(--color-accent-soft);
-  border-radius: 24px;
+  border-radius: calc(var(--density-card-radius) - 4px);
   background:
-    linear-gradient(180deg, rgba(108, 127, 146, 0.06), transparent 18%),
+    linear-gradient(180deg, var(--color-accent-muted), transparent 18%),
     rgba(255, 255, 255, 0.86);
   padding: 1rem;
   color: var(--color-text-secondary);
@@ -208,7 +277,7 @@
 
 .agent-subcard {
   border: 1px solid var(--color-border-soft);
-  border-radius: 24px;
+  border-radius: calc(var(--density-card-radius) - 4px);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.48)),
     var(--color-bg-surface);
@@ -217,7 +286,7 @@
 
 .agent-subcard-strong {
   border: 1px solid var(--color-border-strong);
-  border-radius: 24px;
+  border-radius: calc(var(--density-card-radius) - 4px);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.62)),
     var(--color-bg-surface-strong);
@@ -227,11 +296,11 @@
 .agent-selection-card {
   width: 100%;
   border: 1px solid var(--color-border-soft);
-  border-radius: 24px;
+  border-radius: calc(var(--density-card-radius) - 4px);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.52)),
     var(--color-bg-surface);
-  padding: 1rem;
+  padding: var(--density-card-padding);
   text-align: left;
   transition:
     border-color 160ms ease,
@@ -249,17 +318,17 @@
 .agent-selection-card[data-active="true"] {
   border-color: var(--color-accent);
   background:
-    linear-gradient(180deg, rgba(108, 127, 146, 0.14), rgba(108, 127, 146, 0.06)),
+    linear-gradient(180deg, var(--color-accent-soft), var(--color-accent-muted)),
     rgba(255, 255, 255, 0.9);
 }
 
 .agent-metric-card {
   border: 1px solid var(--color-border-soft);
-  border-radius: 22px;
+  border-radius: calc(var(--density-card-radius) - 6px);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.5)),
     var(--color-bg-surface);
-  padding: 1rem;
+  padding: var(--density-card-padding);
   box-shadow: var(--shadow-floating);
 }
 
@@ -283,7 +352,7 @@
 
 .agent-detail-note {
   border: 1px solid var(--color-border-soft);
-  border-radius: 22px;
+  border-radius: calc(var(--density-card-radius) - 6px);
   background: rgba(255, 255, 255, 0.45);
   color: var(--color-text-secondary);
 }

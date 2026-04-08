@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, CheckCircle2, Globe2, LayoutGrid, UserRound } from "lucide-react";
 import { ActionButton, ShellCard } from "@/components/core/primitives";
+import { StepProgress, type StepProgressStep } from "@/components/guided/step-progress";
 import { PackCard } from "@/components/packs/pack-card";
 import { useUixPreferences } from "@/hooks/use-uix-preferences";
 import { useUserProfile, type UserProfileType } from "@/hooks/use-user-profile";
@@ -11,6 +12,15 @@ import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 
 type OnboardingStep = "language" | "profile" | "packs" | "widgets";
+
+const ONBOARDING_STEP_ORDER: OnboardingStep[] = ["language", "profile", "packs", "widgets"];
+
+const ONBOARDING_STEP_LABELS: Record<OnboardingStep, { zh: string; en: string }> = {
+  language: { zh: "语言", en: "Language" },
+  profile: { zh: "画像", en: "Profile" },
+  packs: { zh: "入口", en: "Packs" },
+  widgets: { zh: "模块", en: "Widgets" },
+};
 
 const PROFILE_OPTIONS: Array<{
   type: UserProfileType;
@@ -118,6 +128,13 @@ export function OnboardingPage() {
     navigate("/home", { replace: true });
   }
 
+  const currentStepIdx = ONBOARDING_STEP_ORDER.indexOf(step);
+  const onboardingSteps: StepProgressStep[] = ONBOARDING_STEP_ORDER.map((s, idx) => ({
+    id: s,
+    label: locale === "zh" ? ONBOARDING_STEP_LABELS[s].zh : ONBOARDING_STEP_LABELS[s].en,
+    status: idx < currentStepIdx ? "completed" as const : idx === currentStepIdx ? "active" as const : "pending" as const,
+  }));
+
   return (
     <div className="flex min-h-[calc(100vh-7rem)] items-center justify-center pb-6">
       <div className="w-full max-w-4xl space-y-5">
@@ -135,6 +152,11 @@ export function OnboardingPage() {
               "These four steps only set your initial language, pinned packs, and default home widgets. You can change them later.",
             )}
           </p>
+          {locale === "zh" && (
+            <div className="mt-4">
+              <StepProgress steps={onboardingSteps} orientation="horizontal" />
+            </div>
+          )}
         </section>
 
         {step === "language" ? (
