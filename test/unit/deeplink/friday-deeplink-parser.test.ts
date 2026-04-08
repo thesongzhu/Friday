@@ -69,11 +69,11 @@ describe("parseFridayDeepLinkUri", () => {
 
   it("extracts integrity hash and source", () => {
     const result = parseFridayDeepLinkUri(
-      "friday://skill-source?url=https://example.com/skill.tgz&integrity=abc123def456&source=trusted-repo",
+      "friday://skill-source?url=https://example.com/skill.tgz&integrity=integrity-demo-value&source=trusted-repo",
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.payload.integrityHash).toBe("abc123def456");
+      expect(result.payload.integrityHash).toBe("integrity-demo-value");
       expect(result.payload.source).toBe("trusted-repo");
     }
   });

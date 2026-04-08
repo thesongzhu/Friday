@@ -50,13 +50,13 @@ describe("hub-level SecretRef unification", () => {
 
   describe("resolveFridaySecretInput resolves env-ref", () => {
     it("resolves env-ref from provided env object", async () => {
-      const parsed = parseFridaySecretInput("$TEST_SECRET_VALUE");
+      const parsed = parseFridaySecretInput("$TEST_ENV_VALUE");
       const result = await resolveFridaySecretInput(parsed, {
-        env: { TEST_SECRET_VALUE: "resolved-value" },
+        env: { TEST_ENV_VALUE: "demo-env-value" },
       });
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value).toBe("resolved-value");
+        expect(result.value).toBe("demo-env-value");
       }
     });
 
