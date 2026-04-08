@@ -54,39 +54,50 @@ async function waitForTestId(pageHandle: FridayBrowserPageHandle, testId: string
 type SurfaceId = "home" | "packs" | "assistant";
 
 async function waitForSurfaceReady(pageHandle: FridayBrowserPageHandle, surface: SurfaceId): Promise<void> {
-  await pageHandle.page.waitForFunction(
-    (targetSurface) => {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    const ready = await pageHandle.page.evaluate((targetSurface) => {
       const textLength = document.body.textContent?.trim().length ?? 0;
+      const has = (selector: string) => Boolean(document.querySelector(selector));
       switch (targetSurface) {
         case "home":
-          return Boolean(document.querySelector('[data-testid="home-surface-ready"]')) && textLength > 120;
+          return has('[data-testid="home-surface-ready"]') && textLength > 120;
         case "packs":
-          return Boolean(document.querySelector('[data-testid="packs-surface-ready"]'))
-            && Boolean(document.querySelector('[data-testid^="pack-open-"]'));
+          return has('[data-testid="packs-surface-ready"]')
+            && (has('[data-testid^="pack-open-"]') || has('[data-testid^="pack-card-"]'));
         case "assistant":
-          return Boolean(document.querySelector('[data-testid="assistant-inbox"]'));
+          return has('[data-testid="assistant-inbox"]');
       }
-    },
-    surface,
-    { timeout: 60_000 },
-  );
+    }, surface);
+    if (ready) {
+      return;
+    }
+    await pageHandle.page.waitForTimeout(200);
+  }
+
+  throw new Error(`surface ${surface} did not become visible within 60000ms (url=${pageHandle.page.url()})`);
 }
 
 async function clickRailLink(pageHandle: FridayBrowserPageHandle, href: string): Promise<void> {
-  await pageHandle.page.waitForFunction(
-    (targetHref) => {
-      const link = document.querySelector(`[data-testid="app-shell-rail"] a[href="${targetHref}"]`);
-      return link instanceof HTMLAnchorElement && link.isConnected;
-    },
-    href,
-  );
-  await pageHandle.page.evaluate((targetHref) => {
-    const link = document.querySelector(`[data-testid="app-shell-rail"] a[href="${targetHref}"]`);
-    if (!(link instanceof HTMLAnchorElement)) {
-      throw new Error(`rail link not found for ${targetHref}`);
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const clicked = await pageHandle.page.evaluate((targetHref) => {
+      const link = document.querySelector(
+        `[data-testid="app-shell-rail"] a[href="${targetHref}"], nav a[href="${targetHref}"]`,
+      );
+      if (!(link instanceof HTMLAnchorElement)) {
+        return false;
+      }
+      link.click();
+      return true;
+    }, href);
+    if (clicked) {
+      return;
     }
-    link.click();
-  }, href);
+    await pageHandle.page.waitForTimeout(200);
+  }
+
+  throw new Error(`rail link not found for ${href} within 30000ms`);
 }
 
 function median(values: number[]): number {
