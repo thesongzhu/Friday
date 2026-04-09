@@ -38,6 +38,10 @@ import {
   type FridayRuleRow,
 } from "#rules";
 import type {
+  JsonObject,
+} from "../model/friday-workflow.types.js";
+import type { FridayCompiledWorkflowGraphV2 } from "../model/friday-workflow-graph.types.js";
+import type {
   FridayWorkflowEvidenceEvent,
   FridayWorkflowEvidenceModule,
   FridayWorkflowPlaybookEvidenceTrace,
@@ -354,6 +358,15 @@ export interface CreateFridayWorkflowRuntimeDeps {
   ) => Promise<unknown>;
   publishEvent?: (event: string, payload: unknown) => Promise<void>;
   triggerRepo?: FridayWorkflowTriggerRepository;
+  onRunIntake?: (input: {
+    runId: string;
+    workflowId: string;
+    workflowVersionId: string;
+    compiledGraph: FridayCompiledWorkflowGraphV2;
+    triggerType: string;
+    triggerPayload?: JsonObject;
+    context?: JsonObject;
+  }) => Promise<{ contextPatch?: JsonObject } | void>;
 }
 
 /** @deprecated Use `CreateFridayWorkflowRuntimeDeps` instead. */
@@ -908,54 +921,57 @@ export function createFridayWorkflowRuntime(
     idGenerator: deps.idGenerator,
     nowIso: deps.nowIso,
     publishEvent: deps.publishEvent,
-    onRunIntake: pipelineEnabled ? async (input) => {
-      const workflow = deps.db.withReadConnection((db) =>
-        workflowRepo.getWorkflowById(db, input.workflowId),
-      );
-      const workflowType = workflow?.slug ?? "workflow";
-      const tags = workflow?.tags ?? [];
-      const nodeSequence = input.compiledGraph.graph.nodes.map((node) => ({
-        nodeType: node.type,
-        adapterType: asString((node.config as Record<string, unknown>).actionType),
-      }));
+    onRunIntake: pipelineEnabled || deps.onRunIntake ? async (input) => {
+      let contextPatch: JsonObject | undefined;
 
-      const intake = await playbookBridge.selectOnIntake({
-        runId: input.runId,
-        workflowId: input.workflowId,
-        workflowType,
-        tags,
-        nodeSequence,
-      });
-
-      if (intake.decision === "matched" && intake.playbookId) {
-        pipelineEventEmitter.emit(
-          "pipeline.playbook.selected",
-          {
-            playbookId: intake.playbookId,
-            versionNumber: intake.versionNumber ?? 1,
-            matchScore: intake.matchScore ?? 0,
-          },
-          {
-            runId: input.runId,
-            workflowId: input.workflowId,
-          },
+      if (pipelineEnabled) {
+        const workflow = deps.db.withReadConnection((db) =>
+          workflowRepo.getWorkflowById(db, input.workflowId),
         );
-      } else {
-        pipelineEventEmitter.emit(
-          "pipeline.playbook.no_match",
-          {
-            workflowType,
-            reason: intake.decision,
-          },
-          {
-            runId: input.runId,
-            workflowId: input.workflowId,
-          },
-        );
-      }
+        const workflowType = workflow?.slug ?? "workflow";
+        const tags = workflow?.tags ?? [];
+        const nodeSequence = input.compiledGraph.graph.nodes.map((node) => ({
+          nodeType: node.type,
+          adapterType: asString((node.config as Record<string, unknown>).actionType),
+        }));
 
-      return {
-        contextPatch: {
+        const intake = await playbookBridge.selectOnIntake({
+          runId: input.runId,
+          workflowId: input.workflowId,
+          workflowType,
+          tags,
+          nodeSequence,
+        });
+
+        if (intake.decision === "matched" && intake.playbookId) {
+          pipelineEventEmitter.emit(
+            "pipeline.playbook.selected",
+            {
+              playbookId: intake.playbookId,
+              versionNumber: intake.versionNumber ?? 1,
+              matchScore: intake.matchScore ?? 0,
+            },
+            {
+              runId: input.runId,
+              workflowId: input.workflowId,
+            },
+          );
+        } else {
+          pipelineEventEmitter.emit(
+            "pipeline.playbook.no_match",
+            {
+              workflowType,
+              reason: intake.decision,
+            },
+            {
+              runId: input.runId,
+              workflowId: input.workflowId,
+            },
+          );
+        }
+
+        contextPatch = {
+          ...(contextPatch ?? {}),
           pipeline: {
             playbook: {
               decision: intake.decision,
@@ -965,8 +981,20 @@ export function createFridayWorkflowRuntime(
               evaluatedAt: intake.evaluatedAt,
             },
           },
-        },
-      };
+        };
+      }
+
+      if (deps.onRunIntake) {
+        const externalIntake = await deps.onRunIntake(input);
+        if (externalIntake?.contextPatch) {
+          contextPatch = {
+            ...(contextPatch ?? {}),
+            ...externalIntake.contextPatch,
+          };
+        }
+      }
+
+      return contextPatch ? { contextPatch } : undefined;
     } : undefined,
     onRetryDecision: pipelineEnabled ? (input) => {
       const decision = unifiedRetryBridge.evaluateRetry({

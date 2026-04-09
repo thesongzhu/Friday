@@ -17,6 +17,14 @@ describe("pack links", () => {
     expect(buildPackFlowHref(pack!, { mode: "adjust" })).toBe("/flow/content-social?packId=industry-creator-media&mode=adjust");
   });
 
+  it("sends the cross-border pack through the dedicated setup route", () => {
+    const pack = getPackById("industry-cross-border-ecommerce");
+    expect(pack).toBeTruthy();
+
+    expect(buildPackFlowHref(pack!)).toBe("/packs/cross-border/setup?packId=industry-cross-border-ecommerce");
+    expect(buildPackFlowHref(pack!, { mode: "adjust" })).toBe("/packs/cross-border/setup?packId=industry-cross-border-ecommerce&mode=adjust");
+  });
+
   it("builds pack-aware chat and assistant hrefs", () => {
     expect(buildPackAssistantHref("industry-creator-media")).toBe("/assistant?packId=industry-creator-media");
     expect(buildPackChatHref("industry-creator-media")).toBe("/chat?packId=industry-creator-media");

@@ -1,17 +1,18 @@
 {
   "schemaVersion": "2.0",
-  "id": "summarize-shop-performance",
-  "name": "Shop Performance Summarizer",
-  "description": "Summarize Amazon or TikTok Shop performance notes into issue clusters for ads, inventory, returns, and listing actions.",
+  "id": "cross-border-weekly-growth-review",
+  "name": "Cross-border Weekly Growth Review",
+  "description": "Combines the week's ads, category movement, listing changes, pricing, and service issues into a weekly review with the next operating moves.",
   "version": "1.0.0",
   "kind": "workflow",
-  "category": "ai",
+  "category": "automation",
   "author": {
-    "name": "Your Name"
+    "name": "Friday"
   },
   "tags": [
     "generated",
-    "skill.stabilized"
+    "skill.stabilized",
+    "cross-border"
   ],
   "runtime": {
     "kind": "node",
@@ -49,17 +50,17 @@
   },
   "inputs": [
     {
-      "key": "performanceNotes",
+      "key": "weeklySignals",
       "type": "string",
       "required": true,
-      "label": "Performance Notes"
+      "label": "Weekly Signals"
     }
   ],
   "outputs": [
     {
-      "key": "issueClusters",
+      "key": "weeklyReview",
       "type": "string",
-      "description": "Summarized issue clusters in Chinese, segmented by ads, inventory, order health, and recommended actions"
+      "description": "Weekly growth review with the keep/change/stop recommendations for next week."
     }
   ],
   "permissions": {

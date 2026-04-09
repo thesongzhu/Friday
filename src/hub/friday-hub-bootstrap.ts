@@ -27,6 +27,10 @@ import {
   createFridaySetupRecipeRegistry,
 } from "../setup/index.js";
 import { createOnboardingEngine } from "../uix/engine/index.js";
+import {
+  createFridayCrossBorderPackService,
+  type FridayCrossBorderPackService,
+} from "../packs/cross-border/friday-cross-border-pack-service.js";
 import { FridayDomainError } from "#errors";
 import { isFridayTestSecurityWarningSuppressed, safeJsonParse } from "#utilities";
 import { initializeFridayState } from "#state";
@@ -969,6 +973,9 @@ export async function createFridayHub(
     }
   };
 
+  let crossBorderPackServiceRef: FridayCrossBorderPackService | null = null;
+  let workflowRuntimeRef: ReturnType<typeof createFridayWorkflowRuntime> | null = null;
+
   const workflowRuntime = createFridayWorkflowRuntime({
     db: stateRuntime!.sqlite,
     idGenerator,
@@ -981,6 +988,17 @@ export async function createFridayHub(
     invokeSkill: invokeSkillForWorkflow,
     publishEvent: publishWorkflowRealtimeEvent,
     triggerRepo,
+    onRunIntake: async (input) => {
+      const workflow = workflowRuntimeRef?.crud.getWorkflow(input.workflowId) ?? null;
+      if (!workflow?.ownerUserId || !crossBorderPackServiceRef) {
+        return undefined;
+      }
+      const contextPatch = crossBorderPackServiceRef.buildWorkflowInputContext({
+        userId: workflow.ownerUserId,
+        managedWorkflowId: input.workflowId,
+      });
+      return contextPatch ? { contextPatch } : undefined;
+    },
   });
   const workflowBuilderRuntime = createFridayWorkflowBuilderRuntime({
     db: stateRuntime!.sqlite,
@@ -989,6 +1007,7 @@ export async function createFridayHub(
     nowIso,
     computeChecksum,
   });
+  workflowRuntimeRef = workflowRuntime;
 
   // ─── Workflow generator service ───
 
@@ -3728,6 +3747,17 @@ export async function createFridayHub(
     nowIso,
   });
 
+  const crossBorderPackService = createFridayCrossBorderPackService({
+    db: stateRuntime.sqlite,
+    preferenceRepo: uixUserPreferenceRepository,
+    idGenerator,
+    nowIso,
+    workflowRuntime,
+    workflowBuilderRuntime,
+    workflowProductService,
+  });
+  crossBorderPackServiceRef = crossBorderPackService;
+
   if (stateRuntime) {
     try {
       marketplaceRuntime = createFridaySkillMarketplaceRuntime({
@@ -3902,6 +3932,9 @@ export async function createFridayHub(
           .map((f) => ({ key: f.key, value: f.value, confidence: f.confidence, evidenceCount: f.evidenceCount, lastConfirmedAt: f.lastConfirmedAt })),
       collectLearningEvents: learningEventWriter,
       idGenerator,
+    },
+    crossBorderPack: {
+      service: crossBorderPackService,
     },
     searchHealth: {
       provider: configuredSearchProvider && configuredSearchProvider.length > 0

@@ -22,6 +22,7 @@ import {
 import type {
   FridayAutoFixRoutesDeps,
   FridayChannelRoutesDeps,
+  FridayCrossBorderPackRoutesDeps,
   FridayDesktopRoutesDeps,
   FridayDiagnosisRoutesDeps,
   FridayDiscoveryRoutesDeps,
@@ -318,6 +319,68 @@ const stubConfigManager: FridayHubConfigManagerService = {
   getSkillSecurityProfile: async () => ({}),
 };
 
+const stubCrossBorderPackService = {
+  getProfile: () => null,
+  upsertProfile: () => ({
+    packId: "industry-cross-border-ecommerce",
+    regionFocus: "sea_tiktok" as const,
+    platformPrimary: "tiktok_shop" as const,
+    platformSecondary: "public_web" as const,
+    storeStage: "new_store" as const,
+    categoryL1: "Beauty",
+    categoryL2: "Hair Dryers",
+    fulfillmentMode: "platform_fulfilled" as const,
+    priceBand: "US$19-29",
+    adUsage: "light" as const,
+    customerServiceMode: "solo_inbox" as const,
+    monitoringDepth: "standard" as const,
+    watchTargets: [],
+    competitorTargets: [],
+    workflowPreset: [
+      "daily-store-health-check",
+      "daily-category-top10-watch",
+      "daily-price-gap-watch",
+      "daily-customer-service-sweep",
+      "weekly-hot-product-review",
+      "weekly-operating-profile-tune",
+    ],
+    adaptationState: {
+      status: "tracking" as const,
+      firstReviewDueAt: FIXED_NOW,
+      stableReviewDueAt: FIXED_NOW,
+    },
+    createdAt: FIXED_NOW,
+    updatedAt: FIXED_NOW,
+  }),
+  importBatch: () => ({
+    id: "import-1",
+    kind: "store_report" as const,
+    source: "paste" as const,
+    title: "Store report",
+    publicLinks: [],
+    fileNames: [],
+    createdAt: FIXED_NOW,
+  }),
+  getSnapshot: () => ({
+    generatedAt: FIXED_NOW,
+    profile: null,
+    storeHealth: null,
+    categoryWatch: null,
+    spikingProducts: null,
+    priceGapBoard: null,
+    listingQualityBoard: null,
+    customerServiceBoard: null,
+    workflowRecommendations: [],
+    riskClusters: [],
+    nextActions: [],
+    importSummary: {
+      lastImportedAt: null,
+      totalImports: 0,
+      sourceTypes: [],
+    },
+  }),
+};
+
 /** Stub converter service — matches FridaySkillConverterService interface. */
 const stubConverterService: FridaySkillConverterService = {
   listConverters: () => [],
@@ -523,6 +586,7 @@ function createContractRuntime(options: { includeExtendedRouteFamilies?: boolean
     diagnosis: { service: stubSelfHealingService } as FridayDiagnosisRoutesDeps,
     autoFix: { service: stubSelfHealingService } as FridayAutoFixRoutesDeps,
     uix: { service: stubUixService } as FridayUixRoutesDeps,
+    crossBorderPack: { service: stubCrossBorderPackService } as FridayCrossBorderPackRoutesDeps,
     converterService: stubConverterService,
     workflowGenerator: stubWorkflowGenerator,
     memoryService: stubMemoryService,

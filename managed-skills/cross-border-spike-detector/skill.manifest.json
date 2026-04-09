@@ -1,17 +1,18 @@
 {
   "schemaVersion": "2.0",
-  "id": "summarize-shop-performance",
-  "name": "Shop Performance Summarizer",
-  "description": "Summarize Amazon or TikTok Shop performance notes into issue clusters for ads, inventory, returns, and listing actions.",
+  "id": "cross-border-spike-detector",
+  "name": "Cross-border Spike Detector",
+  "description": "Reviews recent public market notes and category movement to identify products that appear to be spiking and worth closer validation.",
   "version": "1.0.0",
   "kind": "workflow",
-  "category": "ai",
+  "category": "automation",
   "author": {
-    "name": "Your Name"
+    "name": "Friday"
   },
   "tags": [
     "generated",
-    "skill.stabilized"
+    "skill.stabilized",
+    "cross-border"
   ],
   "runtime": {
     "kind": "node",
@@ -49,17 +50,17 @@
   },
   "inputs": [
     {
-      "key": "performanceNotes",
+      "key": "spikeSignals",
       "type": "string",
       "required": true,
-      "label": "Performance Notes"
+      "label": "Spike Signals"
     }
   ],
   "outputs": [
     {
-      "key": "issueClusters",
+      "key": "spikeReview",
       "type": "string",
-      "description": "Summarized issue clusters in Chinese, segmented by ads, inventory, order health, and recommended actions"
+      "description": "Review of products that appear to be spiking, including whether to follow or ignore them."
     }
   ],
   "permissions": {

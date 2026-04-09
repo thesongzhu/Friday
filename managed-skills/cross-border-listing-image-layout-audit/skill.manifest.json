@@ -1,17 +1,18 @@
 {
   "schemaVersion": "2.0",
-  "id": "summarize-shop-performance",
-  "name": "Shop Performance Summarizer",
-  "description": "Summarize Amazon or TikTok Shop performance notes into issue clusters for ads, inventory, returns, and listing actions.",
+  "id": "cross-border-listing-image-layout-audit",
+  "name": "Cross-border Listing Image Layout Audit",
+  "description": "Reviews listing image quality, hero image clarity, detail-page sequencing, and localization fit for your target market.",
   "version": "1.0.0",
   "kind": "workflow",
-  "category": "ai",
+  "category": "automation",
   "author": {
-    "name": "Your Name"
+    "name": "Friday"
   },
   "tags": [
     "generated",
-    "skill.stabilized"
+    "skill.stabilized",
+    "cross-border"
   ],
   "runtime": {
     "kind": "node",
@@ -49,17 +50,17 @@
   },
   "inputs": [
     {
-      "key": "performanceNotes",
+      "key": "listingNotes",
       "type": "string",
       "required": true,
-      "label": "Performance Notes"
+      "label": "Listing Notes"
     }
   ],
   "outputs": [
     {
-      "key": "issueClusters",
+      "key": "listingAudit",
       "type": "string",
-      "description": "Summarized issue clusters in Chinese, segmented by ads, inventory, order health, and recommended actions"
+      "description": "Listing image and layout audit with gaps and replacement suggestions."
     }
   ],
   "permissions": {

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Cross-border Listing Image Layout Audit",
+  "description": "Audit listing images, hero images, and detail-page structure before changing ads or prices.",
+  "sections": [
+    {
+      "id": "main",
+      "label": "Inputs",
+      "fieldIds": [
+        "listingNotes-field"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "listingNotes-field",
+      "inputKey": "listingNotes",
+      "kind": "text",
+      "label": "Listing Notes",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "listingAudit-output",
+      "outputKey": "listingAudit",
+      "label": "listingAudit",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Run",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}
+
