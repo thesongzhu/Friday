@@ -43,6 +43,9 @@ function mergeSeededCrossBorderSnapshot(
   if (!liveSnapshot) {
     return seededSnapshot;
   }
+  if (!liveSnapshot.profile) {
+    return seededSnapshot;
+  }
   const workflowRecommendations = liveSnapshot.workflowRecommendations.map((workflow) => {
     if (workflow.automation) {
       return workflow;
