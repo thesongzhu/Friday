@@ -71,21 +71,7 @@ export function McpPage() {
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  {statusBadge(server.status)}
-                  <button
-                    type="button"
-                    className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-                    style={{ backgroundColor: server.status === "connected" ? "var(--color-accent)" : "#d1d5db" }}
-                    title={server.status === "connected" ? "Disable server" : "Enable server"}
-                    aria-label={`Toggle ${server.id}`}
-                  >
-                    <span
-                      className="pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow ring-0 transition-transform duration-200 ease-in-out"
-                      style={{ transform: server.status === "connected" ? "translateX(16px)" : "translateX(0)" }}
-                    />
-                  </button>
-                </div>
+                {statusBadge(server.status)}
               </div>
               {server.lastError ? (
                 <p className="mt-2 rounded-lg bg-red-50 p-2 text-xs text-red-700 dark:bg-red-900/20 dark:text-red-400">

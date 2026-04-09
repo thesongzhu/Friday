@@ -13,11 +13,16 @@ describe("agent os navigation", () => {
 
   it("advanced nav contains operator and system pages", () => {
     expect(AGENT_OS_NAV_ADVANCED.map((item) => item.path)).toEqual([
-      "/fleet",
-      "/marketplace",
+      "/skills",
+      "/workflows",
       "/automations",
       "/memory",
+      "/mcp",
+      "/usage",
+      "/sessions",
       "/observability",
+      "/fleet",
+      "/marketplace",
       "/command-center",
       "/settings",
     ]);
@@ -42,5 +47,8 @@ describe("agent os navigation", () => {
     expect(resolvePageTitle("/observability")).toEqual({ zh: "可观测性", en: "Observability" });
     expect(resolvePageTitle("/settings")).toEqual({ zh: "设置", en: "Settings" });
     expect(resolvePageTitle("/command-center")).toEqual({ zh: "操作控制台", en: "Operator Console" });
+    expect(resolvePageTitle("/sessions")).toEqual({ zh: "会话", en: "Sessions" });
+    expect(resolvePageTitle("/mcp")).toEqual({ zh: "MCP 服务", en: "MCP Servers" });
+    expect(resolvePageTitle("/usage")).toEqual({ zh: "用量与成本", en: "Usage & Cost" });
   });
 });
