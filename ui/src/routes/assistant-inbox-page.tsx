@@ -14,6 +14,7 @@ import { crossBorderPackApi } from "@/lib/api/cross-border-pack";
 import { uixSnapshotsApi } from "@/lib/api/uix-snapshots";
 import { localize, resolveLocalizedText } from "@/lib/i18n/localized-text";
 import { buildPackAssistantHref, buildPackChatHref } from "@/lib/packs/pack-links";
+import { mergeCrossBorderSnapshots, readNavigationCrossBorderSnapshot } from "@/lib/packs/cross-border-snapshot";
 import { getPackById } from "@/lib/packs/pack-registry";
 import {
   describeRunHealth,
@@ -23,48 +24,6 @@ import {
 } from "@/lib/runs/run-health";
 import { buildSkillHref } from "@/lib/skills/view-models";
 import { useAppLocale } from "@/providers/locale-provider";
-import type { FridayCrossBorderSnapshot } from "../../../src/packs/cross-border/friday-cross-border-pack.types";
-
-function readNavigationCrossBorderSnapshot(value: unknown): FridayCrossBorderSnapshot | undefined {
-  if (!value || typeof value !== "object" || !("crossBorderSnapshot" in value)) {
-    return undefined;
-  }
-  const snapshot = (value as { crossBorderSnapshot?: FridayCrossBorderSnapshot }).crossBorderSnapshot;
-  return snapshot?.profile ? snapshot : undefined;
-}
-
-function mergeSeededCrossBorderSnapshot(
-  seededSnapshot: FridayCrossBorderSnapshot | undefined,
-  liveSnapshot: FridayCrossBorderSnapshot | undefined,
-): FridayCrossBorderSnapshot | undefined {
-  if (!seededSnapshot) {
-    return liveSnapshot;
-  }
-  if (!liveSnapshot) {
-    return seededSnapshot;
-  }
-  if (!liveSnapshot.profile) {
-    return seededSnapshot;
-  }
-  const workflowRecommendations = liveSnapshot.workflowRecommendations.map((workflow) => {
-    if (workflow.automation) {
-      return workflow;
-    }
-    const seededWorkflow = seededSnapshot.workflowRecommendations.find((candidate) => candidate.id === workflow.id);
-    if (!seededWorkflow?.automation) {
-      return workflow;
-    }
-    return {
-      ...workflow,
-      automation: seededWorkflow.automation,
-    };
-  });
-  return {
-    ...liveSnapshot,
-    workflowRecommendations,
-  };
-}
-
 export function AssistantInboxPage() {
   const navigate = useAppNavigate();
   const { locale } = useAppLocale();
@@ -93,7 +52,7 @@ export function AssistantInboxPage() {
     staleTime: navigationCrossBorderSnapshot ? 30_000 : 0,
   });
   const effectiveCrossBorderSnapshot = useMemo(
-    () => mergeSeededCrossBorderSnapshot(navigationCrossBorderSnapshot, crossBorderSnapshotQuery.data),
+    () => mergeCrossBorderSnapshots(navigationCrossBorderSnapshot, crossBorderSnapshotQuery.data),
     [crossBorderSnapshotQuery.data, navigationCrossBorderSnapshot],
   );
 

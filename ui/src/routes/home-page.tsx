@@ -15,6 +15,7 @@ import { crossBorderPackApi } from "@/lib/api/cross-border-pack";
 import { uixSnapshotsApi, type UixScheduledAutomationSummary } from "@/lib/api/uix-snapshots";
 import { localize, resolveLocalizedText } from "@/lib/i18n/localized-text";
 import { findPackRuns } from "@/lib/packs/pack-assistant-receipt";
+import { buildCrossBorderAssistantNavigationState, mergeCrossBorderSnapshots } from "@/lib/packs/cross-border-snapshot";
 import { buildPackAssistantHref, buildPackChatHref, buildPackFlowHref } from "@/lib/packs/pack-links";
 import { FRIDAY_PACKS, getPackById, type FridayPackDefinition, type HomeWidgetId } from "@/lib/packs/pack-registry";
 import { buildSkillHref } from "@/lib/skills/view-models";
@@ -117,10 +118,9 @@ export function HomePage() {
       queryKey: ["cross-border-pack", "snapshot"],
       queryFn: () => crossBorderPackApi.getSnapshot(),
     });
+    const navigationSnapshot = mergeCrossBorderSnapshots(crossBorderSnapshotQuery.data, latestSnapshot);
     navigate(buildPackAssistantHref("industry-cross-border-ecommerce"), {
-      state: latestSnapshot?.profile
-        ? { crossBorderSnapshot: latestSnapshot }
-        : undefined,
+      state: buildCrossBorderAssistantNavigationState(navigationSnapshot),
     });
   };
 
