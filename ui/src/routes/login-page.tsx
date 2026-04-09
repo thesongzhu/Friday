@@ -88,7 +88,9 @@ export function LoginPage() {
         <div className="space-y-4">
           <ShellCard eyebrow="Local Access" title="Fast operator login">
             <div className="space-y-4">
+              <label htmlFor="login-local-passphrase" className="sr-only">Local passphrase</label>
               <input
+                id="login-local-passphrase"
                 value={localPassphrase}
                 onChange={(event) => setLocalPassphrase(event.target.value)}
                 type="password"
@@ -104,13 +106,17 @@ export function LoginPage() {
 
           <ShellCard eyebrow="Credential Login" title="Email and password">
             <div className="space-y-4">
+              <label htmlFor="login-email" className="sr-only">Email</label>
               <input
+                id="login-email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 className="agent-input"
                 placeholder="Email"
               />
+              <label htmlFor="login-password" className="sr-only">Password</label>
               <input
+                id="login-password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 type="password"
