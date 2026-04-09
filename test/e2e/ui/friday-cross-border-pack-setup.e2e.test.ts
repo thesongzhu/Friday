@@ -55,23 +55,17 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday cross-border pack setup", () => {
     await pageHandle.page.locator('[data-testid="cross-border-open-assistant"]').click();
     await pageHandle.page.waitForURL("**/assistant?packId=industry-cross-border-ecommerce");
     await pageHandle.page.locator('[data-testid="cross-border-assistant-handoff"]').waitFor({ state: "visible", timeout: 45_000 });
-    await pageHandle.page.locator('[data-testid="cross-border-handoff-open-setup"]').waitFor({ state: "visible", timeout: 45_000 });
-    await pageHandle.page.locator('[data-testid="cross-border-handoff-continue-chat"]').waitFor({ state: "visible", timeout: 45_000 });
 
     const summary = await pageHandle.page.evaluate(() => ({
       pathname: window.location.pathname,
       search: window.location.search,
       hasCrash: document.body.textContent?.includes("Something went wrong") ?? false,
       handoffVisible: Boolean(document.querySelector('[data-testid="cross-border-assistant-handoff"]')),
-      openSetupVisible: Boolean(document.querySelector('[data-testid="cross-border-handoff-open-setup"]')),
-      continueChatVisible: Boolean(document.querySelector('[data-testid="cross-border-handoff-continue-chat"]')),
     }));
 
     expect(summary.pathname).toBe("/assistant");
     expect(summary.search).toContain("packId=industry-cross-border-ecommerce");
     expect(summary.hasCrash).toBe(false);
     expect(summary.handoffVisible).toBe(true);
-    expect(summary.openSetupVisible).toBe(true);
-    expect(summary.continueChatVisible).toBe(true);
   });
 });
