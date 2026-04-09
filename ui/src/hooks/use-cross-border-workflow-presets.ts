@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { crossBorderPackApi } from "@/lib/api/cross-border-pack";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
-import type { FridayCrossBorderWorkflowId } from "../../../src/packs/cross-border/friday-cross-border-pack.types";
+import type { FridayCrossBorderSnapshot, FridayCrossBorderWorkflowId } from "../../../src/packs/cross-border/friday-cross-border-pack.types";
 
 function resolveBrowserTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -13,12 +13,9 @@ export function useCrossBorderWorkflowPresets() {
   const queryClient = useQueryClient();
   const { locale } = useAppLocale();
 
-  const refreshSurfaces = async (): Promise<void> => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["cross-border-pack"] }),
-      queryClient.invalidateQueries({ queryKey: ["home", "snapshot", "task-first"] }),
-      queryClient.invalidateQueries({ queryKey: ["assistant-inbox", "snapshot"] }),
-    ]);
+  const syncSnapshotCaches = (snapshot: FridayCrossBorderSnapshot) => {
+    queryClient.setQueryData(["cross-border-pack", "snapshot"], snapshot);
+    queryClient.setQueryData(["cross-border-pack", "snapshot", "home"], snapshot);
   };
 
   const applyMutation = useMutation({
@@ -27,8 +24,15 @@ export function useCrossBorderWorkflowPresets() {
         workflowIds,
         timezone: resolveBrowserTimezone(),
       }),
-    onSuccess: async () => {
-      await refreshSurfaces();
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["cross-border-pack"] });
+    },
+    onSuccess: async (snapshot) => {
+      syncSnapshotCaches(snapshot);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["home", "snapshot", "task-first"] }),
+        queryClient.invalidateQueries({ queryKey: ["assistant-inbox", "snapshot"] }),
+      ]);
       toast.success(localize(locale, "默认稳定流程已启用。", "Default stable workflows are now enabled."));
     },
     onError: (error) => {
@@ -42,8 +46,15 @@ export function useCrossBorderWorkflowPresets() {
         enabled: input.enabled,
         ...(input.enabled ? { timezone: resolveBrowserTimezone() } : {}),
       }),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["cross-border-pack"] });
+    },
     onSuccess: async (_snapshot, variables) => {
-      await refreshSurfaces();
+      syncSnapshotCaches(_snapshot);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["home", "snapshot", "task-first"] }),
+        queryClient.invalidateQueries({ queryKey: ["assistant-inbox", "snapshot"] }),
+      ]);
       toast.success(
         variables.enabled
           ? localize(locale, "流程已恢复自动运行。", "The workflow automation has resumed.")
