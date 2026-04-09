@@ -2,12 +2,14 @@ import type { FridayCrossBorderSnapshot } from "../../../../src/packs/cross-bord
 
 const CROSS_BORDER_ASSISTANT_SNAPSHOT_STORAGE_KEY = "friday.cross-border.assistant-navigation-snapshot";
 
-function readStoredSnapshot(): FridayCrossBorderSnapshot | undefined {
-  if (typeof window === "undefined" || !window.sessionStorage) {
+function readSnapshotFromStorage(
+  storage: Pick<Storage, "getItem"> | undefined,
+): FridayCrossBorderSnapshot | undefined {
+  if (!storage) {
     return undefined;
   }
   try {
-    const raw = window.sessionStorage.getItem(CROSS_BORDER_ASSISTANT_SNAPSHOT_STORAGE_KEY);
+    const raw = storage.getItem(CROSS_BORDER_ASSISTANT_SNAPSHOT_STORAGE_KEY);
     if (!raw) {
       return undefined;
     }
@@ -18,20 +20,34 @@ function readStoredSnapshot(): FridayCrossBorderSnapshot | undefined {
   }
 }
 
+function readStoredSnapshot(): FridayCrossBorderSnapshot | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+  return readSnapshotFromStorage(window.sessionStorage)
+    ?? readSnapshotFromStorage(window.localStorage);
+}
+
 export function persistCrossBorderAssistantNavigationSnapshot(
   snapshot: FridayCrossBorderSnapshot | undefined,
 ): void {
-  if (typeof window === "undefined" || !window.sessionStorage) {
+  if (typeof window === "undefined") {
     return;
   }
   try {
     if (!snapshot?.profile) {
-      window.sessionStorage.removeItem(CROSS_BORDER_ASSISTANT_SNAPSHOT_STORAGE_KEY);
+      window.sessionStorage?.removeItem(CROSS_BORDER_ASSISTANT_SNAPSHOT_STORAGE_KEY);
+      window.localStorage?.removeItem(CROSS_BORDER_ASSISTANT_SNAPSHOT_STORAGE_KEY);
       return;
     }
-    window.sessionStorage.setItem(
+    const serializedSnapshot = JSON.stringify(snapshot);
+    window.sessionStorage?.setItem(
       CROSS_BORDER_ASSISTANT_SNAPSHOT_STORAGE_KEY,
-      JSON.stringify(snapshot),
+      serializedSnapshot,
+    );
+    window.localStorage?.setItem(
+      CROSS_BORDER_ASSISTANT_SNAPSHOT_STORAGE_KEY,
+      serializedSnapshot,
     );
   } catch {
     // Best-effort only. Assistant can still rely on live snapshot queries.

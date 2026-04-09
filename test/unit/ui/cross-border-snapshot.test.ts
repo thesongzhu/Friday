@@ -9,22 +9,37 @@ import {
 } from "../../../ui/src/lib/packs/cross-border-snapshot";
 
 function installSessionStorageMock() {
-  const storage = new Map<string, string>();
+  const sessionStorage = new Map<string, string>();
+  const localStorage = new Map<string, string>();
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
       sessionStorage: {
         getItem(key: string) {
-          return storage.has(key) ? storage.get(key)! : null;
+          return sessionStorage.has(key) ? sessionStorage.get(key)! : null;
         },
         setItem(key: string, value: string) {
-          storage.set(key, value);
+          sessionStorage.set(key, value);
         },
         removeItem(key: string) {
-          storage.delete(key);
+          sessionStorage.delete(key);
         },
         clear() {
-          storage.clear();
+          sessionStorage.clear();
+        },
+      },
+      localStorage: {
+        getItem(key: string) {
+          return localStorage.has(key) ? localStorage.get(key)! : null;
+        },
+        setItem(key: string, value: string) {
+          localStorage.set(key, value);
+        },
+        removeItem(key: string) {
+          localStorage.delete(key);
+        },
+        clear() {
+          localStorage.clear();
         },
       },
     },
@@ -98,6 +113,7 @@ describe("cross-border snapshot helpers", () => {
 
   afterEach(() => {
     window.sessionStorage.clear();
+    window.localStorage.clear();
   });
 
   it("preserves seeded automation when the live snapshot drops it", () => {
@@ -153,6 +169,15 @@ describe("cross-border snapshot helpers", () => {
     const snapshot = buildSnapshot();
 
     persistCrossBorderAssistantNavigationSnapshot(snapshot);
+
+    expect(readNavigationCrossBorderSnapshot(undefined)).toEqual(snapshot);
+  });
+
+  it("falls back to localStorage when the session snapshot is missing", () => {
+    const snapshot = buildSnapshot();
+
+    persistCrossBorderAssistantNavigationSnapshot(snapshot);
+    window.sessionStorage.clear();
 
     expect(readNavigationCrossBorderSnapshot(undefined)).toEqual(snapshot);
   });
