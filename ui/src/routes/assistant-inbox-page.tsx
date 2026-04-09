@@ -39,7 +39,7 @@ export function AssistantInboxPage() {
   });
   const selectedPackId = searchParams.get("packId");
   const crossBorderSnapshotQuery = useQuery({
-    queryKey: ["cross-border-pack", "snapshot", "assistant"],
+    queryKey: ["cross-border-pack", "snapshot"],
     queryFn: () => crossBorderPackApi.getSnapshot(),
     refetchInterval: pollInterval,
     enabled: selectedPackId === "industry-cross-border-ecommerce" || pinnedPackIds.includes("industry-cross-border-ecommerce"),
