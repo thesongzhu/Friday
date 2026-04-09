@@ -44,14 +44,14 @@ const HEALTH_CHECKS: HealthCheck[] = [
   {
     name: "db_size",
     check: (deps) => {
-      const row = deps.db.withReadConnection((db) =>
-        db.prepare("SELECT page_count * page_size AS size FROM pragma_page_count(), pragma_page_size()").get(),
-      ) as { size: number } | undefined;
-      const sizeBytes = row?.size ?? 0;
+      const sizeBytes = deps.db.withReadConnection((db) => {
+        const pageCount = db.pragma("page_count", { simple: true }) as number;
+        const pageSize = db.pragma("page_size", { simple: true }) as number;
+        return pageCount * pageSize;
+      });
       return { name: "db_size", healthy: sizeBytes < 500_000_000, value: sizeBytes, unit: "bytes" };
     },
     autoFix: (deps) => {
-      // Incremental vacuum: reclaim free pages without full rebuild
       deps.db.withWriteTransaction((db) => {
         db.pragma("incremental_vacuum(100)");
       });
@@ -87,7 +87,7 @@ const HEALTH_CHECKS: HealthCheck[] = [
       const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
       const row = deps.db.withReadConnection((db) =>
         db
-          .prepare("SELECT COUNT(*) AS cnt FROM realtime_event_checkpoints WHERE updated_at < ?")
+          .prepare("SELECT COUNT(*) AS cnt FROM realtime_checkpoints WHERE updated_at < ?")
           .get(cutoff),
       ) as { cnt: number } | undefined;
       const count = row?.cnt ?? 0;
@@ -96,7 +96,7 @@ const HEALTH_CHECKS: HealthCheck[] = [
     autoFix: (deps) => {
       const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
       const result = deps.db.withWriteTransaction((db) =>
-        db.prepare("DELETE FROM realtime_event_checkpoints WHERE updated_at < ?").run(cutoff),
+        db.prepare("DELETE FROM realtime_checkpoints WHERE updated_at < ?").run(cutoff),
       );
       const pruned = (result as { changes?: number })?.changes ?? 0;
       return { name: "stale_realtime_checkpoints", fixed: true, detail: `Pruned ${pruned} stale checkpoints` };

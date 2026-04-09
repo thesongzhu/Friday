@@ -232,17 +232,22 @@ export function createFridayAutoFixExecutionService(
   ): void {
     if (!deps.lessonExtractionService) return;
     try {
+      // Re-read the action to get the updated status/outcome after finalization
+      const freshAction = deps.db.withReadConnection((db) =>
+        deps.actionRepo.getById(db, failedAction.actionId),
+      ) ?? failedAction;
+
       const incident = deps.db.withReadConnection((db) =>
-        deps.incidentRepo.listByUser(db, { userId: failedAction.userId }).find(
-          (inc) => inc.incidentId === failedAction.incidentId,
+        deps.incidentRepo.listByUser(db, { userId: freshAction.userId }).find(
+          (inc) => inc.incidentId === freshAction.incidentId,
         ),
       );
-      const diagnosisId = failedAction.plan.evidence.diagnosisId;
+      const diagnosisId = freshAction.plan.evidence.diagnosisId;
       const diagnosis = diagnosisId
         ? deps.db.withReadConnection((db) =>
             deps.diagnosisRepo.listByFingerprint(
               db,
-              failedAction.plan.evidence.fingerprint,
+              freshAction.plan.evidence.fingerprint,
             ).find((d) => d.id === diagnosisId),
           )
         : undefined;
@@ -250,12 +255,15 @@ export function createFridayAutoFixExecutionService(
         deps.lessonExtractionService.extractFromFailure({
           incident,
           diagnosis,
-          action: failedAction,
+          action: freshAction,
           nowIso,
         });
       }
-    } catch {
-      // Lesson extraction is best-effort; swallow errors.
+    } catch (err) {
+      console.warn(
+        `[friday] Failed-fix lesson extraction failed for action ${failedAction.actionId}:`,
+        err instanceof Error ? err.message : String(err),
+      );
     }
   }
 
@@ -314,9 +322,6 @@ export function createFridayAutoFixExecutionService(
       if (!executionSucceeded) {
         persistPlanEvidence(actionId, action.plan, nowIso);
 
-        // Best-effort lesson extraction from failed execution
-        extractFailureLessonBestEffort(action, nowIso);
-
         // Execution failed — attempt rollback
         const rollbackPlan = action.rollbackPlan ?? action.plan.rollbackPlan;
         if (rollbackPlan) {
@@ -325,9 +330,10 @@ export function createFridayAutoFixExecutionService(
             executionFailureMessage ?? "Forward execution failed",
           );
           if (rollbackResult.rollbackSucceeded) {
+            extractFailureLessonBestEffort(action, nowIso);
             return rollbackResult;
           }
-          return finalizeFailedAction(
+          const failedResult = await finalizeFailedAction(
             actionId,
             nowIso,
             rollbackResult.errorMessage ??
@@ -335,14 +341,18 @@ export function createFridayAutoFixExecutionService(
               "Step execution failed and rollback did not complete",
             true,
           );
+          extractFailureLessonBestEffort(action, nowIso);
+          return failedResult;
         }
 
-        return finalizeFailedAction(
+        const failedResult = await finalizeFailedAction(
           actionId,
           nowIso,
           executionFailureMessage ?? "Step execution failed, no rollback plan available",
           false,
         );
+        extractFailureLessonBestEffort(action, nowIso);
+        return failedResult;
       }
 
       persistPlanEvidence(actionId, action.plan, nowIso);
@@ -439,18 +449,17 @@ export function createFridayAutoFixExecutionService(
         return result;
       }
 
-      // Best-effort lesson extraction from verification failure
-      extractFailureLessonBestEffort(action, nowIso);
-
       // Verification failed — attempt rollback
       const rollbackPlan = action.rollbackPlan ?? action.plan.rollbackPlan;
       if (!rollbackPlan) {
-        return finalizeFailedAction(
+        const failedResult = await finalizeFailedAction(
           actionId,
           nowIso,
           verificationFailureMessage ?? "Verification failed, no rollback plan available",
           false,
         );
+        extractFailureLessonBestEffort(action, nowIso);
+        return failedResult;
       }
 
       const rollbackResult = await deps.rollbackService.rollback(
@@ -458,9 +467,10 @@ export function createFridayAutoFixExecutionService(
         verificationFailureMessage ?? "Verification failed",
       );
       if (rollbackResult.rollbackSucceeded) {
+        extractFailureLessonBestEffort(action, nowIso);
         return rollbackResult;
       }
-      return finalizeFailedAction(
+      const failedResult = await finalizeFailedAction(
         actionId,
         nowIso,
         rollbackResult.errorMessage ??
@@ -468,6 +478,8 @@ export function createFridayAutoFixExecutionService(
           "Verification failed and rollback did not complete",
         true,
       );
+      extractFailureLessonBestEffort(action, nowIso);
+      return failedResult;
     },
   };
 }
