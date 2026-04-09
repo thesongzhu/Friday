@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, RefreshCcw, ShieldAlert, Sparkles } from "lucide-react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { CrossBorderAssistantHandoffCard } from "@/components/packs/cross-border-assistant-handoff-card";
 import { PackAssistantHandoffCard } from "@/components/packs/pack-assistant-handoff-card";
@@ -22,11 +22,21 @@ import {
 } from "@/lib/runs/run-health";
 import { buildSkillHref } from "@/lib/skills/view-models";
 import { useAppLocale } from "@/providers/locale-provider";
+import type { FridayCrossBorderSnapshot } from "../../../src/packs/cross-border/friday-cross-border-pack.types";
+
+function readNavigationCrossBorderSnapshot(value: unknown): FridayCrossBorderSnapshot | undefined {
+  if (!value || typeof value !== "object" || !("crossBorderSnapshot" in value)) {
+    return undefined;
+  }
+  const snapshot = (value as { crossBorderSnapshot?: FridayCrossBorderSnapshot }).crossBorderSnapshot;
+  return snapshot?.profile ? snapshot : undefined;
+}
 
 export function AssistantInboxPage() {
   const navigate = useAppNavigate();
   const { locale } = useAppLocale();
   const { profileType } = useUserProfile();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const { pinnedPackIds } = useHomeSurfacePreferences(profileType);
   const pollInterval = useAdaptivePollingInterval({ activeMs: 12_000, backgroundMs: 36_000 });
@@ -38,11 +48,15 @@ export function AssistantInboxPage() {
     refetchInterval: pollInterval,
   });
   const selectedPackId = searchParams.get("packId");
+  const navigationCrossBorderSnapshot = selectedPackId === "industry-cross-border-ecommerce"
+    ? readNavigationCrossBorderSnapshot(location.state)
+    : undefined;
   const crossBorderSnapshotQuery = useQuery({
     queryKey: ["cross-border-pack", "snapshot"],
     queryFn: () => crossBorderPackApi.getSnapshot(),
     refetchInterval: pollInterval,
     enabled: selectedPackId === "industry-cross-border-ecommerce" || pinnedPackIds.includes("industry-cross-border-ecommerce"),
+    initialData: navigationCrossBorderSnapshot,
   });
 
   const approvals = snapshotQuery.data?.approvals ?? [];
