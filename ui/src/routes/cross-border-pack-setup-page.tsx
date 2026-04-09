@@ -8,6 +8,11 @@ import { useCrossBorderWorkflowPresets } from "@/hooks/use-cross-border-workflow
 import { crossBorderPackApi, type CrossBorderImportInput, type CrossBorderProfileInput } from "@/lib/api/cross-border-pack";
 import { localize } from "@/lib/i18n/localized-text";
 import { buildPackAssistantHref, buildPackChatHref } from "@/lib/packs/pack-links";
+import {
+  buildCrossBorderAssistantNavigationSnapshot,
+  buildCrossBorderAssistantNavigationState,
+  persistCrossBorderAssistantNavigationSnapshot,
+} from "@/lib/packs/cross-border-snapshot";
 import { getPackById } from "@/lib/packs/pack-registry";
 import { useAppLocale } from "@/providers/locale-provider";
 import type { FridayCrossBorderCompetitorTarget, FridayCrossBorderWatchTarget } from "../../../src/packs/cross-border/friday-cross-border-pack.types";
@@ -68,17 +73,6 @@ function parseCompetitors(text: string, regionFocus: SetupState["regionFocus"]):
   });
 }
 
-function buildCrossBorderAssistantNavigationState(
-  snapshot: Awaited<ReturnType<typeof crossBorderPackApi.getSnapshot>> | undefined,
-) {
-  if (!snapshot?.profile) {
-    return undefined;
-  }
-  return {
-    crossBorderSnapshot: snapshot,
-  };
-}
-
 async function readFileAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -120,12 +114,18 @@ export function CrossBorderPackSetupPage() {
     queryFn: () => crossBorderPackApi.getSnapshot(),
   });
 
-  const openAssistant = () => {
-    if (snapshotQuery.data) {
-      queryClient.setQueryData(["cross-border-pack", "snapshot"], snapshotQuery.data);
+  const openAssistant = async () => {
+    const latestSnapshot = await queryClient.fetchQuery({
+      queryKey: ["cross-border-pack", "snapshot"],
+      queryFn: () => crossBorderPackApi.getSnapshot(),
+    });
+    const navigationSnapshot = buildCrossBorderAssistantNavigationSnapshot(snapshotQuery.data, latestSnapshot);
+    if (navigationSnapshot) {
+      queryClient.setQueryData(["cross-border-pack", "snapshot"], navigationSnapshot);
     }
+    persistCrossBorderAssistantNavigationSnapshot(navigationSnapshot);
     navigate(buildPackAssistantHref(CROSS_BORDER_PACK_ID), {
-      state: buildCrossBorderAssistantNavigationState(snapshotQuery.data),
+      state: buildCrossBorderAssistantNavigationState(navigationSnapshot),
     });
   };
 

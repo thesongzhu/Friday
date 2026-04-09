@@ -7,8 +7,25 @@ import { createFridayCrossBorderPackService } from "../../../../src/packs/cross-
 import type { FridayCrossBorderWorkflowId } from "../../../../src/packs/cross-border/friday-cross-border-pack.types.js";
 
 function createWorkflowDeps() {
-  const workflows = new Map<string, { id: string; slug: string; name: string; ownerUserId: string; isArchived?: boolean }>();
-  const registrations = new Map<string, { id: string; enabled: boolean; trigger: { type: "schedule" }; nextFireAt?: string }[]>();
+  const workflows = new Map<string, {
+    id: string;
+    slug: string;
+    name: string;
+    ownerUserId: string;
+    isArchived?: boolean;
+    tags: string[];
+    updatedAt: string;
+  }>();
+  const registrations = new Map<string, {
+    id: string;
+    enabled: boolean;
+    trigger: { type: "schedule" };
+    triggerType: "cron";
+    cronExpression: string;
+    cronTimezone: string;
+    nextFireAt?: string;
+  }[]>();
+  const publishedVersions = new Map<string, { id: string; createdAt: string }>();
   let draftCounter = 0;
   let publishCounter = 0;
 
@@ -16,13 +33,41 @@ function createWorkflowDeps() {
     crud: {
       getWorkflow: vi.fn((workflowId: string) => workflows.get(workflowId) ?? null),
       getWorkflowBySlug: vi.fn((slug: string) => Array.from(workflows.values()).find((workflow) => workflow.slug === slug) ?? null),
-      createWorkflow: vi.fn((input: { slug: string; name: string; ownerUserId: string }) => {
+      listWorkflows: vi.fn((input?: { tag?: string; archived?: boolean; limit?: number }) => Array.from(workflows.values())
+        .filter((workflow) => {
+          if (input?.archived !== undefined && Boolean(workflow.isArchived) !== input.archived) {
+            return false;
+          }
+          if (input?.tag && !workflow.tags.includes(input.tag)) {
+            return false;
+          }
+          return true;
+        })
+        .slice(0, input?.limit ?? 50)),
+      getPublishedVersion: vi.fn((workflowId: string) => {
+        const published = publishedVersions.get(workflowId);
+        return published
+          ? {
+              id: published.id,
+              workflowId,
+              versionNumber: 1,
+              checksum: "checksum",
+              graphJson: {},
+              isPublished: true,
+              createdAt: published.createdAt,
+              updatedAt: published.createdAt,
+            }
+          : null;
+      }),
+      createWorkflow: vi.fn((input: { slug: string; name: string; ownerUserId: string; tags?: string[] }) => {
         const workflow = {
           id: `wf-${workflows.size + 1}`,
           slug: input.slug,
           name: input.name,
           ownerUserId: input.ownerUserId,
           isArchived: false,
+          tags: input.tags ?? [],
+          updatedAt: "2026-04-08T12:00:00.000Z",
         };
         workflows.set(workflow.id, workflow);
         return workflow;
@@ -35,6 +80,8 @@ function createWorkflowDeps() {
           id: `reg-${workflowId}`,
           enabled: true,
           triggerType: "cron",
+          cronExpression: "0 9 * * *",
+          cronTimezone: "America/Los_Angeles",
           nextFireAt: "2026-04-09T09:00:00.000Z",
         }]);
       }),
@@ -88,8 +135,14 @@ function createWorkflowDeps() {
         id: `reg-${input.workflowId}`,
         enabled: true,
         triggerType: "cron",
+        cronExpression: "0 9 * * *",
+        cronTimezone: "America/Los_Angeles",
         nextFireAt: "2026-04-09T09:00:00.000Z",
       }]);
+      publishedVersions.set(input.workflowId, {
+        id: `version-${publishCounter}`,
+        createdAt: "2026-04-08T12:00:00.000Z",
+      });
       return {
         workflowId: input.workflowId,
         workflowVersionId: `version-${publishCounter}`,
@@ -427,6 +480,68 @@ describe("createFridayCrossBorderPackService", () => {
     expect(payload).toMatchObject({
       priceSignals: expect.stringContaining("Competitor price dropped"),
     });
+
+    db.close();
+  });
+
+  it("recovers managed workflow automation records when the stored index is missing", async () => {
+    const db = createTestDb();
+    const preferenceRepo = createFridayUixUserPreferenceRepository();
+    const workflowDeps = createWorkflowDeps();
+    const service = createFridayCrossBorderPackService({
+      db,
+      preferenceRepo,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2026-04-08T12:00:00.000Z",
+      ...workflowDeps,
+    });
+
+    service.upsertProfile({
+      userId: "test-user",
+      profile: {
+        regionFocus: "sea_tiktok",
+        storeStage: "scaling",
+        categoryL1: "Beauty",
+        categoryL2: "Hair Dryers",
+        fulfillmentMode: "platform_fulfilled",
+        priceBand: "US$19-29",
+        adUsage: "active",
+        customerServiceMode: "solo_inbox",
+        monitoringDepth: "standard",
+        watchTargets: [],
+        competitorTargets: [],
+      },
+    });
+
+    await service.applyWorkflowPreset({
+      userId: "test-user",
+      preset: {
+        workflowIds: ["daily-store-health-check"],
+        timezone: "America/Los_Angeles",
+      },
+    });
+
+    db.withWriteTransaction((sqlite) => {
+      preferenceRepo.upsert(sqlite, {
+        id: "pref-reset",
+        principalId: "test-user",
+        category: "uix",
+        key: "packs.cross_border.workflow_automations",
+        value: [],
+        source: "explicit",
+        confidence: 1,
+        nowIso: "2026-04-08T12:05:00.000Z",
+      });
+    });
+
+    const recoveredSnapshot = service.getSnapshot({ userId: "test-user" });
+
+    expect(
+      recoveredSnapshot.workflowRecommendations.find((item) => item.id === "daily-store-health-check")?.automation?.managedWorkflowId,
+    ).toBe("wf-1");
+    expect(
+      recoveredSnapshot.workflowRecommendations.find((item) => item.id === "daily-store-health-check")?.automation?.status,
+    ).toBe("active");
 
     db.close();
   });

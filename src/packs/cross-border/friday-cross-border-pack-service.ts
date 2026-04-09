@@ -60,6 +60,7 @@ const CUSTOMER_SERVICE_KEYWORDS = ["refund", "return", "complaint", "bad review"
 const LISTING_KEYWORDS = ["image", "hero", "layout", "listing", "首图", "详情", "排版", "素材"];
 const SPIKE_KEYWORDS = ["spike", "爆", "爆单", "突然", "trending", "hot", "rise", "增长"];
 const CROSS_BORDER_MANAGED_WORKFLOW_TAG = "cross-border-pack-managed";
+const CROSS_BORDER_PRESET_TAG_PREFIX = "cross-border-preset:";
 
 export interface FridayCrossBorderOperatingProfileInput {
   regionFocus: FridayCrossBorderRegionFocus;
@@ -350,6 +351,17 @@ function normalizeWorkflowAutomationRecords(value: unknown): FridayCrossBorderWo
       lastSyncedAt,
     }];
   });
+}
+
+function parseManagedWorkflowPresetId(tags: string[]): FridayCrossBorderWorkflowId | null {
+  const presetTag = tags.find((tag) => tag.startsWith(CROSS_BORDER_PRESET_TAG_PREFIX));
+  if (!presetTag) {
+    return null;
+  }
+  const workflowId = presetTag.slice(CROSS_BORDER_PRESET_TAG_PREFIX.length);
+  return DEFAULT_WORKFLOWS.includes(workflowId as FridayCrossBorderWorkflowId)
+    ? workflowId as FridayCrossBorderWorkflowId
+    : null;
 }
 
 function addDays(iso: string, days: number): string {
@@ -1171,8 +1183,60 @@ export function createFridayCrossBorderPackService(
     writePreference(userId, WORKFLOW_AUTOMATIONS_KEY, value);
   }
 
+  function recoverWorkflowAutomationRecords(
+    userId: string,
+    existing: FridayCrossBorderWorkflowAutomationRecord[],
+  ): FridayCrossBorderWorkflowAutomationRecord[] {
+    const persistedIds = new Set(existing.map((record) => record.workflowId));
+    const managedWorkflows = deps.workflowRuntime.crud.listWorkflows?.({
+      tag: CROSS_BORDER_MANAGED_WORKFLOW_TAG,
+      archived: false,
+      limit: 200,
+    }) ?? [];
+    const recovered = managedWorkflows.flatMap((workflow) => {
+      if (workflow.ownerUserId !== userId || workflow.isArchived) {
+        return [];
+      }
+      const workflowId = parseManagedWorkflowPresetId(workflow.tags);
+      if (!workflowId || persistedIds.has(workflowId)) {
+        return [];
+      }
+      const entry = getFridayCrossBorderWorkflowCatalogEntry(workflowId);
+      const registration = deps.workflowRuntime.triggers
+        .listRegistrations(workflow.id)
+        .find((item) => item.triggerType === "cron");
+      if (!registration?.cronExpression || !registration.cronTimezone) {
+        return [];
+      }
+      const publishedVersion = deps.workflowRuntime.crud.getPublishedVersion?.(workflow.id);
+      const status: FridayCrossBorderWorkflowAutomationState["status"] = registration.enabled ? "active" : "paused";
+      return [{
+        workflowId,
+        templateId: entry.templateId,
+        managedWorkflowId: workflow.id,
+        ...(publishedVersion?.id ? { managedWorkflowVersionId: publishedVersion.id } : {}),
+        managedWorkflowSlug: workflow.slug,
+        managedWorkflowName: workflow.name,
+        status,
+        schedule: {
+          cron: registration.cronExpression,
+          timezone: registration.cronTimezone,
+        },
+        ...(registration.id ? { triggerRegistrationId: registration.id } : {}),
+        ...(registration.nextFireAt ? { nextRunAt: registration.nextFireAt } : {}),
+        lastPublishedAt: publishedVersion?.createdAt ?? workflow.updatedAt,
+        lastSyncedAt: deps.nowIso(),
+      }];
+    });
+    if (recovered.length === 0) {
+      return existing;
+    }
+    return [...existing, ...recovered]
+      .sort((left, right) => left.workflowId.localeCompare(right.workflowId));
+  }
+
   function resolveWorkflowAutomationRecords(userId: string): FridayCrossBorderWorkflowAutomationRecord[] {
-    const existing = readWorkflowAutomations(userId);
+    const existing = recoverWorkflowAutomationRecords(userId, readWorkflowAutomations(userId));
     const now = deps.nowIso();
     const nextRecords = existing.flatMap((record) => {
       const workflow = deps.workflowRuntime.crud.getWorkflow(record.managedWorkflowId);

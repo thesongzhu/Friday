@@ -15,6 +15,11 @@ import { crossBorderPackApi } from "@/lib/api/cross-border-pack";
 import { uixSnapshotsApi, type UixScheduledAutomationSummary } from "@/lib/api/uix-snapshots";
 import { localize, resolveLocalizedText } from "@/lib/i18n/localized-text";
 import { findPackRuns } from "@/lib/packs/pack-assistant-receipt";
+import {
+  buildCrossBorderAssistantNavigationSnapshot,
+  buildCrossBorderAssistantNavigationState,
+  persistCrossBorderAssistantNavigationSnapshot,
+} from "@/lib/packs/cross-border-snapshot";
 import { buildPackAssistantHref, buildPackChatHref, buildPackFlowHref } from "@/lib/packs/pack-links";
 import { FRIDAY_PACKS, getPackById, type FridayPackDefinition, type HomeWidgetId } from "@/lib/packs/pack-registry";
 import { buildSkillHref } from "@/lib/skills/view-models";
@@ -112,14 +117,18 @@ export function HomePage() {
     refetchInterval: pollInterval,
   });
 
-  const openCrossBorderAssistant = () => {
-    if (crossBorderSnapshotQuery.data) {
-      queryClient.setQueryData(["cross-border-pack", "snapshot"], crossBorderSnapshotQuery.data);
+  const openCrossBorderAssistant = async () => {
+    const latestSnapshot = await queryClient.fetchQuery({
+      queryKey: ["cross-border-pack", "snapshot"],
+      queryFn: () => crossBorderPackApi.getSnapshot(),
+    });
+    const navigationSnapshot = buildCrossBorderAssistantNavigationSnapshot(crossBorderSnapshotQuery.data, latestSnapshot);
+    if (navigationSnapshot) {
+      queryClient.setQueryData(["cross-border-pack", "snapshot"], navigationSnapshot);
     }
+    persistCrossBorderAssistantNavigationSnapshot(navigationSnapshot);
     navigate(buildPackAssistantHref("industry-cross-border-ecommerce"), {
-      state: crossBorderSnapshotQuery.data?.profile
-        ? { crossBorderSnapshot: crossBorderSnapshotQuery.data }
-        : undefined,
+      state: buildCrossBorderAssistantNavigationState(navigationSnapshot),
     });
   };
 
