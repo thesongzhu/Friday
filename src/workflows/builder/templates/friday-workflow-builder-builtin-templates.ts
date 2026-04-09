@@ -1,6 +1,7 @@
 import type { FridayWorkflowTemplateEntity } from "../model/friday-workflow-builder-template.types.js";
 import type { FridayWorkflowSpecV1 } from "../../model/friday-workflow-spec.types.js";
 import type { FridayWorkflowVisualGraphV1 } from "../model/friday-workflow-builder-canvas.types.js";
+import { createFridayCrossBorderBuiltinWorkflowTemplates } from "./friday-workflow-builder-cross-border-templates.js";
 
 // ─── Helper ───
 
@@ -159,5 +160,6 @@ export function getFridayBuiltinWorkflowTemplates(): FridayWorkflowTemplateEntit
     createBlankTemplate(),
     createSimpleActionTemplate(),
     createConditionalTemplate(),
+    ...createFridayCrossBorderBuiltinWorkflowTemplates(),
   ];
 }

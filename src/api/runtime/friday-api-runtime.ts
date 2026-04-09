@@ -74,6 +74,7 @@ import { createFridayDeepLinkRoutes } from "../http/routes/friday-deeplink-route
 import { createFridayGrantRoutes } from "../http/routes/friday-grant-routes.js";
 import { createFridaySystemRoutes } from "../http/routes/friday-system-routes.js";
 import { createFridayUixRoutes } from "../http/routes/friday-uix-routes.js";
+import { createFridayCrossBorderPackRoutes } from "../http/routes/friday-cross-border-pack-routes.js";
 import { createFridayDiscoveryRoutes } from "../http/routes/friday-discovery-routes.js";
 import { createFridayMcpServerRoutes } from "../http/routes/friday-mcp-server-routes.js";
 import { createFridayMarketplaceCommerceRoutes } from "../http/routes/friday-marketplace-commerce-routes.js";
@@ -1646,6 +1647,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   if (deps.uix) {
     for (const route of createFridayUixRoutes(deps.uix)) {
+      routes.register(route);
+    }
+  }
+
+  if (deps.crossBorderPack) {
+    for (const route of createFridayCrossBorderPackRoutes(deps.crossBorderPack)) {
       routes.register(route);
     }
   }
