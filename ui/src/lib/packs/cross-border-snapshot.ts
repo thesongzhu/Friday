@@ -1,0 +1,126 @@
+import type { FridayCrossBorderSnapshot } from "../../../../src/packs/cross-border/friday-cross-border-pack.types";
+
+const CROSS_BORDER_ASSISTANT_SNAPSHOT_STORAGE_KEY = "friday.cross-border.assistant-navigation-snapshot";
+
+function readSnapshotFromStorage(
+  storage: Pick<Storage, "getItem"> | undefined,
+): FridayCrossBorderSnapshot | undefined {
+  if (!storage) {
+    return undefined;
+  }
+  try {
+    const raw = storage.getItem(CROSS_BORDER_ASSISTANT_SNAPSHOT_STORAGE_KEY);
+    if (!raw) {
+      return undefined;
+    }
+    const parsed = JSON.parse(raw) as FridayCrossBorderSnapshot;
+    return parsed?.profile ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readStoredSnapshot(): FridayCrossBorderSnapshot | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+  return readSnapshotFromStorage(window.sessionStorage)
+    ?? readSnapshotFromStorage(window.localStorage);
+}
+
+export function persistCrossBorderAssistantNavigationSnapshot(
+  snapshot: FridayCrossBorderSnapshot | undefined,
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    if (!snapshot?.profile) {
+      window.sessionStorage?.removeItem(CROSS_BORDER_ASSISTANT_SNAPSHOT_STORAGE_KEY);
+      window.localStorage?.removeItem(CROSS_BORDER_ASSISTANT_SNAPSHOT_STORAGE_KEY);
+      return;
+    }
+    const serializedSnapshot = JSON.stringify(snapshot);
+    window.sessionStorage?.setItem(
+      CROSS_BORDER_ASSISTANT_SNAPSHOT_STORAGE_KEY,
+      serializedSnapshot,
+    );
+    window.localStorage?.setItem(
+      CROSS_BORDER_ASSISTANT_SNAPSHOT_STORAGE_KEY,
+      serializedSnapshot,
+    );
+  } catch {
+    // Best-effort only. Assistant can still rely on live snapshot queries.
+  }
+}
+
+export function readNavigationCrossBorderSnapshot(value: unknown): FridayCrossBorderSnapshot | undefined {
+  const storedSnapshot = readStoredSnapshot();
+  if (!value || typeof value !== "object" || !("crossBorderSnapshot" in value)) {
+    return storedSnapshot;
+  }
+  const snapshot = (value as { crossBorderSnapshot?: FridayCrossBorderSnapshot }).crossBorderSnapshot;
+  if (snapshot?.profile) {
+    const mergedSnapshot = mergeCrossBorderSnapshots(storedSnapshot, snapshot) ?? snapshot;
+    persistCrossBorderAssistantNavigationSnapshot(mergedSnapshot);
+    return mergedSnapshot;
+  }
+  return storedSnapshot;
+}
+
+export function buildCrossBorderAssistantNavigationState(
+  snapshot: FridayCrossBorderSnapshot | undefined,
+) {
+  if (!snapshot?.profile) {
+    return undefined;
+  }
+  return {
+    crossBorderSnapshot: snapshot,
+  };
+}
+
+export function buildCrossBorderAssistantNavigationSnapshot(
+  ...snapshots: Array<FridayCrossBorderSnapshot | undefined>
+): FridayCrossBorderSnapshot | undefined {
+  return snapshots.reduce<FridayCrossBorderSnapshot | undefined>((current, snapshot) => {
+    const storedSnapshot = current ?? readStoredSnapshot();
+    return mergeCrossBorderSnapshots(storedSnapshot, snapshot);
+  }, undefined);
+}
+
+export function mergeCrossBorderSnapshots(
+  seededSnapshot: FridayCrossBorderSnapshot | undefined,
+  liveSnapshot: FridayCrossBorderSnapshot | undefined,
+): FridayCrossBorderSnapshot | undefined {
+  if (!seededSnapshot) {
+    return liveSnapshot;
+  }
+  if (!liveSnapshot || !liveSnapshot.profile) {
+    return seededSnapshot;
+  }
+
+  const mergedWorkflowIds = new Set<string>([
+    ...seededSnapshot.workflowRecommendations.map((workflow) => workflow.id),
+    ...liveSnapshot.workflowRecommendations.map((workflow) => workflow.id),
+  ]);
+
+  const workflowRecommendations = Array.from(mergedWorkflowIds).map((workflowId) => {
+    const liveWorkflow = liveSnapshot.workflowRecommendations.find((workflow) => workflow.id === workflowId);
+    const seededWorkflow = seededSnapshot.workflowRecommendations.find((workflow) => workflow.id === workflowId);
+    if (!liveWorkflow) {
+      return seededWorkflow!;
+    }
+    if (!seededWorkflow?.automation || liveWorkflow.automation) {
+      return liveWorkflow;
+    }
+    return {
+      ...liveWorkflow,
+      automation: seededWorkflow.automation,
+    };
+  });
+
+  return {
+    ...liveSnapshot,
+    workflowRecommendations,
+  };
+}

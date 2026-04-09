@@ -38,10 +38,8 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday deep link import — skills page", 
     pageHandle = await env.newPage();
 
     await pageHandle.page.goto("/skills");
-    await pageHandle.page.waitForFunction(() => {
-      const bodyText = document.body.textContent?.trim() ?? "";
-      return bodyText.length > 20 && !bodyText.includes("Something went wrong");
-    }, { timeout: 45_000 });
+    await pageHandle.page.locator('[data-testid="skills-page"]').waitFor({ state: "visible", timeout: 45_000 });
+    await pageHandle.page.locator('[data-testid="skills-import-button"]').waitFor({ state: "visible", timeout: 45_000 });
 
     const pageState = await pageHandle.page.evaluate(() => {
       const bodyText = document.body.textContent?.trim() ?? "";
@@ -50,16 +48,14 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday deep link import — skills page", 
         bodyLength: bodyText.length,
         hasContent: bodyText.length > 20,
         appCrashed: bodyText.includes("Something went wrong"),
-        // Check for common skill-page elements
-        hasButtons: document.querySelectorAll("button").length > 0,
-        hasLinks: document.querySelectorAll("a").length > 0,
+        hasImportButton: Boolean(document.querySelector('[data-testid="skills-import-button"]')),
       };
     });
 
     expect(pageState.url).toBe("/skills");
     expect(pageState.hasContent).toBe(true);
     expect(pageState.appCrashed).toBe(false);
-    expect(pageState.hasButtons).toBe(true);
+    expect(pageState.hasImportButton).toBe(true);
   });
 
   it("skills page does not crash on initial load", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {

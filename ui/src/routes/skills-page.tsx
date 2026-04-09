@@ -279,12 +279,13 @@ export function SkillsPage() {
   }, [detail?.origin, detail?.skillId, detail?.starter]);
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+    <div data-testid="skills-page" className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
       <div className="space-y-4">
         <div className="flex justify-end">
           <button
             type="button"
             onClick={() => setShowImportDialog(true)}
+            data-testid="skills-import-button"
             className="inline-flex items-center gap-1.5 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-1.5 text-sm text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-hover)]"
           >
             <Link2 className="h-3.5 w-3.5" />
