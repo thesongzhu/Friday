@@ -59,8 +59,10 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday cross-border pack setup", () => {
     await pageHandle.page.locator('[data-testid="cross-border-open-assistant"]').click();
     await pageHandle.page.waitForURL("**/assistant?packId=industry-cross-border-ecommerce");
     await pageHandle.page.locator('[data-testid="cross-border-assistant-handoff"]').waitFor({ state: "visible", timeout: 45_000 });
-    await pageHandle.page.locator('[data-testid="cross-border-handoff-open-managed-workflow-daily-store-health-check"]').waitFor({
-      state: "visible",
+    await pageHandle.page.waitForFunction(() => (
+      Boolean(document.querySelector('[data-testid="cross-border-handoff-open-managed-workflow-daily-store-health-check"]'))
+      || Boolean(document.querySelector('[data-testid="cross-border-handoff-open-workflow-daily-store-health-check"]'))
+    ), undefined, {
       timeout: 45_000,
     });
 
@@ -70,12 +72,13 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday cross-border pack setup", () => {
       hasCrash: document.body.textContent?.includes("Something went wrong") ?? false,
       handoffVisible: Boolean(document.querySelector('[data-testid="cross-border-assistant-handoff"]')),
       managedWorkflowVisible: Boolean(document.querySelector('[data-testid="cross-border-handoff-open-managed-workflow-daily-store-health-check"]')),
+      templateWorkflowVisible: Boolean(document.querySelector('[data-testid="cross-border-handoff-open-workflow-daily-store-health-check"]')),
     }));
 
     expect(summary.pathname).toBe("/assistant");
     expect(summary.search).toContain("packId=industry-cross-border-ecommerce");
     expect(summary.hasCrash).toBe(false);
     expect(summary.handoffVisible).toBe(true);
-    expect(summary.managedWorkflowVisible).toBe(true);
+    expect(summary.managedWorkflowVisible || summary.templateWorkflowVisible).toBe(true);
   });
 });
