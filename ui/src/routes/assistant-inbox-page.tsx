@@ -57,6 +57,7 @@ export function AssistantInboxPage() {
     refetchInterval: pollInterval,
     enabled: selectedPackId === "industry-cross-border-ecommerce" || pinnedPackIds.includes("industry-cross-border-ecommerce"),
     initialData: navigationCrossBorderSnapshot,
+    staleTime: navigationCrossBorderSnapshot ? 30_000 : 0,
   });
 
   const approvals = snapshotQuery.data?.approvals ?? [];
