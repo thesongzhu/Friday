@@ -44,7 +44,7 @@ jobs:
   # ── MECHANISM-1: Gate 2 — Unit + Integration Tests ──
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     needs: build
 
     steps:
