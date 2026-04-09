@@ -3,12 +3,15 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, Clock3, ListFilter, Pin, Plus, Sparkles } from "lucide-react";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { ContextualHelp } from "@/components/core/contextual-help";
+import { CrossBorderActionBoard } from "@/components/packs/cross-border-action-board";
 import { PackCard } from "@/components/packs/pack-card";
 import { PackQuickSheet } from "@/components/packs/pack-quick-sheet";
 import { useAdaptivePollingInterval } from "@/hooks/use-adaptive-polling";
 import { useAppNavigate } from "@/hooks/use-app-navigate";
+import { useCrossBorderWorkflowPresets } from "@/hooks/use-cross-border-workflow-presets";
 import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences";
 import { useUserProfile } from "@/hooks/use-user-profile";
+import { crossBorderPackApi } from "@/lib/api/cross-border-pack";
 import { uixSnapshotsApi, type UixScheduledAutomationSummary } from "@/lib/api/uix-snapshots";
 import { localize, resolveLocalizedText } from "@/lib/i18n/localized-text";
 import { findPackRuns } from "@/lib/packs/pack-assistant-receipt";
@@ -90,10 +93,21 @@ export function HomePage() {
   const [editingWidgets, setEditingWidgets] = useState(false);
   const [editingPacks, setEditingPacks] = useState(false);
   const pollInterval = useAdaptivePollingInterval({ activeMs: 12_000, backgroundMs: 36_000 });
+  const {
+    applyDefaultWorkflows,
+    setWorkflowEnabled,
+    isApplyingDefaultWorkflows,
+    togglingWorkflowId,
+  } = useCrossBorderWorkflowPresets();
 
   const snapshotQuery = useQuery({
     queryKey: ["home", "snapshot", "task-first"],
     queryFn: () => uixSnapshotsApi.getHome(),
+    refetchInterval: pollInterval,
+  });
+  const crossBorderSnapshotQuery = useQuery({
+    queryKey: ["cross-border-pack", "snapshot", "home"],
+    queryFn: () => crossBorderPackApi.getSnapshot(),
     refetchInterval: pollInterval,
   });
 
@@ -199,6 +213,20 @@ export function HomePage() {
           </div>
         </div>
       </section>
+
+      {crossBorderSnapshotQuery.data?.profile ? (
+        <CrossBorderActionBoard
+          snapshot={crossBorderSnapshotQuery.data}
+          onOpenSetup={() => navigate("/packs/cross-border/setup?packId=industry-cross-border-ecommerce&mode=adjust")}
+          onOpenAssistant={() => navigate("/assistant?packId=industry-cross-border-ecommerce")}
+          onOpenWorkflowTemplate={(templateId) => navigate(`/workflows/builder?templateId=${encodeURIComponent(templateId)}`)}
+          onOpenManagedWorkflow={(workflowId) => navigate(`/workflows/builder?workflowId=${encodeURIComponent(workflowId)}`)}
+          onApplyDefaultWorkflows={() => applyDefaultWorkflows()}
+          onSetWorkflowEnabled={setWorkflowEnabled}
+          isApplyingDefaultWorkflows={isApplyingDefaultWorkflows}
+          togglingWorkflowId={togglingWorkflowId}
+        />
+      ) : null}
 
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">
