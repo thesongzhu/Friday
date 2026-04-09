@@ -120,12 +120,13 @@ export function CrossBorderPackSetupPage() {
     queryFn: () => crossBorderPackApi.getSnapshot(),
   });
 
-  const openAssistant = () => {
-    if (snapshotQuery.data) {
-      queryClient.setQueryData(["cross-border-pack", "snapshot"], snapshotQuery.data);
-    }
+  const openAssistant = async () => {
+    const latestSnapshot = await queryClient.fetchQuery({
+      queryKey: ["cross-border-pack", "snapshot"],
+      queryFn: () => crossBorderPackApi.getSnapshot(),
+    });
     navigate(buildPackAssistantHref(CROSS_BORDER_PACK_ID), {
-      state: buildCrossBorderAssistantNavigationState(snapshotQuery.data),
+      state: buildCrossBorderAssistantNavigationState(latestSnapshot),
     });
   };
 

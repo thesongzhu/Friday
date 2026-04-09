@@ -112,13 +112,14 @@ export function HomePage() {
     refetchInterval: pollInterval,
   });
 
-  const openCrossBorderAssistant = () => {
-    if (crossBorderSnapshotQuery.data) {
-      queryClient.setQueryData(["cross-border-pack", "snapshot"], crossBorderSnapshotQuery.data);
-    }
+  const openCrossBorderAssistant = async () => {
+    const latestSnapshot = await queryClient.fetchQuery({
+      queryKey: ["cross-border-pack", "snapshot"],
+      queryFn: () => crossBorderPackApi.getSnapshot(),
+    });
     navigate(buildPackAssistantHref("industry-cross-border-ecommerce"), {
-      state: crossBorderSnapshotQuery.data?.profile
-        ? { crossBorderSnapshot: crossBorderSnapshotQuery.data }
+      state: latestSnapshot?.profile
+        ? { crossBorderSnapshot: latestSnapshot }
         : undefined,
     });
   };
