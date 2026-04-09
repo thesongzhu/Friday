@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, RefreshCcw, ShieldAlert, Sparkles } from "lucide-react";
 import { useLocation, useSearchParams } from "react-router-dom";
@@ -32,6 +33,35 @@ function readNavigationCrossBorderSnapshot(value: unknown): FridayCrossBorderSna
   return snapshot?.profile ? snapshot : undefined;
 }
 
+function mergeSeededCrossBorderSnapshot(
+  seededSnapshot: FridayCrossBorderSnapshot | undefined,
+  liveSnapshot: FridayCrossBorderSnapshot | undefined,
+): FridayCrossBorderSnapshot | undefined {
+  if (!seededSnapshot) {
+    return liveSnapshot;
+  }
+  if (!liveSnapshot) {
+    return seededSnapshot;
+  }
+  const workflowRecommendations = liveSnapshot.workflowRecommendations.map((workflow) => {
+    if (workflow.automation) {
+      return workflow;
+    }
+    const seededWorkflow = seededSnapshot.workflowRecommendations.find((candidate) => candidate.id === workflow.id);
+    if (!seededWorkflow?.automation) {
+      return workflow;
+    }
+    return {
+      ...workflow,
+      automation: seededWorkflow.automation,
+    };
+  });
+  return {
+    ...liveSnapshot,
+    workflowRecommendations,
+  };
+}
+
 export function AssistantInboxPage() {
   const navigate = useAppNavigate();
   const { locale } = useAppLocale();
@@ -59,6 +89,10 @@ export function AssistantInboxPage() {
     initialData: navigationCrossBorderSnapshot,
     staleTime: navigationCrossBorderSnapshot ? 30_000 : 0,
   });
+  const effectiveCrossBorderSnapshot = useMemo(
+    () => mergeSeededCrossBorderSnapshot(navigationCrossBorderSnapshot, crossBorderSnapshotQuery.data),
+    [crossBorderSnapshotQuery.data, navigationCrossBorderSnapshot],
+  );
 
   const approvals = snapshotQuery.data?.approvals ?? [];
   const alerts = snapshotQuery.data?.alerts ?? [];
@@ -107,10 +141,10 @@ export function AssistantInboxPage() {
 
       {selectedPack?.productCopy ? (
         <ShellCard title={localize(locale, "当前行业包交接", "Current Pack Handoff")}>
-          {selectedPack.id === "industry-cross-border-ecommerce" && crossBorderSnapshotQuery.data?.profile ? (
+          {selectedPack.id === "industry-cross-border-ecommerce" && effectiveCrossBorderSnapshot?.profile ? (
             <div className="mb-4">
               <CrossBorderAssistantHandoffCard
-                snapshot={crossBorderSnapshotQuery.data}
+                snapshot={effectiveCrossBorderSnapshot}
                 onOpenSetup={() => navigate("/packs/cross-border/setup?packId=industry-cross-border-ecommerce&mode=adjust")}
                 onContinueInChat={() => navigate(buildPackChatHref(selectedPack.id))}
                 onOpenWorkflowTemplate={(templateId) => navigate(`/workflows/builder?templateId=${encodeURIComponent(templateId)}`)}
