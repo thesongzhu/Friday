@@ -39,15 +39,17 @@ export function persistCrossBorderAssistantNavigationSnapshot(
 }
 
 export function readNavigationCrossBorderSnapshot(value: unknown): FridayCrossBorderSnapshot | undefined {
+  const storedSnapshot = readStoredSnapshot();
   if (!value || typeof value !== "object" || !("crossBorderSnapshot" in value)) {
-    return readStoredSnapshot();
+    return storedSnapshot;
   }
   const snapshot = (value as { crossBorderSnapshot?: FridayCrossBorderSnapshot }).crossBorderSnapshot;
   if (snapshot?.profile) {
-    persistCrossBorderAssistantNavigationSnapshot(snapshot);
-    return snapshot;
+    const mergedSnapshot = mergeCrossBorderSnapshots(storedSnapshot, snapshot) ?? snapshot;
+    persistCrossBorderAssistantNavigationSnapshot(mergedSnapshot);
+    return mergedSnapshot;
   }
-  return readStoredSnapshot();
+  return storedSnapshot;
 }
 
 export function buildCrossBorderAssistantNavigationState(

@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { crossBorderPackApi } from "@/lib/api/cross-border-pack";
 import { localize } from "@/lib/i18n/localized-text";
+import { persistCrossBorderAssistantNavigationSnapshot } from "@/lib/packs/cross-border-snapshot";
 import { useAppLocale } from "@/providers/locale-provider";
 import type { FridayCrossBorderSnapshot, FridayCrossBorderWorkflowId } from "../../../src/packs/cross-border/friday-cross-border-pack.types";
 
@@ -16,6 +17,7 @@ export function useCrossBorderWorkflowPresets() {
   const syncSnapshotCaches = (snapshot: FridayCrossBorderSnapshot) => {
     queryClient.setQueryData(["cross-border-pack", "snapshot"], snapshot);
     queryClient.setQueryData(["cross-border-pack", "snapshot", "home"], snapshot);
+    persistCrossBorderAssistantNavigationSnapshot(snapshot);
   };
 
   const applyMutation = useMutation({

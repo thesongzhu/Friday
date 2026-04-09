@@ -155,4 +155,41 @@ describe("cross-border snapshot helpers", () => {
 
     expect(readNavigationCrossBorderSnapshot(undefined)).toEqual(snapshot);
   });
+
+  it("merges a stored automation snapshot into navigation state that dropped automation", () => {
+    const storedSnapshot = buildSnapshot({
+      workflowRecommendations: [{
+        ...buildSnapshot().workflowRecommendations[0],
+        automation: {
+          workflowId: "daily-store-health-check",
+          templateId: "builtin-cross-border-daily-store-health-check",
+          managedWorkflowId: "mwf_123",
+          managedWorkflowSlug: "daily-store-health-check",
+          managedWorkflowName: "Daily Store Health Check",
+          status: "active",
+          schedule: {
+            cron: "0 9 * * *",
+            timezone: "America/Los_Angeles",
+          },
+          nextRunAt: "2026-04-09T16:00:00.000Z",
+          lastPublishedAt: "2026-04-08T00:00:00.000Z",
+          lastSyncedAt: "2026-04-08T00:00:00.000Z",
+        },
+      }],
+    });
+    const navigationSnapshot = buildSnapshot({
+      workflowRecommendations: [{
+        ...buildSnapshot().workflowRecommendations[0],
+        automation: null,
+      }],
+    });
+
+    persistCrossBorderAssistantNavigationSnapshot(storedSnapshot);
+
+    const restored = readNavigationCrossBorderSnapshot(
+      buildCrossBorderAssistantNavigationState(navigationSnapshot),
+    );
+
+    expect(restored?.workflowRecommendations[0]?.automation?.managedWorkflowId).toBe("mwf_123");
+  });
 });
