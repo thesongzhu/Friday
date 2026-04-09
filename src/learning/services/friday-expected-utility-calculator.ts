@@ -44,6 +44,49 @@ export interface FridayUtilityResult {
 
 // ─── Strategy interface (pluggable for future ML models) ───
 
+/**
+ * Strategy interface for computing expected utility of auto-fix actions.
+ *
+ * The default implementation ({@link FridayHeuristicUtilityStrategy}) uses:
+ *   EU = benefit * P(success) - cost * P(failure) - riskPenalty
+ *
+ * **To replace with a trained ML model:**
+ * 1. Implement this interface with your model's inference call.
+ * 2. Pass the implementation to `createFridayExpectedUtilityCalculator()`.
+ * 3. The input includes historical signals (`humanRejectionRate`,
+ *    `rollbackFrequency`, `routeFailureRate`, `patternStrength`, etc.)
+ *    that can serve as feature vectors for your model.
+ * 4. Training data can be collected from the `learning_metrics` table
+ *    (daily aggregated success/rollback/activation rates) and from
+ *    the `auto_fix_actions` table (per-action outcome history).
+ * 5. The output `recommendation` must be one of: `auto_apply`, `suggest`, `defer`.
+ *    The recommendation is advisory — approval gates and risk tier policies
+ *    are enforced separately and cannot be bypassed by the strategy.
+ *
+ * @example
+ * ```ts
+ * const mlStrategy: FridayUtilityStrategy = {
+ *   compute(input) {
+ *     const features = [
+ *       input.confidence,
+ *       input.riskTier,
+ *       input.humanRejectionRate ?? 0,
+ *       input.rollbackFrequency ?? 0,
+ *       input.historicalSuccessRate ?? 0.5,
+ *       input.lessonMatchCount ?? 0,
+ *       input.patternStrength ?? 0,
+ *     ];
+ *     const eu = myModel.predict(features);
+ *     return {
+ *       expectedUtility: eu,
+ *       recommendation: eu > 0.3 ? "auto_apply" : eu > 0 ? "suggest" : "defer",
+ *       reasoning: `ML model v2 (eu=${eu.toFixed(3)})`,
+ *       learningSignals: ["ml_model_v2"],
+ *     };
+ *   },
+ * };
+ * ```
+ */
 export interface FridayUtilityStrategy {
   compute(input: FridayUtilityInput): FridayUtilityResult;
 }

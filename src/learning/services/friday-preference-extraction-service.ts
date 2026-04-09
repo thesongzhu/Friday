@@ -63,6 +63,72 @@ interface PreferenceRule {
   confidence: number;
 }
 
+/**
+ * Communication persona preference rules.
+ * These produce keys matching FRIDAY_COMMUNICATION_PREFERENCE_KEYS
+ * (e.g., "persona.verbosity", "persona.tone") so they flow through
+ * the learning context into persona resolution automatically.
+ */
+const PERSONA_PREFERENCE_RULES: PreferenceRule[] = [
+  {
+    pattern: /\b(?:be\s+more\s+)(concise|brief|short|detailed|verbose)\b/i,
+    keyExtractor: () => "persona.verbosity",
+    valueExtractor: (m) => {
+      const word = m[1]!.toLowerCase();
+      return ["concise", "brief", "short"].includes(word) ? "concise" : "detailed";
+    },
+    confidence: 0.75,
+  },
+  {
+    pattern: /\b(?:be\s+more\s+)(formal|professional|casual|friendly|warm)\b/i,
+    keyExtractor: () => "persona.tone",
+    valueExtractor: (m) => {
+      const word = m[1]!.toLowerCase();
+      if (["formal", "professional"].includes(word)) return "analytical";
+      if (["casual", "friendly", "warm"].includes(word)) return "warm";
+      return "neutral";
+    },
+    confidence: 0.75,
+  },
+  {
+    pattern: /\b(?:don'?t|stop)\s+(?:ask(?:ing)?)\s+(?:so\s+many\s+)?questions?\b/i,
+    keyExtractor: () => "persona.question_style",
+    valueExtractor: () => "minimal",
+    confidence: 0.70,
+  },
+  {
+    pattern: /\b(?:be\s+more\s+)(direct|straightforward|blunt)\b/i,
+    keyExtractor: () => "persona.directness",
+    valueExtractor: () => "direct",
+    confidence: 0.75,
+  },
+  // Chinese persona rules
+  {
+    pattern: /(?:简洁|简短|精炼)(?:一点|些|点)/,
+    keyExtractor: () => "persona.verbosity",
+    valueExtractor: () => "concise",
+    confidence: 0.75,
+  },
+  {
+    pattern: /(?:详细|展开|多说)(?:一点|些|点)/,
+    keyExtractor: () => "persona.verbosity",
+    valueExtractor: () => "detailed",
+    confidence: 0.75,
+  },
+  {
+    pattern: /(?:直接|干脆)(?:一点|些|点)/,
+    keyExtractor: () => "persona.directness",
+    valueExtractor: () => "direct",
+    confidence: 0.75,
+  },
+  {
+    pattern: /(?:别|不要|少)问(?:那么多|这么多)?(?:问题)?/,
+    keyExtractor: () => "persona.question_style",
+    valueExtractor: () => "minimal",
+    confidence: 0.70,
+  },
+];
+
 const PREFERENCE_RULES: PreferenceRule[] = [
   {
     pattern: /\bprefer\s+(.+?)(?:\s+for\s+(.+?))?$/i,
@@ -128,6 +194,7 @@ export function createFridayPreferenceExtractionService(
         case "user_message": {
           const text = event.payload["text"] as string | undefined;
           if (text) {
+            let matched = false;
             for (const rule of PREFERENCE_RULES) {
               const match = text.match(rule.pattern);
               if (match) {
@@ -136,7 +203,22 @@ export function createFridayPreferenceExtractionService(
                 signals.push(
                   makeSignal("preference", key, value, rule.confidence),
                 );
+                matched = true;
                 break; // first match wins
+              }
+            }
+            // Try persona rules if no general preference rule matched
+            if (!matched) {
+              for (const rule of PERSONA_PREFERENCE_RULES) {
+                const match = text.match(rule.pattern);
+                if (match) {
+                  const key = rule.keyExtractor(match);
+                  const value = rule.valueExtractor(match);
+                  signals.push(
+                    makeSignal("preference", key, value, rule.confidence),
+                  );
+                  break;
+                }
               }
             }
           }

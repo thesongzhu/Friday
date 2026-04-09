@@ -7,6 +7,7 @@ import type { FridayAutoFixLessonExtractionService } from "./friday-auto-fix-les
 import type { FridayAutoFixRollbackService } from "./friday-auto-fix-rollback-service.js";
 import type { UUID } from "../model/friday-learning.types.js";
 import type {
+  FridayAutoFixActionEntity,
   FridayAutoFixExecutionResult,
   FridayAutoFixPlan,
   FridayAutoFixPlanStep,
@@ -225,6 +226,39 @@ export function createFridayAutoFixExecutionService(
     });
   }
 
+  function extractFailureLessonBestEffort(
+    failedAction: FridayAutoFixActionEntity,
+    nowIso: string,
+  ): void {
+    if (!deps.lessonExtractionService) return;
+    try {
+      const incident = deps.db.withReadConnection((db) =>
+        deps.incidentRepo.listByUser(db, { userId: failedAction.userId }).find(
+          (inc) => inc.incidentId === failedAction.incidentId,
+        ),
+      );
+      const diagnosisId = failedAction.plan.evidence.diagnosisId;
+      const diagnosis = diagnosisId
+        ? deps.db.withReadConnection((db) =>
+            deps.diagnosisRepo.listByFingerprint(
+              db,
+              failedAction.plan.evidence.fingerprint,
+            ).find((d) => d.id === diagnosisId),
+          )
+        : undefined;
+      if (incident && diagnosis) {
+        deps.lessonExtractionService.extractFromFailure({
+          incident,
+          diagnosis,
+          action: failedAction,
+          nowIso,
+        });
+      }
+    } catch {
+      // Lesson extraction is best-effort; swallow errors.
+    }
+  }
+
   return {
     async execute(actionId) {
       const nowIso = deps.nowIso();
@@ -279,6 +313,9 @@ export function createFridayAutoFixExecutionService(
 
       if (!executionSucceeded) {
         persistPlanEvidence(actionId, action.plan, nowIso);
+
+        // Best-effort lesson extraction from failed execution
+        extractFailureLessonBestEffort(action, nowIso);
 
         // Execution failed — attempt rollback
         const rollbackPlan = action.rollbackPlan ?? action.plan.rollbackPlan;
@@ -401,6 +438,9 @@ export function createFridayAutoFixExecutionService(
 
         return result;
       }
+
+      // Best-effort lesson extraction from verification failure
+      extractFailureLessonBestEffort(action, nowIso);
 
       // Verification failed — attempt rollback
       const rollbackPlan = action.rollbackPlan ?? action.plan.rollbackPlan;

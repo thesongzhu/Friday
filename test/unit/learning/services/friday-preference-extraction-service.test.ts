@@ -397,4 +397,95 @@ describe("FridayPreferenceExtractionService", () => {
     expect(signals[0]!.ts).toBe(NOW);
     expect(signals[0]!.signalId).toBeTruthy();
   });
+
+  describe("persona preference rules", () => {
+    it("extracts verbosity=concise from 'be more concise'", () => {
+      const event = makeEvent({
+        kind: "user_message",
+        payload: { text: "Can you be more concise in your answers?" },
+      });
+      const signals = service.extract(event);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]!.key).toBe("persona.verbosity");
+      expect(signals[0]!.value).toBe("concise");
+      expect(signals[0]!.confidence).toBe(0.75);
+    });
+
+    it("extracts verbosity=detailed from 'be more detailed'", () => {
+      const event = makeEvent({
+        kind: "user_message",
+        payload: { text: "be more detailed please" },
+      });
+      const signals = service.extract(event);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]!.key).toBe("persona.verbosity");
+      expect(signals[0]!.value).toBe("detailed");
+    });
+
+    it("extracts tone=warm from 'be more friendly'", () => {
+      const event = makeEvent({
+        kind: "user_message",
+        payload: { text: "be more friendly when responding" },
+      });
+      const signals = service.extract(event);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]!.key).toBe("persona.tone");
+      expect(signals[0]!.value).toBe("warm");
+    });
+
+    it("extracts questionStyle=minimal from 'stop asking so many questions'", () => {
+      const event = makeEvent({
+        kind: "user_message",
+        payload: { text: "stop asking so many questions" },
+      });
+      const signals = service.extract(event);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]!.key).toBe("persona.question_style");
+      expect(signals[0]!.value).toBe("minimal");
+    });
+
+    it("extracts directness=direct from 'be more direct'", () => {
+      const event = makeEvent({
+        kind: "user_message",
+        payload: { text: "be more direct" },
+      });
+      const signals = service.extract(event);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]!.key).toBe("persona.directness");
+      expect(signals[0]!.value).toBe("direct");
+    });
+
+    it("extracts Chinese verbosity=concise from '简洁一点'", () => {
+      const event = makeEvent({
+        kind: "user_message",
+        payload: { text: "回答简洁一点" },
+      });
+      const signals = service.extract(event);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]!.key).toBe("persona.verbosity");
+      expect(signals[0]!.value).toBe("concise");
+    });
+
+    it("extracts Chinese verbosity=detailed from '详细一点'", () => {
+      const event = makeEvent({
+        kind: "user_message",
+        payload: { text: "请详细一点��明" },
+      });
+      const signals = service.extract(event);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]!.key).toBe("persona.verbosity");
+      expect(signals[0]!.value).toBe("detailed");
+    });
+
+    it("extracts Chinese questionStyle=minimal from '别问那么多'", () => {
+      const event = makeEvent({
+        kind: "user_message",
+        payload: { text: "别问那么多问题" },
+      });
+      const signals = service.extract(event);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]!.key).toBe("persona.question_style");
+      expect(signals[0]!.value).toBe("minimal");
+    });
+  });
 });
