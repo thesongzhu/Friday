@@ -120,6 +120,9 @@ export function CrossBorderPackSetupPage() {
       queryFn: () => crossBorderPackApi.getSnapshot(),
     });
     const navigationSnapshot = buildCrossBorderAssistantNavigationSnapshot(snapshotQuery.data, latestSnapshot);
+    if (navigationSnapshot) {
+      queryClient.setQueryData(["cross-border-pack", "snapshot"], navigationSnapshot);
+    }
     persistCrossBorderAssistantNavigationSnapshot(navigationSnapshot);
     navigate(buildPackAssistantHref(CROSS_BORDER_PACK_ID), {
       state: buildCrossBorderAssistantNavigationState(navigationSnapshot),

@@ -123,6 +123,9 @@ export function HomePage() {
       queryFn: () => crossBorderPackApi.getSnapshot(),
     });
     const navigationSnapshot = buildCrossBorderAssistantNavigationSnapshot(crossBorderSnapshotQuery.data, latestSnapshot);
+    if (navigationSnapshot) {
+      queryClient.setQueryData(["cross-border-pack", "snapshot"], navigationSnapshot);
+    }
     persistCrossBorderAssistantNavigationSnapshot(navigationSnapshot);
     navigate(buildPackAssistantHref("industry-cross-border-ecommerce"), {
       state: buildCrossBorderAssistantNavigationState(navigationSnapshot),
