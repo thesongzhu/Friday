@@ -1,10 +1,34 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { FridayCrossBorderSnapshot } from "../../../src/packs/cross-border/friday-cross-border-pack.types";
 import {
   buildCrossBorderAssistantNavigationState,
   mergeCrossBorderSnapshots,
+  persistCrossBorderAssistantNavigationSnapshot,
   readNavigationCrossBorderSnapshot,
 } from "../../../ui/src/lib/packs/cross-border-snapshot";
+
+function installSessionStorageMock() {
+  const storage = new Map<string, string>();
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      sessionStorage: {
+        getItem(key: string) {
+          return storage.has(key) ? storage.get(key)! : null;
+        },
+        setItem(key: string, value: string) {
+          storage.set(key, value);
+        },
+        removeItem(key: string) {
+          storage.delete(key);
+        },
+        clear() {
+          storage.clear();
+        },
+      },
+    },
+  });
+}
 
 function buildSnapshot(overrides?: Partial<FridayCrossBorderSnapshot>): FridayCrossBorderSnapshot {
   return {
@@ -69,6 +93,12 @@ function buildSnapshot(overrides?: Partial<FridayCrossBorderSnapshot>): FridayCr
 }
 
 describe("cross-border snapshot helpers", () => {
+  installSessionStorageMock();
+
+  afterEach(() => {
+    window.sessionStorage.clear();
+  });
+
   it("preserves seeded automation when the live snapshot drops it", () => {
     const seeded = buildSnapshot({
       workflowRecommendations: [{
@@ -116,5 +146,13 @@ describe("cross-border snapshot helpers", () => {
 
     expect(readNavigationCrossBorderSnapshot(state)).toEqual(snapshot);
     expect(buildCrossBorderAssistantNavigationState(buildSnapshot({ profile: null }))).toBeUndefined();
+  });
+
+  it("falls back to a stored assistant snapshot when navigation state is missing", () => {
+    const snapshot = buildSnapshot();
+
+    persistCrossBorderAssistantNavigationSnapshot(snapshot);
+
+    expect(readNavigationCrossBorderSnapshot(undefined)).toEqual(snapshot);
   });
 });

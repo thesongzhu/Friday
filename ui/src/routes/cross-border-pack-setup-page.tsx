@@ -8,7 +8,11 @@ import { useCrossBorderWorkflowPresets } from "@/hooks/use-cross-border-workflow
 import { crossBorderPackApi, type CrossBorderImportInput, type CrossBorderProfileInput } from "@/lib/api/cross-border-pack";
 import { localize } from "@/lib/i18n/localized-text";
 import { buildPackAssistantHref, buildPackChatHref } from "@/lib/packs/pack-links";
-import { buildCrossBorderAssistantNavigationState, mergeCrossBorderSnapshots } from "@/lib/packs/cross-border-snapshot";
+import {
+  buildCrossBorderAssistantNavigationState,
+  mergeCrossBorderSnapshots,
+  persistCrossBorderAssistantNavigationSnapshot,
+} from "@/lib/packs/cross-border-snapshot";
 import { getPackById } from "@/lib/packs/pack-registry";
 import { useAppLocale } from "@/providers/locale-provider";
 import type { FridayCrossBorderCompetitorTarget, FridayCrossBorderWatchTarget } from "../../../src/packs/cross-border/friday-cross-border-pack.types";
@@ -116,6 +120,7 @@ export function CrossBorderPackSetupPage() {
       queryFn: () => crossBorderPackApi.getSnapshot(),
     });
     const navigationSnapshot = mergeCrossBorderSnapshots(snapshotQuery.data, latestSnapshot);
+    persistCrossBorderAssistantNavigationSnapshot(navigationSnapshot);
     navigate(buildPackAssistantHref(CROSS_BORDER_PACK_ID), {
       state: buildCrossBorderAssistantNavigationState(navigationSnapshot),
     });
