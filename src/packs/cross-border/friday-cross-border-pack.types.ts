@@ -1,4 +1,4 @@
-import type { ISODateTime } from "#workflows";
+import type { ISODateTime } from "../../cross-program/model/friday-cross-program.types.js";
 
 export const FRIDAY_CROSS_BORDER_PACK_ID = "industry-cross-border-ecommerce" as const;
 

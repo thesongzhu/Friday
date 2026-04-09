@@ -1,4 +1,4 @@
-import type { FridayAgentTaskProfileId } from "#agent";
+import type { FridayAgentTaskProfileId } from "../../agent/runtime/friday-agent-task-profile.js";
 import type {
   FridayCrossBorderLocalizedText,
   FridayCrossBorderWorkflowId,
