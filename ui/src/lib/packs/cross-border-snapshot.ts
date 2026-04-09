@@ -63,6 +63,15 @@ export function buildCrossBorderAssistantNavigationState(
   };
 }
 
+export function buildCrossBorderAssistantNavigationSnapshot(
+  ...snapshots: Array<FridayCrossBorderSnapshot | undefined>
+): FridayCrossBorderSnapshot | undefined {
+  return snapshots.reduce<FridayCrossBorderSnapshot | undefined>((current, snapshot) => {
+    const storedSnapshot = current ?? readStoredSnapshot();
+    return mergeCrossBorderSnapshots(storedSnapshot, snapshot);
+  }, undefined);
+}
+
 export function mergeCrossBorderSnapshots(
   seededSnapshot: FridayCrossBorderSnapshot | undefined,
   liveSnapshot: FridayCrossBorderSnapshot | undefined,

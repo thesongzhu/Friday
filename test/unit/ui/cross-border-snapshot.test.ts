@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { FridayCrossBorderSnapshot } from "../../../src/packs/cross-border/friday-cross-border-pack.types";
 import {
+  buildCrossBorderAssistantNavigationSnapshot,
   buildCrossBorderAssistantNavigationState,
   mergeCrossBorderSnapshots,
   persistCrossBorderAssistantNavigationSnapshot,
@@ -191,5 +192,40 @@ describe("cross-border snapshot helpers", () => {
     );
 
     expect(restored?.workflowRecommendations[0]?.automation?.managedWorkflowId).toBe("mwf_123");
+  });
+
+  it("uses the stored assistant snapshot as a seed when building a new navigation snapshot", () => {
+    const storedSnapshot = buildSnapshot({
+      workflowRecommendations: [{
+        ...buildSnapshot().workflowRecommendations[0],
+        automation: {
+          workflowId: "daily-store-health-check",
+          templateId: "builtin-cross-border-daily-store-health-check",
+          managedWorkflowId: "mwf_123",
+          managedWorkflowSlug: "daily-store-health-check",
+          managedWorkflowName: "Daily Store Health Check",
+          status: "active",
+          schedule: {
+            cron: "0 9 * * *",
+            timezone: "America/Los_Angeles",
+          },
+          nextRunAt: "2026-04-09T16:00:00.000Z",
+          lastPublishedAt: "2026-04-08T00:00:00.000Z",
+          lastSyncedAt: "2026-04-08T00:00:00.000Z",
+        },
+      }],
+    });
+    const latestSnapshot = buildSnapshot({
+      workflowRecommendations: [{
+        ...buildSnapshot().workflowRecommendations[0],
+        automation: null,
+      }],
+    });
+
+    persistCrossBorderAssistantNavigationSnapshot(storedSnapshot);
+
+    const merged = buildCrossBorderAssistantNavigationSnapshot(undefined, latestSnapshot);
+
+    expect(merged?.workflowRecommendations[0]?.automation?.managedWorkflowId).toBe("mwf_123");
   });
 });

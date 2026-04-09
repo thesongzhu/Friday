@@ -9,8 +9,8 @@ import { crossBorderPackApi, type CrossBorderImportInput, type CrossBorderProfil
 import { localize } from "@/lib/i18n/localized-text";
 import { buildPackAssistantHref, buildPackChatHref } from "@/lib/packs/pack-links";
 import {
+  buildCrossBorderAssistantNavigationSnapshot,
   buildCrossBorderAssistantNavigationState,
-  mergeCrossBorderSnapshots,
   persistCrossBorderAssistantNavigationSnapshot,
 } from "@/lib/packs/cross-border-snapshot";
 import { getPackById } from "@/lib/packs/pack-registry";
@@ -119,7 +119,7 @@ export function CrossBorderPackSetupPage() {
       queryKey: ["cross-border-pack", "snapshot"],
       queryFn: () => crossBorderPackApi.getSnapshot(),
     });
-    const navigationSnapshot = mergeCrossBorderSnapshots(snapshotQuery.data, latestSnapshot);
+    const navigationSnapshot = buildCrossBorderAssistantNavigationSnapshot(snapshotQuery.data, latestSnapshot);
     persistCrossBorderAssistantNavigationSnapshot(navigationSnapshot);
     navigate(buildPackAssistantHref(CROSS_BORDER_PACK_ID), {
       state: buildCrossBorderAssistantNavigationState(navigationSnapshot),

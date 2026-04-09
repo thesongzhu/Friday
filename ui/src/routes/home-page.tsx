@@ -16,8 +16,8 @@ import { uixSnapshotsApi, type UixScheduledAutomationSummary } from "@/lib/api/u
 import { localize, resolveLocalizedText } from "@/lib/i18n/localized-text";
 import { findPackRuns } from "@/lib/packs/pack-assistant-receipt";
 import {
+  buildCrossBorderAssistantNavigationSnapshot,
   buildCrossBorderAssistantNavigationState,
-  mergeCrossBorderSnapshots,
   persistCrossBorderAssistantNavigationSnapshot,
 } from "@/lib/packs/cross-border-snapshot";
 import { buildPackAssistantHref, buildPackChatHref, buildPackFlowHref } from "@/lib/packs/pack-links";
@@ -122,7 +122,7 @@ export function HomePage() {
       queryKey: ["cross-border-pack", "snapshot"],
       queryFn: () => crossBorderPackApi.getSnapshot(),
     });
-    const navigationSnapshot = mergeCrossBorderSnapshots(crossBorderSnapshotQuery.data, latestSnapshot);
+    const navigationSnapshot = buildCrossBorderAssistantNavigationSnapshot(crossBorderSnapshotQuery.data, latestSnapshot);
     persistCrossBorderAssistantNavigationSnapshot(navigationSnapshot);
     navigate(buildPackAssistantHref("industry-cross-border-ecommerce"), {
       state: buildCrossBorderAssistantNavigationState(navigationSnapshot),
