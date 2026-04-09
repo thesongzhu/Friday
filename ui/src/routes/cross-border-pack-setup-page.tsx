@@ -65,7 +65,18 @@ function parseCompetitors(text: string, regionFocus: SetupState["regionFocus"]):
         platform: regionFocus === "sea_tiktok" ? "tiktok_shop" : "amazon",
         ...(productName ? { productName } : {}),
       };
-    });
+  });
+}
+
+function buildCrossBorderAssistantNavigationState(
+  snapshot: Awaited<ReturnType<typeof crossBorderPackApi.getSnapshot>> | undefined,
+) {
+  if (!snapshot?.profile) {
+    return undefined;
+  }
+  return {
+    crossBorderSnapshot: snapshot,
+  };
 }
 
 async function readFileAsText(file: File): Promise<string> {
@@ -108,6 +119,15 @@ export function CrossBorderPackSetupPage() {
     queryKey: ["cross-border-pack", "snapshot"],
     queryFn: () => crossBorderPackApi.getSnapshot(),
   });
+
+  const openAssistant = () => {
+    if (snapshotQuery.data) {
+      queryClient.setQueryData(["cross-border-pack", "snapshot"], snapshotQuery.data);
+    }
+    navigate(buildPackAssistantHref(CROSS_BORDER_PACK_ID), {
+      state: buildCrossBorderAssistantNavigationState(snapshotQuery.data),
+    });
+  };
 
   useEffect(() => {
     if (!profileQuery.data) {
@@ -405,7 +425,7 @@ export function CrossBorderPackSetupPage() {
               <ActionButton
                 data-testid="cross-border-open-assistant-direct"
                 tone="secondary"
-                onClick={() => navigate(buildPackAssistantHref(CROSS_BORDER_PACK_ID))}
+                onClick={openAssistant}
                 disabled={!profileQuery.data && !snapshotQuery.data?.profile}
               >
                 {localize(locale, "去助手看交接", "Open assistant handoff")}
@@ -524,7 +544,7 @@ export function CrossBorderPackSetupPage() {
         <CrossBorderActionBoard
           snapshot={snapshotQuery.data}
           onOpenSetup={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-          onOpenAssistant={() => navigate(buildPackAssistantHref(CROSS_BORDER_PACK_ID))}
+          onOpenAssistant={openAssistant}
           onOpenWorkflowTemplate={(templateId) => navigate(`/workflows/builder?templateId=${encodeURIComponent(templateId)}`)}
           onOpenManagedWorkflow={(workflowId) => navigate(`/workflows/builder?workflowId=${encodeURIComponent(workflowId)}`)}
           onApplyDefaultWorkflows={() => applyDefaultWorkflows()}
