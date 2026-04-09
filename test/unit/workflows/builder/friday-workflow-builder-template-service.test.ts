@@ -11,6 +11,7 @@ import { getFridayBuiltinWorkflowTemplates } from "#workflows";
 import { createFridaySkillRepository } from "#skills";
 import type { FridaySkillRepository } from "#skills";
 import type { SkillManifestV2 } from "#skills";
+import { listFridayCrossBorderWorkflowTemplateIds } from "../../../../src/packs/cross-border/friday-cross-border-workflow-catalog";
 import { createTestDb, createTestIdGenerator } from "../_helpers/create-test-db.helper.js";
 import { createTestSpec, createTestVisual } from "./_helpers/create-test-spec.helper.js";
 
@@ -57,8 +58,17 @@ describe("FridayWorkflowBuilderTemplateService", () => {
   it("lists builtin templates", () => {
     const service = createService();
     const templates = service.listTemplates();
-    expect(templates.length).toBeGreaterThanOrEqual(3);
+    expect(templates.length).toBeGreaterThanOrEqual(9);
     expect(templates.some((t) => t.kind === "builtin")).toBe(true);
+  });
+
+  it("includes the cross-border builtin workflow templates", () => {
+    const service = createService();
+    const templateIds = new Set(service.listTemplates().map((template) => template.templateId));
+
+    for (const templateId of listFridayCrossBorderWorkflowTemplateIds()) {
+      expect(templateIds.has(templateId)).toBe(true);
+    }
   });
 
   it("gets a builtin template by id", () => {
@@ -170,6 +180,28 @@ describe("FridayWorkflowBuilderTemplateService", () => {
     expect(draft.spec.workflowId).toBe("wf-new");
     expect(draft.visual.workflowId).toBe("wf-new");
     expect(draft.status).toBe("active");
+  });
+
+  it("instantiates the weekly hot-product cross-border template into a multi-step draft", () => {
+    const service = createService();
+    const draft = service.instantiateTemplate(
+      "builtin-cross-border-weekly-hot-product-review",
+      "wf-cross-border",
+      "Cross-border Hot Product Review",
+      "test-user",
+    );
+
+    expect(draft.spec.steps.map((step) => step.id)).toEqual([
+      "detect_spikes",
+      "screen_followups",
+    ]);
+    expect(draft.spec.edges).toEqual([
+      {
+        from: "detect_spikes",
+        to: "screen_followups",
+        when: "success",
+      },
+    ]);
   });
 
   it("throws when instantiating nonexistent template", () => {

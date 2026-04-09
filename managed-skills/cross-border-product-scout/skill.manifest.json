@@ -1,17 +1,18 @@
 {
   "schemaVersion": "2.0",
-  "id": "summarize-shop-performance",
-  "name": "Shop Performance Summarizer",
-  "description": "Summarize Amazon or TikTok Shop performance notes into issue clusters for ads, inventory, returns, and listing actions.",
+  "id": "cross-border-product-scout",
+  "name": "Cross-border Product Scout",
+  "description": "Screens category signals, competitor notes, and market observations to identify promising products, avoid obvious traps, and list the next validation questions.",
   "version": "1.0.0",
   "kind": "workflow",
-  "category": "ai",
+  "category": "automation",
   "author": {
-    "name": "Your Name"
+    "name": "Friday"
   },
   "tags": [
     "generated",
-    "skill.stabilized"
+    "skill.stabilized",
+    "cross-border"
   ],
   "runtime": {
     "kind": "node",
@@ -49,17 +50,17 @@
   },
   "inputs": [
     {
-      "key": "performanceNotes",
+      "key": "marketSignals",
       "type": "string",
       "required": true,
-      "label": "Performance Notes"
+      "label": "Market Signals"
     }
   ],
   "outputs": [
     {
-      "key": "issueClusters",
+      "key": "productScout",
       "type": "string",
-      "description": "Summarized issue clusters in Chinese, segmented by ads, inventory, order health, and recommended actions"
+      "description": "Structured product-scout summary with opportunities, risks, and next validation questions."
     }
   ],
   "permissions": {
