@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, Clock3, ListFilter, Pin, Plus, Sparkles } from "lucide-react";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { ContextualHelp } from "@/components/core/contextual-help";
@@ -76,6 +76,7 @@ function formatAutomationNextRun(
 
 export function HomePage() {
   const navigate = useAppNavigate();
+  const queryClient = useQueryClient();
   const { locale } = useAppLocale();
   const { profileType } = useUserProfile();
   const {
@@ -110,6 +111,17 @@ export function HomePage() {
     queryFn: () => crossBorderPackApi.getSnapshot(),
     refetchInterval: pollInterval,
   });
+
+  const openCrossBorderAssistant = () => {
+    if (crossBorderSnapshotQuery.data) {
+      queryClient.setQueryData(["cross-border-pack", "snapshot"], crossBorderSnapshotQuery.data);
+    }
+    navigate(buildPackAssistantHref("industry-cross-border-ecommerce"), {
+      state: crossBorderSnapshotQuery.data?.profile
+        ? { crossBorderSnapshot: crossBorderSnapshotQuery.data }
+        : undefined,
+    });
+  };
 
   useEffect(() => {
     if (!pendingPackPath) {
@@ -218,7 +230,7 @@ export function HomePage() {
         <CrossBorderActionBoard
           snapshot={crossBorderSnapshotQuery.data}
           onOpenSetup={() => navigate("/packs/cross-border/setup?packId=industry-cross-border-ecommerce&mode=adjust")}
-          onOpenAssistant={() => navigate("/assistant?packId=industry-cross-border-ecommerce")}
+          onOpenAssistant={openCrossBorderAssistant}
           onOpenWorkflowTemplate={(templateId) => navigate(`/workflows/builder?templateId=${encodeURIComponent(templateId)}`)}
           onOpenManagedWorkflow={(workflowId) => navigate(`/workflows/builder?workflowId=${encodeURIComponent(workflowId)}`)}
           onApplyDefaultWorkflows={() => applyDefaultWorkflows()}
