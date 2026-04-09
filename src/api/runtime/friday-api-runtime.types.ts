@@ -51,6 +51,7 @@ import type { FridayAutoFixRoutesDeps } from "../http/routes/friday-auto-fix-rou
 import type { FridayAgentLoopRoutesDeps } from "../http/routes/friday-agent-loop-routes.js";
 import type { FridaySystemRoutesDeps } from "../http/routes/friday-system-routes.js";
 import type { FridayUixRoutesDeps } from "../http/routes/friday-uix-routes.js";
+import type { FridayCrossBorderPackRoutesDeps } from "../http/routes/friday-cross-border-pack-routes.js";
 import type {
   LarkWebhookRelayService,
   LineWebhookListenerService,
@@ -90,6 +91,7 @@ export interface FridayApiRuntime {
   autoFix?: FridayAutoFixRoutesDeps;
   agentLoop?: FridayAgentLoopRoutesDeps;
   uix?: FridayUixRoutesDeps;
+  crossBorderPack?: FridayCrossBorderPackRoutesDeps;
   system?: FridaySystemRoutesDeps;
   channels?: FridayChannelRoutesDeps;
 }
@@ -202,6 +204,8 @@ export interface CreateFridayApiRuntimeDeps {
   system?: FridaySystemRoutesDeps;
   /** Optional: beginner-friendly UIX route surface. */
   uix?: FridayUixRoutesDeps;
+  /** Optional: cross-border operating pack route surface. */
+  crossBorderPack?: FridayCrossBorderPackRoutesDeps;
   /** Optional: search capability metadata surfaced by /v1/health. */
   searchHealth?: {
     provider: string;

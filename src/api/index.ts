@@ -20,6 +20,7 @@ export type * from "./model/friday-api-plugin.types.js";
 export type * from "./model/friday-api-system.types.js";
 export type * from "./model/friday-api-self-healing.types.js";
 export type * from "./model/friday-api-uix-surface.types.js";
+export type * from "./model/friday-api-cross-border-pack.types.js";
 export type * from "./model/friday-api-runtime-admin.types.js";
 
 // Deep link types
@@ -191,6 +192,8 @@ export { createFridaySystemRoutes } from "./http/routes/friday-system-routes.js"
 export type { FridaySystemRoutesDeps } from "./http/routes/friday-system-routes.js";
 export { createFridayUixRoutes } from "./http/routes/friday-uix-routes.js";
 export type { FridayUixRoutesDeps } from "./http/routes/friday-uix-routes.js";
+export { createFridayCrossBorderPackRoutes } from "./http/routes/friday-cross-border-pack-routes.js";
+export type { FridayCrossBorderPackRoutesDeps } from "./http/routes/friday-cross-border-pack-routes.js";
 
 // Discovery routes (C-005)
 export { createFridayDiscoveryRoutes } from "./http/routes/friday-discovery-routes.js";

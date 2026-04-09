@@ -20,6 +20,15 @@ export function buildPackFlowHref(
     mode?: "adjust";
   },
 ): string {
+  if (pack.id === "industry-cross-border-ecommerce") {
+    const searchParams = new URLSearchParams({
+      packId: pack.id,
+    });
+    if (options?.mode === "adjust") {
+      searchParams.set("mode", "adjust");
+    }
+    return `/packs/cross-border/setup?${searchParams.toString()}`;
+  }
   const searchParams = new URLSearchParams({
     packId: pack.id,
   });

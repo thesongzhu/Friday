@@ -23,6 +23,7 @@ const MarketplacePage = lazy(async () => import("@/routes/marketplace-page").the
 const ObservabilityPage = lazy(async () => import("@/routes/observability-page").then((module) => ({ default: module.ObservabilityPage })));
 const OnboardingPage = lazy(async () => import("@/routes/onboarding-page").then((module) => ({ default: module.OnboardingPage })));
 const PacksPage = lazy(async () => import("@/routes/packs-page").then((module) => ({ default: module.PacksPage })));
+const CrossBorderPackSetupPage = lazy(async () => import("@/routes/cross-border-pack-setup-page").then((module) => ({ default: module.CrossBorderPackSetupPage })));
 const SettingsPage = lazy(async () => import("@/routes/settings-page").then((module) => ({ default: module.SettingsPage })));
 const SetupPage = lazy(async () => import("@/routes/setup-page").then((module) => ({ default: module.SetupPage })));
 const SkillsPage = lazy(async () => import("@/routes/skills-page").then((module) => ({ default: module.SkillsPage })));
@@ -265,6 +266,17 @@ export const router = createBrowserRouter([
                 detail={localizedText("Friday 正在准备行业与任务库。", "Friday is preparing the industry and task library.")}
               >
                 <PacksPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "packs/cross-border/setup",
+            element: (
+              <RouteSuspense
+                title={localizedText("加载跨境经营引导包", "Loading cross-border operating pack")}
+                detail={localizedText("Friday 正在准备跨境经营设置和默认流程。", "Friday is preparing the cross-border operating setup and default workflows.")}
+              >
+                <CrossBorderPackSetupPage />
               </RouteSuspense>
             ),
           },

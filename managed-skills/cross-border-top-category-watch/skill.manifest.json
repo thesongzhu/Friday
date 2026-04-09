@@ -1,17 +1,18 @@
 {
   "schemaVersion": "2.0",
-  "id": "summarize-shop-performance",
-  "name": "Shop Performance Summarizer",
-  "description": "Summarize Amazon or TikTok Shop performance notes into issue clusters for ads, inventory, returns, and listing actions.",
+  "id": "cross-border-top-category-watch",
+  "name": "Cross-border Top Category Watch",
+  "description": "Tracks Top 10 category sellers/products, highlights movement in pricing and positioning, and surfaces what changed in the visible public market.",
   "version": "1.0.0",
   "kind": "workflow",
-  "category": "ai",
+  "category": "automation",
   "author": {
-    "name": "Your Name"
+    "name": "Friday"
   },
   "tags": [
     "generated",
-    "skill.stabilized"
+    "skill.stabilized",
+    "cross-border"
   ],
   "runtime": {
     "kind": "node",
@@ -49,17 +50,17 @@
   },
   "inputs": [
     {
-      "key": "performanceNotes",
+      "key": "categoryWatchNotes",
       "type": "string",
       "required": true,
-      "label": "Performance Notes"
+      "label": "Category Watch Notes"
     }
   ],
   "outputs": [
     {
-      "key": "issueClusters",
+      "key": "watchBoard",
       "type": "string",
-      "description": "Summarized issue clusters in Chinese, segmented by ads, inventory, order health, and recommended actions"
+      "description": "Top-category movement summary with seller/product changes and likely follow-up actions."
     }
   ],
   "permissions": {

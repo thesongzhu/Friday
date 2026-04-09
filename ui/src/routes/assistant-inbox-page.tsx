@@ -2,11 +2,14 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, RefreshCcw, ShieldAlert, Sparkles } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
+import { CrossBorderAssistantHandoffCard } from "@/components/packs/cross-border-assistant-handoff-card";
 import { PackAssistantHandoffCard } from "@/components/packs/pack-assistant-handoff-card";
 import { useAdaptivePollingInterval } from "@/hooks/use-adaptive-polling";
 import { useAppNavigate } from "@/hooks/use-app-navigate";
+import { useCrossBorderWorkflowPresets } from "@/hooks/use-cross-border-workflow-presets";
 import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences";
 import { useUserProfile } from "@/hooks/use-user-profile";
+import { crossBorderPackApi } from "@/lib/api/cross-border-pack";
 import { uixSnapshotsApi } from "@/lib/api/uix-snapshots";
 import { localize, resolveLocalizedText } from "@/lib/i18n/localized-text";
 import { buildPackAssistantHref, buildPackChatHref } from "@/lib/packs/pack-links";
@@ -27,11 +30,19 @@ export function AssistantInboxPage() {
   const [searchParams] = useSearchParams();
   const { pinnedPackIds } = useHomeSurfacePreferences(profileType);
   const pollInterval = useAdaptivePollingInterval({ activeMs: 12_000, backgroundMs: 36_000 });
+  const { setWorkflowEnabled, togglingWorkflowId } = useCrossBorderWorkflowPresets();
 
   const snapshotQuery = useQuery({
     queryKey: ["assistant-inbox", "snapshot"],
     queryFn: () => uixSnapshotsApi.getAssistantInbox(),
     refetchInterval: pollInterval,
+  });
+  const selectedPackId = searchParams.get("packId");
+  const crossBorderSnapshotQuery = useQuery({
+    queryKey: ["cross-border-pack", "snapshot"],
+    queryFn: () => crossBorderPackApi.getSnapshot(),
+    refetchInterval: pollInterval,
+    enabled: selectedPackId === "industry-cross-border-ecommerce" || pinnedPackIds.includes("industry-cross-border-ecommerce"),
   });
 
   const approvals = snapshotQuery.data?.approvals ?? [];
@@ -42,7 +53,6 @@ export function AssistantInboxPage() {
     .filter((pack): pack is NonNullable<ReturnType<typeof getPackById>> => Boolean(pack))
     .filter((pack) => pack.curatedSkills.length > 0)
     .slice(0, 3);
-  const selectedPackId = searchParams.get("packId");
   const selectedPack = selectedPackId ? getPackById(selectedPackId) ?? null : null;
   const scrollToSection = (sectionId: string) => {
     const target = document.getElementById(sectionId);
@@ -82,6 +92,19 @@ export function AssistantInboxPage() {
 
       {selectedPack?.productCopy ? (
         <ShellCard title={localize(locale, "当前行业包交接", "Current Pack Handoff")}>
+          {selectedPack.id === "industry-cross-border-ecommerce" && crossBorderSnapshotQuery.data?.profile ? (
+            <div className="mb-4">
+              <CrossBorderAssistantHandoffCard
+                snapshot={crossBorderSnapshotQuery.data}
+                onOpenSetup={() => navigate("/packs/cross-border/setup?packId=industry-cross-border-ecommerce&mode=adjust")}
+                onContinueInChat={() => navigate(buildPackChatHref(selectedPack.id))}
+                onOpenWorkflowTemplate={(templateId) => navigate(`/workflows/builder?templateId=${encodeURIComponent(templateId)}`)}
+                onOpenManagedWorkflow={(workflowId) => navigate(`/workflows/builder?workflowId=${encodeURIComponent(workflowId)}`)}
+                onSetWorkflowEnabled={setWorkflowEnabled}
+                togglingWorkflowId={togglingWorkflowId}
+              />
+            </div>
+          ) : null}
           <PackAssistantHandoffCard
             pack={selectedPack}
             runs={recentRuns}

@@ -18,6 +18,7 @@ import {
   requireBuiltInPackCatalogEntry,
   type BuiltInPackKind,
 } from "../../../../src/packs/friday-built-in-pack-catalog";
+import { listFridayCrossBorderWorkflowTemplateIds } from "../../../../src/packs/cross-border/friday-cross-border-workflow-catalog";
 import type { UserProfileType } from "@/hooks/use-user-profile";
 import { FRIDAY_GOAL_CATEGORIES } from "@/lib/guided/goal-categories";
 import { localizedText, type LocalizedText } from "@/lib/i18n/localized-text";
@@ -146,60 +147,123 @@ const INDUSTRY_PACKS: FridayPackDefinition[] = [
     builtIn: true,
     icon: ShoppingCart,
     title: localizedText("跨境电商", "Cross-border Ecommerce"),
-    summary: localizedText("围绕店铺数据、运营动作和多平台节奏组织每天该做的事情。", "Organize store metrics, operations actions, and multi-platform routines."),
+    summary: localizedText("先建立经营画像，再把选品、Top 10 监控、比价、图片质量、客服和周复盘压成稳定流程。", "Build the operating profile first, then turn product scouting, Top 10 watch, price review, listing quality, support, and weekly reviews into a stable routine."),
     defaultLauncher: { type: "wizard", wizardId: requireBuiltInPackCatalogEntry("industry-cross-border-ecommerce").defaultWizardId },
-    backingTemplateIds: ["ecommerce", "automate-work"],
+    backingTemplateIds: listFridayCrossBorderWorkflowTemplateIds(),
     supportsContinueLast: true,
     curatedSkills: [
       {
         skillId: "summarize-shop-performance",
-        title: localizedText("店铺表现摘要", "Shop Performance Summary"),
-        summary: localizedText("把广告、库存、退货和 listing 备注收成异常与动作清单。", "Turn ads, inventory, returns, and listing notes into issue clusters and actions."),
+        title: localizedText("店铺晨检摘要", "Store Health Summary"),
+        summary: localizedText("把广告、库存、退货、订单和店铺健康备注压成晨检动作板。", "Turn ads, inventory, returns, orders, and shop-health notes into a morning action board."),
         starterPrompt: localizedText(
-          "帮我用 summarize-shop-performance 这个技能，把这些店铺表现备注整理成异常和今日动作清单。",
-          "Use the summarize-shop-performance skill to summarize these store performance notes into anomalies and today's action list.",
+          "帮我用 summarize-shop-performance 这个技能，把这些店铺报表和晨检备注压成今天的异常和动作清单。",
+          "Use the summarize-shop-performance skill to compress these store reports and morning notes into today's anomalies and action list.",
+        ),
+      },
+      {
+        skillId: "cross-border-product-scout",
+        title: localizedText("选品初筛", "Product Scout"),
+        summary: localizedText("先筛选值得继续验证的商品方向，不只看表面热度。", "Screen product ideas before you waste time on shallow hype."),
+        starterPrompt: localizedText(
+          "帮我用 cross-border-product-scout 这个技能，对这些类目、竞品和市场信号做选品初筛，告诉我机会点、风险和不建议碰的方向。",
+          "Use the cross-border-product-scout skill to screen these category signals, competitors, and market notes, then show me opportunities, risks, and what to avoid.",
+        ),
+      },
+      {
+        skillId: "cross-border-top-category-watch",
+        title: localizedText("类目 Top 10 监控", "Top Category Watch"),
+        summary: localizedText("盯住 L1/L2 类目前 10 卖家和产品的变化。", "Track movement across the Top 10 sellers and products in your target L1/L2 category."),
+        starterPrompt: localizedText(
+          "帮我用 cross-border-top-category-watch 这个技能，盯住这个类目 Top 10 卖家和产品的变化，并整理卖点、价格带和素材趋势。",
+          "Use the cross-border-top-category-watch skill to monitor this category's Top 10 sellers/products and summarize positioning, price band, and creative shifts.",
+        ),
+      },
+      {
+        skillId: "cross-border-spike-detector",
+        title: localizedText("爆发商品雷达", "Spike Detector"),
+        summary: localizedText("找过去一段时间突然升温的商品，并判断是真需求还是短噪音。", "Find products that suddenly heated up and separate real demand from short-lived noise."),
+        starterPrompt: localizedText(
+          "帮我用 cross-border-spike-detector 这个技能，找过去一段时间突然爆起来的商品，并判断可不可以跟。",
+          "Use the cross-border-spike-detector skill to find products that recently spiked and judge whether they are worth following.",
+        ),
+      },
+      {
+        skillId: "cross-border-price-match-review",
+        title: localizedText("价格带与跟价判断", "Price Match Review"),
+        summary: localizedText("对比价格、促销、运费和组合包，判断该不该跟价。", "Compare price, promos, shipping, and bundles before deciding whether to match."),
+        starterPrompt: localizedText(
+          "帮我用 cross-border-price-match-review 这个技能，对这些竞品价格、优惠券、运费和套餐做对比，判断我该不该跟价。",
+          "Use the cross-border-price-match-review skill to compare these competitor prices, coupon stacks, shipping promises, and bundles, then tell me if I should match.",
+        ),
+      },
+      {
+        skillId: "cross-border-listing-image-layout-audit",
+        title: localizedText("图片质量与排版审核", "Listing Image Layout Audit"),
+        summary: localizedText("检查首图、图片质量、详情节奏和本地化适配。", "Audit hero image quality, detail-page pacing, and localization fit."),
+        starterPrompt: localizedText(
+          "帮我用 cross-border-listing-image-layout-audit 这个技能，检查这些商品图、首图和详情页排版有没有问题，并给出替换建议。",
+          "Use the cross-border-listing-image-layout-audit skill to review these product images, hero images, and listing layout, then give me replacement suggestions.",
+        ),
+      },
+      {
+        skillId: "cross-border-customer-service-brief",
+        title: localizedText("客服与售后简报", "Customer Service Brief"),
+        summary: localizedText("把客服、退货、退款和差评问题收成根因和回复策略。", "Turn support, returns, refunds, and bad-review issues into root causes and reply strategies."),
+        starterPrompt: localizedText(
+          "帮我用 cross-border-customer-service-brief 这个技能，把这些客服、退货和差评问题整理成根因、回复策略和升级建议。",
+          "Use the cross-border-customer-service-brief skill to turn these support, return, and bad-review issues into root causes, reply strategy, and escalation guidance.",
+        ),
+      },
+      {
+        skillId: "cross-border-weekly-growth-review",
+        title: localizedText("每周增长复盘", "Weekly Growth Review"),
+        summary: localizedText("把一周内的广告、类目、价格、客服和 listing 调整压成下周动作。", "Compress the week's ads, category shifts, price moves, support issues, and listing changes into next week's moves."),
+        starterPrompt: localizedText(
+          "帮我用 cross-border-weekly-growth-review 这个技能，做一份跨境店铺的一周增长复盘，并告诉我下周先动哪几个动作。",
+          "Use the cross-border-weekly-growth-review skill to produce a weekly growth review for this store and tell me what to change next week.",
         ),
       },
     ],
     productCopy: {
-      audience: localizedText("适合每天要盯广告、库存、售后和多平台节奏的跨境店铺运营。", "For operators who juggle ads, inventory, support, and multi-channel store operations every day."),
-      resultTitle: localizedText("你会拿到今天该做什么的异常清单", "You will get today’s anomaly and action board"),
-      resultSummary: localizedText("Friday 会把报表和运营备注压成风险分组、优先级和动作清单，而不是只给你读一遍数据。", "Friday compresses reports and notes into risk clusters, priorities, and actions instead of just restating metrics."),
+      audience: localizedText("适合中国单人跨境运营者，先打东南亚 TikTok Shop 和北美 Amazon，想把选品、监控、客服和复盘收成稳定流程。", "For Chinese solo operators focused first on SEA TikTok Shop and North America Amazon who want product scouting, monitoring, support, and reviews to become a stable operating system."),
+      resultTitle: localizedText("你会拿到一套能天天用的跨境经营动作板", "You will get a daily cross-border operating board"),
+      resultSummary: localizedText("Friday 不只读数据，而是先建立经营画像，再把类目 Top 10、爆发商品、价格带、图片质量、客服和每周调优压成一个长期可用的经营系统。", "Friday does more than restate reports. It creates the operating profile first, then turns category Top 10 watch, breakout products, price bands, listing quality, customer service, and weekly tuning into a durable operating system."),
       entryPrompts: [
         {
-          id: "morning-check",
-          label: localizedText("做晨检摘要", "Run a morning check"),
-          prompt: localizedText("把今天的店铺数据整理成异常、优先级和动作清单。", "Turn today's store metrics into anomalies, priorities, and action items."),
+          id: "setup-pack",
+          label: localizedText("先安装经营系统", "Install the operating system"),
+          prompt: localizedText("先帮我建立跨境经营画像：地域模式、类目、履约、价格带、竞品和默认流程。", "Help me set up the cross-border operating profile first: region mode, category, fulfillment, price band, competitors, and default workflows."),
         },
         {
-          id: "risk-area",
-          label: localizedText("找最危险的模块", "Find the riskiest area"),
-          prompt: localizedText("帮我看广告、库存、退货和 listing 里现在哪块最危险。", "Show me which area across ads, inventory, returns, and listings is most at risk right now."),
+          id: "top10-watch",
+          label: localizedText("盯 Top 10 和爆发商品", "Track Top 10 and breakout products"),
+          prompt: localizedText("帮我盯住这个类目 Top 10 卖家和产品，并找出过去一段时间突然爆起来的商品。", "Track the Top 10 sellers/products in this category and flag products that suddenly heated up recently."),
         },
         {
-          id: "ops-checklist",
-          label: localizedText("做今日运营清单", "Build today’s checklist"),
-          prompt: localizedText("根据这些店铺数据和运营备注，做一个今天必须处理的运营清单。", "Use these store metrics and operations notes to build today's must-do checklist."),
+          id: "price-image-service",
+          label: localizedText("查价格、图片和客服", "Review price, images, and service"),
+          prompt: localizedText("把价格带、图片质量、详情页排版和客服售后问题一起压成今天的动作清单。", "Turn price band, image quality, listing layout, and customer service issues into today’s action list."),
         },
       ],
       deliverables: [
         {
-          title: localizedText("异常分组", "Issue clusters"),
-          detail: localizedText("把广告、库存、订单、listing 和售后分成清楚的风险组。", "Clear clusters across ads, inventory, orders, listings, and support."),
+          title: localizedText("经营画像与默认流程", "Operating profile and default workflows"),
+          detail: localizedText("先确定东南亚 / 北美模式、类目、竞品、监控深度，再长出默认 daily / weekly 流程。", "Lock region mode, category, competitors, and monitoring depth first, then grow the default daily / weekly workflow."),
         },
         {
-          title: localizedText("今日动作清单", "Today’s action list"),
-          detail: localizedText("先做什么、为什么先做、如果不做会怎样。", "What to do first, why it comes first, and what happens if it slips."),
+          title: localizedText("Top 10 / 爆发商品 / 比价看板", "Top 10 / breakout / price board"),
+          detail: localizedText("持续盯类目头部卖家、突然升温商品、价格带和促销差。", "Keep watching category leaders, sudden breakout products, and price / promo gaps."),
         },
         {
-          title: localizedText("店铺风险看板", "Store risk board"),
-          detail: localizedText("哪些问题要今天处理，哪些适合进入一周节奏。", "Which issues need same-day action versus weekly follow-up."),
+          title: localizedText("图片、客服和周复盘交接", "Listing, support, and weekly handoff"),
+          detail: localizedText("把图片质量、排版、客服售后和一周调优建议收成稳定交接。", "Compress listing quality, support issues, and weekly tuning suggestions into a stable handoff."),
         },
       ],
       assistantHandoff: {
-        title: localizedText("交给助手做复盘和跟进", "Hand off to Assistant for review"),
-        summary: localizedText("Assistant 会把异常、风险和下一步协作动作收成一页可执行摘要。", "Assistant turns the anomaly board into a concise handoff for follow-up and coordination."),
-        actionLabel: localizedText("交给助手跟进", "Continue with Assistant"),
+        title: localizedText("交给助手做经营交接", "Hand off to Assistant"),
+        summary: localizedText("Assistant 会把当前 operating mode、严重问题、今日动作、本周跟踪项和流程调优建议压成一页交接。", "Assistant turns the current operating mode, top issues, must-do actions, weekly follow-ups, and workflow tuning suggestions into a single handoff."),
+        actionLabel: localizedText("进入经营交接", "Open operating handoff"),
       },
     },
   },
