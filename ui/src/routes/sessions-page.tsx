@@ -74,7 +74,7 @@ function exportSession(sessionKey: string, messages: SessionMessage[], format: "
 export function SessionsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
-  const { data: sessions = [], isLoading } = useSessionList({ status: statusFilter || undefined });
+  const { data: sessions = [], isLoading, isError } = useSessionList({ status: statusFilter || undefined });
   const { data: messages = [] } = useSessionMessages(selectedSession);
 
   return (
@@ -106,6 +106,10 @@ export function SessionsPage() {
           {isLoading ? (
             <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-6 text-center text-sm text-[color:var(--color-text-secondary)]">
               Loading sessions...
+            </div>
+          ) : isError ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center dark:border-red-900/50 dark:bg-red-900/20">
+              <p className="text-sm font-medium text-red-700 dark:text-red-400">Failed to load sessions</p>
             </div>
           ) : sessions.length === 0 ? (
             <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-6 text-center text-sm text-[color:var(--color-text-secondary)]">

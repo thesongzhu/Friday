@@ -309,7 +309,7 @@ export const router = createBrowserRouter([
           {
             path: "command-center",
             element: (
-              <RouteSuspense title="Loading control center" detail="Friday is preparing the main operator console.">
+              <RouteSuspense title={localizedText("加载控制中心", "Loading control center")} detail={localizedText("Friday 正在准备主控台。", "Friday is preparing the main operator console.")}>
                 <AgentPage />
               </RouteSuspense>
             ),
@@ -317,7 +317,7 @@ export const router = createBrowserRouter([
           {
             path: "fleet",
             element: (
-              <RouteSuspense title="Loading fleet" detail="Friday is preparing the fleet control plane.">
+              <RouteSuspense title={localizedText("加载设备集群", "Loading fleet")} detail={localizedText("Friday 正在准备集群管理面板。", "Friday is preparing the fleet control plane.")}>
                 <FleetPage />
               </RouteSuspense>
             ),
@@ -325,7 +325,7 @@ export const router = createBrowserRouter([
           {
             path: "marketplace",
             element: (
-              <RouteSuspense title="Loading marketplace" detail="Friday is preparing the public creator ecosystem.">
+              <RouteSuspense title={localizedText("加载市场", "Loading marketplace")} detail={localizedText("Friday 正在准备创作者生态。", "Friday is preparing the public creator ecosystem.")}>
                 <MarketplacePage />
               </RouteSuspense>
             ),
@@ -333,7 +333,7 @@ export const router = createBrowserRouter([
           {
             path: "automations",
             element: (
-              <RouteSuspense title="Loading automations" detail="Friday is preparing the automation queue.">
+              <RouteSuspense title={localizedText("加载自动化", "Loading automations")} detail={localizedText("Friday 正在准备自动化队列。", "Friday is preparing the automation queue.")}>
                 <AutomationsPage />
               </RouteSuspense>
             ),
@@ -341,7 +341,7 @@ export const router = createBrowserRouter([
           {
             path: "observability",
             element: (
-              <RouteSuspense title="Loading observability" detail="Friday is preparing trace, audit, alert, and health views.">
+              <RouteSuspense title={localizedText("加载可观测性", "Loading observability")} detail={localizedText("Friday 正在准备追踪、审计、告警和健康视图。", "Friday is preparing trace, audit, alert, and health views.")}>
                 <ObservabilityPage />
               </RouteSuspense>
             ),
@@ -349,7 +349,7 @@ export const router = createBrowserRouter([
           {
             path: "skills",
             element: (
-              <RouteSuspense title="Loading skills" detail="Friday is preparing the skills lifecycle surface.">
+              <RouteSuspense title={localizedText("加载技能", "Loading skills")} detail={localizedText("Friday 正在准备技能生命周期面板。", "Friday is preparing the skills lifecycle surface.")}>
                 <SkillsPage />
               </RouteSuspense>
             ),
@@ -357,7 +357,7 @@ export const router = createBrowserRouter([
           {
             path: "skills/generator",
             element: (
-              <RouteSuspense title="Loading skill generator" detail="Friday is preparing the skill generator workflow.">
+              <RouteSuspense title={localizedText("加载技能生成器", "Loading skill generator")} detail={localizedText("Friday 正在准备技能生成工作流。", "Friday is preparing the skill generator workflow.")}>
                 <SkillGeneratorPage />
               </RouteSuspense>
             ),
@@ -365,7 +365,7 @@ export const router = createBrowserRouter([
           {
             path: "workflows",
             element: (
-              <RouteSuspense title="Loading workflows" detail="Friday is preparing workflow deploy and visualization surfaces.">
+              <RouteSuspense title={localizedText("加载工作流", "Loading workflows")} detail={localizedText("Friday 正在准备工作流部署和可视化面板。", "Friday is preparing workflow deploy and visualization surfaces.")}>
                 <WorkflowsPage />
               </RouteSuspense>
             ),
@@ -373,7 +373,7 @@ export const router = createBrowserRouter([
           {
             path: "workflows/builder",
             element: (
-              <RouteSuspense title="Loading workflow builder" detail="Friday is preparing template-first workflow authoring surfaces.">
+              <RouteSuspense title={localizedText("加载工作流编辑器", "Loading workflow builder")} detail={localizedText("Friday 正在准备模板驱动的工作流编辑。", "Friday is preparing template-first workflow authoring surfaces.")}>
                 <WorkflowBuilderPage />
               </RouteSuspense>
             ),
@@ -382,7 +382,7 @@ export const router = createBrowserRouter([
           {
             path: "mcp",
             element: (
-              <RouteSuspense title="Loading MCP" detail="Friday is preparing the MCP server management surface.">
+              <RouteSuspense title={localizedText("加载 MCP", "Loading MCP")} detail={localizedText("Friday 正在准备 MCP 服务器管理面板。", "Friday is preparing the MCP server management surface.")}>
                 <McpPage />
               </RouteSuspense>
             ),
@@ -390,7 +390,7 @@ export const router = createBrowserRouter([
           {
             path: "usage",
             element: (
-              <RouteSuspense title="Loading usage" detail="Friday is preparing the usage and cost dashboard.">
+              <RouteSuspense title={localizedText("加载用量", "Loading usage")} detail={localizedText("Friday 正在准备用量和成本仪表盘。", "Friday is preparing the usage and cost dashboard.")}>
                 <UsagePage />
               </RouteSuspense>
             ),
@@ -398,7 +398,7 @@ export const router = createBrowserRouter([
           {
             path: "settings",
             element: (
-              <RouteSuspense title="Loading settings" detail="Friday is preparing runtime settings and diagnostics.">
+              <RouteSuspense title={localizedText("加载设置", "Loading settings")} detail={localizedText("Friday 正在准备运行时设置和诊断。", "Friday is preparing runtime settings and diagnostics.")}>
                 <SettingsPage />
               </RouteSuspense>
             ),
@@ -408,7 +408,7 @@ export const router = createBrowserRouter([
           {
             path: "sessions",
             element: (
-              <RouteSuspense title="Loading sessions" detail="Friday is preparing the session browser.">
+              <RouteSuspense title={localizedText("加载会话", "Loading sessions")} detail={localizedText("Friday 正在准备会话浏览器。", "Friday is preparing the session browser.")}>
                 <SessionsPage />
               </RouteSuspense>
             ),
@@ -416,7 +416,7 @@ export const router = createBrowserRouter([
           {
             path: "memory",
             element: (
-              <RouteSuspense title="Loading memory" detail="Friday is preparing the memory store view.">
+              <RouteSuspense title={localizedText("加载记忆", "Loading memory")} detail={localizedText("Friday 正在准备记忆存储视图。", "Friday is preparing the memory store view.")}>
                 <MemoryPage />
               </RouteSuspense>
             ),

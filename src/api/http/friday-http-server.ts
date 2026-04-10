@@ -767,6 +767,14 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       return;
     }
 
+    // Validate Origin header to prevent cross-site WebSocket hijacking
+    const origin = req.headers.origin ?? "";
+    if (corsOrigins.length > 0 && origin && !isOriginAllowed(origin, corsOrigins)) {
+      socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
     // Complete the handshake
     const accept = computeWsAccept(wsKey);
     socket.write(

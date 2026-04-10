@@ -142,13 +142,20 @@ export function createFridayApprovalWorkflowService(
       } catch (executionError) {
         // Saga pattern: approval stays committed. Retrieve the actual action
         // state so we return a valid FridayAutoFixExecutionResult.
-        const action = deps.db.withWriteTransaction((db) =>
+        const action = deps.db.withReadConnection((db) =>
           deps.actionRepo.getById(db, approved.actionId),
         );
+        if (!action) {
+          throw new FridayDomainError(
+            "AUTOFIX_ACTION_NOT_FOUND",
+            `Action ${approved.actionId} not found after execution failure`,
+            { httpStatus: 500 },
+          );
+        }
         return {
           approval: approved,
           execution: {
-            action: action!,
+            action,
             success: false,
             verificationPassed: false,
             rollbackAttempted: false,
