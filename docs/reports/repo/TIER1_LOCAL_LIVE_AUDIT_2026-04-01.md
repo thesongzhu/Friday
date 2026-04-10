@@ -1,8 +1,8 @@
 # Tier1 Local Live Audit
 
 - Generated at: 2026-04-01T22:17:44.725Z
-- Source matrix: /Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json
-- Source report: /Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_2026-04-01.md
+- Source matrix: /path/to/friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json
+- Source report: /path/to/friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_2026-04-01.md
 
 ## Summary
 

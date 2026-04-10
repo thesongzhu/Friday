@@ -2,7 +2,7 @@
 
 Date: 2026-04-07
 
-Workspace: `/Users/jarvis/Projects/Friday-main-05bba7a`
+Workspace: `/path/to/friday-main-05bba7a`
 
 Base commit: `05bba7ad1019d6b1b7e958727f31aa11d083d4d4`
 
@@ -35,7 +35,7 @@ The audit checks four things:
 
 Latest benchmark artifact:
 
-- `/Users/jarvis/Projects/Friday-main-05bba7a/artifacts/browser-benchmarks/ui-surface-interaction-latest.md`
+- `/path/to/friday-main-05bba7a/artifacts/browser-benchmarks/ui-surface-interaction-latest.md`
 
 Latest medians:
 
@@ -163,7 +163,7 @@ These remain open after the final audit, but none currently justify reverting th
 
 This is already classified in:
 
-- `/Users/jarvis/Projects/Friday-main-05bba7a/docs/reports/repo/RELEASE_VERIFY_WARNING_CLASSIFICATION_2026-04-07.md`
+- `/path/to/friday-main-05bba7a/docs/reports/repo/RELEASE_VERIFY_WARNING_CLASSIFICATION_2026-04-07.md`
 
 The still-visible warnings are now mostly:
 

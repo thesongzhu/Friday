@@ -5,8 +5,8 @@
     "layer": "Provider / Routing / Backend matrix",
     "title": "Historical outcome bias did not visibly reorder routing toward the successful fallback provider",
     "evidence": [
-      "/Users/jarvis/Projects/Friday/.friday/live-audit/2026-04-01T21-33-34-196Z/routing-explain-cli-text.json",
-      "/Users/jarvis/Projects/Friday/.friday/live-audit/2026-04-01T21-33-34-196Z/learning-overview.json"
+      "/path/to/friday/.friday/live-audit/2026-04-01T21-33-34-196Z/routing-explain-cli-text.json",
+      "/path/to/friday/.friday/live-audit/2026-04-01T21-33-34-196Z/learning-overview.json"
     ],
     "repro": "Create a bad default OpenAI provider, a good fallback, run the same task twice, then inspect /v1/providers/routing/explain.",
     "recommendation": "Keep routing explain aligned with actual history-based selection so operators can observe learning-driven route shifts."

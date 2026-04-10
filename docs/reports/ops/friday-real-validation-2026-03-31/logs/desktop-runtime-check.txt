@@ -4,7 +4,7 @@
 
 [desktop-check] platform=Darwin
 [desktop-check][ok] FRIDAY_DESKTOP_ENABLED=true
-[desktop-check][ok] FRIDAY_DESKTOP_SANDBOX_ALLOWED_ROOTS=/Users/jarvis/Projects/Friday
+[desktop-check][ok] FRIDAY_DESKTOP_SANDBOX_ALLOWED_ROOTS=/path/to/friday
 [desktop-check][ok] found command: osascript
 [desktop-check][ok] found command: screencapture
 [desktop-check][ok] found command: base64

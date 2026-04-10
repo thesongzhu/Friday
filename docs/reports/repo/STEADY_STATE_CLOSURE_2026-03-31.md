@@ -54,7 +54,7 @@ This report captures the final local closure pass after the `675a84847adb3dfd91c
 - `npm run test:e2e:closure:local`
   - Result: PASS on product path, with harness exit defect
   - Evidence:
-    - Ledger: `/Users/jarvis/Projects/Friday/.friday/closure/2026-04-01T03-51-26-270Z/ledger.json`
+    - Ledger: `/path/to/friday/.friday/closure/2026-04-01T03-51-26-270Z/ledger.json`
     - Final observed summary: `24 PASS / 0 FAIL / 0 BLOCKER`
     - Readiness: `productReadyLocal = GO`, `overall = GO`
 

@@ -1,9 +1,9 @@
 # Friday Self-Evolution Live Audit
 
 - Date: 2026-04-01T21:33:34.196Z
-- Repo: /Users/jarvis/Projects/Friday
-- Artifact root: /Users/jarvis/Projects/Friday/.friday/live-audit/2026-04-01T21-33-34-196Z
-- Isolated state dir: /Users/jarvis/Projects/Friday/.friday/live-audit/2026-04-01T21-33-34-196Z/state
+- Repo: /path/to/friday
+- Artifact root: /path/to/friday/.friday/live-audit/2026-04-01T21-33-34-196Z
+- Isolated state dir: /path/to/friday/.friday/live-audit/2026-04-01T21-33-34-196Z/state
 
 ## Confirmed facts
 
@@ -43,7 +43,7 @@
 
 ## Findings
 
-- [P1] Confirmed non-blocker — Provider / Routing / Backend matrix: Historical outcome bias did not visibly reorder routing toward the successful fallback provider (evidence: /Users/jarvis/Projects/Friday/.friday/live-audit/2026-04-01T21-33-34-196Z/routing-explain-cli-text.json, /Users/jarvis/Projects/Friday/.friday/live-audit/2026-04-01T21-33-34-196Z/learning-overview.json)
+- [P1] Confirmed non-blocker — Provider / Routing / Backend matrix: Historical outcome bias did not visibly reorder routing toward the successful fallback provider (evidence: /path/to/friday/.friday/live-audit/2026-04-01T21-33-34-196Z/routing-explain-cli-text.json, /path/to/friday/.friday/live-audit/2026-04-01T21-33-34-196Z/learning-overview.json)
 
 ## Layer audit summary
 
@@ -58,9 +58,9 @@
 
 ## Evidence
 
-- Matrix JSON: /Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json
-- Findings JSON: /Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_FINDINGS_2026-04-01.json
-- Provider doctors: /Users/jarvis/Projects/Friday/.friday/live-audit/2026-04-01T21-33-34-196Z/provider-doctors.json
-- Routing explain: /Users/jarvis/Projects/Friday/.friday/live-audit/2026-04-01T21-33-34-196Z/routing-explain-cli-text.json
-- Learning overview: /Users/jarvis/Projects/Friday/.friday/live-audit/2026-04-01T21-33-34-196Z/learning-overview.json
-- Agent run events: /Users/jarvis/Projects/Friday/.friday/live-audit/2026-04-01T21-33-34-196Z/agent-run-events.json
+- Matrix JSON: /path/to/friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json
+- Findings JSON: /path/to/friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_FINDINGS_2026-04-01.json
+- Provider doctors: /path/to/friday/.friday/live-audit/2026-04-01T21-33-34-196Z/provider-doctors.json
+- Routing explain: /path/to/friday/.friday/live-audit/2026-04-01T21-33-34-196Z/routing-explain-cli-text.json
+- Learning overview: /path/to/friday/.friday/live-audit/2026-04-01T21-33-34-196Z/learning-overview.json
+- Agent run events: /path/to/friday/.friday/live-audit/2026-04-01T21-33-34-196Z/agent-run-events.json

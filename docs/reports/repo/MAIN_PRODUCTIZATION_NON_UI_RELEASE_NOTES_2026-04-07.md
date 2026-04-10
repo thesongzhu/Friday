@@ -2,7 +2,7 @@
 
 Date: 2026-04-07
 
-Workspace: `/Users/jarvis/Projects/Friday-main-05bba7a`
+Workspace: `/path/to/friday-main-05bba7a`
 
 This note covers retained changes that are not part of the primary visible UI story and should be reviewed separately from UI polish.
 

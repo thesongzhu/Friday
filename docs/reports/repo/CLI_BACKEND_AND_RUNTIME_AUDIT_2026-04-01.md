@@ -39,19 +39,19 @@ The audit used real Friday execution evidence, not only static review.
 ## Evidence
 
 - PR1 Friday CLI smoke:
-  - [/Users/jarvis/Projects/Friday/.friday/live-smoke/cli-backend-smoke-2026-04-01T09-01-37-838Z.json](/Users/jarvis/Projects/Friday/.friday/live-smoke/cli-backend-smoke-2026-04-01T09-01-37-838Z.json)
+  - [/path/to/friday/.friday/live-smoke/cli-backend-smoke-2026-04-01T09-01-37-838Z.json](/path/to/friday/.friday/live-smoke/cli-backend-smoke-2026-04-01T09-01-37-838Z.json)
 - concurrent `attach-cli` failed before fix:
-  - [/Users/jarvis/Projects/Friday/.friday/live-smoke/attach-cli-concurrency-2026-04-01T09-08-28-094Z.json](/Users/jarvis/Projects/Friday/.friday/live-smoke/attach-cli-concurrency-2026-04-01T09-08-28-094Z.json)
+  - [/path/to/friday/.friday/live-smoke/attach-cli-concurrency-2026-04-01T09-08-28-094Z.json](/path/to/friday/.friday/live-smoke/attach-cli-concurrency-2026-04-01T09-08-28-094Z.json)
 - concurrent `attach-cli` passed after migration + startup fix:
-  - [/Users/jarvis/Projects/Friday/.friday/live-smoke/attach-cli-concurrency-2026-04-01T09-09-11-666Z.json](/Users/jarvis/Projects/Friday/.friday/live-smoke/attach-cli-concurrency-2026-04-01T09-09-11-666Z.json)
+  - [/path/to/friday/.friday/live-smoke/attach-cli-concurrency-2026-04-01T09-09-11-666Z.json](/path/to/friday/.friday/live-smoke/attach-cli-concurrency-2026-04-01T09-09-11-666Z.json)
 - auth/profile real output:
-  - [/Users/jarvis/Projects/Friday/.friday/live-smoke/auth-status-2026-04-01T09-16-37Z.json](/Users/jarvis/Projects/Friday/.friday/live-smoke/auth-status-2026-04-01T09-16-37Z.json)
+  - [/path/to/friday/.friday/live-smoke/auth-status-2026-04-01T09-16-37Z.json](/path/to/friday/.friday/live-smoke/auth-status-2026-04-01T09-16-37Z.json)
 - closure run that now exits cleanly and writes `completedAt`:
-  - [/Users/jarvis/Projects/Friday/.friday/closure/2026-04-01T09-16-52-793Z/ledger.json](/Users/jarvis/Projects/Friday/.friday/closure/2026-04-01T09-16-52-793Z/ledger.json)
+  - [/path/to/friday/.friday/closure/2026-04-01T09-16-52-793Z/ledger.json](/path/to/friday/.friday/closure/2026-04-01T09-16-52-793Z/ledger.json)
 - CLI backend agent-route probe before truth-boundary hardening:
-  - [/Users/jarvis/Projects/Friday/.friday/live-smoke/cli-agent-route-probe-pretruthfix-2026-04-01T09-20-41Z.json](/Users/jarvis/Projects/Friday/.friday/live-smoke/cli-agent-route-probe-pretruthfix-2026-04-01T09-20-41Z.json)
+  - [/path/to/friday/.friday/live-smoke/cli-agent-route-probe-pretruthfix-2026-04-01T09-20-41Z.json](/path/to/friday/.friday/live-smoke/cli-agent-route-probe-pretruthfix-2026-04-01T09-20-41Z.json)
 - CLI backend agent-route probe after truth-boundary hardening:
-  - [/Users/jarvis/Projects/Friday/.friday/live-smoke/cli-agent-route-probe-posttruthfix-2026-04-01T09-22-12Z.json](/Users/jarvis/Projects/Friday/.friday/live-smoke/cli-agent-route-probe-posttruthfix-2026-04-01T09-22-12Z.json)
+  - [/path/to/friday/.friday/live-smoke/cli-agent-route-probe-posttruthfix-2026-04-01T09-22-12Z.json](/path/to/friday/.friday/live-smoke/cli-agent-route-probe-posttruthfix-2026-04-01T09-22-12Z.json)
 
 ## Confirmed Blockers Fixed
 
@@ -65,12 +65,12 @@ The audit used real Friday execution evidence, not only static review.
 
 **Code changes**
 
-- [/Users/jarvis/Projects/Friday/src/state/sqlite/friday-migration-runner.ts](/Users/jarvis/Projects/Friday/src/state/sqlite/friday-migration-runner.ts)
-- [/Users/jarvis/Projects/Friday/src/state/sqlite/friday-sqlite-pragmas.ts](/Users/jarvis/Projects/Friday/src/state/sqlite/friday-sqlite-pragmas.ts)
-- [/Users/jarvis/Projects/Friday/test/integration/state/sqlite/friday-migration-chain.test.ts](/Users/jarvis/Projects/Friday/test/integration/state/sqlite/friday-migration-chain.test.ts)
-- [/Users/jarvis/Projects/Friday/test/unit/state/sqlite/friday-sqlite-layer.test.ts](/Users/jarvis/Projects/Friday/test/unit/state/sqlite/friday-sqlite-layer.test.ts)
-- [/Users/jarvis/Projects/Friday/test/integration/state/sqlite/helpers/run-friday-migrations-worker.mjs](/Users/jarvis/Projects/Friday/test/integration/state/sqlite/helpers/run-friday-migrations-worker.mjs)
-- [/Users/jarvis/Projects/Friday/test/unit/state/sqlite/helpers/create-sqlite-layer-worker.mjs](/Users/jarvis/Projects/Friday/test/unit/state/sqlite/helpers/create-sqlite-layer-worker.mjs)
+- [/path/to/friday/src/state/sqlite/friday-migration-runner.ts](/path/to/friday/src/state/sqlite/friday-migration-runner.ts)
+- [/path/to/friday/src/state/sqlite/friday-sqlite-pragmas.ts](/path/to/friday/src/state/sqlite/friday-sqlite-pragmas.ts)
+- [/path/to/friday/test/integration/state/sqlite/friday-migration-chain.test.ts](/path/to/friday/test/integration/state/sqlite/friday-migration-chain.test.ts)
+- [/path/to/friday/test/unit/state/sqlite/friday-sqlite-layer.test.ts](/path/to/friday/test/unit/state/sqlite/friday-sqlite-layer.test.ts)
+- [/path/to/friday/test/integration/state/sqlite/helpers/run-friday-migrations-worker.mjs](/path/to/friday/test/integration/state/sqlite/helpers/run-friday-migrations-worker.mjs)
+- [/path/to/friday/test/unit/state/sqlite/helpers/create-sqlite-layer-worker.mjs](/path/to/friday/test/unit/state/sqlite/helpers/create-sqlite-layer-worker.mjs)
 
 **Result**
 
@@ -86,8 +86,8 @@ The audit used real Friday execution evidence, not only static review.
 
 **Code changes**
 
-- [/Users/jarvis/Projects/Friday/scripts/e2e/run-friday-closure.mjs](/Users/jarvis/Projects/Friday/scripts/e2e/run-friday-closure.mjs)
-- [/Users/jarvis/Projects/Friday/test/unit/e2e/run-friday-closure.test.ts](/Users/jarvis/Projects/Friday/test/unit/e2e/run-friday-closure.test.ts)
+- [/path/to/friday/scripts/e2e/run-friday-closure.mjs](/path/to/friday/scripts/e2e/run-friday-closure.mjs)
+- [/path/to/friday/test/unit/e2e/run-friday-closure.test.ts](/path/to/friday/test/unit/e2e/run-friday-closure.test.ts)
 
 **Result**
 
@@ -104,8 +104,8 @@ The audit used real Friday execution evidence, not only static review.
 
 **Code changes**
 
-- [/Users/jarvis/Projects/Friday/src/agent/runtime/friday-agent-llm-client.ts](/Users/jarvis/Projects/Friday/src/agent/runtime/friday-agent-llm-client.ts)
-- [/Users/jarvis/Projects/Friday/test/unit/agent/runtime/friday-agent-llm-client-cli.test.ts](/Users/jarvis/Projects/Friday/test/unit/agent/runtime/friday-agent-llm-client-cli.test.ts)
+- [/path/to/friday/src/agent/runtime/friday-agent-llm-client.ts](/path/to/friday/src/agent/runtime/friday-agent-llm-client.ts)
+- [/path/to/friday/test/unit/agent/runtime/friday-agent-llm-client-cli.test.ts](/path/to/friday/test/unit/agent/runtime/friday-agent-llm-client-cli.test.ts)
 
 **Result**
 
@@ -192,8 +192,8 @@ The audit used real Friday execution evidence, not only static review.
 - `Gemini CLI` is advertised in the capability/catalog surface, but runtime still throws:
   - `Gemini CLI backend is not wired for non-interactive inference yet`
 - Relevant source:
-  - [/Users/jarvis/Projects/Friday/src/providers/cli/friday-provider-cli-backend.ts](/Users/jarvis/Projects/Friday/src/providers/cli/friday-provider-cli-backend.ts)
-  - [/Users/jarvis/Projects/Friday/src/providers/model/friday-provider-capabilities.ts](/Users/jarvis/Projects/Friday/src/providers/model/friday-provider-capabilities.ts)
+  - [/path/to/friday/src/providers/cli/friday-provider-cli-backend.ts](/path/to/friday/src/providers/cli/friday-provider-cli-backend.ts)
+  - [/path/to/friday/src/providers/model/friday-provider-capabilities.ts](/path/to/friday/src/providers/model/friday-provider-capabilities.ts)
 - This should stay out of the “verified ready” surface until a real non-interactive path exists.
 
 ## Confirmed Non-Blockers

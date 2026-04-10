@@ -41,10 +41,10 @@ describe("loadFridayWorkspaceContext", () => {
     });
 
     it("loads USER.md when present", async () => {
-      await fs.writeFile(path.join(tmpDir, "USER.md"), "# User\nName: Jarvis\nLanguage: Chinese");
+      await fs.writeFile(path.join(tmpDir, "USER.md"), "# User\nName: Alex\nLanguage: Chinese");
       const ctx = await loadFridayWorkspaceContext(tmpDir);
       expect(ctx.promptFragment).toContain("USER.md");
-      expect(ctx.promptFragment).toContain("Jarvis");
+      expect(ctx.promptFragment).toContain("Alex");
     });
 
     it("loads MEMORY.md when present", async () => {

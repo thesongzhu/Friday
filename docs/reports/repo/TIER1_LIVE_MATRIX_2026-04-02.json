@@ -16,7 +16,7 @@
       "status": "passed",
       "summary": "Friday-routed OpenAI HTTP live path passed.",
       "evidence": [
-        "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
+        "/path/to/friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
       ],
       "family": "openai",
       "runner": "global",
@@ -39,7 +39,7 @@
       "status": "passed",
       "summary": "Codex CLI external-session backend passed a Friday-routed text completion.",
       "evidence": [
-        "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
+        "/path/to/friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
       ],
       "family": "openai-codex",
       "runner": "global",
@@ -61,7 +61,7 @@
       "status": "passed",
       "summary": "Claude CLI external-session backend passed a Friday-routed text completion.",
       "evidence": [
-        "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
+        "/path/to/friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
       ],
       "family": "anthropic",
       "runner": "global",
@@ -403,7 +403,7 @@
       "status": "passed",
       "summary": "Ollama local/self-hosted path passed a Friday-routed live run.",
       "evidence": [
-        "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
+        "/path/to/friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
       ],
       "family": "ollama",
       "runner": "local",

@@ -653,7 +653,7 @@ describe("createFridaySystemService", () => {
     allocatedDbs.push(fixture.db);
 
     const device = fixture.service.registerRemoteDevice({
-      label: "Jarvis MacBook",
+      label: "Test MacBook",
       fingerprint: "fp-123",
       credentialId: "cred-123",
     });
@@ -670,7 +670,7 @@ describe("createFridaySystemService", () => {
     allocatedDbs.push(fixture.db);
 
     const device = fixture.service.registerRemoteDevice({
-      label: "Jarvis MacBook",
+      label: "Test MacBook",
       fingerprint: "fp-passkey-1",
     });
     const registerOptions = await fixture.service.beginRemotePasskeyRegistration({
@@ -729,7 +729,7 @@ describe("createFridaySystemService", () => {
     allocatedDbs.push(fixture.db);
 
     const device = fixture.service.registerRemoteDevice({
-      label: "Jarvis MacBook",
+      label: "Test MacBook",
       fingerprint: "fp-passkey-clear-1",
     });
     const registerOptions = await fixture.service.beginRemotePasskeyRegistration({
@@ -780,7 +780,7 @@ describe("createFridaySystemService", () => {
     allocatedDbs.push(fixture.db);
 
     const device = fixture.service.registerRemoteDevice({
-      label: "Jarvis MacBook",
+      label: "Test MacBook",
       fingerprint: "fp-remote-1",
     });
     const registrationOptions = await fixture.service.beginRemotePasskeyRegistration({
@@ -828,7 +828,7 @@ describe("createFridaySystemService", () => {
     allocatedDbs.push(fixture.db);
 
     const device = fixture.service.registerRemoteDevice({
-      label: "Jarvis MacBook",
+      label: "Test MacBook",
       fingerprint: "fp-remote-public",
     });
     const registrationOptions = await fixture.service.beginRemotePasskeyRegistration({
@@ -865,7 +865,7 @@ describe("createFridaySystemService", () => {
     allocatedDbs.push(fixture.db);
 
     const device = fixture.service.registerRemoteDevice({
-      label: "Jarvis MacBook",
+      label: "Test MacBook",
       fingerprint: "fp-remote-revoke",
     });
     const registrationOptions = await fixture.service.beginRemotePasskeyRegistration({
@@ -1039,7 +1039,7 @@ describe("createFridaySystemService", () => {
     allocatedDbs.push(fixture.db);
 
     expect(() => fixture.service.registerRemoteDevice({
-      label: "Jarvis MacBook",
+      label: "Test MacBook",
       fingerprint: "fp-disabled",
     })).toThrow("Trusted-device remote access is disabled");
   });

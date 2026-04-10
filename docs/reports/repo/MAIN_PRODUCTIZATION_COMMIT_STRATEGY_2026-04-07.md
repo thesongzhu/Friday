@@ -2,7 +2,7 @@
 
 Date: 2026-04-07
 
-Workspace: `/Users/jarvis/Projects/Friday-main-05bba7a`
+Workspace: `/path/to/friday-main-05bba7a`
 
 ## Goal
 

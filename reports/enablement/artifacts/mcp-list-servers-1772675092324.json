@@ -7,7 +7,7 @@
       "args": [
         "ready"
       ],
-      "cwd": "/Users/jarvis/Projects/Friday",
+      "cwd": "/path/to/friday",
       "timeoutMs": 5000
     }
   ]

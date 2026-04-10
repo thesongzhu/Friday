@@ -40,7 +40,7 @@ describeIfDarwin("Friday native companion release workflow", () => {
     await execFileAsync("git", ["init", "-b", "main"], { cwd: workRepo });
     await fs.writeFile(path.join(workRepo, "README.md"), "# friday tap\n", "utf8");
     await execFileAsync("git", ["add", "README.md"], { cwd: workRepo });
-    await execFileAsync("git", ["-c", "user.name=Codex", "-c", "user.email=codex@openai.com", "commit", "-m", "init"], { cwd: workRepo });
+    await execFileAsync("git", ["-c", "user.name=Friday Bot", "-c", "user.email=friday-bot@users.noreply.github.com", "commit", "-m", "init"], { cwd: workRepo });
     await execFileAsync("git", ["clone", "--bare", workRepo, remoteRepo]);
     await execFileAsync("git", ["remote", "add", "origin", remoteRepo], { cwd: workRepo });
     await execFileAsync("git", ["push", "-u", "origin", "main"], { cwd: workRepo });

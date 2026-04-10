@@ -3,8 +3,8 @@
 测试日期基线: `2026-03-31`  
 主目标实例: `http://127.0.0.1:3141`  
 排除实例: `http://127.0.0.1:51800`（空白实例，不纳入主测）  
-证据目录: `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/`  
-真实文件写入目录: `/Users/jarvis/Desktop/friday-real-test-2026-03-31/`
+证据目录: `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/`  
+真实文件写入目录: `/Users/dev/Desktop/friday-real-test-2026-03-31/`
 
 ## 已确认事实
 
@@ -85,12 +85,12 @@
 
 ## 主要证据文件
 
-- `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/snapshots/baseline-runtime.json`
-- `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/logs/desktop-runtime-check.txt`
-- `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/raw/http-validation-results.json`
-- `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/responses/ui-validation.json`
-- `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/responses/targeted-reruns.json`
-- `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/responses/approval-workflow-only-rerun.json`
-- `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/responses/session-memory-rerun.json`
-- `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/responses/auto-fix-actions-snapshot.json`
+- `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/snapshots/baseline-runtime.json`
+- `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/logs/desktop-runtime-check.txt`
+- `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/raw/http-validation-results.json`
+- `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/responses/ui-validation.json`
+- `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/responses/targeted-reruns.json`
+- `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/responses/approval-workflow-only-rerun.json`
+- `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/responses/session-memory-rerun.json`
+- `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/responses/auto-fix-actions-snapshot.json`
 

@@ -8,8 +8,8 @@
   "observed": {
     "status": "completed",
     "toolCallCount": 12,
-    "response": "## Task Completion Summary\n\n✅ **Task completed successfully**\n\n**Actions taken:**\n1. Created the file `manual-real-20260331-agent-note.txt` with the exact text \"Friday real validation manual-real-20260331\"\n2. Moved the file to the target directory `/Users/jarvis/Desktop/friday-real-test-2026-03-31/`\n3. Confirmed the file exists in the correct location (43 bytes, created at 02:28)\n4. Verified the exact contents match the required text: \"Friday real validation manual-real-20260331\"\n\n**File location:** `/Users/jarvis/Desktop/friday-real-test-2026-03-31/manual-real-20260331-agent-note.txt`\n**Contents confirmed:** Exactly matches the required text \"Friday real validation manual-real-20260331\"",
-    "targetFile": "/Users/jarvis/Desktop/friday-real-test-2026-03-31/manual-real-20260331-agent-note.txt",
+    "response": "## Task Completion Summary\n\n✅ **Task completed successfully**\n\n**Actions taken:**\n1. Created the file `manual-real-20260331-agent-note.txt` with the exact text \"Friday real validation manual-real-20260331\"\n2. Moved the file to the target directory `/Users/dev/Desktop/friday-real-test-2026-03-31/`\n3. Confirmed the file exists in the correct location (43 bytes, created at 02:28)\n4. Verified the exact contents match the required text: \"Friday real validation manual-real-20260331\"\n\n**File location:** `/Users/dev/Desktop/friday-real-test-2026-03-31/manual-real-20260331-agent-note.txt`\n**Contents confirmed:** Exactly matches the required text \"Friday real validation manual-real-20260331\"",
+    "targetFile": "/Users/dev/Desktop/friday-real-test-2026-03-31/manual-real-20260331-agent-note.txt",
     "fileExists": true,
     "content": "Friday real validation manual-real-20260331"
   }
