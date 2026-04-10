@@ -13,6 +13,8 @@ interface ChatInputProps {
   onValueChange?: (value: string) => void;
 }
 
+const CHAT_INPUT_MAX_LENGTH = 50_000;
+
 export function ChatInput({
   onSend,
   disabled = false,
@@ -83,6 +85,7 @@ export function ChatInput({
             "Tell Friday what you want to get done or describe the task directly…",
           )}
           disabled={disabled}
+          maxLength={CHAT_INPUT_MAX_LENGTH}
           rows={1}
           className="min-h-[32px] flex-1 resize-none bg-transparent text-sm leading-6 text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:outline-none disabled:opacity-50"
         />
