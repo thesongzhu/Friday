@@ -33,10 +33,10 @@ export function StatusPill(props: {
   return (
     <span
       className={cn(
-        "inline-flex min-h-[32px] items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]",
-        props.tone === "success" && "border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-text-primary)]",
-        props.tone === "warning" && "border-[color:var(--color-border-strong)] bg-[color:var(--color-accent-muted)] text-[color:var(--color-text-primary)]",
-        props.tone === "danger" && "border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] text-[color:var(--color-text-primary)]",
+        "inline-flex min-h-[32px] items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] transition-colors",
+        props.tone === "success" && "border-emerald-200 bg-emerald-50 text-emerald-700",
+        props.tone === "warning" && "border-amber-200 bg-amber-50 text-amber-700",
+        props.tone === "danger" && "border-red-200 bg-red-50 text-red-700",
         (!props.tone || props.tone === "neutral") && "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] text-[color:var(--color-text-secondary)]",
         props.className,
       )}
