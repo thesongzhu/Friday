@@ -116,7 +116,8 @@ export function createFridayAutoFixRollbackService(
           db,
           actionId,
           nowIso,
-        )!;
+        );
+        if (!rolledBack) throw new FridayDomainError("AUTOFIX_ACTION_NOT_FOUND", `Action ${actionId} not found during rollback`, { httpStatus: 404 });
         return {
           action: rolledBack,
           success: false,
