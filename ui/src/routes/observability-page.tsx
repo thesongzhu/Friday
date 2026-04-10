@@ -23,7 +23,9 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
+import { ActionButton, ShellCard, SkeletonCard, SkeletonList, StatusPill } from "@/components/core/primitives";
+import { localize, type AppLocale } from "@/lib/i18n/localized-text";
+import { useAppLocale } from "@/providers/locale-provider";
 import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { learningApi } from "@/lib/api/learning";
 import { systemApi } from "@/lib/api/system";
@@ -177,6 +179,7 @@ function ObservabilityActionCard(props: {
 }
 
 export function ObservabilityPage() {
+  const { locale } = useAppLocale();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const focus = parseFocus(searchParams.get("focus"));
@@ -647,14 +650,14 @@ export function ObservabilityPage() {
         }
       >
         <div className="mb-4 flex flex-wrap gap-2">
-          <FocusChip label="Overview" active={focus === "overview"} to={buildObservabilityHref({ focus: "overview" })} />
-          <FocusChip label="Assistant" active={focus === "assistant"} to={buildObservabilityHref({ focus: "assistant" })} />
-          <FocusChip label="Alerts" active={focus === "alerts"} to={buildObservabilityHref({ focus: "alerts" })} />
-          <FocusChip label="Health" active={focus === "health"} to={buildObservabilityHref({ focus: "health" })} />
-          <FocusChip label="Acceptance" active={focus === "acceptance"} to={buildObservabilityHref({ focus: "acceptance" })} />
-          <FocusChip label="Retry" active={focus === "retry"} to={buildObservabilityHref({ focus: "retry" })} />
-          <FocusChip label="Rules" active={focus === "rules"} to={buildObservabilityHref({ focus: "rules" })} />
-          <FocusChip label="Loop" active={focus === "loop"} to={buildObservabilityHref({ focus: "loop" })} />
+          <FocusChip label={localize(locale, "概览", "Overview")} active={focus === "overview"} to={buildObservabilityHref({ focus: "overview" })} />
+          <FocusChip label={localize(locale, "助手", "Assistant")} active={focus === "assistant"} to={buildObservabilityHref({ focus: "assistant" })} />
+          <FocusChip label={localize(locale, "告警", "Alerts")} active={focus === "alerts"} to={buildObservabilityHref({ focus: "alerts" })} />
+          <FocusChip label={localize(locale, "健康", "Health")} active={focus === "health"} to={buildObservabilityHref({ focus: "health" })} />
+          <FocusChip label={localize(locale, "验收", "Acceptance")} active={focus === "acceptance"} to={buildObservabilityHref({ focus: "acceptance" })} />
+          <FocusChip label={localize(locale, "重试", "Retry")} active={focus === "retry"} to={buildObservabilityHref({ focus: "retry" })} />
+          <FocusChip label={localize(locale, "规则", "Rules")} active={focus === "rules"} to={buildObservabilityHref({ focus: "rules" })} />
+          <FocusChip label={localize(locale, "循环", "Loop")} active={focus === "loop"} to={buildObservabilityHref({ focus: "loop" })} />
         </div>
         {actionQueue.length > 0 ? (
           <div className="grid gap-3 xl:grid-cols-2">
@@ -663,7 +666,7 @@ export function ObservabilityPage() {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-[color:var(--color-text-secondary)]">No urgent action cards are open right now.</p>
+          <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "当前没有紧急操作卡片。", "No urgent action cards are open right now.")}</p>
         )}
       </ShellCard>
 
@@ -690,7 +693,7 @@ export function ObservabilityPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Overview" title="Current operational state">
+        <ShellCard eyebrow={localize(locale, "概览", "Overview")} title={localize(locale, "当前运行状态", "Current operational state")}>
           {overview ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">

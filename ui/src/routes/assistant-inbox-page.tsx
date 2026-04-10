@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, RefreshCcw, ShieldAlert, Sparkles } from "lucide-react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
+import { LearningInsightCard } from "@/components/core/learning-insight-card";
 import { CrossBorderAssistantHandoffCard } from "@/components/packs/cross-border-assistant-handoff-card";
 import { PackAssistantHandoffCard } from "@/components/packs/pack-assistant-handoff-card";
 import { useAdaptivePollingInterval } from "@/hooks/use-adaptive-polling";
@@ -294,10 +295,12 @@ export function AssistantInboxPage() {
           <RefreshCcw className="mr-2 h-4 w-4" />
           {localize(locale, "看自动化队列", "Open automations")}
         </ActionButton>
+        <LearningInsightCard />
+
         <ActionButton tone="secondary" className="w-full" onClick={() => navigate("/command-center")}>
-          <CheckCircle2 className="mr-2 h-4 w-4" />
+          <CheckCircle2 className="mr-2 h-4 w-4" aria-hidden="true" />
           {localize(locale, "进入更深的控制台", "Go deeper")}
-          <ArrowRight className="ml-2 h-4 w-4" />
+          <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
         </ActionButton>
       </div>
     </div>

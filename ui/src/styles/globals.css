@@ -1,10 +1,10 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap");
 @import "tailwindcss";
 
 :root {
   --color-bg-base: #faf2e7;
   --color-ink: #332922;
-  --color-accent: #6c7f92;
+  --color-accent: #5E6AD2;
 
   --color-bg-elevated: #fcf7f0;
   --color-bg-surface: rgba(255, 255, 255, 0.56);
@@ -20,16 +20,27 @@
   --color-text-tertiary: rgba(51, 41, 34, 0.54);
   --color-text-faint: rgba(51, 41, 34, 0.34);
 
-  --color-accent-soft: rgba(108, 127, 146, 0.14);
-  --color-accent-muted: rgba(108, 127, 146, 0.08);
-  --color-accent-strong: rgba(108, 127, 146, 0.24);
-  --color-focus-ring: rgba(108, 127, 146, 0.18);
+  --color-accent-soft: rgba(94, 106, 210, 0.12);
+  --color-accent-muted: rgba(94, 106, 210, 0.06);
+  --color-accent-strong: rgba(94, 106, 210, 0.22);
+  --color-focus-ring: rgba(94, 106, 210, 0.18);
+
+  /* Semantic status colors */
+  --color-success: #34C759;
+  --color-warning: #FAAD14;
+  --color-error: #E5484D;
+  --color-info: #5E6AD2;
+  --color-live: #34C759;
+
+  /* Skeleton loading (warm-tinted to match beige background) */
+  --color-skeleton-base: #ede5da;
+  --color-skeleton-shimmer: rgba(255, 255, 255, 0.4);
 
   --shadow-card: 0 16px 36px rgba(88, 74, 61, 0.08);
   --shadow-card-strong: 0 24px 52px rgba(88, 74, 61, 0.1);
   --shadow-floating: 0 10px 30px rgba(88, 74, 61, 0.06);
 
-  --font-display: "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+  --font-display: "Inter", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
   --font-mono: "IBM Plex Mono", "SFMono-Regular", monospace;
 
   --density-card-padding: 1.35rem;
@@ -71,6 +82,11 @@
   --shadow-card: 0 14px 32px rgba(88, 68, 42, 0.09);
   --shadow-card-strong: 0 22px 48px rgba(88, 68, 42, 0.11);
   --shadow-floating: 0 9px 26px rgba(88, 68, 42, 0.07);
+
+  --color-info: #c87a3c;
+
+  --color-skeleton-base: #e8ddd0;
+  --color-skeleton-shimmer: rgba(255, 248, 238, 0.5);
 
   --font-display: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
 
@@ -355,4 +371,82 @@
   border-radius: calc(var(--density-card-radius) - 6px);
   background: rgba(255, 255, 255, 0.45);
   color: var(--color-text-secondary);
+}
+
+/* ── Skeleton loading shimmer ── */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.skeleton {
+  background-color: var(--color-skeleton-base);
+  border-radius: 6px;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--color-skeleton-shimmer) 50%,
+    transparent 100%
+  );
+  animation: shimmer 1.8s ease-in-out infinite;
+  transform: translateX(-100%);
+}
+
+.skeleton-line { height: 14px; margin-bottom: 8px; }
+.skeleton-line-short { width: 60%; }
+.skeleton-line-medium { width: 85%; }
+.skeleton-title { height: 20px; width: 45%; margin-bottom: 12px; }
+.skeleton-circle { width: 40px; height: 40px; border-radius: 9999px; }
+.skeleton-card {
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--density-card-radius);
+  padding: var(--density-card-padding);
+  background: var(--color-bg-surface);
+}
+
+/* ── AI thinking pulse ── */
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.thinking-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--color-accent);
+  animation: thinking-pulse 1.4s ease-in-out infinite;
+}
+.thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* ── Status indicator colors (use semantic variables) ── */
+.status-success { color: var(--color-success); }
+.status-warning { color: var(--color-warning); }
+.status-error { color: var(--color-error); }
+.status-info { color: var(--color-info); }
+.status-live { color: var(--color-live); }
+
+.bg-status-success { background-color: var(--color-success); }
+.bg-status-warning { background-color: var(--color-warning); }
+.bg-status-error { background-color: var(--color-error); }
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

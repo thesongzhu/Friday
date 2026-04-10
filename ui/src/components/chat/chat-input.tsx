@@ -76,6 +76,7 @@ export function ChatInput({
           onKeyDown={handleKeyDown}
           onInput={handleInput}
           autoFocus={autoFocus}
+          aria-label={localize(locale, "任务输入框", "Task input")}
           placeholder={placeholder ?? localize(
             locale,
             "告诉 Friday 你要完成什么，或者直接描述你想处理的事情…",
@@ -88,6 +89,7 @@ export function ChatInput({
         <button
           data-testid="chat-send-button"
           type="button"
+          aria-label={localize(locale, "发送消息", "Send message")}
           onClick={handleSend}
           disabled={disabled || text.trim().length === 0}
           className={cn(
