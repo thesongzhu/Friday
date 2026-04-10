@@ -132,7 +132,7 @@ export interface CreateFridayRealtimeSubscriptionServiceDeps {
 export function createFridayRealtimeSubscriptionService(
   deps: CreateFridayRealtimeSubscriptionServiceDeps,
 ): FridayRealtimeSubscriptionService {
-  const cursorSecret = deps.cursorSecret ?? deps.nowIso().replace(/\D/g, "").slice(0, 16);
+  const cursorSecret = deps.cursorSecret ?? crypto.randomBytes(16).toString("hex");
 
   /** Check if a streamId is valid for the given topic based on prefix rules. */
   function isStreamValidForTopic(topic: FridayRealtimeTopic, streamId: string): boolean {

@@ -115,11 +115,11 @@ export function createFridayWorkflowDagScheduler(): FridayWorkflowDagScheduler {
               anyEnabledEdge = true;
             }
           } catch (err) {
+            // eslint-disable-next-line no-console
             console.warn(
-              `[friday] Workflow DAG edge condition evaluation failed for edge ${pred}→${nodeId}: ${err instanceof Error ? err.message : String(err)}. Treating edge as enabled (fail-open).`,
+              `[friday] Workflow DAG edge condition evaluation failed for edge ${pred}→${nodeId}: ${err instanceof Error ? err.message : String(err)}. Treating edge as DISABLED (fail-closed).`,
             );
-            // P2-WF-001: Fail-open — treat evaluation error as edge enabled rather than silently disabling
-            anyEnabledEdge = true;
+            // P2-WF-001: Fail-closed — expression errors block the edge to prevent unintended execution
           }
         } else {
           anyEnabledEdge = true;
