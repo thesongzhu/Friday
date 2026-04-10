@@ -108,10 +108,11 @@ import { PercentBar } from "@/components/usage/usage-charts";
 // ─── Page ───
 
 export function UsagePage() {
-  const { data: healthItems = [], isLoading: healthLoading } = useProviderHealth();
-  const { data: providers = [], isLoading: providersLoading } = useProviders();
+  const { data: healthItems = [], isLoading: healthLoading, isError: healthError } = useProviderHealth();
+  const { data: providers = [], isLoading: providersLoading, isError: providersError } = useProviders();
 
   const isLoading = healthLoading || providersLoading;
+  const isError = healthError || providersError;
 
   // Aggregate stats from provider health data.
   const totalRequests = healthItems.reduce((sum, p) => sum + p.successCount + p.errorCount, 0);
@@ -156,6 +157,11 @@ export function UsagePage() {
       {isLoading ? (
         <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-8 text-center text-sm text-[color:var(--color-text-secondary)]">
           Loading usage data...
+        </div>
+      ) : isError ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-8 text-center dark:border-red-900/50 dark:bg-red-900/20">
+          <p className="text-sm font-medium text-red-700 dark:text-red-400">Failed to load usage data</p>
+          <p className="mt-1 text-xs text-red-600 dark:text-red-500">Provider health information is temporarily unavailable.</p>
         </div>
       ) : (
         <div className="space-y-6">
