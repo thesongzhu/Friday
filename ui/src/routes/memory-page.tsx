@@ -22,7 +22,7 @@ function toneForNamespace(ns: string): "neutral" | "success" | "warning" {
 
 export function MemoryPage() {
   const queryClient = useQueryClient();
-  const locale = useAppLocale();
+  const { locale } = useAppLocale();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
 
@@ -224,7 +224,7 @@ export function MemoryPage() {
 }
 
 function AddMemoryForm(props: {
-  locale: string;
+  locale: import("@/lib/i18n/localized-text").AppLocale;
   onSubmit: (input: { namespace: string; content: string; key: string; tags: string[] }) => void;
   pending: boolean;
   onCancel: () => void;

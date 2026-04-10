@@ -11,7 +11,7 @@ import { SkeletonLine } from "@/components/core/primitives";
  * layer visible to the user.
  */
 export function LearningInsightCard() {
-  const locale = useAppLocale();
+  const { locale } = useAppLocale();
   const { data: overview, isLoading } = useQuery({
     queryKey: ["learning", "overview"],
     queryFn: () => learningApi.getOverview(5),

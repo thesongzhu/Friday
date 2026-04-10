@@ -21,7 +21,7 @@ function summarizeSchedule(schedule?: { type: "cron"; cron: string; timezone?: s
 
 export function AutomationsPage() {
   const queryClient = useQueryClient();
-  const locale = useAppLocale();
+  const { locale } = useAppLocale();
   const [searchParams] = useSearchParams();
   const [name, setName] = useState("");
   const [taskTemplate, setTaskTemplate] = useState("");

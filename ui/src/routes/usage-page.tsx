@@ -111,7 +111,7 @@ import { PercentBar } from "@/components/usage/usage-charts";
 // ─── Page ───
 
 export function UsagePage() {
-  const locale = useAppLocale();
+  const { locale } = useAppLocale();
   const { data: healthItems = [], isLoading: healthLoading, isError: healthError } = useProviderHealth();
   const { data: providers = [], isLoading: providersLoading, isError: providersError } = useProviders();
 

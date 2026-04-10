@@ -13,7 +13,7 @@ function useMcpServers() {
   });
 }
 
-function statusBadge(status: string | undefined, locale: string) {
+function statusBadge(status: string | undefined, locale: import("@/lib/i18n/localized-text").AppLocale) {
   switch (status) {
     case "connected":
       return <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-accent-soft)] px-2 py-0.5 text-xs font-medium text-[color:var(--color-accent)]">{localize(locale, "已连接", "Connected")}</span>;
@@ -28,7 +28,7 @@ function statusBadge(status: string | undefined, locale: string) {
 
 export function McpPage() {
   const { data: servers = [], isLoading, isError } = useMcpServers();
-  const locale = useAppLocale();
+  const { locale } = useAppLocale();
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">

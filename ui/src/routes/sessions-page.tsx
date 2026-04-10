@@ -75,7 +75,7 @@ export function SessionsPage() {
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const { data: sessions = [], isLoading, isError } = useSessionList({ status: statusFilter || undefined });
   const { data: messages = [] } = useSessionMessages(selectedSession);
-  const locale = useAppLocale();
+  const { locale } = useAppLocale();
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
