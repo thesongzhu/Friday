@@ -203,4 +203,45 @@ describe("FridayErrorDiagnosisService", () => {
     expect(result.diagnosis.confidence).toBeGreaterThanOrEqual(0.6);
     expect(result.autoFixEligible).toBe(true);
   });
+
+  it("excludes negative lessons (rejected fixes) from candidate plans", () => {
+    const lessonRepo = createFridayLearnedLessonRepository();
+
+    // Seed a rejected (negative) lesson for the incident's fingerprint
+    lessonRepo.upsertByFingerprint(db.writer, {
+      id: "lesson-neg",
+      fingerprint: "sig-tool-timeout",
+      title: "Rejected: Retry node",
+      cause: "Fix rejected by operator",
+      fix: "Do not auto-apply retry_node",
+      mitigation: { rejected: true, rejectedReason: "wrong approach" },
+      nowIso: NOW,
+    });
+
+    const result = service.diagnose({ incident: baseIncident, nowIso: NOW });
+
+    // Negative lessons should be excluded from matched lessons and candidate plans
+    expect(result.matchedLessons).toHaveLength(0);
+    expect(result.candidatePlans).toHaveLength(0);
+  });
+
+  it("excludes failed-fix lessons from candidate plans", () => {
+    const lessonRepo = createFridayLearnedLessonRepository();
+
+    // Seed a failed-fix lesson
+    lessonRepo.upsertByFingerprint(db.writer, {
+      id: "lesson-fail",
+      fingerprint: "sig-tool-timeout",
+      title: "Failed fix: Retry node",
+      cause: "Auto-fix did not resolve issue",
+      fix: "Avoid repeating retry_node",
+      mitigation: { autoFixFailed: true, outcome: "failed" },
+      nowIso: NOW,
+    });
+
+    const result = service.diagnose({ incident: baseIncident, nowIso: NOW });
+
+    expect(result.matchedLessons).toHaveLength(0);
+    expect(result.candidatePlans).toHaveLength(0);
+  });
 });

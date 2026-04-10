@@ -487,5 +487,38 @@ describe("FridayPreferenceExtractionService", () => {
       expect(signals[0]!.key).toBe("persona.question_style");
       expect(signals[0]!.value).toBe("minimal");
     });
+
+    it("extracts tone=analytical from 'be more formal'", () => {
+      const event = makeEvent({
+        kind: "user_message",
+        payload: { text: "be more formal in your responses" },
+      });
+      const signals = service.extract(event);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]!.key).toBe("persona.tone");
+      expect(signals[0]!.value).toBe("analytical");
+    });
+
+    it("extracts Chinese directness from '直接一点'", () => {
+      const event = makeEvent({
+        kind: "user_message",
+        payload: { text: "回答直接一点" },
+      });
+      const signals = service.extract(event);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]!.key).toBe("persona.directness");
+      expect(signals[0]!.value).toBe("direct");
+    });
+
+    it("extracts verbosity=concise from 'be more brief'", () => {
+      const event = makeEvent({
+        kind: "user_message",
+        payload: { text: "be more brief" },
+      });
+      const signals = service.extract(event);
+      expect(signals).toHaveLength(1);
+      expect(signals[0]!.key).toBe("persona.verbosity");
+      expect(signals[0]!.value).toBe("concise");
+    });
   });
 });
