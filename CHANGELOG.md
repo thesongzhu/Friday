@@ -7,6 +7,42 @@ and this project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+- Deep link protocol: `friday://` import protocol for provider templates, skill sources, MCP server configs, workflow templates, and marketplace assets with preview + validate + confirm flow.
+- PolicyExtensionChain: authorization chain where extensions can only tighten (deny) decisions, never loosen core policy, with full audit trail.
+- Shell safety scanner: rules-based preflight scanner for shell-based skills detecting `rm -rf`, `sudo`, `curl | sh`, path traversal, and 20+ dangerous patterns.
+- MCP management UI: `/mcp` page for viewing MCP server status, transport, tool/resource counts, and configuration guidance.
+- Session browser: `/sessions` page with status filtering, transcript viewer, and JSON/Markdown export.
+- Cost dashboard: `/usage` page with provider health, request counts, error rates, and cost estimation.
+- Capability grant lifecycle: SQLite persistence, revoke API, and grant routes for full issue-use-expire-revoke flow.
+- SIEM export: JSONL file export and HTTP webhook export sinks on the existing hash-chained audit trail.
+- Linux packaging: complete .deb and .AppImage packaging with build scripts.
+- Communication persona system: MBTI-based with 16 personality templates, 9 configurable dimensions, and learned preference integration.
+- Learning-adaptive communication: learned preference facts from the self-learning pipeline feed into persona resolution with confidence-decaying Bayesian-inspired updates.
+- User preference management: full CRUD API for user preferences at `/v1/uix/preferences`, persona preview, user profile onboarding, and assistant diagnostics.
+- Expected utility calculator: pluggable utility scoring for auto-fix decisions (`EU = benefit * P(success) - cost * P(failure) - riskPenalty`).
+- Tool call summary: privacy-safe tool execution summaries (arg keys only, no values) for observability and world model training data.
+- OpenAI Responses API: full streaming support for the `openai-responses` API format alongside existing `openai-completions`.
+
+### Changed
+- Warn-once architecture: cross-module log deduplication (7+ modules) for cleaner runtime output.
+- Workflow realtime events: buffered event publishing enables live workflow progress tracking via SSE/WebSocket.
+- Setup diagnostics: user-friendly error messages and remediation hints for setup/auth failures in UI.
+- Provider templates and lane health: setup/settings now consume template-driven bootstrap and lane visibility.
+- Skill preflight verdicts: grouped blocking/warning/advisory preflight checks across manifest, integrity, requirements, permissions, runtime dry-run, and trust.
+
+### Fixed
+- WebSocket buffer accumulation now capped at 4 MB to prevent DoS via fragmented frames.
+- Session key recursive parsing now enforces maximum subagent nesting depth of 10 to prevent stack overflow.
+- Agent runtime progress timer and event listeners are now created inside the try block to prevent leaks on early failures.
+- Subagent drain timeout now logs remaining in-flight execution count for shutdown diagnostics.
+- Master key file-read cache path now sets TTL expiry, preventing stale cached keys from blocking rotation.
+- Master key file permissions too-open warning now attempts `chmod 0600` remediation.
+- Channel input sanitizer now enforces 50,000 character limit and applies Unicode NFC normalization.
+- Error diagnosis lesson-disabled check logic simplified to prevent disabled lessons from being included when `factRepo` is unavailable.
+- Auto-fix risk assessment 1h spike threshold now uses `Math.ceil()` for correct integer comparison against hourly baseline.
+- Provider OAuth hardening: Claude Code request format matching for OAuth inference (Anthropic PKCE).
+
 ## [0.4.2] - 2026-03-24
 
 ### Fixed

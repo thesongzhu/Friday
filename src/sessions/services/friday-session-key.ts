@@ -89,8 +89,17 @@ export function buildFridaySubagentSessionKey(
 
 // ─── Key parsing ───
 
+const FRIDAY_SESSION_MAX_SUBAGENT_DEPTH = 10;
+
 /** Parse a canonical session key into its constituent parts. */
-export function parseFridaySessionKey(key: string): FridaySessionKeyParts {
+export function parseFridaySessionKey(key: string, _depth = 0): FridaySessionKeyParts {
+  if (_depth > FRIDAY_SESSION_MAX_SUBAGENT_DEPTH) {
+    throw new FridayDomainError(
+      FRIDAY_SESSION_ERROR_CODES.INVALID_KEY,
+      `Session key exceeds maximum subagent nesting depth of ${FRIDAY_SESSION_MAX_SUBAGENT_DEPTH}`,
+      { httpStatus: 400 },
+    );
+  }
   if (!key) {
     throw new FridayDomainError(
       FRIDAY_SESSION_ERROR_CODES.INVALID_KEY,
@@ -118,7 +127,7 @@ export function parseFridaySessionKey(key: string): FridaySessionKeyParts {
 
     validateSegment(taskId, "taskId");
     // Recursively validate the parent key
-    const parentParts = parseFridaySessionKey(parentKey);
+    const parentParts = parseFridaySessionKey(parentKey, _depth + 1);
 
     return {
       kind: "subagent",
@@ -165,7 +174,14 @@ export function validateFridaySessionKey(key: string): void {
  * Applies lowercase + segment normalization to each segment.
  * Returns the canonicalized key string. Throws on structurally invalid keys.
  */
-export function canonicalizeFridaySessionKey(rawKey: string): string {
+export function canonicalizeFridaySessionKey(rawKey: string, _depth = 0): string {
+  if (_depth > FRIDAY_SESSION_MAX_SUBAGENT_DEPTH) {
+    throw new FridayDomainError(
+      FRIDAY_SESSION_ERROR_CODES.INVALID_KEY,
+      `Session key exceeds maximum subagent nesting depth of ${FRIDAY_SESSION_MAX_SUBAGENT_DEPTH}`,
+      { httpStatus: 400 },
+    );
+  }
   if (!rawKey) {
     throw new FridayDomainError(
       FRIDAY_SESSION_ERROR_CODES.INVALID_KEY,
@@ -188,7 +204,7 @@ export function canonicalizeFridaySessionKey(rawKey: string): string {
 
     const parentKey = rest.slice(0, lastColon);
     const taskId = rest.slice(lastColon + 1);
-    const normalizedParent = canonicalizeFridaySessionKey(parentKey);
+    const normalizedParent = canonicalizeFridaySessionKey(parentKey, _depth + 1);
     const normalizedTaskId = normalizeSegment(taskId);
     validateSegment(normalizedTaskId, "taskId");
 
