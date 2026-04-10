@@ -1,8 +1,9 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, RefreshCcw, ShieldAlert, Sparkles } from "lucide-react";
 import { useLocation, useSearchParams } from "react-router-dom";
-import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
+import { ActionButton, ConfirmDialog, ShellCard, StatusPill } from "@/components/core/primitives";
+import { learningApi } from "@/lib/api/learning";
 import { LearningInsightCard } from "@/components/core/learning-insight-card";
 import { CrossBorderAssistantHandoffCard } from "@/components/packs/cross-border-assistant-handoff-card";
 import { PackAssistantHandoffCard } from "@/components/packs/pack-assistant-handoff-card";
@@ -70,6 +71,22 @@ export function AssistantInboxPage() {
     const target = document.getElementById(sectionId);
     target?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+
+  const queryClient = useQueryClient();
+  const [confirmApproval, setConfirmApproval] = useState<{ actionId: string; title: string; mode: "approve" | "deny" } | null>(null);
+  const approvalMutation = useMutation({
+    mutationFn: async ({ actionId, mode }: { actionId: string; mode: "approve" | "deny" }) => {
+      if (mode === "approve") {
+        await learningApi.approveAction(actionId);
+      } else {
+        await learningApi.denyAction(actionId);
+      }
+    },
+    onSuccess: () => {
+      setConfirmApproval(null);
+      void queryClient.invalidateQueries({ queryKey: ["uix", "assistant-inbox"] });
+    },
+  });
 
   return (
     <div className="space-y-5 pb-4">
@@ -149,6 +166,26 @@ export function AssistantInboxPage() {
                     <StatusPill tone="warning">{localize(locale, "待确认", "Needs Review")}</StatusPill>
                   </div>
                   <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-secondary)]">{action.summary}</p>
+                  {action.actionId && (
+                    <div className="mt-3 flex gap-2">
+                      <ActionButton
+                        tone="primary"
+                        onClick={() => setConfirmApproval({ actionId: action.actionId!, title: action.title, mode: "approve" })}
+                        disabled={approvalMutation.isPending}
+                        className="!min-h-[36px] !px-3 !text-xs"
+                      >
+                        {localize(locale, "批准", "Approve")}
+                      </ActionButton>
+                      <ActionButton
+                        tone="danger"
+                        onClick={() => setConfirmApproval({ actionId: action.actionId!, title: action.title, mode: "deny" })}
+                        disabled={approvalMutation.isPending}
+                        className="!min-h-[36px] !px-3 !text-xs"
+                      >
+                        {localize(locale, "拒绝", "Reject")}
+                      </ActionButton>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -303,6 +340,25 @@ export function AssistantInboxPage() {
           <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
         </ActionButton>
       </div>
+      <ConfirmDialog
+        open={confirmApproval !== null}
+        title={confirmApproval?.mode === "approve"
+          ? localize(locale, "确认批准", "Confirm Approval")
+          : localize(locale, "确认拒绝", "Confirm Rejection")}
+        description={confirmApproval
+          ? localize(locale, `确定要${confirmApproval.mode === "approve" ? "批准" : "拒绝"}"${confirmApproval.title}"吗？`, `Are you sure you want to ${confirmApproval.mode} "${confirmApproval.title}"?`)
+          : ""}
+        confirmLabel={confirmApproval?.mode === "approve" ? localize(locale, "批准", "Approve") : localize(locale, "拒绝", "Reject")}
+        cancelLabel={localize(locale, "取消", "Cancel")}
+        tone={confirmApproval?.mode === "approve" ? "primary" : "danger"}
+        loading={approvalMutation.isPending}
+        onConfirm={() => {
+          if (confirmApproval) {
+            approvalMutation.mutate({ actionId: confirmApproval.actionId, mode: confirmApproval.mode });
+          }
+        }}
+        onCancel={() => setConfirmApproval(null)}
+      />
     </div>
   );
 }

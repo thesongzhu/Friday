@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Brain, Plus, Search, Tag, Trash2 } from "lucide-react";
 import { SkeletonList } from "@/components/core/primitives";
 import { toast } from "sonner";
-import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
+import { ActionButton, ConfirmDialog, ShellCard, StatusPill } from "@/components/core/primitives";
 import { memoryApi } from "@/lib/api/memory";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -73,6 +73,7 @@ export function MemoryPage() {
   });
 
   const [showAddForm, setShowAddForm] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   const handleSearch = () => {
     setActiveSearch(searchQuery.trim());
@@ -206,7 +207,7 @@ export function MemoryPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => deleteMutation.mutate(item.id)}
+                    onClick={() => setDeleteConfirmId(item.id)}
                     disabled={deleteMutation.isPending}
                     aria-label={localize(locale, "删除此记忆", "Delete this memory")}
                     className="shrink-0 rounded-xl p-2 text-[color:var(--color-text-faint)] transition-colors hover:bg-[color:var(--color-bg-contrast)] hover:text-[color:var(--color-text-primary)]"
@@ -237,6 +238,22 @@ export function MemoryPage() {
           ))}
         </div>
       )}
+      <ConfirmDialog
+        open={deleteConfirmId !== null}
+        title={localize(locale, "确认删除记忆", "Delete Memory")}
+        description={localize(locale, "此操作不可撤销。", "This action cannot be undone.")}
+        confirmLabel={localize(locale, "删除", "Delete")}
+        cancelLabel={localize(locale, "取消", "Cancel")}
+        tone="danger"
+        loading={deleteMutation.isPending}
+        onConfirm={() => {
+          if (deleteConfirmId) {
+            deleteMutation.mutate(deleteConfirmId);
+            setDeleteConfirmId(null);
+          }
+        }}
+        onCancel={() => setDeleteConfirmId(null)}
+      />
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BadgeCheck, Download, Link2, Package, RefreshCcw, ShieldCheck, Trash2 } from "lucide-react";
 import { DeepLinkPreviewDialog } from "@/components/deeplink/deeplink-preview-dialog";
 import { toast } from "sonner";
-import { ActionButton, ShellCard, SkeletonList, StatusPill } from "@/components/core/primitives";
+import { ActionButton, ConfirmDialog, EmptyState, ShellCard, SkeletonCard, SkeletonList, StatusPill } from "@/components/core/primitives";
 import { HelpTooltip } from "@/components/core/help-tooltip";
 import { localize, type AppLocale } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -127,6 +127,7 @@ export function SkillsPage() {
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
   const [recentGeneratorSessionId, setRecentGeneratorSessionId] = useState<string | null>(null);
   const [showImportDialog, setShowImportDialog] = useState(false);
+  const [deleteConfirmSkillId, setDeleteConfirmSkillId] = useState<string | null>(null);
   const requestedSkillId = searchParams.get("skillId");
   const requestedFocus = searchParams.get("focus");
   const focus: FridaySkillFocus =
@@ -655,7 +656,7 @@ export function SkillsPage() {
                   {!detail.starter && (detail.installedVersion || detail.registryLoaded) ? (
                     <ActionButton
                       tone="danger"
-                      onClick={() => void deleteMutation.mutateAsync(detail.skillId)}
+                      onClick={() => setDeleteConfirmSkillId(detail.skillId)}
                       disabled={deleteMutation.isPending}
                     >
                       <Trash2 className="mr-2 h-4 w-4" />
@@ -843,6 +844,21 @@ export function SkillsPage() {
           </div>
         </ShellCard>
       </div>
+      <ConfirmDialog
+        open={deleteConfirmSkillId !== null}
+        title={localize(locale, "确认删除技能", "Remove Skill")}
+        description={localize(locale, "此操作不可撤销。技能将从本地注册中移除。", "This action cannot be undone. The skill will be removed from the local registry.")}
+        confirmLabel={localize(locale, "删除", "Remove")}
+        cancelLabel={localize(locale, "取消", "Cancel")}
+        tone="danger"
+        loading={deleteMutation.isPending}
+        onConfirm={() => {
+          if (deleteConfirmSkillId) {
+            void deleteMutation.mutateAsync(deleteConfirmSkillId).then(() => setDeleteConfirmSkillId(null));
+          }
+        }}
+        onCancel={() => setDeleteConfirmSkillId(null)}
+      />
     </div>
   );
 }

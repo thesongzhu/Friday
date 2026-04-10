@@ -163,6 +163,29 @@ describe("FridaySessionKey", () => {
         FRIDAY_SESSION_ERROR_CODES.INVALID_KEY,
       );
     });
+
+    it("rejects deeply nested subagent keys exceeding max depth", () => {
+      // Build a key with 12 levels of subagent nesting (max is 10)
+      let key = "discord:default:chat";
+      for (let i = 0; i < 12; i++) {
+        key = `subagent:${key}:task-${i}`;
+      }
+      expectSessionError(
+        () => parseFridaySessionKey(key),
+        FRIDAY_SESSION_ERROR_CODES.INVALID_KEY,
+      );
+    });
+
+    it("accepts subagent keys at max allowed depth", () => {
+      // Build a key with exactly 10 levels (should pass)
+      let key = "discord:default:chat";
+      for (let i = 0; i < 10; i++) {
+        key = `subagent:${key}:task-${i}`;
+      }
+      const parsed = parseFridaySessionKey(key);
+      expect(parsed.kind).toBe("subagent");
+      expect(parsed.channel).toBe("discord");
+    });
   });
 
   // ─── validateFridaySessionKey ───

@@ -69,7 +69,7 @@ export interface AdapterHealthCheck {
   readonly details: Record<string, string | boolean | number>;
 }
 
-const SAFE_APP_IDENTIFIER_RE = /^[A-Za-z0-9._:/\\\-\s]+$/;
+const SAFE_APP_IDENTIFIER_RE = /^[A-Za-z0-9._:/\\\- ]+$/;
 const SAFE_XDOTOOL_KEY_RE = /^[A-Za-z0-9_+\-]+$/;
 
 // ─── Default Shell Executor ───
@@ -225,7 +225,7 @@ function ensureFiniteInteger(value: number, fieldName: string): number {
 }
 
 function ensureSafeAppIdentifier(value: string): string {
-  if (!SAFE_APP_IDENTIFIER_RE.test(value)) {
+  if (value.length > 256 || !SAFE_APP_IDENTIFIER_RE.test(value)) {
     throw new FridayDomainError("VALIDATION_ERROR", "Unsafe app identifier", { httpStatus: 400 });
   }
   return value;

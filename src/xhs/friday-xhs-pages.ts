@@ -162,8 +162,8 @@ export function createXhsPageInteractions(deps: CreateXhsPageInteractionsDeps): 
     }
     await xhsSleep();
 
-    // Take QR code screenshot
-    fs.mkdirSync(artifactDir, { recursive: true });
+    // Take QR code screenshot — mkdir with validated artifact dir
+    fs.mkdirSync(artifactDir, { recursive: true }); // eslint-disable-line security/detect-non-literal-fs-filename -- artifactDir is internal config, not user input
     let safeSessionId: string;
     try {
       safeSessionId = sanitizeArtifactPathSegment(sessionId);
@@ -173,7 +173,7 @@ export function createXhsPageInteractions(deps: CreateXhsPageInteractionsDeps): 
     }
     const qrPath = path.join(artifactDir, `xhs-qr-${safeSessionId}-${Date.now()}.png`);
     const screenshotBuffer = await page.screenshot({ type: "png" });
-    fs.writeFileSync(qrPath, screenshotBuffer);
+    fs.writeFileSync(qrPath, screenshotBuffer); // eslint-disable-line security/detect-non-literal-fs-filename -- path built from sanitized segments
 
     // Poll for login completion
     const startTime = Date.now();

@@ -851,6 +851,13 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
     socket.on("data", (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
 
+      // Guard against accumulated buffer exceeding max size (prevents DoS via fragmented frames)
+      const MAX_WS_BUFFER_SIZE = 4_194_304; // 4 MB
+      if (buffer.length > MAX_WS_BUFFER_SIZE) {
+        socket.destroy();
+        return;
+      }
+
       // Parse WebSocket frames
       while (buffer.length >= 2) {
         const firstByte = buffer[0]!;

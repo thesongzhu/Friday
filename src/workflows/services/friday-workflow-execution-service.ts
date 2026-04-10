@@ -232,6 +232,15 @@ export function createFridayWorkflowExecutionService(
     error?: { code: string; message: string };
   }
 
+  /** Return type for single-node execution within a batch. */
+  type NodeExecutionOutcome = {
+    nodeId: string;
+    status: "completed" | "failed" | "retrying" | "paused" | "dispatched" | "blocked" | "skipped";
+    output?: unknown;
+    error?: { code: string; message: string; retryable?: boolean };
+    satelliteId?: UUID;
+  };
+
   function buildExpressionContext(
     runEntity: FridayWorkflowRunEntity,
     nodeContexts: Map<string, NodeContextEntry>,
@@ -478,6 +487,511 @@ export function createFridayWorkflowExecutionService(
     return "failed";
   }
 
+  // ─── Extracted from executeRun: mark unreachable nodes as cancelled ───
+
+  function cancelDeadEndedNodes(
+    runId: UUID,
+    deadEndedNodes: string[],
+    nodeStatuses: Map<string, NodeAttemptStatus>,
+    exprContext: FridayExpressionContext,
+  ): void {
+    deps.db.withWriteTransaction((db) => {
+      for (const nodeId of deadEndedNodes) {
+        const currentStatus = nodeStatuses.get(nodeId);
+        if (currentStatus) {
+          continue;
+        }
+
+        const latestAttempt = deps.nodeRepo.getLatestAttempt(db, runId, nodeId);
+        if (latestAttempt) {
+          nodeStatuses.set(nodeId, latestAttempt.status);
+          continue;
+        }
+
+        const attemptId = deps.idGenerator();
+        const entity: FridayWorkflowRunNodeEntity = {
+          id: deps.idGenerator(),
+          runId,
+          nodeId,
+          attempt: 1,
+          attemptId,
+          status: "cancelled",
+          idempotencyKey: deps.retryManager.generateIdempotencyKey(
+            runId,
+            nodeId,
+            1,
+          ),
+          input: exprContext as unknown as JsonValue,
+          finishedAt: deps.nowIso(),
+          createdAt: deps.nowIso(),
+          updatedAt: deps.nowIso(),
+        };
+
+        deps.nodeRepo.insertNodeAttempt(db, entity);
+        nodeStatuses.set(nodeId, "cancelled");
+      }
+    });
+  }
+
+  // ─── Extracted from executeRun: create or reuse attempt records for ready nodes ───
+
+  function prepareNodeAttempts(
+    runId: UUID,
+    readyNodes: string[],
+    nodeStatuses: Map<string, NodeAttemptStatus>,
+    exprContext: FridayExpressionContext,
+  ): FridayWorkflowRunNodeEntity[] {
+    const attempts: FridayWorkflowRunNodeEntity[] = [];
+    deps.db.withWriteTransaction((db) => {
+      for (const nodeId of readyNodes) {
+        const currentNodeStatus = nodeStatuses.get(nodeId);
+        if (currentNodeStatus === "retrying") {
+          const existingAttempt = deps.db.withReadConnection((rdb) =>
+            deps.nodeRepo.getLatestAttempt(rdb, runId, nodeId),
+          );
+          if (existingAttempt && existingAttempt.status === "retrying") {
+            attempts.push(existingAttempt);
+            continue;
+          }
+        }
+
+        const latestAttempt = deps.db.withReadConnection((rdb) =>
+          deps.nodeRepo.getLatestAttempt(rdb, runId, nodeId),
+        );
+        const actualAttempt = latestAttempt
+          ? latestAttempt.attempt + 1
+          : 1;
+
+        const attemptId = deps.idGenerator();
+        const idempotencyKey = deps.retryManager.generateIdempotencyKey(
+          runId,
+          nodeId,
+          actualAttempt,
+        );
+
+        const entity: FridayWorkflowRunNodeEntity = {
+          id: deps.idGenerator(),
+          runId,
+          nodeId,
+          attempt: actualAttempt,
+          attemptId,
+          status: "queued",
+          idempotencyKey,
+          // SAFETY: exprContext is a Record-based expression context, runtime-compatible with JsonValue
+          input: exprContext as unknown as JsonValue,
+          createdAt: deps.nowIso(),
+          updatedAt: deps.nowIso(),
+        };
+
+        deps.nodeRepo.insertNodeAttempt(db, entity);
+        attempts.push(entity);
+      }
+    });
+    return attempts;
+  }
+
+  // ─── Extracted from executeRun: execute a single node (approval / satellite / local) ───
+
+  async function executeSingleNode(
+    runId: UUID,
+    attempt: FridayWorkflowRunNodeEntity,
+    plan: FridayWorkflowExecutionPlan,
+    runEntity: FridayWorkflowRunEntity,
+    nodeContexts: Map<string, NodeContextEntry>,
+    runSignal: AbortSignal,
+  ): Promise<NodeExecutionOutcome> {
+    try {
+      const node = plan.nodeMap.get(attempt.nodeId)!;
+
+      // ── Approval nodes: block until explicit decision ──
+      if (node.type === "approval") {
+        const leaseExpiresAt = new Date(new Date(deps.nowIso()).getTime() + LEASE_TTL_MS).toISOString();
+        const leaseAcquired = deps.db.withWriteTransaction((db) =>
+          deps.nodeRepo.acquireLease(db, attempt.id, "hub", leaseExpiresAt, deps.nowIso()),
+        );
+        if (!leaseAcquired) {
+          return { nodeId: attempt.nodeId, status: "skipped" };
+        }
+
+        deps.db.withWriteTransaction((db) => {
+          deps.nodeRepo.updateNodeAttempt(db, attempt.id, {
+            status: "blocked_offline",
+            nowIso: deps.nowIso(),
+          });
+        });
+
+        if (deps.requestNodeApproval) {
+          const nodeConfig = node.config as Record<string, unknown> | undefined;
+          try {
+            await deps.requestNodeApproval({
+              workflowId: runEntity.workflowId,
+              workflowVersionId: runEntity.workflowVersionId,
+              runId,
+              runNodeAttemptId: attempt.id,
+              nodeId: attempt.nodeId,
+              approverUserId: nodeConfig?.approverUserId as string | undefined,
+              approverRole: nodeConfig?.approverRole as string | undefined,
+              requestPayload: nodeConfig?.requestPayload as Record<string, unknown> | undefined,
+              timeoutMs: nodeConfig?.timeoutMs as number | undefined,
+            });
+          } catch (approvalErr) {
+            const errMsg = approvalErr instanceof Error ? approvalErr.message : String(approvalErr);
+            console.error(
+              `[friday] requestNodeApproval failed for run=${runId} node=${attempt.nodeId}: ${errMsg}`,
+            );
+            await deps.publishEvent?.("workflow.approval.error", {
+              runId,
+              nodeId: attempt.nodeId,
+              attemptId: attempt.id,
+              error: errMsg,
+            });
+          }
+        }
+
+        deps.db.withWriteTransaction((db) => {
+          deps.runRepo.updateRunStatus(db, runId, "paused", deps.nowIso());
+        });
+
+        return { nodeId: attempt.nodeId, status: "paused" };
+      }
+
+      // ── Distributed dispatch: route to satellite if available ──
+      if (distributedDispatcher) {
+        const dispatchResult = await distributedDispatcher.dispatchNode({
+          runId,
+          workflowId: runEntity.workflowId,
+          workflowVersionId: runEntity.workflowVersionId,
+          nodeId: attempt.nodeId,
+          attemptId: attempt.attemptId,
+          attempt: attempt.attempt,
+          node,
+          inputData: (attempt.input as Record<string, unknown>) ?? {},
+          expressionContext: buildExpressionContext(runEntity, nodeContexts),
+          idempotencyKey: attempt.idempotencyKey,
+        });
+
+        if (dispatchResult.kind === "satellite_dispatched") {
+          deps.db.withWriteTransaction((db) => {
+            deps.nodeRepo.updateNodeAttempt(db, attempt.id, {
+              status: "running",
+              satelliteId: dispatchResult.satelliteId,
+              leaseOwner: dispatchResult.leaseOwner,
+              leaseExpiresAt: dispatchResult.leaseExpiresAt,
+              startedAt: deps.nowIso(),
+              nowIso: deps.nowIso(),
+            });
+          });
+
+          await deps.publishEvent?.("workflow.node.started", {
+            runId,
+            nodeId: attempt.nodeId,
+            attempt: attempt.attempt,
+            satelliteId: dispatchResult.satelliteId,
+          });
+
+          return { nodeId: attempt.nodeId, status: "dispatched", satelliteId: dispatchResult.satelliteId };
+        }
+
+        if (dispatchResult.kind === "blocked") {
+          deps.db.withWriteTransaction((db) => {
+            deps.nodeRepo.updateNodeAttempt(db, attempt.id, {
+              status: "blocked_offline",
+              satelliteId: dispatchResult.satelliteId,
+              error: {
+                code: dispatchResult.code,
+                message: dispatchResult.message,
+                retryable: dispatchResult.retryable,
+                details: dispatchResult.details,
+              },
+              nowIso: deps.nowIso(),
+            });
+          });
+
+          await deps.publishEvent?.("workflow.node.blocked_offline", {
+            runId,
+            nodeId: attempt.nodeId,
+            attempt: attempt.attempt,
+            satelliteId: dispatchResult.satelliteId,
+            since: deps.nowIso(),
+          });
+
+          return {
+            nodeId: attempt.nodeId,
+            status: "blocked",
+            satelliteId: dispatchResult.satelliteId,
+            error: { code: dispatchResult.code, message: dispatchResult.message },
+          };
+        }
+      }
+
+      // ── Local execution: acquire lease and run node on hub ──
+      const leaseExpiresAt = new Date(Date.now() + LEASE_TTL_MS).toISOString();
+      const leaseAcquired = deps.db.withWriteTransaction((db) =>
+        deps.nodeRepo.acquireLease(db, attempt.id, "hub", leaseExpiresAt, deps.nowIso()),
+      );
+      if (!leaseAcquired) {
+        return { nodeId: attempt.nodeId, status: "skipped" };
+      }
+
+      const timeoutMs = node.timeoutMs ?? 300_000;
+      let nodeTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const result = await Promise.race([
+        deps.nodeExecutor.executeNode({
+          runId,
+          workflowId: runEntity.workflowId,
+          nodeId: attempt.nodeId,
+          attemptId: attempt.attemptId,
+          node,
+          inputData: (attempt.input as Record<string, unknown>) ?? {},
+          expressionContext: buildExpressionContext(runEntity, nodeContexts),
+          signal: runSignal,
+        }),
+        new Promise<never>((_, reject) => {
+          nodeTimeoutHandle = setTimeout(
+            () => reject(new Error("NODE_TIMEOUT")),
+            timeoutMs,
+          );
+        }),
+      ]);
+      if (nodeTimeoutHandle !== undefined) clearTimeout(nodeTimeoutHandle);
+
+      deps.db.withWriteTransaction((db) => {
+        deps.nodeRepo.updateNodeAttempt(db, attempt.id, {
+          status: "completed",
+          output: result.output,
+          finishedAt: deps.nowIso(),
+          nowIso: deps.nowIso(),
+        });
+      });
+
+      await notifyNodeAttemptResultSafe({
+        runId,
+        workflowId: runEntity.workflowId,
+        nodeId: attempt.nodeId,
+        attempt: attempt.attempt,
+        status: "completed",
+      });
+
+      if (result.output != null) {
+        deps.artifactWriter.writeJsonArtifact(runId, attempt.nodeId, result.output);
+      }
+
+      return { nodeId: attempt.nodeId, status: "completed", output: result.output };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorCode = errorMessage.startsWith("NODE_")
+        ? errorMessage.split(":")[0]!
+        : "NODE_EXECUTION_FAILED";
+
+      const errorObj = {
+        code: errorCode,
+        message: errorMessage,
+        retryable: true,
+      } as const;
+
+      const failureStatus = await persistNodeFailure({
+        runId,
+        workflowId: runEntity.workflowId,
+        attempt,
+        node: plan.nodeMap.get(attempt.nodeId)!,
+        error: errorObj,
+      });
+
+      return { nodeId: attempt.nodeId, status: failureStatus, error: errorObj };
+    }
+  }
+
+  // ─── Extracted from executeRun: process batch results and apply failure policy ───
+
+  async function applyBatchResults(
+    runId: UUID,
+    results: PromiseSettledResult<NodeExecutionOutcome>[],
+    plan: FridayWorkflowExecutionPlan,
+    runEntity: FridayWorkflowRunEntity,
+    nodeStatuses: Map<string, NodeAttemptStatus>,
+    nodeContexts: Map<string, NodeContextEntry>,
+  ): Promise<{ aborted: boolean; paused: boolean; blocked: boolean }> {
+    let hasFailure = false;
+    let hasPause = false;
+    let hasBlocked = false;
+
+    for (const result of results) {
+      if (result.status === "rejected") continue;
+      const { value } = result;
+
+      if (value.status === "completed") {
+        nodeStatuses.set(value.nodeId, "completed");
+        if ("output" in value && value.output != null) {
+          const outputObj =
+            typeof value.output === "object" && !Array.isArray(value.output)
+              ? (value.output as Record<string, unknown>)
+              : { value: value.output };
+          nodeContexts.set(value.nodeId, { output: outputObj, status: "completed" });
+        }
+      } else if (value.status === "failed") {
+        nodeStatuses.set(value.nodeId, "failed");
+        if ("error" in value && value.error != null) {
+          const errObj = value.error as { code: string; message: string };
+          nodeContexts.set(value.nodeId, {
+            output: { status: "failed" },
+            status: "failed",
+            error: { code: errObj.code, message: errObj.message },
+          });
+        }
+        hasFailure = true;
+      } else if (value.status === "retrying") {
+        nodeStatuses.delete(value.nodeId);
+      } else if (value.status === "paused") {
+        nodeStatuses.set(value.nodeId, "blocked_offline");
+        hasPause = true;
+      } else if (value.status === "dispatched") {
+        nodeStatuses.set(value.nodeId, "running");
+      } else if (value.status === "blocked") {
+        nodeStatuses.set(value.nodeId, "blocked_offline");
+        hasBlocked = true;
+      }
+    }
+
+    // Apply failure policy
+    if (hasFailure) {
+      const policy = plan.failurePolicy;
+      switch (policy.onFailure) {
+        case "fail_fast": {
+          deps.db.withWriteTransaction((db) => {
+            deps.nodeRepo.cancelAllPendingNodes(db, runId, deps.nowIso());
+            deps.runRepo.finalizeRun(db, runId, "failed", deps.nowIso(), {
+              code: "WORKFLOW_FAILED",
+              message: "Workflow failed due to fail_fast policy",
+            });
+          });
+          const counts = deps.db.withReadConnection((db) =>
+            deps.nodeRepo.countByStatus(db, runId),
+          );
+          await notifyRunCompleted({
+            runId,
+            workflowId: runEntity.workflowId,
+            workflowVersionId: runEntity.workflowVersionId,
+            status: "failed",
+            plan,
+            failedNodes: counts.failed,
+            completedNodes: counts.completed,
+            cancelledNodes: counts.cancelled,
+          });
+          return { aborted: true, paused: false, blocked: false };
+        }
+
+        case "continue_on_error":
+          break;
+
+        case "pause_for_approval":
+          deps.db.withWriteTransaction((db) => {
+            deps.runRepo.updateRunStatus(db, runId, "paused", deps.nowIso());
+          });
+          return { aborted: false, paused: true, blocked: false };
+
+        case "fallback_step":
+          if (policy.fallbackStepId) {
+            nodeStatuses.delete(policy.fallbackStepId);
+          }
+          break;
+
+        case "compensate":
+          deps.db.withWriteTransaction((db) => {
+            deps.runRepo.updateRunStatus(db, runId, "compensating", deps.nowIso());
+          });
+          return { aborted: false, paused: true, blocked: false };
+      }
+    }
+
+    if (hasPause) {
+      return { aborted: false, paused: true, blocked: false };
+    }
+
+    if (hasBlocked) {
+      deps.db.withWriteTransaction((db) => {
+        deps.runRepo.updateRunStatus(db, runId, "paused", deps.nowIso());
+      });
+      await deps.publishEvent?.("workflow.run.paused", {
+        runId,
+        reason: "satellite_blocked_offline",
+      });
+      return { aborted: false, paused: false, blocked: true };
+    }
+
+    return { aborted: false, paused: false, blocked: false };
+  }
+
+  // ─── Extracted from executeRun: determine final run status after loop exit ───
+
+  async function finalizeRunStatus(
+    runId: UUID,
+    plan: FridayWorkflowExecutionPlan,
+    aborted: boolean,
+  ): Promise<void> {
+    if (!aborted) {
+      const runEntity = deps.db.withReadConnection((db) =>
+        deps.runRepo.getRunById(db, runId),
+      )!;
+
+      if (runEntity.status === "running") {
+        const counts = deps.db.withReadConnection((db) =>
+          deps.nodeRepo.countByStatus(db, runId),
+        );
+
+        if (counts.running > 0 || counts.queued > 0 || counts.retrying > 0) {
+          return;
+        }
+
+        if (counts.blocked_offline > 0) {
+          deps.db.withWriteTransaction((db) => {
+            deps.runRepo.updateRunStatus(db, runId, "paused", deps.nowIso());
+          });
+          await deps.publishEvent?.("workflow.run.paused", {
+            runId,
+            reason: "satellite_blocked_offline",
+          });
+          return;
+        }
+
+        const finalStatus: WorkflowRunStatus =
+          counts.failed > 0 ? "failed" : "completed";
+
+        deps.db.withWriteTransaction((db) => {
+          const failure =
+            finalStatus === "failed"
+              ? {
+                  code: "WORKFLOW_NODES_FAILED",
+                  message: `${counts.failed} node(s) failed`,
+                }
+              : undefined;
+          deps.runRepo.finalizeRun(db, runId, finalStatus, deps.nowIso(), failure);
+        });
+
+        await notifyRunCompleted({
+          runId,
+          workflowId: runEntity.workflowId,
+          workflowVersionId: runEntity.workflowVersionId,
+          status: finalStatus,
+          plan,
+          failedNodes: counts.failed,
+          completedNodes: counts.completed,
+          cancelledNodes: counts.cancelled,
+        });
+      }
+    }
+
+    const finalRun = deps.db.withReadConnection((db) =>
+      deps.runRepo.getRunById(db, runId),
+    );
+    if (finalRun?.status === "completed" || finalRun?.status === "failed" || finalRun?.status === "cancelled") {
+      activePlans.delete(runId);
+      activeAbortControllers.delete(runId);
+      await deps.publishEvent?.("workflow.run.finished", { runId });
+    }
+  }
+
+  // ─── Core workflow execution loop ───
+
   async function executeRun(plan: FridayWorkflowExecutionPlan): Promise<void> {
     const runId = plan.runId;
 
@@ -507,7 +1021,6 @@ export function createFridayWorkflowExecutionService(
     const nodeStatuses = new Map<string, NodeAttemptStatus>();
     deps.db.withReadConnection((db) => {
       const allNodes = deps.nodeRepo.listNodesByRun(db, runId);
-      // Use latest attempt per node
       const latestAttempts = new Map<string, FridayWorkflowRunNodeEntity>();
       for (const n of allNodes) {
         const existing = latestAttempts.get(n.nodeId);
@@ -547,42 +1060,7 @@ export function createFridayWorkflowExecutionService(
       const { readyNodes, deadEndedNodes } = schedulingResult;
 
       if (deadEndedNodes.length > 0) {
-        deps.db.withWriteTransaction((db) => {
-          for (const nodeId of deadEndedNodes) {
-            const currentStatus = nodeStatuses.get(nodeId);
-            if (currentStatus) {
-              continue;
-            }
-
-            const latestAttempt = deps.nodeRepo.getLatestAttempt(db, runId, nodeId);
-            if (latestAttempt) {
-              nodeStatuses.set(nodeId, latestAttempt.status);
-              continue;
-            }
-
-            const attemptId = deps.idGenerator();
-            const entity: FridayWorkflowRunNodeEntity = {
-              id: deps.idGenerator(),
-              runId,
-              nodeId,
-              attempt: 1,
-              attemptId,
-              status: "cancelled",
-              idempotencyKey: deps.retryManager.generateIdempotencyKey(
-                runId,
-                nodeId,
-                1,
-              ),
-              input: exprContext as unknown as JsonValue,
-              finishedAt: deps.nowIso(),
-              createdAt: deps.nowIso(),
-              updatedAt: deps.nowIso(),
-            };
-
-            deps.nodeRepo.insertNodeAttempt(db, entity);
-            nodeStatuses.set(nodeId, "cancelled");
-          }
-        });
+        cancelDeadEndedNodes(runId, deadEndedNodes, nodeStatuses, exprContext);
       }
 
       if (readyNodes.length === 0) {
@@ -592,490 +1070,27 @@ export function createFridayWorkflowExecutionService(
         continue;
       }
 
-      // Create node attempt records (or reuse existing retrying attempts)
-      const attempts: FridayWorkflowRunNodeEntity[] = [];
-      deps.db.withWriteTransaction((db) => {
-        for (const nodeId of readyNodes) {
-          // Check if this node already has a retrying attempt (from retryRun)
-          const currentNodeStatus = nodeStatuses.get(nodeId);
-          if (currentNodeStatus === "retrying") {
-            const existingAttempt = deps.db.withReadConnection((rdb) =>
-              deps.nodeRepo.getLatestAttempt(rdb, runId, nodeId),
-            );
-            if (existingAttempt && existingAttempt.status === "retrying") {
-              attempts.push(existingAttempt);
-              continue;
-            }
-          }
-
-          const latestAttempt = deps.db.withReadConnection((rdb) =>
-            deps.nodeRepo.getLatestAttempt(rdb, runId, nodeId),
-          );
-          const actualAttempt = latestAttempt
-            ? latestAttempt.attempt + 1
-            : 1;
-
-          const attemptId = deps.idGenerator();
-          const idempotencyKey = deps.retryManager.generateIdempotencyKey(
-            runId,
-            nodeId,
-            actualAttempt,
-          );
-
-          const entity: FridayWorkflowRunNodeEntity = {
-            id: deps.idGenerator(),
-            runId,
-            nodeId,
-            attempt: actualAttempt,
-            attemptId,
-            status: "queued",
-            idempotencyKey,
-            // SAFETY: exprContext is a Record-based expression context, runtime-compatible with JsonValue
-            input: exprContext as unknown as JsonValue,
-            createdAt: deps.nowIso(),
-            updatedAt: deps.nowIso(),
-          };
-
-          deps.nodeRepo.insertNodeAttempt(db, entity);
-          attempts.push(entity);
-        }
-      });
+      const attempts = prepareNodeAttempts(runId, readyNodes, nodeStatuses, exprContext);
 
       // Execute batch
       const results = await Promise.allSettled(
-        attempts.map(async (attempt) => {
-          try {
-            const node = plan.nodeMap.get(attempt.nodeId)!;
-
-            // Check for approval nodes — these block until explicit decision
-            if (node.type === "approval") {
-              // P2-WF: Use injected clock instead of Date.now() for testable lease TTL
-              const leaseExpiresAt = new Date(new Date(deps.nowIso()).getTime() + LEASE_TTL_MS).toISOString();
-              const leaseAcquired = deps.db.withWriteTransaction((db) =>
-                deps.nodeRepo.acquireLease(
-                  db,
-                  attempt.id,
-                  "hub",
-                  leaseExpiresAt,
-                  deps.nowIso(),
-                ),
-              );
-
-              if (!leaseAcquired) {
-                return { nodeId: attempt.nodeId, status: "skipped" as const };
-              }
-
-              deps.db.withWriteTransaction((db) => {
-                deps.nodeRepo.updateNodeAttempt(db, attempt.id, {
-                  status: "blocked_offline",
-                  nowIso: deps.nowIso(),
-                });
-              });
-
-              if (deps.requestNodeApproval) {
-                const nodeConfig = node.config as Record<string, unknown> | undefined;
-                try {
-                  await deps.requestNodeApproval({
-                    workflowId: runEntity.workflowId,
-                    workflowVersionId: runEntity.workflowVersionId,
-                    runId,
-                    runNodeAttemptId: attempt.id,
-                    nodeId: attempt.nodeId,
-                    approverUserId: nodeConfig?.approverUserId as string | undefined,
-                    approverRole: nodeConfig?.approverRole as string | undefined,
-                    requestPayload: nodeConfig?.requestPayload as Record<string, unknown> | undefined,
-                    timeoutMs: nodeConfig?.timeoutMs as number | undefined,
-                  });
-                } catch (approvalErr) {
-                  const errMsg = approvalErr instanceof Error ? approvalErr.message : String(approvalErr);
-                  console.error(
-                    `[friday] requestNodeApproval failed for run=${runId} node=${attempt.nodeId}: ${errMsg}`,
-                  );
-                  await deps.publishEvent?.("workflow.approval.error", {
-                    runId,
-                    nodeId: attempt.nodeId,
-                    attemptId: attempt.id,
-                    error: errMsg,
-                  });
-                }
-              }
-
-              deps.db.withWriteTransaction((db) => {
-                deps.runRepo.updateRunStatus(db, runId, "paused", deps.nowIso());
-              });
-
-              return {
-                nodeId: attempt.nodeId,
-                status: "paused" as const,
-              };
-            }
-
-            if (distributedDispatcher) {
-              const dispatchResult = await distributedDispatcher.dispatchNode({
-                runId,
-                workflowId: runEntity.workflowId,
-                workflowVersionId: runEntity.workflowVersionId,
-                nodeId: attempt.nodeId,
-                attemptId: attempt.attemptId,
-                attempt: attempt.attempt,
-                node,
-                inputData: (attempt.input as Record<string, unknown>) ?? {},
-                expressionContext: buildExpressionContext(
-                  runEntity,
-                  nodeContexts,
-                ),
-                idempotencyKey: attempt.idempotencyKey,
-              });
-
-              if (dispatchResult.kind === "satellite_dispatched") {
-                deps.db.withWriteTransaction((db) => {
-                  deps.nodeRepo.updateNodeAttempt(db, attempt.id, {
-                    status: "running",
-                    satelliteId: dispatchResult.satelliteId,
-                    leaseOwner: dispatchResult.leaseOwner,
-                    leaseExpiresAt: dispatchResult.leaseExpiresAt,
-                    startedAt: deps.nowIso(),
-                    nowIso: deps.nowIso(),
-                  });
-                });
-
-                await deps.publishEvent?.("workflow.node.started", {
-                  runId,
-                  nodeId: attempt.nodeId,
-                  attempt: attempt.attempt,
-                  satelliteId: dispatchResult.satelliteId,
-                });
-
-                return {
-                  nodeId: attempt.nodeId,
-                  status: "dispatched" as const,
-                  satelliteId: dispatchResult.satelliteId,
-                };
-              }
-
-              if (dispatchResult.kind === "blocked") {
-                deps.db.withWriteTransaction((db) => {
-                  deps.nodeRepo.updateNodeAttempt(db, attempt.id, {
-                    status: "blocked_offline",
-                    satelliteId: dispatchResult.satelliteId,
-                    error: {
-                      code: dispatchResult.code,
-                      message: dispatchResult.message,
-                      retryable: dispatchResult.retryable,
-                      details: dispatchResult.details,
-                    },
-                    nowIso: deps.nowIso(),
-                  });
-                });
-
-                await deps.publishEvent?.("workflow.node.blocked_offline", {
-                  runId,
-                  nodeId: attempt.nodeId,
-                  attempt: attempt.attempt,
-                  satelliteId: dispatchResult.satelliteId,
-                  since: deps.nowIso(),
-                });
-
-                return {
-                  nodeId: attempt.nodeId,
-                  status: "blocked" as const,
-                  satelliteId: dispatchResult.satelliteId,
-                  error: {
-                    code: dispatchResult.code,
-                    message: dispatchResult.message,
-                  },
-                };
-              }
-            }
-
-            const leaseExpiresAt = new Date(Date.now() + LEASE_TTL_MS).toISOString();
-            const leaseAcquired = deps.db.withWriteTransaction((db) =>
-              deps.nodeRepo.acquireLease(
-                db,
-                attempt.id,
-                "hub",
-                leaseExpiresAt,
-                deps.nowIso(),
-              ),
-            );
-
-            if (!leaseAcquired) {
-              return { nodeId: attempt.nodeId, status: "skipped" as const };
-            }
-
-            const timeoutMs = node.timeoutMs ?? 300_000;
-            // P2-WF-003: Store timeout handle for cleanup on success
-            let nodeTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
-            const result = await Promise.race([
-              deps.nodeExecutor.executeNode({
-                runId,
-                workflowId: runEntity.workflowId,
-                nodeId: attempt.nodeId,
-                attemptId: attempt.attemptId,
-                node,
-                inputData: (attempt.input as Record<string, unknown>) ?? {},
-                expressionContext: buildExpressionContext(
-                  runEntity,
-                  nodeContexts,
-                ),
-                signal: runSignal,
-              }),
-              new Promise<never>((_, reject) => {
-                nodeTimeoutHandle = setTimeout(
-                  () => reject(new Error("NODE_TIMEOUT")),
-                  timeoutMs,
-                );
-              }),
-            ]);
-            if (nodeTimeoutHandle !== undefined) clearTimeout(nodeTimeoutHandle);
-
-            deps.db.withWriteTransaction((db) => {
-              deps.nodeRepo.updateNodeAttempt(db, attempt.id, {
-                status: "completed",
-                output: result.output,
-                finishedAt: deps.nowIso(),
-                nowIso: deps.nowIso(),
-              });
-            });
-
-            await notifyNodeAttemptResultSafe({
-              runId,
-              workflowId: runEntity.workflowId,
-              nodeId: attempt.nodeId,
-              attempt: attempt.attempt,
-              status: "completed",
-            });
-
-            if (result.output != null) {
-              deps.artifactWriter.writeJsonArtifact(
-                runId,
-                attempt.nodeId,
-                result.output,
-              );
-            }
-
-            return {
-              nodeId: attempt.nodeId,
-              status: "completed" as const,
-              output: result.output,
-            };
-          } catch (err) {
-            const errorMessage =
-              err instanceof Error ? err.message : String(err);
-            const errorCode = errorMessage.startsWith("NODE_")
-              ? errorMessage.split(":")[0]!
-              : "NODE_EXECUTION_FAILED";
-
-            const errorObj = {
-              code: errorCode,
-              message: errorMessage,
-              retryable: true,
-            } as const;
-
-            const failureStatus = await persistNodeFailure({
-              runId,
-              workflowId: runEntity.workflowId,
-              attempt,
-              node: plan.nodeMap.get(attempt.nodeId)!,
-              error: errorObj,
-            });
-
-            return {
-              nodeId: attempt.nodeId,
-              status: failureStatus,
-              error: errorObj,
-            };
-          }
-        }),
+        attempts.map((attempt) =>
+          executeSingleNode(runId, attempt, plan, runEntity, nodeContexts, runSignal),
+        ),
       );
 
-      // Process results and update statuses
-      let hasFailure = false;
-      let hasPause = false;
-      let hasBlocked = false;
-
-      for (const result of results) {
-        if (result.status === "rejected") continue;
-        const { value } = result;
-
-        if (value.status === "completed") {
-          nodeStatuses.set(value.nodeId, "completed");
-          if ("output" in value && value.output != null) {
-            const outputObj =
-              typeof value.output === "object" && !Array.isArray(value.output)
-                ? (value.output as Record<string, unknown>)
-                : { value: value.output };
-            nodeContexts.set(value.nodeId, { output: outputObj, status: "completed" });
-          }
-        } else if (value.status === "failed") {
-          nodeStatuses.set(value.nodeId, "failed");
-          if ("error" in value && value.error != null) {
-            const errObj = value.error as { code: string; message: string };
-            nodeContexts.set(value.nodeId, {
-              output: { status: "failed" },
-              status: "failed",
-              error: { code: errObj.code, message: errObj.message },
-            });
-          }
-          hasFailure = true;
-        } else if (value.status === "retrying") {
-          // Don't set status — let next iteration pick it up
-          // Remove from nodeStatuses so it can be retried
-          nodeStatuses.delete(value.nodeId);
-        } else if (value.status === "paused") {
-          nodeStatuses.set(value.nodeId, "blocked_offline");
-          hasPause = true;
-        } else if (value.status === "dispatched") {
-          nodeStatuses.set(value.nodeId, "running");
-        } else if (value.status === "blocked") {
-          nodeStatuses.set(value.nodeId, "blocked_offline");
-          hasBlocked = true;
-        }
-      }
-      // Apply failure policy
-      if (hasFailure) {
-        const policy = plan.failurePolicy;
-        switch (policy.onFailure) {
-          case "fail_fast":
-            aborted = true;
-            deps.db.withWriteTransaction((db) => {
-              deps.nodeRepo.cancelAllPendingNodes(db, runId, deps.nowIso());
-              deps.runRepo.finalizeRun(db, runId, "failed", deps.nowIso(), {
-                code: "WORKFLOW_FAILED",
-                message: "Workflow failed due to fail_fast policy",
-              });
-            });
-            {
-              const counts = deps.db.withReadConnection((db) =>
-                deps.nodeRepo.countByStatus(db, runId),
-              );
-              await notifyRunCompleted({
-                runId,
-                workflowId: runEntity.workflowId,
-                workflowVersionId: runEntity.workflowVersionId,
-                status: "failed",
-                plan,
-                failedNodes: counts.failed,
-                completedNodes: counts.completed,
-                cancelledNodes: counts.cancelled,
-              });
-            }
-            return;
-
-          case "continue_on_error":
-            // Continue, failed nodes are terminal
-            break;
-
-          case "pause_for_approval":
-            deps.db.withWriteTransaction((db) => {
-              deps.runRepo.updateRunStatus(db, runId, "paused", deps.nowIso());
-            });
-            return;
-
-          case "fallback_step":
-            // Add fallback step to ready set if available
-            if (policy.fallbackStepId) {
-              nodeStatuses.delete(policy.fallbackStepId);
-            }
-            break;
-
-          case "compensate":
-            deps.db.withWriteTransaction((db) => {
-              deps.runRepo.updateRunStatus(
-                db,
-                runId,
-                "compensating",
-                deps.nowIso(),
-              );
-            });
-            return;
-        }
-      }
-
-      if (hasPause) {
+      // Process results and apply failure policy
+      const outcome = await applyBatchResults(runId, results, plan, runEntity, nodeStatuses, nodeContexts);
+      if (outcome.aborted) {
+        aborted = true;
         return;
       }
-
-      if (hasBlocked) {
-        deps.db.withWriteTransaction((db) => {
-          deps.runRepo.updateRunStatus(db, runId, "paused", deps.nowIso());
-        });
-        await deps.publishEvent?.("workflow.run.paused", {
-          runId,
-          reason: "satellite_blocked_offline",
-        });
+      if (outcome.paused || outcome.blocked) {
         return;
       }
     }
 
-    // Determine final status
-    if (!aborted) {
-      runEntity = deps.db.withReadConnection((db) =>
-        deps.runRepo.getRunById(db, runId),
-      )!;
-
-      if (runEntity.status === "running") {
-        // Check if any nodes failed
-        const counts = deps.db.withReadConnection((db) =>
-          deps.nodeRepo.countByStatus(db, runId),
-        );
-
-        if (counts.running > 0 || counts.queued > 0 || counts.retrying > 0) {
-          return;
-        }
-
-        if (counts.blocked_offline > 0) {
-          deps.db.withWriteTransaction((db) => {
-            deps.runRepo.updateRunStatus(db, runId, "paused", deps.nowIso());
-          });
-          await deps.publishEvent?.("workflow.run.paused", {
-            runId,
-            reason: "satellite_blocked_offline",
-          });
-          return;
-        }
-
-        const finalStatus: WorkflowRunStatus =
-          counts.failed > 0 ? "failed" : "completed";
-
-        deps.db.withWriteTransaction((db) => {
-          const failure =
-            finalStatus === "failed"
-              ? {
-                  code: "WORKFLOW_NODES_FAILED",
-                  message: `${counts.failed} node(s) failed`,
-                }
-              : undefined;
-          deps.runRepo.finalizeRun(
-            db,
-            runId,
-            finalStatus,
-            deps.nowIso(),
-            failure,
-          );
-        });
-
-        await notifyRunCompleted({
-          runId,
-          workflowId: runEntity.workflowId,
-          workflowVersionId: runEntity.workflowVersionId,
-          status: finalStatus,
-          plan,
-          failedNodes: counts.failed,
-          completedNodes: counts.completed,
-          cancelledNodes: counts.cancelled,
-        });
-      }
-    }
-
-    const finalRun = deps.db.withReadConnection((db) =>
-      deps.runRepo.getRunById(db, runId),
-    );
-    if (finalRun?.status === "completed" || finalRun?.status === "failed" || finalRun?.status === "cancelled") {
-      activePlans.delete(runId);
-      activeAbortControllers.delete(runId);
-      await deps.publishEvent?.("workflow.run.finished", { runId });
-    }
+    await finalizeRunStatus(runId, plan, aborted);
   }
 
   return {

@@ -107,7 +107,7 @@ export function createFridayAutoFixRiskAssessmentService(
         const baseline24h = counts24h.executed > 0
           ? counts24h.rolledBack / 24
           : 0;
-        if (baseline24h > 0 && counts1h.rolledBack > 3 * baseline24h) {
+        if (baseline24h > 0 && counts1h.rolledBack > Math.ceil(3 * baseline24h)) {
           riskTier = 2;
           reasons.push(
             `1h error spike (${counts1h.rolledBack} rollbacks) > 3x baseline (${baseline24h.toFixed(1)}/h) disables auto-apply`,

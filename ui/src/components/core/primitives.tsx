@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { type ButtonHTMLAttributes, type ReactNode, useState } from "react";
 import { cn } from "@/lib/utils/cn";
 
 export function ShellCard(props: {
@@ -34,9 +34,9 @@ export function StatusPill(props: {
     <span
       className={cn(
         "inline-flex min-h-[32px] items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] transition-colors",
-        props.tone === "success" && "border-emerald-200 bg-emerald-50 text-emerald-700",
-        props.tone === "warning" && "border-amber-200 bg-amber-50 text-amber-700",
-        props.tone === "danger" && "border-red-200 bg-red-50 text-red-700",
+        props.tone === "success" && "border-[color:var(--color-border-success)] bg-[color:var(--color-bg-success-subtle)] text-[color:var(--color-text-success)]",
+        props.tone === "warning" && "border-[color:var(--color-border-warning)] bg-[color:var(--color-bg-warning-subtle)] text-[color:var(--color-text-warning)]",
+        props.tone === "danger" && "border-[color:var(--color-border-danger)] bg-[color:var(--color-bg-danger-subtle)] text-[color:var(--color-text-danger)]",
         (!props.tone || props.tone === "neutral") && "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] text-[color:var(--color-text-secondary)]",
         props.className,
       )}
@@ -148,5 +148,64 @@ export function ThinkingDots() {
       <span className="thinking-dot" />
       <span className="thinking-dot" />
     </span>
+  );
+}
+
+/* ── Confirm Dialog ── */
+
+export function ConfirmDialog(props: {
+  open: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+  title: string;
+  description?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  tone?: "danger" | "primary";
+  loading?: boolean;
+}) {
+  if (!props.open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-label={props.title}>
+      <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={props.onCancel} />
+      <div className="relative z-10 mx-4 w-full max-w-sm rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-elevated)] p-6 shadow-[var(--shadow-card-strong)]">
+        <h3 className="text-base font-semibold text-[color:var(--color-text-primary)]">{props.title}</h3>
+        {props.description && (
+          <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">{props.description}</p>
+        )}
+        <div className="mt-5 flex justify-end gap-2">
+          <ActionButton tone="secondary" onClick={props.onCancel} disabled={props.loading}>
+            {props.cancelLabel ?? "Cancel"}
+          </ActionButton>
+          <ActionButton tone={props.tone ?? "danger"} onClick={props.onConfirm} disabled={props.loading}>
+            {props.confirmLabel ?? "Confirm"}
+          </ActionButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Empty State ── */
+
+export function EmptyState(props: {
+  title: string;
+  description?: string;
+  action?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex flex-col items-center justify-center py-12 text-center", props.className)}>
+      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[color:var(--color-bg-subtle)]">
+        <svg className="h-5 w-5 text-[color:var(--color-text-faint)]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5m6 4.125l2.25 2.25m0 0l2.25-2.25M12 13.875V7.5m0 0H9m3 0h3" />
+        </svg>
+      </div>
+      <h3 className="text-sm font-medium text-[color:var(--color-text-primary)]">{props.title}</h3>
+      {props.description && (
+        <p className="mt-1 max-w-xs text-xs leading-5 text-[color:var(--color-text-tertiary)]">{props.description}</p>
+      )}
+      {props.action && <div className="mt-4">{props.action}</div>}
+    </div>
   );
 }

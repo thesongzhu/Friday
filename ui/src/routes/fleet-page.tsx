@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Cpu, HeartPulse, Link2, RadioTower, ShieldCheck, Workflow } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ShellCard, SkeletonCard, SkeletonList, StatusPill } from "@/components/core/primitives";
+import { ActionButton, ConfirmDialog, ShellCard, SkeletonCard, SkeletonList, StatusPill } from "@/components/core/primitives";
 import { HelpTooltip } from "@/components/core/help-tooltip";
 import { localize, type AppLocale } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -79,6 +79,21 @@ export function FleetPage() {
   });
 
   const satellites = satellitesQuery.data?.items ?? [];
+
+  const pairingQuery = useQuery({
+    queryKey: ["fleet", "pairing-requests"],
+    queryFn: () => fleetApi.listPairingRequests(),
+    refetchInterval: 10_000,
+  });
+  const pendingPairings = useMemo(() => pairingQuery.data ?? [], [pairingQuery.data]);
+  const [pairingToApprove, setPairingToApprove] = useState<string | null>(null);
+  const approvePairingMutation = useMutation({
+    mutationFn: (satelliteId: string) => fleetApi.approvePairing(satelliteId),
+    onSuccess: () => {
+      setPairingToApprove(null);
+      void queryClient.invalidateQueries({ queryKey: ["fleet"] });
+    },
+  });
   const loopRunsQuery = useQuery({
     queryKey: ["fleet", "loop-runs"],
     queryFn: () => systemApi.listAgentLoopRuns({ limit: 12 }),
@@ -222,6 +237,22 @@ export function FleetPage() {
         </ShellCard>
 
         <ShellCard eyebrow={localize(locale, "卫星节点", "Satellites")} title={<>{localize(locale, "选择一个", "Choose a ")} <HelpTooltip term="satellite" /> {localize(locale, "查看或恢复", "to inspect or recover")}</>}>
+          {pendingPairings.length > 0 && (
+            <div className="mb-4 space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[color:var(--color-text-tertiary)]">{localize(locale, "待配对", "Pending Pairing")}</p>
+              {pendingPairings.map((req) => (
+                <div key={req.satelliteId} className="flex items-center justify-between gap-3 rounded-2xl border border-dashed border-[color:var(--color-accent-soft)] bg-[color:var(--color-accent-muted)] px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{req.displayName ?? req.satelliteId}</p>
+                    <p className="text-xs text-[color:var(--color-text-tertiary)]">{localize(locale, "等待批准配对", "Waiting for pairing approval")}</p>
+                  </div>
+                  <ActionButton className="!min-h-[36px] !px-3 !text-xs" onClick={() => setPairingToApprove(req.satelliteId)} disabled={approvePairingMutation.isPending}>
+                    {localize(locale, "批准配对", "Approve")}
+                  </ActionButton>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="space-y-3">
             {satellites.map((satellite) => (
               <button
@@ -509,6 +540,17 @@ export function FleetPage() {
           )}
         </ShellCard>
       </div>
+      <ConfirmDialog
+        open={pairingToApprove !== null}
+        title={localize(locale, "确认配对卫星", "Confirm Satellite Pairing")}
+        description={localize(locale, "批准后该节点将加入集群并可接收任务。", "Once approved, this satellite joins the fleet and can receive dispatched work.")}
+        confirmLabel={localize(locale, "批准", "Approve")}
+        cancelLabel={localize(locale, "取消", "Cancel")}
+        tone="primary"
+        loading={approvePairingMutation.isPending}
+        onConfirm={() => { if (pairingToApprove) approvePairingMutation.mutate(pairingToApprove); }}
+        onCancel={() => setPairingToApprove(null)}
+      />
     </div>
   );
 }

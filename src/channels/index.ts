@@ -90,7 +90,7 @@ export {
 
 // ─── Input Sanitization ───
 
-export { sanitizeChannelInput } from "./friday-channel-input-sanitizer.js";
+export { sanitizeChannelInput, FRIDAY_MAX_CHANNEL_INPUT_LENGTH } from "./friday-channel-input-sanitizer.js";
 
 // ─── Typing Controller (OC-005) ───
 
