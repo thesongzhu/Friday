@@ -18,7 +18,7 @@ const AutomationsPage = lazy(async () => import("@/routes/automations-page").the
 const FleetPage = lazy(async () => import("@/routes/fleet-page").then((module) => ({ default: module.FleetPage })));
 const GuidedFlowPage = lazy(async () => import("@/routes/guided-flow-page").then((module) => ({ default: module.GuidedFlowPage })));
 const HomePage = lazy(async () => import("@/routes/home-page").then((module) => ({ default: module.HomePage })));
-const LoginPage = lazy(async () => import("@/routes/login-page").then((module) => ({ default: module.LoginPage })));
+
 const MarketplacePage = lazy(async () => import("@/routes/marketplace-page").then((module) => ({ default: module.MarketplacePage })));
 const ObservabilityPage = lazy(async () => import("@/routes/observability-page").then((module) => ({ default: module.ObservabilityPage })));
 const OnboardingPage = lazy(async () => import("@/routes/onboarding-page").then((module) => ({ default: module.OnboardingPage })));
@@ -68,27 +68,28 @@ function RequireAuth({ children }: { children: ReactNode }) {
   const { isAuthenticated, isLoading, login: doLogin } = useAuth();
   const [retrying, setRetrying] = useState(false);
 
-  // If not authenticated and not loading, retry local auto-login once before showing login page.
+  // Auto-login silently — no login page, just keep trying local auth.
   useEffect(() => {
     if (!isLoading && !isAuthenticated && !retrying) {
       setRetrying(true);
       doLogin({ local: true }).catch(() => {
-        // Auto-login failed — will fall through to login page.
+        // Retry once more after a short delay (server may still be booting).
+        setTimeout(() => {
+          doLogin({ local: true }).catch(() => {
+            // Silent failure — stay on loading screen.
+          });
+        }, 2000);
       });
     }
   }, [isLoading, isAuthenticated, retrying, doLogin]);
 
-  if (isLoading || (!isAuthenticated && retrying)) {
+  if (isLoading || !isAuthenticated) {
     return (
       <FullscreenMessage
         title={localizedText("启动 Friday", "Starting Friday")}
         detail={localizedText("Friday 正在准备你的本地会话。", "Friday is preparing your local session.")}
       />
     );
-  }
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
   }
 
   return <>{children}</>;
@@ -194,14 +195,7 @@ function LegacyRedirectPage() {
 export const router = createBrowserRouter([
   {
     path: "/login",
-    element: (
-      <RouteSuspense
-        title={localizedText("加载登录", "Loading login")}
-        detail={localizedText("Friday 正在准备登录界面。", "Friday is preparing the sign-in surface.")}
-      >
-        <LoginPage />
-      </RouteSuspense>
-    ),
+    element: <Navigate to="/" replace />,
   },
   {
     path: "/",
