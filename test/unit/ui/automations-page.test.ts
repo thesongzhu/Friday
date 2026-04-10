@@ -32,6 +32,14 @@ vi.mock("sonner", () => ({
   },
 }));
 
+vi.mock("@/providers/locale-provider", () => ({
+  useAppLocale: () => "en",
+}));
+
+vi.mock("@/lib/i18n/localized-text", () => ({
+  localize: (_locale: string, _zh: string, en: string) => en,
+}));
+
 function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }

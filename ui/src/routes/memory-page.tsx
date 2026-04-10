@@ -1,13 +1,16 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Brain, Plus, Search, Tag, Trash2 } from "lucide-react";
+import { SkeletonList } from "@/components/core/primitives";
 import { toast } from "sonner";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { memoryApi } from "@/lib/api/memory";
+import { localize } from "@/lib/i18n/localized-text";
+import { useAppLocale } from "@/providers/locale-provider";
 import type { FridayMemoryItem } from "@/lib/api/types";
 
 function formatTimestamp(value?: string): string {
-  if (!value) return "Unknown";
+  if (!value) return "—";
   return new Date(value).toLocaleString();
 }
 
@@ -19,6 +22,7 @@ function toneForNamespace(ns: string): "neutral" | "success" | "warning" {
 
 export function MemoryPage() {
   const queryClient = useQueryClient();
+  const { locale } = useAppLocale();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
 
@@ -36,22 +40,22 @@ export function MemoryPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => memoryApi.deleteItem(id),
     onSuccess: async () => {
-      toast.success("Memory item deleted");
+      toast.success(localize(locale, "记忆已删除", "Memory item deleted"));
       await queryClient.invalidateQueries({ queryKey: ["memory"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to delete memory item");
+      toast.error(error instanceof Error ? error.message : localize(locale, "删除记忆失败", "Failed to delete memory item"));
     },
   });
 
   const pruneMutation = useMutation({
     mutationFn: () => memoryApi.prune({ expiredOnly: true }),
     onSuccess: async (result) => {
-      toast.success(`Pruned ${String(result.deletedCount)} expired items`);
+      toast.success(localize(locale, `已清理 ${String(result.deletedCount)} 条过期记忆`, `Pruned ${String(result.deletedCount)} expired items`));
       await queryClient.invalidateQueries({ queryKey: ["memory"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to prune memory");
+      toast.error(error instanceof Error ? error.message : localize(locale, "清理记忆失败", "Failed to prune memory"));
     },
   });
 
@@ -59,12 +63,12 @@ export function MemoryPage() {
     mutationFn: (input: { namespace: string; content: string; key: string; tags: string[] }) =>
       memoryApi.store(input),
     onSuccess: async () => {
-      toast.success("Memory item stored");
+      toast.success(localize(locale, "记忆已保存", "Memory item stored"));
       setShowAddForm(false);
       await queryClient.invalidateQueries({ queryKey: ["memory"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to store memory item");
+      toast.error(error instanceof Error ? error.message : localize(locale, "保存记忆失败", "Failed to store memory item"));
     },
   });
 
@@ -80,19 +84,23 @@ export function MemoryPage() {
 
   return (
     <div className="space-y-4">
-      <ShellCard eyebrow="Memory Store" title="Stored Knowledge">
+      <ShellCard eyebrow={localize(locale, "记忆存储", "Memory Store")} title={localize(locale, "已记忆的知识", "Stored Knowledge")}>
         <div className="space-y-4">
           <p className="text-sm text-[color:var(--color-text-secondary)]">
-            Friday remembers facts, preferences, and context across sessions.
-            Items shown here are stored in the memory subsystem and used to personalize responses.
+            {localize(
+              locale,
+              "Friday 会跨会话记住事实、偏好和上下文。这里展示的项目存储在记忆系统中，用于个性化响应。",
+              "Friday remembers facts, preferences, and context across sessions. Items shown here are stored in the memory subsystem and used to personalize responses.",
+            )}
           </p>
 
           <div className="flex gap-2">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--color-text-faint)]" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--color-text-faint)]" aria-hidden="true" />
               <input
                 type="text"
-                placeholder="Search memories..."
+                aria-label={localize(locale, "搜索记忆", "Search memories")}
+                placeholder={localize(locale, "搜索记忆...", "Search memories...")}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => {
@@ -102,7 +110,7 @@ export function MemoryPage() {
               />
             </div>
             <ActionButton onClick={handleSearch} disabled={searchQuery.trim().length === 0}>
-              Search
+              {localize(locale, "搜索", "Search")}
             </ActionButton>
             {activeSearch.length > 0 && (
               <ActionButton
@@ -112,7 +120,7 @@ export function MemoryPage() {
                   setActiveSearch("");
                 }}
               >
-                Clear
+                {localize(locale, "清除", "Clear")}
               </ActionButton>
             )}
           </div>
@@ -120,22 +128,23 @@ export function MemoryPage() {
           <div className="flex items-center justify-between">
             <p className="text-xs text-[color:var(--color-text-faint)]">
               {activeSearch
-                ? `${String(displayItems.length)} results for "${activeSearch}"`
-                : `${String(displayItems.length)} items total`}
+                ? localize(locale, `"${activeSearch}" 的 ${String(displayItems.length)} 条结果`, `${String(displayItems.length)} results for "${activeSearch}"`)
+                : localize(locale, `共 ${String(displayItems.length)} 条记忆`, `${String(displayItems.length)} items total`)}
             </p>
             <div className="flex gap-2">
               <ActionButton tone="secondary" onClick={() => setShowAddForm(!showAddForm)}>
-                <Plus className="mr-1 h-3 w-3" />
-                Add Memory
+                <Plus className="mr-1 h-3 w-3" aria-hidden="true" />
+                {localize(locale, "添加记忆", "Add Memory")}
               </ActionButton>
               <ActionButton tone="secondary" onClick={() => pruneMutation.mutate()} disabled={pruneMutation.isPending}>
-                Prune Expired
+                {localize(locale, "清理过期", "Prune Expired")}
               </ActionButton>
             </div>
           </div>
 
           {showAddForm && (
             <AddMemoryForm
+              locale={locale}
               onSubmit={(input) => storeMutation.mutate(input)}
               pending={storeMutation.isPending}
               onCancel={() => setShowAddForm(false)}
@@ -146,14 +155,16 @@ export function MemoryPage() {
 
       {isLoading ? (
         <ShellCard>
-          <p className="text-sm text-[color:var(--color-text-secondary)]">Loading memories...</p>
+          <SkeletonList rows={4} />
         </ShellCard>
       ) : displayItems.length === 0 ? (
         <ShellCard>
           <div className="flex flex-col items-center gap-3 py-8 text-center">
-            <Brain className="h-8 w-8 text-[color:var(--color-text-faint)]" />
+            <Brain className="h-8 w-8 text-[color:var(--color-text-faint)]" aria-hidden="true" />
             <p className="text-sm text-[color:var(--color-text-secondary)]">
-              {activeSearch ? "No memories match your search." : "No memories stored yet. Friday will learn as you interact."}
+              {activeSearch
+                ? localize(locale, "没有匹配的记忆。", "No memories match your search.")
+                : localize(locale, "暂无记忆。Friday 会在你使用过程中自动学习。", "No memories stored yet. Friday will learn as you interact.")}
             </p>
           </div>
         </ShellCard>
@@ -169,7 +180,7 @@ export function MemoryPage() {
                       {item.source ? <StatusPill>{item.source}</StatusPill> : null}
                       {item.expiresAt ? (
                         <span className="text-xs text-[color:var(--color-text-faint)]">
-                          expires {formatTimestamp(item.expiresAt)}
+                          {localize(locale, "过期于", "expires")} {formatTimestamp(item.expiresAt)}
                         </span>
                       ) : null}
                     </div>
@@ -179,10 +190,10 @@ export function MemoryPage() {
                     type="button"
                     onClick={() => deleteMutation.mutate(item.id)}
                     disabled={deleteMutation.isPending}
+                    aria-label={localize(locale, "删除此记忆", "Delete this memory")}
                     className="shrink-0 rounded-xl p-2 text-[color:var(--color-text-faint)] transition-colors hover:bg-[color:var(--color-bg-contrast)] hover:text-[color:var(--color-text-primary)]"
-                    title="Delete this memory"
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 className="h-4 w-4" aria-hidden="true" />
                   </button>
                 </div>
 
@@ -190,7 +201,7 @@ export function MemoryPage() {
 
                 {item.tags.length > 0 ? (
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <Tag className="h-3 w-3 text-[color:var(--color-text-faint)]" />
+                    <Tag className="h-3 w-3 text-[color:var(--color-text-faint)]" aria-hidden="true" />
                     {item.tags.map((tag) => (
                       <span key={tag} className="rounded-full bg-[color:var(--color-bg-subtle)] px-2 py-0.5 text-xs text-[color:var(--color-text-tertiary)]">
                         {tag}
@@ -200,8 +211,8 @@ export function MemoryPage() {
                 ) : null}
 
                 <p className="text-xs text-[color:var(--color-text-faint)]">
-                  Created {formatTimestamp(item.createdAt)}
-                  {item.updatedAt !== item.createdAt ? ` · Updated ${formatTimestamp(item.updatedAt)}` : ""}
+                  {localize(locale, "创建于", "Created")} {formatTimestamp(item.createdAt)}
+                  {item.updatedAt !== item.createdAt ? ` · ${localize(locale, "更新于", "Updated")} ${formatTimestamp(item.updatedAt)}` : ""}
                 </p>
               </div>
             </ShellCard>
@@ -213,10 +224,12 @@ export function MemoryPage() {
 }
 
 function AddMemoryForm(props: {
+  locale: import("@/lib/i18n/localized-text").AppLocale;
   onSubmit: (input: { namespace: string; content: string; key: string; tags: string[] }) => void;
   pending: boolean;
   onCancel: () => void;
 }) {
+  const { locale } = props;
   const [namespace, setNamespace] = useState("user");
   const [key, setKey] = useState("");
   const [content, setContent] = useState("");
@@ -226,26 +239,26 @@ function AddMemoryForm(props: {
 
   return (
     <div className="space-y-3 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
-      <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Add memory item</p>
+      <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">{localize(locale, "添加记忆项", "Add memory item")}</p>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Namespace</label>
+          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">{localize(locale, "命名空间", "Namespace")}</label>
           <select
             value={namespace}
             onChange={(e) => setNamespace(e.target.value)}
             className="agent-select px-3 py-2 text-sm"
           >
-            <option value="user">user</option>
-            <option value="preference">preference</option>
-            <option value="system">system</option>
-            <option value="agent">agent</option>
+            <option value="user">{localize(locale, "用户", "user")}</option>
+            <option value="preference">{localize(locale, "偏好", "preference")}</option>
+            <option value="system">{localize(locale, "系统", "system")}</option>
+            <option value="agent">{localize(locale, "agent", "agent")}</option>
           </select>
         </div>
         <div>
-          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Key</label>
+          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">{localize(locale, "键名", "Key")}</label>
           <input
             type="text"
-            placeholder="e.g. favorite-language"
+            placeholder={localize(locale, "例如: 常用语言", "e.g. favorite-language")}
             value={key}
             onChange={(e) => setKey(e.target.value)}
             className="agent-input px-3 py-2 text-sm"
@@ -253,20 +266,20 @@ function AddMemoryForm(props: {
         </div>
       </div>
       <div>
-        <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Content</label>
+        <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">{localize(locale, "内容", "Content")}</label>
         <textarea
           rows={3}
-          placeholder="The information to remember..."
+          placeholder={localize(locale, "需要记住的信息...", "The information to remember...")}
           value={content}
           onChange={(e) => setContent(e.target.value)}
           className="agent-textarea resize-none px-3 py-2 text-sm"
         />
       </div>
       <div>
-        <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Tags (comma-separated)</label>
+        <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">{localize(locale, "标签（逗号分隔）", "Tags (comma-separated)")}</label>
         <input
           type="text"
-          placeholder="e.g. lang, preference"
+          placeholder={localize(locale, "例如: 语言, 偏好", "e.g. lang, preference")}
           value={tagsInput}
           onChange={(e) => setTagsInput(e.target.value)}
           className="agent-input px-3 py-2 text-sm"
@@ -287,10 +300,10 @@ function AddMemoryForm(props: {
             })
           }
         >
-          {props.pending ? "Storing..." : "Store"}
+          {props.pending ? localize(locale, "保存中...", "Storing...") : localize(locale, "保存", "Store")}
         </ActionButton>
         <ActionButton tone="secondary" onClick={props.onCancel}>
-          Cancel
+          {localize(locale, "取消", "Cancel")}
         </ActionButton>
       </div>
     </div>

@@ -3,8 +3,10 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Cpu, HeartPulse, Link2, RadioTower, ShieldCheck, Workflow } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ShellCard, StatusPill } from "@/components/core/primitives";
+import { ShellCard, SkeletonCard, SkeletonList, StatusPill } from "@/components/core/primitives";
 import { HelpTooltip } from "@/components/core/help-tooltip";
+import { localize, type AppLocale } from "@/lib/i18n/localized-text";
+import { useAppLocale } from "@/providers/locale-provider";
 import { fleetApi } from "@/lib/api/fleet";
 import { systemApi } from "@/lib/api/system";
 import {
@@ -53,6 +55,7 @@ function FleetMetricCard(props: {
 }
 
 export function FleetPage() {
+  const { locale } = useAppLocale();
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedSatelliteId, setSelectedSatelliteId] = useState<string | null>(null);
   const queryClient = useQueryClient();
@@ -135,8 +138,8 @@ export function FleetPage() {
     <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
       <div className="space-y-4">
         <ShellCard
-          eyebrow="Assistant Handoff"
-          title="Recover degraded nodes with guided actions"
+          eyebrow={localize(locale, "助手引导", "Assistant Handoff")}
+          title={localize(locale, "通过引导操作恢复降级节点", "Recover degraded nodes with guided actions")}
           aside={
             overview ? (
               <StatusPill tone={overview.totals.degraded > 0 ? "warning" : "success"}>
@@ -161,13 +164,13 @@ export function FleetPage() {
                 />
                 <FleetMetricCard
                   icon={<Link2 className="h-4 w-4" />}
-                  label="Blocked work"
+                  label={localize(locale, "阻塞任务", "Blocked work")}
                   value={String(overview.queue.deadLetter + overview.queue.failed)}
                   detail={`${overview.queue.queued + overview.queue.leased} queued or leased`}
                 />
                 <FleetMetricCard
                   icon={<Workflow className="h-4 w-4" />}
-                  label="Recovery loops"
+                  label={localize(locale, "恢复循环", "Recovery loops")}
                   value={String(fleetLoopRuns.length)}
                   detail="Active or recent remediation runs"
                 />
@@ -178,13 +181,13 @@ export function FleetPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Fleet Control Plane" title={<><HelpTooltip term="fleet" /> — distributed execution overview</>}>
+        <ShellCard eyebrow={localize(locale, "设备集群控制台", "Fleet Control Plane")} title={<><HelpTooltip term="fleet" /> — {localize(locale, "分布式执行概览", "distributed execution overview")}</>}>
           {overview ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <FleetMetricCard
                   icon={<RadioTower className="h-4 w-4" />}
-                  label="Online satellites"
+                  label={localize(locale, "在线节点", "Online satellites")}
                   value={String(overview.totals.online)}
                   detail={`${overview.totals.satellites} registered · ${overview.totals.degraded} degraded`}
                 />
@@ -218,7 +221,7 @@ export function FleetPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Satellites" title={<>Choose a <HelpTooltip term="satellite" /> to inspect or recover</>}>
+        <ShellCard eyebrow={localize(locale, "卫星节点", "Satellites")} title={<>{localize(locale, "选择一个", "Choose a ")} <HelpTooltip term="satellite" /> {localize(locale, "查看或恢复", "to inspect or recover")}</>}>
           <div className="space-y-3">
             {satellites.map((satellite) => (
               <button
@@ -252,15 +255,15 @@ export function FleetPage() {
             ))}
             {satellites.length === 0 ? (
               <div className="space-y-2 text-sm text-[color:var(--color-text-secondary)]">
-                <p>No satellites have registered yet.</p>
+                <p>{localize(locale, "暂无卫星节点注册。", "No satellites have registered yet.")}</p>
                 <p>Friday can help you set up remote devices to extend your automation reach.</p>
-                <Link to="/chat" className="inline-flex items-center rounded-full border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-strong)]">Learn more in Chat</Link>
+                <Link to="/chat" className="inline-flex items-center rounded-full border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-strong)]">{localize(locale, "在聊天中了解更多", "Learn more in Chat")}</Link>
               </div>
             ) : null}
           </div>
         </ShellCard>
 
-        <ShellCard eyebrow="Recovery Loop" title="Repair attempts and blocked recovery">
+        <ShellCard eyebrow={localize(locale, "恢复循环", "Recovery Loop")} title={localize(locale, "修复尝试和阻塞的恢复", "Repair attempts and blocked recovery")}>
           {fleetLoopRuns.length > 0 ? (
             <div className="space-y-3">
               {fleetLoopRuns.map((record) => (
@@ -294,8 +297,8 @@ export function FleetPage() {
 
       <div className="space-y-4">
         <ShellCard
-          eyebrow="Node Detail"
-          title={selectedSatellite?.displayName ? `${selectedSatellite.displayName} detail` : "Satellite detail"}
+          eyebrow={localize(locale, "节点详情", "Node Detail")}
+          title={selectedSatellite?.displayName ? `${selectedSatellite.displayName} ${localize(locale, "详情", "detail")}` : localize(locale, "卫星节点详情", "Satellite detail")}
           aside={
             detail?.satellite ? (
               <StatusPill tone={toneForFleetPairing(detail.satellite.pairingStatus)}>
@@ -345,7 +348,7 @@ export function FleetPage() {
                               })
                             }
                           >
-                            {remediationMutation.isPending ? "Running..." : "Run step"}
+                            {remediationMutation.isPending ? localize(locale, "运行中...", "Running...") : localize(locale, "执行步骤", "Run step")}
                           </button>
                         ) : null}
                         <Link

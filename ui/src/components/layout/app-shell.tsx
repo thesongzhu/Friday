@@ -75,7 +75,7 @@ export function AppShell() {
   return (
     <div className="min-h-screen bg-[color:var(--color-bg-base)] text-[color:var(--color-text-primary)]">
       <div className="relative flex min-h-screen w-full pb-24 lg:pb-0">
-        <aside data-testid="app-shell-rail" className="hidden lg:block lg:w-[248px] lg:shrink-0">
+        <aside data-testid="app-shell-rail" role="navigation" aria-label="Main navigation" className="hidden lg:block lg:w-[248px] lg:shrink-0">
           <div className="sticky top-0 flex min-h-screen flex-col border-r border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-chrome)] px-4 py-5 shadow-[inset_-1px_0_0_rgba(51,41,34,0.04)] backdrop-blur-md">
             <div className="border-b border-[color:var(--color-border-soft)] pb-4">
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[color:var(--color-text-faint)]">Friday</p>
@@ -232,7 +232,7 @@ export function AppShell() {
         </div>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-chrome-strong)] px-3 py-2 backdrop-blur-xl lg:hidden">
+      <nav aria-label="Mobile navigation" className="fixed inset-x-0 bottom-0 z-30 border-t border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-chrome-strong)] px-3 py-2 backdrop-blur-xl lg:hidden">
         <div className="mx-auto grid max-w-2xl grid-cols-5 gap-2">
           {primaryNav.map((item) => (
             <NavLink
