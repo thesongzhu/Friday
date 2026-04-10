@@ -9,6 +9,9 @@ import type {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Brain, Cpu, DollarSign, KeyRound, MessageCircleMore, Shield, Sliders, Wifi, Wrench } from "lucide-react";
 import { toast } from "sonner";
+import { localize, type AppLocale } from "@/lib/i18n/localized-text";
+import { useAppLocale } from "@/providers/locale-provider";
+import { ChannelConfigForm } from "@/components/core/channel-config-form";
 import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { channelsApi } from "@/lib/api/channels";
 import { healthApi } from "@/lib/api/health";
@@ -85,6 +88,7 @@ function applyDraftToPreferencePayload(draft: {
 }
 
 export function SettingsPage() {
+  const { locale } = useAppLocale();
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState(() => buildPersonaDraft());
 
@@ -336,7 +340,7 @@ export function SettingsPage() {
   return (
     <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
       <div className="space-y-4">
-        <ShellCard eyebrow="System Health" title="Diagnostics">
+        <ShellCard eyebrow={localize(locale, "系统健康", "System Health")} title={localize(locale, "诊断", "Diagnostics")}>
           {health ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
@@ -354,7 +358,7 @@ export function SettingsPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Identity" title="Operator Access">
+        <ShellCard eyebrow={localize(locale, "身份", "Identity")} title={localize(locale, "运维访问", "Operator Access")}>
           {me ? (
             <div className="space-y-3 text-sm text-[color:var(--color-text-secondary)]">
               <div className="flex items-center justify-between gap-4">
@@ -379,7 +383,7 @@ export function SettingsPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Providers" title="Model Routing Basics">
+        <ShellCard eyebrow={localize(locale, "提供商", "Providers")} title={localize(locale, "模型路由基础", "Model Routing Basics")}>
           {providers.length === 0 ? (
             <p className="text-sm text-[color:var(--color-text-secondary)]">No providers configured yet.</p>
           ) : (
@@ -432,7 +436,7 @@ export function SettingsPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Operator" title="Routing Explainability">
+        <ShellCard eyebrow={localize(locale, "运维", "Operator")} title={localize(locale, "路由可解释性", "Routing Explainability")}>
           {routingExplain ? (
             <div className="space-y-4">
               <div className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
@@ -520,7 +524,7 @@ export function SettingsPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Communication" title="Persona">
+        <ShellCard eyebrow={localize(locale, "沟通", "Communication")} title={localize(locale, "人格", "Persona")}>
           <div className="space-y-4">
             <p className="text-sm text-[color:var(--color-text-secondary)]">
               MBTI is a comfort-oriented starting template. The actual behavior comes from the settings below, and it never weakens safety or approval boundaries.
@@ -630,7 +634,7 @@ export function SettingsPage() {
       </div>
 
       <div className="space-y-4">
-        <ShellCard eyebrow="Agent OS Session" title="Companion And Permissions">
+        <ShellCard eyebrow={localize(locale, "Agent OS 会话", "Agent OS Session")} title={localize(locale, "伴侣与权限", "Companion And Permissions")}>
           {systemSession && systemState ? (
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-2">
@@ -675,7 +679,7 @@ export function SettingsPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Companion State" title="Desktop Surfaces">
+        <ShellCard eyebrow={localize(locale, "伴侣状态", "Companion State")} title={localize(locale, "桌面面板", "Desktop Surfaces")}>
           {systemState ? (
             <div className="space-y-3">
               <DiagnosticRow label="Frontmost App" value={systemState.frontmostAppId ?? "Unknown"} />
@@ -689,7 +693,7 @@ export function SettingsPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Token Economy" title="LLM Budget">
+        <ShellCard eyebrow={localize(locale, "Token 经济", "Token Economy")} title={localize(locale, "LLM 预算", "LLM Budget")}>
           {budgetStatus ? (
             <div className="space-y-3">
               <div className="grid gap-3 sm:grid-cols-2">
@@ -729,7 +733,7 @@ export function SettingsPage() {
         </ShellCard>
 
         {learnedFacts.length > 0 ? (
-          <ShellCard eyebrow="Learning" title="What Friday Knows About You">
+          <ShellCard eyebrow={localize(locale, "学习", "Learning")} title={localize(locale, "Friday 对你的了解", "What Friday Knows About You")}>
             <div className="space-y-3">
               <p className="text-sm text-[color:var(--color-text-secondary)]">
                 These are preferences and facts Friday has learned from your interactions.
@@ -757,7 +761,7 @@ export function SettingsPage() {
           </ShellCard>
         ) : null}
 
-        <ShellCard eyebrow="Operator" title="Learning Controls">
+        <ShellCard eyebrow={localize(locale, "运维", "Operator")} title={localize(locale, "学习控制", "Learning Controls")}>
           {learningOverview ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
@@ -826,7 +830,7 @@ export function SettingsPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Security" title="Security Center">
+        <ShellCard eyebrow={localize(locale, "安全", "Security")} title={localize(locale, "安全中心", "Security Center")}>
           {securityCenter ? (
             <div className="space-y-3">
               <div className="grid gap-3 sm:grid-cols-2">
@@ -859,7 +863,7 @@ export function SettingsPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Capability Management" title="MCP And Channel Surfaces">
+        <ShellCard eyebrow={localize(locale, "能力管理", "Capability Management")} title={localize(locale, "MCP 与通道面板", "MCP And Channel Surfaces")}>
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-3">
               <DiagnosticTile icon={<Wrench className="h-4 w-4" />} label="MCP Loaded" value={`${loadedMcpCount}/${mcpStates.length}`} />
@@ -946,10 +950,15 @@ export function SettingsPage() {
                 ))
               )}
             </div>
+
+            <div className="mt-4 border-t border-[color:var(--color-border-soft)] pt-4">
+              <p className="agent-eyebrow mb-3">{localize(locale, "添加通道", "Add Channel")}</p>
+              <ChannelConfigForm locale={locale} />
+            </div>
           </div>
         </ShellCard>
 
-        <ShellCard eyebrow="Capabilities" title="Tool Availability">
+        <ShellCard eyebrow={localize(locale, "能力", "Capabilities")} title={localize(locale, "工具可用性", "Tool Availability")}>
           {health ? (
             <div className="space-y-2">
               {[
@@ -975,7 +984,7 @@ export function SettingsPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Agent Loop" title="Automation Policy">
+        <ShellCard eyebrow={localize(locale, "Agent 循环", "Agent Loop")} title={localize(locale, "自动化策略", "Automation Policy")}>
           {agentLoopPolicy ? (
             <div className="space-y-3">
               <div className="grid gap-3 sm:grid-cols-2">

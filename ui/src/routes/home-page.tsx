@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, Clock3, ListFilter, Pin, Plus, Sparkles } from "lucide-react";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { LearningInsightCard } from "@/components/core/learning-insight-card";
+import { computeIntentWidgetOrder, recordPageVisit } from "@/lib/home/intent-engine";
 import { ContextualHelp } from "@/components/core/contextual-help";
 import { CrossBorderActionBoard } from "@/components/packs/cross-border-action-board";
 import { PackCard } from "@/components/packs/pack-card";
@@ -178,7 +179,20 @@ export function HomePage() {
     recommended_to_add: localize(locale, "推荐加入", "Recommended"),
   };
 
-  const renderedWidgets = widgetOrder.filter((widgetId) => visibleWidgets.includes(widgetId));
+  // Record page visit for intent tracking
+  useEffect(() => { recordPageVisit("/home"); }, []);
+
+  // Apply intent-aware widget order if available
+  const smartOrder = useMemo(() => computeIntentWidgetOrder({
+    currentWidgetOrder: widgetOrder.filter((id) => visibleWidgets.includes(id)),
+    hasActiveAlerts: pendingApprovals.length > 0,
+    hasActiveRuns: activeRuns.length > 0,
+    hasPendingApprovals: pendingApprovals.length > 0,
+    hasScheduledSoon: scheduledAutomations.length > 0,
+    hour: new Date().getHours(),
+  }), [widgetOrder, visibleWidgets, pendingApprovals, activeRuns, scheduledAutomations]);
+
+  const renderedWidgets = smartOrder ?? widgetOrder.filter((widgetId) => visibleWidgets.includes(widgetId));
 
   return (
     <div className="space-y-5 pb-4">

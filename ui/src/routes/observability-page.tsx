@@ -308,45 +308,45 @@ export function ObservabilityPage() {
     mutationFn: (input: { alertId: string; note?: string }) =>
       systemApi.acknowledgeObservabilityAlert(input.alertId, input.note),
     onSuccess: () => {
-      toast.success("Alert acknowledged.");
+      toast.success(localize(locale, "告警已确认。", "Alert acknowledged."));
       void queryClient.invalidateQueries({ queryKey: ["observability", "alerts"] });
       void queryClient.invalidateQueries({ queryKey: ["observability", "overview"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not acknowledge alert.");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法确认告警。", "Could not acknowledge alert."));
     },
   });
 
   const resumeLoopRunMutation = useMutation({
     mutationFn: (loopRunId: string) => systemApi.resumeAgentLoopRun(loopRunId),
     onSuccess: () => {
-      toast.success("Loop run resumed.");
+      toast.success(localize(locale, "循环运行已恢复。", "Loop run resumed."));
       void queryClient.invalidateQueries({ queryKey: ["observability", "agent-loop-runs"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not resume loop run.");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法恢复循环运行。", "Could not resume loop run."));
     },
   });
 
   const cancelLoopRunMutation = useMutation({
     mutationFn: (loopRunId: string) => systemApi.cancelAgentLoopRun(loopRunId),
     onSuccess: () => {
-      toast.success("Loop run cancelled.");
+      toast.success(localize(locale, "循环运行已取消。", "Loop run cancelled."));
       void queryClient.invalidateQueries({ queryKey: ["observability", "agent-loop-runs"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not cancel loop run.");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法取消循环运行。", "Could not cancel loop run."));
     },
   });
 
   const deleteDestinationMutation = useMutation({
     mutationFn: (destinationId: string) => systemApi.deleteObservabilityAlertDestination(destinationId),
     onSuccess: () => {
-      toast.success("Alert destination deleted.");
+      toast.success(localize(locale, "告警目标已删除。", "Alert destination deleted."));
       void queryClient.invalidateQueries({ queryKey: ["observability", "alert-destinations"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not delete destination.");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法删除告警目标。", "Could not delete destination."));
     },
   });
 
@@ -354,12 +354,12 @@ export function ObservabilityPage() {
     mutationFn: (input: { type: "slack"; name: string; webhookUrl: string }) =>
       systemApi.createObservabilityAlertDestination(input),
     onSuccess: () => {
-      toast.success("Alert destination created.");
+      toast.success(localize(locale, "告警目标已创建。", "Alert destination created."));
       void queryClient.invalidateQueries({ queryKey: ["observability", "alert-destinations"] });
       setShowCreateDest(false);
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not create destination.");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法创建告警目标。", "Could not create destination."));
     },
   });
 
@@ -369,11 +369,11 @@ export function ObservabilityPage() {
       return systemApi.updateObservabilityAlertDestination(id, patch);
     },
     onSuccess: () => {
-      toast.success("Alert destination updated.");
+      toast.success(localize(locale, "告警目标已更新。", "Alert destination updated."));
       void queryClient.invalidateQueries({ queryKey: ["observability", "alert-destinations"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not update destination.");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法更新告警目标。", "Could not update destination."));
     },
   });
 
@@ -381,10 +381,10 @@ export function ObservabilityPage() {
     mutationFn: (input: { alertId: string; destinationId?: string }) =>
       systemApi.testObservabilityAlertDispatch(input.alertId, input.destinationId),
     onSuccess: () => {
-      toast.success("Test alert dispatched.");
+      toast.success(localize(locale, "测试告警已发送。", "Test alert dispatched."));
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not dispatch test alert.");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法发送测试告警。", "Could not dispatch test alert."));
     },
   });
 
@@ -395,12 +395,12 @@ export function ObservabilityPage() {
         sliMetric: { name: "custom.metric", displayName: input.name, description: input.description ?? "", type: "success_rate", unit: "percent", module: "system" },
       }),
     onSuccess: () => {
-      toast.success("SLO created.");
+      toast.success(localize(locale, "SLO 已创建。", "SLO created."));
       setShowCreateSlo(false);
       void queryClient.invalidateQueries({ queryKey: ["observability", "slos"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not create SLO.");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法创建 SLO。", "Could not create SLO."));
     },
   });
 
@@ -408,11 +408,11 @@ export function ObservabilityPage() {
     mutationFn: (input: { sloId: string; etag: string }) =>
       systemApi.deleteObservabilitySlo(input.sloId, input.etag),
     onSuccess: () => {
-      toast.success("SLO deleted.");
+      toast.success(localize(locale, "SLO 已删除。", "SLO deleted."));
       void queryClient.invalidateQueries({ queryKey: ["observability", "slos"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not delete SLO.");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法删除 SLO。", "Could not delete SLO."));
     },
   });
 
@@ -498,10 +498,10 @@ export function ObservabilityPage() {
             summary: highlightedIssue.summary,
             detail:
               highlightedIssue.kind === "approval_required"
-                ? "A guided recovery is waiting behind an approval gate."
+                ? localize(locale, "一个引导恢复正在审批门后等待。", "A guided recovery is waiting behind an approval gate.")
                 : highlightedIssue.kind === "failed_fix"
-                  ? "Friday already tried a bounded repair here. Review the rollback evidence before retrying."
-                  : "Inspect the issue evidence, then move into a guided recovery path.",
+                  ? localize(locale, "Friday 已尝试过有限修复。请先检查回滚证据再重试。", "Friday already tried a bounded repair here. Review the rollback evidence before retrying.")
+                  : localize(locale, "检查问题证据，然后进入引导恢复路径。", "Inspect the issue evidence, then move into a guided recovery path."),
             tone: toneForIssueSeverity(highlightedIssue.severity),
           };
         }
@@ -509,7 +509,7 @@ export function ObservabilityPage() {
           return {
             title: highlightedAlert.ruleName,
             summary: highlightedAlert.summary,
-            detail: "This is the sharpest live alert. Acknowledge it here, then open the deeper recovery path if needed.",
+            detail: localize(locale, "这是最紧急的实时告警。在此确认后，根据需要打开更深的恢复路径。", "This is the sharpest live alert. Acknowledge it here, then open the deeper recovery path if needed."),
             tone: toneForAlert(highlightedAlert.status, highlightedAlert.severity),
           };
         }
@@ -517,9 +517,9 @@ export function ObservabilityPage() {
       case "assistant":
         if (!assistantDiagnostics) {
           return {
-            title: "Assistant diagnostics are loading",
-            summary: "Friday is gathering task profiles, MCP server states, and recent context-cost summaries.",
-            detail: "Use this focus to inspect context governance and task profile choices without leaving observability.",
+            title: localize(locale, "助手诊断加载中", "Assistant diagnostics are loading"),
+            summary: localize(locale, "Friday 正在收集任务配置、MCP 服务器状态和近期上下文成本摘要。", "Friday is gathering task profiles, MCP server states, and recent context-cost summaries."),
+            detail: localize(locale, "使用此焦点在不离开可观测性页面的情况下检查上下文治理和任务配置选择。", "Use this focus to inspect context governance and task profile choices without leaving observability."),
             tone: "neutral",
           };
         }
@@ -535,7 +535,7 @@ export function ObservabilityPage() {
         if (!highlightedHealthComponent) return null;
         return {
           title: highlightedHealthComponent.name,
-          summary: highlightedHealthComponent.message ?? "This component is currently the main health concern.",
+          summary: highlightedHealthComponent.message ?? localize(locale, "此组件是当前主要健康关注点。", "This component is currently the main health concern."),
           detail: `Module ${highlightedHealthComponent.module} is ${highlightedHealthComponent.status}.`,
           tone: toneForHealth(highlightedHealthComponent.status),
         };
@@ -553,13 +553,13 @@ export function ObservabilityPage() {
             title: highlightedEscalation.reason,
             summary: `${highlightedEscalation.channel} escalation on ${highlightedEscalation.failureCategory}.`,
             detail: highlightedEscalation.acknowledged
-              ? "This escalation has already been acknowledged."
-              : "This escalation still needs an operator decision.",
+              ? localize(locale, "此升级已被确认。", "This escalation has already been acknowledged.")
+              : localize(locale, "此升级仍需运维人员决策。", "This escalation still needs an operator decision."),
             tone: highlightedEscalation.acknowledged ? "neutral" : "warning",
           };
         }
         return {
-          title: "Retry protection",
+          title: localize(locale, "重试保护", "Retry protection"),
           summary: `${retryCircuitBreakers.filter((item) => item.state !== "closed").length} provider protections are active.`,
           detail: "Review circuit breakers before forcing more retries.",
           tone: retryCircuitBreakers.some((item) => item.state === "open") ? "danger" : "warning",
@@ -569,7 +569,7 @@ export function ObservabilityPage() {
           return {
             title: `${rulesAuditLog[0].resource} · ${rulesAuditLog[0].action}`,
             summary: `${rulesAuditLog[0].decision} decision from ${rulesAuditLog[0].ruleId ?? "bundle-eval"}.`,
-            detail: "Use this audit trail to explain why policy allowed, denied, or warned.",
+            detail: localize(locale, "使用此审计记录解释策略为何允许、拒绝或警告。", "Use this audit trail to explain why policy allowed, denied, or warned."),
             tone: rulesAuditLog[0].decision === "deny" ? "danger" : rulesAuditLog[0].decision === "warn" ? "warning" : "success",
           };
         }
@@ -582,7 +582,7 @@ export function ObservabilityPage() {
           detail:
             highlightedLoopRun.run.haltReason ??
             (highlightedLoopRun.run.verificationPassed === false
-              ? "Verification failed and Friday recorded the rollback outcome."
+              ? localize(locale, "验证失败，Friday 已记录回滚结果。", "Verification failed and Friday recorded the rollback outcome.")
               : "Review verification, rollback, and lesson extraction before resuming."),
           tone:
             highlightedLoopRun.run.status === "halted" || highlightedLoopRun.run.status === "failed"
@@ -610,9 +610,9 @@ export function ObservabilityPage() {
       case "overview":
       default:
         return {
-          title: "Work from the action queue first",
-          summary: "Friday surfaces the most actionable problems above, then keeps raw telemetry in drill-down sections below.",
-          detail: "Use the chips and action cards to move directly to the area that needs the next decision.",
+          title: localize(locale, "优先处理操作队列", "Work from the action queue first"),
+          summary: localize(locale, "Friday 在上方展示最需要行动的问题，原始遥测数据在下方的下钻区域中。", "Friday surfaces the most actionable problems above, then keeps raw telemetry in drill-down sections below."),
+          detail: localize(locale, "使用标签和操作卡片直接跳转到需要下一个决策的区域。", "Use the chips and action cards to move directly to the area that needs the next decision."),
           tone: overview?.alerts.activeAlerts ? "warning" : "success",
         };
     }
@@ -634,6 +634,7 @@ export function ObservabilityPage() {
     overview,
     latestAssistantRun,
     pathRuleCount,
+    locale,
   ]);
 
   const maxPoint = Math.max(1, ...(series?.points ?? []).map((point) => point.value));
@@ -641,15 +642,15 @@ export function ObservabilityPage() {
   return (
     <div className="space-y-4">
       <ShellCard
-        eyebrow="Action queue"
-        title="What is wrong and what should I click next"
+        eyebrow={localize(locale, "操作队列", "Action queue")}
+        title={localize(locale, "哪里出了问题，我该点什么", "What is wrong and what should I click next")}
         aside={
           <StatusPill tone={actionQueue.length > 0 ? "warning" : "success"}>
-            {actionQueue.length > 0 ? "action needed" : "stable"}
+            {actionQueue.length > 0 ? localize(locale, "需要操作", "action needed") : localize(locale, "稳定", "stable")}
           </StatusPill>
         }
       >
-        <div className="mb-4 flex flex-wrap gap-2">
+        <div className="mb-4 flex gap-2 overflow-x-chips lg:flex-wrap">
           <FocusChip label={localize(locale, "概览", "Overview")} active={focus === "overview"} to={buildObservabilityHref({ focus: "overview" })} />
           <FocusChip label={localize(locale, "助手", "Assistant")} active={focus === "assistant"} to={buildObservabilityHref({ focus: "assistant" })} />
           <FocusChip label={localize(locale, "告警", "Alerts")} active={focus === "alerts"} to={buildObservabilityHref({ focus: "alerts" })} />
@@ -671,7 +672,7 @@ export function ObservabilityPage() {
       </ShellCard>
 
       <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-        <ShellCard eyebrow="Current focus" title={formatObservabilityFocusLabel(focus)}>
+        <ShellCard eyebrow={localize(locale, "当前焦点", "Current focus")} title={formatObservabilityFocusLabel(focus)}>
           {focusSummary ? (
             <div className="space-y-4">
               <div className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
@@ -685,11 +686,11 @@ export function ObservabilityPage() {
                 <p className="text-xs leading-5 text-[color:var(--color-text-tertiary)]">{focusSummary.detail}</p>
               </div>
               <p className="text-sm text-[color:var(--color-text-secondary)]">
-                Friday keeps this page action-first: solve the highlighted problem here, then drill into traces, audit, and history only when you need the deeper evidence.
+                {localize(locale, "Friday 以行动为先展示此页面：先解决上方高亮的问题，需要更深证据时再下钻到追踪、审计和历史。", "Friday keeps this page action-first: solve the highlighted problem here, then drill into traces, audit, and history only when you need the deeper evidence.")}
               </p>
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">No detail is available for this focus yet.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "此焦点暂无详细信息。", "No detail is available for this focus yet.")}</p>
           )}
         </ShellCard>
 
@@ -699,25 +700,25 @@ export function ObservabilityPage() {
               <div className="grid gap-3 sm:grid-cols-2">
                 <ObservabilityTile
                   icon={<AlertTriangle className="h-4 w-4" />}
-                  label="Active alerts"
+                  label={localize(locale, "活跃告警", "Active alerts")}
                   value={String(overview.alerts.activeAlerts)}
                   detail={overview.alerts.highestSeverity ? `Highest severity ${overview.alerts.highestSeverity}` : "No active alert severity"}
                 />
                 <ObservabilityTile
                   icon={<HeartPulse className="h-4 w-4" />}
-                  label="Health"
+                  label={localize(locale, "健康", "Health")}
                   value={overview.health?.status ?? "unavailable"}
                   detail={overview.health?.message ?? "No health checks registered yet."}
                 />
                 <ObservabilityTile
                   icon={<Activity className="h-4 w-4" />}
-                  label="Completed traces"
+                  label={localize(locale, "已完成追踪", "Completed traces")}
                   value={String(overview.traces.totalTraces)}
                   detail={`Average duration ${formatDurationMs(overview.traces.avgDurationMs)}`}
                 />
                 <ObservabilityTile
                   icon={<ShieldCheck className="h-4 w-4" />}
-                  label="Audit entries"
+                  label={localize(locale, "审计条目", "Audit entries")}
                   value={String(overview.audit.totalEntries)}
                   detail={`${Object.keys(overview.audit.byOutcome).length} tracked outcomes`}
                 />
@@ -727,25 +728,25 @@ export function ObservabilityPage() {
               </p>
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Loading the current system state...</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "正在加载当前系统状态...", "Loading the current system state...")}</p>
           )}
         </ShellCard>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <ShellCard eyebrow="Learning explainability" title="Lessons, route shifts, and blocked candidates">
+        <ShellCard eyebrow={localize(locale, "学习可解释性", "Learning explainability")} title={localize(locale, "教训、路由偏移和候选阻断", "Lessons, route shifts, and blocked candidates")}>
           {learningOverview ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <ObservabilityTile
                   icon={<CheckCircle2 className="h-4 w-4" />}
-                  label="Lessons"
+                  label={localize(locale, "教训", "Lessons")}
                   value={String(learningOverview.coverage.lessons)}
                   detail={`${learningOverview.coverage.routeAdjustments} route adjustments available to operator controls`}
                 />
                 <ObservabilityTile
                   icon={<RotateCcw className="h-4 w-4" />}
-                  label="Recent route shifts"
+                  label={localize(locale, "近期路由偏移", "Recent route shifts")}
                   value={String(learningOverview.coverage.recentDecisionDiffs)}
                   detail={`${learningOverview.coverage.blockedRoutes} blocked routes observed in recent decision traces`}
                 />
@@ -775,12 +776,12 @@ export function ObservabilityPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Learning overview is loading...</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "正在加载学习概览...", "Learning overview is loading...")}</p>
           )}
         </ShellCard>
 
         {focus === "overview" || focus === "assistant" ? (
-          <ShellCard eyebrow="Assistant diagnostics" title="Context governance, MCP loading, and task profiles">
+          <ShellCard eyebrow={localize(locale, "助手诊断", "Assistant diagnostics")} title={localize(locale, "上下文治理、MCP 加载和任务配置", "Context governance, MCP loading, and task profiles")}>
             {assistantDiagnostics ? (
               <div className="space-y-4">
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -865,7 +866,7 @@ export function ObservabilityPage() {
           </ShellCard>
         ) : null}
 
-        <ShellCard eyebrow="Live alerts" title="Investigate, acknowledge, or hand off to guided recovery">
+        <ShellCard eyebrow={localize(locale, "实时告警", "Live alerts")} title={localize(locale, "调查、确认或移交引导恢复", "Investigate, acknowledge, or hand off to guided recovery")}>
           {alerts.length > 0 ? (
             <div className="space-y-3">
               {alerts.slice(0, 6).map((alert) => (
@@ -918,7 +919,7 @@ export function ObservabilityPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Guided issues" title="Problems that map back to the assistant">
+        <ShellCard eyebrow={localize(locale, "引导问题", "Guided issues")} title={localize(locale, "映射回助手的问题", "Problems that map back to the assistant")}>
           {issues.length > 0 ? (
             <div className="space-y-3">
               {issues.slice(0, 6).map((issue) => (
@@ -951,18 +952,18 @@ export function ObservabilityPage() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <ShellCard eyebrow="Acceptance and retry" title="Quality gates and retry pressure">
+        <ShellCard eyebrow={localize(locale, "验收与重试", "Acceptance and retry")} title={localize(locale, "质量门控和重试压力", "Quality gates and retry pressure")}>
           {acceptanceResults.length > 0 || retryEscalations.length > 0 || retryCircuitBreakers.length > 0 ? (
             <div className="space-y-3">
               <ObservabilityTile
                 icon={<ShieldCheck className="h-4 w-4" />}
-                label="Failed acceptance"
+                label={localize(locale, "验收失败", "Failed acceptance")}
                 value={String(acceptanceResults.filter((run) => run.state === "failed").length)}
                 detail={`${acceptanceTests.filter((test) => test.enabled).length} quality gates enabled`}
               />
               <ObservabilityTile
                 icon={<TimerReset className="h-4 w-4" />}
-                label="Retry escalations"
+                label={localize(locale, "重试升级", "Retry escalations")}
                 value={String(retryEscalations.filter((item) => !item.acknowledged).length)}
                 detail={`${retryCircuitBreakers.filter((item) => item.state !== "closed").length} non-closed circuit breakers`}
               />
@@ -992,7 +993,7 @@ export function ObservabilityPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Agent loop and rules" title="Autonomous recovery and policy state">
+        <ShellCard eyebrow={localize(locale, "Agent 循环与规则", "Agent loop and rules")} title={localize(locale, "自主恢复和策略状态", "Autonomous recovery and policy state")}>
           {agentLoopRuns.length > 0 || expertLoopRuns.length > 0 || rulesAuditLog.length > 0 ? (
             <div className="space-y-3">
               {agentLoopRuns.slice(0, 3).map((record) => (
@@ -1041,7 +1042,7 @@ export function ObservabilityPage() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <ShellCard eyebrow="Time series" title="Trend context after you know what to inspect">
+        <ShellCard eyebrow={localize(locale, "时间序列", "Time series")} title={localize(locale, "确定检查目标后的趋势上下文", "Trend context after you know what to inspect")}>
           {series ? (
             <div className="space-y-3">
               <div className="grid gap-2">
@@ -1067,7 +1068,7 @@ export function ObservabilityPage() {
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Deep evidence" title="Traces and audit stay available as drill-down">
+        <ShellCard eyebrow={localize(locale, "深度证据", "Deep evidence")} title={localize(locale, "追踪和审计作为下钻入口保持可用", "Traces and audit stay available as drill-down")}>
           {traces.length > 0 || auditEntries.length > 0 ? (
             <div className="space-y-3">
               {traces.slice(0, 3).map((trace) => (
@@ -1107,8 +1108,8 @@ export function ObservabilityPage() {
 
       <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
         <ShellCard
-          eyebrow="SLO pack"
-          title="Service level state"
+          eyebrow={localize(locale, "SLO 包", "SLO pack")}
+          title={localize(locale, "服务等级状态", "Service level state")}
           aside={
             <ActionButton tone="secondary" onClick={() => setShowCreateSlo(!showCreateSlo)}>
               <Plus className="mr-1.5 h-3 w-3" />
@@ -1140,8 +1141,8 @@ export function ObservabilityPage() {
         </ShellCard>
 
         <ShellCard
-          eyebrow="Alert routing"
-          title="Who gets notified when Friday escalates"
+          eyebrow={localize(locale, "告警路由", "Alert routing")}
+          title={localize(locale, "Friday 升级时谁会被通知", "Who gets notified when Friday escalates")}
           aside={
             <ActionButton tone="secondary" onClick={() => setShowCreateDest(!showCreateDest)}>
               <Plus className="mr-1.5 h-3 w-3" />
