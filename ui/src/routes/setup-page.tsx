@@ -22,6 +22,7 @@ import type {
   SetupStepId,
 } from "@/lib/setup/types";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
+import { useAppLocale } from "@/providers/locale-provider";
 import {
   buildPersonaPreview,
   COMMUNICATION_MBTI_OPTIONS,
@@ -137,6 +138,8 @@ function toneForTemplateTier(tier?: "official" | "verified" | "community" | "exp
 export function SetupPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { locale, setLocale } = useAppLocale();
+  const [languageChosen, setLanguageChosen] = useState(false);
   const [acknowledgedSecurity, setAcknowledgedSecurity] = useState(false);
   const [providerKind, setProviderKind] = useState<ProviderKind>("openai");
   const [providerName, setProviderName] = useState("");
@@ -465,18 +468,50 @@ export function SetupPage() {
       </div>
 
       <div className="relative mx-auto flex w-full max-w-[1480px] flex-col gap-4">
+        {!languageChosen ? (
+          <ShellCard>
+            <div className="flex min-h-[60vh] flex-col items-center justify-center text-center">
+              <p className="agent-eyebrow">Friday</p>
+              <h1 className="font-[var(--font-display)] text-4xl font-semibold tracking-tight text-[color:var(--color-text-primary)]">
+                {locale === "zh" ? "选择你的语言" : "Choose Your Language"}
+              </h1>
+              <p className="mt-3 text-base text-[color:var(--color-text-secondary)]">
+                {locale === "zh" ? "你随时可以在设置中更改。" : "You can change this anytime in Settings."}
+              </p>
+              <div className="mt-8 flex gap-4">
+                <button
+                  type="button"
+                  onClick={() => { setLocale("zh"); setLanguageChosen(true); }}
+                  className={`rounded-[28px] border-2 px-8 py-4 text-lg font-medium transition ${locale === "zh" ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent-muted)]" : "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)]"} text-[color:var(--color-text-primary)] hover:border-[color:var(--color-accent)]`}
+                >
+                  中文
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setLocale("en"); setLanguageChosen(true); }}
+                  className={`rounded-[28px] border-2 px-8 py-4 text-lg font-medium transition ${locale === "en" ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent-muted)]" : "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)]"} text-[color:var(--color-text-primary)] hover:border-[color:var(--color-accent)]`}
+                >
+                  English
+                </button>
+              </div>
+            </div>
+          </ShellCard>
+        ) : (
+        <>
         <ShellCard>
           <p className="agent-eyebrow">Friday Agent OS Setup</p>
           <h1 className="font-[var(--font-display)] text-4xl font-semibold tracking-tight text-[color:var(--color-text-primary)]">
-            Bootstrap the new operator shell
+            {locale === "zh" ? "配置你的 Friday" : "Configure your Friday"}
           </h1>
           <p className="mt-4 max-w-4xl text-base leading-7 text-[color:var(--color-text-secondary)]">
-            This setup flow has been rebuilt from scratch. It keeps the backend bootstrap APIs intact while removing the previous wizard UI and builder framing.
+            {locale === "zh"
+              ? "按顺序完成以下步骤，让 Friday 准备就绪。"
+              : "Complete the steps below to get Friday ready."}
           </p>
         </ShellCard>
 
         <div className="grid gap-4 xl:grid-cols-2">
-          <ShellCard eyebrow="1. Security" title="Operator acknowledgement">
+          <ShellCard eyebrow={locale === "zh" ? "1. 安全" : "1. Security"} title={locale === "zh" ? "操作确认" : "Operator acknowledgement"}>
             <div className="space-y-4">
               <p className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
                 Friday Agent OS can request control leases, read local status, and orchestrate risky actions behind explicit approvals. Confirm that you are setting up a single-user local machine.
@@ -493,7 +528,7 @@ export function SetupPage() {
             </div>
           </ShellCard>
 
-          <ShellCard eyebrow="2. Provider" title="Model bootstrap">
+          <ShellCard eyebrow={locale === "zh" ? "2. 模型提供方" : "2. Provider"} title={locale === "zh" ? "AI 模型配置" : "Model bootstrap"}>
             <div className="space-y-3">
               <select
                 value={providerKind}
@@ -635,7 +670,7 @@ export function SetupPage() {
             </div>
           </ShellCard>
 
-          <ShellCard eyebrow="3. Network" title="Local bind settings">
+          <ShellCard eyebrow={locale === "zh" ? "3. 网络" : "3. Network"} title={locale === "zh" ? "本地绑定设置" : "Local bind settings"}>
             <div className="space-y-3">
               <select
                 value={networkMode}
@@ -668,7 +703,7 @@ export function SetupPage() {
             </div>
           </ShellCard>
 
-          <ShellCard eyebrow="4. Channels" title="Optional ingress surfaces">
+          <ShellCard eyebrow={locale === "zh" ? "4. 通道" : "4. Channels"} title={locale === "zh" ? "可选的消息接入" : "Optional ingress surfaces"}>
             <div className="space-y-4">
               <p className="text-sm text-[color:var(--color-text-secondary)]">
                 Channel setup is optional in phase 1. Select only the kinds you want Friday to persist now.
@@ -706,7 +741,7 @@ export function SetupPage() {
             </div>
           </ShellCard>
 
-          <ShellCard eyebrow="5. Communication" title="How Friday should guide you">
+          <ShellCard eyebrow={locale === "zh" ? "5. 沟通风格" : "5. Communication"} title={locale === "zh" ? "Friday 如何与你交流" : "How Friday should guide you"}>
             <div className="space-y-4">
               <p className="text-sm text-[color:var(--color-text-secondary)]">
                 Pick a comfort-oriented communication template. You can skip this now and change it later in Settings.
@@ -753,7 +788,7 @@ export function SetupPage() {
           </ShellCard>
         </div>
 
-        <ShellCard eyebrow="6. Starter Pack" title="Bundled skills ship ready">
+        <ShellCard eyebrow={locale === "zh" ? "6. 起步包" : "6. Starter Pack"} title={locale === "zh" ? "内置技能已就绪" : "Bundled skills ship ready"}>
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
             <div className="space-y-3">
               <p className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
@@ -792,7 +827,7 @@ export function SetupPage() {
           </div>
         </ShellCard>
 
-        <ShellCard eyebrow="7. Finish" title="Enter Friday">
+        <ShellCard eyebrow={locale === "zh" ? "7. 完成" : "7. Finish"} title={locale === "zh" ? "进入 Friday" : "Enter Friday"}>
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
             <div className="space-y-4">
               <div className="space-y-2 text-sm text-[color:var(--color-text-secondary)]">
@@ -873,6 +908,8 @@ export function SetupPage() {
             </div>
           </div>
         </ShellCard>
+        </>
+        )}
       </div>
     </div>
   );

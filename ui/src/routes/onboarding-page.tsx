@@ -82,7 +82,8 @@ export function OnboardingPage() {
   const { locale, setLocale } = useAppLocale();
   const { setPreferences } = useUixPreferences();
   const { setProfileType, markOnboarded } = useUserProfile();
-  const [step, setStep] = useState<OnboardingStep>("language");
+  // Language is now selected in setup — onboarding starts at profile selection.
+  const [step, setStep] = useState<OnboardingStep>("profile");
   const [selectedProfile, setSelectedProfile] = useState<UserProfileType>("beginner");
   const [selectedPacks, setSelectedPacks] = useState<string[]>(getDefaultPinnedPackIds("beginner"));
   const [selectedWidgets, setSelectedWidgets] = useState<HomeWidgetId[]>(getDefaultVisibleWidgets());
