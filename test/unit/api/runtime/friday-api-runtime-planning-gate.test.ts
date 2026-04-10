@@ -190,7 +190,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
 
     const answerThree = await startRoute!.handler({
       body: {
-        task: "/Users/jarvis/Projects/Friday",
+        task: "/path/to/friday",
         sessionKey,
       },
     } as never);

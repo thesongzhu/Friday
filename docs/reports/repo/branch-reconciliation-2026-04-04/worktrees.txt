@@ -1,24 +1,24 @@
-worktree /Users/jarvis/Projects/Friday
+worktree /path/to/friday
 HEAD 3fc9983a1ff6fb61a4e0ea3f9e598ca7c592b4fe
 branch refs/heads/codex/efficiency-audit-fixes
 
-worktree /Users/jarvis/.claude-worktrees/Friday/laughing-hugle
+worktree /Users/dev/.claude-worktrees/Friday/laughing-hugle
 HEAD 440807d4652caf24805905ce78dec84c407c10a0
 branch refs/heads/laughing-hugle
 
-worktree /Users/jarvis/.claude-worktrees/Friday/serene-chaum
+worktree /Users/dev/.claude-worktrees/Friday/serene-chaum
 HEAD 3f7e10eaca61b2a209aeef864106ae521747d16e
 branch refs/heads/serene-chaum
 
-worktree /Users/jarvis/Projects/Friday-nightly-fix
+worktree /path/to/friday-nightly-fix
 HEAD 94169f87adbda586ecc64f1e99a9849973aba3d0
 branch refs/heads/codex/fix-2026-03-30-nightly
 
-worktree /Users/jarvis/Projects/Friday-publish-real-world
+worktree /path/to/friday-publish-real-world
 HEAD e51de41f5ba1c52152fc3bfc7b7d4eaff3fe3eb7
 branch refs/heads/main
 
-worktree /Users/jarvis/Projects/Friday/.claude/worktrees/cranky-colden
+worktree /path/to/friday/.claude/worktrees/cranky-colden
 HEAD fddce67a715e3c982c1e978a4f31497b07e7b9c4
 branch refs/heads/claude/cranky-colden
 prunable gitdir file points to non-existent location

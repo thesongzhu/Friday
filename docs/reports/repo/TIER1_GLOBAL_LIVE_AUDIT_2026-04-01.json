@@ -1,15 +1,15 @@
 {
   "generatedAt": "2026-04-01T22:17:44.724Z",
   "scope": "tier1-global",
-  "sourceMatrixPath": "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json",
-  "sourceReportPath": "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_2026-04-01.md",
+  "sourceMatrixPath": "/path/to/friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json",
+  "sourceReportPath": "/path/to/friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_2026-04-01.md",
   "results": [
     {
       "target": "openai-http",
       "status": "passed",
       "summary": "Friday-routed OpenAI HTTP live path passed.",
       "evidence": [
-        "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
+        "/path/to/friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
       ]
     },
     {
@@ -17,7 +17,7 @@
       "status": "passed",
       "summary": "Codex CLI external-session backend passed a Friday-routed text completion.",
       "evidence": [
-        "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
+        "/path/to/friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
       ]
     },
     {
@@ -25,7 +25,7 @@
       "status": "passed",
       "summary": "Claude CLI external-session backend passed a Friday-routed text completion.",
       "evidence": [
-        "/Users/jarvis/Projects/Friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
+        "/path/to/friday/docs/reports/repo/SELF_EVOLUTION_LIVE_AUDIT_MATRIX_2026-04-01.json"
       ]
     },
     {

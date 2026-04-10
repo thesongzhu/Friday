@@ -3,7 +3,7 @@ import path from "node:path";
 import { chromium } from "playwright";
 
 const BASE_URL = "http://127.0.0.1:3141";
-const ROOT_DIR = "/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31";
+const ROOT_DIR = "/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31";
 const SCREENSHOTS_DIR = path.join(ROOT_DIR, "screenshots");
 const RESPONSES_DIR = path.join(ROOT_DIR, "responses");
 

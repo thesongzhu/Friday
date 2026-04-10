@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 const BASE_URL = "http://127.0.0.1:3141";
 const PROVIDER_ID = "11053bd1-a47b-4e07-a195-59a56a96c83c";
 const MODEL = "claude-sonnet-4-20250514";
-const ROOT_DIR = "/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31";
+const ROOT_DIR = "/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31";
 const RESPONSES_DIR = path.join(ROOT_DIR, "responses");
 
 fs.mkdirSync(RESPONSES_DIR, { recursive: true });

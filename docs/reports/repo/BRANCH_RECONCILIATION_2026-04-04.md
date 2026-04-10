@@ -6,8 +6,8 @@ Date: 2026-04-04
 
 This report records the `main` branch reconciliation and final branch cleanup performed across:
 
-- `/Users/jarvis/Projects/Friday`
-- `/Users/jarvis/Projects/Friday-publish-real-world`
+- `/path/to/friday`
+- `/path/to/friday-publish-real-world`
 
 Confirmed facts:
 
@@ -18,7 +18,7 @@ Confirmed facts:
   - `npm run build`
   - `npm run validate:real-world:catalog`
 - The most recent full real-world smoke before this cleanup was `28 passed / 0 failed`.
-- The dirty worktree at `/Users/jarvis/Projects/Friday` was protected before any cleanup by exporting status, tracked diff, and untracked inventory into `docs/reports/repo/branch-reconciliation-2026-04-04/`.
+- The dirty worktree at `/path/to/friday` was protected before any cleanup by exporting status, tracked diff, and untracked inventory into `docs/reports/repo/branch-reconciliation-2026-04-04/`.
 
 Authoritative raw evidence for this reconciliation lives in:
 
@@ -34,9 +34,9 @@ Authoritative raw evidence for this reconciliation lives in:
 
 ### Worktrees Removed
 
-- Removed `/Users/jarvis/.claude-worktrees/Friday/laughing-hugle`
-- Removed `/Users/jarvis/Projects/Friday-nightly-fix`
-- Removed `/Users/jarvis/.claude-worktrees/Friday/serene-chaum`
+- Removed `/Users/dev/.claude-worktrees/Friday/laughing-hugle`
+- Removed `/path/to/friday-nightly-fix`
+- Removed `/Users/dev/.claude-worktrees/Friday/serene-chaum`
 - Pruned the stale `claude/cranky-colden` worktree registration
 
 ### Local Branches Deleted
@@ -124,7 +124,7 @@ Authoritative raw evidence for this reconciliation lives in:
 
 ## Dirty Worktree Protection
 
-Before cleanup, the dirty worktree at `/Users/jarvis/Projects/Friday` was snapshotted into:
+Before cleanup, the dirty worktree at `/path/to/friday` was snapshotted into:
 
 - `docs/reports/repo/branch-reconciliation-2026-04-04/dirty-worktree-status.txt`
 - `docs/reports/repo/branch-reconciliation-2026-04-04/dirty-worktree-diff.patch`
@@ -145,7 +145,7 @@ Confirmed facts from that snapshot:
 - Untracked `docs/reports/ops/real-world-validation/**` entries are generated validation outputs, not missing product code on `main`.
 - Untracked `scripts/validation/run-real-world-validation.mjs` and `validation/real-world/**` are already tracked on `main`; they appear untracked in the old dirty branch only because that branch predates PR #78.
 - Untracked `managed-skills/output-current-datetime/**` does not exist on current `main`; it remains local-only material inside the dirty worktree snapshot.
-- The dirty worktree was preserved again as `stash@{0}: On codex/efficiency-audit-fixes: pre-branch-cleanup-2026-04-04` before switching `/Users/jarvis/Projects/Friday` back to `main`.
+- The dirty worktree was preserved again as `stash@{0}: On codex/efficiency-audit-fixes: pre-branch-cleanup-2026-04-04` before switching `/path/to/friday` back to `main`.
 
 No tracked work from the dirty branch was discarded without a snapshot or stash handle.
 

@@ -22,20 +22,20 @@ function makeMessage(overrides?: Partial<FridayChannelMessage>): FridayChannelMe
 describe("cross-channel identity mapping", () => {
   it("parses flat and nested identity maps", () => {
     const parsed = parseFridayChannelIdentityMap(JSON.stringify({
-      "discord:u-1": "Jarvis",
+      "discord:u-1": "Alice",
       telegram: {
-        "88": "jarvis",
+        "88": "alice",
       },
     }));
 
-    expect(parsed["discord:u-1"]).toBe("jarvis");
-    expect(parsed["telegram:88"]).toBe("jarvis");
+    expect(parsed["discord:u-1"]).toBe("alice");
+    expect(parsed["telegram:88"]).toBe("alice");
   });
 
   it("returns legacy channel session key when mapping is disabled", () => {
     const key = resolveFridayChannelSessionKey(makeMessage(), {
       crossChannelIdentityEnabled: false,
-      identityMap: { "discord:u-1": "jarvis" },
+      identityMap: { "discord:u-1": "alice" },
     });
     expect(key).toBe("channel:discord:c-1");
   });
@@ -43,15 +43,15 @@ describe("cross-channel identity mapping", () => {
   it("routes direct messages to omni session when identity mapping exists", () => {
     const key = resolveFridayChannelSessionKey(makeMessage(), {
       crossChannelIdentityEnabled: true,
-      identityMap: { "discord:u-1": "jarvis" },
+      identityMap: { "discord:u-1": "alice" },
     });
-    expect(key).toBe("omni:default:jarvis");
+    expect(key).toBe("omni:default:alice");
   });
 
   it("keeps group messages channel-scoped even when mapping exists", () => {
     const key = resolveFridayChannelSessionKey(makeMessage({ chatType: "group" }), {
       crossChannelIdentityEnabled: true,
-      identityMap: { "discord:u-1": "jarvis" },
+      identityMap: { "discord:u-1": "alice" },
     });
     expect(key).toBe("channel:discord:c-1");
   });

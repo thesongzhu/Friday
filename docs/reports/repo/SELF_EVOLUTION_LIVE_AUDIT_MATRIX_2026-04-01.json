@@ -1,7 +1,7 @@
 {
   "generatedAt": "2026-04-01T21:33:34.196Z",
-  "artifactRoot": "/Users/jarvis/Projects/Friday/.friday/live-audit/2026-04-01T21-33-34-196Z",
-  "stateDir": "/Users/jarvis/Projects/Friday/.friday/live-audit/2026-04-01T21-33-34-196Z/state",
+  "artifactRoot": "/path/to/friday/.friday/live-audit/2026-04-01T21-33-34-196Z",
+  "stateDir": "/path/to/friday/.friday/live-audit/2026-04-01T21-33-34-196Z/state",
   "live": {
     "attachCli": {
       "codex": {
@@ -11,7 +11,7 @@
       },
       "claude": {
         "code": 0,
-        "stdout": "[friday] Deterministic pipeline mode: enforce\n[friday] Desktop runtime enabled (darwin) — Adapter operational: 23 capabilities, 1/4 permissions granted\n[friday] Agent OS system runtime enabled (remote=trusted_private_network, cloud=opt_in, companion=unix_socket/embedded)\n[friday] MCP adapter enabled with 1 server(s)\n[friday] Plugin runtime mode: full\n[friday] Marketplace commerce runtime: enabled\n[friday] ✓ Friday is running\n[friday]   Providers: 2\n[friday]   Channels:  0 — no messaging channels configured\n[friday]   Skills:    52\n\nAttached Claude CLI to provider 78a819ed-08de-4cee-b159-680925396404\n   backend=cli auth=external-session\n   backendHealth=healthy authHealth=healthy\n   version=2.1.58 (Claude Code)\n   account=wdou0707@gmail.com\n\n",
+        "stdout": "[friday] Deterministic pipeline mode: enforce\n[friday] Desktop runtime enabled (darwin) — Adapter operational: 23 capabilities, 1/4 permissions granted\n[friday] Agent OS system runtime enabled (remote=trusted_private_network, cloud=opt_in, companion=unix_socket/embedded)\n[friday] MCP adapter enabled with 1 server(s)\n[friday] Plugin runtime mode: full\n[friday] Marketplace commerce runtime: enabled\n[friday] ✓ Friday is running\n[friday]   Providers: 2\n[friday]   Channels:  0 — no messaging channels configured\n[friday]   Skills:    52\n\nAttached Claude CLI to provider 78a819ed-08de-4cee-b159-680925396404\n   backend=cli auth=external-session\n   backendHealth=healthy authHealth=healthy\n   version=2.1.58 (Claude Code)\n   account=user@example.com\n\n",
         "stderr": "[friday] FRIDAY_SEARCH_PROVIDER is not configured; Friday will fall back to DuckDuckGo HTML search and time-sensitive news lookup is unverified.\n[friday][W-PROVIDER-ROUTING-001] Default provider \"db8ac851-f538-403c-9ffe-b1de358af167\" has no fallback providers configured. Validated enabled alternatives are available: Codex CLI (f6657587-908c-4c2c-b7be-6a24ddd5dc32). Live runs may fail hard if the default provider is temporarily unavailable.\n"
       }
     },
@@ -204,8 +204,8 @@
           "loggedIn": true,
           "checkedAt": "2026-04-01T21:33:37.024Z",
           "account": {
-            "email": "wdou0707@gmail.com",
-            "orgId": "49108347-68c4-4245-90dc-427a3e80d673",
+            "email": "user@example.com",
+            "orgId": "00000000-0000-0000-0000-000000000000",
             "subscriptionType": "max",
             "authMethod": "claude.ai"
           }

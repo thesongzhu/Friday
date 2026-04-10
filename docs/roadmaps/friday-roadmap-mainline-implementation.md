@@ -1,7 +1,7 @@
 # Friday Roadmap Mainline Implementation Tracker
 
 Last updated: 2026-03-25
-Worktree: `/Users/jarvis/Projects/Friday-roadmap-mainline`
+Worktree: `/path/to/friday-worktree`
 Branch: `codex/friday-roadmap-mainline`
 Base commit: `4d20ee0`
 
@@ -13,10 +13,10 @@ Base commit: `4d20ee0`
   - Created isolated worktree and branch from committed `HEAD`.
   - Verified the new worktree does not inherit uncommitted primary-tree changes.
 - Validation:
-  - `git -C /Users/jarvis/Projects/Friday-roadmap-mainline status --short --branch`
-  - `git -C /Users/jarvis/Projects/Friday-roadmap-mainline rev-parse --short HEAD`
+  - `git -C /path/to/friday-worktree status --short --branch`
+  - `git -C /path/to/friday-worktree rev-parse --short HEAD`
 - Rollback:
-  - Remove worktree with `git worktree remove /Users/jarvis/Projects/Friday-roadmap-mainline`
+  - Remove worktree with `git worktree remove /path/to/friday-worktree`
   - Delete branch `codex/friday-roadmap-mainline` if the isolation branch is abandoned.
 
 ## Batch 1
@@ -73,5 +73,5 @@ Base commit: `4d20ee0`
 
 ## Notes
 
-- This worktree intentionally ignores uncommitted files in `/Users/jarvis/Projects/Friday`.
+- This worktree intentionally ignores uncommitted files in `/path/to/friday`.
 - The roadmap landed as a backend-first slice in this worktree. Public UI exposure can follow after additional product wiring.

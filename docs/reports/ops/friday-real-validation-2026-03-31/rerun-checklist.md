@@ -9,8 +9,8 @@
 - 问题: 普通总结请求被错误送进 `generate workflow` 澄清门。
 - 先决条件: 修正 intent routing / planning gate。
 - 重跑入口:
-  - `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-http-validation.mjs`
-  - `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-targeted-reruns.mjs`
+  - `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-http-validation.mjs`
+  - `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-targeted-reruns.mjs`
 - 重点 case:
   - `claude-quiz-summary`
   - `claude-summary-rerun`
@@ -21,7 +21,7 @@
 - 问题: `/v1/skills/generator/sessions` 返回 `502 PROVIDER_ERROR`
 - 先决条件: 修复 Claude-backed generator session 建立链路。
 - 重跑入口:
-  - `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-http-validation.mjs`
+  - `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-http-validation.mjs`
 - 通过条件:
   - session 可创建
   - draft 可生成
@@ -34,7 +34,7 @@
 - 问题: `/v1/workflows/generator/sessions` 返回 `502 PROVIDER_ERROR`
 - 先决条件: 修复 workflow generator 的 provider/runtime 错误。
 - 重跑入口:
-  - `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-http-validation.mjs`
+  - `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-http-validation.mjs`
 - 通过条件:
   - session 可创建
   - draft 可生成
@@ -51,7 +51,7 @@
   - 给 Friday / Friday Companion 补齐 macOS TCC 授权
   - 修复 desktop tool 结果回传链路
 - 重跑入口:
-  - `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-targeted-reruns.mjs`
+  - `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-targeted-reruns.mjs`
   - 真实手动动作链: 打开低风险应用、输入内容、截图、保存到测试目录、读回结果
 - 通过条件:
   - `/v1/health` 不再报告上述 permission pending
@@ -98,7 +98,7 @@
 
 ## 可复用脚本
 
-- `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-http-validation.mjs`
-- `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-ui-validation.mjs`
-- `/Users/jarvis/Projects/Friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-targeted-reruns.mjs`
+- `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-http-validation.mjs`
+- `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-ui-validation.mjs`
+- `/path/to/friday/artifacts/manual/friday-real-validation-2026-03-31/raw/run-targeted-reruns.mjs`
 

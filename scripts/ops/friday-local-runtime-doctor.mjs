@@ -224,7 +224,7 @@ function classifyTarget(report) {
       ],
       recommendations: [
         "This is an API-only port or the UI static bundle is not mounted.",
-        "Run `npm run build` and restart with `FRIDAY_UI_DIST_DIR=/Users/jarvis/Projects/Friday/dist/ui`.",
+        "Run `npm run build` and restart with `FRIDAY_UI_DIST_DIR=/path/to/friday/dist/ui`.",
         "Open the rebuilt app on the same API port after restart.",
       ],
     };

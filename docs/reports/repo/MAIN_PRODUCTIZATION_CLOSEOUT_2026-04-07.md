@@ -2,7 +2,7 @@
 
 Date: 2026-04-07
 
-Workspace: `/Users/jarvis/Projects/Friday-main-05bba7a`
+Workspace: `/path/to/friday-main-05bba7a`
 
 Base commit: `05bba7ad1019d6b1b7e958727f31aa11d083d4d4`
 
@@ -222,7 +222,7 @@ The strict backfill strategy leaves old runs unattributed unless a strong, struc
 
 ## Validation Results
 
-Validated on 2026-04-07 in `/Users/jarvis/Projects/Friday-main-05bba7a`.
+Validated on 2026-04-07 in `/path/to/friday-main-05bba7a`.
 
 Passed:
 

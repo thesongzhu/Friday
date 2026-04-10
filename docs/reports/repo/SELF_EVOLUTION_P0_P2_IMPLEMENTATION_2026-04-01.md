@@ -90,7 +90,7 @@
 
 Querying the real local state DB at:
 
-- `/Users/jarvis/Library/Application Support/Friday/state/friday.db`
+- `/Users/dev/Library/Application Support/Friday/state/friday.db`
 
 on **2026-04-01** still shows:
 
