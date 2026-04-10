@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, Clock3, ListFilter, Pin, Plus, Sparkles } from "lucide-react";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
+import { LearningInsightCard } from "@/components/core/learning-insight-card";
 import { ContextualHelp } from "@/components/core/contextual-help";
 import { CrossBorderActionBoard } from "@/components/packs/cross-border-action-board";
 import { PackCard } from "@/components/packs/pack-card";
@@ -248,6 +249,8 @@ export function HomePage() {
           togglingWorkflowId={togglingWorkflowId}
         />
       ) : null}
+
+      <LearningInsightCard />
 
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">
