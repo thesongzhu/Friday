@@ -32,7 +32,7 @@ import {
 } from "@/lib/persona/communication-persona";
 
 function formatTimestamp(value?: string): string {
-  if (!value) return "Never";
+  if (!value) return "—";
   return new Date(value).toLocaleString();
 }
 

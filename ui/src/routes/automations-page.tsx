@@ -10,7 +10,7 @@ import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 
 function formatTimestamp(value?: string): string {
-  if (!value) return "Never";
+  if (!value) return "—";
   return new Date(value).toLocaleString();
 }
 

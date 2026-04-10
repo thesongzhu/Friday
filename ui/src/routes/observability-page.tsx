@@ -94,7 +94,7 @@ function toneForIssueSeverity(
 }
 
 function formatTimestamp(value?: string): string {
-  if (!value) return "Unknown";
+  if (!value) return "—";
   return new Date(value).toLocaleString();
 }
 
