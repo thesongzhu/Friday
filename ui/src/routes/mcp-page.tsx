@@ -24,7 +24,7 @@ function statusBadge(status?: string) {
 }
 
 export function McpPage() {
-  const { data: servers = [], isLoading } = useMcpServers();
+  const { data: servers = [], isLoading, isError } = useMcpServers();
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
@@ -40,6 +40,11 @@ export function McpPage() {
       {isLoading ? (
         <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-8 text-center text-sm text-[color:var(--color-text-secondary)]">
           Loading MCP server status...
+        </div>
+      ) : isError ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-8 text-center dark:border-red-900/50 dark:bg-red-900/20">
+          <p className="text-sm font-medium text-red-700 dark:text-red-400">Failed to load MCP server status</p>
+          <p className="mt-1 text-xs text-red-600 dark:text-red-500">Check that the Friday server is running and try refreshing the page.</p>
         </div>
       ) : servers.length === 0 ? (
         <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-8 text-center">

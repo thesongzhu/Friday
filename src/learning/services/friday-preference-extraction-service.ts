@@ -71,16 +71,19 @@ interface PreferenceRule {
  */
 const PERSONA_PREFERENCE_RULES: PreferenceRule[] = [
   {
-    pattern: /\b(?:be\s+more\s+)(concise|brief|short|detailed|verbose)\b/i,
+    // Matches imperative requests like "please be more concise" but not
+    // conversational mentions like "the report was more concise".
+    // Confidence kept below auto-use threshold so repeated signals accumulate.
+    pattern: /(?:^|please\s+|can\s+you\s+|could\s+you\s+|i\s+(?:want|need|prefer)\s+(?:you\s+to\s+)?)be\s+more\s+(concise|brief|short|detailed|verbose)\b/i,
     keyExtractor: () => "persona.verbosity",
     valueExtractor: (m) => {
       const word = m[1]!.toLowerCase();
       return ["concise", "brief", "short"].includes(word) ? "concise" : "detailed";
     },
-    confidence: 0.75,
+    confidence: 0.65,
   },
   {
-    pattern: /\b(?:be\s+more\s+)(formal|professional|casual|friendly|warm)\b/i,
+    pattern: /(?:^|please\s+|can\s+you\s+|could\s+you\s+|i\s+(?:want|need|prefer)\s+(?:you\s+to\s+)?)be\s+more\s+(formal|professional|casual|friendly|warm)\b/i,
     keyExtractor: () => "persona.tone",
     valueExtractor: (m) => {
       const word = m[1]!.toLowerCase();
@@ -88,44 +91,44 @@ const PERSONA_PREFERENCE_RULES: PreferenceRule[] = [
       if (["casual", "friendly", "warm"].includes(word)) return "warm";
       return "neutral";
     },
-    confidence: 0.75,
+    confidence: 0.65,
   },
   {
-    pattern: /\b(?:don'?t|stop)\s+(?:ask(?:ing)?)\s+(?:so\s+many\s+)?questions?\b/i,
+    pattern: /(?:^|please\s+)(?:don'?t|stop)\s+(?:ask(?:ing)?)\s+(?:so\s+many\s+)?questions?\b/i,
     keyExtractor: () => "persona.question_style",
     valueExtractor: () => "minimal",
-    confidence: 0.70,
+    confidence: 0.65,
   },
   {
-    pattern: /\b(?:be\s+more\s+)(direct|straightforward|blunt)\b/i,
+    pattern: /(?:^|please\s+|can\s+you\s+|could\s+you\s+|i\s+(?:want|need|prefer)\s+(?:you\s+to\s+)?)be\s+more\s+(direct|straightforward|blunt)\b/i,
     keyExtractor: () => "persona.directness",
     valueExtractor: () => "direct",
-    confidence: 0.75,
+    confidence: 0.65,
   },
-  // Chinese persona rules
+  // Chinese persona rules — imperative context (请/回答/你)
   {
-    pattern: /(?:简洁|简短|精炼)(?:一点|些|点)/,
+    pattern: /(?:请|回答|你).*(?:简洁|简短|精炼)(?:一点|些|点)/,
     keyExtractor: () => "persona.verbosity",
     valueExtractor: () => "concise",
-    confidence: 0.75,
+    confidence: 0.65,
   },
   {
-    pattern: /(?:详细|展开|多说)(?:一点|些|点)/,
+    pattern: /(?:请|回答|你).*(?:详细|展开|多说)(?:一点|些|点)/,
     keyExtractor: () => "persona.verbosity",
     valueExtractor: () => "detailed",
-    confidence: 0.75,
+    confidence: 0.65,
   },
   {
-    pattern: /(?:直接|干脆)(?:一点|些|点)/,
+    pattern: /(?:请|回答|你).*(?:直接|干脆)(?:一点|些|点)/,
     keyExtractor: () => "persona.directness",
     valueExtractor: () => "direct",
-    confidence: 0.75,
+    confidence: 0.65,
   },
   {
-    pattern: /(?:别|不要|少)问(?:那么多|这么多)?(?:问题)?/,
+    pattern: /(?:别|不要|少|请.*别)问(?:那么多|这么多)?(?:问题)?/,
     keyExtractor: () => "persona.question_style",
     valueExtractor: () => "minimal",
-    confidence: 0.70,
+    confidence: 0.65,
   },
 ];
 

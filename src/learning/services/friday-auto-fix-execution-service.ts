@@ -214,7 +214,8 @@ export function createFridayAutoFixExecutionService(
     rollbackAttempted: boolean,
   ): Promise<FridayAutoFixExecutionResult> {
     return deps.db.withWriteTransaction((db) => {
-      const failed = deps.actionRepo.markApplied(db, actionId, "failed", nowIso)!;
+      const failed = deps.actionRepo.markApplied(db, actionId, "failed", nowIso);
+      if (!failed) throw new FridayDomainError("AUTOFIX_ACTION_NOT_FOUND", `Action ${actionId} not found`, { httpStatus: 404 });
       return {
         action: failed,
         success: false,
@@ -290,7 +291,8 @@ export function createFridayAutoFixExecutionService(
       // For Tier 1+, ensure rollback plan exists
       if (action.riskTier >= 1 && !action.plan.rollbackPlan && !action.rollbackPlan) {
         return deps.db.withWriteTransaction((db) => {
-          const rejected = deps.actionRepo.markRejected(db, actionId, nowIso)!;
+          const rejected = deps.actionRepo.markRejected(db, actionId, nowIso);
+          if (!rejected) throw new FridayDomainError("AUTOFIX_ACTION_NOT_FOUND", `Action ${actionId} not found`, { httpStatus: 404 });
           return {
             action: rejected,
             success: false,
@@ -386,7 +388,8 @@ export function createFridayAutoFixExecutionService(
             actionId,
             "success",
             nowIso,
-          )!;
+          );
+          if (!applied) throw new FridayDomainError("AUTOFIX_ACTION_NOT_FOUND", `Action ${actionId} not found`, { httpStatus: 404 });
 
           // Mark incident as mitigated
           deps.incidentRepo.updateStatus(

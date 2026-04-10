@@ -216,10 +216,10 @@ export function createFridayAgentRoutes(
         let timeoutMs: number | undefined;
         if (body.timeoutMs !== undefined) {
           const parsed = Number(body.timeoutMs);
-          if (!Number.isFinite(parsed) || parsed < 1) {
+          if (!Number.isFinite(parsed) || parsed < 1 || parsed > 600_000) {
             throw new FridayDomainError(
               "VALIDATION_ERROR",
-              "timeoutMs must be a positive number",
+              "timeoutMs must be a positive number up to 600000",
               { httpStatus: 400 },
             );
           }
@@ -306,7 +306,7 @@ export function createFridayAgentRoutes(
             ...(typeof input.model === "string" && input.model.trim().length > 0
               ? { model: input.model.trim() }
               : {}),
-            ...(typeof temperature === "number" && Number.isFinite(temperature)
+            ...(typeof temperature === "number" && Number.isFinite(temperature) && temperature >= 0 && temperature <= 2
               ? { temperature }
               : {}),
             ...(reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high"
@@ -994,10 +994,10 @@ export function createFridayAgentRoutes(
         let timeoutMs: number | undefined;
         if (body.timeoutMs !== undefined) {
           const parsed = Number(body.timeoutMs);
-          if (!Number.isFinite(parsed) || parsed < 1) {
+          if (!Number.isFinite(parsed) || parsed < 1 || parsed > 600_000) {
             throw new FridayDomainError(
               "VALIDATION_ERROR",
-              "timeoutMs must be a positive number",
+              "timeoutMs must be a positive number up to 600000",
               { httpStatus: 400 },
             );
           }
