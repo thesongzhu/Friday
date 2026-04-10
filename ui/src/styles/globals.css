@@ -32,6 +32,17 @@
   --color-info: #5E6AD2;
   --color-live: #34C759;
 
+  /* Status subtle backgrounds and text (for StatusPill, cards) */
+  --color-bg-success-subtle: #dcfce7;
+  --color-bg-warning-subtle: #fef9c3;
+  --color-bg-danger-subtle: #fee2e2;
+  --color-text-success: #15803d;
+  --color-text-warning: #92400e;
+  --color-text-danger: #dc2626;
+  --color-border-success: #bbf7d0;
+  --color-border-warning: #fde68a;
+  --color-border-danger: #fecaca;
+
   /* Skeleton loading (warm-tinted to match beige background) */
   --color-skeleton-base: #ede5da;
   --color-skeleton-shimmer: rgba(255, 255, 255, 0.4);

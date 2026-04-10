@@ -38,4 +38,12 @@ export const learningApi = {
       },
     );
   },
+
+  async approveAction(actionId: string, reason?: string): Promise<void> {
+    await apiClient.post(`/v1/auto-fix/actions/${encodeURIComponent(actionId)}/approve`, reason ? { reason } : {});
+  },
+
+  async denyAction(actionId: string, reason?: string): Promise<void> {
+    await apiClient.post(`/v1/auto-fix/actions/${encodeURIComponent(actionId)}/deny`, reason ? { reason } : {});
+  },
 };

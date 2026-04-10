@@ -154,7 +154,7 @@ export function UsagePage() {
           <SkeletonCard lines={1} />
         </div>
       ) : isError ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-8 text-center dark:border-red-900/50 dark:bg-red-900/20">
+        <div className="rounded-xl border border-[color:var(--color-border-danger)] bg-[color:var(--color-bg-danger-subtle)] p-8 text-center">
           <p className="text-sm font-medium status-error">{localize(locale, "加载用量数据失败", "Failed to load usage data")}</p>
           <p className="mt-1 text-xs text-[color:var(--color-text-tertiary)]">{localize(locale, "提供商健康信息暂时不可用。", "Provider health information is temporarily unavailable.")}</p>
         </div>
@@ -165,25 +165,25 @@ export function UsagePage() {
             <h2 className="text-sm font-medium text-[color:var(--color-text-primary)]">
               {localize(locale, "Token 用量估算", "Token Usage Estimate")}
             </h2>
-            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+            <p className="mt-1 text-xs text-[color:var(--color-text-warning)]">
               {localize(locale, "Token 数按每次成功请求约 800 个估算（输入/输出比 35/65）。实际用量因模型和提示长度而异。", "Tokens are estimated at ~800 per successful request with a 35/65 input/output split. Actual usage varies by model and prompt length.")}
             </p>
             <div className="mt-4 grid grid-cols-3 gap-4">
-              <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
+              <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
                 <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "总 Token", "Total Tokens")}</p>
                 <p className="mt-1 text-lg font-semibold text-[color:var(--color-text-primary)]">
                   {formatNumber(estimatedTotalTokens)}
                 </p>
               </div>
-              <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
+              <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
                 <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "输入 Token", "Input Tokens")}</p>
-                <p className="mt-1 text-lg font-semibold text-indigo-600 dark:text-indigo-400">
+                <p className="mt-1 text-lg font-semibold text-[color:var(--color-accent)]">
                   {formatNumber(estimatedInputTokens)}
                 </p>
               </div>
-              <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
+              <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
                 <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "输出 Token", "Output Tokens")}</p>
-                <p className="mt-1 text-lg font-semibold text-violet-600 dark:text-violet-400">
+                <p className="mt-1 text-lg font-semibold text-[color:var(--color-accent)]">
                   {formatNumber(estimatedOutputTokens)}
                 </p>
               </div>
@@ -263,21 +263,21 @@ export function UsagePage() {
               {localize(locale, "错误率与回退", "Error Rate & Fallbacks")}
             </h2>
             <div className="mt-4 grid grid-cols-3 gap-4">
-              <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
+              <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
                 <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "总请求数", "Total Requests")}</p>
                 <p className="mt-1 text-lg font-semibold text-[color:var(--color-text-primary)]">
                   {formatNumber(totalRequests)}
                 </p>
               </div>
-              <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
+              <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
                 <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "错误率", "Error Rate")}</p>
-                <p className={`mt-1 text-lg font-semibold ${Number(errorRate) > 5 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                <p className={`mt-1 text-lg font-semibold ${Number(errorRate) > 5 ? "text-[color:var(--color-text-danger)]" : "text-[color:var(--color-text-success)]"}`}>
                   {errorRate}%
                 </p>
               </div>
-              <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
+              <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
                 <p className="text-xs text-[color:var(--color-text-secondary)]">Fallback Count</p>
-                <p className="mt-1 text-lg font-semibold text-amber-600 dark:text-amber-400">
+                <p className="mt-1 text-lg font-semibold text-[color:var(--color-text-warning)]">
                   {formatNumber(totalErrors)}
                 </p>
               </div>

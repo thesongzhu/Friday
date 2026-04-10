@@ -107,6 +107,47 @@ describe("validateFridayDeepLink", () => {
     });
   });
 
+  describe("SSRF protection — private URL detection", () => {
+    const privateUrls = [
+      "http://127.0.0.1:8080/api",
+      "http://10.0.0.1/internal",
+      "http://192.168.1.100:11434/v1",
+      "http://172.16.0.1/admin",
+      "http://172.31.255.255/admin",
+      "http://localhost:3000/skill",
+      "http://[::1]:8080/api",
+      "http://0.0.0.0:3000/probe",
+      "http://169.254.169.254/metadata",
+    ];
+
+    for (const url of privateUrls) {
+      it(`detects private URL: ${url}`, () => {
+        const result = validateFridayDeepLink(makePayload({
+          type: "skill-source",
+          skillSource: { url },
+        }));
+        expect(result.checks.some((c) => c.level === "warning" && c.summary.toLowerCase().includes("private"))).toBe(true);
+      });
+    }
+
+    it("allows public URLs", () => {
+      const result = validateFridayDeepLink(makePayload({
+        type: "skill-source",
+        skillSource: { url: "https://github.com/user/repo" },
+      }));
+      expect(result.checks.every((c) => !c.summary.toLowerCase().includes("private"))).toBe(true);
+    });
+
+    it("treats unparseable URLs as private (fail-closed)", () => {
+      const result = validateFridayDeepLink(makePayload({
+        type: "skill-source",
+        skillSource: { url: "not-a-url" },
+      }));
+      // Should either block or warn
+      expect(result.checks.some((c) => c.level === "warning" || c.level === "blocking")).toBe(true);
+    });
+  });
+
   describe("integrity hash", () => {
     it("reports advisory when valid SHA-256 provided", () => {
       const result = validateFridayDeepLink(makePayload({

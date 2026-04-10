@@ -262,9 +262,9 @@ export function OnboardingPage() {
             </div>
             <div className="mt-5 flex items-center justify-between gap-3">
               <p className="text-sm text-[color:var(--color-text-secondary)]">
-                {locale === "zh"
-                  ? `已选择 ${selectedPacks.length} / 3`
-                  : `${selectedPacks.length} / 3 selected`}
+                {selectedPacks.length < 3
+                  ? localize(locale, `请选择 3 个场景包 (已选 ${selectedPacks.length})`, `Select 3 packs to continue (${selectedPacks.length} selected)`)
+                  : localize(locale, `已选择 ${selectedPacks.length} / 3`, `${selectedPacks.length} / 3 selected`)}
               </p>
               <div className="flex gap-2">
                 <ActionButton tone="secondary" onClick={() => setStep("profile")}>

@@ -223,7 +223,7 @@ describe("FridayWorkflowDagScheduler", () => {
     expect(result.deadEndedNodes).toContain("B");
   });
 
-  it("warns when condition evaluation fails and treats the edge as enabled (fail-open)", () => {
+  it("warns when condition evaluation fails and treats the edge as disabled (fail-closed)", () => {
     const graph = makeGraph(
       [{ id: "A" }, { id: "B" }],
       [
@@ -250,9 +250,9 @@ describe("FridayWorkflowDagScheduler", () => {
     );
 
     expect(warnSpy).toHaveBeenCalledTimes(1);
-    // P2-WF-001: Changed from fail-disabled to fail-open — B should now be ready
-    expect(result.readyNodes).toContain("B");
-    expect(result.deadEndedNodes).not.toContain("B");
+    // Fail-closed: expression errors block the edge to prevent unintended execution
+    expect(result.readyNodes).not.toContain("B");
+    expect(result.deadEndedNodes).toContain("B");
   });
 
   it("entry nodes computation", () => {

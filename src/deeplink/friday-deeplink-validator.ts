@@ -14,17 +14,28 @@ import type {
   FridayDeepLinkPreviewResult,
 } from "./friday-deeplink-types.js";
 
-const PRIVATE_IP_PATTERNS = [
-  /^https?:\/\/127\./,
-  /^https?:\/\/10\./,
-  /^https?:\/\/192\.168\./,
-  /^https?:\/\/172\.(1[6-9]|2\d|3[01])\./,
-  /^https?:\/\/localhost/i,
-  /^https?:\/\/\[::1\]/,
-];
-
-function isPrivateUrl(url: string): boolean {
-  return PRIVATE_IP_PATTERNS.some((pattern) => pattern.test(url));
+function isPrivateUrl(urlString: string): boolean {
+  try {
+    const parsed = new URL(urlString);
+    const hostname = parsed.hostname.toLowerCase();
+    // Check for private/reserved hostnames
+    if (hostname === "localhost" || hostname === "[::1]" || hostname === "::1") return true;
+    // Check for private IP ranges (strip brackets for IPv6)
+    const ip = hostname.replace(/^\[|\]$/g, "");
+    if (/^127\./.test(ip)) return true;
+    if (/^10\./.test(ip)) return true;
+    if (/^192\.168\./.test(ip)) return true;
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) return true;
+    if (ip === "::1" || ip === "0.0.0.0" || ip === "0:0:0:0:0:0:0:1") return true;
+    // Check for link-local and other reserved ranges
+    if (/^169\.254\./.test(ip)) return true;
+    if (/^fc[0-9a-f]{2}:/i.test(ip) || /^fd[0-9a-f]{2}:/i.test(ip)) return true;
+    if (/^fe80:/i.test(ip)) return true;
+    return false;
+  } catch {
+    // If URL parsing fails, treat as potentially private (fail-closed)
+    return true;
+  }
 }
 
 function isValidSha256(hash: string): boolean {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sanitizeChannelInput } from "#channels";
+import { sanitizeChannelInput, FRIDAY_MAX_CHANNEL_INPUT_LENGTH } from "#channels";
 
 describe("sanitizeChannelInput", () => {
   it("trims whitespace", () => {
@@ -38,5 +38,28 @@ describe("sanitizeChannelInput", () => {
 
   it("preserves Unicode text", () => {
     expect(sanitizeChannelInput("你好世界")).toBe("你好世界");
+  });
+
+  it("truncates input exceeding max length", () => {
+    const oversized = "a".repeat(FRIDAY_MAX_CHANNEL_INPUT_LENGTH + 1000);
+    const result = sanitizeChannelInput(oversized);
+    expect(result.length).toBeLessThanOrEqual(FRIDAY_MAX_CHANNEL_INPUT_LENGTH);
+  });
+
+  it("preserves input within max length", () => {
+    const withinLimit = "hello world";
+    expect(sanitizeChannelInput(withinLimit)).toBe("hello world");
+  });
+
+  it("applies NFC normalization", () => {
+    // é composed (e + combining acute) vs precomposed
+    const decomposed = "caf\u0065\u0301"; // e + combining accent
+    const result = sanitizeChannelInput(decomposed);
+    expect(result).toBe("café");
+  });
+
+  it("exports FRIDAY_MAX_CHANNEL_INPUT_LENGTH constant", () => {
+    expect(typeof FRIDAY_MAX_CHANNEL_INPUT_LENGTH).toBe("number");
+    expect(FRIDAY_MAX_CHANNEL_INPUT_LENGTH).toBeGreaterThan(0);
   });
 });

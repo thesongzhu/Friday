@@ -18,7 +18,7 @@ export function ContextualHelp(props: { text: string; locale: AppLocale; classNa
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [open]);
 
-  if (props.locale !== "zh") return null;
+  if (!props.text) return null;
 
   return (
     <span ref={ref} className={cn("relative inline-flex", props.className)}>
@@ -26,7 +26,7 @@ export function ContextualHelp(props: { text: string; locale: AppLocale; classNa
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="inline-flex items-center justify-center rounded-full p-0.5 text-[color:var(--color-text-faint)] transition hover:text-[color:var(--color-text-secondary)]"
-        aria-label="帮助"
+        aria-label={props.locale === "zh" ? "帮助" : "Help"}
       >
         <HelpCircle className="h-3.5 w-3.5" />
       </button>
