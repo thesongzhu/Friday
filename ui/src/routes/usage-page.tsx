@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api/client";
-import { SkeletonCard } from "@/components/core/primitives";
+import { SkeletonCard, StatusPill } from "@/components/core/primitives";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 
@@ -74,34 +74,18 @@ function formatNumber(n: number): string {
   return n.toLocaleString();
 }
 
-function statusBadge(status?: string) {
+function statusBadge(status: string | undefined, locale: import("@/lib/i18n/localized-text").AppLocale) {
   switch (status) {
     case "healthy":
     case "ok":
-      return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
-          Healthy
-        </span>
-      );
+      return <StatusPill tone="success">{localize(locale, "健康", "Healthy")}</StatusPill>;
     case "degraded":
-      return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-          Degraded
-        </span>
-      );
+      return <StatusPill tone="warning">{localize(locale, "降级", "Degraded")}</StatusPill>;
     case "down":
     case "error":
-      return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
-          Down
-        </span>
-      );
+      return <StatusPill tone="danger">{localize(locale, "宕机", "Down")}</StatusPill>;
     default:
-      return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
-          Unknown
-        </span>
-      );
+      return <StatusPill>{localize(locale, "未知", "Unknown")}</StatusPill>;
   }
 }
 
@@ -227,12 +211,12 @@ export function UsagePage() {
           {/* ─── Cost by Provider ─── */}
           <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5">
             <h2 className="text-sm font-medium text-[color:var(--color-text-primary)]">
-              Cost by Provider
+              {localize(locale, "按提供商计费", "Cost by Provider")}
             </h2>
 
             {costRows.length === 0 ? (
               <p className="mt-3 text-xs text-[color:var(--color-text-secondary)]">
-                No provider data available yet.
+                {localize(locale, "暂无提供商数据。", "No provider data available yet.")}
               </p>
             ) : (
               <div className="mt-4 overflow-x-auto">
@@ -321,7 +305,7 @@ export function UsagePage() {
 
             {healthItems.length === 0 ? (
               <p className="mt-3 text-xs text-[color:var(--color-text-secondary)]">
-                No providers reporting health data.
+                {localize(locale, "暂无提供商健康数据。", "No providers reporting health data.")}
               </p>
             ) : (
               <div className="mt-3 space-y-2">
@@ -344,7 +328,7 @@ export function UsagePage() {
                           last checked {new Date(item.lastChecked).toLocaleTimeString()}
                         </p>
                       </div>
-                      {statusBadge(item.status)}
+                      {statusBadge(item.status, locale)}
                     </div>
                   );
                 })}
@@ -355,7 +339,7 @@ export function UsagePage() {
           {/* ─── Pricing Note ─── */}
           <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4">
             <h2 className="text-sm font-medium text-[color:var(--color-text-primary)]">
-              Pricing Configuration
+              {localize(locale, "定价配置", "Pricing Configuration")}
             </h2>
             <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
               The estimated costs shown above use default token pricing. You can override per-model pricing rates in{" "}

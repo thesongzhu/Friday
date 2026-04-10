@@ -78,7 +78,7 @@ export function AutomationsPage() {
         enabled: true,
       }),
     onSuccess: () => {
-      toast.success("Task created");
+      toast.success(localize(locale, "任务已创建", "Task created"));
       setName("");
       setTaskTemplate("");
       setCron("");
@@ -92,7 +92,7 @@ export function AutomationsPage() {
   const runAutomationMutation = useMutation({
     mutationFn: (automationId: string) => automationsApi.run(automationId),
     onSuccess: () => {
-      toast.success("Task run started");
+      toast.success(localize(locale, "任务运行已启动", "Task run started"));
       void queryClient.invalidateQueries({ queryKey: ["agent-os", "automations"] });
     },
     onError: (error) => {
@@ -138,13 +138,13 @@ export function AutomationsPage() {
   return (
     <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
       <div className="space-y-4">
-        <ShellCard eyebrow="Create Task" title="Quick Queue Entry">
+        <ShellCard eyebrow={localize(locale, "创建任务", "Create Task")} title={localize(locale, "快速入队", "Quick Queue Entry")}>
           <form
             className="space-y-4"
             onSubmit={(event) => {
               event.preventDefault();
               if (!name.trim() || !taskTemplate.trim()) {
-                toast.error("Name and task template are required");
+                toast.error(localize(locale, "名称和任务模板为必填项", "Name and task template are required"));
                 return;
               }
               createAutomationMutation.mutate();
@@ -155,7 +155,7 @@ export function AutomationsPage() {
               value={name}
               onChange={(event) => setName(event.target.value)}
               className="agent-input"
-              placeholder="Task name"
+              placeholder={localize(locale, "任务名称", "Task name")}
             />
             <textarea
               data-testid="automations-task-input"
@@ -163,7 +163,7 @@ export function AutomationsPage() {
               onChange={(event) => setTaskTemplate(event.target.value)}
               rows={6}
               className="agent-textarea"
-              placeholder="Describe the task to run when this automation is triggered."
+              placeholder={localize(locale, "描述触发自动化时要运行的任务。", "Describe the task to run when this automation is triggered.")}
             />
             <div className="grid gap-3 md:grid-cols-[1fr_220px]">
               <input
@@ -171,24 +171,24 @@ export function AutomationsPage() {
                 value={cron}
                 onChange={(event) => setCron(event.target.value)}
                 className="agent-input"
-                placeholder="Cron schedule (optional)"
+                placeholder={localize(locale, "Cron 表达式（可选）", "Cron schedule (optional)")}
               />
               <input
                 data-testid="automations-timezone-input"
                 value={timezone}
                 onChange={(event) => setTimezone(event.target.value)}
                 className="agent-input"
-                placeholder="Timezone"
+                placeholder={localize(locale, "时区", "Timezone")}
               />
             </div>
             <ActionButton type="submit" disabled={createAutomationMutation.isPending}>
               <Plus className="mr-2 h-4 w-4" />
-              Create Task
+              {localize(locale, "创建任务", "Create Task")}
             </ActionButton>
           </form>
         </ShellCard>
 
-        <ShellCard eyebrow="Queue Diagnostics" title="Operator Notes">
+        <ShellCard eyebrow={localize(locale, "队列诊断", "Queue Diagnostics")} title={localize(locale, "运维备注", "Operator Notes")}>
           <div className="space-y-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">
             <p>
               This phase keeps task management intentionally lightweight. You can create manual or cron-backed tasks, trigger them on demand, and flip enablement without exposing the old automation builder UI.
@@ -201,12 +201,12 @@ export function AutomationsPage() {
       </div>
 
       <ShellCard
-        eyebrow="Task Queue"
-        title="Scheduled Work"
+        eyebrow={localize(locale, "任务队列", "Task Queue")}
+        title={localize(locale, "计划任务", "Scheduled Work")}
         aside={
           <ActionButton tone="secondary" onClick={() => void refetch()}>
-            <RefreshCcw className="mr-2 h-4 w-4" />
-            Refresh
+            <RefreshCcw className="mr-2 h-4 w-4" aria-hidden="true" />
+            {localize(locale, "刷新", "Refresh")}
           </ActionButton>
         }
       >
@@ -214,7 +214,7 @@ export function AutomationsPage() {
           <SkeletonList rows={3} />
         ) : sortedAutomations.length === 0 ? (
           <div className="rounded-[28px] border border-dashed border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-8 text-center text-sm text-[color:var(--color-text-secondary)]">
-            No scheduled tasks exist yet.
+            {localize(locale, "暂无计划任务。", "No scheduled tasks exist yet.")}
           </div>
         ) : (
           <div className="space-y-3">
@@ -229,7 +229,7 @@ export function AutomationsPage() {
                     <div className="flex items-center gap-2">
                       <h2 className="text-lg font-semibold text-[color:var(--color-text-primary)]">{automation.name}</h2>
                       <StatusPill tone={automation.enabled ? "success" : "neutral"}>
-                        {automation.enabled ? "enabled" : "paused"}
+                        {automation.enabled ? localize(locale, "启用", "enabled") : localize(locale, "暂停", "paused")}
                       </StatusPill>
                       <StatusPill tone={automation.promotionState === "public_boost_eligible" ? "warning" : automation.promotionState === "team" ? "success" : "neutral"}>
                         {automation.promotionState.replaceAll("_", " ")}
@@ -268,10 +268,10 @@ export function AutomationsPage() {
                   </div>
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-4">
-                  <TaskMetric label="Schedule" value={summarizeSchedule(automation.schedule)} icon={<Clock3 className="h-4 w-4" />} />
-                  <TaskMetric label="Time Saved" value={`${automation.estimatedTimeSavedMinutes} min`} icon={<Clock3 className="h-4 w-4" />} />
-                  <TaskMetric label="Reuse Count" value={String(automation.reuseCount)} icon={<RefreshCcw className="h-4 w-4" />} />
-                  <TaskMetric label="Outcome Score" value={String(Math.round(automation.lastOutcomeScore))} icon={<Play className="h-4 w-4" />} />
+                  <TaskMetric label={localize(locale, "计划", "Schedule")} value={summarizeSchedule(automation.schedule)} icon={<Clock3 className="h-4 w-4" aria-hidden="true" />} />
+                  <TaskMetric label={localize(locale, "节省时间", "Time Saved")} value={`${automation.estimatedTimeSavedMinutes} min`} icon={<Clock3 className="h-4 w-4" aria-hidden="true" />} />
+                  <TaskMetric label={localize(locale, "复用次数", "Reuse Count")} value={String(automation.reuseCount)} icon={<RefreshCcw className="h-4 w-4" aria-hidden="true" />} />
+                  <TaskMetric label={localize(locale, "效果评分", "Outcome Score")} value={String(Math.round(automation.lastOutcomeScore))} icon={<Play className="h-4 w-4" aria-hidden="true" />} />
                 </div>
                 {editingId === automation.id && (
                   <div className="mt-4 space-y-2 rounded-xl border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] p-3">
