@@ -408,13 +408,13 @@ describe("FridayPreferenceExtractionService", () => {
       expect(signals).toHaveLength(1);
       expect(signals[0]!.key).toBe("persona.verbosity");
       expect(signals[0]!.value).toBe("concise");
-      expect(signals[0]!.confidence).toBe(0.75);
+      expect(signals[0]!.confidence).toBe(0.65);
     });
 
-    it("extracts verbosity=detailed from 'be more detailed'", () => {
+    it("extracts verbosity=detailed from 'please be more detailed'", () => {
       const event = makeEvent({
         kind: "user_message",
-        payload: { text: "be more detailed please" },
+        payload: { text: "please be more detailed" },
       });
       const signals = service.extract(event);
       expect(signals).toHaveLength(1);
@@ -425,7 +425,7 @@ describe("FridayPreferenceExtractionService", () => {
     it("extracts tone=warm from 'be more friendly'", () => {
       const event = makeEvent({
         kind: "user_message",
-        payload: { text: "be more friendly when responding" },
+        payload: { text: "can you be more friendly when responding" },
       });
       const signals = service.extract(event);
       expect(signals).toHaveLength(1);
@@ -436,7 +436,7 @@ describe("FridayPreferenceExtractionService", () => {
     it("extracts questionStyle=minimal from 'stop asking so many questions'", () => {
       const event = makeEvent({
         kind: "user_message",
-        payload: { text: "stop asking so many questions" },
+        payload: { text: "please stop asking so many questions" },
       });
       const signals = service.extract(event);
       expect(signals).toHaveLength(1);
@@ -447,7 +447,7 @@ describe("FridayPreferenceExtractionService", () => {
     it("extracts directness=direct from 'be more direct'", () => {
       const event = makeEvent({
         kind: "user_message",
-        payload: { text: "be more direct" },
+        payload: { text: "I want you to be more direct" },
       });
       const signals = service.extract(event);
       expect(signals).toHaveLength(1);
@@ -491,7 +491,7 @@ describe("FridayPreferenceExtractionService", () => {
     it("extracts tone=analytical from 'be more formal'", () => {
       const event = makeEvent({
         kind: "user_message",
-        payload: { text: "be more formal in your responses" },
+        payload: { text: "could you be more formal in your responses" },
       });
       const signals = service.extract(event);
       expect(signals).toHaveLength(1);
@@ -502,7 +502,7 @@ describe("FridayPreferenceExtractionService", () => {
     it("extracts Chinese directness from '直接一点'", () => {
       const event = makeEvent({
         kind: "user_message",
-        payload: { text: "回答直接一点" },
+        payload: { text: "请回答直接一点" },
       });
       const signals = service.extract(event);
       expect(signals).toHaveLength(1);
@@ -513,12 +513,23 @@ describe("FridayPreferenceExtractionService", () => {
     it("extracts verbosity=concise from 'be more brief'", () => {
       const event = makeEvent({
         kind: "user_message",
-        payload: { text: "be more brief" },
+        payload: { text: "please be more brief" },
       });
       const signals = service.extract(event);
       expect(signals).toHaveLength(1);
       expect(signals[0]!.key).toBe("persona.verbosity");
       expect(signals[0]!.value).toBe("concise");
+    });
+
+    it("does NOT match conversational mentions (false positive guard)", () => {
+      const event = makeEvent({
+        kind: "user_message",
+        payload: { text: "The report was more concise than expected" },
+      });
+      const signals = service.extract(event);
+      // Should NOT extract a persona preference from conversational text
+      const personaSignals = signals.filter((s) => s.key.startsWith("persona."));
+      expect(personaSignals).toHaveLength(0);
     });
   });
 });

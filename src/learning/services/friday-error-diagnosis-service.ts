@@ -101,23 +101,24 @@ export function createFridayErrorDiagnosisService(
       5,
     );
 
-    // 4. Compute confidence using deterministic scoring
+    // 4. Compute confidence using deterministic scoring (always in [0, 1])
+    const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
     let confidence = incident.severity === "high" ? 0.5 : 0.3;
 
     // Exact lesson match boost
     if (matchedLessons.length > 0) {
-      confidence += 0.3;
+      confidence = clamp01(confidence + 0.3);
     }
 
     // Recurrence boost (capped)
-    confidence += Math.min(recurrenceCount * 0.05, 0.2);
+    confidence = clamp01(confidence + Math.min(recurrenceCount * 0.05, 0.2));
 
     // Historical high-confidence diagnosis boost
     const highConfDiagnoses = historicalDiagnoses.filter(
       (d) => d.confidence >= 0.7,
     );
     if (highConfDiagnoses.length > 0) {
-      confidence += 0.1;
+      confidence = clamp01(confidence + 0.1);
     }
 
     // Internal structured runtime failures are deterministic product signals,
@@ -126,11 +127,8 @@ export function createFridayErrorDiagnosisService(
       ? incident.context.source
       : undefined;
     if (source && INTERNAL_RUNTIME_AUTO_FIX_SOURCES.has(source)) {
-      confidence += 0.3;
+      confidence = clamp01(confidence + 0.3);
     }
-
-    // Cap at 1.0
-    confidence = Math.min(confidence, 1.0);
 
     // 5. Build diagnosis entity
     const diagnosisJson: JsonObject = {

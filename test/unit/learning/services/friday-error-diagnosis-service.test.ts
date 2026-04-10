@@ -244,4 +244,67 @@ describe("FridayErrorDiagnosisService", () => {
     expect(result.matchedLessons).toHaveLength(0);
     expect(result.candidatePlans).toHaveLength(0);
   });
+
+  it("confidence is always clamped to [0, 1]", () => {
+    // High severity (0.5) + lesson match (0.3) + max recurrence (0.2) + historical (0.1) + internal source (0.3)
+    // = 1.4 unclamped, should be clamped to 1.0
+    const lessonRepo = createFridayLearnedLessonRepository();
+    lessonRepo.upsertByFingerprint(db.writer, {
+      id: "lesson-clamp",
+      fingerprint: "sig-internal-crash",
+      title: "Known fix",
+      cause: "Internal crash",
+      fix: "Retry",
+      nowIso: NOW,
+    });
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const highSeverityIncident: FridayErrorIncidentEntity = {
+      ...baseIncident,
+      incidentId: "inc-clamp",
+      severity: "high",
+      signature: "sig-internal-crash",
+      context: { source: "assistant" },
+    };
+    incidentRepo.insert(db.writer, highSeverityIncident);
+    // Seed recurrence (insert multiple incidents with same signature)
+    for (let i = 0; i < 10; i++) {
+      incidentRepo.insert(db.writer, {
+        ...highSeverityIncident,
+        incidentId: `inc-recur-${i}`,
+      });
+    }
+
+    const result = service.diagnose({ incident: highSeverityIncident, nowIso: NOW });
+
+    expect(result.diagnosis.confidence).toBeLessThanOrEqual(1.0);
+    expect(result.diagnosis.confidence).toBeGreaterThanOrEqual(0);
+  });
+
+  it("autoFixEligible boundary: confidence exactly at threshold (0.6)", () => {
+    // Medium severity (0.3) + lesson match (0.3) = 0.6 exactly
+    const lessonRepo = createFridayLearnedLessonRepository();
+    lessonRepo.upsertByFingerprint(db.writer, {
+      id: "lesson-boundary",
+      fingerprint: "sig-boundary",
+      title: "Boundary fix",
+      cause: "Boundary error",
+      fix: "Boundary fix",
+      nowIso: NOW,
+    });
+    const boundaryIncident: FridayErrorIncidentEntity = {
+      ...baseIncident,
+      incidentId: "inc-boundary",
+      severity: "medium",
+      signature: "sig-boundary",
+    };
+    const incidentRepo = createFridayErrorIncidentRepository();
+    incidentRepo.insert(db.writer, boundaryIncident);
+
+    const result = service.diagnose({ incident: boundaryIncident, nowIso: NOW });
+
+    // 0.3 (medium) + 0.3 (lesson) + recurrence boost from the 1 incident = 0.65
+    // Auto-fix threshold is 0.6
+    expect(result.autoFixEligible).toBe(true);
+    expect(result.diagnosis.confidence).toBeGreaterThanOrEqual(0.6);
+  });
 });
