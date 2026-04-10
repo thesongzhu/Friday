@@ -11,6 +11,7 @@ import { AlertTriangle, Brain, Cpu, DollarSign, KeyRound, MessageCircleMore, Shi
 import { toast } from "sonner";
 import { localize, type AppLocale } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
+import { ChannelConfigForm } from "@/components/core/channel-config-form";
 import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { channelsApi } from "@/lib/api/channels";
 import { healthApi } from "@/lib/api/health";
@@ -948,6 +949,11 @@ export function SettingsPage() {
                   </div>
                 ))
               )}
+            </div>
+
+            <div className="mt-4 border-t border-[color:var(--color-border-soft)] pt-4">
+              <p className="agent-eyebrow mb-3">{localize(locale, "添加通道", "Add Channel")}</p>
+              <ChannelConfigForm locale={locale} />
             </div>
           </div>
         </ShellCard>

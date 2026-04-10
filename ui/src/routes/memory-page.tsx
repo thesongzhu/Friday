@@ -84,6 +84,24 @@ export function MemoryPage() {
 
   return (
     <div className="space-y-4">
+      {/* Teach Friday quick action */}
+      <div className="rounded-2xl border border-[color:var(--color-accent-soft)] bg-[color:var(--color-accent-muted)] p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+              {localize(locale, "教 Friday 记住你需要的", "Teach Friday what you need")}
+            </p>
+            <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
+              {localize(locale, "主动告诉 Friday 需要记住的信息，让它更了解你的工作方式。", "Tell Friday what to remember so it understands your workflow better.")}
+            </p>
+          </div>
+          <ActionButton onClick={() => setShowAddForm(true)}>
+            <Brain className="mr-2 h-4 w-4" aria-hidden="true" />
+            {localize(locale, "添加记忆", "Add Memory")}
+          </ActionButton>
+        </div>
+      </div>
+
       <ShellCard eyebrow={localize(locale, "记忆存储", "Memory Store")} title={localize(locale, "已记忆的知识", "Stored Knowledge")}>
         <div className="space-y-4">
           <p className="text-sm text-[color:var(--color-text-secondary)]">

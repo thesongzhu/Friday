@@ -440,6 +440,45 @@
 .bg-status-warning { background-color: var(--color-warning); }
 .bg-status-error { background-color: var(--color-error); }
 
+/* ── Workflow node execution states ── */
+@keyframes node-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(94, 106, 210, 0.3); }
+  50% { box-shadow: 0 0 0 8px rgba(94, 106, 210, 0); }
+}
+
+.workflow-node-running {
+  border-color: var(--color-accent) !important;
+  animation: node-pulse 1.5s ease-in-out infinite;
+}
+
+.workflow-node-success {
+  border-color: var(--color-success) !important;
+  background: linear-gradient(180deg, rgba(52, 199, 89, 0.06), transparent) !important;
+}
+
+.workflow-node-failed {
+  border-color: var(--color-error) !important;
+  background: linear-gradient(180deg, rgba(229, 72, 77, 0.06), transparent) !important;
+}
+
+.workflow-edge-active {
+  stroke: var(--color-accent);
+  stroke-dasharray: 5 5;
+  animation: edge-flow 1s linear infinite;
+}
+
+@keyframes edge-flow {
+  to { stroke-dashoffset: -10; }
+}
+
+/* ── Mobile refinements ── */
+.overflow-x-chips {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.overflow-x-chips::-webkit-scrollbar { display: none; }
+
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   *,

@@ -650,7 +650,7 @@ export function ObservabilityPage() {
           </StatusPill>
         }
       >
-        <div className="mb-4 flex flex-wrap gap-2">
+        <div className="mb-4 flex gap-2 overflow-x-chips lg:flex-wrap">
           <FocusChip label={localize(locale, "概览", "Overview")} active={focus === "overview"} to={buildObservabilityHref({ focus: "overview" })} />
           <FocusChip label={localize(locale, "助手", "Assistant")} active={focus === "assistant"} to={buildObservabilityHref({ focus: "assistant" })} />
           <FocusChip label={localize(locale, "告警", "Alerts")} active={focus === "alerts"} to={buildObservabilityHref({ focus: "alerts" })} />
