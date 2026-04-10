@@ -559,7 +559,7 @@ export function SetupPage() {
                 </ActionButton>
                 <ActionButton
                   onClick={() => saveProviderMutation.mutate()}
-                  disabled={!providerBaseUrl.trim() || providerModels.length === 0}
+                  disabled={!providerBaseUrl.trim() || providerModels.length === 0 || saveProviderMutation.isPending}
                 >
                   Save Provider
                 </ActionButton>
