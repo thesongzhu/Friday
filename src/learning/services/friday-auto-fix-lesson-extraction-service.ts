@@ -18,6 +18,13 @@ export interface FridayAutoFixLessonExtractionService {
     action: FridayAutoFixActionEntity;
     nowIso: ISODateTime;
   }): FridayLearnedLessonEntity | null;
+
+  extractFromFailure(input: {
+    incident: FridayErrorIncidentEntity;
+    diagnosis: FridayDiagnosisRecordEntity;
+    action: FridayAutoFixActionEntity;
+    nowIso: ISODateTime;
+  }): FridayLearnedLessonEntity | null;
 }
 
 export interface CreateAutoFixLessonExtractionServiceDeps {
@@ -71,6 +78,39 @@ export function createFridayAutoFixLessonExtractionService(
 
         // Mark diagnosis as resolved
         deps.diagnosisRepo.markResolved(db, diagnosis.id, nowIso);
+
+        return lesson;
+      });
+    },
+
+    extractFromFailure(input) {
+      const { incident, diagnosis, action, nowIso } = input;
+
+      if (action.outcome === "success") {
+        return null;
+      }
+
+      return deps.db.withWriteTransaction((db) => {
+        const mitigation: JsonObject = {
+          autoFixFailed: true,
+          failedPlanTitle: action.plan.title,
+          riskTier: action.riskTier,
+          failedSteps: action.plan.steps.map((s) => s.kind),
+          outcome: action.outcome,
+        };
+
+        const lesson = deps.lessonRepo.upsertByFingerprint(db, {
+          id: deps.idGenerator(),
+          fingerprint: incident.signature,
+          title: `Failed fix: ${action.plan.title}`,
+          cause: (diagnosis.diagnosis as JsonObject)["summary"] as string ??
+            `${incident.category} error`,
+          fix: `Avoid repeating "${action.plan.steps.map((s) => s.kind).join(", ")}" for this error pattern without modification`,
+          mitigation,
+          sourceIncidentId: incident.incidentId,
+          sourceDiagnosisId: diagnosis.id,
+          nowIso,
+        });
 
         return lesson;
       });

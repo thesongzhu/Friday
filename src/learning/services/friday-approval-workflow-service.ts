@@ -2,7 +2,8 @@ import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
 import type { FridayApprovalRequestRepository } from "../persistence/friday-approval-request-repository.js";
 import type { FridayAutoFixActionRepository } from "../persistence/friday-auto-fix-action-repository.js";
-import type { ISODateTime, UUID } from "../model/friday-learning.types.js";
+import type { FridayLearnedLessonRepository } from "../persistence/friday-learned-lesson-repository.js";
+import type { ISODateTime, JsonObject, UUID } from "../model/friday-learning.types.js";
 import type {
   FridayApprovalRequestEntity,
   FridayAutoFixActionEntity,
@@ -49,6 +50,7 @@ export interface CreateApprovalWorkflowServiceDeps {
   db: FridaySqliteLayer;
   approvalRepo: FridayApprovalRequestRepository;
   actionRepo: FridayAutoFixActionRepository;
+  lessonRepo?: FridayLearnedLessonRepository;
   idGenerator: () => string;
   executionService?: {
     execute(actionId: UUID): Promise<FridayAutoFixExecutionResult>;
@@ -180,6 +182,29 @@ export function createFridayApprovalWorkflowService(
         // Mark linked action as rejected
         const actionId = resolved.actionId;
         deps.actionRepo.markRejected(db, actionId, nowIso);
+
+        // Record negative lesson so diagnosis avoids recommending this fix again
+        if (deps.lessonRepo) {
+          const action = deps.actionRepo.getById(db, actionId);
+          if (action) {
+            const mitigation: JsonObject = {
+              rejected: true,
+              rejectedReason: reason ?? "unspecified",
+              rejectedStepKinds: action.plan.steps.map((s) => s.kind),
+            };
+            deps.lessonRepo.upsertByFingerprint(db, {
+              id: deps.idGenerator(),
+              fingerprint: action.plan.evidence.fingerprint,
+              title: `Rejected: ${action.plan.title}`,
+              cause: `Fix rejected by operator (reason: ${reason ?? "unspecified"})`,
+              fix: `Do not auto-apply "${action.plan.steps.map((s) => s.kind).join(", ")}" for this error pattern`,
+              mitigation,
+              sourceIncidentId: action.incidentId,
+              sourceDiagnosisId: action.plan.evidence.diagnosisId,
+              nowIso,
+            });
+          }
+        }
 
         return resolved;
       });

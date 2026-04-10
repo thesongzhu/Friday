@@ -32,14 +32,14 @@ export const AGENT_OS_NAV_PRIMARY: AgentOsNavItem[] = [
 
 export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
   {
-    label: localizedText("执行节点", "Fleet"),
-    path: "/fleet",
-    description: localizedText("查看卫星节点、任务放置、积压和分布式执行健康度。", "Satellites, placement, backlog, and distributed execution health."),
+    label: localizedText("能力包", "Skills"),
+    path: "/skills",
+    description: localizedText("查看、管理和生成 Friday 可调用的能力包。", "View, manage, and generate callable skill packs for Friday."),
   },
   {
-    label: localizedText("资产市场", "Marketplace"),
-    path: "/marketplace",
-    description: localizedText("浏览公开资产、支持创作者并发布定制需求。", "Browse public assets, support creators, and post custom requests."),
+    label: localizedText("工作流", "Workflows"),
+    path: "/workflows",
+    description: localizedText("部署、编辑和监控自动化工作流。", "Deploy, edit, and monitor automation workflows."),
   },
   {
     label: localizedText("任务队列", "Task Queue"),
@@ -52,9 +52,34 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     description: localizedText("查看、搜索并管理 Friday 记住了什么。", "View, search, and manage what Friday remembers about you."),
   },
   {
+    label: localizedText("MCP 服务", "MCP Servers"),
+    path: "/mcp",
+    description: localizedText("查看已连接的 MCP 服务器和工具扩展状态。", "View connected MCP servers and tool extension status."),
+  },
+  {
+    label: localizedText("用量与成本", "Usage & Cost"),
+    path: "/usage",
+    description: localizedText("查看请求量、估算成本和提供方健康度。", "Request volume, estimated costs, and provider health."),
+  },
+  {
+    label: localizedText("会话", "Sessions"),
+    path: "/sessions",
+    description: localizedText("浏览和管理远程会话记录。", "Browse and manage remote session records."),
+  },
+  {
     label: localizedText("可观测性", "Observability"),
     path: "/observability",
     description: localizedText("查看 trace、审计、告警和系统健康。", "Trace, audit, alerts, and health for operator debugging."),
+  },
+  {
+    label: localizedText("执行节点", "Fleet"),
+    path: "/fleet",
+    description: localizedText("查看卫星节点、任务放置、积压和分布式执行健康度。", "Satellites, placement, backlog, and distributed execution health."),
+  },
+  {
+    label: localizedText("资产市场", "Marketplace"),
+    path: "/marketplace",
+    description: localizedText("浏览公开资产、支持创作者并发布定制需求。", "Browse public assets, support creators, and post custom requests."),
   },
   {
     label: localizedText("操作控制台", "Operator Console"),
@@ -114,7 +139,16 @@ export function resolvePageTitle(pathname: string): LocalizedText {
   if (pathname.startsWith("/memory")) {
     return localizedText("记忆", "Memory");
   }
-  if (pathname.startsWith("/command-center") || pathname.startsWith("/sessions")) {
+  if (pathname.startsWith("/sessions")) {
+    return localizedText("会话", "Sessions");
+  }
+  if (pathname.startsWith("/mcp")) {
+    return localizedText("MCP 服务", "MCP Servers");
+  }
+  if (pathname.startsWith("/usage")) {
+    return localizedText("用量与成本", "Usage & Cost");
+  }
+  if (pathname.startsWith("/command-center")) {
     return localizedText("操作控制台", "Operator Console");
   }
   if (pathname.startsWith("/login")) {

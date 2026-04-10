@@ -164,4 +164,35 @@ describe("FridayAutoFixLessonExtractionService", () => {
     expect(lesson).not.toBeNull();
     expect(lesson!.fingerprint).toBe("sig-tool-crash");
   });
+
+  it("extracts lesson from failed auto-fix action", () => {
+    const failedAction: FridayAutoFixActionEntity = {
+      ...baseAction,
+      outcome: "failed" as FridayAutoFixActionEntity["outcome"],
+    };
+
+    const lesson = service.extractFromFailure({
+      incident: baseIncident,
+      diagnosis: baseDiagnosis,
+      action: failedAction,
+      nowIso: NOW,
+    });
+
+    expect(lesson).not.toBeNull();
+    expect(lesson!.title).toContain("Failed fix");
+    const mitigation = lesson!.mitigation as Record<string, unknown>;
+    expect(mitigation.autoFixFailed).toBe(true);
+    expect(mitigation.failedSteps).toEqual(["retry_node"]);
+  });
+
+  it("extractFromFailure returns null for success outcome", () => {
+    const lesson = service.extractFromFailure({
+      incident: baseIncident,
+      diagnosis: baseDiagnosis,
+      action: baseAction,
+      nowIso: NOW,
+    });
+
+    expect(lesson).toBeNull();
+  });
 });
