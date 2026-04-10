@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 
 export interface FridayGrantRoutesDeps {
@@ -26,6 +27,9 @@ export function createFridayGrantRoutes(
       auth: { public: false, anyOfScopes: ["agent.run", "hub.admin"] },
       async handler(ctx) {
         const grantId = String((ctx.params as Record<string, unknown>).grantId ?? "").trim();
+        if (!grantId) {
+          throw new FridayDomainError("VALIDATION_ERROR", "grantId is required", { httpStatus: 400 });
+        }
         const reason = (ctx.body as Record<string, unknown> | undefined)?.reason as string | undefined;
         const result = await deps.revokeGrant(grantId, reason);
         return result;
