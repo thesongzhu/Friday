@@ -213,7 +213,7 @@ export function HomePage() {
                     <>
                       <span className="text-[color:var(--color-border-strong)]">&middot;</span>
                       <span className="inline-flex items-center gap-1">
-                        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-green-500" />
+                        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[color:var(--color-live)]" />
                         {`${activeRuns.length} 个任务运行中`}
                       </span>
                     </>
