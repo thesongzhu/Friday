@@ -36,11 +36,11 @@ interface DeepLinkApplyResponse {
 function checkLevelBadge(level: string) {
   switch (level) {
     case "blocking":
-      return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">Blocking</span>;
+      return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 ">Blocking</span>;
     case "warning":
-      return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Warning</span>;
+      return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 ">Warning</span>;
     default:
-      return <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">Advisory</span>;
+      return <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-600 ">Advisory</span>;
   }
 }
 
@@ -80,7 +80,7 @@ export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: 
       >
         <h2 className="text-lg font-semibold text-[color:var(--color-text-primary)]">Import from URL</h2>
         <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
-          Paste a <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">friday://</code> deep link or a JSON payload to preview and import.
+          Paste a <code className="rounded bg-zinc-100 px-1 ">friday://</code> deep link or a JSON payload to preview and import.
         </p>
 
         <textarea
@@ -92,7 +92,7 @@ export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: 
         />
 
         {previewMutation.error ? (
-          <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+          <p className="mt-2 text-xs text-red-600 ">
             {previewMutation.error instanceof Error ? previewMutation.error.message : "Preview failed"}
           </p>
         ) : null}
@@ -114,11 +114,11 @@ export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: 
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-[color:var(--color-text-primary)]">{preview.payload.label}</span>
               {preview.verdict === "ready" ? (
-                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">Ready</span>
+                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 ">Ready</span>
               ) : preview.verdict === "needs_review" ? (
-                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Needs Review</span>
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 ">Needs Review</span>
               ) : (
-                <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">Blocked</span>
+                <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 ">Blocked</span>
               )}
             </div>
 
@@ -157,7 +157,7 @@ export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: 
             </div>
 
             {applyMutation.error ? (
-              <p className="text-xs text-red-600 dark:text-red-400">
+              <p className="text-xs text-red-600 ">
                 {applyMutation.error instanceof Error ? applyMutation.error.message : "Import failed"}
               </p>
             ) : null}
