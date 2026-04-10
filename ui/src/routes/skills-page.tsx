@@ -4,8 +4,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BadgeCheck, Download, Link2, Package, RefreshCcw, ShieldCheck, Trash2 } from "lucide-react";
 import { DeepLinkPreviewDialog } from "@/components/deeplink/deeplink-preview-dialog";
 import { toast } from "sonner";
-import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
+import { ActionButton, ShellCard, SkeletonList, StatusPill } from "@/components/core/primitives";
 import { HelpTooltip } from "@/components/core/help-tooltip";
+import { localize, type AppLocale } from "@/lib/i18n/localized-text";
+import { useAppLocale } from "@/providers/locale-provider";
 import { skillsApi } from "@/lib/api/skills";
 import { buildObservabilityHref } from "@/lib/observability/view-models";
 import { readLastSkillGeneratorSessionId } from "@/lib/skills/generator-session";
@@ -35,17 +37,17 @@ function toneForMaturity(maturity?: "draft" | "verified" | "stable"): "neutral" 
   return "neutral";
 }
 
-function formatOriginType(originType?: "generated" | "stabilized" | "cli-backed" | "mcp-backed"): string {
-  if (originType === "cli-backed") return "CLI-backed";
-  if (originType === "mcp-backed") return "MCP-backed";
-  if (originType === "stabilized") return "Stabilized";
-  return "Generated";
+function formatOriginType(originType: string | undefined, locale: AppLocale): string {
+  if (originType === "cli-backed") return localize(locale, "CLI 驱动", "CLI-backed");
+  if (originType === "mcp-backed") return localize(locale, "MCP 驱动", "MCP-backed");
+  if (originType === "stabilized") return localize(locale, "已稳定", "Stabilized");
+  return localize(locale, "AI 生成", "Generated");
 }
 
-function formatMaturity(maturity?: "draft" | "verified" | "stable"): string {
-  if (maturity === "stable") return "Stable";
-  if (maturity === "verified") return "Verified";
-  return "Draft";
+function formatMaturity(maturity: string | undefined, locale: AppLocale): string {
+  if (maturity === "stable") return localize(locale, "稳定", "Stable");
+  if (maturity === "verified") return localize(locale, "已验证", "Verified");
+  return localize(locale, "草稿", "Draft");
 }
 
 function toneForCatalogReadiness(item: {
@@ -64,14 +66,14 @@ function toneForCatalogReadiness(item: {
 function labelForCatalogReadiness(item: {
   blockedReasons?: string[];
   recommendedNextAction?: string;
-}): string {
+}, locale: AppLocale): string {
   if ((item.blockedReasons?.length ?? 0) > 0) {
-    return "needs review";
+    return localize(locale, "需要审核", "needs review");
   }
   if (item.recommendedNextAction) {
-    return "ready";
+    return localize(locale, "就绪", "ready");
   }
-  return "catalog";
+  return localize(locale, "目录", "catalog");
 }
 
 function describeIntegrationMode(input: {
@@ -119,6 +121,7 @@ function labelForPreflightVerdict(
 }
 
 export function SkillsPage() {
+  const { locale } = useAppLocale();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
@@ -365,8 +368,8 @@ export function SkillsPage() {
               <div className="grid gap-3 sm:grid-cols-4">
                 <SkillMetric label="Selected skill" value={detail?.name ?? selectedCatalog?.skillName ?? selectedSkillId} />
                 <SkillMetric label="Lifecycle state" value={detail?.status ?? "catalog"} />
-                <SkillMetric label="Origin" value={formatOriginType(detail?.originType ?? selectedCatalog?.originType)} />
-                <SkillMetric label="Maturity" value={formatMaturity(detail?.maturity ?? selectedCatalog?.maturity)} />
+                <SkillMetric label="Origin" value={formatOriginType(detail?.originType ?? selectedCatalog?.originType, locale)} />
+                <SkillMetric label="Maturity" value={formatMaturity(detail?.maturity ?? selectedCatalog?.maturity, locale)} />
               </div>
             </div>
           ) : (
@@ -399,8 +402,8 @@ export function SkillsPage() {
                     <div className="flex items-center gap-2">
                       <StatusPill tone="success">starter</StatusPill>
                       <StatusPill tone={toneForSkillLifecycle(skill)}>{skill.status}</StatusPill>
-                      <StatusPill>{formatOriginType(skill.originType)}</StatusPill>
-                      <StatusPill tone={toneForMaturity(skill.maturity)}>{formatMaturity(skill.maturity)}</StatusPill>
+                      <StatusPill>{formatOriginType(skill.originType, locale)}</StatusPill>
+                      <StatusPill tone={toneForMaturity(skill.maturity)}>{formatMaturity(skill.maturity, locale)}</StatusPill>
                       {isCliFirstSkill(skill) ? <StatusPill tone="success">CLI-first</StatusPill> : null}
                     </div>
                   </div>
@@ -443,8 +446,8 @@ export function SkillsPage() {
                       <StatusPill tone={toneForSkillLifecycle(skill)}>
                         {skill.updateAvailable ? "update available" : skill.status}
                       </StatusPill>
-                      <StatusPill>{formatOriginType(skill.originType)}</StatusPill>
-                      <StatusPill tone={toneForMaturity(skill.maturity)}>{formatMaturity(skill.maturity)}</StatusPill>
+                      <StatusPill>{formatOriginType(skill.originType, locale)}</StatusPill>
+                      <StatusPill tone={toneForMaturity(skill.maturity)}>{formatMaturity(skill.maturity, locale)}</StatusPill>
                     </div>
                   </div>
                   <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
@@ -516,7 +519,7 @@ export function SkillsPage() {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <StatusPill tone={toneForCatalogReadiness(item)}>
-                        {labelForCatalogReadiness(item)}
+                        {labelForCatalogReadiness(item, locale)}
                       </StatusPill>
                       <StatusPill tone={item.signatureValid ? "success" : "warning"}>
                         trust {item.trustScore}
@@ -537,9 +540,9 @@ export function SkillsPage() {
                     </p>
                   ) : null}
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {item.originType ? <StatusPill>{formatOriginType(item.originType)}</StatusPill> : null}
+                    {item.originType ? <StatusPill>{formatOriginType(item.originType, locale)}</StatusPill> : null}
                     {item.maturity ? (
-                      <StatusPill tone={toneForMaturity(item.maturity)}>{formatMaturity(item.maturity)}</StatusPill>
+                      <StatusPill tone={toneForMaturity(item.maturity)}>{formatMaturity(item.maturity, locale)}</StatusPill>
                     ) : null}
                     {item.trustTier ? <StatusPill>{item.trustTier}</StatusPill> : null}
                     {item.firstUsePrompts?.slice(0, 2).map((prompt) => (
@@ -580,8 +583,8 @@ export function SkillsPage() {
                     <StatusPill tone={toneForSkillLifecycle(detail)}>
                       {detail.installedVersion ?? detail.latestVersion ?? "unversioned"}
                     </StatusPill>
-                    <StatusPill>{formatOriginType(detail.originType)}</StatusPill>
-                    <StatusPill tone={toneForMaturity(detail.maturity)}>{formatMaturity(detail.maturity)}</StatusPill>
+                    <StatusPill>{formatOriginType(detail.originType, locale)}</StatusPill>
+                    <StatusPill tone={toneForMaturity(detail.maturity)}>{formatMaturity(detail.maturity, locale)}</StatusPill>
                     {isCliFirstSkill(detail) ? <StatusPill tone="success">CLI-first</StatusPill> : null}
                   </div>
                 </div>
@@ -597,8 +600,8 @@ export function SkillsPage() {
                   <p>Installed version: {detail.installedVersion ?? "not installed"}</p>
                   <p>Latest version: {detail.latestVersion ?? "unknown"}</p>
                   <p>Starter pack: {detail.starter ? "yes" : "no"}</p>
-                  <p>Origin type: {formatOriginType(detail.originType)}</p>
-                  <p>Maturity: {formatMaturity(detail.maturity)}</p>
+                  <p>{localize(locale, "来源类型", "Origin type")}: {formatOriginType(detail.originType, locale)}</p>
+                  <p>{localize(locale, "成熟度", "Maturity")}: {formatMaturity(detail.maturity, locale)}</p>
                   <p>Implementation status: {detail.catalogEntry?.implementationStatus ?? "installed"}</p>
                 </div>
                 {detail.catalogEntry?.recommendedNextAction ? (
