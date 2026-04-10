@@ -358,13 +358,18 @@ export function createFridaySubagentRegistry(
       if (inFlightExecutions.size === 0) {
         return;
       }
+      const remaining = inFlightExecutions.size;
       const pending = Array.from(inFlightExecutions.values());
-      await Promise.race([
-        Promise.allSettled(pending).then(() => undefined),
-        new Promise<void>((resolve) => {
-          setTimeout(resolve, timeoutMs);
+      const settled = await Promise.race([
+        Promise.allSettled(pending).then(() => true),
+        new Promise<false>((resolve) => {
+          setTimeout(() => resolve(false), timeoutMs);
         }),
       ]);
+      if (!settled && inFlightExecutions.size > 0) {
+        // eslint-disable-next-line no-console
+        console.warn(`[friday][subagent] drain timed out with ${inFlightExecutions.size} of ${remaining} executions still in-flight`);
+      }
     },
 
     async startRun(subagentId: string): Promise<FridaySubagentOutcome> {

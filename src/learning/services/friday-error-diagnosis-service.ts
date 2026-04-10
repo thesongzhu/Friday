@@ -65,9 +65,11 @@ export function createFridayErrorDiagnosisService(
     const lessonDisabled = lesson && deps.factRepo
       ? deps.factRepo.getByUserAndKey(db, incident.userId, `lesson_disabled:${lesson.id}`)
       : null;
-    let matchedLessons = lesson && !(lessonDisabled?.value === true || (typeof lessonDisabled?.value === "object" && lessonDisabled?.value !== null && "disabled" in lessonDisabled.value && lessonDisabled.value.disabled === true))
-      ? [lesson]
-      : [];
+    const isLessonDisabled = lessonDisabled != null && (
+      lessonDisabled.value === true
+      || (typeof lessonDisabled.value === "object" && lessonDisabled.value !== null && "disabled" in lessonDisabled.value && (lessonDisabled.value as Record<string, unknown>).disabled === true)
+    );
+    let matchedLessons = lesson && !isLessonDisabled ? [lesson] : [];
 
     // 1b. Check for rejected/negative lessons — avoid recommending same fix
     const isNegativeLesson = lesson?.mitigation &&

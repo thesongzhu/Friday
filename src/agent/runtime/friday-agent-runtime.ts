@@ -592,9 +592,7 @@ export function createFridayAgentRuntime(
 
       eventEmitter.on("agent.subagent.spawned", onSubagentSpawned);
       eventEmitter.on("agent.subagent.completed", onSubagentCompleted);
-      const progressTimer = setInterval(() => {
-        emitProgressEvent();
-      }, 15_000);
+      let progressTimer: ReturnType<typeof setInterval> | undefined;
 
       // 1. Create run record unless we are resuming a previously gated run.
       if (!existingRun) {
@@ -856,6 +854,10 @@ export function createFridayAgentRuntime(
       };
 
       try {
+        progressTimer = setInterval(() => {
+          emitProgressEvent();
+        }, 15_000);
+
         // 2. Emit started event and transition to planning
         if (evaluateRules) {
           const runPolicy = await safeEvaluateRules(evaluateRules, {
@@ -2562,7 +2564,7 @@ export function createFridayAgentRuntime(
       } finally {
         clearTimeout(abortTimer);
         params.signal?.removeEventListener("abort", onExternalAbort);
-        clearInterval(progressTimer);
+        if (progressTimer) clearInterval(progressTimer);
         eventEmitter.off("agent.subagent.spawned", onSubagentSpawned);
         eventEmitter.off("agent.subagent.completed", onSubagentCompleted);
         runSeqCounters.delete(runId);

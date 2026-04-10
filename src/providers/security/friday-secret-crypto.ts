@@ -116,16 +116,27 @@ export function getMasterKey(): Buffer {
   // 2. Try to read persisted key file
   try {
     const hex = fs.readFileSync(MASTER_KEY_FILE, "utf8").trim();
-    // P2-SEC: Verify master key file permissions are not too open
+    // P2-SEC: Verify and fix master key file permissions
     try {
       const stat = fs.statSync(MASTER_KEY_FILE);
       if ((stat.mode & 0o077) !== 0) {
-        console.warn(`[friday][SECURITY] Master key file permissions too open — expected 0600, got 0o${(stat.mode & 0o777).toString(8)}`);
+        // eslint-disable-next-line no-console
+        console.warn(`[friday][SECURITY] Master key file permissions too open (0o${(stat.mode & 0o777).toString(8)}) — attempting chmod 0600`);
+        try {
+          fs.chmodSync(MASTER_KEY_FILE, 0o600);
+        } catch (chmodErr) {
+          // eslint-disable-next-line no-console
+          console.warn("[friday][SECURITY] Could not fix master key file permissions:", chmodErr instanceof Error ? chmodErr.message : String(chmodErr));
+        }
       }
-    } catch (err) { console.warn("[friday][secret-crypto] stat check failed:", err instanceof Error ? err.message : String(err)); }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[friday][secret-crypto] stat check failed:", err instanceof Error ? err.message : String(err));
+    }
     const buf = Buffer.from(hex, "hex");
     if (buf.length === KEY_BYTES) {
       cachedMasterKey = buf;
+      cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
       return cachedMasterKey;
     }
     // Invalid length — fall through to regenerate
