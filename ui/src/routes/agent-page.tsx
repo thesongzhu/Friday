@@ -84,15 +84,15 @@ const ACTIVE_RUN_STATUSES = [
 ] as const;
 
 function formatTimestamp(value?: string): string {
-  if (!value) return "Never";
+  if (!value) return "—";
   return new Date(value).toLocaleString();
 }
 
 function formatRelative(value?: string): string {
-  if (!value) return "Never";
+  if (!value) return "—";
   const ms = Date.now() - new Date(value).getTime();
   const minutes = Math.max(0, Math.floor(ms / 60_000));
-  if (minutes < 1) return "Just now";
+  if (minutes < 1) return "—";
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;

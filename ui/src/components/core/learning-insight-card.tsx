@@ -104,6 +104,30 @@ export function LearningInsightCard() {
               </p>
             </div>
           )}
+
+          {overview.coverage.autoFixActions > 0 && overview.rollbackHotspots.length === 0 && (
+            <div className="mt-3 rounded-xl bg-emerald-50 px-3 py-2">
+              <p className="text-xs text-emerald-700">
+                {localize(
+                  locale,
+                  `Friday 已自动修复 ${String(overview.coverage.autoFixActions)} 个问题，无需人工干预。`,
+                  `Friday auto-fixed ${String(overview.coverage.autoFixActions)} issue(s) without manual intervention.`,
+                )}
+              </p>
+            </div>
+          )}
+
+          {overview.rollbackHotspots.length > 0 && (
+            <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2">
+              <p className="text-xs text-amber-700">
+                {localize(
+                  locale,
+                  `${String(overview.rollbackHotspots.length)} 个热点问题频繁回滚 — Friday 正在学习更好的修复方案。`,
+                  `${String(overview.rollbackHotspots.length)} hotspot(s) with frequent rollbacks — Friday is learning better fixes.`,
+                )}
+              </p>
+            </div>
+          )}
         </>
       ) : (
         <p className="text-sm text-[color:var(--color-text-secondary)]">
