@@ -498,10 +498,10 @@ export function ObservabilityPage() {
             summary: highlightedIssue.summary,
             detail:
               highlightedIssue.kind === "approval_required"
-                ? "A guided recovery is waiting behind an approval gate."
+                ? localize(locale, "一个引导恢复正在审批门后等待。", "A guided recovery is waiting behind an approval gate.")
                 : highlightedIssue.kind === "failed_fix"
-                  ? "Friday already tried a bounded repair here. Review the rollback evidence before retrying."
-                  : "Inspect the issue evidence, then move into a guided recovery path.",
+                  ? localize(locale, "Friday 已尝试过有限修复。请先检查回滚证据再重试。", "Friday already tried a bounded repair here. Review the rollback evidence before retrying.")
+                  : localize(locale, "检查问题证据，然后进入引导恢复路径。", "Inspect the issue evidence, then move into a guided recovery path."),
             tone: toneForIssueSeverity(highlightedIssue.severity),
           };
         }
@@ -509,7 +509,7 @@ export function ObservabilityPage() {
           return {
             title: highlightedAlert.ruleName,
             summary: highlightedAlert.summary,
-            detail: "This is the sharpest live alert. Acknowledge it here, then open the deeper recovery path if needed.",
+            detail: localize(locale, "这是最紧急的实时告警。在此确认后，根据需要打开更深的恢复路径。", "This is the sharpest live alert. Acknowledge it here, then open the deeper recovery path if needed."),
             tone: toneForAlert(highlightedAlert.status, highlightedAlert.severity),
           };
         }
@@ -517,9 +517,9 @@ export function ObservabilityPage() {
       case "assistant":
         if (!assistantDiagnostics) {
           return {
-            title: "Assistant diagnostics are loading",
-            summary: "Friday is gathering task profiles, MCP server states, and recent context-cost summaries.",
-            detail: "Use this focus to inspect context governance and task profile choices without leaving observability.",
+            title: localize(locale, "助手诊断加载中", "Assistant diagnostics are loading"),
+            summary: localize(locale, "Friday 正在收集任务配置、MCP 服务器状态和近期上下文成本摘要。", "Friday is gathering task profiles, MCP server states, and recent context-cost summaries."),
+            detail: localize(locale, "使用此焦点在不离开可观测性页面的情况下检查上下文治理和任务配置选择。", "Use this focus to inspect context governance and task profile choices without leaving observability."),
             tone: "neutral",
           };
         }
@@ -535,7 +535,7 @@ export function ObservabilityPage() {
         if (!highlightedHealthComponent) return null;
         return {
           title: highlightedHealthComponent.name,
-          summary: highlightedHealthComponent.message ?? "This component is currently the main health concern.",
+          summary: highlightedHealthComponent.message ?? localize(locale, "此组件是当前主要健康关注点。", "This component is currently the main health concern."),
           detail: `Module ${highlightedHealthComponent.module} is ${highlightedHealthComponent.status}.`,
           tone: toneForHealth(highlightedHealthComponent.status),
         };
@@ -553,13 +553,13 @@ export function ObservabilityPage() {
             title: highlightedEscalation.reason,
             summary: `${highlightedEscalation.channel} escalation on ${highlightedEscalation.failureCategory}.`,
             detail: highlightedEscalation.acknowledged
-              ? "This escalation has already been acknowledged."
-              : "This escalation still needs an operator decision.",
+              ? localize(locale, "此升级已被确认。", "This escalation has already been acknowledged.")
+              : localize(locale, "此升级仍需运维人员决策。", "This escalation still needs an operator decision."),
             tone: highlightedEscalation.acknowledged ? "neutral" : "warning",
           };
         }
         return {
-          title: "Retry protection",
+          title: localize(locale, "重试保护", "Retry protection"),
           summary: `${retryCircuitBreakers.filter((item) => item.state !== "closed").length} provider protections are active.`,
           detail: "Review circuit breakers before forcing more retries.",
           tone: retryCircuitBreakers.some((item) => item.state === "open") ? "danger" : "warning",
@@ -569,7 +569,7 @@ export function ObservabilityPage() {
           return {
             title: `${rulesAuditLog[0].resource} · ${rulesAuditLog[0].action}`,
             summary: `${rulesAuditLog[0].decision} decision from ${rulesAuditLog[0].ruleId ?? "bundle-eval"}.`,
-            detail: "Use this audit trail to explain why policy allowed, denied, or warned.",
+            detail: localize(locale, "使用此审计记录解释策略为何允许、拒绝或警告。", "Use this audit trail to explain why policy allowed, denied, or warned."),
             tone: rulesAuditLog[0].decision === "deny" ? "danger" : rulesAuditLog[0].decision === "warn" ? "warning" : "success",
           };
         }
@@ -582,7 +582,7 @@ export function ObservabilityPage() {
           detail:
             highlightedLoopRun.run.haltReason ??
             (highlightedLoopRun.run.verificationPassed === false
-              ? "Verification failed and Friday recorded the rollback outcome."
+              ? localize(locale, "验证失败，Friday 已记录回滚结果。", "Verification failed and Friday recorded the rollback outcome.")
               : "Review verification, rollback, and lesson extraction before resuming."),
           tone:
             highlightedLoopRun.run.status === "halted" || highlightedLoopRun.run.status === "failed"
@@ -610,9 +610,9 @@ export function ObservabilityPage() {
       case "overview":
       default:
         return {
-          title: "Work from the action queue first",
-          summary: "Friday surfaces the most actionable problems above, then keeps raw telemetry in drill-down sections below.",
-          detail: "Use the chips and action cards to move directly to the area that needs the next decision.",
+          title: localize(locale, "优先处理操作队列", "Work from the action queue first"),
+          summary: localize(locale, "Friday 在上方展示最需要行动的问题，原始遥测数据在下方的下钻区域中。", "Friday surfaces the most actionable problems above, then keeps raw telemetry in drill-down sections below."),
+          detail: localize(locale, "使用标签和操作卡片直接跳转到需要下一个决策的区域。", "Use the chips and action cards to move directly to the area that needs the next decision."),
           tone: overview?.alerts.activeAlerts ? "warning" : "success",
         };
     }
@@ -634,6 +634,7 @@ export function ObservabilityPage() {
     overview,
     latestAssistantRun,
     pathRuleCount,
+    locale,
   ]);
 
   const maxPoint = Math.max(1, ...(series?.points ?? []).map((point) => point.value));
@@ -685,7 +686,7 @@ export function ObservabilityPage() {
                 <p className="text-xs leading-5 text-[color:var(--color-text-tertiary)]">{focusSummary.detail}</p>
               </div>
               <p className="text-sm text-[color:var(--color-text-secondary)]">
-                Friday keeps this page action-first: solve the highlighted problem here, then drill into traces, audit, and history only when you need the deeper evidence.
+                {localize(locale, "Friday 以行动为先展示此页面：先解决上方高亮的问题，需要更深证据时再下钻到追踪、审计和历史。", "Friday keeps this page action-first: solve the highlighted problem here, then drill into traces, audit, and history only when you need the deeper evidence.")}
               </p>
             </div>
           ) : (
