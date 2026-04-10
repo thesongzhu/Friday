@@ -10,7 +10,7 @@
 - Short-lived working notes belong in `memory/YYYY-MM-DD.md`.
 - Repeated operational routines should graduate into automations or workflows instead of expanding prompt instructions.
 - When product docs conflict with historical notes, prefer `docs/current-source-of-truth.md`.
-- The MBTI communication persona system is wired end-to-end: hub-bootstrap builds persona per-run, agent-runtime injects it into the system prompt. Code path: `hub-bootstrap.ts:2266` → `agent-runtime.ts:1043`.
+- The MBTI communication persona system is wired end-to-end: hub-bootstrap builds persona per-run, agent-runtime injects it into the system prompt. Code path: `hub-bootstrap.ts` (`communicationPromptBuilder` callback) → `agent-runtime.ts` (`communicationPromptBuilder` invocation in executeRun).
 - The self-learning pipeline feeds preference facts (with 30-day half-life confidence decay) into persona resolution via `_learningContextRef.buildContext()`.
 - Wizard/onboarding state defaults to in-memory (`Map`) but supports optional persistence via the `OnboardingPersistence` interface. Setup assistant state (not onboarding engine) is strictly in-memory and does not survive restarts.
 - The learning confidence model uses Bayesian-inspired updates: `0.45 * existingDecayed + 0.55 * signalConfidence + evidenceBoost - conflictPenalty`.
@@ -18,4 +18,4 @@
 - Tool call summary (`src/agent/services/friday-tool-call-summary.ts`) captures privacy-safe tool execution metadata (arg keys only, no values) for observability and world model training data.
 - Warn-once pattern is used across 7+ modules (hub-bootstrap, auth, memory, system, http-server, workspace-context, unix-socket-bridge) to deduplicate runtime warnings without losing critical signals.
 - OpenAI Responses API (`openai-responses`) streaming is now supported alongside `openai-completions` in the agent LLM client.
-- Database migration count: 59+ (latest: v059-rules-audit-canonicalization).
+- Database migration count: 67+ (latest: v067-capability-grants).
