@@ -1,5 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api/client";
+import { SkeletonCard } from "@/components/core/primitives";
+import { localize } from "@/lib/i18n/localized-text";
+import { useAppLocale } from "@/providers/locale-provider";
 
 // ─── Types ───
 
@@ -108,6 +111,7 @@ import { PercentBar } from "@/components/usage/usage-charts";
 // ─── Page ───
 
 export function UsagePage() {
+  const locale = useAppLocale();
   const { data: healthItems = [], isLoading: healthLoading, isError: healthError } = useProviderHealth();
   const { data: providers = [], isLoading: providersLoading, isError: providersError } = useProviders();
 
@@ -147,47 +151,54 @@ export function UsagePage() {
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight text-[color:var(--color-text-primary)]">
-          Usage &amp; Cost
+          {localize(locale, "用量与成本", "Usage & Cost")}
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
-          Monitor provider health and request volume. Token and cost figures below are rough estimates derived from request counts and generic pricing — they are not actual billing data.
+          {localize(
+            locale,
+            "监控提供商健康状态和请求量。下方的 Token 和成本数据为基于请求数和通用定价的粗略估算，非实际计费数据。",
+            "Monitor provider health and request volume. Token and cost figures below are rough estimates derived from request counts and generic pricing — they are not actual billing data.",
+          )}
         </p>
       </div>
 
       {isLoading ? (
-        <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-8 text-center text-sm text-[color:var(--color-text-secondary)]">
-          Loading usage data...
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <SkeletonCard lines={1} />
+          <SkeletonCard lines={1} />
+          <SkeletonCard lines={1} />
+          <SkeletonCard lines={1} />
         </div>
       ) : isError ? (
         <div className="rounded-xl border border-red-200 bg-red-50 p-8 text-center dark:border-red-900/50 dark:bg-red-900/20">
-          <p className="text-sm font-medium text-red-700 dark:text-red-400">Failed to load usage data</p>
-          <p className="mt-1 text-xs text-red-600 dark:text-red-500">Provider health information is temporarily unavailable.</p>
+          <p className="text-sm font-medium status-error">{localize(locale, "加载用量数据失败", "Failed to load usage data")}</p>
+          <p className="mt-1 text-xs text-[color:var(--color-text-tertiary)]">{localize(locale, "提供商健康信息暂时不可用。", "Provider health information is temporarily unavailable.")}</p>
         </div>
       ) : (
         <div className="space-y-6">
           {/* ─── Token Usage Summary ─── */}
           <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5">
             <h2 className="text-sm font-medium text-[color:var(--color-text-primary)]">
-              Token Usage Estimate
+              {localize(locale, "Token 用量估算", "Token Usage Estimate")}
             </h2>
             <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-              Tokens are estimated at ~800 per successful request with a 35/65 input/output split. Actual usage varies by model and prompt length.
+              {localize(locale, "Token 数按每次成功请求约 800 个估算（输入/输出比 35/65）。实际用量因模型和提示长度而异。", "Tokens are estimated at ~800 per successful request with a 35/65 input/output split. Actual usage varies by model and prompt length.")}
             </p>
             <div className="mt-4 grid grid-cols-3 gap-4">
               <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
-                <p className="text-xs text-[color:var(--color-text-secondary)]">Total Tokens</p>
+                <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "总 Token", "Total Tokens")}</p>
                 <p className="mt-1 text-lg font-semibold text-[color:var(--color-text-primary)]">
                   {formatNumber(estimatedTotalTokens)}
                 </p>
               </div>
               <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
-                <p className="text-xs text-[color:var(--color-text-secondary)]">Input Tokens</p>
+                <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "输入 Token", "Input Tokens")}</p>
                 <p className="mt-1 text-lg font-semibold text-indigo-600 dark:text-indigo-400">
                   {formatNumber(estimatedInputTokens)}
                 </p>
               </div>
               <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
-                <p className="text-xs text-[color:var(--color-text-secondary)]">Output Tokens</p>
+                <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "输出 Token", "Output Tokens")}</p>
                 <p className="mt-1 text-lg font-semibold text-violet-600 dark:text-violet-400">
                   {formatNumber(estimatedOutputTokens)}
                 </p>
@@ -265,17 +276,17 @@ export function UsagePage() {
           {/* ─── Error Rate & Fallback ─── */}
           <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5">
             <h2 className="text-sm font-medium text-[color:var(--color-text-primary)]">
-              Error Rate &amp; Fallbacks
+              {localize(locale, "错误率与回退", "Error Rate & Fallbacks")}
             </h2>
             <div className="mt-4 grid grid-cols-3 gap-4">
               <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
-                <p className="text-xs text-[color:var(--color-text-secondary)]">Total Requests</p>
+                <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "总请求数", "Total Requests")}</p>
                 <p className="mt-1 text-lg font-semibold text-[color:var(--color-text-primary)]">
                   {formatNumber(totalRequests)}
                 </p>
               </div>
               <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
-                <p className="text-xs text-[color:var(--color-text-secondary)]">Error Rate</p>
+                <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "错误率", "Error Rate")}</p>
                 <p className={`mt-1 text-lg font-semibold ${Number(errorRate) > 5 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
                   {errorRate}%
                 </p>
@@ -305,7 +316,7 @@ export function UsagePage() {
           {/* ─── Provider Health Status ─── */}
           <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5">
             <h2 className="text-sm font-medium text-[color:var(--color-text-primary)]">
-              Provider Health
+              {localize(locale, "提供商健康", "Provider Health")}
             </h2>
 
             {healthItems.length === 0 ? (

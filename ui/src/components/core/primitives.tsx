@@ -95,3 +95,58 @@ export function LiveIndicator(props: { label: string; active?: boolean; classNam
     </span>
   );
 }
+
+/* ── Skeleton primitives ── */
+
+export function SkeletonLine(props: { width?: string; className?: string }) {
+  return (
+    <div
+      className={cn("skeleton skeleton-line", props.className)}
+      style={props.width ? { width: props.width } : undefined}
+    />
+  );
+}
+
+export function SkeletonCard(props: { lines?: number; className?: string }) {
+  const lineCount = props.lines ?? 3;
+  const widths = ["100%", "85%", "60%", "75%", "50%"];
+  return (
+    <div className={cn("skeleton-card", props.className)}>
+      <div className="skeleton skeleton-title" />
+      {Array.from({ length: lineCount }, (_, i) => (
+        <div
+          key={i}
+          className="skeleton skeleton-line"
+          style={{ width: widths[i % widths.length] }}
+        />
+      ))}
+    </div>
+  );
+}
+
+export function SkeletonList(props: { rows?: number; className?: string }) {
+  const rowCount = props.rows ?? 4;
+  return (
+    <div className={cn("space-y-3", props.className)}>
+      {Array.from({ length: rowCount }, (_, i) => (
+        <div key={i} className="flex items-center gap-3">
+          <div className="skeleton skeleton-circle" />
+          <div className="flex-1 space-y-2">
+            <div className="skeleton skeleton-line" style={{ width: "65%" }} />
+            <div className="skeleton skeleton-line" style={{ width: "40%" }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function ThinkingDots() {
+  return (
+    <span className="inline-flex items-center gap-1" aria-label="Processing">
+      <span className="thinking-dot" />
+      <span className="thinking-dot" />
+      <span className="thinking-dot" />
+    </span>
+  );
+}
