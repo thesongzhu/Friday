@@ -65,9 +65,25 @@ export function createFridayErrorDiagnosisService(
     const lessonDisabled = lesson && deps.factRepo
       ? deps.factRepo.getByUserAndKey(db, incident.userId, `lesson_disabled:${lesson.id}`)
       : null;
-    const matchedLessons = lesson && !(lessonDisabled?.value === true || (typeof lessonDisabled?.value === "object" && lessonDisabled?.value !== null && "disabled" in lessonDisabled.value && lessonDisabled.value.disabled === true))
+    let matchedLessons = lesson && !(lessonDisabled?.value === true || (typeof lessonDisabled?.value === "object" && lessonDisabled?.value !== null && "disabled" in lessonDisabled.value && lessonDisabled.value.disabled === true))
       ? [lesson]
       : [];
+
+    // 1b. Check for rejected/negative lessons — avoid recommending same fix
+    const isNegativeLesson = lesson?.mitigation &&
+      typeof lesson.mitigation === "object" &&
+      lesson.mitigation !== null &&
+      "rejected" in (lesson.mitigation as Record<string, unknown>) &&
+      (lesson.mitigation as Record<string, unknown>).rejected === true;
+    const isFailedLesson = lesson?.mitigation &&
+      typeof lesson.mitigation === "object" &&
+      lesson.mitigation !== null &&
+      "autoFixFailed" in (lesson.mitigation as Record<string, unknown>) &&
+      (lesson.mitigation as Record<string, unknown>).autoFixFailed === true;
+
+    if (isNegativeLesson || isFailedLesson) {
+      matchedLessons = [];
+    }
 
     // 2. Recurrence count: recent incidents with same signature
     const recentIncidents = deps.incidentRepo.findRecentBySignature(

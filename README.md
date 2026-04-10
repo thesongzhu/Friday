@@ -4,7 +4,7 @@
 <p>
   <img src="https://img.shields.io/badge/Node-%E2%89%A522-brightgreen?style=for-the-badge" alt="Node ≥22">
   <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="MIT License">
-  <img src="https://img.shields.io/badge/Tests-9900%2B-success?style=for-the-badge" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-10000%2B-success?style=for-the-badge" alt="Tests">
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=for-the-badge" alt="TypeScript strict">
   <img src="https://github.com/thesongzhu/Friday/actions/workflows/ci.yml/badge.svg" alt="CI">
   <img src="https://github.com/thesongzhu/Friday/actions/workflows/release.yml/badge.svg" alt="Release">
@@ -1104,12 +1104,12 @@ Tools are registered via the tool registry and can be enabled/disabled per agent
 | Module | Purpose |
 |---|---|
 | `src/hub/` | Composition root (~5000 lines) — wires all services together |
-| `src/api/` | HTTP routes (45 route files), auth (JWT+RBAC+OAuth), rate limiting, realtime events (WS+SSE) |
+| `src/api/` | HTTP routes (49 route files), auth (JWT+RBAC+OAuth), rate limiting, realtime events (WS+SSE) |
 | `src/agent/` | Agent runtime, 37+ tool files, sub-agent orchestration, MCP bridge, autonomous engine, tool call summary (privacy-safe observability) |
 | `src/uix/` | Beginner UX: MBTI persona, user preferences, intent classification, guided wizards, onboarding engine, help system |
 | `src/learning/` | Self-learning pipeline: event collection, signal extraction, preference facts (confidence decay), pattern recognition, error diagnosis, auto-fix (plan/risk/execute/rollback/lessons), expected utility calculator (world model prep) |
 | `src/channels/` | 10-platform channel registry with adapters, health monitor, allowlists, auto-reconnect |
-| `src/skills/` | Skill registry, manifest loading, validation, execution, 7 converters, generator |
+| `src/skills/` | Skill registry, manifest loading, validation, execution, 8 converters, generator |
 | `src/workflows/` | DAG-based workflow engine with triggers, approvals, builder, compiler, generator |
 | `src/providers/` | BYOK provider management, OAuth, cost routing, secret encryption, budget enforcement |
 | `src/memory/` | Hybrid memory (FTS + semantic embedding), PII guarding, file sync, quota management |
@@ -1145,7 +1145,7 @@ Tools are registered via the tool registry and can be enabled/disabled per agent
 | `src/daemon/` | Long-running daemon mode with PID management |
 | `src/tui/` | Terminal UI for interactive CLI operation |
 | `src/cli/` | CLI entry point, argument parser, command routing |
-| `src/state/` | SQLite persistence layer with 59+ migrations |
+| `src/state/` | SQLite persistence layer with 67 migrations |
 | `src/errors/` | Domain error types, error code catalog |
 | `src/utilities/` | Backoff, retry, safe JSON, path safety |
 | `src/lib/` | Version constant |

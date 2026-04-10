@@ -541,7 +541,7 @@ export function resolveChannelInitConfigWithSecretPolicy(params: {
 
       if (parsed.kind === "command-ref") {
         try {
-          const output = execFileSync("/bin/sh", ["-lc", parsed.command], {
+          const output = execFileSync("/bin/sh", ["-c", parsed.command], {
             timeout: 5_000,
             encoding: "utf8",
             maxBuffer: 1024 * 1024,

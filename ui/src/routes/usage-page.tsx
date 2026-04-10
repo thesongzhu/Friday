@@ -62,9 +62,9 @@ function useProviders() {
 
 // ─── Helpers ───
 
-/** Rough cost estimate: $0.01 per 1K tokens (placeholder rate). */
+/** Rough cost estimate using a generic placeholder rate. Not real billing. */
 function estimateCost(tokens: number): string {
-  return `$${(tokens * 0.00001).toFixed(4)}`;
+  return `~$${(tokens * 0.00001).toFixed(4)}`;
 }
 
 function formatNumber(n: number): string {
@@ -149,7 +149,7 @@ export function UsagePage() {
           Usage &amp; Cost
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
-          Monitor token consumption, estimated costs, and provider health across all configured providers.
+          Monitor provider health and request volume. Token and cost figures below are rough estimates derived from request counts and generic pricing — they are not actual billing data.
         </p>
       </div>
 
@@ -162,8 +162,11 @@ export function UsagePage() {
           {/* ─── Token Usage Summary ─── */}
           <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5">
             <h2 className="text-sm font-medium text-[color:var(--color-text-primary)]">
-              Token Usage Summary
+              Token Usage Estimate
             </h2>
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+              Tokens are estimated at ~800 per successful request with a 35/65 input/output split. Actual usage varies by model and prompt length.
+            </p>
             <div className="mt-4 grid grid-cols-3 gap-4">
               <div className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
                 <p className="text-xs text-[color:var(--color-text-secondary)]">Total Tokens</p>

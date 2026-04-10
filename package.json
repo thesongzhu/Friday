@@ -225,7 +225,6 @@
     "#retry": "./dist/retry/index.js",
     "#playbook": "./dist/playbook/index.js",
     "#harness": "./dist/harness/index.js",
-    "#routing": "./dist/routing/index.js",
     "#daemon": "./dist/daemon/index.js",
     "#tui": "./dist/tui/index.js",
     "#media-understanding": "./dist/media-understanding/index.js",

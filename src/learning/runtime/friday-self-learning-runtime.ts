@@ -141,6 +141,7 @@ export function createFridaySelfLearningRuntime(
     db: deps.db,
     approvalRepo,
     actionRepo,
+    lessonRepo,
     idGenerator: deps.idGenerator,
     executionService: autoFixExecution,
   });

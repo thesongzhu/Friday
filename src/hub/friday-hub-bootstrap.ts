@@ -4574,6 +4574,33 @@ export async function createFridayHub(
       },
     });
 
+    // System self-health monitor: periodic checks + auto-fix for DB bloat, expired data, etc.
+    schedulerJobs.push({
+      id: "system-health-monitor",
+      intervalMs: 300_000, // every 5 min
+      timeoutMs: 60_000,
+      catchUpRuns: 1,
+      run: async () => {
+        const { createFridaySystemHealthMonitor } = await import("../learning/services/friday-system-health-monitor.js");
+        const monitor = createFridaySystemHealthMonitor({
+          db: stateRuntime!.sqlite,
+          nowIso,
+          onRunComplete: (summary) => {
+            const unhealthy = summary.checks.filter((c) => !c.healthy);
+            if (unhealthy.length > 0) {
+              for (const check of unhealthy) {
+                console.warn(`[friday][system-health] ${check.name}: unhealthy (${String(check.value)} ${check.unit})`);
+              }
+            }
+            for (const fix of summary.autoFixes) {
+              console.log(`[friday][system-health] auto-fix ${fix.name}: ${fix.detail}`);
+            }
+          },
+        });
+        monitor.runAll();
+      },
+    });
+
     jobScheduler = createFridayJobSchedulerService({
       repository: schedulerRepoRef,
       nowIso,
