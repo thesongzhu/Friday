@@ -8,6 +8,8 @@ import { completeClientRouteTransition } from "@/lib/diagnostics/client-stabilit
 import { resolveLocalizedText, localize } from "@/lib/i18n/localized-text";
 import { AGENT_OS_NAV_PRIMARY, AGENT_OS_NAV_ADVANCED, resolvePageTitle } from "@/lib/routes/agent-os-nav";
 import { ActionButton, LiveIndicator } from "@/components/core/primitives";
+import { CommandPalette } from "@/components/core/command-palette";
+import { recordNavVisit, sortNavByFrequency } from "@/lib/uix/adaptive-layout";
 import { cn } from "@/lib/utils/cn";
 import { useAppLocale } from "@/providers/locale-provider";
 import { QuickAccessBar } from "@/components/layout/quick-access-bar";
@@ -26,6 +28,19 @@ export function AppShell() {
   const { rememberPrimarySurface } = useHomeSurfacePreferences(profileType);
   const { locale, setLocale } = useAppLocale();
   const [showMore, setShowMore] = useState(locale === "zh");
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+
+  // Cmd+K / Ctrl+K to open command palette
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setShowCommandPalette((v) => !v);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const pageTitle = resolvePageTitle(location.pathname);
 
@@ -39,6 +54,7 @@ export function AppShell() {
     } else if (location.pathname === "/assistant") {
       rememberPrimarySurface("assistant");
     }
+    recordNavVisit(location.pathname);
   }, [location.pathname, rememberPrimarySurface]);
 
   useEffect(() => {
@@ -63,14 +79,23 @@ export function AppShell() {
     })),
     [locale],
   );
-  const advancedNav = useMemo(
-    () => AGENT_OS_NAV_ADVANCED.map((item) => ({
+  const advancedNav = useMemo(() => {
+    const items = AGENT_OS_NAV_ADVANCED.map((item) => ({
       ...item,
       labelText: resolveLocalizedText(item.label, locale),
       descriptionText: resolveLocalizedText(item.description, locale),
-    })),
-    [locale],
-  );
+    }));
+    // Sort by visit frequency — most used pages first
+    const freqOrder = sortNavByFrequency(items.map((i) => i.path));
+    if (freqOrder.length > 0) {
+      items.sort((a, b) => {
+        const aIdx = freqOrder.indexOf(a.path);
+        const bIdx = freqOrder.indexOf(b.path);
+        return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx);
+      });
+    }
+    return items;
+  }, [locale]);
 
   return (
     <div className="min-h-screen bg-[color:var(--color-bg-base)] text-[color:var(--color-text-primary)]">
@@ -262,6 +287,10 @@ export function AppShell() {
           </button>
         </div>
       </nav>
+
+      {showCommandPalette && (
+        <CommandPalette locale={locale} onClose={() => setShowCommandPalette(false)} />
+      )}
     </div>
   );
 }
