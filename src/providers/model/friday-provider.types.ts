@@ -43,6 +43,7 @@ export const FRIDAY_PROVIDER_KINDS = [
   "xiaomi",
   "zai",
   "glm",
+  "deepseek",
   "bedrock",
   "cloudflare-ai-gateway",
   "openai-compatible",
