@@ -1,8 +1,8 @@
 /**
  * Local Skill Scanner — finds AI tool configs on the local machine.
  *
- * Scans known directories for Claude Code, Cursor, n8n, Codex, and
- * project-local command files that can be imported as Friday skills.
+ * Scans ~/.claude/, ~/.cursor/, ~/.n8n/, ~/.codex/, and ~/Projects/
+ * for SKILL.md files, commands, workflows, and other skill-like configs.
  *
  * @module skills/converter/discovery
  */
@@ -14,7 +14,7 @@ import { basename, extname, join, resolve } from "node:path";
 
 // ─── Types ───
 
-export type LocalSkillSourceTool = "claude-code" | "cursor" | "n8n" | "codex" | "clawdbot" | "friday" | "unknown";
+export type LocalSkillSourceTool = "claude-code" | "cursor" | "n8n" | "codex" | "openclaw" | "friday" | "unknown";
 
 export interface LocalSkillScanItem {
   id: string;
@@ -35,23 +35,10 @@ export interface LocalSkillScanResult {
   directoriesScanned: string[];
 }
 
-// ─── Scan directory descriptors ───
-
-interface ScanDirectoryDescriptor {
-  dir: string;
-  tool: LocalSkillSourceTool;
-  extensions: string[];
-  converterHint: string;
-  /** For JSON files, require these top-level keys to be present. */
-  jsonRequiredKeys?: string[];
-}
-
 // ─── Helpers ───
 
 function titleCase(raw: string): string {
-  return raw
-    .replace(/[-_]+/g, " ")
-    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+  return raw.replace(/[-_]+/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
 function makeId(absolutePath: string): string {
@@ -59,7 +46,6 @@ function makeId(absolutePath: string): string {
 }
 
 function extractDescriptionMd(content: string): string {
-  // Try YAML frontmatter first
   if (content.startsWith("---")) {
     const endIdx = content.indexOf("---", 3);
     if (endIdx !== -1) {
@@ -68,12 +54,8 @@ function extractDescriptionMd(content: string): string {
       if (descMatch) return descMatch[1].trim().replace(/^["']|["']$/g, "");
     }
   }
-
-  // Fall back to first heading line
   const headingMatch = /^#+\s+(.+)$/m.exec(content);
   if (headingMatch) return headingMatch[1].trim();
-
-  // Fall back to first non-empty line
   const firstLine = content.split("\n").find((l) => l.trim().length > 0);
   return firstLine?.trim().slice(0, 120) ?? "";
 }
@@ -83,123 +65,220 @@ function extractDescriptionJson(content: string): string {
     const parsed = JSON.parse(content) as Record<string, unknown>;
     if (typeof parsed.description === "string") return parsed.description.slice(0, 200);
     if (typeof parsed.name === "string") return parsed.name;
-  } catch {
-    // Ignore parse errors
-  }
+  } catch { /* ignore */ }
   return "";
 }
 
-function jsonHasRequiredKeys(content: string, keys: string[]): boolean {
+function jsonHasKeys(content: string, keys: string[]): boolean {
   try {
     const parsed = JSON.parse(content) as Record<string, unknown>;
     return keys.every((k) => k in parsed);
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
-// ─── Scanner ───
+function safeReadDir(dir: string): string[] {
+  try { return existsSync(dir) ? readdirSync(dir) : []; }
+  catch { return []; }
+}
+
+function safeReadText(path: string, limit = 2000): string {
+  try { return readFileSync(path, { encoding: "utf-8" }).slice(0, limit); }
+  catch { return ""; }
+}
+
+function safeStat(path: string): { size: number; mtime: Date; isFile: boolean; isDir: boolean } | null {
+  try {
+    const s = statSync(path);
+    return { size: s.size, mtime: s.mtime, isFile: s.isFile(), isDir: s.isDirectory() };
+  } catch { return null; }
+}
+
+// ─── Core scan logic ───
+
+function scanFlatDir(
+  dir: string,
+  tool: LocalSkillSourceTool,
+  extensions: string[],
+  converterHint: string,
+  jsonRequiredKeys?: string[],
+): LocalSkillScanItem[] {
+  const items: LocalSkillScanItem[] = [];
+  const resolved = resolve(dir);
+  if (!existsSync(resolved)) return items;
+
+  for (const entry of safeReadDir(resolved)) {
+    const ext = extname(entry).toLowerCase();
+    if (!extensions.includes(ext)) continue;
+    const fullPath = join(resolved, entry);
+    const stat = safeStat(fullPath);
+    if (!stat?.isFile) continue;
+
+    const content = safeReadText(fullPath);
+    if (jsonRequiredKeys && !jsonHasKeys(content, jsonRequiredKeys)) continue;
+
+    const description = ext === ".json" ? extractDescriptionJson(content) : extractDescriptionMd(content);
+    items.push({
+      id: makeId(fullPath),
+      name: titleCase(basename(entry, ext)),
+      sourceTool: tool,
+      sourcePath: fullPath,
+      description,
+      convertible: true,
+      converterHint,
+      sizeBytes: stat.size,
+      modifiedAt: stat.mtime.toISOString(),
+    });
+  }
+  return items;
+}
+
+/**
+ * Scan directories where each subdirectory is a skill (contains SKILL.md or skill.yaml).
+ * E.g., ~/Projects/openclaw-dev/skills/nano-pdf/SKILL.md
+ */
+function scanSkillSubdirs(
+  parentDir: string,
+  tool: LocalSkillSourceTool,
+  converterHint: string,
+): LocalSkillScanItem[] {
+  const items: LocalSkillScanItem[] = [];
+  const resolved = resolve(parentDir);
+  if (!existsSync(resolved)) return items;
+
+  for (const subdir of safeReadDir(resolved)) {
+    const subdirPath = join(resolved, subdir);
+    const subdirStat = safeStat(subdirPath);
+    if (!subdirStat?.isDir) continue;
+
+    // Look for SKILL.md or skill.yaml in the subdirectory
+    for (const skillFile of ["SKILL.md", "skill.yaml", "skill.yml"]) {
+      const skillPath = join(subdirPath, skillFile);
+      const stat = safeStat(skillPath);
+      if (!stat?.isFile) continue;
+
+      const content = safeReadText(skillPath);
+      const description = extractDescriptionMd(content);
+
+      items.push({
+        id: makeId(skillPath),
+        name: titleCase(subdir),
+        sourceTool: tool,
+        sourcePath: skillPath,
+        description,
+        convertible: true,
+        converterHint,
+        sizeBytes: stat.size,
+        modifiedAt: stat.mtime.toISOString(),
+      });
+      break; // Only one skill file per subdir
+    }
+  }
+  return items;
+}
+
+/**
+ * Find skill directories in ~/Projects/ by looking for known patterns.
+ * Scans 2 levels deep: ~/Projects/<project>/skills/ and ~/Projects/<project>/.agents/skills/
+ */
+function scanProjectSkills(projectsDir: string): LocalSkillScanItem[] {
+  const items: LocalSkillScanItem[] = [];
+  if (!existsSync(projectsDir)) return items;
+
+  for (const project of safeReadDir(projectsDir)) {
+    const projectPath = join(projectsDir, project);
+    const projectStat = safeStat(projectPath);
+    if (!projectStat?.isDir) continue;
+
+    // Check <project>/skills/
+    items.push(...scanSkillSubdirs(join(projectPath, "skills"), "openclaw", "clawdbot-skill-md"));
+
+    // Check <project>/.agents/skills/
+    items.push(...scanSkillSubdirs(join(projectPath, ".agents", "skills"), "openclaw", "clawdbot-skill-md"));
+
+    // Check <project>/extensions/
+    items.push(...scanSkillSubdirs(join(projectPath, "extensions"), "openclaw", "clawdbot-skill-md"));
+
+    // Check <project>/managed-skills/
+    items.push(...scanSkillSubdirs(join(projectPath, "managed-skills"), "friday", "friday-package"));
+  }
+  return items;
+}
+
+// ─── Main scanner ───
 
 export function scanLocalSkills(): LocalSkillScanResult {
   const start = Date.now();
   const home = homedir();
   const cwd = process.cwd();
-
-  const descriptors: ScanDirectoryDescriptor[] = [
-    {
-      dir: join(home, ".claude", "commands"),
-      tool: "claude-code",
-      extensions: [".md"],
-      converterHint: "clawdbot-skill-md",
-    },
-    {
-      dir: join(home, ".cursor", "rules"),
-      tool: "cursor",
-      extensions: [".md", ".mdc"],
-      converterHint: "clawdbot-skill-md",
-    },
-    {
-      dir: join(home, ".n8n"),
-      tool: "n8n",
-      extensions: [".json"],
-      converterHint: "n8n-node",
-      jsonRequiredKeys: ["nodes", "connections"],
-    },
-    {
-      dir: join(home, ".codex"),
-      tool: "codex",
-      extensions: [".md", ".yaml"],
-      converterHint: "clawdbot-skill-md",
-    },
-    {
-      dir: join(cwd, ".claude", "commands"),
-      tool: "claude-code",
-      extensions: [".md"],
-      converterHint: "clawdbot-skill-md",
-    },
-  ];
-
-  const items: LocalSkillScanItem[] = [];
+  const allItems: LocalSkillScanItem[] = [];
   const directoriesScanned: string[] = [];
 
-  for (const desc of descriptors) {
-    try {
-      const dir = resolve(desc.dir);
-      if (!existsSync(dir)) continue;
+  // ── 1. Claude Code ──
+  const claudeDirs = [
+    join(home, ".claude", "commands"),
+    join(home, ".claude", "skills"),
+    join(cwd, ".claude", "commands"),
+  ];
+  for (const dir of claudeDirs) {
+    const items = scanFlatDir(dir, "claude-code", [".md"], "clawdbot-skill-md");
+    if (items.length > 0) directoriesScanned.push(dir);
+    allItems.push(...items);
+  }
+  // Also scan ~/.claude/skills/ as subdirectories (each skill in its own folder)
+  const claudeSkillsDir = join(home, ".claude", "skills");
+  const claudeSkillSubItems = scanSkillSubdirs(claudeSkillsDir, "claude-code", "clawdbot-skill-md");
+  if (claudeSkillSubItems.length > 0) directoriesScanned.push(claudeSkillsDir);
+  allItems.push(...claudeSkillSubItems);
 
-      directoriesScanned.push(dir);
-      const entries = readdirSync(dir);
+  // ── 2. Cursor ──
+  const cursorItems = scanFlatDir(join(home, ".cursor", "rules"), "cursor", [".md", ".mdc"], "clawdbot-skill-md");
+  if (cursorItems.length > 0) directoriesScanned.push(join(home, ".cursor", "rules"));
+  allItems.push(...cursorItems);
 
-      for (const entry of entries) {
-        try {
-          const ext = extname(entry).toLowerCase();
-          if (!desc.extensions.includes(ext)) continue;
+  // ── 3. n8n ──
+  const n8nItems = scanFlatDir(join(home, ".n8n"), "n8n", [".json"], "n8n-node", ["nodes", "connections"]);
+  if (n8nItems.length > 0) directoriesScanned.push(join(home, ".n8n"));
+  allItems.push(...n8nItems);
 
-          const absolutePath = join(dir, entry);
-          const stat = statSync(absolutePath);
-          if (!stat.isFile()) continue;
+  // ── 4. Codex ──
+  const codexItems = scanFlatDir(join(home, ".codex"), "codex", [".md", ".yaml"], "clawdbot-skill-md");
+  if (codexItems.length > 0) directoriesScanned.push(join(home, ".codex"));
+  allItems.push(...codexItems);
 
-          // Read first 500 bytes for description extraction
-          const fd = readFileSync(absolutePath, { encoding: "utf-8", flag: "r" });
-          const preview = fd.slice(0, 500);
-
-          // For n8n JSON files, require specific keys
-          if (desc.jsonRequiredKeys) {
-            if (!jsonHasRequiredKeys(fd, desc.jsonRequiredKeys)) continue;
-          }
-
-          const description =
-            ext === ".json"
-              ? extractDescriptionJson(preview)
-              : extractDescriptionMd(preview);
-
-          const rawName = basename(entry, ext);
-          const name = titleCase(rawName);
-
-          items.push({
-            id: makeId(absolutePath),
-            name,
-            sourceTool: desc.tool,
-            sourcePath: absolutePath,
-            description,
-            convertible: true,
-            converterHint: desc.converterHint,
-            sizeBytes: stat.size,
-            modifiedAt: stat.mtime.toISOString(),
-          });
-        } catch {
-          // Skip individual file errors
-        }
-      }
-    } catch {
-      // Skip directories that cannot be read
-    }
+  // ── 5. Projects directory — scan for OpenClaw/skill repos ──
+  const projectsDirs = [
+    join(home, "Projects"),
+    join(home, "projects"),
+    join(home, "Developer"),
+    join(home, "dev"),
+  ];
+  for (const dir of projectsDirs) {
+    if (!existsSync(dir)) continue;
+    directoriesScanned.push(dir);
+    allItems.push(...scanProjectSkills(dir));
   }
 
+  // ── 6. Current working directory skills ──
+  const cwdSkills = scanSkillSubdirs(join(cwd, "skills"), "friday", "friday-package");
+  if (cwdSkills.length > 0) directoriesScanned.push(join(cwd, "skills"));
+  allItems.push(...cwdSkills);
+
+  const cwdManagedSkills = scanSkillSubdirs(join(cwd, "managed-skills"), "friday", "friday-package");
+  if (cwdManagedSkills.length > 0) directoriesScanned.push(join(cwd, "managed-skills"));
+  allItems.push(...cwdManagedSkills);
+
+  // ── Dedup by sourcePath ──
+  const seen = new Set<string>();
+  const dedupedItems = allItems.filter((item) => {
+    if (seen.has(item.sourcePath)) return false;
+    seen.add(item.sourcePath);
+    return true;
+  });
+
   return {
-    items,
+    items: dedupedItems,
     scannedAt: new Date().toISOString(),
     scanDurationMs: Date.now() - start,
-    directoriesScanned,
+    directoriesScanned: [...new Set(directoriesScanned)],
   };
 }

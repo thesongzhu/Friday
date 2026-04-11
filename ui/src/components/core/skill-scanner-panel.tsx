@@ -304,10 +304,10 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
                 />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-[color:var(--color-text-primary)]">
-                    {item.name}
+                    {locale === "zh" ? item.nameZh : item.nameEn}
                   </p>
                   <p className="mt-0.5 line-clamp-2 text-xs text-[color:var(--color-text-tertiary)]">
-                    {item.description}
+                    {locale === "zh" ? item.descriptionZh : item.descriptionEn}
                   </p>
                   {item.tags.length > 0 && (
                     <div className="mt-1.5 flex flex-wrap gap-1">

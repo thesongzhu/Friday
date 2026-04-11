@@ -1,174 +1,126 @@
 /**
- * Community Skill Catalog — curated list of community-contributed skills.
+ * Community Skill Catalog.
  *
- * Returns a hardcoded catalog of popular community skills that can be
- * browsed and imported into a Friday workspace.
+ * Currently scans local OpenClaw repos for shareable skills.
+ * Future: connect to remote skill registries.
  *
  * @module skills/converter/discovery
  */
 
-// ─── Types ───
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
+import { createHash } from "node:crypto";
 
 export interface CommunitySkillItem {
   id: string;
   name: string;
+  nameZh: string;
+  nameEn: string;
   description: string;
+  descriptionZh: string;
+  descriptionEn: string;
   author: string;
   sourceUrl: string;
   tags: string[];
   category: string;
 }
 
-// ─── Catalog ───
+function extractFromSkillMd(content: string): { description: string; tags: string[] } {
+  let description = "";
+  const tags: string[] = [];
 
-const COMMUNITY_CATALOG: CommunitySkillItem[] = [
-  {
-    id: "comm-code-review",
-    name: "代码审查 Code Review",
-    description: "Automated code review assistant that checks style, complexity, and common pitfalls across multiple languages.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/code-review",
-    tags: ["code", "review", "quality"],
-    category: "development",
-  },
-  {
-    id: "comm-api-doc-gen",
-    name: "API 文档生成器 API Doc Generator",
-    description: "Generates OpenAPI / Swagger documentation from source code annotations and route definitions.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/api-doc-gen",
-    tags: ["api", "documentation", "openapi"],
-    category: "development",
-  },
-  {
-    id: "comm-competitive-analysis",
-    name: "竞品分析 Competitive Analysis",
-    description: "Structures competitive landscape research with feature comparison matrices and positioning maps.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/competitive-analysis",
-    tags: ["analysis", "competition", "strategy"],
-    category: "business",
-  },
-  {
-    id: "comm-weekly-report",
-    name: "周报生成 Weekly Report Generator",
-    description: "Compiles weekly status reports from git commits, issues, and calendar events.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/weekly-report",
-    tags: ["report", "weekly", "status"],
-    category: "productivity",
-  },
-  {
-    id: "comm-data-cleaning",
-    name: "数据清洗 Data Cleaning",
-    description: "Detects and fixes common data quality issues: duplicates, missing values, format inconsistencies.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/data-cleaning",
-    tags: ["data", "cleaning", "etl"],
-    category: "data",
-  },
-  {
-    id: "comm-seo-optimizer",
-    name: "SEO 优化建议 SEO Optimizer",
-    description: "Analyzes page content and metadata to provide actionable SEO improvement recommendations.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/seo-optimizer",
-    tags: ["seo", "marketing", "optimization"],
-    category: "marketing",
-  },
-  {
-    id: "comm-social-calendar",
-    name: "社媒内容日历 Social Media Calendar",
-    description: "Plans and schedules social media content across platforms with optimal posting times.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/social-calendar",
-    tags: ["social", "media", "calendar", "content"],
-    category: "marketing",
-  },
-  {
-    id: "comm-prd-gen",
-    name: "产品需求文档 PRD Generator",
-    description: "Creates structured product requirement documents from feature briefs and user stories.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/prd-gen",
-    tags: ["product", "requirements", "prd"],
-    category: "product",
-  },
-  {
-    id: "comm-user-persona",
-    name: "用户画像分析 User Persona Analysis",
-    description: "Builds data-driven user personas from analytics, surveys, and behavioral data.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/user-persona",
-    tags: ["user", "persona", "research", "ux"],
-    category: "product",
-  },
-  {
-    id: "comm-bug-triager",
-    name: "Bug 分类器 Bug Triager",
-    description: "Automatically categorizes, prioritizes, and assigns incoming bug reports based on severity and component.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/bug-triager",
-    tags: ["bug", "triage", "issue"],
-    category: "development",
-  },
-  {
-    id: "comm-meeting-notes",
-    name: "会议纪要 Meeting Notes",
-    description: "Summarizes meeting transcripts into structured notes with action items and decisions.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/meeting-notes",
-    tags: ["meeting", "notes", "summary"],
-    category: "productivity",
-  },
-  {
-    id: "comm-email-templates",
-    name: "邮件模板 Email Templates",
-    description: "Generates professional email drafts for common scenarios: outreach, follow-up, announcements.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/email-templates",
-    tags: ["email", "template", "communication"],
-    category: "productivity",
-  },
-  {
-    id: "comm-kb-search",
-    name: "知识库搜索 Knowledge Base Search",
-    description: "Semantic search over internal documentation and knowledge base articles.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/kb-search",
-    tags: ["knowledge", "search", "documentation"],
-    category: "productivity",
-  },
-  {
-    id: "comm-project-tracker",
-    name: "项目进度追踪 Project Tracker",
-    description: "Tracks project milestones, blockers, and team velocity with automated status dashboards.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/project-tracker",
-    tags: ["project", "tracking", "management"],
-    category: "productivity",
-  },
-  {
-    id: "comm-test-gen",
-    name: "自动化测试生成 Test Generator",
-    description: "Generates unit and integration test cases from function signatures and API specifications.",
-    author: "Friday Community",
-    sourceUrl: "https://hub.friday.dev/skills/test-gen",
-    tags: ["test", "automation", "testing"],
-    category: "development",
-  },
-];
+  if (content.startsWith("---")) {
+    const endIdx = content.indexOf("---", 3);
+    if (endIdx !== -1) {
+      const frontmatter = content.slice(3, endIdx);
+      const descMatch = /^description:\s*(.+)$/m.exec(frontmatter);
+      if (descMatch) description = descMatch[1].trim().replace(/^["']|["']$/g, "");
+      const tagsMatch = /^tags:\s*\[([^\]]*)\]/m.exec(frontmatter);
+      if (tagsMatch) {
+        tags.push(...tagsMatch[1].split(",").map((t) => t.trim().replace(/^["']|["']$/g, "")).filter(Boolean));
+      }
+    }
+  }
 
-// ─── Public API ───
+  if (!description) {
+    const headingMatch = /^#+\s+(.+)$/m.exec(content);
+    if (headingMatch) description = headingMatch[1].trim();
+  }
 
+  return { description, tags };
+}
+
+/**
+ * Scan local OpenClaw skill repos in ~/Projects/ and return them as community skills.
+ * This is a bridge until a remote registry is available.
+ */
 export function getCommunitySkillCatalog(query?: string): CommunitySkillItem[] {
-  if (!query || query.trim().length === 0) return COMMUNITY_CATALOG;
+  const home = homedir();
+  const items: CommunitySkillItem[] = [];
 
-  const q = query.toLowerCase();
-  return COMMUNITY_CATALOG.filter(
-    (item) =>
-      item.name.toLowerCase().includes(q) ||
-      item.description.toLowerCase().includes(q) ||
-      item.tags.some((t) => t.toLowerCase().includes(q)),
-  );
+  // Scan known OpenClaw/skill repos
+  const searchDirs = [
+    join(home, "Projects"),
+    join(home, "projects"),
+    join(home, "Developer"),
+  ];
+
+  for (const searchDir of searchDirs) {
+    if (!existsSync(searchDir)) continue;
+
+    let projects: string[];
+    try { projects = readdirSync(searchDir); } catch { continue; }
+
+    for (const project of projects) {
+      const projectPath = join(searchDir, project);
+      try { if (!statSync(projectPath).isDirectory()) continue; } catch { continue; }
+
+      // Look for skills/ directory
+      const skillsDir = join(projectPath, "skills");
+      if (!existsSync(skillsDir)) continue;
+
+      let skillFolders: string[];
+      try { skillFolders = readdirSync(skillsDir); } catch { continue; }
+
+      for (const folder of skillFolders) {
+        const skillMdPath = join(skillsDir, folder, "SKILL.md");
+        if (!existsSync(skillMdPath)) continue;
+
+        try {
+          const content = readFileSync(skillMdPath, "utf-8").slice(0, 2000);
+          const { description, tags } = extractFromSkillMd(content);
+          const name = folder.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+          const id = createHash("sha256").update(skillMdPath).digest("hex").slice(0, 16);
+
+          items.push({
+            id: `community-${id}`,
+            name,
+            nameZh: name,
+            nameEn: name,
+            description: description || `Skill from ${project}`,
+            descriptionZh: description || `来自 ${project} 的技能`,
+            descriptionEn: description || `Skill from ${project}`,
+            author: project,
+            sourceUrl: skillMdPath,
+            tags: tags.length > 0 ? tags : [basename(projectPath)],
+            category: "community",
+          });
+        } catch { /* skip */ }
+      }
+    }
+  }
+
+  // Filter by query if provided
+  if (query && query.trim().length > 0) {
+    const q = query.toLowerCase();
+    return items.filter(
+      (item) =>
+        item.name.toLowerCase().includes(q) ||
+        item.description.toLowerCase().includes(q) ||
+        item.tags.some((t) => t.toLowerCase().includes(q)),
+    );
+  }
+
+  return items;
 }
