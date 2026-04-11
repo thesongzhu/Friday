@@ -1,13 +1,16 @@
 import { NavLink } from "react-router-dom";
 import {
+  Activity,
   BarChart3,
-  Clock3,
-  Globe2,
   Brain,
+  Clock3,
+  CreditCard,
+  Globe2,
   Layers,
+  MessageSquare,
+  Plug,
   Settings,
-  Store,
-  Terminal,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 import { resolveLocalizedText } from "@/lib/i18n/localized-text";
@@ -15,14 +18,16 @@ import type { AgentOsNavItem } from "@/lib/routes/agent-os-nav";
 import type { AppLocale } from "@/lib/i18n/localized-text";
 
 const NAV_ICONS: Record<string, LucideIcon> = {
-  "/fleet": Globe2,
-  "/marketplace": Store,
+  "/skills": Layers,
+  "/workflows": Workflow,
   "/automations": Clock3,
   "/memory": Brain,
-  "/observability": BarChart3,
-  "/command-center": Terminal,
+  "/mcp": Plug,
+  "/usage": CreditCard,
+  "/sessions": MessageSquare,
+  "/observability": Activity,
+  "/fleet": Globe2,
   "/settings": Settings,
-  "/skills": Layers,
 };
 
 export function QuickAccessBar(props: { items: AgentOsNavItem[]; locale: AppLocale }) {

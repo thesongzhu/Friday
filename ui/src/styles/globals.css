@@ -482,6 +482,30 @@
   to { stroke-dashoffset: -10; }
 }
 
+/* ── Auto-hide scrollbar — appears on scroll, fades after 1s ── */
+.scrollbar-autohide {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.3s;
+}
+.scrollbar-autohide::-webkit-scrollbar {
+  width: 6px;
+}
+.scrollbar-autohide::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-autohide::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+  transition: background 0.3s;
+}
+.scrollbar-autohide.is-scrolling {
+  scrollbar-color: rgba(51, 41, 34, 0.15) transparent;
+}
+.scrollbar-autohide.is-scrolling::-webkit-scrollbar-thumb {
+  background: rgba(51, 41, 34, 0.15);
+}
+
 /* ── Mobile refinements ── */
 .overflow-x-chips {
   overflow-x: auto;

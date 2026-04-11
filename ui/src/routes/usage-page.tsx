@@ -192,14 +192,14 @@ export function UsagePage() {
             {/* Simple input/output bar */}
             <div className="mt-4 space-y-2">
               <div className="flex items-center gap-3">
-                <span className="w-14 text-xs text-[color:var(--color-text-secondary)]">Input</span>
+                <span className="w-14 text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "输入", "Input")}</span>
                 <div className="flex-1">
                   <PercentBar value={estimatedInputTokens} max={estimatedTotalTokens} color="#6366f1" />
                 </div>
                 <span className="w-10 text-right text-xs text-[color:var(--color-text-secondary)]">35%</span>
               </div>
               <div className="flex items-center gap-3">
-                <span className="w-14 text-xs text-[color:var(--color-text-secondary)]">Output</span>
+                <span className="w-14 text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "输出", "Output")}</span>
                 <div className="flex-1">
                   <PercentBar value={estimatedOutputTokens} max={estimatedTotalTokens} color="#8b5cf6" />
                 </div>
@@ -223,11 +223,11 @@ export function UsagePage() {
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b border-[color:var(--color-border-soft)] text-xs text-[color:var(--color-text-secondary)]">
-                      <th className="pb-2 pr-4 font-medium">Provider</th>
-                      <th className="pb-2 pr-4 font-medium">Requests</th>
-                      <th className="pb-2 pr-4 font-medium">Tokens</th>
-                      <th className="pb-2 pr-4 font-medium">Distribution</th>
-                      <th className="pb-2 font-medium text-right">Est. Cost</th>
+                      <th className="pb-2 pr-4 font-medium">{localize(locale, "提供商", "Provider")}</th>
+                      <th className="pb-2 pr-4 font-medium">{localize(locale, "请求数", "Requests")}</th>
+                      <th className="pb-2 pr-4 font-medium">{localize(locale, "Token 数", "Tokens")}</th>
+                      <th className="pb-2 pr-4 font-medium">{localize(locale, "分布", "Distribution")}</th>
+                      <th className="pb-2 font-medium text-right">{localize(locale, "预估成本", "Est. Cost")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -276,7 +276,7 @@ export function UsagePage() {
                 </p>
               </div>
               <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
-                <p className="text-xs text-[color:var(--color-text-secondary)]">Fallback Count</p>
+                <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "回退次数", "Fallback Count")}</p>
                 <p className="mt-1 text-lg font-semibold text-[color:var(--color-text-warning)]">
                   {formatNumber(totalErrors)}
                 </p>
@@ -286,7 +286,7 @@ export function UsagePage() {
             {/* Error bar */}
             <div className="mt-4">
               <div className="flex items-center gap-3">
-                <span className="w-14 text-xs text-[color:var(--color-text-secondary)]">Errors</span>
+                <span className="w-14 text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "错误", "Errors")}</span>
                 <div className="flex-1">
                   <PercentBar value={totalErrors} max={totalRequests} color="#ef4444" />
                 </div>
@@ -323,9 +323,9 @@ export function UsagePage() {
                         <p className="text-xs text-[color:var(--color-text-secondary)]">
                           {item.providerKind}
                           {" \u00b7 "}
-                          {String(item.latencyMs)}ms avg
+                          {String(item.latencyMs)}ms {localize(locale, "平均", "avg")}
                           {" \u00b7 "}
-                          last checked {new Date(item.lastChecked).toLocaleTimeString()}
+                          {localize(locale, "最后检查", "last checked")} {new Date(item.lastChecked).toLocaleTimeString()}
                         </p>
                       </div>
                       {statusBadge(item.status, locale)}
@@ -342,11 +342,19 @@ export function UsagePage() {
               {localize(locale, "定价配置", "Pricing Configuration")}
             </h2>
             <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
-              The estimated costs shown above use default token pricing. You can override per-model pricing rates in{" "}
+              {localize(
+                locale,
+                "上方显示的预估成本使用默认 Token 定价。您可以在",
+                "The estimated costs shown above use default token pricing. You can override per-model pricing rates in",
+              )}{" "}
               <a href="/settings" className="font-medium text-indigo-600 underline underline-offset-2 dark:text-indigo-400">
-                Settings
+                {localize(locale, "设置", "Settings")}
               </a>{" "}
-              to match your actual provider contracts and negotiated rates.
+              {localize(
+                locale,
+                "中覆盖每个模型的定价费率，以匹配您的实际提供商合同和协商价格。",
+                "to match your actual provider contracts and negotiated rates.",
+              )}
             </p>
           </div>
         </div>

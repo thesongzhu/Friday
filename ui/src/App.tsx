@@ -16,12 +16,12 @@ export default function App() {
   return (
     <QueryProvider>
       <AuthProvider>
-        <LocaleProvider>
-          <AppErrorBoundary>
+        <AppErrorBoundary>
+          <LocaleProvider>
             <RouterProvider router={router} />
-          </AppErrorBoundary>
-          <Toaster position="bottom-right" />
-        </LocaleProvider>
+            <Toaster position="bottom-right" />
+          </LocaleProvider>
+        </AppErrorBoundary>
       </AuthProvider>
     </QueryProvider>
   );

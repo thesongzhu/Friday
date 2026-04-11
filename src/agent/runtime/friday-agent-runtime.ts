@@ -72,7 +72,7 @@ import { attachFridayAgentToolExecutionContext } from "./friday-agent-tool-execu
 import { shouldDelegateFridayAgentTask } from "./friday-agent-delegation-policy.js";
 import { resolveFridayAgentTaskProfile } from "./friday-agent-task-profile.js";
 import { isMutatingToolCall } from "./friday-agent-tool-mutation.js";
-import { getApprovalRequiredReasonForToolCall } from "./friday-agent-tool-risk.js";
+import { classifyShellRisk, getApprovalRequiredReasonForToolCall } from "./friday-agent-tool-risk.js";
 import {
   buildFridayStarterSkillRoutingRetryPrompt,
   findFridayStarterSkillRoutingCandidate,
@@ -376,6 +376,8 @@ export function createFridayAgentRuntime(
       const checkpoint = loadRunCheckpoint(targetRunId);
       return Boolean(checkpoint && checkpoint.entries().some((entry) => entry.rollbackAvailable));
     },
+
+    emitRunEvent,
 
     async executeRun(params) {
       const runId = params.runId ?? idGenerator();
@@ -1935,6 +1937,9 @@ export function createFridayAgentRuntime(
               const expiresAt = new Date(Date.parse(nowIso()) + 15 * 60 * 1000).toISOString();
               const approvalScopes = scopes ?? [];
               if (deps.toolApprovalResolver) {
+                const shellRisk = toolUse.name === "exec" && typeof toolUse.input?.command === "string"
+                  ? classifyShellRisk(toolUse.input.command as string).level
+                  : undefined;
                 // Pause and ask the user for approval via the resolver callback.
                 handleTrackedEvent("agent.run.awaiting_tool_approval", {
                   runId,
@@ -1945,6 +1950,7 @@ export function createFridayAgentRuntime(
                   params: toolUse.input,
                   reason: approvalRequiredReason,
                   expiresAt,
+                  ...(shellRisk ? { riskLevel: shellRisk } : {}),
                   ...(principalId ? { principalId } : {}),
                   ...(approvalScopes.length > 0 ? { scopes: approvalScopes } : {}),
                   ...(sessionKey ? { sessionKey } : {}),

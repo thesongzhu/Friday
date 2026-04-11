@@ -410,6 +410,7 @@ export interface FridayAgentRunAwaitingToolApprovalPayload {
   scopes?: string[];
   sessionKey?: string;
   surface?: string;
+  riskLevel?: "safe" | "guarded" | "destructive" | "blocked";
 }
 
 export interface FridayAgentCapabilityGrantIssuedPayload {
@@ -574,6 +575,52 @@ export interface FridayAgentRouteMismatchPayload {
     | "historical_bias";
 }
 
+// ─── Autonomous event payloads ───
+
+export interface FridayAutonomousGoalCreatedPayload {
+  runId: string;
+  goalId: string;
+  description: string;
+}
+
+export interface FridayAutonomousGoalStartedPayload {
+  runId: string;
+  goalId: string;
+}
+
+export interface FridayAutonomousStepStartedPayload {
+  runId: string;
+  goalId: string;
+  stepId: string;
+  instruction: string;
+  index: number;
+  total: number;
+}
+
+export interface FridayAutonomousStepCompletedPayload {
+  runId: string;
+  goalId: string;
+  stepId: string;
+}
+
+export interface FridayAutonomousStepFailedPayload {
+  runId: string;
+  goalId: string;
+  stepId: string;
+  reason?: string;
+}
+
+export interface FridayAutonomousGoalCompletedPayload {
+  runId: string;
+  goalId: string;
+}
+
+export interface FridayAutonomousGoalFailedPayload {
+  runId: string;
+  goalId: string;
+  reason?: string;
+}
+
 // ─── Sub-agent event payloads ───
 
 export interface FridaySubagentSpawnedPayload {
@@ -627,6 +674,13 @@ export interface FridayAgentEventMap {
   "agent.run.mode_changed": FridayAgentModeChangedPayload;
   "agent.subagent.spawned": FridaySubagentSpawnedPayload;
   "agent.subagent.completed": FridaySubagentCompletedPayload;
+  "autonomous.goal.created": FridayAutonomousGoalCreatedPayload;
+  "autonomous.goal.started": FridayAutonomousGoalStartedPayload;
+  "autonomous.step.started": FridayAutonomousStepStartedPayload;
+  "autonomous.step.completed": FridayAutonomousStepCompletedPayload;
+  "autonomous.step.failed": FridayAutonomousStepFailedPayload;
+  "autonomous.goal.completed": FridayAutonomousGoalCompletedPayload;
+  "autonomous.goal.failed": FridayAutonomousGoalFailedPayload;
 }
 
 export type FridayAgentEventName = keyof FridayAgentEventMap;
