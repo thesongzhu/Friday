@@ -157,6 +157,148 @@ const TEMPLATE_META: Partial<Record<FridayProviderKind, FridayProviderTemplateMe
     tier: "experimental",
     status: "experimental",
   },
+  deepseek: {
+    displayName: "DeepSeek",
+    description: "DeepSeek reasoning and coding models with OpenAI-compatible API.",
+    tier: "verified",
+    status: "ready",
+    baseUrlHints: ["https://api.deepseek.com"],
+    modelDefaults: {
+      recommended: "deepseek-chat",
+      fallback: "deepseek-reasoner",
+      examples: ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"],
+    },
+    reasoningHints: ["DeepSeek supports chain-of-thought reasoning via deepseek-reasoner."],
+  },
+  moonshot: {
+    displayName: "\u6708\u4E4B\u6697\u9762 (Moonshot)",
+    description: "Kimi \u5927\u6A21\u578B\uFF0C\u652F\u6301\u8D85\u957F\u4E0A\u4E0B\u6587\u5BF9\u8BDD\u3002",
+    tier: "verified",
+    status: "ready",
+    baseUrlHints: ["https://api.moonshot.ai"],
+    modelDefaults: {
+      recommended: "moonshot-v1-128k",
+      fallback: "moonshot-v1-32k",
+      examples: ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
+    },
+    reasoningHints: [],
+  },
+  qwen: {
+    displayName: "\u901A\u4E49\u5343\u95EE (Qwen)",
+    description: "\u963F\u91CC\u4E91\u901A\u4E49\u5343\u95EE\uFF0C\u652F\u6301\u591A\u6A21\u6001\u548C\u4EE3\u7801\u751F\u6210\u3002",
+    tier: "verified",
+    status: "ready",
+    baseUrlHints: ["https://dashscope.aliyuncs.com/compatible-mode"],
+    modelDefaults: {
+      recommended: "qwen-max",
+      fallback: "qwen-plus",
+      examples: ["qwen-max", "qwen-plus", "qwen-turbo", "qwen2.5-coder-32b"],
+    },
+    reasoningHints: [],
+  },
+  glm: {
+    displayName: "\u667A\u8C31\u6E05\u8A00 (GLM)",
+    description: "\u667A\u8C31 AI \u7684 GLM \u7CFB\u5217\u5927\u6A21\u578B\u3002",
+    tier: "verified",
+    status: "ready",
+    baseUrlHints: ["https://open.bigmodel.cn/api/paas/v4"],
+    modelDefaults: {
+      recommended: "glm-4",
+      fallback: "glm-4-flash",
+      examples: ["glm-4", "glm-4-flash", "glm-4v"],
+    },
+    reasoningHints: [],
+  },
+  minimax: {
+    displayName: "MiniMax",
+    description: "MiniMax \u5927\u6A21\u578B\uFF0C\u652F\u6301\u8BED\u97F3\u548C\u591A\u6A21\u6001\u3002",
+    tier: "verified",
+    status: "ready",
+    baseUrlHints: ["https://api.minimaxi.com"],
+    modelDefaults: {
+      recommended: "abab6.5s-chat",
+      examples: ["abab6.5s-chat", "abab5.5-chat"],
+    },
+    reasoningHints: [],
+  },
+  volcengine: {
+    displayName: "\u706B\u5C71\u5F15\u64CE (\u8C46\u5305)",
+    description: "\u5B57\u8282\u8DF3\u52A8\u706B\u5C71\u5F15\u64CE\uFF0C\u8C46\u5305\u5927\u6A21\u578B\u3002",
+    tier: "community",
+    status: "requires_configuration",
+    baseUrlHints: [],
+    modelDefaults: {
+      examples: ["doubao-pro-32k", "doubao-lite-32k"],
+    },
+    reasoningHints: ["\u9700\u8981\u5728\u706B\u5C71\u5F15\u64CE\u63A7\u5236\u53F0\u521B\u5EFA\u63A5\u5165\u70B9\u5E76\u83B7\u53D6 API Key\u3002"],
+  },
+  qianfan: {
+    displayName: "\u767E\u5EA6\u5343\u5E06 (\u6587\u5FC3)",
+    description: "\u767E\u5EA6\u6587\u5FC3\u4E00\u8A00\u5343\u5E06\u5E73\u53F0\u3002",
+    tier: "community",
+    status: "requires_configuration",
+    baseUrlHints: [],
+    modelDefaults: {
+      examples: ["ernie-4.0", "ernie-3.5-turbo"],
+    },
+    reasoningHints: ["\u9700\u8981\u5728\u767E\u5EA6\u667A\u80FD\u4E91\u521B\u5EFA\u5E94\u7528\u5E76\u83B7\u53D6 API Key\u3002"],
+  },
+  "kimi-coding": {
+    displayName: "Kimi Coding",
+    description: "Kimi \u7F16\u7A0B\u6A21\u578B\uFF0C\u652F\u6301 Anthropic \u517C\u5BB9 API\u3002",
+    tier: "verified",
+    status: "ready",
+    baseUrlHints: ["https://api.moonshot.ai/anthropic"],
+    modelDefaults: {
+      recommended: "kimi-coder",
+      examples: ["kimi-coder"],
+    },
+    reasoningHints: [],
+  },
+  xiaomi: {
+    displayName: "\u5C0F\u7C73 AI (MiLM)",
+    description: "\u5C0F\u7C73\u5927\u6A21\u578B\u670D\u52A1\u3002",
+    tier: "community",
+    status: "requires_configuration",
+    baseUrlHints: [],
+    modelDefaults: {
+      examples: [],
+    },
+    reasoningHints: [],
+  },
+  byteplus: {
+    displayName: "BytePlus ModelArk",
+    description: "BytePlus \u6D77\u5916\u7248\u706B\u5C71\u5F15\u64CE\u6A21\u578B\u670D\u52A1\u3002",
+    tier: "community",
+    status: "requires_configuration",
+    baseUrlHints: [],
+    modelDefaults: {
+      examples: [],
+    },
+    reasoningHints: [],
+  },
+  "qwen-portal": {
+    displayName: "\u901A\u4E49\u5343\u95EE Portal",
+    description: "\u901A\u4E49\u5343\u95EE\u95E8\u6237\u7248 API\u3002",
+    tier: "community",
+    status: "requires_configuration",
+    baseUrlHints: [],
+    modelDefaults: {
+      examples: ["qwen-max", "qwen-plus"],
+    },
+    reasoningHints: [],
+  },
+  zai: {
+    displayName: "Z.AI",
+    description: "Z.AI \u667A\u80FD\u5BF9\u8BDD\u5E73\u53F0\u3002",
+    tier: "community",
+    status: "ready",
+    baseUrlHints: ["https://api.z.ai"],
+    modelDefaults: {
+      examples: [],
+    },
+    reasoningHints: [],
+  },
 };
 
 function titleCaseProviderKind(kind: FridayProviderKind): string {
@@ -238,7 +380,7 @@ export function listFridayProviderTemplates(): FridayProviderTemplate[] {
       authModes,
       baseUrlHints,
       modelDefaults,
-      reasoningHints: meta.reasoningHints ?? defaultReasoningHints(kind),
+      reasoningHints: meta.reasoningHints?.length ? meta.reasoningHints : defaultReasoningHints(kind),
       requiredSecrets: buildRequiredSecrets(authModes),
     };
   });

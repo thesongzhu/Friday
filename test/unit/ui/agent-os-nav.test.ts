@@ -20,11 +20,6 @@ describe("agent os navigation", () => {
       "/mcp",
       "/usage",
       "/sessions",
-      "/observability",
-      "/fleet",
-      "/marketplace",
-      "/command-center",
-      "/settings",
     ]);
   });
 

@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Friday — 三栏布局样板</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg-base: #fbf4ea;
+    --bg-surface: #ffffff;
+    --bg-chrome: rgba(251, 244, 234, 0.85);
+    --bg-subtle: #f5ede2;
+    --ink: #2d2118;
+    --ink-secondary: rgba(45, 33, 24, 0.74);
+    --ink-faint: rgba(45, 33, 24, 0.42);
+    --accent: #c87a3c;
+    --accent-soft: rgba(200, 122, 60, 0.10);
+    --border-soft: rgba(51, 41, 34, 0.08);
+    --border-strong: rgba(51, 41, 34, 0.18);
+    --shadow-card: 0 1px 3px rgba(51, 41, 34, 0.06);
+    --shadow-float: 0 4px 24px rgba(51, 41, 34, 0.08);
+    --radius: 22px;
+    --radius-btn: 12px;
+  }
+
+  body {
+    font-family: 'Noto Sans SC', 'Inter', -apple-system, sans-serif;
+    background: var(--bg-base);
+    color: var(--ink);
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ═══ Three-column layout ═══ */
+  .app-shell {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* ─── Left sidebar ─── */
+  .sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border-soft);
+    background: var(--bg-chrome);
+    backdrop-filter: blur(16px);
+    display: flex;
+    flex-direction: column;
+    padding: 20px 16px;
+  }
+
+  .sidebar-brand {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--ink-faint);
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+
+  .sidebar-nav {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+    text-decoration: none;
+  }
+  .nav-item:hover { background: var(--bg-subtle); color: var(--ink); }
+  .nav-item.active { background: var(--accent-soft); color: var(--ink); }
+
+  .nav-icon {
+    width: 16px; height: 16px;
+    border-radius: 4px;
+    background: var(--ink-faint);
+    opacity: 0.5;
+    flex-shrink: 0;
+  }
+  .nav-item.active .nav-icon { background: var(--accent); opacity: 0.8; }
+
+  .sidebar-bottom {
+    margin-top: auto;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .sidebar-status {
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 12px;
+    font-size: 12px; color: var(--ink-faint);
+  }
+  .status-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #4ade80;
+  }
+
+  .sidebar-btn {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid var(--border-soft);
+    background: var(--bg-surface);
+    font-size: 13px; color: var(--ink-secondary);
+    cursor: pointer;
+  }
+
+  /* ─── Center content ─── */
+  .main-content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 20px 32px;
+  }
+
+  .top-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+
+  .top-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border-soft);
+    background: var(--bg-surface);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .top-tab:hover { border-color: var(--border-strong); color: var(--ink); }
+  .top-tab-icon {
+    width: 14px; height: 14px;
+    border-radius: 3px;
+    background: var(--ink-faint);
+    opacity: 0.4;
+  }
+
+  /* Content cards */
+  .content-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  .card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: var(--shadow-card);
+  }
+
+  .card-eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+
+  .card-title {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin-bottom: 16px;
+  }
+
+  .metric-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .metric-tile {
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-soft);
+    border-radius: 16px;
+    padding: 14px;
+  }
+
+  .metric-label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--ink-faint);
+    margin-bottom: 10px;
+  }
+  .metric-label-icon {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    border: 1.5px solid var(--ink-faint);
+  }
+
+  .metric-value {
+    font-size: 14px;
+    color: var(--ink);
+  }
+
+  .timeline-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius);
+    padding: 20px;
+    grid-column: 1 / -1;
+  }
+
+  .timeline-item {
+    display: flex;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-soft);
+    font-size: 13px;
+  }
+  .timeline-item:last-child { border-bottom: none; }
+
+  .timeline-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-top: 5px;
+    flex-shrink: 0;
+  }
+  .timeline-dot.green { background: #4ade80; }
+  .timeline-dot.amber { background: #f59e0b; }
+  .timeline-dot.blue { background: #60a5fa; }
+
+  .timeline-time {
+    font-size: 11px;
+    color: var(--ink-faint);
+    margin-top: 2px;
+  }
+
+  /* ─── Right chat panel ─── */
+  /* Drag handle between main and chat */
+  .resize-handle {
+    width: 6px;
+    flex-shrink: 0;
+    cursor: col-resize;
+    background: transparent;
+    position: relative;
+    transition: background 0.15s;
+  }
+  .resize-handle:hover,
+  .resize-handle.active {
+    background: var(--accent-soft);
+  }
+  .resize-handle::after {
+    content: '';
+    position: absolute;
+    left: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 2px;
+    height: 32px;
+    border-radius: 1px;
+    background: var(--border-soft);
+    transition: background 0.15s;
+  }
+  .resize-handle:hover::after {
+    background: var(--accent);
+  }
+
+  .chat-panel {
+    width: 340px;
+    min-width: 280px;
+    max-width: 520px;
+    flex-shrink: 0;
+    border-left: 1px solid var(--border-soft);
+    background: var(--bg-surface);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .chat-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-soft);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .chat-header-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .chat-header-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .chat-msg {
+    max-width: 88%;
+    padding: 12px 16px;
+    border-radius: 18px;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .chat-msg.user {
+    align-self: flex-end;
+    background: var(--ink);
+    color: var(--bg-surface);
+    border-bottom-right-radius: 6px;
+  }
+
+  .chat-msg.friday {
+    align-self: flex-start;
+    background: var(--bg-subtle);
+    color: var(--ink);
+    border-bottom-left-radius: 6px;
+  }
+
+  .chat-msg .msg-name {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-faint);
+    margin-bottom: 4px;
+  }
+  .chat-msg.user .msg-name { color: rgba(255,255,255,0.6); }
+
+  .chat-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 6px 12px;
+    border-radius: 10px;
+    background: rgba(200, 122, 60, 0.08);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .chat-input-area {
+    padding: 16px 20px;
+    border-top: 1px solid var(--border-soft);
+    background: var(--bg-base);
+  }
+
+  .chat-input-wrapper {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-soft);
+    border-radius: 18px;
+    padding: 10px 16px;
+    transition: border-color 0.15s;
+  }
+  .chat-input-wrapper:focus-within {
+    border-color: var(--border-strong);
+  }
+
+  .chat-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    font-size: 14px;
+    font-family: inherit;
+    background: transparent;
+    color: var(--ink);
+    resize: none;
+    min-height: 20px;
+    max-height: 120px;
+  }
+  .chat-input::placeholder { color: var(--ink-faint); }
+
+  .chat-send-btn {
+    width: 32px; height: 32px;
+    border-radius: 10px;
+    border: none;
+    background: var(--ink);
+    color: var(--bg-surface);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: opacity 0.15s;
+  }
+  .chat-send-btn:hover { opacity: 0.85; }
+
+  .chat-context {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--ink-faint);
+  }
+  .context-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: #4ade80;
+  }
+</style>
+</head>
+<body>
+<div class="app-shell">
+
+  <!-- ═══ Left Sidebar ═══ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">FRIDAY</div>
+
+    <nav class="sidebar-nav">
+      <a class="nav-item active" href="#">
+        <div class="nav-icon"></div>
+        首页
+      </a>
+      <a class="nav-item" href="#">
+        <div class="nav-icon"></div>
+        行业与任务
+      </a>
+      <a class="nav-item" href="#">
+        <div class="nav-icon"></div>
+        助手
+      </a>
+    </nav>
+
+    <div style="margin-top: 16px; border-top: 1px solid var(--border-soft); padding-top: 16px;">
+      <a class="nav-item" href="#">
+        <div class="nav-icon"></div>
+        设置
+      </a>
+    </div>
+
+    <div class="sidebar-bottom">
+      <div class="sidebar-status">
+        <span class="status-dot"></span>
+        Friday 运行中
+      </div>
+      <button class="sidebar-btn">🌐 中文</button>
+      <button class="sidebar-btn">👤 Admin</button>
+    </div>
+  </aside>
+
+  <!-- ═══ Center Content ═══ -->
+  <main class="main-content">
+
+    <!-- Top quick-access bar -->
+    <div class="top-bar">
+      <span class="top-tab"><span class="top-tab-icon"></span>能力包</span>
+      <span class="top-tab"><span class="top-tab-icon"></span>工作流</span>
+      <span class="top-tab"><span class="top-tab-icon"></span>任务队列</span>
+      <span class="top-tab"><span class="top-tab-icon"></span>记忆</span>
+      <span class="top-tab"><span class="top-tab-icon"></span>MCP 服务</span>
+      <span class="top-tab"><span class="top-tab-icon"></span>用量与成本</span>
+      <span class="top-tab"><span class="top-tab-icon"></span>会话</span>
+    </div>
+
+    <!-- Dashboard cards -->
+    <div class="content-grid">
+      <div class="card">
+        <div class="card-eyebrow">系统健康</div>
+        <div class="card-title">诊断</div>
+        <div class="metric-grid">
+          <div class="metric-tile">
+            <div class="metric-label"><span class="metric-label-icon"></span> API 状态</div>
+            <div class="metric-value">ok</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-label"><span class="metric-label-icon"></span> 远程模式</div>
+            <div class="metric-value">trusted_private_network</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-label"><span class="metric-label-icon"></span> 系统已启用</div>
+            <div class="metric-value">true</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-label"><span class="metric-label-icon"></span> 运行时间</div>
+            <div class="metric-value">11,382s</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-eyebrow">Friday 学到了什么</div>
+        <div class="card-title" style="font-size:16px;">学习洞察</div>
+        <div class="metric-grid">
+          <div class="metric-tile" style="background: var(--accent-soft);">
+            <div class="metric-label" style="color: var(--accent);">📖 教训</div>
+            <div class="metric-value" style="font-size:22px; font-weight:700;">0</div>
+          </div>
+          <div class="metric-tile" style="background: #ecfdf5;">
+            <div class="metric-label" style="color: #059669;">📈 模式</div>
+            <div class="metric-value" style="font-size:22px; font-weight:700;">5</div>
+          </div>
+          <div class="metric-tile" style="background: #fefce8;">
+            <div class="metric-label" style="color: #d97706;">🛡 自动修复</div>
+            <div class="metric-value" style="font-size:22px; font-weight:700;">0</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-label">🧠 诊断</div>
+            <div class="metric-value" style="font-size:22px; font-weight:700;">0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Timeline -->
+      <div class="timeline-card">
+        <div class="card-eyebrow">活动时间线</div>
+        <div class="card-title" style="font-size:16px;">Friday 正在做什么</div>
+        <div class="timeline-item">
+          <span class="timeline-dot green"></span>
+          <div style="flex:1;">
+            <div>自媒体包已激活 — 正在扫描最新内容热点</div>
+            <div class="timeline-time">2 分钟前</div>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-dot amber"></span>
+          <div style="flex:1;">
+            <div>3 个热点问题频繁回滚 — 正在学习更好的修复方案</div>
+            <div class="timeline-time">15 分钟前</div>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-dot blue"></span>
+          <div style="flex:1;">
+            <div>已完成 12 个任务 · 成功率 100%</div>
+            <div class="timeline-time">1 小时前</div>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-dot green"></span>
+          <div style="flex:1;">
+            <div>Friday 已自动修复 2 个问题，无需人工干预</div>
+            <div class="timeline-time">3 小时前</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ═══ Resize Handle ═══ -->
+  <div class="resize-handle" id="resizeHandle"></div>
+
+  <!-- ═══ Right Chat Panel ═══ -->
+  <aside class="chat-panel" id="chatPanel">
+    <div class="chat-header">
+      <div class="chat-header-title">Friday 对话</div>
+      <span class="chat-header-badge">上下文已加载</span>
+    </div>
+
+    <div class="chat-messages">
+      <div class="chat-msg friday">
+        <div class="msg-name">Friday</div>
+        你好！我已经读取了你的工作上下文和记忆。现在有什么可以帮你的？
+      </div>
+
+      <div class="chat-msg user">
+        <div class="msg-name">你</div>
+        帮我整理这周要推进的事情
+      </div>
+
+      <div class="chat-msg friday">
+        <div class="msg-name">Friday</div>
+        好的，根据你的任务队列和最近的活动，这周有 3 件需要推进的事：
+        <br><br>
+        1. <strong>自媒体内容发布</strong> — 有 2 篇草稿待审核<br>
+        2. <strong>跨境电商选品</strong> — Top 10 数据已更新<br>
+        3. <strong>运营社媒</strong> — 小红书/抖音排期需确认
+        <div class="chat-action">✨ 已同步到首页任务面板</div>
+      </div>
+
+      <div class="chat-msg user">
+        <div class="msg-name">你</div>
+        先处理自媒体的草稿
+      </div>
+
+      <div class="chat-msg friday">
+        <div class="msg-name">Friday</div>
+        正在打开自媒体包的内容审核流程…
+        <div class="chat-action">📋 已在左侧展示自媒体内容审核</div>
+      </div>
+    </div>
+
+    <div class="chat-input-area">
+      <div class="chat-input-wrapper">
+        <textarea class="chat-input" placeholder="告诉 Friday 你要完成什么…" rows="1"></textarea>
+        <button class="chat-send-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>
+          </svg>
+        </button>
+      </div>
+      <div class="chat-context">
+        <span class="context-dot"></span>
+        Friday 已加载你的记忆和工作上下文 · 单会话模式
+      </div>
+    </div>
+  </aside>
+
+</div>
+
+<script>
+  // Resizable chat panel
+  const handle = document.getElementById('resizeHandle');
+  const panel = document.getElementById('chatPanel');
+  let dragging = false;
+
+  handle.addEventListener('mousedown', (e) => {
+    dragging = true;
+    handle.classList.add('active');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const newWidth = window.innerWidth - e.clientX;
+    if (newWidth >= 280 && newWidth <= 520) {
+      panel.style.width = newWidth + 'px';
+    }
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (dragging) {
+      dragging = false;
+      handle.classList.remove('active');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+  });
+</script>
+</body>
+</html>
