@@ -11,6 +11,7 @@ import {
   startRegistration,
 } from "@simplewebauthn/browser";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useAppLocale } from "@/providers/locale-provider";
 import {
   AlertTriangle,
   AppWindow,
@@ -35,7 +36,7 @@ import type {
   FridaySystemRemoteDevice,
   FridaySystemRemoteSession,
 } from "@/lib/api/system-types";
-import { useAgentRunEvents } from "@/hooks/use-agent-run-events";
+import { useAgentRunEvents, type PendingToolApprovalViewModel } from "@/hooks/use-agent-run-events";
 import { ChatAuditDrawer } from "@/components/chat/chat-audit-drawer";
 import { ChatStatusBanner } from "@/components/chat/chat-status-banner";
 import { ActivitySummaryPanel } from "@/components/core/activity-summary-panel";
@@ -185,8 +186,96 @@ function scoreStarterSkill(input: {
   return score;
 }
 
+/* ── Risk-level badge config ── */
+const RISK_BADGE: Record<
+  NonNullable<PendingToolApprovalViewModel["riskLevel"]>,
+  { tone: "success" | "warning" | "danger"; en: string; zh: string }
+> = {
+  safe:        { tone: "success", en: "SAFE",        zh: "安全" },
+  guarded:     { tone: "warning", en: "GUARDED",     zh: "受控" },
+  destructive: { tone: "danger",  en: "DESTRUCTIVE", zh: "危险" },
+  blocked:     { tone: "danger",  en: "BLOCKED",     zh: "禁止" },
+};
+
+function ApprovalCard({
+  approval,
+  locale,
+  onApprove,
+  onReject,
+  disabled,
+}: {
+  approval: PendingToolApprovalViewModel;
+  locale: string;
+  onApprove: () => void;
+  onReject: () => void;
+  disabled: boolean;
+}) {
+  const [showParams, setShowParams] = useState(false);
+  const badge = approval.riskLevel ? RISK_BADGE[approval.riskLevel] : null;
+  const paramKeys = approval.params ? Object.keys(approval.params) : [];
+
+  return (
+    <div
+      className="mb-3 rounded-2xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] p-3 text-sm text-[color:var(--color-text-primary)]"
+    >
+      <p className="mb-2 flex items-center gap-2 font-medium">
+        <span>
+          Friday wants to use{" "}
+          <span className="font-mono font-bold text-[color:var(--color-text-primary)]">
+            {approval.toolName}
+          </span>
+        </span>
+        {badge && (
+          <StatusPill tone={badge.tone}>
+            {locale === "zh" ? badge.zh : badge.en}
+          </StatusPill>
+        )}
+      </p>
+      <p className="mb-3 text-xs text-[color:var(--color-text-secondary)]">{approval.reason}</p>
+
+      {paramKeys.length > 0 && (
+        <div className="mb-3">
+          <button
+            type="button"
+            onClick={() => setShowParams((v) => !v)}
+            className="text-xs font-medium text-[color:var(--color-text-tertiary)] hover:text-[color:var(--color-text-secondary)] transition-colors"
+          >
+            {showParams
+              ? (locale === "zh" ? "收起参数" : "Hide params")
+              : (locale === "zh" ? "查看参数" : "Show params")}
+          </button>
+          {showParams && (
+            <dl className="mt-2 space-y-1 rounded-xl bg-[color:var(--color-bg-subtle)] p-2 text-xs">
+              {paramKeys.map((key) => (
+                <div key={key} className="flex gap-2">
+                  <dt className="shrink-0 font-mono font-semibold text-[color:var(--color-text-secondary)]">{key}:</dt>
+                  <dd className="break-all text-[color:var(--color-text-tertiary)]">
+                    {typeof approval.params![key] === "string"
+                      ? (approval.params![key] as string)
+                      : JSON.stringify(approval.params![key])}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <ActionButton tone="secondary" onClick={onApprove} disabled={disabled}>
+          Approve
+        </ActionButton>
+        <ActionButton tone="danger" onClick={onReject} disabled={disabled}>
+          Reject
+        </ActionButton>
+      </div>
+    </div>
+  );
+}
+
 export function AgentPage() {
   const navigate = useNavigate();
+  const { locale } = useAppLocale();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [task, setTask] = useState("");
@@ -568,8 +657,8 @@ export function AgentPage() {
       <div className="space-y-4">
         <ActivitySummaryPanel />
         <ShellCard
-          eyebrow="Operator Console"
-          title="Command Center"
+          eyebrow={locale === "zh" ? "操作控制台" : "Operator Console"}
+          title={locale === "zh" ? "命令中心" : "Command Center"}
           aside={
             <div className="flex items-center gap-2">
               <BudgetIndicator />
@@ -588,14 +677,14 @@ export function AgentPage() {
             <div className="rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
               <label className="mb-2 flex items-center gap-2 text-sm font-medium text-[color:var(--color-text-primary)]">
                 <Command className="h-4 w-4 text-[color:var(--color-accent)]" />
-                Send a new operator task
+                {locale === "zh" ? "发送新的操作任务" : "Send a new operator task"}
               </label>
               <textarea
                 value={task}
                 onChange={(event) => setTask(event.target.value)}
                 rows={5}
                 className="agent-textarea"
-                placeholder="Example: open the workspace, inspect system permissions, and prepare the next build task."
+                placeholder={locale === "zh" ? "例如：打开工作区、检查系统权限并准备下一个构建任务。" : "Example: open the workspace, inspect system permissions, and prepare the next build task."}
               />
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                 <label className="inline-flex items-center gap-2 text-sm text-[color:var(--color-text-secondary)]">
@@ -605,23 +694,23 @@ export function AgentPage() {
                     onChange={(event) => setReadOnly(event.target.checked)}
                     className="rounded border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-surface)]"
                   />
-                  Start in read-only mode
+                  {locale === "zh" ? "以只读模式启动" : "Start in read-only mode"}
                 </label>
                 <div className="flex flex-wrap gap-2">
                   <ActionButton
                     tone="secondary"
                     onClick={() => systemIntentMutation.mutate({ action: "request_control", reason: "command_center" })}
                   >
-                    Request Control
+                    {locale === "zh" ? "请求控制" : "Request Control"}
                   </ActionButton>
                   <ActionButton
                     tone="secondary"
                     onClick={() => systemIntentMutation.mutate({ action: "recover_ui", reason: "operator_recovery" })}
                   >
-                    Recover UI
+                    {locale === "zh" ? "恢复界面" : "Recover UI"}
                   </ActionButton>
                   <ActionButton type="submit" disabled={startRunMutation.isPending || task.trim().length === 0}>
-                    Launch Run
+                    {locale === "zh" ? "启动运行" : "Launch Run"}
                   </ActionButton>
                 </div>
               </div>
@@ -630,19 +719,19 @@ export function AgentPage() {
         </ShellCard>
 
         <ShellCard
-          eyebrow="Recommended Skills"
-          title="Starter pack matches for this session"
-          aside={<StatusPill tone={recommendedStarterSkills.length > 0 ? "success" : "neutral"}>{recommendedStarterSkills.length} suggested</StatusPill>}
+          eyebrow={locale === "zh" ? "推荐技能" : "Recommended Skills"}
+          title={locale === "zh" ? "本会话的入门包匹配" : "Starter pack matches for this session"}
+          aside={<StatusPill tone={recommendedStarterSkills.length > 0 ? "success" : "neutral"}>{recommendedStarterSkills.length} {locale === "zh" ? "推荐" : "suggested"}</StatusPill>}
         >
           <div className="grid gap-3">
             {recommendedStarterSkills.length === 0 ? (
-              <p className="text-sm text-[color:var(--color-text-tertiary)]">Starter recommendations will appear once the skill registry is loaded.</p>
+              <p className="text-sm text-[color:var(--color-text-tertiary)]">{locale === "zh" ? "技能注册表加载后将显示入门推荐。" : "Starter recommendations will appear once the skill registry is loaded."}</p>
             ) : recommendedStarterSkills.map((skill) => (
               <div key={skill.skillId} className="agent-subcard">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{skill.name}</p>
-                    <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">{skill.description ?? "Bundled starter skill."}</p>
+                    <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">{skill.description ?? (locale === "zh" ? "内置入门技能。" : "Bundled starter skill.")}</p>
                   </div>
                   <StatusPill tone="success">starter</StatusPill>
                 </div>
@@ -658,7 +747,7 @@ export function AgentPage() {
                       });
                     }}
                   >
-                    Use Skill
+                    {locale === "zh" ? "使用技能" : "Use Skill"}
                   </ActionButton>
                   <ActionButton
                     tone="secondary"
@@ -670,7 +759,7 @@ export function AgentPage() {
                       navigate(buildSkillHref(skill.skillId));
                     }}
                   >
-                    Open Details
+                    {locale === "zh" ? "查看详情" : "Open Details"}
                   </ActionButton>
                 </div>
               </div>
@@ -679,8 +768,8 @@ export function AgentPage() {
         </ShellCard>
 
         <ShellCard
-          eyebrow="Live Run"
-          title="Execution Console"
+          eyebrow={locale === "zh" ? "实时运行" : "Live Run"}
+          title={locale === "zh" ? "执行控制台" : "Execution Console"}
           aside={latestBrowserTool?.presentationMode ? (
             <StatusPill tone={browserModeTone(latestBrowserTool.presentationMode)}>
               {formatBrowserMode(latestBrowserTool.presentationMode)}
@@ -737,14 +826,14 @@ export function AgentPage() {
                       onClick={() => approvePlanMutation.mutate(currentRun.id)}
                       disabled={approvePlanMutation.isPending || rejectPlanMutation.isPending}
                     >
-                      Approve Plan
+                      {locale === "zh" ? "批准计划" : "Approve Plan"}
                     </ActionButton>
                     <ActionButton
                       tone="danger"
                       onClick={() => rejectPlanMutation.mutate(currentRun.id)}
                       disabled={approvePlanMutation.isPending || rejectPlanMutation.isPending}
                     >
-                      Reject Plan
+                      {locale === "zh" ? "拒绝计划" : "Reject Plan"}
                     </ActionButton>
                   </div>
                 ) : currentRunId ? (
@@ -753,21 +842,21 @@ export function AgentPage() {
                       tone="secondary"
                       onClick={() => setAuditDrawerOpen(true)}
                     >
-                      View Audit
+                      {locale === "zh" ? "查看审计" : "View Audit"}
                     </ActionButton>
                     <ActionButton
                       tone="danger"
                       onClick={() => cancelRunMutation.mutate(currentRunId)}
                       disabled={cancelRunMutation.isPending}
                     >
-                      Cancel
+                      {locale === "zh" ? "取消" : "Cancel"}
                     </ActionButton>
                   </div>
                 ) : null}
               </div>
               {currentRun?.status === "awaiting_clarification" && currentRun.planReview?.gate?.clarificationQuestions?.length ? (
                 <div className="mb-3 rounded-2xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] p-3 text-sm text-[color:var(--color-text-primary)]">
-                  Waiting for clarification. Next question: {currentRun.planReview.gate.clarificationQuestions[0]}
+                  {locale === "zh" ? "等待澄清。下一个问题：" : "Waiting for clarification. Next question: "}{currentRun.planReview.gate.clarificationQuestions[0]}
                 </div>
               ) : null}
               {currentRun?.status === "awaiting_plan_approval" && currentRun.planReview?.gate?.approvalPrompt ? (
@@ -781,41 +870,24 @@ export function AgentPage() {
                 </div>
               )}
               {runEvents.pendingToolApprovals.map((approval) => (
-                <div
+                <ApprovalCard
                   key={approval.toolCallId}
-                  className="mb-3 rounded-2xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] p-3 text-sm text-[color:var(--color-text-primary)]"
-                >
-                  <p className="mb-2 font-medium">
-                    Friday wants to use <span className="font-mono font-bold text-[color:var(--color-text-primary)]">{approval.toolName}</span>
-                  </p>
-                  <p className="mb-3 text-xs text-[color:var(--color-text-secondary)]">{approval.reason}</p>
-                  <div className="flex gap-2">
-                    <ActionButton
-                      tone="secondary"
-                      onClick={() =>
-                        approveToolMutation.mutate({
-                          runId: approval.runId,
-                          toolCallId: approval.toolCallId,
-                        })
-                      }
-                      disabled={approveToolMutation.isPending || rejectToolMutation.isPending}
-                    >
-                      Approve
-                    </ActionButton>
-                    <ActionButton
-                      tone="danger"
-                      onClick={() =>
-                        rejectToolMutation.mutate({
-                          runId: approval.runId,
-                          toolCallId: approval.toolCallId,
-                        })
-                      }
-                      disabled={approveToolMutation.isPending || rejectToolMutation.isPending}
-                    >
-                      Reject
-                    </ActionButton>
-                  </div>
-                </div>
+                  approval={approval}
+                  locale={locale}
+                  onApprove={() =>
+                    approveToolMutation.mutate({
+                      runId: approval.runId,
+                      toolCallId: approval.toolCallId,
+                    })
+                  }
+                  onReject={() =>
+                    rejectToolMutation.mutate({
+                      runId: approval.runId,
+                      toolCallId: approval.toolCallId,
+                    })
+                  }
+                  disabled={approveToolMutation.isPending || rejectToolMutation.isPending}
+                />
               ))}
               <pre className="agent-console">
                 {runOutputText || "Start a run to stream live model output, tool activity, and terminal state here."}
@@ -915,7 +987,7 @@ export function AgentPage() {
         </ShellCard>
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <ShellCard eyebrow="System Truth" title="Current Session">
+          <ShellCard eyebrow={locale === "zh" ? "系统状态" : "System Truth"} title={locale === "zh" ? "当前会话" : "Current Session"}>
             {commandCenterError ? (
               <p className="text-sm text-[color:var(--color-text-primary)]">
                 Agent OS routes are unavailable: {commandCenterError instanceof Error ? commandCenterError.message : "unknown error"}
@@ -935,7 +1007,7 @@ export function AgentPage() {
                   <Metric label="Browser Target" value={state.browser?.browserTarget ?? state.browser?.targetBrowser ?? "unknown"} />
                 </div>
                 <p className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
-                  {summarizeHealthReasons(state.health)}
+                  {summarizeHealthReasons(state.health, locale)}
                 </p>
                 {state.browser?.fallbackReason ? (
                   <p className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
@@ -947,19 +1019,19 @@ export function AgentPage() {
                     tone="secondary"
                     onClick={() => systemIntentMutation.mutate({ action: "arrange_windows", reason: "command_center_layout" })}
                   >
-                    Arrange Windows
+                    {locale === "zh" ? "排列窗口" : "Arrange Windows"}
                   </ActionButton>
                   <ActionButton
                     tone="secondary"
                     onClick={() => systemIntentMutation.mutate({ action: "release_control", reason: "operator_release" })}
                   >
-                    Release Control
+                    {locale === "zh" ? "释放控制" : "Release Control"}
                   </ActionButton>
                   <ActionButton
                     tone="secondary"
                     onClick={() => queryClient.invalidateQueries({ queryKey: systemKeys.state() })}
                   >
-                    Refresh Snapshot
+                    {locale === "zh" ? "刷新快照" : "Refresh Snapshot"}
                   </ActionButton>
                 </div>
               </div>
@@ -968,7 +1040,7 @@ export function AgentPage() {
             )}
           </ShellCard>
 
-          <ShellCard eyebrow="Companion" title="Desktop Bridge">
+          <ShellCard eyebrow={locale === "zh" ? "伴侣应用" : "Companion"} title={locale === "zh" ? "桌面桥接" : "Desktop Bridge"}>
             {state ? (
               <div className="space-y-4">
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -1012,7 +1084,7 @@ export function AgentPage() {
                 </p>
               </div>
             ) : (
-              <p className="text-sm text-[color:var(--color-text-tertiary)]">No companion snapshot available.</p>
+              <p className="text-sm text-[color:var(--color-text-tertiary)]">{locale === "zh" ? "暂无伴侣应用快照。" : "No companion snapshot available."}</p>
             )}
           </ShellCard>
         </div>
@@ -1020,9 +1092,9 @@ export function AgentPage() {
 
       <div className="space-y-4">
         <ShellCard
-          eyebrow="Approvals"
-          title="Risk Gates"
-          aside={<StatusPill tone={blockedApprovalEvents.length > 0 ? "warning" : "neutral"}>{blockedApprovalEvents.length} blocked</StatusPill>}
+          eyebrow={locale === "zh" ? "审批" : "Approvals"}
+          title={locale === "zh" ? "风险门控" : "Risk Gates"}
+          aside={<StatusPill tone={blockedApprovalEvents.length > 0 ? "warning" : "neutral"}>{blockedApprovalEvents.length} {locale === "zh" ? "已阻止" : "blocked"}</StatusPill>}
         >
           <div className="space-y-3">
             {approvalCards.map((card) => (
@@ -1042,20 +1114,20 @@ export function AgentPage() {
                     onClick={() => systemIntentMutation.mutate({
                       action: "approve",
                       target: card.action,
-                      reason: "Allowed from Command Center",
+                      reason: locale === "zh" ? "已从命令中心允许" : "Allowed from Command Center",
                     })}
                   >
-                    Allow
+                    {locale === "zh" ? "允许" : "Allow"}
                   </ActionButton>
                   <ActionButton
                     tone="danger"
                     onClick={() => systemIntentMutation.mutate({
                       action: "deny",
                       target: card.action,
-                      reason: "Denied from Command Center",
+                      reason: locale === "zh" ? "已从命令中心拒绝" : "Denied from Command Center",
                     })}
                   >
-                    Deny
+                    {locale === "zh" ? "拒绝" : "Deny"}
                   </ActionButton>
                 </div>
                 {card.updatedAt ? (
@@ -1066,15 +1138,15 @@ export function AgentPage() {
           </div>
           {approvalRules.length === 0 ? (
             <p className="mt-4 text-sm text-[color:var(--color-text-tertiary)]">
-              No persistent approval rules exist yet. Sensitive actions will block until you allow them.
+              {locale === "zh" ? "暂无持久审批规则。敏感操作将被阻止，直到您允许。" : "No persistent approval rules exist yet. Sensitive actions will block until you allow them."}
             </p>
           ) : null}
         </ShellCard>
 
         <ShellCard
-          eyebrow="Notifications"
-          title="Notification Queue"
-          aside={<StatusPill tone={state?.notifications.length ? "warning" : "neutral"}>{state?.notifications.length ?? 0} queued</StatusPill>}
+          eyebrow={locale === "zh" ? "通知" : "Notifications"}
+          title={locale === "zh" ? "通知队列" : "Notification Queue"}
+          aside={<StatusPill tone={state?.notifications.length ? "warning" : "neutral"}>{state?.notifications.length ?? 0} {locale === "zh" ? "排队中" : "queued"}</StatusPill>}
         >
           <div className="space-y-3">
             {state?.notifications.length ? state.notifications.slice(0, 4).map((notification) => (
@@ -1082,7 +1154,7 @@ export function AgentPage() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="font-medium text-[color:var(--color-text-primary)]">{notification.title}</p>
-                    <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">{notification.body ?? "No body provided."}</p>
+                    <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">{notification.body ?? (locale === "zh" ? "无内容。" : "No body provided.")}</p>
                     <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
                       {notification.sourceApp ?? "Unknown source"} · {formatRelative(notification.receivedAt)}
                     </p>
@@ -1101,7 +1173,7 @@ export function AgentPage() {
                       notificationAction: "open",
                     })}
                   >
-                    Open
+                    {locale === "zh" ? "打开" : "Open"}
                   </ActionButton>
                   <ActionButton
                     tone="secondary"
@@ -1112,7 +1184,7 @@ export function AgentPage() {
                       notificationAction: "mark_read",
                     })}
                   >
-                    Mark Read
+                    {locale === "zh" ? "标为已读" : "Mark Read"}
                   </ActionButton>
                   <ActionButton
                     tone="danger"
@@ -1123,21 +1195,21 @@ export function AgentPage() {
                       notificationAction: "dismiss",
                     })}
                   >
-                    Dismiss
+                    {locale === "zh" ? "忽略" : "Dismiss"}
                   </ActionButton>
                 </div>
               </div>
             )) : (
               <p className="text-sm text-[color:var(--color-text-tertiary)]">
-                No notifications are currently surfaced by the companion.
+                {locale === "zh" ? "伴侣应用当前没有待处理的通知。" : "No notifications are currently surfaced by the companion."}
               </p>
             )}
           </div>
         </ShellCard>
 
         <ShellCard
-          eyebrow="Trusted Devices"
-          title="Remote Access"
+          eyebrow={locale === "zh" ? "受信设备" : "Trusted Devices"}
+          title={locale === "zh" ? "远程访问" : "Remote Access"}
           aside={<StatusPill tone={remoteDevices.some((item) => item.status === "active") ? "success" : "neutral"}>{remoteDevices.length} devices / {remoteSessions.filter((item) => item.status === "active").length} sessions</StatusPill>}
         >
           <form
@@ -1145,7 +1217,7 @@ export function AgentPage() {
             onSubmit={(event) => {
               event.preventDefault();
               if (!remoteLabel.trim() || !remoteFingerprint.trim()) {
-                toast.error("Label and fingerprint are required");
+                toast.error(locale === "zh" ? "需要标签和指纹" : "Label and fingerprint are required");
                 return;
               }
               remoteRegisterMutation.mutate();
@@ -1155,27 +1227,27 @@ export function AgentPage() {
               <input
                 value={remoteLabel}
                 onChange={(event) => setRemoteLabel(event.target.value)}
-                placeholder="Device label"
+                placeholder={locale === "zh" ? "设备标签" : "Device label"}
                 className="agent-input"
               />
               <input
                 value={remoteFingerprint}
                 onChange={(event) => setRemoteFingerprint(event.target.value)}
-                placeholder="Fingerprint"
+                placeholder={locale === "zh" ? "指纹" : "Fingerprint"}
                 className="agent-input"
               />
             </div>
             <p className="text-sm text-[color:var(--color-text-tertiary)]">
-              Register the browser as a trusted device first, then enroll a passkey on the device card below.
+              {locale === "zh" ? "先将浏览器注册为受信设备，然后在下方的设备卡片中注册通行密钥。" : "Register the browser as a trusted device first, then enroll a passkey on the device card below."}
             </p>
             <ActionButton type="submit" disabled={remoteRegisterMutation.isPending}>
-              Register Trusted Device
+              {locale === "zh" ? "注册受信设备" : "Register Trusted Device"}
             </ActionButton>
           </form>
 
           <div className="mt-4 space-y-3">
             {remoteDevices.length === 0 ? (
-              <p className="text-sm text-[color:var(--color-text-tertiary)]">No trusted devices registered yet.</p>
+              <p className="text-sm text-[color:var(--color-text-tertiary)]">{locale === "zh" ? "暂无已注册的受信设备。" : "No trusted devices registered yet."}</p>
             ) : remoteDevices.map((device) => (
               <RemoteDeviceCard
                 key={device.id}
@@ -1197,11 +1269,11 @@ export function AgentPage() {
 
           <div className="mt-4 space-y-3">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
-              Remote sessions
+              {locale === "zh" ? "远程会话" : "Remote sessions"}
             </p>
             {remoteSessions.length === 0 ? (
               <p className="text-sm text-[color:var(--color-text-tertiary)]">
-                No remote sessions recorded yet. Active trusted-device sessions will appear here once connected from a private network.
+                {locale === "zh" ? "暂无远程会话记录。从私有网络连接后，受信设备的活跃会话将显示在此。" : "No remote sessions recorded yet. Active trusted-device sessions will appear here once connected from a private network."}
               </p>
             ) : remoteSessions.map((sessionItem) => (
               <RemoteSessionCard
@@ -1214,14 +1286,14 @@ export function AgentPage() {
         </ShellCard>
 
         <ShellCard
-          eyebrow="Event Timeline"
-          title="System Feed"
+          eyebrow={locale === "zh" ? "事件时间线" : "Event Timeline"}
+          title={locale === "zh" ? "系统动态" : "System Feed"}
           aside={
             <div className="flex items-center gap-2">
               <StatusPill tone={mapTone(systemEvents.connectionState)}>{systemEvents.connectionState}</StatusPill>
               <ActionButton tone="secondary" onClick={systemEvents.reconnect}>
                 <RefreshCcw className="mr-2 h-4 w-4" />
-                Reconnect
+                {locale === "zh" ? "重新连接" : "Reconnect"}
               </ActionButton>
             </div>
           }
@@ -1231,7 +1303,7 @@ export function AgentPage() {
           ) : null}
           <div className="space-y-3">
             {timelineItems.length === 0 ? (
-              <p className="text-sm text-[color:var(--color-text-tertiary)]">Waiting for system activity.</p>
+              <p className="text-sm text-[color:var(--color-text-tertiary)]">{locale === "zh" ? "等待系统活动。" : "Waiting for system activity."}</p>
             ) : timelineItems.map((item) => (
               <div key={item.id} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                 <div className="flex items-center justify-between gap-3">

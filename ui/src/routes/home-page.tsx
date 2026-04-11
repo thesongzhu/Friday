@@ -314,9 +314,15 @@ export function HomePage() {
               return (
                 <ShellCard key={widgetId} title={widgetLabels[widgetId]}>
                   {activeRuns.length === 0 ? (
-                    <p className="text-sm text-[color:var(--color-text-secondary)]">
-                      {localize(locale, "现在没有正在运行的任务。", "No task is actively running right now.")}
-                    </p>
+                    <div className="space-y-3">
+                      <p className="text-sm text-[color:var(--color-text-secondary)]">
+                        {localize(locale, "现在没有正在运行的任务。", "No task is actively running right now.")}
+                      </p>
+                      <ActionButton tone="secondary" onClick={() => navigate("/chat")}>
+                        <Sparkles className="mr-2 h-4 w-4" />
+                        {localize(locale, "开始新任务", "Start a task")}
+                      </ActionButton>
+                    </div>
                   ) : (
                     <div className="space-y-3">
                       {activeRuns.slice(0, 3).map((run) => (
@@ -347,9 +353,15 @@ export function HomePage() {
               return (
                 <ShellCard key={widgetId} title={widgetLabels[widgetId]}>
                   {pendingApprovals.length === 0 ? (
-                    <p className="text-sm text-[color:var(--color-text-secondary)]">
-                      {localize(locale, "当前没有需要你确认的自动修复。", "There are no approvals waiting on you right now.")}
-                    </p>
+                    <div className="space-y-3">
+                      <p className="text-sm text-[color:var(--color-text-secondary)]">
+                        {localize(locale, "当前没有需要你确认的自动修复。", "There are no approvals waiting on you right now.")}
+                      </p>
+                      <ActionButton tone="secondary" onClick={() => navigate("/assistant")}>
+                        <CheckCircle2 className="mr-2 h-4 w-4" />
+                        {localize(locale, "查看助手", "Open assistant")}
+                      </ActionButton>
+                    </div>
                   ) : (
                     <div className="space-y-3">
                       {pendingApprovals.slice(0, 2).map((item) => (
@@ -373,9 +385,15 @@ export function HomePage() {
               return (
                 <ShellCard key={widgetId} title={widgetLabels[widgetId]}>
                   {scheduledAutomations.length === 0 ? (
-                    <p className="text-sm text-[color:var(--color-text-secondary)]">
-                      {localize(locale, "还没有固定在跑的自动化。", "No recurring automation is pinned into your flow yet.")}
-                    </p>
+                    <div className="space-y-3">
+                      <p className="text-sm text-[color:var(--color-text-secondary)]">
+                        {localize(locale, "还没有固定在跑的自动化。", "No recurring automation is pinned into your flow yet.")}
+                      </p>
+                      <ActionButton tone="secondary" onClick={() => navigate("/automations")}>
+                        <Clock3 className="mr-2 h-4 w-4" />
+                        {localize(locale, "创建自动化", "Create automation")}
+                      </ActionButton>
+                    </div>
                   ) : (
                     <div className="space-y-3">
                       {scheduledAutomations.map((automation) => (

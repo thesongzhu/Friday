@@ -30,7 +30,9 @@ export const AGENT_OS_NAV_PRIMARY: AgentOsNavItem[] = [
   },
 ];
 
+// Ordered by cognitive flow: create → manage → monitor → configure
 export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
+  // ── Create & Build ──
   {
     label: localizedText("能力包", "Skills"),
     path: "/skills",
@@ -41,6 +43,7 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     path: "/workflows",
     description: localizedText("部署、编辑和监控自动化工作流。", "Deploy, edit, and monitor automation workflows."),
   },
+  // ── Manage ──
   {
     label: localizedText("任务队列", "Task Queue"),
     path: "/automations",
@@ -52,12 +55,13 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     description: localizedText("查看、搜索并管理 Friday 记住了什么。", "View, search, and manage what Friday remembers about you."),
   },
   {
-    label: localizedText("MCP 服务", "MCP Servers"),
+    label: localizedText("MCP 服务", "MCP"),
     path: "/mcp",
     description: localizedText("查看已连接的 MCP 服务器和工具扩展状态。", "View connected MCP servers and tool extension status."),
   },
+  // ── Monitor ──
   {
-    label: localizedText("用量与成本", "Usage & Cost"),
+    label: localizedText("用量与成本", "Usage"),
     path: "/usage",
     description: localizedText("查看请求量、估算成本和提供方健康度。", "Request volume, estimated costs, and provider health."),
   },
@@ -66,31 +70,7 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     path: "/sessions",
     description: localizedText("浏览和管理远程会话记录。", "Browse and manage remote session records."),
   },
-  {
-    label: localizedText("可观测性", "Observability"),
-    path: "/observability",
-    description: localizedText("查看 trace、审计、告警和系统健康。", "Trace, audit, alerts, and health for operator debugging."),
-  },
-  {
-    label: localizedText("执行节点", "Fleet"),
-    path: "/fleet",
-    description: localizedText("查看卫星节点、任务放置、积压和分布式执行健康度。", "Satellites, placement, backlog, and distributed execution health."),
-  },
-  {
-    label: localizedText("资产市场", "Marketplace"),
-    path: "/marketplace",
-    description: localizedText("浏览公开资产、支持创作者并发布定制需求。", "Browse public assets, support creators, and post custom requests."),
-  },
-  {
-    label: localizedText("操作控制台", "Operator Console"),
-    path: "/command-center",
-    description: localizedText("进入实时系统控制台、远程会话和底层操作入口。", "Raw live system console, remote sessions, and low-level operator controls."),
-  },
-  {
-    label: localizedText("设置", "Settings"),
-    path: "/settings",
-    description: localizedText("查看系统诊断、模型提供方和访问设置。", "System diagnostics, providers, and access surfaces."),
-  },
+  // Settings is in the sidebar — not duplicated here.
 ];
 
 /** Full list for backward compat. */

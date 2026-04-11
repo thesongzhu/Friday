@@ -85,7 +85,7 @@ export function AutomationsPage() {
       void queryClient.invalidateQueries({ queryKey: ["agent-os", "automations"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to create task");
+      toast.error(error instanceof Error ? error.message : localize(locale, "创建任务失败", "Failed to create task"));
     },
   });
 
@@ -96,7 +96,7 @@ export function AutomationsPage() {
       void queryClient.invalidateQueries({ queryKey: ["agent-os", "automations"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to run task");
+      toast.error(error instanceof Error ? error.message : localize(locale, "运行任务失败", "Failed to run task"));
     },
   });
 
@@ -144,7 +144,7 @@ export function AutomationsPage() {
             onSubmit={(event) => {
               event.preventDefault();
               if (!name.trim() || !taskTemplate.trim()) {
-                toast.error(localize(locale, "名称和任务模板为必填项", "Name and task template are required"));
+                toast.error(localize(locale, "需要名称和任务模板", "Name and task template are required"));
                 return;
               }
               createAutomationMutation.mutate();
@@ -191,10 +191,14 @@ export function AutomationsPage() {
         <ShellCard eyebrow={localize(locale, "队列诊断", "Queue Diagnostics")} title={localize(locale, "运维备注", "Operator Notes")}>
           <div className="space-y-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">
             <p>
-              This phase keeps task management intentionally lightweight. You can create manual or cron-backed tasks, trigger them on demand, and flip enablement without exposing the old automation builder UI.
+              {locale === "zh"
+                ? "此阶段有意保持任务管理轻量化。你可以创建手动或定时任务，按需触发并切换启用状态，无需暴露旧的自动化构建器界面。"
+                : "This phase keeps task management intentionally lightweight. You can create manual or cron-backed tasks, trigger them on demand, and flip enablement without exposing the old automation builder UI."}
             </p>
             <p>
-              Detailed workflow, memory, and session tooling has been intentionally deferred behind redirects while the Agent OS shell becomes the primary entrypoint.
+              {locale === "zh"
+                ? "详细的工作流、记忆和会话工具已被有意推迟，等待 Agent OS 界面成为主要入口。"
+                : "Detailed workflow, memory, and session tooling has been intentionally deferred behind redirects while the Agent OS shell becomes the primary entrypoint."}
             </p>
           </div>
         </ShellCard>

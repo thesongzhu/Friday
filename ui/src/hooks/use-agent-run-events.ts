@@ -4,6 +4,22 @@ import { authStorage } from "@/lib/storage/auth-storage";
 import { apiClient } from "@/lib/api/client";
 import type { AgentRunStreamEvent, AgentRunStatus } from "@/lib/api/types";
 
+// ─── Autonomous view models ───
+
+export interface AutonomousStepViewModel {
+  id: string;
+  instruction: string;
+  status: "pending" | "executing" | "completed" | "failed";
+}
+
+export interface AutonomousGoalViewModel {
+  id: string;
+  description: string;
+  status: "pending" | "executing" | "completed" | "failed";
+  steps: AutonomousStepViewModel[];
+  currentStepIndex: number;
+}
+
 // ─── View models ───
 
 export interface ToolCallViewModel {
@@ -40,6 +56,7 @@ export interface PendingToolApprovalViewModel {
   params?: Record<string, unknown>;
   reason: string;
   receivedAt: string;
+  riskLevel?: "safe" | "guarded" | "destructive" | "blocked";
 }
 
 export interface StatusBannerViewModel {
@@ -81,6 +98,7 @@ export interface UseAgentRunEventsResult {
   pendingToolApprovals: PendingToolApprovalViewModel[];
   statusBanners: StatusBannerViewModel[];
   progress: RunProgressViewModel;
+  autonomousGoal: AutonomousGoalViewModel | null;
   errorMessage?: string;
   reconnect: () => void;
 }
@@ -132,6 +150,7 @@ export function useAgentRunEvents(
   });
   const [pendingToolApprovals, setPendingToolApprovals] = React.useState<PendingToolApprovalViewModel[]>([]);
   const [statusBanners, setStatusBanners] = React.useState<StatusBannerViewModel[]>([]);
+  const [autonomousGoal, setAutonomousGoal] = React.useState<AutonomousGoalViewModel | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | undefined>();
   const [reconnectTrigger, setReconnectTrigger] = React.useState(0);
 
@@ -322,6 +341,7 @@ export function useAgentRunEvents(
                   reason: parsed.reason
                     ?? parsed.message ?? "This action requires approval.",
                   receivedAt: eventTime,
+                  riskLevel: parsed.riskLevel as PendingToolApprovalViewModel["riskLevel"],
                 },
               ];
             });
@@ -491,6 +511,79 @@ export function useAgentRunEvents(
             }));
           }
 
+          // Autonomous goal/step events
+          if (eventType === "autonomous.goal.created" && parsed.goalId) {
+            setAutonomousGoal({
+              id: parsed.goalId,
+              description: parsed.description ?? "",
+              status: "pending",
+              steps: [],
+              currentStepIndex: -1,
+            });
+          }
+
+          if (eventType === "autonomous.goal.started" && parsed.goalId) {
+            setAutonomousGoal((prev) =>
+              prev && prev.id === parsed.goalId ? { ...prev, status: "executing" } : prev,
+            );
+          }
+
+          if (eventType === "autonomous.step.started" && parsed.goalId && parsed.stepId) {
+            setAutonomousGoal((prev) => {
+              if (!prev || prev.id !== parsed.goalId) return prev;
+              const existingIdx = prev.steps.findIndex((s) => s.id === parsed.stepId);
+              const step: AutonomousStepViewModel = {
+                id: parsed.stepId!,
+                instruction: parsed.instruction ?? "",
+                status: "executing",
+              };
+              const nextSteps = existingIdx >= 0
+                ? prev.steps.map((s, i) => (i === existingIdx ? step : s))
+                : [...prev.steps, step];
+              return {
+                ...prev,
+                steps: nextSteps,
+                currentStepIndex: typeof parsed.index === "number" ? parsed.index : nextSteps.length - 1,
+              };
+            });
+          }
+
+          if (eventType === "autonomous.step.completed" && parsed.goalId && parsed.stepId) {
+            setAutonomousGoal((prev) => {
+              if (!prev || prev.id !== parsed.goalId) return prev;
+              return {
+                ...prev,
+                steps: prev.steps.map((s) =>
+                  s.id === parsed.stepId ? { ...s, status: "completed" } : s,
+                ),
+              };
+            });
+          }
+
+          if (eventType === "autonomous.step.failed" && parsed.goalId && parsed.stepId) {
+            setAutonomousGoal((prev) => {
+              if (!prev || prev.id !== parsed.goalId) return prev;
+              return {
+                ...prev,
+                steps: prev.steps.map((s) =>
+                  s.id === parsed.stepId ? { ...s, status: "failed" } : s,
+                ),
+              };
+            });
+          }
+
+          if (eventType === "autonomous.goal.completed" && parsed.goalId) {
+            setAutonomousGoal((prev) =>
+              prev && prev.id === parsed.goalId ? { ...prev, status: "completed" } : prev,
+            );
+          }
+
+          if (eventType === "autonomous.goal.failed" && parsed.goalId) {
+            setAutonomousGoal((prev) =>
+              prev && prev.id === parsed.goalId ? { ...prev, status: "failed" } : prev,
+            );
+          }
+
           // Terminal events
           if (TERMINAL_STATUSES.has(eventType.replace("agent.run.", ""))) {
             terminalRef.current = true;
@@ -537,6 +630,7 @@ export function useAgentRunEvents(
       activeSubagentIds: [],
       etaConfidence: "unavailable",
     });
+    setAutonomousGoal(null);
     setStatus(null);
     setErrorMessage(undefined);
     seenSeqRef.current = new Set();
@@ -559,6 +653,7 @@ export function useAgentRunEvents(
     pendingToolApprovals,
     statusBanners,
     progress,
+    autonomousGoal,
     errorMessage,
     reconnect,
   };

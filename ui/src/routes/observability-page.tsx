@@ -524,11 +524,11 @@ export function ObservabilityPage() {
           };
         }
         return {
-          title: latestAssistantRun?.task ?? "Assistant diagnostics",
+          title: latestAssistantRun?.task ?? localize(locale, "助手诊断", "Assistant diagnostics"),
           summary: latestAssistantRun?.taskProfile
-            ? `${latestAssistantRun.taskProfile.label} profile on the latest assistant run.`
-            : "No recent assistant run is available yet.",
-          detail: `MCP loaded ${assistantMcpStateCounts.loaded}, deferred ${assistantMcpStateCounts.deferred}, path rules ${pathRuleCount}.`,
+            ? localize(locale, `${latestAssistantRun.taskProfile.label} 配置文件用于最近的助手运行。`, `${latestAssistantRun.taskProfile.label} profile on the latest assistant run.`)
+            : localize(locale, "暂无最近的助手运行。", "No recent assistant run is available yet."),
+          detail: localize(locale, `MCP 已加载 ${assistantMcpStateCounts.loaded}，延迟 ${assistantMcpStateCounts.deferred}，路径规则 ${pathRuleCount}。`, `MCP loaded ${assistantMcpStateCounts.loaded}, deferred ${assistantMcpStateCounts.deferred}, path rules ${pathRuleCount}.`),
           tone: assistantMcpStateCounts.deferred > 0 || pathRuleCount > 0 ? "warning" : "success",
         };
       case "health":
@@ -536,7 +536,7 @@ export function ObservabilityPage() {
         return {
           title: highlightedHealthComponent.name,
           summary: highlightedHealthComponent.message ?? localize(locale, "此组件是当前主要健康关注点。", "This component is currently the main health concern."),
-          detail: `Module ${highlightedHealthComponent.module} is ${highlightedHealthComponent.status}.`,
+          detail: localize(locale, `模块 ${highlightedHealthComponent.module} 状态为 ${highlightedHealthComponent.status}。`, `Module ${highlightedHealthComponent.module} is ${highlightedHealthComponent.status}.`),
           tone: toneForHealth(highlightedHealthComponent.status),
         };
       case "acceptance":
@@ -544,14 +544,14 @@ export function ObservabilityPage() {
         return {
           title: `${highlightedAcceptance.artifactType} quality gate`,
           summary: highlightedAcceptance.overallVerdict,
-          detail: `${highlightedAcceptance.checksFailed} checks failed for ${highlightedAcceptance.artifactUri}.`,
+          detail: localize(locale, `${highlightedAcceptance.checksFailed} 项检查未通过，目标 ${highlightedAcceptance.artifactUri}。`, `${highlightedAcceptance.checksFailed} checks failed for ${highlightedAcceptance.artifactUri}.`),
           tone: highlightedAcceptance.state === "failed" ? "warning" : "neutral",
         };
       case "retry":
         if (highlightedEscalation) {
           return {
             title: highlightedEscalation.reason,
-            summary: `${highlightedEscalation.channel} escalation on ${highlightedEscalation.failureCategory}.`,
+            summary: localize(locale, `${highlightedEscalation.channel} 升级，类别 ${highlightedEscalation.failureCategory}。`, `${highlightedEscalation.channel} escalation on ${highlightedEscalation.failureCategory}.`),
             detail: highlightedEscalation.acknowledged
               ? localize(locale, "此升级已被确认。", "This escalation has already been acknowledged.")
               : localize(locale, "此升级仍需运维人员决策。", "This escalation still needs an operator decision."),
@@ -560,15 +560,15 @@ export function ObservabilityPage() {
         }
         return {
           title: localize(locale, "重试保护", "Retry protection"),
-          summary: `${retryCircuitBreakers.filter((item) => item.state !== "closed").length} provider protections are active.`,
-          detail: "Review circuit breakers before forcing more retries.",
+          summary: localize(locale, `${retryCircuitBreakers.filter((item) => item.state !== "closed").length} 个提供商保护处于活跃状态。`, `${retryCircuitBreakers.filter((item) => item.state !== "closed").length} provider protections are active.`),
+          detail: localize(locale, "在强制更多重试之前请先检查断路器。", "Review circuit breakers before forcing more retries."),
           tone: retryCircuitBreakers.some((item) => item.state === "open") ? "danger" : "warning",
         };
       case "rules":
         if (rulesAuditLog[0]) {
           return {
             title: `${rulesAuditLog[0].resource} · ${rulesAuditLog[0].action}`,
-            summary: `${rulesAuditLog[0].decision} decision from ${rulesAuditLog[0].ruleId ?? "bundle-eval"}.`,
+            summary: localize(locale, `${rulesAuditLog[0].decision} 决策，来自 ${rulesAuditLog[0].ruleId ?? "bundle-eval"}。`, `${rulesAuditLog[0].decision} decision from ${rulesAuditLog[0].ruleId ?? "bundle-eval"}.`),
             detail: localize(locale, "使用此审计记录解释策略为何允许、拒绝或警告。", "Use this audit trail to explain why policy allowed, denied, or warned."),
             tone: rulesAuditLog[0].decision === "deny" ? "danger" : rulesAuditLog[0].decision === "warn" ? "warning" : "success",
           };
@@ -577,13 +577,13 @@ export function ObservabilityPage() {
       case "loop":
         if (!highlightedLoopRun) return null;
         return {
-          title: highlightedLoopRun.action?.summary.title ?? highlightedLoopRun.incident?.summary.rootCauseSummary ?? "Loop run",
+          title: highlightedLoopRun.action?.summary.title ?? highlightedLoopRun.incident?.summary.rootCauseSummary ?? localize(locale, "循环运行", "Loop run"),
           summary: highlightedLoopRun.run.status.replaceAll("_", " "),
           detail:
             highlightedLoopRun.run.haltReason ??
             (highlightedLoopRun.run.verificationPassed === false
               ? localize(locale, "验证失败，Friday 已记录回滚结果。", "Verification failed and Friday recorded the rollback outcome.")
-              : "Review verification, rollback, and lesson extraction before resuming."),
+              : localize(locale, "在恢复之前请先检查验证、回滚和教训提取。", "Review verification, rollback, and lesson extraction before resuming.")),
           tone:
             highlightedLoopRun.run.status === "halted" || highlightedLoopRun.run.status === "failed"
               ? "warning"
@@ -596,7 +596,7 @@ export function ObservabilityPage() {
         return {
           title: traces[0].name,
           summary: `${traces[0].module} · ${traces[0].traceId}`,
-          detail: `${traces[0].spanCount} spans over ${formatDurationMs(traces[0].durationMs)}.`,
+          detail: localize(locale, `${traces[0].spanCount} 个 span，耗时 ${formatDurationMs(traces[0].durationMs)}。`, `${traces[0].spanCount} spans over ${formatDurationMs(traces[0].durationMs)}.`),
           tone: traces[0].status === "error" ? "danger" : traces[0].status === "ok" ? "success" : "neutral",
         };
       case "audit":
@@ -604,7 +604,7 @@ export function ObservabilityPage() {
         return {
           title: auditEntries[0].description,
           summary: `${auditEntries[0].actorDisplayName} · ${auditEntries[0].action}`,
-          detail: `${auditEntries[0].outcome} outcome in ${auditEntries[0].module}.`,
+          detail: localize(locale, `${auditEntries[0].outcome} 结果，模块 ${auditEntries[0].module}。`, `${auditEntries[0].outcome} outcome in ${auditEntries[0].module}.`),
           tone: auditEntries[0].outcome === "failure" || auditEntries[0].outcome === "error" ? "danger" : auditEntries[0].outcome === "denied" ? "warning" : "success",
         };
       case "overview":
@@ -702,29 +702,29 @@ export function ObservabilityPage() {
                   icon={<AlertTriangle className="h-4 w-4" />}
                   label={localize(locale, "活跃告警", "Active alerts")}
                   value={String(overview.alerts.activeAlerts)}
-                  detail={overview.alerts.highestSeverity ? `Highest severity ${overview.alerts.highestSeverity}` : "No active alert severity"}
+                  detail={overview.alerts.highestSeverity ? localize(locale, `最高严重级别 ${overview.alerts.highestSeverity}`, `Highest severity ${overview.alerts.highestSeverity}`) : localize(locale, "无活跃告警严重级别", "No active alert severity")}
                 />
                 <ObservabilityTile
                   icon={<HeartPulse className="h-4 w-4" />}
                   label={localize(locale, "健康", "Health")}
                   value={overview.health?.status ?? "unavailable"}
-                  detail={overview.health?.message ?? "No health checks registered yet."}
+                  detail={overview.health?.message ?? localize(locale, "尚未注册健康检查。", "No health checks registered yet.")}
                 />
                 <ObservabilityTile
                   icon={<Activity className="h-4 w-4" />}
                   label={localize(locale, "已完成追踪", "Completed traces")}
                   value={String(overview.traces.totalTraces)}
-                  detail={`Average duration ${formatDurationMs(overview.traces.avgDurationMs)}`}
+                  detail={localize(locale, `平均耗时 ${formatDurationMs(overview.traces.avgDurationMs)}`, `Average duration ${formatDurationMs(overview.traces.avgDurationMs)}`)}
                 />
                 <ObservabilityTile
                   icon={<ShieldCheck className="h-4 w-4" />}
                   label={localize(locale, "审计条目", "Audit entries")}
                   value={String(overview.audit.totalEntries)}
-                  detail={`${Object.keys(overview.audit.byOutcome).length} tracked outcomes`}
+                  detail={localize(locale, `${Object.keys(overview.audit.byOutcome).length} 个追踪结果`, `${Object.keys(overview.audit.byOutcome).length} tracked outcomes`)}
                 />
               </div>
               <p className="text-xs text-[color:var(--color-text-tertiary)]">
-                Generated at {formatTimestamp(overview.generatedAt)}. This page stays aligned with `/assistant`: action queue first, telemetry second.
+                {localize(locale, `生成于 ${formatTimestamp(overview.generatedAt)}。本页面与 /assistant 保持一致：操作队列优先，遥测数据其次。`, `Generated at ${formatTimestamp(overview.generatedAt)}. This page stays aligned with \`/assistant\`: action queue first, telemetry second.`)}
               </p>
             </div>
           ) : (
@@ -742,13 +742,13 @@ export function ObservabilityPage() {
                   icon={<CheckCircle2 className="h-4 w-4" />}
                   label={localize(locale, "教训", "Lessons")}
                   value={String(learningOverview.coverage.lessons)}
-                  detail={`${learningOverview.coverage.routeAdjustments} route adjustments available to operator controls`}
+                  detail={localize(locale, `${learningOverview.coverage.routeAdjustments} 个路由调整可供运维控制`, `${learningOverview.coverage.routeAdjustments} route adjustments available to operator controls`)}
                 />
                 <ObservabilityTile
                   icon={<RotateCcw className="h-4 w-4" />}
                   label={localize(locale, "近期路由偏移", "Recent route shifts")}
                   value={String(learningOverview.coverage.recentDecisionDiffs)}
-                  detail={`${learningOverview.coverage.blockedRoutes} blocked routes observed in recent decision traces`}
+                  detail={localize(locale, `${learningOverview.coverage.blockedRoutes} 条阻断路由出现在近期决策追踪中`, `${learningOverview.coverage.blockedRoutes} blocked routes observed in recent decision traces`)}
                 />
               </div>
               {learningOverview.recentDecisionDiffs.slice(0, 2).map((record) => (
@@ -759,7 +759,7 @@ export function ObservabilityPage() {
                       <p className="text-xs text-[color:var(--color-text-tertiary)]">{formatTimestamp(record.createdAt)}</p>
                     </div>
                     <StatusPill tone={record.learningAdjusted ? "success" : "warning"}>
-                      {record.learningAdjusted ? "selection changed" : "signals present"}
+                      {record.learningAdjusted ? localize(locale, "选择已变更", "selection changed") : localize(locale, "信号存在", "signals present")}
                     </StatusPill>
                   </div>
                   <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">
@@ -787,25 +787,25 @@ export function ObservabilityPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <ObservabilityTile
                     icon={<BellRing className="h-4 w-4" />}
-                    label="MCP loaded"
+                    label={localize(locale, "MCP 已加载", "MCP loaded")}
                     value={String(assistantMcpStateCounts.loaded)}
-                    detail={`${assistantMcpStateCounts.configured} configured · ${assistantMcpStateCounts.discoverable} discoverable`}
+                    detail={localize(locale, `${assistantMcpStateCounts.configured} 已配置 · ${assistantMcpStateCounts.discoverable} 可发现`, `${assistantMcpStateCounts.configured} configured · ${assistantMcpStateCounts.discoverable} discoverable`)}
                   />
                   <ObservabilityTile
                     icon={<RotateCcw className="h-4 w-4" />}
-                    label="Deferred"
+                    label={localize(locale, "延迟加载", "Deferred")}
                     value={String(assistantMcpStateCounts.deferred)}
-                    detail="Deferred servers stay out of the default context until they are needed."
+                    detail={localize(locale, "延迟服务器在需要时才会加入默认上下文。", "Deferred servers stay out of the default context until they are needed.")}
                   />
                   <ObservabilityTile
                     icon={<Mail className="h-4 w-4" />}
-                    label="Path rules"
+                    label={localize(locale, "路径规则", "Path rules")}
                     value={String(pathRuleCount)}
-                    detail={candidatePaths.length > 0 ? candidatePaths.slice(0, 2).join(" · ") : "No path-specific rule candidates surfaced."}
+                    detail={candidatePaths.length > 0 ? candidatePaths.slice(0, 2).join(" · ") : localize(locale, "暂无路径特定的规则候选。", "No path-specific rule candidates surfaced.")}
                   />
                   <ObservabilityTile
                     icon={<Activity className="h-4 w-4" />}
-                    label="Preprocessors"
+                    label={localize(locale, "预处理器", "Preprocessors")}
                     value={String(assistantDiagnostics.supportedPreprocessors.length)}
                     detail={assistantDiagnostics.supportedPreprocessors.join(", ")}
                   />
@@ -826,18 +826,18 @@ export function ObservabilityPage() {
                     </div>
                     <div className="mt-3 grid gap-2 text-xs text-[color:var(--color-text-tertiary)]">
                       <p>{describeRunHealth(latestAssistantRun, "en")}</p>
-                      <p>Workspace context: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "workspace_context")?.estimatedChars ?? 0} chars</p>
-                      <p>Starter skills: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "starter_skills")?.estimatedChars ?? 0} chars</p>
-                      <p>MCP: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "mcp")?.estimatedChars ?? 0} chars</p>
-                      <p>Subagents: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "subagents")?.estimatedChars ?? 0} chars</p>
+                      <p>{localize(locale, "工作区上下文", "Workspace context")}: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "workspace_context")?.estimatedChars ?? 0} {localize(locale, "字符", "chars")}</p>
+                      <p>{localize(locale, "初始技能", "Starter skills")}: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "starter_skills")?.estimatedChars ?? 0} {localize(locale, "字符", "chars")}</p>
+                      <p>MCP: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "mcp")?.estimatedChars ?? 0} {localize(locale, "字符", "chars")}</p>
+                      <p>{localize(locale, "子代理", "Subagents")}: {latestAssistantRun.contextCostSummary?.components.find((item) => item.kind === "subagents")?.estimatedChars ?? 0} {localize(locale, "字符", "chars")}</p>
                     </div>
                   </div>
                 ) : (
-                  <p className="text-sm text-[color:var(--color-text-secondary)]">No recent assistant runs have been recorded yet.</p>
+                  <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "尚未记录最近的助手运行。", "No recent assistant runs have been recorded yet.")}</p>
                 )}
                 <div className="space-y-3">
                   {(assistantDiagnostics.mcpServerStates ?? []).length === 0 ? (
-                    <p className="text-sm text-[color:var(--color-text-secondary)]">No MCP servers are configured for this runtime.</p>
+                    <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "此运行时未配置 MCP 服务器。", "No MCP servers are configured for this runtime.")}</p>
                   ) : (
                     assistantDiagnostics.mcpServerStates.map((state) => (
                       <div key={state.serverId} className="agent-subcard p-4">
@@ -845,7 +845,7 @@ export function ObservabilityPage() {
                           <div>
                             <p className="font-medium text-[color:var(--color-text-primary)]">{state.serverId}</p>
                             <p className="text-xs text-[color:var(--color-text-tertiary)]">
-                              {state.transport} · {state.lazyDiscovery ? "lazy discovery" : "eager discovery"}
+                              {state.transport} · {state.lazyDiscovery ? localize(locale, "延迟发现", "lazy discovery") : localize(locale, "即时发现", "eager discovery")}
                             </p>
                           </div>
                           <StatusPill tone={state.state === "loaded" ? "success" : state.state === "deferred" ? "warning" : "neutral"}>
@@ -853,7 +853,7 @@ export function ObservabilityPage() {
                           </StatusPill>
                         </div>
                         <p className="mt-3 text-xs text-[color:var(--color-text-tertiary)]">
-                          Tools {state.toolCount ?? 0} · Resources {state.resourceCount ?? 0} · Prompts {state.promptCount ?? 0}
+                          {localize(locale, "工具", "Tools")} {state.toolCount ?? 0} · {localize(locale, "资源", "Resources")} {state.resourceCount ?? 0} · {localize(locale, "提示", "Prompts")} {state.promptCount ?? 0}
                         </p>
                       </div>
                     ))
@@ -861,7 +861,7 @@ export function ObservabilityPage() {
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-[color:var(--color-text-secondary)]">Loading assistant diagnostics...</p>
+              <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "正在加载助手诊断...", "Loading assistant diagnostics...")}</p>
             )}
           </ShellCard>
         ) : null}
@@ -880,13 +880,13 @@ export function ObservabilityPage() {
                       {alert.severity} · {alert.status}
                     </StatusPill>
                   </div>
-                  <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">Detected {formatTimestamp(alert.detectedAt)}</p>
+                  <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "检测于", "Detected")} {formatTimestamp(alert.detectedAt)}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Link className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]" to={buildObservabilityHref({ focus: "alerts", alertId: alert.id })}>
-                      Investigate
+                      {localize(locale, "调查", "Investigate")}
                     </Link>
                     <Link className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]" to="/assistant">
-                      Open guided recovery
+                      {localize(locale, "打开引导恢复", "Open guided recovery")}
                     </Link>
                     {alert.status !== "acknowledged" && alert.status !== "resolved" ? (
                       <button
@@ -899,7 +899,7 @@ export function ObservabilityPage() {
                           })}
                         type="button"
                       >
-                        Acknowledge
+                        {localize(locale, "确认", "Acknowledge")}
                       </button>
                     ) : null}
                     <button
@@ -908,14 +908,14 @@ export function ObservabilityPage() {
                       onClick={() => testAlertDispatchMutation.mutate({ alertId: alert.id })}
                       type="button"
                     >
-                      Test dispatch
+                      {localize(locale, "测试分发", "Test dispatch")}
                     </button>
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">No active alerts are firing right now.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "当前没有活跃告警。", "No active alerts are firing right now.")}</p>
           )}
         </ShellCard>
 
@@ -936,17 +936,17 @@ export function ObservabilityPage() {
                   <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{issue.summary}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Link className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]" to={buildObservabilityHref({ focus: "alerts", issueId: issue.id })}>
-                      Inspect evidence
+                      {localize(locale, "检查证据", "Inspect evidence")}
                     </Link>
                     <Link className="inline-flex items-center rounded-2xl bg-[color:var(--color-accent-soft)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-strong)]" to="/assistant">
-                      Continue in assistant
+                      {localize(locale, "在助手中继续", "Continue in assistant")}
                     </Link>
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">No guided issues are open right now.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "当前没有打开的引导问题。", "No guided issues are open right now.")}</p>
           )}
         </ShellCard>
       </div>
@@ -959,19 +959,19 @@ export function ObservabilityPage() {
                 icon={<ShieldCheck className="h-4 w-4" />}
                 label={localize(locale, "验收失败", "Failed acceptance")}
                 value={String(acceptanceResults.filter((run) => run.state === "failed").length)}
-                detail={`${acceptanceTests.filter((test) => test.enabled).length} quality gates enabled`}
+                detail={localize(locale, `${acceptanceTests.filter((test) => test.enabled).length} 个质量门控已启用`, `${acceptanceTests.filter((test) => test.enabled).length} quality gates enabled`)}
               />
               <ObservabilityTile
                 icon={<TimerReset className="h-4 w-4" />}
                 label={localize(locale, "重试升级", "Retry escalations")}
                 value={String(retryEscalations.filter((item) => !item.acknowledged).length)}
-                detail={`${retryCircuitBreakers.filter((item) => item.state !== "closed").length} non-closed circuit breakers`}
+                detail={localize(locale, `${retryCircuitBreakers.filter((item) => item.state !== "closed").length} 个未关闭的断路器`, `${retryCircuitBreakers.filter((item) => item.state !== "closed").length} non-closed circuit breakers`)}
               />
               {retryCostSummary ? (
                 <div className="agent-detail-note p-4 text-xs text-[color:var(--color-text-tertiary)]">
-                  <p>Total retry records: {retryCostSummary.summary.recordCount}</p>
-                  <p>Budget exceeded: {retryCostSummary.summary.budgetExceeded ? "yes" : "no"}</p>
-                  <p>Token cost: {retryCostSummary.summary.totalCost.tokens}</p>
+                  <p>{localize(locale, "总重试记录", "Total retry records")}: {retryCostSummary.summary.recordCount}</p>
+                  <p>{localize(locale, "预算超出", "Budget exceeded")}: {retryCostSummary.summary.budgetExceeded ? localize(locale, "是", "yes") : localize(locale, "否", "no")}</p>
+                  <p>{localize(locale, "Token 成本", "Token cost")}: {retryCostSummary.summary.totalCost.tokens}</p>
                 </div>
               ) : null}
               {retryEscalations.slice(0, 3).map((escalation) => (
@@ -982,14 +982,14 @@ export function ObservabilityPage() {
                       <p className="text-xs text-[color:var(--color-text-tertiary)]">{escalation.channel} · {escalation.failureCategory}</p>
                     </div>
                     <StatusPill tone={escalation.acknowledged ? "success" : "warning"}>
-                      {escalation.acknowledged ? "acknowledged" : "open"}
+                      {escalation.acknowledged ? localize(locale, "已确认", "acknowledged") : localize(locale, "待处理", "open")}
                     </StatusPill>
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">No acceptance or retry pressure is active right now.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "当前没有验收或重试压力。", "No acceptance or retry pressure is active right now.")}</p>
           )}
         </ShellCard>
 
@@ -1008,7 +1008,7 @@ export function ObservabilityPage() {
               ))}
               {expertLoopRuns.length > 0 && (
                 <div className="border-t border-[color:var(--color-border-soft)] pt-3">
-                  <p className="mb-2 text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Expert mode runs</p>
+                  <p className="mb-2 text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">{localize(locale, "专家模式运行", "Expert mode runs")}</p>
                   {expertLoopRuns.slice(0, 3).map((record) => (
                     <LoopRunCard
                       key={record.run.loopRunId}
@@ -1036,7 +1036,7 @@ export function ObservabilityPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">No loop or rules events need attention right now.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "当前没有需要关注的循环或规则事件。", "No loop or rules events need attention right now.")}</p>
           )}
         </ShellCard>
       </div>
@@ -1060,11 +1060,11 @@ export function ObservabilityPage() {
                 ))}
               </div>
               <p className="text-xs text-[color:var(--color-text-tertiary)]">
-                Metric: {series.metricName} · Bucket {series.bucketSize}
+                {localize(locale, "指标", "Metric")}: {series.metricName} · {localize(locale, "桶大小", "Bucket")} {series.bucketSize}
               </p>
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Loading time-series data...</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "正在加载时间序列数据...", "Loading time-series data...")}</p>
           )}
         </ShellCard>
 
@@ -1101,7 +1101,7 @@ export function ObservabilityPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Trace and audit evidence will appear here when the system has more history.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "当系统有更多历史记录时，追踪和审计证据将显示在此处。", "Trace and audit evidence will appear here when the system has more history.")}</p>
           )}
         </ShellCard>
       </div>
@@ -1113,7 +1113,7 @@ export function ObservabilityPage() {
           aside={
             <ActionButton tone="secondary" onClick={() => setShowCreateSlo(!showCreateSlo)}>
               <Plus className="mr-1.5 h-3 w-3" />
-              Add SLO
+              {localize(locale, "添加 SLO", "Add SLO")}
             </ActionButton>
           }
         >
@@ -1136,7 +1136,7 @@ export function ObservabilityPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">No SLO definitions are configured yet. Click &quot;Add SLO&quot; to create one.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "尚未配置 SLO 定义。点击\"添加 SLO\"创建一个。", "No SLO definitions are configured yet. Click \"Add SLO\" to create one.")}</p>
           )}
         </ShellCard>
 
@@ -1146,7 +1146,7 @@ export function ObservabilityPage() {
           aside={
             <ActionButton tone="secondary" onClick={() => setShowCreateDest(!showCreateDest)}>
               <Plus className="mr-1.5 h-3 w-3" />
-              Add destination
+              {localize(locale, "添加目标", "Add destination")}
             </ActionButton>
           }
         >
@@ -1172,7 +1172,7 @@ export function ObservabilityPage() {
                         disabled={updateDestinationMutation.isPending}
                         onClick={() => updateDestinationMutation.mutate({ id: destination.id, enabled: !destination.enabled })}
                       >
-                        {destination.enabled ? "enabled" : "disabled"}
+                        {destination.enabled ? localize(locale, "已启用", "enabled") : localize(locale, "已禁用", "disabled")}
                       </button>
                       <button
                         type="button"
@@ -1188,7 +1188,7 @@ export function ObservabilityPage() {
               ))}
             </div>
           ) : !showCreateDest ? (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">No alert destinations are configured yet.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "尚未配置告警目标。", "No alert destinations are configured yet.")}</p>
           ) : null}
         </ShellCard>
       </div>
@@ -1203,6 +1203,7 @@ function LoopRunCard(props: {
   resumePending: boolean;
   cancelPending: boolean;
 }) {
+  const { locale } = useAppLocale();
   const { record } = props;
   const [expanded, setExpanded] = useState(false);
   const detailQuery = useQuery({
@@ -1215,7 +1216,7 @@ function LoopRunCard(props: {
     <div className="agent-subcard p-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="font-medium text-[color:var(--color-text-primary)]">{record.action?.summary.title ?? record.incident?.summary.rootCauseSummary ?? "Loop run"}</p>
+          <p className="font-medium text-[color:var(--color-text-primary)]">{record.action?.summary.title ?? record.incident?.summary.rootCauseSummary ?? localize(locale, "循环运行", "Loop run")}</p>
           <p className="text-xs text-[color:var(--color-text-tertiary)]">{record.run.loopRunId}</p>
         </div>
         <StatusPill tone={record.run.status === "verified" ? "success" : record.run.status === "halted" ? "warning" : "neutral"}>
@@ -1223,18 +1224,18 @@ function LoopRunCard(props: {
         </StatusPill>
       </div>
       <p className="mt-3 text-xs text-[color:var(--color-text-tertiary)]">
-        Verification: {record.run.verificationPassed === undefined ? "pending" : record.run.verificationPassed ? "passed" : "failed"} ·
-        Rollback: {record.run.rollbackAttempted ? (record.run.rollbackSucceeded ? " succeeded" : " attempted") : " not needed"}
+        {localize(locale, "验证", "Verification")}: {record.run.verificationPassed === undefined ? localize(locale, "待定", "pending") : record.run.verificationPassed ? localize(locale, "通过", "passed") : localize(locale, "失败", "failed")} ·
+        {localize(locale, "回滚", "Rollback")}: {record.run.rollbackAttempted ? (record.run.rollbackSucceeded ? localize(locale, " 成功", " succeeded") : localize(locale, " 已尝试", " attempted")) : localize(locale, " 不需要", " not needed")}
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {record.run.status === "paused" ? (
           <ActionButton tone="secondary" disabled={props.resumePending} onClick={() => props.onResume(record.run.loopRunId)}>
-            <Play className="mr-1.5 h-3 w-3" />Resume
+            <Play className="mr-1.5 h-3 w-3" />{localize(locale, "恢复", "Resume")}
           </ActionButton>
         ) : null}
         {record.run.status === "running" || record.run.status === "paused" ? (
           <ActionButton tone="secondary" disabled={props.cancelPending} onClick={() => props.onCancel(record.run.loopRunId)}>
-            <Square className="mr-1.5 h-3 w-3" />Cancel
+            <Square className="mr-1.5 h-3 w-3" />{localize(locale, "取消", "Cancel")}
           </ActionButton>
         ) : null}
         <button
@@ -1243,20 +1244,20 @@ function LoopRunCard(props: {
           className="flex items-center gap-1 text-xs font-medium text-[color:var(--color-text-tertiary)] transition hover:text-[color:var(--color-text-primary)]"
         >
           <ChevronRight className={`h-3 w-3 transition ${expanded ? "rotate-90" : ""}`} />
-          {expanded ? "Less" : "Detail"}
+          {expanded ? localize(locale, "收起", "Less") : localize(locale, "详情", "Detail")}
         </button>
       </div>
       {expanded && detailQuery.data ? (
         <div className="mt-3 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3 text-xs text-[color:var(--color-text-tertiary)] space-y-1">
-          <p>Risk tier: {detailQuery.data.run.riskTier}</p>
-          <p>Attempt: {detailQuery.data.run.attemptNumber}</p>
-          <p>Approval required: {detailQuery.data.run.approvalRequired ? "yes" : "no"}</p>
-          {detailQuery.data.run.haltReason ? <p>Halt reason: {detailQuery.data.run.haltReason}</p> : null}
-          {detailQuery.data.run.lastError ? <p>Last error: {detailQuery.data.run.lastError}</p> : null}
-          {detailQuery.data.run.correlationId ? <p>Correlation: {detailQuery.data.run.correlationId}</p> : null}
+          <p>{localize(locale, "风险等级", "Risk tier")}: {detailQuery.data.run.riskTier}</p>
+          <p>{localize(locale, "尝试次数", "Attempt")}: {detailQuery.data.run.attemptNumber}</p>
+          <p>{localize(locale, "需要审批", "Approval required")}: {detailQuery.data.run.approvalRequired ? localize(locale, "是", "yes") : localize(locale, "否", "no")}</p>
+          {detailQuery.data.run.haltReason ? <p>{localize(locale, "停止原因", "Halt reason")}: {detailQuery.data.run.haltReason}</p> : null}
+          {detailQuery.data.run.lastError ? <p>{localize(locale, "最后错误", "Last error")}: {detailQuery.data.run.lastError}</p> : null}
+          {detailQuery.data.run.correlationId ? <p>{localize(locale, "关联 ID", "Correlation")}: {detailQuery.data.run.correlationId}</p> : null}
         </div>
       ) : expanded && detailQuery.isLoading ? (
-        <p className="mt-3 text-xs text-[color:var(--color-text-faint)]">Loading...</p>
+        <p className="mt-3 text-xs text-[color:var(--color-text-faint)]">{localize(locale, "加载中...", "Loading...")}</p>
       ) : null}
     </div>
   );
@@ -1267,28 +1268,29 @@ function CreateDestinationForm(props: {
   pending: boolean;
   onCancel: () => void;
 }) {
+  const { locale } = useAppLocale();
   const [name, setName] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
   return (
     <div className="mb-3 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4 space-y-3">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">New Slack destination</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{localize(locale, "新建 Slack 目标", "New Slack destination")}</p>
       <input
         className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-sm text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:border-[color:var(--color-accent)] focus:outline-none"
-        placeholder="Name"
+        placeholder={localize(locale, "名称", "Name")}
         value={name}
         onChange={(e) => setName(e.target.value)}
       />
       <input
         className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-sm text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:border-[color:var(--color-accent)] focus:outline-none"
-        placeholder="Webhook URL"
+        placeholder={localize(locale, "Webhook 地址", "Webhook URL")}
         value={webhookUrl}
         onChange={(e) => setWebhookUrl(e.target.value)}
       />
       <div className="flex gap-2">
         <ActionButton disabled={props.pending || !name.trim() || !webhookUrl.trim()} onClick={() => props.onSubmit({ type: "slack", name: name.trim(), webhookUrl: webhookUrl.trim() })}>
-          Create
+          {localize(locale, "创建", "Create")}
         </ActionButton>
-        <ActionButton tone="secondary" onClick={props.onCancel}>Cancel</ActionButton>
+        <ActionButton tone="secondary" onClick={props.onCancel}>{localize(locale, "取消", "Cancel")}</ActionButton>
       </div>
     </div>
   );
@@ -1299,6 +1301,7 @@ function SloCard(props: {
   onDelete: (sloId: string, etag: string) => void;
   deletePending: boolean;
 }) {
+  const { locale } = useAppLocale();
   const { slo } = props;
   const [expanded, setExpanded] = useState(false);
   const detailQuery = useQuery({
@@ -1331,9 +1334,9 @@ function SloCard(props: {
         </div>
       </div>
       <div className="mt-3 grid gap-2 text-xs text-[color:var(--color-text-tertiary)]">
-        <p>Target: {slo.target}%</p>
-        <p>Current value: {slo.currentValue?.toFixed(2) ?? "n/a"}%</p>
-        <p>Budget consumed: {slo.budgetConsumedPercent?.toFixed(2) ?? "0"}%</p>
+        <p>{localize(locale, "目标", "Target")}: {slo.target}%</p>
+        <p>{localize(locale, "当前值", "Current value")}: {slo.currentValue?.toFixed(2) ?? "n/a"}%</p>
+        <p>{localize(locale, "预算已消耗", "Budget consumed")}: {slo.budgetConsumedPercent?.toFixed(2) ?? "0"}%</p>
       </div>
       <button
         type="button"
@@ -1341,23 +1344,23 @@ function SloCard(props: {
         className="mt-3 flex items-center gap-1 text-xs font-medium text-[color:var(--color-text-tertiary)] transition hover:text-[color:var(--color-text-primary)]"
       >
         <ChevronRight className={`h-3 w-3 transition ${expanded ? "rotate-90" : ""}`} />
-        {expanded ? "Hide detail" : "Show detail"}
+        {expanded ? localize(locale, "隐藏详情", "Hide detail") : localize(locale, "显示详情", "Show detail")}
       </button>
       {expanded && detailQuery.data ? (
         <div className="mt-3 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3 text-xs text-[color:var(--color-text-tertiary)]">
           <div className="grid gap-2">
             {detailQuery.data.slo.description ? <p>{detailQuery.data.slo.description}</p> : null}
-            <p>Compliance window: {detailQuery.data.slo.complianceWindowDays} days</p>
+            <p>{localize(locale, "合规窗口", "Compliance window")}: {detailQuery.data.slo.complianceWindowDays} {localize(locale, "天", "days")}</p>
             {detailQuery.data.errorBudget ? (
               <>
-                <p>Error budget remaining: {detailQuery.data.errorBudget.remainingBudgetPercent.toFixed(2)}%</p>
-                <p>Budget exhausted: {detailQuery.data.errorBudget.exhausted ? "Yes" : "No"}</p>
-                <p>Window: {new Date(detailQuery.data.errorBudget.windowStart).toLocaleDateString()} – {new Date(detailQuery.data.errorBudget.windowEnd).toLocaleDateString()}</p>
+                <p>{localize(locale, "剩余错误预算", "Error budget remaining")}: {detailQuery.data.errorBudget.remainingBudgetPercent.toFixed(2)}%</p>
+                <p>{localize(locale, "预算已耗尽", "Budget exhausted")}: {detailQuery.data.errorBudget.exhausted ? localize(locale, "是", "Yes") : localize(locale, "否", "No")}</p>
+                <p>{localize(locale, "窗口", "Window")}: {new Date(detailQuery.data.errorBudget.windowStart).toLocaleDateString()} – {new Date(detailQuery.data.errorBudget.windowEnd).toLocaleDateString()}</p>
               </>
             ) : null}
             {detailQuery.data.burnRates.length > 0 ? (
               <div>
-                <p className="font-medium text-[color:var(--color-text-secondary)]">Burn rates:</p>
+                <p className="font-medium text-[color:var(--color-text-secondary)]">{localize(locale, "消耗速率:", "Burn rates:")}</p>
                 {detailQuery.data.burnRates.map((rate) => (
                   <p key={rate.windowLabel}>{rate.windowLabel}: {rate.rate.toFixed(2)}x</p>
                 ))}
@@ -1366,7 +1369,7 @@ function SloCard(props: {
           </div>
         </div>
       ) : expanded && detailQuery.isLoading ? (
-        <p className="mt-3 text-xs text-[color:var(--color-text-faint)]">Loading...</p>
+        <p className="mt-3 text-xs text-[color:var(--color-text-faint)]">{localize(locale, "加载中...", "Loading...")}</p>
       ) : null}
     </div>
   );
@@ -1377,6 +1380,7 @@ function CreateSloForm(props: {
   pending: boolean;
   onCancel: () => void;
 }) {
+  const { locale } = useAppLocale();
   const [name, setName] = useState("");
   const [target, setTarget] = useState("99.5");
   const [description, setDescription] = useState("");
@@ -1386,24 +1390,24 @@ function CreateSloForm(props: {
 
   return (
     <div className="mb-3 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] p-4 space-y-3">
-      <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Create SLO</p>
+      <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">{localize(locale, "创建 SLO", "Create SLO")}</p>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Name</label>
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. API Availability" className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-sm text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:border-[color:var(--color-border-strong)] focus:outline-none" />
+          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">{localize(locale, "名称", "Name")}</label>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={localize(locale, "例如 API 可用性", "e.g. API Availability")} className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-sm text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:border-[color:var(--color-border-strong)] focus:outline-none" />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Target (%)</label>
+          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">{localize(locale, "目标 (%)", "Target (%)")}</label>
           <input type="number" value={target} onChange={(e) => setTarget(e.target.value)} min={0} max={100} step={0.1} className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-sm text-[color:var(--color-text-primary)] focus:border-[color:var(--color-border-strong)] focus:outline-none" />
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Description</label>
-          <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-sm text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:border-[color:var(--color-border-strong)] focus:outline-none" />
+          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">{localize(locale, "描述", "Description")}</label>
+          <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder={localize(locale, "可选", "Optional")} className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-sm text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:border-[color:var(--color-border-strong)] focus:outline-none" />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">Compliance window (days)</label>
+          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">{localize(locale, "合规窗口（天）", "Compliance window (days)")}</label>
           <input type="number" value={windowDays} onChange={(e) => setWindowDays(e.target.value)} min={1} max={365} className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] px-3 py-2 text-sm text-[color:var(--color-text-primary)] focus:border-[color:var(--color-border-strong)] focus:outline-none" />
         </div>
       </div>
@@ -1417,9 +1421,9 @@ function CreateSloForm(props: {
             complianceWindowDays: Number(windowDays) || undefined,
           })}
         >
-          {props.pending ? "Creating..." : "Create"}
+          {props.pending ? localize(locale, "创建中...", "Creating...") : localize(locale, "创建", "Create")}
         </ActionButton>
-        <ActionButton tone="secondary" onClick={props.onCancel}>Cancel</ActionButton>
+        <ActionButton tone="secondary" onClick={props.onCancel}>{localize(locale, "取消", "Cancel")}</ActionButton>
       </div>
     </div>
   );

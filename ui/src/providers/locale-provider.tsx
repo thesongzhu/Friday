@@ -27,26 +27,38 @@ function writeLocalLocale(locale: AppLocale): void {
 
 export function LocaleProvider(props: { children: React.ReactNode }) {
   const { values, setPreference } = useUixPreferences();
-  const preferredLocale = isAppLocale(values["display.locale"])
-    ? values["display.locale"]
-    : null;
-  const [locale, setLocaleState] = React.useState<AppLocale>(() => preferredLocale ?? readLocalLocale() ?? detectSystemLocale());
 
+  // Derive preferred locale from remote preferences — extract a stable primitive.
+  const remoteLocaleRaw = values["display.locale"];
+  const remoteLocale: AppLocale | null = isAppLocale(remoteLocaleRaw) ? remoteLocaleRaw : null;
+
+  const [locale, setLocaleState] = React.useState<AppLocale>(
+    () => remoteLocale ?? readLocalLocale() ?? detectSystemLocale(),
+  );
+
+  // Sync from remote preference only when the primitive value actually changes.
+  const prevRemoteRef = React.useRef(remoteLocale);
   React.useEffect(() => {
-    const nextLocale = preferredLocale ?? readLocalLocale() ?? detectSystemLocale();
-    setLocaleState(nextLocale);
-  }, [preferredLocale]);
+    if (remoteLocale !== null && remoteLocale !== prevRemoteRef.current) {
+      prevRemoteRef.current = remoteLocale;
+      setLocaleState(remoteLocale);
+    }
+  }, [remoteLocale]);
 
   React.useEffect(() => {
     document.documentElement.setAttribute("data-locale", locale);
     document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
   }, [locale]);
 
+  // Stable ref to setPreference to avoid re-creating setLocale on every render.
+  const setPreferenceRef = React.useRef(setPreference);
+  setPreferenceRef.current = setPreference;
+
   const setLocale = React.useCallback((nextLocale: AppLocale) => {
     writeLocalLocale(nextLocale);
     setLocaleState(nextLocale);
-    setPreference("display.locale", nextLocale);
-  }, [setPreference]);
+    setPreferenceRef.current("display.locale", nextLocale);
+  }, []);
 
   const value = React.useMemo<LocaleContextValue>(() => ({
     locale,
