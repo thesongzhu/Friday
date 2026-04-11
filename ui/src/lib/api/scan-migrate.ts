@@ -23,46 +23,31 @@ export interface LocalSkillScanResult {
   directoriesScanned: string[];
 }
 
-export interface CommunitySkillItem {
-  id: string;
-  name: string;
-  nameZh: string;
-  nameEn: string;
-  description: string;
-  descriptionZh: string;
-  descriptionEn: string;
-  author: string;
-  sourceUrl: string;
-  tags: string[];
-  category: string;
-}
-
 export interface BatchImportResult {
   results: Array<{ sourcePath: string; success: boolean; skillId?: string; error?: string }>;
   importedCount: number;
   failedCount: number;
 }
 
-// Note: routes may wrap in { status, body } envelope like discovery routes
-interface RouteEnvelope<T> { status: number; body: T }
+// Helper to unwrap route envelope if present
+function unwrap<T>(res: unknown): T {
+  if (res && typeof res === "object" && "body" in res && "status" in res) {
+    return (res as { body: T }).body;
+  }
+  return res as T;
+}
 
 export const scanMigrateApi = {
   async scanLocal(): Promise<LocalSkillScanResult> {
-    const res = await apiClient.post<Record<string, never>, RouteEnvelope<LocalSkillScanResult>>("/v1/skills/scan-local", {});
-    return res.body ?? (res as unknown as LocalSkillScanResult);
-  },
-
-  async getCommunitySkills(q?: string): Promise<{ items: CommunitySkillItem[] }> {
-    const qs = q ? `?q=${encodeURIComponent(q)}` : "";
-    const res = await apiClient.get<RouteEnvelope<{ items: CommunitySkillItem[] }>>(`/v1/skills/catalog/community${qs}`);
-    return res.body ?? (res as unknown as { items: CommunitySkillItem[] });
+    const res = await apiClient.post<Record<string, never>, unknown>("/v1/skills/scan-local", {});
+    return unwrap<LocalSkillScanResult>(res);
   },
 
   async importBatch(items: Array<{ sourcePath: string; formatHint?: string }>): Promise<BatchImportResult> {
     const res = await apiClient.post<
       { items: Array<{ sourcePath: string; formatHint?: string }> },
-      RouteEnvelope<BatchImportResult>
+      unknown
     >("/v1/skills/import-batch", { items });
-    return res.body ?? (res as unknown as BatchImportResult);
+    return unwrap<BatchImportResult>(res);
   },
 };

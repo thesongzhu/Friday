@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Search, X } from "lucide-react";
 import { toast } from "sonner";
@@ -7,10 +7,10 @@ import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 import {
   scanMigrateApi,
-  type CommunitySkillItem,
   type LocalSkillScanItem,
   type LocalSkillSourceTool,
 } from "@/lib/api/scan-migrate";
+import { skillsApi } from "@/lib/api/skills";
 
 // ─── Props ───
 
@@ -19,11 +19,23 @@ export interface SkillScannerPanelProps {
   onClose: () => void;
 }
 
+// ─── Constants ───
+
+const TOP_N = 20;
+
+const SOURCE_FILTERS = [
+  { key: "all", zh: "全部", en: "All" },
+  { key: "claude-code", zh: "Claude Code", en: "Claude Code" },
+  { key: "clawdbot", zh: "OpenClaw", en: "OpenClaw" },
+  { key: "codex", zh: "Codex", en: "Codex" },
+  { key: "friday", zh: "Friday", en: "Friday" },
+] as const;
+
 // ─── Source tool badge config ───
 
 function sourceToolTone(tool: LocalSkillSourceTool): "neutral" | "success" | "warning" | "danger" {
   switch (tool) {
-    case "claude-code": return "neutral";   // accent-like via neutral
+    case "claude-code": return "neutral";
     case "cursor": return "neutral";
     case "n8n": return "warning";
     case "codex": return "success";
@@ -57,25 +69,17 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
   const { locale } = useAppLocale();
   const queryClient = useQueryClient();
 
-  const [activeTab, setActiveTab] = useState<"local" | "community">("local");
+  const [activeTab, setActiveTab] = useState<"local" | "friday">("local");
 
   // ── Local scan state ──
   const [selectedLocalIds, setSelectedLocalIds] = useState<Set<string>>(new Set());
   const [scanItems, setScanItems] = useState<LocalSkillScanItem[]>([]);
+  const [localSearch, setLocalSearch] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<string>("all");
+  const [showAllLocal, setShowAllLocal] = useState(false);
 
-  // ── Community state ──
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [selectedCommunityIds, setSelectedCommunityIds] = useState<Set<string>>(new Set());
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => setDebouncedQuery(searchQuery), 300);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [searchQuery]);
+  // ── Friday skills state ──
+  const [fridaySearch, setFridaySearch] = useState("");
 
   // ── Queries / Mutations ──
 
@@ -84,13 +88,14 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
     onSuccess: (data) => {
       setScanItems(data.items);
       setSelectedLocalIds(new Set());
+      setShowAllLocal(false);
     },
   });
 
-  const communityQuery = useQuery({
-    queryKey: ["skills", "community", debouncedQuery],
-    queryFn: () => scanMigrateApi.getCommunitySkills(debouncedQuery || undefined),
-    enabled: open && activeTab === "community",
+  const fridaySkillsQuery = useQuery({
+    queryKey: ["skills", "friday-builtin"],
+    queryFn: () => skillsApi.listSkills(),
+    enabled: open && activeTab === "friday",
   });
 
   const importMutation = useMutation({
@@ -111,13 +116,61 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
     },
   });
 
+  // ── Filtered + sorted local items ──
+
+  const filteredLocalItems = useMemo(() => {
+    let items = [...scanItems];
+
+    // Sort by modification date, most recent first
+    items.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
+
+    // Apply source filter
+    if (sourceFilter !== "all") {
+      items = items.filter((i) => i.sourceTool === sourceFilter);
+    }
+
+    // Apply search
+    if (localSearch.trim()) {
+      const q = localSearch.trim().toLowerCase();
+      items = items.filter(
+        (i) =>
+          i.name.toLowerCase().includes(q) ||
+          i.description.toLowerCase().includes(q),
+      );
+    }
+
+    return items;
+  }, [scanItems, sourceFilter, localSearch]);
+
+  const visibleLocalItems = useMemo(() => {
+    if (showAllLocal) return filteredLocalItems;
+    return filteredLocalItems.slice(0, TOP_N);
+  }, [filteredLocalItems, showAllLocal]);
+
+  const hasMoreLocal = filteredLocalItems.length > TOP_N && !showAllLocal;
+
+  // ── Filtered Friday skills ──
+
+  const filteredFridaySkills = useMemo(() => {
+    const skills = fridaySkillsQuery.data ?? [];
+    if (!fridaySearch.trim()) return skills;
+    const q = fridaySearch.trim().toLowerCase();
+    return skills.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        (s.description ?? "").toLowerCase().includes(q),
+    );
+  }, [fridaySkillsQuery.data, fridaySearch]);
+
   // ── Handlers ──
 
   function handleClose() {
     setSelectedLocalIds(new Set());
-    setSelectedCommunityIds(new Set());
     setScanItems([]);
-    setSearchQuery("");
+    setLocalSearch("");
+    setSourceFilter("all");
+    setShowAllLocal(false);
+    setFridaySearch("");
     scanMutation.reset();
     importMutation.reset();
     onClose();
@@ -139,32 +192,16 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
     });
   }, [scanItems]);
 
-  const toggleCommunityItem = useCallback((id: string) => {
-    setSelectedCommunityIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
   function handleImport() {
-    if (activeTab === "local") {
-      const items = scanItems
-        .filter((i) => selectedLocalIds.has(i.id))
-        .map((i) => ({ sourcePath: i.sourcePath, formatHint: i.converterHint }));
-      if (items.length === 0) return;
-      importMutation.mutate(items);
-    } else {
-      const communityItems = (communityQuery.data?.items ?? [])
-        .filter((i) => selectedCommunityIds.has(i.id))
-        .map((i) => ({ sourcePath: i.sourceUrl }));
-      if (communityItems.length === 0) return;
-      importMutation.mutate(communityItems);
-    }
+    if (activeTab !== "local") return;
+    const items = scanItems
+      .filter((i) => selectedLocalIds.has(i.id))
+      .map((i) => ({ sourcePath: i.sourcePath, formatHint: i.converterHint }));
+    if (items.length === 0) return;
+    importMutation.mutate(items);
   }
 
-  const selectedCount = activeTab === "local" ? selectedLocalIds.size : selectedCommunityIds.size;
+  const selectedCount = activeTab === "local" ? selectedLocalIds.size : 0;
 
   // ── Import error details ──
   const importErrors = importMutation.data?.results.filter((r) => !r.success) ?? [];
@@ -202,12 +239,42 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
         )}
 
         {scanItems.length > 0 && (
-          <div className="space-y-2">
+          <div className="space-y-3">
+            {/* Search input */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--color-text-tertiary)]" />
+              <input
+                type="text"
+                value={localSearch}
+                onChange={(e) => setLocalSearch(e.target.value)}
+                placeholder={localize(locale, "搜索本地技能...", "Search local skills...")}
+                className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-base)] py-2.5 pl-9 pr-3 text-sm text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-tertiary)] focus:border-[color:var(--color-accent)] focus:outline-none"
+              />
+            </div>
+
+            {/* Source filter pills */}
+            <div className="flex flex-wrap gap-1.5">
+              {SOURCE_FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => { setSourceFilter(f.key); setShowAllLocal(false); }}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                    sourceFilter === f.key
+                      ? "bg-[color:var(--color-accent)] text-white"
+                      : "bg-[color:var(--color-bg-subtle)] text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-hover)]"
+                  }`}
+                >
+                  {localize(locale, f.zh, f.en)}
+                </button>
+              ))}
+            </div>
+
             {/* Select all */}
             <label className="flex items-center gap-2 text-sm text-[color:var(--color-text-secondary)]">
               <input
                 type="checkbox"
-                checked={selectedLocalIds.size === scanItems.length}
+                checked={selectedLocalIds.size === scanItems.length && scanItems.length > 0}
                 onChange={toggleAllLocal}
                 className="h-4 w-4 rounded border-[color:var(--color-border-soft)] accent-[color:var(--color-accent)]"
               />
@@ -216,7 +283,7 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
 
             {/* Item list */}
             <div className="space-y-1.5">
-              {scanItems.map((item) => (
+              {visibleLocalItems.map((item) => (
                 <label
                   key={item.id}
                   className="flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3 transition hover:border-[color:var(--color-border-strong)]"
@@ -246,14 +313,29 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
                 </label>
               ))}
             </div>
+
+            {/* Show all link */}
+            {hasMoreLocal && (
+              <button
+                type="button"
+                onClick={() => setShowAllLocal(true)}
+                className="text-sm font-medium text-[color:var(--color-accent)] hover:underline"
+              >
+                {localize(
+                  locale,
+                  `查看全部 (${filteredLocalItems.length})`,
+                  `Show all (${filteredLocalItems.length})`,
+                )}
+              </button>
+            )}
           </div>
         )}
       </div>
     );
   }
 
-  function renderCommunityTab() {
-    const items: CommunitySkillItem[] = communityQuery.data?.items ?? [];
+  function renderFridayTab() {
+    const skills = filteredFridaySkills;
 
     return (
       <div className="space-y-4">
@@ -262,70 +344,54 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--color-text-tertiary)]" />
           <input
             type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={localize(locale, "搜索社区技能...", "Search community skills...")}
+            value={fridaySearch}
+            onChange={(e) => setFridaySearch(e.target.value)}
+            placeholder={localize(locale, "搜索 Friday 技能...", "Search Friday skills...")}
             className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-base)] py-2.5 pl-9 pr-3 text-sm text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-tertiary)] focus:border-[color:var(--color-accent)] focus:outline-none"
           />
         </div>
 
-        {communityQuery.isLoading && (
+        {fridaySkillsQuery.isLoading && (
           <p className="text-sm text-[color:var(--color-text-tertiary)]">
             {localize(locale, "加载中...", "Loading...")}
           </p>
         )}
 
-        {communityQuery.isError && (
+        {fridaySkillsQuery.isError && (
           <p className="text-sm text-[color:var(--color-text-danger)]">
-            {communityQuery.error instanceof Error
-              ? communityQuery.error.message
+            {fridaySkillsQuery.error instanceof Error
+              ? fridaySkillsQuery.error.message
               : localize(locale, "加载失败", "Failed to load")}
           </p>
         )}
 
-        {communityQuery.isSuccess && items.length === 0 && (
+        {fridaySkillsQuery.isSuccess && skills.length === 0 && (
           <p className="text-sm text-[color:var(--color-text-tertiary)]">
-            {localize(locale, "未找到社区技能", "No community skills found")}
+            {localize(locale, "未找到技能", "No skills found")}
           </p>
         )}
 
-        {items.length > 0 && (
+        {skills.length > 0 && (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {items.map((item) => (
-              <label
-                key={item.id}
-                className="flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3 transition hover:border-[color:var(--color-border-strong)]"
+            {skills.map((skill) => (
+              <div
+                key={skill.skillId}
+                className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3"
               >
-                <input
-                  type="checkbox"
-                  checked={selectedCommunityIds.has(item.id)}
-                  onChange={() => toggleCommunityItem(item.id)}
-                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-[color:var(--color-border-soft)] accent-[color:var(--color-accent)]"
-                />
-                <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-[color:var(--color-text-primary)]">
-                    {locale === "zh" ? item.nameZh : item.nameEn}
+                    {skill.name}
                   </p>
-                  <p className="mt-0.5 line-clamp-2 text-xs text-[color:var(--color-text-tertiary)]">
-                    {locale === "zh" ? item.descriptionZh : item.descriptionEn}
-                  </p>
-                  {item.tags.length > 0 && (
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      {item.tags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="rounded-full bg-[color:var(--color-bg-subtle)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-tertiary)]"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <p className="mt-1 text-[10px] text-[color:var(--color-text-faint)]">
-                    {item.author}
-                  </p>
+                  <StatusPill tone="success">
+                    {localize(locale, "已安装", "Installed")}
+                  </StatusPill>
                 </div>
-              </label>
+                {skill.description && (
+                  <p className="mt-0.5 line-clamp-2 text-xs text-[color:var(--color-text-tertiary)]">
+                    {skill.description}
+                  </p>
+                )}
+              </div>
             ))}
           </div>
         )}
@@ -367,20 +433,20 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab("community")}
+            onClick={() => setActiveTab("friday")}
             className={`px-4 py-2.5 text-sm font-medium transition ${
-              activeTab === "community"
+              activeTab === "friday"
                 ? "border-b-2 border-[color:var(--color-accent)] text-[color:var(--color-text-primary)]"
                 : "text-[color:var(--color-text-tertiary)] hover:text-[color:var(--color-text-secondary)]"
             }`}
           >
-            {localize(locale, "社区技能", "Community Skills")}
+            {localize(locale, "Friday 技能库", "Friday Skills")}
           </button>
         </div>
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
-          {activeTab === "local" ? renderLocalTab() : renderCommunityTab()}
+          {activeTab === "local" ? renderLocalTab() : renderFridayTab()}
 
           {/* Inline import errors */}
           {importErrors.length > 0 && (
@@ -397,21 +463,27 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
           )}
         </div>
 
-        {/* Bottom bar */}
-        <div className="flex items-center justify-between border-t border-[color:var(--color-border-soft)] px-6 py-4">
-          <span className="text-sm text-[color:var(--color-text-tertiary)]">
-            {localize(locale, `已选择 ${selectedCount} 项`, `${selectedCount} selected`)}
-          </span>
-          <ActionButton
-            tone="primary"
-            onClick={handleImport}
-            disabled={selectedCount === 0 || importMutation.isPending}
-          >
-            {importMutation.isPending
-              ? localize(locale, "导入中...", "Importing...")
-              : localize(locale, "导入选中", "Import Selected")}
-          </ActionButton>
-        </div>
+        {/* Bottom bar - only show import button on local tab */}
+        {activeTab === "local" && (
+          <div className="flex items-center justify-between border-t border-[color:var(--color-border-soft)] px-6 py-4">
+            <span className="text-sm text-[color:var(--color-text-tertiary)]">
+              {localize(locale, `已选择 ${selectedCount} 项`, `${selectedCount} selected`)}
+            </span>
+            <ActionButton
+              tone="primary"
+              onClick={handleImport}
+              disabled={selectedCount === 0 || importMutation.isPending}
+            >
+              {importMutation.isPending
+                ? localize(locale, "导入中...", "Importing...")
+                : localize(
+                    locale,
+                    `导入选中 (${selectedCount})`,
+                    `Import Selected (${selectedCount})`,
+                  )}
+            </ActionButton>
+          </div>
+        )}
       </div>
     </div>
   );
