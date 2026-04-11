@@ -92,6 +92,7 @@ export const FRIDAY_PROVIDER_CAPABILITIES: Record<FridayProviderKind, FridayProv
   xiaomi: capability("xiaomi", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
   zai: capability("zai", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
   glm: capability("glm", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
+  deepseek: capability("deepseek", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
   bedrock: capability("bedrock", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
   "cloudflare-ai-gateway": capability("cloudflare-ai-gateway", "openai-compatible", OPENAI_APIS, { http: OPENAI_CLOUD_AUTH, cli: [], sdk: [] }),
   "openai-compatible": capability("openai-compatible", "openai-compatible", OPENAI_APIS, { http: OPENAI_PROXY_AUTH, cli: [], sdk: [] }),
