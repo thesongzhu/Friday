@@ -49,24 +49,26 @@ export interface IntegrationRecommendation {
   context: Record<string, string>;
 }
 
-// ─── Response wrappers (routes return { status, body }) ───
+// ─── Helper: unwrap route envelope if present ───
 
-interface RouteEnvelope<T> {
-  status: number;
-  body: T;
+function unwrap<T>(res: unknown): T {
+  if (res && typeof res === "object" && "body" in res && "status" in res) {
+    return (res as { body: T }).body;
+  }
+  return res as T;
 }
 
 // ─── API client ───
 
 export const discoveryApi = {
   async getStatus(): Promise<DiscoveryStatus> {
-    const res = await apiClient.get<RouteEnvelope<DiscoveryStatus>>("/v1/discovery/status");
-    return res.body;
+    const res = await apiClient.get<unknown>("/v1/discovery/status");
+    return unwrap<DiscoveryStatus>(res);
   },
 
   async scan(): Promise<{ catalog: DiscoveryScanCatalog }> {
-    const res = await apiClient.post<Record<string, never>, RouteEnvelope<{ catalog: DiscoveryScanCatalog }>>("/v1/discovery/scan", {});
-    return res.body;
+    const res = await apiClient.post<Record<string, never>, unknown>("/v1/discovery/scan", {});
+    return unwrap<{ catalog: DiscoveryScanCatalog }>(res);
   },
 
   async getPrograms(params?: {
@@ -79,8 +81,8 @@ export const discoveryApi = {
     if (params?.q) query.set("q", params.q);
     if (params?.cli !== undefined) query.set("cli", String(params.cli));
     const qs = query.toString();
-    const res = await apiClient.get<RouteEnvelope<{ programs: DiscoveredProgram[]; total: number; catalogId: string }>>(`/v1/discovery/programs${qs ? `?${qs}` : ""}`);
-    return res.body;
+    const res = await apiClient.get<unknown>(`/v1/discovery/programs${qs ? `?${qs}` : ""}`);
+    return unwrap<{ programs: DiscoveredProgram[]; total: number; catalogId: string }>(res);
   },
 
   async getRecommendations(params?: {
@@ -89,7 +91,7 @@ export const discoveryApi = {
     const query = new URLSearchParams();
     if (params?.minConfidence !== undefined) query.set("minConfidence", String(params.minConfidence));
     const qs = query.toString();
-    const res = await apiClient.get<RouteEnvelope<{ recommendations: IntegrationRecommendation[]; unmatched: number }>>(`/v1/discovery/recommendations${qs ? `?${qs}` : ""}`);
-    return res.body;
+    const res = await apiClient.get<unknown>(`/v1/discovery/recommendations${qs ? `?${qs}` : ""}`);
+    return unwrap<{ recommendations: IntegrationRecommendation[]; unmatched: number }>(res);
   },
 };
