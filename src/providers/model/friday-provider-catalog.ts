@@ -110,6 +110,7 @@ export const FRIDAY_PROVIDER_PRESETS: Record<FridayProviderKind, FridayProviderP
   xiaomi: hostedPreset("xiaomi", "openai-responses", "bearer-token", "", "china"),
   zai: hostedPreset("zai", "openai-responses", "bearer-token", "https://api.z.ai", "china"),
   glm: hostedPreset("glm", "openai-responses", "bearer-token", "https://open.bigmodel.cn/api/paas/v4", "china"),
+  deepseek: hostedPreset("deepseek", "openai-responses", "bearer-token", "https://api.deepseek.com", "china"),
   bedrock: hostedPreset("bedrock", "openai-responses", "bearer-token", ""),
   "cloudflare-ai-gateway": hostedPreset("cloudflare-ai-gateway", "openai-responses", "bearer-token", ""),
   "openai-compatible": selfHostedPreset("openai-compatible", "openai-responses", "bearer-token", "", "custom"),
@@ -174,5 +175,21 @@ export function detectFridayProviderKindFromApiKey(apiKey: string): {
   if (/^AI[a-zA-Z]/.test(key)) {
     return { kind: "google", confidence: "medium" };
   }
+
+  // ── Chinese providers ──
+  if (lower.startsWith("sk-") && key.length >= 40 && key.length <= 50) {
+    // DeepSeek keys are sk-xxx with 48 chars; OpenAI sk-proj-xxx is longer
+    // If not caught by OpenAI above, likely DeepSeek or Moonshot
+    return { kind: "deepseek", confidence: "medium" };
+  }
+  if (/^[a-f0-9]{32}$/.test(key)) {
+    // 32-char hex — common for Zhipu GLM API keys
+    return { kind: "glm", confidence: "medium" };
+  }
+  if (key.includes(".") && key.split(".").length === 3) {
+    // JWT-like format (xxx.xxx.xxx) — common for Zhipu and some Chinese providers
+    return { kind: "glm", confidence: "medium" };
+  }
+
   return { kind: "openai-compatible", confidence: "medium" };
 }

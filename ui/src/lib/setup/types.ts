@@ -33,6 +33,7 @@ export type ProviderKind =
   | "moonshot"
   | "kimi-coding"
   | "glm"
+  | "deepseek"
   | "minimax"
   | "qianfan"
   | "volcengine"

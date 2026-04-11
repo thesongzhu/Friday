@@ -131,6 +131,44 @@ export function ChatPage() {
     void sendMessage(text);
   }, [sendMessage]);
 
+  const handleRetry = useCallback((assistantMsgId: string) => {
+    const idx = messages.findIndex((m) => m.id === assistantMsgId);
+    if (idx < 1) return;
+    for (let i = idx - 1; i >= 0; i--) {
+      if (messages[i]!.role === "user") {
+        void sendMessage(messages[i]!.content);
+        return;
+      }
+    }
+  }, [messages, sendMessage]);
+
+  const handleCommand = useCallback((commandId: string) => {
+    switch (commandId) {
+      case "new":
+        startNewConversation();
+        break;
+      case "clear":
+        clearHistory();
+        break;
+      case "skills":
+        navigate("/skills");
+        break;
+      case "workflows":
+        navigate("/workflows");
+        break;
+      case "settings":
+        navigate("/settings");
+        break;
+      case "help":
+        void sendMessage(
+          locale === "zh"
+            ? "请列出所有可用的斜杠命令及其用途。"
+            : "Please list all available slash commands and what they do.",
+        );
+        break;
+    }
+  }, [startNewConversation, clearHistory, navigate, sendMessage, locale]);
+
   const latestAssistantMsg = messages.length > 0
     ? messages[messages.length - 1]
     : undefined;
@@ -253,6 +291,7 @@ export function ChatPage() {
                         ? runEvents.outputText
                         : undefined
                     }
+                    onRetry={msg.role === "assistant" ? () => handleRetry(msg.id) : undefined}
                   />
                   {actions.length > 0 ? <ChatActionCard actions={actions} /> : null}
                 </div>
@@ -278,6 +317,7 @@ export function ChatPage() {
 
       <ChatInput
         onSend={handleSend}
+        onCommand={handleCommand}
         disabled={isStreaming}
         autoFocus
         value={draftText}

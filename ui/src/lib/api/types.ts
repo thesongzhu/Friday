@@ -1784,6 +1784,7 @@ export type FridayProviderKind =
   | "xiaomi"
   | "zai"
   | "glm"
+  | "deepseek"
   | "bedrock"
   | "cloudflare-ai-gateway"
   | "openai-compatible";

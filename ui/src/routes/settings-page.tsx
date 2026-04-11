@@ -328,7 +328,7 @@ export function SettingsPage() {
     },
   });
 
-  const preview = buildPersonaPreview(draft.settings);
+  const preview = buildPersonaPreview(draft.settings, locale, draft.mbti || null);
   const mcpStates = assistantDiagnostics?.mcpServerStates ?? [];
   const loadedMcpCount = mcpStates.filter((state) => state.state === "loaded").length;
   const connectedChannelCount = channels.filter((channel) => channel.health.state === "connected").length;

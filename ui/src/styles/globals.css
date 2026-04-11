@@ -514,6 +514,24 @@
 }
 .overflow-x-chips::-webkit-scrollbar { display: none; }
 
+/* ── Setup wizard step fade-in ── */
+.setup-step-enter {
+  animation: setup-fade-in 0.5s ease-out;
+}
+@keyframes setup-fade-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Setup completion gentle pulse ── */
+.setup-completion-pulse {
+  animation: setup-pulse 2s ease-in-out infinite;
+}
+@keyframes setup-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.06); opacity: 0.85; }
+}
+
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   *,
