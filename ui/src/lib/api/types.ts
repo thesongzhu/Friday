@@ -898,11 +898,20 @@ export interface AgentRunStreamEvent {
   // status events
   output?: string;
   error?: string;
+  // tool approval risk
+  riskLevel?: "safe" | "guarded" | "destructive" | "blocked";
   // GAP status events
   reason?: string;
   level?: string;
   newMode?: string;
   fallbackCount?: number;
+  // autonomous events
+  goalId?: string;
+  description?: string;
+  stepId?: string;
+  instruction?: string;
+  index?: number;
+  total?: number;
 }
 
 // ─── Sub-agent types ───

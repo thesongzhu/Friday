@@ -10,6 +10,7 @@ import { workflowsApi } from "@/lib/api/workflows";
 import { buildObservabilityHref } from "@/lib/observability/view-models";
 import { systemApi } from "@/lib/api/system";
 import { systemKeys } from "@/lib/system/query-keys";
+import { useAppLocale } from "@/providers/locale-provider";
 import {
   buildWorkflowBuilderHref,
   buildWorkflowGuidedSteps,
@@ -37,15 +38,16 @@ function parseWorkflowFocus(value: string | null): FridayWorkflowFocus {
   return "details";
 }
 
-function focusLabel(focus: FridayWorkflowFocus): string {
-  if (focus === "recovery") return "Recovery focus";
-  if (focus === "deploy") return "Deploy focus";
-  if (focus === "export") return "Export focus";
-  if (focus === "history") return "History focus";
-  return "Workflow detail";
+function focusLabel(focus: FridayWorkflowFocus, locale?: string): string {
+  if (focus === "recovery") return locale === "zh" ? "恢复焦点" : "Recovery focus";
+  if (focus === "deploy") return locale === "zh" ? "部署焦点" : "Deploy focus";
+  if (focus === "export") return locale === "zh" ? "导出焦点" : "Export focus";
+  if (focus === "history") return locale === "zh" ? "历史焦点" : "History focus";
+  return locale === "zh" ? "工作流详情" : "Workflow detail";
 }
 
 export function WorkflowsPage() {
+  const { locale } = useAppLocale();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
@@ -256,8 +258,8 @@ export function WorkflowsPage() {
     <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
       <div className="space-y-4">
         <ShellCard
-          eyebrow={focusLabel(focus)}
-          title={selectedWorkflow ? attentionSummary?.title ?? selectedWorkflow.name : <><HelpTooltip term="workflow" /> control plane</>}
+          eyebrow={focusLabel(focus, locale)}
+          title={selectedWorkflow ? attentionSummary?.title ?? selectedWorkflow.name : <><HelpTooltip term="workflow" /> {locale === "zh" ? "控制面板" : "control plane"}</>}
           aside={
             selectedWorkflow ? (
               <StatusPill tone={attentionSummary?.tone ?? "neutral"}>
@@ -269,16 +271,17 @@ export function WorkflowsPage() {
           {selectedWorkflow && overviewQuery.data && attentionSummary ? (
             <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
               <p>
-                Friday brings workflow recovery and deploy actions to the top first. The graph stays here as an
-                operator detail view, but you should not need DAG literacy before you know what to click.
+                {locale === "zh"
+                  ? "Friday 将工作流恢复和部署操作优先展示。图表作为操作详情视图保留在此，但在标准操作中您无需了解 DAG。"
+                  : "Friday brings workflow recovery and deploy actions to the top first. The graph stays here as an operator detail view, but you should not need DAG literacy before you know what to click."}
               </p>
               <div className="grid gap-3 sm:grid-cols-3">
-                <WorkflowMetric label="Selected workflow" value={selectedWorkflow.name} />
-                <WorkflowMetric label="Current focus" value={focusLabel(focus)} />
-                <WorkflowMetric label="Latest run" value={overviewQuery.data.latestRun?.status ?? "not run yet"} />
+                <WorkflowMetric label={locale === "zh" ? "已选工作流" : "Selected workflow"} value={selectedWorkflow.name} />
+                <WorkflowMetric label={locale === "zh" ? "当前焦点" : "Current focus"} value={focusLabel(focus, locale)} />
+                <WorkflowMetric label={locale === "zh" ? "最近运行" : "Latest run"} value={overviewQuery.data.latestRun?.status ?? (locale === "zh" ? "尚未运行" : "not run yet")} />
               </div>
               <div className="agent-subcard-strong p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">What needs attention now</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{locale === "zh" ? "当前需要关注的" : "What needs attention now"}</p>
                 <p className="mt-2 text-base font-semibold text-[color:var(--color-text-primary)]">{attentionSummary.title}</p>
                 <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{attentionSummary.summary}</p>
                 <div className="mt-4 flex flex-wrap gap-3">
@@ -300,7 +303,7 @@ export function WorkflowsPage() {
                     className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                     to={buildWorkflowHref(selectedWorkflow.id, "details")}
                   >
-                    Operator details
+                    {locale === "zh" ? "操作详情" : "Operator details"}
                   </Link>
                   <Link
                     className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
@@ -310,7 +313,7 @@ export function WorkflowsPage() {
                       focus: overviewQuery.data.latestDraft ? "draft" : "templates",
                     })}
                   >
-                    Open builder
+                    {locale === "zh" ? "打开编辑器" : "Open builder"}
                   </Link>
                   <Link
                     className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
@@ -318,29 +321,29 @@ export function WorkflowsPage() {
                       focus: overviewQuery.data.latestRun?.status === "failed" ? "traces" : "overview",
                     })}
                   >
-                    Open diagnostics
+                    {locale === "zh" ? "打开诊断" : "Open diagnostics"}
                   </Link>
                 </div>
               </div>
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Select a workflow to unlock click-first deploy and recovery guidance.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{locale === "zh" ? "选择一个工作流以解锁部署和恢复引导。" : "Select a workflow to unlock click-first deploy and recovery guidance."}</p>
           )}
         </ShellCard>
 
         <ShellCard
-          eyebrow="Workflow library"
-          title={<>Choose which <HelpTooltip term="workflow" /> Friday should operate next</>}
+          eyebrow={locale === "zh" ? "工作流库" : "Workflow library"}
+          title={locale === "zh" ? <>选择 Friday 下一步要执行的<HelpTooltip term="workflow" />工作流</> : <>Choose which <HelpTooltip term="workflow" /> Friday should operate next</>}
           aside={
             <div className="flex items-center gap-2">
               <StatusPill tone={workflows.length > 0 ? "success" : "neutral"}>
-                {workflows.length} tracked
+                {workflows.length} {locale === "zh" ? "已跟踪" : "tracked"}
               </StatusPill>
               <Link
                 className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-3 py-1.5 text-xs text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                 to="/workflows/builder"
               >
-                Open builder
+                {locale === "zh" ? "打开编辑器" : "Open builder"}
               </Link>
             </div>
           }
@@ -367,7 +370,7 @@ export function WorkflowsPage() {
                     </StatusPill>
                   </div>
                   <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">
-                    {workflow.description || "No description provided yet."}
+                    {workflow.description || (locale === "zh" ? "暂无描述。" : "No description provided yet.")}
                   </p>
                 </button>
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -382,28 +385,28 @@ export function WorkflowsPage() {
                           : undefined,
                     })}
                   >
-                    Open builder
+                    {locale === "zh" ? "打开编辑器" : "Open builder"}
                   </Link>
                   <Link
                     className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                     to={buildWorkflowHref(workflow.id, "details")}
                   >
-                    Control plane
+                    {locale === "zh" ? "控制面板" : "Control plane"}
                   </Link>
                 </div>
               </div>
             ))}
             {workflows.length === 0 ? (
               <div className="space-y-2 text-sm text-[color:var(--color-text-secondary)]">
-                <p>No workflows have been created yet.</p>
-                <p>Describe what you want to automate in plain language and Friday will build it for you.</p>
-                <Link to="/chat" className="inline-flex items-center rounded-full border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-strong)]">Describe in Chat</Link>
+                <p>{locale === "zh" ? "尚未创建工作流。" : "No workflows have been created yet."}</p>
+                <p>{locale === "zh" ? "用自然语言描述你想自动化的内容，Friday 会为你构建。" : "Describe what you want to automate in plain language and Friday will build it for you."}</p>
+                <Link to="/chat" className="inline-flex items-center rounded-full border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-strong)]">{locale === "zh" ? "在聊天中描述" : "Describe in Chat"}</Link>
               </div>
             ) : null}
           </div>
         </ShellCard>
 
-        <ShellCard eyebrow="Guided path" title="Friday shows the next safe moves before raw graph detail">
+        <ShellCard eyebrow={locale === "zh" ? "引导路径" : "Guided path"} title={locale === "zh" ? "Friday 在展示原始图表前先显示下一步安全操作" : "Friday shows the next safe moves before raw graph detail"}>
           {guidedSteps.length ? (
             <div className="space-y-3">
               {guidedSteps.map((step, index) => (
@@ -411,7 +414,7 @@ export function WorkflowsPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
-                        {index === 0 ? "Start here" : "Then"}
+                        {index === 0 ? (locale === "zh" ? "从这里开始" : "Start here") : (locale === "zh" ? "然后" : "Then")}
                       </p>
                       <p className="mt-2 text-base font-semibold text-[color:var(--color-text-primary)]">{step.title}</p>
                     </div>
@@ -422,11 +425,11 @@ export function WorkflowsPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Select a workflow to load Friday's guided recovery path.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{locale === "zh" ? "选择工作流以加载 Friday 的引导恢复路径。" : "Select a workflow to load Friday's guided recovery path."}</p>
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Version history" title="Change notes and what is live">
+        <ShellCard eyebrow={locale === "zh" ? "版本历史" : "Version history"} title={locale === "zh" ? "变更记录和当前上线版本" : "Change notes and what is live"}>
           {overviewQuery.data ? (
             <div className="space-y-3">
               {overviewQuery.data.versionHistory.map((version) => (
@@ -437,25 +440,25 @@ export function WorkflowsPage() {
                       <p className="text-xs text-[color:var(--color-text-tertiary)]">{formatTimestamp(version.createdAt)}</p>
                     </div>
                     <StatusPill tone={version.isPublished ? "success" : "neutral"}>
-                      {version.isPublished ? "published" : "draft-only"}
+                      {version.isPublished ? (locale === "zh" ? "已发布" : "published") : (locale === "zh" ? "仅草稿" : "draft-only")}
                     </StatusPill>
                   </div>
                   <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">
-                    {version.changeNote || "No change note recorded."}
+                    {version.changeNote || (locale === "zh" ? "暂无变更记录。" : "No change note recorded.")}
                   </p>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Select a workflow to inspect version history.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{locale === "zh" ? "选择工作流以查看版本历史。" : "Select a workflow to inspect version history."}</p>
           )}
         </ShellCard>
       </div>
 
       <div className="space-y-4">
         <ShellCard
-          eyebrow="Current outcome"
-          title="Latest run, blocker, and rerun context"
+          eyebrow={locale === "zh" ? "当前结果" : "Current outcome"}
+          title={locale === "zh" ? "最近运行、阻塞和重运行上下文" : "Latest run, blocker, and rerun context"}
           aside={
             overviewQuery.data?.latestRun ? (
               <StatusPill tone={toneForRunStatus(overviewQuery.data.latestRun.status)}>
@@ -467,9 +470,9 @@ export function WorkflowsPage() {
           {overviewQuery.data?.latestRun ? (
             <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
               <div className="grid gap-3 sm:grid-cols-3">
-                <WorkflowMetric label="Run status" value={overviewQuery.data.latestRun.status} />
-                <WorkflowMetric label="Started" value={formatTimestamp(overviewQuery.data.latestRun.startedAt)} />
-                <WorkflowMetric label="Finished" value={formatTimestamp(overviewQuery.data.latestRun.finishedAt)} />
+                <WorkflowMetric label={locale === "zh" ? "运行状态" : "Run status"} value={overviewQuery.data.latestRun.status} />
+                <WorkflowMetric label={locale === "zh" ? "开始时间" : "Started"} value={formatTimestamp(overviewQuery.data.latestRun.startedAt)} />
+                <WorkflowMetric label={locale === "zh" ? "完成时间" : "Finished"} value={formatTimestamp(overviewQuery.data.latestRun.finishedAt)} />
               </div>
               <div className="space-y-3">
                 {visualizationQuery.data?.nodeTimeline.map((entry) => (
@@ -480,7 +483,7 @@ export function WorkflowsPage() {
                         {entry.status}
                       </StatusPill>
                     </div>
-                    <p className="mt-2 text-[color:var(--color-text-secondary)]">{entry.message || "No failure message recorded."}</p>
+                    <p className="mt-2 text-[color:var(--color-text-secondary)]">{entry.message || (locale === "zh" ? "暂无失败消息。" : "No failure message recorded.")}</p>
                     <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
                       Attempt {entry.attempt} · Finished {formatTimestamp(entry.finishedAt)}
                     </p>
@@ -489,11 +492,11 @@ export function WorkflowsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Friday has not run this workflow yet.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{locale === "zh" ? "Friday 尚未运行此工作流。" : "Friday has not run this workflow yet."}</p>
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Run history" title="Recent workflow executions">
+        <ShellCard eyebrow={locale === "zh" ? "运行历史" : "Run history"} title={locale === "zh" ? "最近的工作流执行" : "Recent workflow executions"}>
           {overviewQuery.data?.recentRuns.length ? (
             <div className="space-y-3">
               {overviewQuery.data.recentRuns.map((run) => (
@@ -515,7 +518,7 @@ export function WorkflowsPage() {
                         onClick={() => cancelRunMutation.mutate(run.id)}
                         disabled={cancelRunMutation.isPending}
                       >
-                        Cancel
+                        {locale === "zh" ? "取消" : "Cancel"}
                       </ActionButton>
                     ) : null}
                     {run.status === "failed" ? (
@@ -523,7 +526,7 @@ export function WorkflowsPage() {
                         onClick={() => retryRunMutation.mutate(run.id)}
                         disabled={retryRunMutation.isPending}
                       >
-                        Retry
+                        {locale === "zh" ? "重试" : "Retry"}
                       </ActionButton>
                     ) : null}
                     {run.status === "paused" ? (
@@ -531,7 +534,7 @@ export function WorkflowsPage() {
                         onClick={() => resumeRunMutation.mutate(run.id)}
                         disabled={resumeRunMutation.isPending}
                       >
-                        Resume
+                        {locale === "zh" ? "恢复" : "Resume"}
                       </ActionButton>
                     ) : null}
                   </div>
@@ -539,11 +542,11 @@ export function WorkflowsPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">No runs recorded yet for this workflow.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{locale === "zh" ? "此工作流暂无运行记录。" : "No runs recorded yet for this workflow."}</p>
           )}
         </ShellCard>
 
-        <ShellCard eyebrow="Evidence" title="Recent bundles and deployment artifacts">
+        <ShellCard eyebrow={locale === "zh" ? "证据" : "Evidence"} title={locale === "zh" ? "最近的打包和部署产物" : "Recent bundles and deployment artifacts"}>
           {visualizationQuery.data?.latestEvidenceExports.length ? (
             <div className="space-y-3">
               {visualizationQuery.data.latestEvidenceExports.map((item) => (
@@ -566,19 +569,21 @@ export function WorkflowsPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Export evidence will show up here after a bundle export or run evidence export.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{locale === "zh" ? "导出证据将在打包导出或运行证据导出后显示在此。" : "Export evidence will show up here after a bundle export or run evidence export."}</p>
           )}
         </ShellCard>
 
         <ShellCard
-          eyebrow="Operator graph"
+          eyebrow={locale === "zh" ? "操作图表" : "Operator graph"}
           title={selectedWorkflow?.name ? `${selectedWorkflow.name} dependency map` : "Workflow graph"}
           aside={<StatusPill tone="neutral">advanced</StatusPill>}
         >
           {visualizationQuery.data ? (
             <div className="space-y-4">
               <p className="text-sm text-[color:var(--color-text-secondary)]">
-                Friday keeps the raw graph here as operator context. Recovery, deploy, rerun, and export stay above it so this page remains click-first for standard work.
+                {locale === "zh"
+                  ? "Friday 将原始图表保留在此作为操作上下文。恢复、部署、重运行和导出在上方，使此页面保持点击优先。"
+                  : "Friday keeps the raw graph here as operator context. Recovery, deploy, rerun, and export stay above it so this page remains click-first for standard work."}
               </p>
               <div className="relative overflow-hidden rounded-[26px] border border-[color:var(--color-border-soft)] bg-[linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-6">
                 <div className="relative min-h-[360px]">
@@ -599,7 +604,7 @@ export function WorkflowsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Select a workflow to load its graph.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{locale === "zh" ? "选择工作流以加载其图表。" : "Select a workflow to load its graph."}</p>
           )}
         </ShellCard>
       </div>

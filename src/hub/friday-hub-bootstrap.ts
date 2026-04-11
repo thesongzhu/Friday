@@ -4882,6 +4882,10 @@ export async function createFridayHub(
           },
         }
       : undefined;
+    // Shared mapping from autonomous goalId → agent runId.
+    // The autonomous tool writes entries; the event bridge reads them.
+    const autonomousGoalRunIdMap: Map<string, string> = new Map();
+
     const autonomousEngine = createFridayAutonomousEngine({
       agentRuntime: {
         executeRun: (params) =>
@@ -4897,7 +4901,29 @@ export async function createFridayHub(
       nowIso,
       eventEmitter: {
         emit: (event, payload) => {
-          agentEventEmitter.emit(event as never, payload as never);
+          // Bridge autonomous events into the agent run SSE stream.
+          // The goalRunIdMap is populated by the autonomous tool with
+          // goalId → runId entries. For goal.created, we promote the
+          // __pending sentinel to the real goalId.
+          const p = payload as Record<string, unknown>;
+          const goalId = typeof p.goalId === "string" ? p.goalId : undefined;
+
+          if (event === "autonomous.goal.created" && goalId) {
+            const pendingRunId = autonomousGoalRunIdMap.get("__pending");
+            if (pendingRunId) {
+              autonomousGoalRunIdMap.set(goalId, pendingRunId);
+            }
+          }
+
+          const runId = goalId ? autonomousGoalRunIdMap.get(goalId) : undefined;
+
+          if (runId && event.startsWith("autonomous.")) {
+            // Persist and emit via the runtime so the SSE stream picks it up.
+            agentRuntime.emitRunEvent(event, { ...p, runId }, runId);
+          } else {
+            // Fallback: emit directly (non-run-scoped observability).
+            agentEventEmitter.emit(event as never, payload as never);
+          }
         },
       },
     });
@@ -4958,7 +4984,7 @@ export async function createFridayHub(
     });
 
     for (const tool of [
-      createFridayAgentAutonomousTool({ autonomousEngine }),
+      createFridayAgentAutonomousTool({ autonomousEngine, goalRunIdMap: autonomousGoalRunIdMap }),
       createFridayAgentSetupTool({
         recipeRegistry: setupRecipeRegistry,
         recipeExecutor: setupRecipeExecutor,

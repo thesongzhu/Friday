@@ -5,6 +5,7 @@ import { useChatSession } from "@/hooks/use-chat-session";
 import { ChatMessageBubble } from "@/components/chat/chat-message";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ChatToolActivity } from "@/components/chat/chat-tool-activity";
+import { AutonomousStepIndicator } from "@/components/chat/autonomous-step-indicator";
 import { ChatActionCard, parseActionsFromText } from "@/components/chat/chat-action-card";
 import { ActionButton } from "@/components/core/primitives";
 import { PackAssistantHandoffCard } from "@/components/packs/pack-assistant-handoff-card";
@@ -263,6 +264,10 @@ export function ChatPage() {
                 toolCalls={runEvents.toolCalls}
                 activeTool={runEvents.progress.activeTool}
               />
+            ) : null}
+
+            {runEvents.autonomousGoal ? (
+              <AutonomousStepIndicator goal={runEvents.autonomousGoal} locale={locale} />
             ) : null}
 
             {isStreaming && streamingActions.length > 0 ? <ChatActionCard actions={streamingActions} /> : null}

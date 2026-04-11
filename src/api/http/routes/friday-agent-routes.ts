@@ -724,6 +724,13 @@ export function createFridayAgentRoutes(
           "agent.run.cancelled",
           "agent.subagent.spawned",
           "agent.subagent.completed",
+          "autonomous.goal.created",
+          "autonomous.goal.started",
+          "autonomous.step.started",
+          "autonomous.step.completed",
+          "autonomous.step.failed",
+          "autonomous.goal.completed",
+          "autonomous.goal.failed",
         ];
 
         type AnyListener = (payload: FridayAgentEventMap[FridayAgentEventName]) => void;

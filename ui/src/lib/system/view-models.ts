@@ -67,12 +67,16 @@ export function buildApprovalActionCards(
   });
 }
 
-export function summarizeHealthReasons(health: FridaySystemHealth): string {
+export function summarizeHealthReasons(health: FridaySystemHealth, locale?: string): string {
   if (health.safeMode) {
-    return "Safe mode is active. Input automation is paused until the operator recovers the UI.";
+    return locale === "zh"
+      ? "安全模式已激活。输入自动化已暂停，直到操作员恢复界面。"
+      : "Safe mode is active. Input automation is paused until the operator recovers the UI.";
   }
   if (health.reasons.length === 0) {
-    return "All local system surfaces required by the current session are connected.";
+    return locale === "zh"
+      ? "当前会话所需的所有本地系统接口均已连接。"
+      : "All local system surfaces required by the current session are connected.";
   }
   return health.reasons
     .map((reason) => reason.replace(/_/g, " ").replace(/:/g, " - "))

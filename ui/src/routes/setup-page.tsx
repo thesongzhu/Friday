@@ -22,6 +22,7 @@ import type {
   SetupStepId,
 } from "@/lib/setup/types";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
+import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 import {
   buildPersonaPreview,
@@ -310,12 +311,12 @@ export function SetupPage() {
       if (result.warnings.length > 0) {
         toast.warning(result.warnings.join(" · "));
       } else {
-        toast.success(`Detected ${result.kind}`);
+        toast.success(localize(locale, `已检测到 ${result.kind}`, `Detected ${result.kind}`));
       }
     },
     onError: (error) => {
       setProviderValidated(false);
-      toast.error(error instanceof Error ? error.message : "Provider detection failed");
+      toast.error(error instanceof Error ? error.message : localize(locale, "提供方检测失败", "Provider detection failed"));
     },
   });
 
@@ -347,12 +348,12 @@ export function SetupPage() {
       });
     },
     onSuccess: () => {
-      toast.success("Provider saved");
+      toast.success(localize(locale, "提供方已保存", "Provider saved"));
       setProviderValidated(true);
       void queryClient.invalidateQueries({ queryKey: ["setup", "providers"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to save provider");
+      toast.error(error instanceof Error ? error.message : localize(locale, "保存提供方失败", "Failed to save provider"));
     },
   });
 
@@ -364,11 +365,11 @@ export function SetupPage() {
         port: Number.parseInt(networkPort, 10),
       }),
     onSuccess: () => {
-      toast.success("Network settings saved");
+      toast.success(localize(locale, "网络设置已保存", "Network settings saved"));
       void queryClient.invalidateQueries({ queryKey: ["setup", "network"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to save network settings");
+      toast.error(error instanceof Error ? error.message : localize(locale, "保存网络设置失败", "Failed to save network settings"));
     },
   });
 
@@ -384,10 +385,10 @@ export function SetupPage() {
           })),
       }),
     onSuccess: () => {
-      toast.success("Channel selections saved");
+      toast.success(localize(locale, "通道选择已保存", "Channel selections saved"));
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to save channel selections");
+      toast.error(error instanceof Error ? error.message : localize(locale, "保存通道选择失败", "Failed to save channel selections"));
     },
   });
 
@@ -409,11 +410,11 @@ export function SetupPage() {
     },
     onSuccess: async () => {
       setCommunicationSaved(true);
-      toast.success("Communication style saved");
+      toast.success(localize(locale, "沟通风格已保存", "Communication style saved"));
       await queryClient.invalidateQueries({ queryKey: ["setup", "persona"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to save communication style");
+      toast.error(error instanceof Error ? error.message : localize(locale, "保存沟通风格失败", "Failed to save communication style"));
     },
   });
 
@@ -441,7 +442,7 @@ export function SetupPage() {
       },
     onSuccess: async (_data, selectedStarterTaskId) => {
       const starterTask = getAssistantStarterTask(selectedStarterTaskId);
-      toast.success("Setup complete");
+      toast.success(localize(locale, "设置完成", "Setup complete"));
       await queryClient.invalidateQueries({ queryKey: ["setup", "status"] });
       navigate("/assistant", {
         replace: true,
@@ -455,7 +456,7 @@ export function SetupPage() {
       });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to complete setup");
+      toast.error(error instanceof Error ? error.message : localize(locale, "完成设置失败", "Failed to complete setup"));
     },
   });
 
@@ -499,7 +500,7 @@ export function SetupPage() {
         ) : (
         <>
         <ShellCard>
-          <p className="agent-eyebrow">Friday Agent OS Setup</p>
+          <p className="agent-eyebrow">{localize(locale, "Friday Agent OS 设置", "Friday Agent OS Setup")}</p>
           <h1 className="font-[var(--font-display)] text-4xl font-semibold tracking-tight text-[color:var(--color-text-primary)]">
             {locale === "zh" ? "配置你的 Friday" : "Configure your Friday"}
           </h1>
@@ -514,7 +515,7 @@ export function SetupPage() {
           <ShellCard eyebrow={locale === "zh" ? "1. 安全" : "1. Security"} title={locale === "zh" ? "操作确认" : "Operator acknowledgement"}>
             <div className="space-y-4">
               <p className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
-                Friday Agent OS can request control leases, read local status, and orchestrate risky actions behind explicit approvals. Confirm that you are setting up a single-user local machine.
+                {localize(locale, "Friday Agent OS 可以请求控制租约、读取本地状态，并在明确批准后执行高风险操作。请确认你正在配置一台单用户本地机器。", "Friday Agent OS can request control leases, read local status, and orchestrate risky actions behind explicit approvals. Confirm that you are setting up a single-user local machine.")}
               </p>
               <label className="inline-flex items-center gap-3 text-sm text-[color:var(--color-text-primary)]">
                 <input
@@ -523,7 +524,7 @@ export function SetupPage() {
                   onChange={(event) => setAcknowledgedSecurity(event.target.checked)}
                   className="rounded border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-surface)]"
                 />
-                I understand this is a supervised local operator shell, not a full operating system replacement.
+                {localize(locale, "我了解这是一个受监控的本地操作终端，而非完整的操作系统替代品。", "I understand this is a supervised local operator shell, not a full operating system replacement.")}
               </label>
             </div>
           </ShellCard>
@@ -572,40 +573,40 @@ export function SetupPage() {
                 value={providerName}
                 onChange={(event) => setProviderName(event.target.value)}
                 className="agent-input"
-                placeholder="Provider name"
+                placeholder={localize(locale, "提供方名称", "Provider name")}
               />
               <input
                 value={providerBaseUrl}
                 onChange={(event) => setProviderBaseUrl(event.target.value)}
                 className="agent-input"
-                placeholder="Base URL"
+                placeholder={localize(locale, "基础 URL", "Base URL")}
               />
               <input
                 value={providerApiKey}
                 onChange={(event) => setProviderApiKey(event.target.value)}
                 type="password"
                 className="agent-input"
-                placeholder={selectedTemplate?.requiredSecrets[0]?.label ?? "API key"}
+                placeholder={selectedTemplate?.requiredSecrets[0]?.label ?? localize(locale, "API 密钥", "API key")}
               />
               <div className="flex flex-wrap gap-2">
                 <ActionButton tone="secondary" onClick={() => detectProviderMutation.mutate()}>
                   <WandSparkles className="mr-2 h-4 w-4" />
-                  Detect
+                  {localize(locale, "检测", "Detect")}
                 </ActionButton>
                 <ActionButton
                   onClick={() => saveProviderMutation.mutate()}
                   disabled={!providerBaseUrl.trim() || providerModels.length === 0 || saveProviderMutation.isPending}
                 >
-                  Save Provider
+                  {localize(locale, "保存提供方", "Save Provider")}
                 </ActionButton>
                 <StatusPill tone={providerValidated ? "success" : "neutral"}>
-                  {providerValidated ? "validated" : "not validated"}
+                  {providerValidated ? localize(locale, "已验证", "validated") : localize(locale, "未验证", "not validated")}
                 </StatusPill>
               </div>
               {providerModels.length > 0 ? (
                 <div className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
-                    Models
+                    {localize(locale, "模型", "Models")}
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {providerModels.slice(0, 6).map((model) => (
@@ -633,11 +634,11 @@ export function SetupPage() {
                   <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{selectedTemplate.description}</p>
                   {selectedTemplate.baseUrlHints.length > 0 ? (
                     <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
-                      Base URL hint: {selectedTemplate.baseUrlHints.join(" · ")}
+                      {localize(locale, "基础 URL 提示：", "Base URL hint: ")}{selectedTemplate.baseUrlHints.join(" · ")}
                     </p>
                   ) : (
                     <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
-                      This template needs an explicit base URL before validation.
+                      {localize(locale, "此模板需要明确的基础 URL 才能进行验证。", "This template needs an explicit base URL before validation.")}
                     </p>
                   )}
                   {selectedTemplate.reasoningHints.length > 0 ? (
@@ -651,15 +652,15 @@ export function SetupPage() {
               ) : null}
               <div className="rounded-[22px] border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-secondary)]">
-                  Recommended backend/auth
+                  {localize(locale, "推荐的后端/认证", "Recommended backend/auth")}
                 </p>
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <div>
-                    <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Backend</p>
+                    <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">{localize(locale, "后端", "Backend")}</p>
                     <p className="mt-1 text-sm font-medium text-[color:var(--color-text-primary)]">{providerRecommendation.backend}</p>
                   </div>
                   <div>
-                    <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">Auth</p>
+                    <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">{localize(locale, "认证", "Auth")}</p>
                     <p className="mt-1 text-sm font-medium text-[color:var(--color-text-primary)]">{providerRecommendation.auth}</p>
                   </div>
                 </div>
@@ -677,28 +678,28 @@ export function SetupPage() {
                 onChange={(event) => setNetworkMode(event.target.value as "local" | "network" | "custom")}
                 className="agent-select"
               >
-                <option value="local">Local only</option>
-                <option value="network">Local network</option>
-                <option value="custom">Custom</option>
+                <option value="local">{localize(locale, "仅本地", "Local only")}</option>
+                <option value="network">{localize(locale, "本地网络", "Local network")}</option>
+                <option value="custom">{localize(locale, "自定义", "Custom")}</option>
               </select>
               <div className="grid gap-3 md:grid-cols-2">
                 <input
                   value={networkHost}
                   onChange={(event) => setNetworkHost(event.target.value)}
                   className="agent-input"
-                  placeholder="Host"
+                  placeholder={localize(locale, "主机", "Host")}
                   disabled={networkMode !== "custom"}
                 />
                 <input
                   value={networkPort}
                   onChange={(event) => setNetworkPort(event.target.value)}
                   className="agent-input"
-                  placeholder="Port"
+                  placeholder={localize(locale, "端口", "Port")}
                 />
               </div>
               <ActionButton onClick={() => saveNetworkMutation.mutate()}>
                 <Network className="mr-2 h-4 w-4" />
-                Save Network
+                {localize(locale, "保存网络设置", "Save Network")}
               </ActionButton>
             </div>
           </ShellCard>
@@ -706,7 +707,7 @@ export function SetupPage() {
           <ShellCard eyebrow={locale === "zh" ? "4. 通道" : "4. Channels"} title={locale === "zh" ? "可选的消息接入" : "Optional ingress surfaces"}>
             <div className="space-y-4">
               <p className="text-sm text-[color:var(--color-text-secondary)]">
-                Channel setup is optional in phase 1. Select only the kinds you want Friday to persist now.
+                {localize(locale, "通道设置在第一阶段是可选的。仅选择你希望 Friday 现在保留的类型。", "Channel setup is optional in phase 1. Select only the kinds you want Friday to persist now.")}
               </p>
               <div className="flex flex-wrap gap-2">
                 {supportedChannels.map((channel) => {
@@ -736,7 +737,7 @@ export function SetupPage() {
               </div>
               <ActionButton tone="secondary" onClick={() => saveChannelsMutation.mutate()}>
                 <PlugZap className="mr-2 h-4 w-4" />
-                Save Channels
+                {localize(locale, "保存通道", "Save Channels")}
               </ActionButton>
             </div>
           </ShellCard>
@@ -744,7 +745,7 @@ export function SetupPage() {
           <ShellCard eyebrow={locale === "zh" ? "5. 沟通风格" : "5. Communication"} title={locale === "zh" ? "Friday 如何与你交流" : "How Friday should guide you"}>
             <div className="space-y-4">
               <p className="text-sm text-[color:var(--color-text-secondary)]">
-                Pick a comfort-oriented communication template. You can skip this now and change it later in Settings.
+                {localize(locale, "选择一个以舒适为导向的沟通模板。你可以暂时跳过，稍后在设置中更改。", "Pick a comfort-oriented communication template. You can skip this now and change it later in Settings.")}
               </p>
               <select
                 value={communicationMbti}
@@ -754,7 +755,7 @@ export function SetupPage() {
                 }}
                 className="agent-select"
               >
-                <option value="">Default</option>
+                <option value="">{localize(locale, "默认", "Default")}</option>
                 {COMMUNICATION_MBTI_OPTIONS.map((mbti) => (
                   <option key={mbti} value={mbti}>{mbti}</option>
                 ))}
@@ -766,7 +767,7 @@ export function SetupPage() {
                     <>
                       <div className="flex items-center gap-2 text-[color:var(--color-text-primary)]">
                         <MessageCircleMore className="h-4 w-4" />
-                        <span className="font-medium">Preview</span>
+                        <span className="font-medium">{localize(locale, "预览", "Preview")}</span>
                       </div>
                       <p className="mt-3 text-sm text-[color:var(--color-text-tertiary)]">{preview.styleLabel}</p>
                       <p className="mt-3 text-sm text-[color:var(--color-text-primary)]">{preview.sampleClarifier}</p>
@@ -778,10 +779,10 @@ export function SetupPage() {
               <div className="flex flex-wrap gap-2">
                 <ActionButton tone="secondary" onClick={() => saveCommunicationMutation.mutate()}>
                   <MessageCircleMore className="mr-2 h-4 w-4" />
-                  Save Communication Style
+                  {localize(locale, "保存沟通风格", "Save Communication Style")}
                 </ActionButton>
                 <StatusPill tone={communicationSaved ? "success" : "neutral"}>
-                  communication {communicationSaved ? "ready" : "default"}
+                  {localize(locale, communicationSaved ? "沟通已就绪" : "沟通默认", communicationSaved ? "communication ready" : "communication default")}
                 </StatusPill>
               </div>
             </div>
@@ -792,23 +793,23 @@ export function SetupPage() {
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
             <div className="space-y-3">
               <p className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
-                Friday now ships with a bundled starter pack for local development and diagnostics. These starter skills are already installed, model-invocable, and non-destructive by default.
+                {localize(locale, "Friday 现已内置本地开发和诊断的起步包。这些起步技能已预装，可由模型调用，且默认不具破坏性。", "Friday now ships with a bundled starter pack for local development and diagnostics. These starter skills are already installed, model-invocable, and non-destructive by default.")}
               </p>
               <div className="grid gap-3 md:grid-cols-2">
                 {starterSkills.length === 0 ? (
-                  <p className="text-sm text-[color:var(--color-text-tertiary)]">Starter pack inventory will appear once the local skill registry is available.</p>
+                  <p className="text-sm text-[color:var(--color-text-tertiary)]">{localize(locale, "起步包清单将在本地技能注册表可用后显示。", "Starter pack inventory will appear once the local skill registry is available.")}</p>
                 ) : starterSkills.map((skill) => (
                   <div key={skill.skillId} className="agent-subcard">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{skill.name}</p>
-                        <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">{skill.description ?? "Bundled starter skill."}</p>
+                        <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">{skill.description ?? localize(locale, "内置起步技能。", "Bundled starter skill.")}</p>
                       </div>
                       <StatusPill tone="success">starter</StatusPill>
                     </div>
-                    <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Example</p>
+                    <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{localize(locale, "示例", "Example")}</p>
                     <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
-                      {STARTER_SKILL_EXAMPLES[skill.skillId] ?? "Run this starter skill from Assistant or Command Center."}
+                      {STARTER_SKILL_EXAMPLES[skill.skillId] ?? localize(locale, "从助手或命令中心运行此起步技能。", "Run this starter skill from Assistant or Command Center.")}
                     </p>
                   </div>
                 ))}
@@ -816,12 +817,12 @@ export function SetupPage() {
             </div>
             <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--color-text-faint)]">
-                Default boundaries
+                {localize(locale, "默认边界", "Default boundaries")}
               </p>
               <div className="mt-4 space-y-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">
-                <p>Starter skills are role-first: they can clarify ideas, review plans, inspect runtime health, and guide the next safe action without dropping you into a blank builder flow.</p>
-                <p>They are bundled with Friday, so there is nothing to install during setup.</p>
-                <p>They can clarify ideas, review plans, QA pages, inspect diffs, and sync bounded docs before they reach for heavier automation.</p>
+                <p>{localize(locale, "起步技能以角色为先：它们可以澄清想法、审查计划、检查运行状况，并引导下一步安全操作，而不会让你进入空白的构建流程。", "Starter skills are role-first: they can clarify ideas, review plans, inspect runtime health, and guide the next safe action without dropping you into a blank builder flow.")}</p>
+                <p>{localize(locale, "它们与 Friday 捆绑提供，因此在设置过程中无需安装任何内容。", "They are bundled with Friday, so there is nothing to install during setup.")}</p>
+                <p>{localize(locale, "它们可以澄清想法、审查计划、QA 页面、检查差异，并在使用更重的自动化之前同步有限范围的文档。", "They can clarify ideas, review plans, QA pages, inspect diffs, and sync bounded docs before they reach for heavier automation.")}</p>
               </div>
             </div>
           </div>
@@ -831,14 +832,14 @@ export function SetupPage() {
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
             <div className="space-y-4">
               <div className="space-y-2 text-sm text-[color:var(--color-text-secondary)]">
-                <p>Setup status: {setupStatus?.needsSetup ? "not completed" : "completed"}</p>
-                <p>Configured providers: {existingProviders.length}</p>
-                <p>Selected channels: {selectedChannels.size}</p>
-                <p>Communication style: {communicationSaved ? (communicationMbti || "default") : "default"}</p>
+                <p>{localize(locale, "设置状态：", "Setup status: ")}{setupStatus?.needsSetup ? localize(locale, "未完成", "not completed") : localize(locale, "已完成", "completed")}</p>
+                <p>{localize(locale, "已配置的提供方：", "Configured providers: ")}{existingProviders.length}</p>
+                <p>{localize(locale, "已选通道：", "Selected channels: ")}{selectedChannels.size}</p>
+                <p>{localize(locale, "沟通风格：", "Communication style: ")}{communicationSaved ? (communicationMbti || localize(locale, "默认", "default")) : localize(locale, "默认", "default")}</p>
               </div>
               <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--color-text-faint)]">
-                  Pick a first task
+                  {localize(locale, "选择首个任务", "Pick a first task")}
                 </p>
                 <div className="mt-4 grid gap-3">
                   {FRIDAY_ASSISTANT_STARTER_TASKS.map((task) => {
@@ -858,10 +859,10 @@ export function SetupPage() {
                             <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">{task.description}</p>
                           </div>
                           <StatusPill tone={active ? "success" : "neutral"}>
-                            {active ? "selected" : "recommended"}
+                            {active ? localize(locale, "已选", "selected") : localize(locale, "推荐", "recommended")}
                           </StatusPill>
                         </div>
-                        <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Outcome</p>
+                        <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{localize(locale, "预期结果", "Outcome")}</p>
                         <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{task.outcome}</p>
                       </button>
                     );
@@ -872,7 +873,7 @@ export function SetupPage() {
             <div className="flex flex-col justify-between gap-4">
               <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--color-text-faint)]">
-                  What happens next
+                  {localize(locale, "接下来会发生什么", "What happens next")}
                 </p>
                 {(() => {
                   const selectedStarterTask = getAssistantStarterTask(starterTaskId);
@@ -880,10 +881,10 @@ export function SetupPage() {
                     <div className="mt-4 space-y-3">
                       <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{selectedStarterTask.title}</p>
                       <p className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
-                        Friday will open the assistant with a skill-backed first task, so you can use the bundled starter pack immediately instead of starting from a generator flow.
+                        {localize(locale, "Friday 将以一个技能支持的首个任务打开助手，这样你可以立即使用内置起步包，而无需从生成器流程开始。", "Friday will open the assistant with a skill-backed first task, so you can use the bundled starter pack immediately instead of starting from a generator flow.")}
                       </p>
                       <div className="agent-subcard">
-                        <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Goal Friday will start with</p>
+                        <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{localize(locale, "Friday 将开始的目标", "Goal Friday will start with")}</p>
                         <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{selectedStarterTask.goal}</p>
                       </div>
                     </div>
@@ -892,17 +893,17 @@ export function SetupPage() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <StatusPill tone={acknowledgedSecurity ? "success" : "warning"}>
-                  security {acknowledgedSecurity ? "acknowledged" : "pending"}
+                  {localize(locale, acknowledgedSecurity ? "安全已确认" : "安全待确认", acknowledgedSecurity ? "security acknowledged" : "security pending")}
                 </StatusPill>
                 <StatusPill tone={providerValidated ? "success" : "neutral"}>
-                  provider {providerValidated ? "ready" : "skipped"}
+                  {localize(locale, providerValidated ? "提供方已就绪" : "提供方已跳过", providerValidated ? "provider ready" : "provider skipped")}
                 </StatusPill>
                 <ActionButton
                   onClick={() => completeSetupMutation.mutate(starterTaskId)}
                   disabled={!acknowledgedSecurity}
                 >
                   <CheckCircle2 className="mr-2 h-4 w-4" />
-                  Complete Setup And Open Assistant
+                  {localize(locale, "完成设置并打开助手", "Complete Setup And Open Assistant")}
                 </ActionButton>
               </div>
             </div>
