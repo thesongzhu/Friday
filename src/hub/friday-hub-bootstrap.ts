@@ -61,6 +61,7 @@ import {
   createLinuxProgramScanner,
   createWin32ProgramScanner,
   FRIDAY_DEFAULT_CONVERTER_FACTORIES,
+  type FridaySkillSourceFormat,
 } from "#skills/converter";
 import { createFridaySkillRunStore } from "#ledger";
 import type { FridayLearningEventAppendInput } from "#ledger";
@@ -229,6 +230,9 @@ import {
   FRIDAY_BUILT_IN_SELF_HEALING_ALERT_RULE_ID,
 } from "../observability/services/friday-observability-api-service.js";
 import { createFridaySatelliteRuntimeRoutes } from "../api/http/routes/friday-satellite-runtime-routes.js";
+import { scanLocalSkills } from "../skills/converter/discovery/friday-local-skill-scanner.js";
+import { getCommunitySkillCatalog } from "../skills/converter/discovery/friday-community-skill-catalog.js";
+import { createFridayScanMigrateRoutes } from "../api/http/routes/friday-scan-migrate-routes.js";
 import { createFridaySessionService } from "#sessions";
 import {
   computeNextRunAtMs,
@@ -4254,6 +4258,31 @@ export async function createFridayHub(
     getCheckpoint: ({ principalId, streamId }) =>
       apiRuntime.subscriptions.getCheckpoint(principalId, streamId),
   })) {
+    apiRuntime.routes.register(route as Parameters<typeof apiRuntime.routes.register>[0]);
+  }
+
+  // ─── Skill Scan & Migrate routes ───
+
+  const scanMigrateRoutes = createFridayScanMigrateRoutes({
+    scanLocal: scanLocalSkills,
+    getCommunitySkills: getCommunitySkillCatalog,
+    importSkill: async (sourcePath, formatHint) => {
+      try {
+        const result = await converterService.import({
+          source: { uri: `file://${sourcePath}` },
+          formatHint: (formatHint ?? "auto") as FridaySkillSourceFormat | "auto",
+          target: "managed",
+          replace: false,
+          refreshRegistry: true,
+        });
+        const firstImport = result.imports[0];
+        return { success: firstImport?.installed ?? false, skillId: firstImport?.skillId };
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : "Import failed" };
+      }
+    },
+  });
+  for (const route of scanMigrateRoutes) {
     apiRuntime.routes.register(route as Parameters<typeof apiRuntime.routes.register>[0]);
   }
 
