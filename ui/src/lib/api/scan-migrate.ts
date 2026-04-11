@@ -26,7 +26,11 @@ export interface LocalSkillScanResult {
 export interface CommunitySkillItem {
   id: string;
   name: string;
+  nameZh: string;
+  nameEn: string;
   description: string;
+  descriptionZh: string;
+  descriptionEn: string;
   author: string;
   sourceUrl: string;
   tags: string[];
