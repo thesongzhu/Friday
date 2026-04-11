@@ -21,8 +21,20 @@ import {
 
 // ─── Types ───
 
+/**
+ * Shared mapping from goalId → runId so the autonomous engine's event
+ * emitter bridge (set up in bootstrap) can enrich event payloads with the
+ * correct agent run identifier for SSE streaming.
+ */
+export type AutonomousGoalRunIdMap = Map<string, string>;
+
 export interface CreateFridayAgentAutonomousToolOptions {
   autonomousEngine: FridayAutonomousEngine;
+  /**
+   * Shared map that the event bridge reads to resolve goalId → runId.
+   * The tool writes entries when a goal starts and removes them when it ends.
+   */
+  goalRunIdMap?: AutonomousGoalRunIdMap;
 }
 
 type AutonomousAction = "execute_goal" | "cancel_goal" | "get_goal" | "list_goals";
@@ -39,7 +51,7 @@ const VALID_ACTIONS = new Set<AutonomousAction>([
 export function createFridayAgentAutonomousTool(
   options: CreateFridayAgentAutonomousToolOptions,
 ): FridayAgentToolDefinition {
-  const { autonomousEngine } = options;
+  const { autonomousEngine, goalRunIdMap } = options;
 
   return {
     name: "autonomous",
@@ -141,19 +153,40 @@ export function createFridayAgentAutonomousTool(
     const maxIterations = readNumberParam(args, "maxIterations", { integer: true });
     const timeoutMs = readNumberParam(args, "timeoutMs", { integer: true });
     const executionContext = getFridayAgentToolExecutionContext(signal);
+    const runId = executionContext?.runId;
 
-    const result = await autonomousEngine.executeGoal({
-      description,
-      priority,
-      config: {
-        ...(maxIterations != null ? { maxIterationsPerGoal: maxIterations } : {}),
-        ...(timeoutMs != null ? { maxTimePerGoalMs: timeoutMs } : {}),
-      },
-      timezone: executionContext?.timezone,
-      principalId: executionContext?.principalId,
-      tenantContext: executionContext?.tenantContext,
-      signal,
-    });
+    // Register a pending runId so the autonomous event bridge (set up in
+    // bootstrap) can enrich `autonomous.*` events with the correct agent
+    // runId for SSE streaming. The bridge resolves goalId → runId from
+    // this map. We use "__pending" because the goalId is not yet known
+    // until the engine creates the goal synchronously at the start of
+    // executeGoal. The bridge promotes __pending → goalId on goal.created.
+    if (runId && goalRunIdMap) {
+      goalRunIdMap.set("__pending", runId);
+    }
+
+    let result;
+    try {
+      result = await autonomousEngine.executeGoal({
+        description,
+        priority,
+        config: {
+          ...(maxIterations != null ? { maxIterationsPerGoal: maxIterations } : {}),
+          ...(timeoutMs != null ? { maxTimePerGoalMs: timeoutMs } : {}),
+        },
+        timezone: executionContext?.timezone,
+        principalId: executionContext?.principalId,
+        tenantContext: executionContext?.tenantContext,
+        signal,
+      });
+    } finally {
+      if (goalRunIdMap) {
+        goalRunIdMap.delete("__pending");
+        if (result?.goalId) {
+          goalRunIdMap.delete(result.goalId);
+        }
+      }
+    }
 
     return jsonResult({
       goalId: result.goalId,

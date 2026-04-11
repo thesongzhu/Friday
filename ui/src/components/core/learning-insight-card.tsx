@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, Brain, Shield, TrendingUp } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { learningApi } from "@/lib/api/learning";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -12,6 +13,7 @@ import { SkeletonLine } from "@/components/core/primitives";
  */
 export function LearningInsightCard() {
   const { locale } = useAppLocale();
+  const navigate = useNavigate();
   const { data: overview, isLoading } = useQuery({
     queryKey: ["learning", "overview"],
     queryFn: () => learningApi.getOverview(5),
@@ -80,16 +82,18 @@ export function LearningInsightCard() {
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {stats.map((stat) => (
-              <div
+              <button
                 key={stat.label}
-                className={`flex items-center gap-2.5 rounded-xl ${stat.bg} px-3 py-2.5`}
+                type="button"
+                onClick={() => navigate("/settings#learning")}
+                className={`flex items-center gap-2.5 rounded-xl ${stat.bg} px-3 py-2.5 text-left transition hover:opacity-80`}
               >
                 <stat.icon className={`h-4 w-4 shrink-0 ${stat.tone}`} aria-hidden="true" />
                 <div>
                   <p className="text-lg font-semibold leading-none text-[color:var(--color-text-primary)]">{stat.value}</p>
                   <p className="mt-0.5 text-[11px] text-[color:var(--color-text-secondary)]">{stat.label}</p>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
 

@@ -7,11 +7,13 @@ import type {
   FridayCommunicationPersonaSettings,
 } from "@friday-operator-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Brain, Cpu, DollarSign, KeyRound, MessageCircleMore, Shield, Sliders, Wifi, Wrench } from "lucide-react";
+import { Activity, AlertTriangle, Brain, Cpu, DollarSign, Globe2, KeyRound, MessageCircleMore, Shield, Sliders, Terminal, Wifi, Wrench } from "lucide-react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { localize, type AppLocale } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 import { ChannelConfigForm } from "@/components/core/channel-config-form";
+import { DiscoveryPanel } from "@/components/core/discovery-panel";
 import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { channelsApi } from "@/lib/api/channels";
 import { healthApi } from "@/lib/api/health";
@@ -225,14 +227,14 @@ export function SettingsPage() {
         reason: "Pinned from settings admin",
       }),
     onSuccess: async () => {
-      toast.success("Route pinned");
+      toast.success(localize(locale, "路由已固定", "Route pinned"));
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["settings", "routing-explain"] }),
         queryClient.invalidateQueries({ queryKey: ["settings", "learning-overview"] }),
       ]);
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not pin route");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法固定路由", "Could not pin route"));
     },
   });
 
@@ -240,14 +242,14 @@ export function SettingsPage() {
     mutationFn: (input: { providerId: string; model: string; backendKind: "http" | "cli" | "sdk"; taskProfileId?: string }) =>
       providersApi.clearRoutePenalty(input),
     onSuccess: async () => {
-      toast.success("Route penalty cleared");
+      toast.success(localize(locale, "路由惩罚已清除", "Route penalty cleared"));
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["settings", "routing-explain"] }),
         queryClient.invalidateQueries({ queryKey: ["settings", "learning-overview"] }),
       ]);
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not clear route penalty");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法清除路由惩罚", "Could not clear route penalty"));
     },
   });
 
@@ -259,11 +261,11 @@ export function SettingsPage() {
         reason: "Updated from settings admin",
       }),
     onSuccess: async () => {
-      toast.success("Lesson updated");
+      toast.success(localize(locale, "经验已更新", "Lesson updated"));
       await queryClient.invalidateQueries({ queryKey: ["settings", "learning-overview"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not update lesson");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法更新经验", "Could not update lesson"));
     },
   });
 
@@ -275,11 +277,11 @@ export function SettingsPage() {
         reason: "Demoted from settings admin",
       }),
     onSuccess: async () => {
-      toast.success("Pattern demoted");
+      toast.success(localize(locale, "模式已降级", "Pattern demoted"));
       await queryClient.invalidateQueries({ queryKey: ["settings", "learning-overview"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not demote pattern");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法降级模式", "Could not demote pattern"));
     },
   });
 
@@ -292,14 +294,14 @@ export function SettingsPage() {
   const savePersonaMutation = useMutation({
     mutationFn: () => systemApi.updateCommunicationPreferences(applyDraftToPreferencePayload(draft)),
     onSuccess: async () => {
-      toast.success("Communication preferences saved");
+      toast.success(localize(locale, "沟通偏好已保存", "Communication preferences saved"));
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: systemKeys.communicationPersona() }),
         queryClient.invalidateQueries({ queryKey: systemKeys.communicationPreferences() }),
       ]);
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to save communication settings");
+      toast.error(error instanceof Error ? error.message : localize(locale, "保存沟通设置失败", "Failed to save communication settings"));
     },
   });
 
@@ -307,22 +309,22 @@ export function SettingsPage() {
     mutationFn: (patch: { paused?: boolean; autoApplyLowRisk?: boolean; cooldownMinutes?: number }) =>
       systemApi.updateAgentLoopPolicy(patch),
     onSuccess: () => {
-      toast.success("Agent loop policy updated.");
+      toast.success(localize(locale, "Agent 循环策略已更新。", "Agent loop policy updated."));
       void queryClient.invalidateQueries({ queryKey: systemKeys.agentLoopPolicy() });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not update policy.");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法更新策略。", "Could not update policy."));
     },
   });
 
   const toggleExpertMutation = useMutation({
     mutationFn: (enabled: boolean) => systemApi.updateAgentLoopExpertMode({ enabled }),
     onSuccess: (result) => {
-      toast.success(result.enabled ? "Expert mode enabled" : "Expert mode disabled");
+      toast.success(result.enabled ? localize(locale, "专家模式已启用", "Expert mode enabled") : localize(locale, "专家模式已禁用", "Expert mode disabled"));
       void queryClient.invalidateQueries({ queryKey: systemKeys.agentLoopExpertMode() });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not toggle expert mode.");
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法切换专家模式。", "Could not toggle expert mode."));
     },
   });
 
@@ -338,23 +340,58 @@ export function SettingsPage() {
   ).length;
 
   return (
+    <div className="space-y-6">
+      {/* ── Advanced Ops quick links ── */}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Link to="/command-center" className="group flex flex-col justify-between rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-5 transition hover:border-[color:var(--color-border-strong)] hover:shadow-[var(--shadow-card-hover)]">
+          <div className="flex items-center gap-2.5 text-[color:var(--color-text-secondary)]">
+            <Terminal className="h-4 w-4 shrink-0" />
+            <span className="text-[11px] font-semibold uppercase tracking-[0.18em]">{localize(locale, "操作控制台", "Operator Console")}</span>
+          </div>
+          <p className="mt-4 text-[13px] leading-relaxed text-[color:var(--color-text-secondary)]">
+            {localize(locale, "审批、远程会话、系统控制", "Approvals, remote sessions, system controls")}
+          </p>
+        </Link>
+        <Link to="/observability" className="group flex flex-col justify-between rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-5 transition hover:border-[color:var(--color-border-strong)] hover:shadow-[var(--shadow-card-hover)]">
+          <div className="flex items-center gap-2.5 text-[color:var(--color-text-secondary)]">
+            <Activity className="h-4 w-4 shrink-0" />
+            <span className="text-[11px] font-semibold uppercase tracking-[0.18em]">{localize(locale, "可观测性", "Observability")}</span>
+          </div>
+          <p className="mt-4 text-[13px] leading-relaxed text-[color:var(--color-text-secondary)]">
+            {localize(locale, "Trace、审计、告警、健康", "Traces, audit, alerts, health")}
+          </p>
+        </Link>
+        <Link to="/fleet" className="group flex flex-col justify-between rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-5 transition hover:border-[color:var(--color-border-strong)] hover:shadow-[var(--shadow-card-hover)]">
+          <div className="flex items-center gap-2.5 text-[color:var(--color-text-secondary)]">
+            <Globe2 className="h-4 w-4 shrink-0" />
+            <span className="text-[11px] font-semibold uppercase tracking-[0.18em]">{localize(locale, "执行节点", "Fleet")}</span>
+          </div>
+          <p className="mt-4 text-[13px] leading-relaxed text-[color:var(--color-text-secondary)]">
+            {localize(locale, "节点管理、任务放置、分布式执行", "Node management, placement, distributed execution")}
+          </p>
+        </Link>
+      </div>
+
+      {/* ── Program Discovery ── */}
+      <DiscoveryPanel />
+
     <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
       <div className="space-y-4">
         <ShellCard eyebrow={localize(locale, "系统健康", "System Health")} title={localize(locale, "诊断", "Diagnostics")}>
           {health ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
-                <DiagnosticTile icon={<Cpu className="h-4 w-4" />} label="API Status" value={health.status} />
-                <DiagnosticTile icon={<Wifi className="h-4 w-4" />} label="Remote Mode" value={health.capabilities?.system?.remoteMode ?? "unavailable"} />
-                <DiagnosticTile icon={<Shield className="h-4 w-4" />} label="System Enabled" value={String(Boolean(health.capabilities?.system?.enabled))} />
-                <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label="Uptime" value={`${health.uptime}s`} />
+                <DiagnosticTile icon={<Cpu className="h-4 w-4" />} label={localize(locale, "API 状态", "API Status")} value={health.status} />
+                <DiagnosticTile icon={<Wifi className="h-4 w-4" />} label={localize(locale, "远程模式", "Remote Mode")} value={health.capabilities?.system?.remoteMode ?? localize(locale, "不可用", "unavailable")} />
+                <DiagnosticTile icon={<Shield className="h-4 w-4" />} label={localize(locale, "系统已启用", "System Enabled")} value={String(Boolean(health.capabilities?.system?.enabled))} />
+                <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label={localize(locale, "运行时间", "Uptime")} value={`${health.uptime}s`} />
               </div>
               <p className="text-sm text-[color:var(--color-text-secondary)]">
-                The web shell reflects the backend truth. If native companion features are missing, this page reports them directly rather than hiding them behind placeholders.
+                {localize(locale, "Web Shell 反映后端实际状态。如果原生伴侣功能缺失，此页面会直接报告，而不是隐藏在占位符后面。", "The web shell reflects the backend truth. If native companion features are missing, this page reports them directly rather than hiding them behind placeholders.")}
               </p>
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Loading diagnostics...</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "正在加载诊断信息…", "Loading diagnostics...")}</p>
           )}
         </ShellCard>
 
@@ -362,15 +399,15 @@ export function SettingsPage() {
           {me ? (
             <div className="space-y-3 text-sm text-[color:var(--color-text-secondary)]">
               <div className="flex items-center justify-between gap-4">
-                <span>User</span>
+                <span>{localize(locale, "用户", "User")}</span>
                 <span className="font-medium text-[color:var(--color-text-primary)]">{me.user.displayName}</span>
               </div>
               <div className="flex items-center justify-between gap-4">
-                <span>Role</span>
+                <span>{localize(locale, "角色", "Role")}</span>
                 <StatusPill>{me.user.role}</StatusPill>
               </div>
               <div>
-                <p className="mb-2 text-[color:var(--color-text-tertiary)]">Scopes</p>
+                <p className="mb-2 text-[color:var(--color-text-tertiary)]">{localize(locale, "权限范围", "Scopes")}</p>
                 <div className="flex flex-wrap gap-2">
                   {me.scopes.map((scope) => (
                     <StatusPill key={scope}>{scope}</StatusPill>
@@ -379,13 +416,13 @@ export function SettingsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Loading identity...</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "正在加载身份信息…", "Loading identity...")}</p>
           )}
         </ShellCard>
 
         <ShellCard eyebrow={localize(locale, "提供商", "Providers")} title={localize(locale, "模型路由基础", "Model Routing Basics")}>
           {providers.length === 0 ? (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">No providers configured yet.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "尚未配置任何提供方。", "No providers configured yet.")}</p>
           ) : (
             <div className="space-y-3">
               {providers.map((provider) => (
@@ -409,19 +446,19 @@ export function SettingsPage() {
                     </div>
                   </div>
                   <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">
-                    Default model: {provider.defaultModel ?? provider.config.supportedModels[0] ?? "Not set"}
+                    {localize(locale, "默认模型：", "Default model: ")}{provider.defaultModel ?? provider.config.supportedModels[0] ?? localize(locale, "未设置", "Not set")}
                   </p>
                   {healthItem ? (
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
-                      <DiagnosticRow label="Backend health" value={healthItem.backendHealth} />
-                      <DiagnosticRow label="Auth health" value={healthItem.authHealth} />
-                      <DiagnosticRow label="Validation" value={healthItem.validationStatus} />
-                      <DiagnosticRow label="Circuit" value={healthItem.circuitState} />
+                      <DiagnosticRow label={localize(locale, "后端健康", "Backend health")} value={healthItem.backendHealth} />
+                      <DiagnosticRow label={localize(locale, "认证健康", "Auth health")} value={healthItem.authHealth} />
+                      <DiagnosticRow label={localize(locale, "验证", "Validation")} value={healthItem.validationStatus} />
+                      <DiagnosticRow label={localize(locale, "断路器", "Circuit")} value={healthItem.circuitState} />
                     </div>
                   ) : null}
                   {healthItem?.cooldownRemainingMs ? (
                     <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
-                      Cooldown remaining: {Math.ceil(healthItem.cooldownRemainingMs / 1000)}s
+                      {localize(locale, "冷却剩余：", "Cooldown remaining: ")}{Math.ceil(healthItem.cooldownRemainingMs / 1000)}s
                     </p>
                   ) : null}
                   {healthItem?.suggestedAction ? (
@@ -442,7 +479,7 @@ export function SettingsPage() {
               <div className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="font-medium text-[color:var(--color-text-primary)]">Current decision</p>
+                    <p className="font-medium text-[color:var(--color-text-primary)]">{localize(locale, "当前决策", "Current decision")}</p>
                     <p className="text-xs text-[color:var(--color-text-tertiary)]">{routingExplain.reasonCode} · history window {routingExplain.historyWindow.sampleLimit}</p>
                   </div>
                   <StatusPill tone={routingExplain.learningAdjusted ? "success" : routingExplain.learningSignalsPresent ? "warning" : "neutral"}>
@@ -452,11 +489,11 @@ export function SettingsPage() {
                 <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{routingExplain.reasonText}</p>
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <DiagnosticRow
-                    label="Before learning"
+                    label={localize(locale, "学习前", "Before learning")}
                     value={routingExplain.selectedBeforeLearning ? `${routingExplain.selectedBeforeLearning.providerId} / ${routingExplain.selectedBeforeLearning.model}` : "n/a"}
                   />
                   <DiagnosticRow
-                    label="After learning"
+                    label={localize(locale, "学习后", "After learning")}
                     value={routingExplain.selectedAfterLearning ? `${routingExplain.selectedAfterLearning.providerId} / ${routingExplain.selectedAfterLearning.model}` : "n/a"}
                   />
                 </div>
@@ -500,7 +537,7 @@ export function SettingsPage() {
                           taskProfileId: routingExplain.taskProfileId,
                         })}
                       >
-                        Pin Route
+                        {localize(locale, "固定路由", "Pin Route")}
                       </ActionButton>
                       <ActionButton
                         tone="secondary"
@@ -512,7 +549,7 @@ export function SettingsPage() {
                           taskProfileId: routingExplain.taskProfileId,
                         })}
                       >
-                        Clear Penalty
+                        {localize(locale, "清除惩罚", "Clear Penalty")}
                       </ActionButton>
                     </div>
                   </div>
@@ -520,18 +557,18 @@ export function SettingsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Routing explain preview unavailable.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "路由解释预览不可用。", "Routing explain preview unavailable.")}</p>
           )}
         </ShellCard>
 
         <ShellCard eyebrow={localize(locale, "沟通", "Communication")} title={localize(locale, "人格", "Persona")}>
           <div className="space-y-4">
             <p className="text-sm text-[color:var(--color-text-secondary)]">
-              MBTI is a comfort-oriented starting template. The actual behavior comes from the settings below, and it never weakens safety or approval boundaries.
+              {localize(locale, "MBTI 是一个以舒适为导向的起始模板。实际行为由下方设置决定，且不会削弱安全或审批边界。", "MBTI is a comfort-oriented starting template. The actual behavior comes from the settings below, and it never weakens safety or approval boundaries.")}
             </p>
             <div className="grid gap-3 md:grid-cols-2">
               <label className="space-y-2 text-sm text-[color:var(--color-text-secondary)]">
-                <span>MBTI template</span>
+                <span>{localize(locale, "MBTI 模板", "MBTI template")}</span>
                 <select
                   value={draft.mbti}
                   onChange={(event) => {
@@ -543,62 +580,62 @@ export function SettingsPage() {
                   }}
                   className="agent-select"
                 >
-                  <option value="">Default</option>
+                  <option value="">{localize(locale, "默认", "Default")}</option>
                   {COMMUNICATION_MBTI_OPTIONS.map((mbti) => (
                     <option key={mbti} value={mbti}>{mbti}</option>
                   ))}
                 </select>
               </label>
               <PersonaField
-                label="Tone"
+                label={localize(locale, "语调", "Tone")}
                 value={draft.settings.tone}
                 onChange={(value) => setDraft((current) => ({ ...current, settings: { ...current.settings, tone: value as FridayCommunicationPersonaSettings["tone"] } }))}
                 options={["warm", "neutral", "analytical", "encouraging"]}
               />
               <PersonaField
-                label="Verbosity"
+                label={localize(locale, "详细程度", "Verbosity")}
                 value={draft.settings.verbosity}
                 onChange={(value) => setDraft((current) => ({ ...current, settings: { ...current.settings, verbosity: value as FridayCommunicationPersonaSettings["verbosity"] } }))}
                 options={["concise", "balanced", "detailed"]}
               />
               <PersonaField
-                label="Structure"
+                label={localize(locale, "结构", "Structure")}
                 value={draft.settings.structure}
                 onChange={(value) => setDraft((current) => ({ ...current, settings: { ...current.settings, structure: value as FridayCommunicationPersonaSettings["structure"] } }))}
                 options={["compact", "balanced", "structured"]}
               />
               <PersonaField
-                label="Question style"
+                label={localize(locale, "提问风格", "Question style")}
                 value={draft.settings.questionStyle}
                 onChange={(value) => setDraft((current) => ({ ...current, settings: { ...current.settings, questionStyle: value as FridayCommunicationPersonaSettings["questionStyle"] } }))}
                 options={["minimal", "guided", "exploratory"]}
               />
               <PersonaField
-                label="Directness"
+                label={localize(locale, "直接程度", "Directness")}
                 value={draft.settings.directness}
                 onChange={(value) => setDraft((current) => ({ ...current, settings: { ...current.settings, directness: value as FridayCommunicationPersonaSettings["directness"] } }))}
                 options={["soft", "balanced", "direct"]}
               />
               <PersonaField
-                label="Assumption style"
+                label={localize(locale, "假设风格", "Assumption style")}
                 value={draft.settings.assumptionStyle}
                 onChange={(value) => setDraft((current) => ({ ...current, settings: { ...current.settings, assumptionStyle: value as FridayCommunicationPersonaSettings["assumptionStyle"] } }))}
                 options={["ask_first", "balanced", "infer_first"]}
               />
               <PersonaField
-                label="Confirmation style"
+                label={localize(locale, "确认风格", "Confirmation style")}
                 value={draft.settings.confirmationStyle}
                 onChange={(value) => setDraft((current) => ({ ...current, settings: { ...current.settings, confirmationStyle: value as FridayCommunicationPersonaSettings["confirmationStyle"] } }))}
                 options={["minimal", "balanced", "explicit"]}
               />
               <PersonaField
-                label="Jargon tolerance"
+                label={localize(locale, "术语容忍度", "Jargon tolerance")}
                 value={draft.settings.jargonTolerance}
                 onChange={(value) => setDraft((current) => ({ ...current, settings: { ...current.settings, jargonTolerance: value as FridayCommunicationJargonTolerance } }))}
                 options={["low", "medium", "high"]}
               />
               <PersonaField
-                label="Emoji style"
+                label={localize(locale, "表情风格", "Emoji style")}
                 value={draft.settings.emojiStyle}
                 onChange={(value) => setDraft((current) => ({ ...current, settings: { ...current.settings, emojiStyle: value as FridayCommunicationEmojiStyle } }))}
                 options={["none", "light"]}
@@ -607,7 +644,7 @@ export function SettingsPage() {
             <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
               <div className="flex items-center gap-2 text-[color:var(--color-text-primary)]">
                 <MessageCircleMore className="h-4 w-4" />
-                <p className="font-medium">Preview</p>
+                <p className="font-medium">{localize(locale, "预览", "Preview")}</p>
               </div>
               <p className="mt-3 text-sm text-[color:var(--color-text-tertiary)]">Style: {preview.styleLabel}</p>
               <p className="mt-3 text-sm text-[color:var(--color-text-primary)]">{preview.sampleClarifier}</p>
@@ -620,13 +657,13 @@ export function SettingsPage() {
             </div>
             <div className="flex flex-wrap gap-2">
               <ActionButton onClick={() => savePersonaMutation.mutate()} disabled={savePersonaMutation.isPending}>
-                Save Communication Style
+                {localize(locale, "保存沟通风格", "Save Communication Style")}
               </ActionButton>
               <ActionButton
                 tone="secondary"
                 onClick={() => setDraft({ mbti: draft.mbti, settings: getMbtiDefaults(draft.mbti || null) })}
               >
-                Reset To MBTI Defaults
+                {localize(locale, "重置为 MBTI 默认值", "Reset To MBTI Defaults")}
               </ActionButton>
             </div>
           </div>
@@ -638,15 +675,15 @@ export function SettingsPage() {
           {systemSession && systemState ? (
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-2">
-                <DiagnosticTile icon={<Cpu className="h-4 w-4" />} label="Workspace Root" value={systemSession.workspaceRoot} mono />
-                <DiagnosticTile icon={<Wifi className="h-4 w-4" />} label="Cloud Planning" value={systemSession.cloudPlanningMode} />
-                <DiagnosticTile icon={<Shield className="h-4 w-4" />} label="Health" value={systemState.health.status} />
-                <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label="Started" value={formatTimestamp(systemSession.startedAt)} />
+                <DiagnosticTile icon={<Cpu className="h-4 w-4" />} label={localize(locale, "工作区根目录", "Workspace Root")} value={systemSession.workspaceRoot} mono />
+                <DiagnosticTile icon={<Wifi className="h-4 w-4" />} label={localize(locale, "云规划", "Cloud Planning")} value={systemSession.cloudPlanningMode} />
+                <DiagnosticTile icon={<Shield className="h-4 w-4" />} label={localize(locale, "健康状态", "Health")} value={systemState.health.status} />
+                <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label={localize(locale, "启动时间", "Started")} value={formatTimestamp(systemSession.startedAt)} />
               </div>
               <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="font-medium text-[color:var(--color-text-primary)]">Companion bridge</p>
+                    <p className="font-medium text-[color:var(--color-text-primary)]">{localize(locale, "伴侣桥接", "Companion bridge")}</p>
                     <p className="text-sm text-[color:var(--color-text-tertiary)]">
                       {systemSession.companion.runtimeKind} · {systemSession.companion.transport.mode} · {systemSession.companion.transport.protocol}
                     </p>
@@ -655,7 +692,7 @@ export function SettingsPage() {
                     {systemSession.health.status}
                   </StatusPill>
                 </div>
-                <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{summarizeHealthReasons(systemSession.health)}</p>
+                <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">{summarizeHealthReasons(systemSession.health, locale)}</p>
               </div>
               <div className="space-y-3">
                 {systemState.permissions.map((permission) => (
@@ -663,33 +700,33 @@ export function SettingsPage() {
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="font-medium text-[color:var(--color-text-primary)]">{permission.permission}</p>
-                        <p className="text-xs text-[color:var(--color-text-faint)]">{permission.grantInstructions ?? "No extra instructions reported."}</p>
+                        <p className="text-xs text-[color:var(--color-text-faint)]">{permission.grantInstructions ?? localize(locale, "无额外说明。", "No extra instructions reported.")}</p>
                       </div>
                       <StatusPill tone={toneForStatus(permission.status)}>{permission.status}</StatusPill>
                     </div>
                   </div>
                 ))}
                 {systemState.permissions.length === 0 ? (
-                  <p className="text-sm text-[color:var(--color-text-secondary)]">No desktop permission telemetry is currently available.</p>
+                  <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "当前没有可用的桌面权限遥测数据。", "No desktop permission telemetry is currently available.")}</p>
                 ) : null}
               </div>
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Agent OS routes are not responding yet.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "Agent OS 路由尚未响应。", "Agent OS routes are not responding yet.")}</p>
           )}
         </ShellCard>
 
         <ShellCard eyebrow={localize(locale, "伴侣状态", "Companion State")} title={localize(locale, "桌面面板", "Desktop Surfaces")}>
           {systemState ? (
             <div className="space-y-3">
-              <DiagnosticRow label="Frontmost App" value={systemState.frontmostAppId ?? "Unknown"} />
-              <DiagnosticRow label="Frontmost Window" value={systemState.frontmostWindowId ?? "Unknown"} />
-              <DiagnosticRow label="Last Snapshot" value={formatTimestamp(systemState.capturedAt)} />
-              <DiagnosticRow label="Active Lease" value={systemState.controlLease?.ownerId ?? "None"} />
-              <DiagnosticRow label="Permissions Updated" value={formatTimestamp(systemState.health.updatedAt)} />
+              <DiagnosticRow label={localize(locale, "前台应用", "Frontmost App")} value={systemState.frontmostAppId ?? localize(locale, "未知", "Unknown")} />
+              <DiagnosticRow label={localize(locale, "前台窗口", "Frontmost Window")} value={systemState.frontmostWindowId ?? localize(locale, "未知", "Unknown")} />
+              <DiagnosticRow label={localize(locale, "最后快照", "Last Snapshot")} value={formatTimestamp(systemState.capturedAt)} />
+              <DiagnosticRow label={localize(locale, "活跃租约", "Active Lease")} value={systemState.controlLease?.ownerId ?? localize(locale, "无", "None")} />
+              <DiagnosticRow label={localize(locale, "权限更新时间", "Permissions Updated")} value={formatTimestamp(systemState.health.updatedAt)} />
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Waiting for a system snapshot.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "等待系统快照…", "Waiting for a system snapshot.")}</p>
           )}
         </ShellCard>
 
@@ -699,36 +736,36 @@ export function SettingsPage() {
               <div className="grid gap-3 sm:grid-cols-2">
                 <DiagnosticTile
                   icon={<DollarSign className="h-4 w-4" />}
-                  label="Status"
+                  label={localize(locale, "状态", "Status")}
                   value={budgetStatus.state}
                 />
                 <DiagnosticTile
                   icon={<DollarSign className="h-4 w-4" />}
-                  label="Spent This Month"
+                  label={localize(locale, "本月已用", "Spent This Month")}
                   value={`$${budgetStatus.spentUsd.toFixed(2)}`}
                 />
               </div>
               <div className="space-y-2">
-                <DiagnosticRow label="Month" value={budgetStatus.month} />
+                <DiagnosticRow label={localize(locale, "月份", "Month")} value={budgetStatus.month} />
                 <DiagnosticRow
-                  label="Monthly Limit"
-                  value={budgetStatus.config ? `$${budgetStatus.config.monthlyLimitUsd.toFixed(2)}` : "No limit set"}
+                  label={localize(locale, "月度限额", "Monthly Limit")}
+                  value={budgetStatus.config ? `$${budgetStatus.config.monthlyLimitUsd.toFixed(2)}` : localize(locale, "未设限", "No limit set")}
                 />
                 <DiagnosticRow
-                  label="Remaining"
-                  value={budgetStatus.remainingUsd !== null ? `$${budgetStatus.remainingUsd.toFixed(2)}` : "Unlimited"}
+                  label={localize(locale, "剩余", "Remaining")}
+                  value={budgetStatus.remainingUsd !== null ? `$${budgetStatus.remainingUsd.toFixed(2)}` : localize(locale, "无限制", "Unlimited")}
                 />
               </div>
               {budgetStatus.state !== "ok" ? (
                 <div className={`rounded-2xl border p-3 text-sm ${budgetStatus.state === "over_limit" ? "border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] text-[color:var(--color-text-primary)]" : "border-[color:var(--color-accent-soft)] bg-[color:var(--color-accent-muted)] text-[color:var(--color-text-primary)]"}`}>
                   {budgetStatus.state === "over_limit"
-                    ? "Budget exceeded — Friday will prefer local models (Ollama) until the next billing cycle."
-                    : "Approaching budget limit — Friday will prefer cheaper models when possible."}
+                    ? localize(locale, "预算已超 — Friday 将优先使用本地模型（Ollama）直到下一个计费周期。", "Budget exceeded — Friday will prefer local models (Ollama) until the next billing cycle.")
+                    : localize(locale, "即将达到预算上限 — Friday 将尽可能优先使用更便宜的模型。", "Approaching budget limit — Friday will prefer cheaper models when possible.")}
                 </div>
               ) : null}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Budget data unavailable.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "预算数据不可用。", "Budget data unavailable.")}</p>
           )}
         </ShellCard>
 
@@ -736,7 +773,7 @@ export function SettingsPage() {
           <ShellCard eyebrow={localize(locale, "学习", "Learning")} title={localize(locale, "Friday 对你的了解", "What Friday Knows About You")}>
             <div className="space-y-3">
               <p className="text-sm text-[color:var(--color-text-secondary)]">
-                These are preferences and facts Friday has learned from your interactions.
+                {localize(locale, "这些是 Friday 从你的互动中学到的偏好和事实。", "These are preferences and facts Friday has learned from your interactions.")}
               </p>
               {learnedFacts.map((fact) => (
                 <div key={fact.key} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
@@ -765,13 +802,13 @@ export function SettingsPage() {
           {learningOverview ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
-                <DiagnosticTile icon={<Brain className="h-4 w-4" />} label="Lessons" value={String(learningOverview.coverage.lessons)} />
-                <DiagnosticTile icon={<Brain className="h-4 w-4" />} label="Patterns" value={String(learningOverview.coverage.patterns)} />
-                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label="Route Adjustments" value={String(learningOverview.coverage.routeAdjustments)} />
-                <DiagnosticTile icon={<AlertTriangle className="h-4 w-4" />} label="Blocked Routes" value={String(learningOverview.coverage.blockedRoutes)} />
+                <DiagnosticTile icon={<Brain className="h-4 w-4" />} label={localize(locale, "经验", "Lessons")} value={String(learningOverview.coverage.lessons)} />
+                <DiagnosticTile icon={<Brain className="h-4 w-4" />} label={localize(locale, "模式", "Patterns")} value={String(learningOverview.coverage.patterns)} />
+                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label={localize(locale, "路由调整", "Route Adjustments")} value={String(learningOverview.coverage.routeAdjustments)} />
+                <DiagnosticTile icon={<AlertTriangle className="h-4 w-4" />} label={localize(locale, "被阻止的路由", "Blocked Routes")} value={String(learningOverview.coverage.blockedRoutes)} />
               </div>
               <div className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Lessons</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{localize(locale, "经验", "Lessons")}</p>
                 {learningOverview.lessons.slice(0, 3).map((record) => (
                   <div key={record.lesson.id} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                     <div className="flex items-center justify-between gap-3">
@@ -793,14 +830,14 @@ export function SettingsPage() {
                           enabled: record.disabled,
                         })}
                       >
-                        {record.disabled ? "Enable Lesson" : "Disable Lesson"}
+                        {record.disabled ? localize(locale, "启用经验", "Enable Lesson") : localize(locale, "禁用经验", "Disable Lesson")}
                       </ActionButton>
                     </div>
                   </div>
                 ))}
               </div>
               <div className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Patterns</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{localize(locale, "模式", "Patterns")}</p>
                 {learningOverview.patterns.slice(0, 3).map((record) => (
                   <div key={record.patternId} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                     <div className="flex items-center justify-between gap-3">
@@ -818,7 +855,7 @@ export function SettingsPage() {
                         disabled={demotePatternMutation.isPending}
                         onClick={() => demotePatternMutation.mutate(record.patternId)}
                       >
-                        Demote Pattern
+                        {localize(locale, "降级模式", "Demote Pattern")}
                       </ActionButton>
                     </div>
                   </div>
@@ -826,7 +863,7 @@ export function SettingsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Learning controls unavailable.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "学习控制不可用。", "Learning controls unavailable.")}</p>
           )}
         </ShellCard>
 
@@ -834,12 +871,12 @@ export function SettingsPage() {
           {securityCenter ? (
             <div className="space-y-3">
               <div className="grid gap-3 sm:grid-cols-2">
-                <DiagnosticTile icon={<Shield className="h-4 w-4" />} label="Active Tokens" value={String(securityCenter.tokens.active)} />
-                <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label="High Privilege" value={String(securityCenter.tokens.highPrivilegeActive)} />
+                <DiagnosticTile icon={<Shield className="h-4 w-4" />} label={localize(locale, "活跃令牌", "Active Tokens")} value={String(securityCenter.tokens.active)} />
+                <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label={localize(locale, "高权限", "High Privilege")} value={String(securityCenter.tokens.highPrivilegeActive)} />
               </div>
               {securityCenter.findings.length > 0 ? (
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Findings</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{localize(locale, "发现", "Findings")}</p>
                   {securityCenter.findings.map((finding) => (
                     <div key={finding.id} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3">
                       <div className="flex items-start justify-between gap-2">
@@ -855,26 +892,26 @@ export function SettingsPage() {
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-[color:var(--color-text-secondary)]">No security findings detected.</p>
+                <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "未检测到安全问题。", "No security findings detected.")}</p>
               )}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Security data unavailable.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "安全数据不可用。", "Security data unavailable.")}</p>
           )}
         </ShellCard>
 
         <ShellCard eyebrow={localize(locale, "能力管理", "Capability Management")} title={localize(locale, "MCP 与通道面板", "MCP And Channel Surfaces")}>
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-3">
-              <DiagnosticTile icon={<Wrench className="h-4 w-4" />} label="MCP Loaded" value={`${loadedMcpCount}/${mcpStates.length}`} />
-              <DiagnosticTile icon={<MessageCircleMore className="h-4 w-4" />} label="Channels Connected" value={`${connectedChannelCount}/${channels.length}`} />
-              <DiagnosticTile icon={<AlertTriangle className="h-4 w-4" />} label="Attention Needed" value={String(channelAttentionCount)} />
+              <DiagnosticTile icon={<Wrench className="h-4 w-4" />} label={localize(locale, "MCP 已加载", "MCP Loaded")} value={`${loadedMcpCount}/${mcpStates.length}`} />
+              <DiagnosticTile icon={<MessageCircleMore className="h-4 w-4" />} label={localize(locale, "通道已连接", "Channels Connected")} value={`${connectedChannelCount}/${channels.length}`} />
+              <DiagnosticTile icon={<AlertTriangle className="h-4 w-4" />} label={localize(locale, "需要关注", "Attention Needed")} value={String(channelAttentionCount)} />
             </div>
 
             <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">MCP servers</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{localize(locale, "MCP 服务器", "MCP servers")}</p>
               {mcpStates.length === 0 ? (
-                <p className="text-sm text-[color:var(--color-text-secondary)]">No MCP servers configured for this runtime.</p>
+                <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "此运行时未配置任何 MCP 服务器。", "No MCP servers configured for this runtime.")}</p>
               ) : (
                 mcpStates.map((state) => (
                   <div key={state.serverId} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
@@ -891,10 +928,10 @@ export function SettingsPage() {
                       </div>
                     </div>
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
-                      <DiagnosticRow label="Tools" value={String(state.toolCount ?? 0)} />
-                      <DiagnosticRow label="Resources" value={String(state.resourceCount ?? 0)} />
-                      <DiagnosticRow label="Prompts" value={String(state.promptCount ?? 0)} />
-                      <DiagnosticRow label="Last Loaded" value={formatTimestamp(state.lastLoadedAt)} />
+                      <DiagnosticRow label={localize(locale, "工具", "Tools")} value={String(state.toolCount ?? 0)} />
+                      <DiagnosticRow label={localize(locale, "资源", "Resources")} value={String(state.resourceCount ?? 0)} />
+                      <DiagnosticRow label={localize(locale, "提示", "Prompts")} value={String(state.promptCount ?? 0)} />
+                      <DiagnosticRow label={localize(locale, "最后加载", "Last Loaded")} value={formatTimestamp(state.lastLoadedAt)} />
                     </div>
                   </div>
                 ))
@@ -902,9 +939,9 @@ export function SettingsPage() {
             </div>
 
             <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Channel health</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{localize(locale, "通道健康", "Channel health")}</p>
               {channels.length === 0 ? (
-                <p className="text-sm text-[color:var(--color-text-secondary)]">No channels are registered in this runtime.</p>
+                <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "此运行时未注册任何通道。", "No channels are registered in this runtime.")}</p>
               ) : (
                 channels.map((channel) => (
                   <div key={channel.kind} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
@@ -923,14 +960,14 @@ export function SettingsPage() {
                       </div>
                     </div>
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
-                      <DiagnosticRow label="Blocked Reason" value={channel.health.blockedReason ?? "None"} />
-                      <DiagnosticRow label="Last Error" value={channel.health.lastError ?? "None"} />
+                      <DiagnosticRow label={localize(locale, "阻止原因", "Blocked Reason")} value={channel.health.blockedReason ?? localize(locale, "无", "None")} />
+                      <DiagnosticRow label={localize(locale, "最后错误", "Last Error")} value={channel.health.lastError ?? localize(locale, "无", "None")} />
                       <DiagnosticRow
-                        label="Allowlist"
+                        label={localize(locale, "白名单", "Allowlist")}
                         value={`users ${channel.allowlist.allowedUsersCount} · chats ${channel.allowlist.allowedChatsCount}`}
                       />
                       <DiagnosticRow
-                        label="Support"
+                        label={localize(locale, "支持", "Support")}
                         value={channel.contract?.supports
                           ? [
                               channel.contract.supports.directMessages ? "DM" : null,
@@ -943,7 +980,7 @@ export function SettingsPage() {
                     </div>
                     {channel.contract?.curatedSkillIds && channel.contract.curatedSkillIds.length > 0 ? (
                       <p className="mt-3 text-xs text-[color:var(--color-text-tertiary)]">
-                        Curated skills: {channel.contract.curatedSkillIds.join(", ")}
+                        {localize(locale, "精选技能：", "Curated skills: ")}{channel.contract.curatedSkillIds.join(", ")}
                       </p>
                     ) : null}
                   </div>
@@ -962,11 +999,11 @@ export function SettingsPage() {
           {health ? (
             <div className="space-y-2">
               {[
-                { name: "Plugins", enabled: health.capabilities?.plugins?.runtimeMode === "full" },
-                { name: "Marketplace", enabled: health.capabilities?.plugins?.marketplaceAvailable === true },
-                { name: "System orchestration", enabled: health.capabilities?.system?.enabled === true },
-                { name: "Commerce", enabled: health.capabilities?.marketplace?.commerceEnabled === true },
-                { name: "Channels", enabled: (health.capabilities?.channels?.enabledKinds?.length ?? 0) > 0 },
+                { name: localize(locale, "插件", "Plugins"), enabled: health.capabilities?.plugins?.runtimeMode === "full" },
+                { name: localize(locale, "市场", "Marketplace"), enabled: health.capabilities?.plugins?.marketplaceAvailable === true },
+                { name: localize(locale, "系统编排", "System orchestration"), enabled: health.capabilities?.system?.enabled === true },
+                { name: localize(locale, "商务", "Commerce"), enabled: health.capabilities?.marketplace?.commerceEnabled === true },
+                { name: localize(locale, "通道", "Channels"), enabled: (health.capabilities?.channels?.enabledKinds?.length ?? 0) > 0 },
               ].map((tool) => (
                 <div key={tool.name} className="flex items-center justify-between rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm">
                   <div className="flex items-center gap-2">
@@ -974,13 +1011,13 @@ export function SettingsPage() {
                     <span className="text-[color:var(--color-text-secondary)]">{tool.name}</span>
                   </div>
                   <StatusPill tone={tool.enabled ? "success" : "neutral"}>
-                    {tool.enabled ? "enabled" : "disabled"}
+                    {tool.enabled ? localize(locale, "已启用", "enabled") : localize(locale, "已禁用", "disabled")}
                   </StatusPill>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Loading tool status...</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "正在加载工具状态…", "Loading tool status...")}</p>
           )}
         </ShellCard>
 
@@ -988,8 +1025,8 @@ export function SettingsPage() {
           {agentLoopPolicy ? (
             <div className="space-y-3">
               <div className="grid gap-3 sm:grid-cols-2">
-                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label="Max Attempts" value={String(agentLoopPolicy.maxAttemptsPerFingerprint)} />
-                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label="Cooldown" value={`${agentLoopPolicy.cooldownMinutes} min`} />
+                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label={localize(locale, "最大尝试次数", "Max Attempts")} value={String(agentLoopPolicy.maxAttemptsPerFingerprint)} />
+                <DiagnosticTile icon={<Sliders className="h-4 w-4" />} label={localize(locale, "冷却时间", "Cooldown")} value={`${agentLoopPolicy.cooldownMinutes} min`} />
               </div>
               <div className="flex flex-wrap gap-2">
                 <ActionButton
@@ -997,44 +1034,46 @@ export function SettingsPage() {
                   disabled={updatePolicyMutation.isPending}
                   onClick={() => updatePolicyMutation.mutate({ paused: !agentLoopPolicy.paused })}
                 >
-                  {agentLoopPolicy.paused ? "Resume loop" : "Pause loop"}
+                  {agentLoopPolicy.paused ? localize(locale, "恢复循环", "Resume loop") : localize(locale, "暂停循环", "Pause loop")}
                 </ActionButton>
                 <ActionButton
                   tone="secondary"
                   disabled={updatePolicyMutation.isPending}
                   onClick={() => updatePolicyMutation.mutate({ autoApplyLowRisk: !agentLoopPolicy.autoApplyLowRisk })}
                 >
-                  {agentLoopPolicy.autoApplyLowRisk ? "Disable auto-apply" : "Enable auto-apply"}
+                  {agentLoopPolicy.autoApplyLowRisk ? localize(locale, "禁用自动应用", "Disable auto-apply") : localize(locale, "启用自动应用", "Enable auto-apply")}
                 </ActionButton>
               </div>
-              <DiagnosticRow label="Require rollback plan" value={agentLoopPolicy.requireRollbackPlan ? "yes" : "no"} />
-              <DiagnosticRow label="Require acceptance check" value={agentLoopPolicy.requireAcceptanceCheck ? "yes" : "no"} />
+              <DiagnosticRow label={localize(locale, "要求回滚计划", "Require rollback plan")} value={agentLoopPolicy.requireRollbackPlan ? localize(locale, "是", "yes") : localize(locale, "否", "no")} />
+              <DiagnosticRow label={localize(locale, "要求验收检查", "Require acceptance check")} value={agentLoopPolicy.requireAcceptanceCheck ? localize(locale, "是", "yes") : localize(locale, "否", "no")} />
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">Agent loop policy unavailable.</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "Agent 循环策略不可用。", "Agent loop policy unavailable.")}</p>
           )}
           {expertMode ? (
             <div className="mt-4 space-y-2 border-t border-[color:var(--color-border-soft)] pt-4">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Expert Mode</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{localize(locale, "专家模式", "Expert Mode")}</p>
                 <ActionButton
                   tone={expertMode.enabled ? "danger" : "primary"}
                   disabled={toggleExpertMutation.isPending}
                   onClick={() => toggleExpertMutation.mutate(!expertMode.enabled)}
                 >
-                  {expertMode.enabled ? "Disable" : "Enable"}
+                  {expertMode.enabled ? localize(locale, "禁用", "Disable") : localize(locale, "启用", "Enable")}
                 </ActionButton>
               </div>
               {expertMode.contextInferenceAllowed !== undefined ? (
-                <DiagnosticRow label="Context Inference" value={expertMode.contextInferenceAllowed ? "allowed" : "denied"} />
+                <DiagnosticRow label={localize(locale, "上下文推断", "Context Inference")} value={expertMode.contextInferenceAllowed ? localize(locale, "已允许", "allowed") : localize(locale, "已拒绝", "denied")} />
               ) : null}
               {expertMode.probeBudget !== undefined ? (
-                <DiagnosticRow label="Probe Budget" value={String(expertMode.probeBudget)} />
+                <DiagnosticRow label={localize(locale, "探测预算", "Probe Budget")} value={String(expertMode.probeBudget)} />
               ) : null}
             </div>
           ) : null}
         </ShellCard>
       </div>
+
+    </div>
     </div>
   );
 }

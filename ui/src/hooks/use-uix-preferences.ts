@@ -7,6 +7,8 @@ const UIX_PREFERENCES_STORAGE_KEY = "friday.uix.preferences.v1";
 
 type UixPreferenceMap = Record<string, unknown>;
 
+const EMPTY_RECORDS: UixPreferenceRecord[] = [];
+
 function readFallbackPreferences(): UixPreferenceMap {
   if (typeof window === "undefined") {
     return {};
@@ -57,10 +59,12 @@ export function useUixPreferences(): UseUixPreferencesResult {
       try {
         return await uixPreferencesApi.list();
       } catch {
-        return [] as UixPreferenceRecord[];
+        return EMPTY_RECORDS;
       }
     },
     staleTime: 30_000,
+    retry: false,
+    refetchOnWindowFocus: false,
   });
 
   const values = useMemo<UixPreferenceMap>(() => {
@@ -105,12 +109,20 @@ export function useUixPreferences(): UseUixPreferencesResult {
     }
   }, []);
 
+  // Use refs for the write path so setPreferences/setPreference are stable across renders.
+  const queryDataRef = useRef(preferencesQuery.data);
+  queryDataRef.current = preferencesQuery.data;
+  const queryClientRef = useRef(queryClient);
+  queryClientRef.current = queryClient;
+  const scheduleFlushRef = useRef(scheduleFlush);
+  scheduleFlushRef.current = scheduleFlush;
+
   const setPreferences = useCallback((patch: UixPreferenceMap) => {
-    const current = mergePreferenceMaps(readFallbackPreferences(), mapRecordsToValues(preferencesQuery.data ?? []));
+    const current = mergePreferenceMaps(readFallbackPreferences(), mapRecordsToValues(queryDataRef.current ?? []));
     const next = mergePreferenceMaps(current, patch);
     writeFallbackPreferences(next);
 
-    queryClient.setQueryData<UixPreferenceRecord[]>(
+    queryClientRef.current.setQueryData<UixPreferenceRecord[]>(
       UIX_PREFERENCES_QUERY_KEY,
       (existing = []) => {
         const byKey = new Map(existing.map((item) => [item.key, item] as const));
@@ -130,8 +142,8 @@ export function useUixPreferences(): UseUixPreferencesResult {
     );
 
     pendingPatchRef.current = mergePreferenceMaps(pendingPatchRef.current, patch);
-    scheduleFlush();
-  }, [preferencesQuery.data, queryClient, scheduleFlush]);
+    scheduleFlushRef.current();
+  }, []);
 
   const setPreference = useCallback((key: string, value: unknown) => {
     setPreferences({ [key]: value });
@@ -142,5 +154,5 @@ export function useUixPreferences(): UseUixPreferencesResult {
     isLoading: preferencesQuery.isLoading,
     setPreference,
     setPreferences,
-  }), [preferencesQuery.isLoading, setPreference, setPreferences, values]);
+  }), [preferencesQuery.isLoading, values]);
 }

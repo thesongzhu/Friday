@@ -211,6 +211,13 @@ export interface FridayAgentRuntime {
    * including checkpoints recovered after process restart.
    */
   hasRollbackCheckpoint(runId: string): boolean;
+
+  /**
+   * Persist an event to the run event repository and emit it on the event bus.
+   * Useful for bridging events from subsystems (e.g. autonomous engine) that
+   * need their events to appear in the agent run SSE stream.
+   */
+  emitRunEvent(eventName: string, payload: Record<string, unknown>, runId: string): void;
 }
 
 export interface FridayAgentRuntimeResult {
