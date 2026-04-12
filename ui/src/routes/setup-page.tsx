@@ -197,12 +197,11 @@ export function SetupPage() {
 
   // ── Redirects ──
 
-  // TODO: restore redirect after setup preview testing
-  // useEffect(() => {
-  //   if (setupStatus && !setupStatus.needsSetup) {
-  //     navigate("/", { replace: true });
-  //   }
-  // }, [navigate, setupStatus]);
+  useEffect(() => {
+    if (setupStatus && !setupStatus.needsSetup) {
+      navigate("/", { replace: true });
+    }
+  }, [navigate, setupStatus]);
 
   // Note: during first-run setup we intentionally do NOT pre-fill from existingProviders.
   // The user should configure from scratch. Existing provider data is only relevant
