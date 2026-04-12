@@ -222,7 +222,11 @@ export function ChatPage() {
                 <MessageSquarePlus className="mr-2 h-4 w-4" />
                 {localize(locale, "新对话", "New Conversation")}
               </ActionButton>
-              <ActionButton tone="secondary" onClick={clearHistory}>
+              <ActionButton tone="secondary" onClick={() => {
+                if (window.confirm(localize(locale, "确定清空所有对话记录吗？", "Are you sure you want to clear all chat history?"))) {
+                  clearHistory();
+                }
+              }}>
                 <Trash2 className="mr-2 h-4 w-4" />
                 {localize(locale, "清空", "Clear")}
               </ActionButton>

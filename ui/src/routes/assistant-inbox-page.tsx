@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { ArrowRight, CheckCircle2, RefreshCcw, ShieldAlert, Sparkles } from "lucide-react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { ActionButton, ConfirmDialog, ShellCard, StatusPill } from "@/components/core/primitives";
@@ -85,6 +86,13 @@ export function AssistantInboxPage() {
     onSuccess: () => {
       setConfirmApproval(null);
       void queryClient.invalidateQueries({ queryKey: ["uix", "assistant-inbox"] });
+    },
+    onError: (error) => {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : localize(locale, "操作失败", "Action failed"),
+      );
     },
   });
 

@@ -31,7 +31,7 @@ export function MemoryPage() {
     queryFn: () => memoryApi.listItems({ limit: 100 }),
   });
 
-  const { data: searchResults } = useQuery({
+  const { data: searchResults, isLoading: isSearching, isError: isSearchError } = useQuery({
     queryKey: ["memory", "search", activeSearch],
     queryFn: () => memoryApi.search({ query: activeSearch, limit: 20 }),
     enabled: activeSearch.length > 0,
@@ -144,11 +144,17 @@ export function MemoryPage() {
             )}
           </div>
 
+          {isSearchError && activeSearch.length > 0 && (
+            <p className="text-sm status-error">{localize(locale, "搜索失败，请重试。", "Search failed. Please try again.")}</p>
+          )}
+
           <div className="flex items-center justify-between">
             <p className="text-xs text-[color:var(--color-text-faint)]">
-              {activeSearch
-                ? localize(locale, `"${activeSearch}" 的 ${String(displayItems.length)} 条结果`, `${String(displayItems.length)} results for "${activeSearch}"`)
-                : localize(locale, `共 ${String(displayItems.length)} 条记忆`, `${String(displayItems.length)} items total`)}
+              {isSearching
+                ? localize(locale, "搜索中...", "Searching...")
+                : activeSearch
+                  ? localize(locale, `"${activeSearch}" 的 ${String(displayItems.length)} 条结果`, `${String(displayItems.length)} results for "${activeSearch}"`)
+                  : localize(locale, `共 ${String(displayItems.length)} 条记忆`, `${String(displayItems.length)} items total`)}
             </p>
             <div className="flex gap-2">
               <ActionButton tone="secondary" onClick={() => setShowAddForm(!showAddForm)}>
