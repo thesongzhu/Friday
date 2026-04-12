@@ -19,6 +19,9 @@ export interface DiscoveryScanCatalog {
   scanErrors: number;
 }
 
+export interface DiscoveryScanResult {
+  catalog: DiscoveryScanCatalog;
+}
 export type ProgramCategory =
   | "browser" | "editor" | "terminal" | "communication" | "media"
   | "productivity" | "development" | "database" | "cloud" | "security"
@@ -49,11 +52,17 @@ export interface IntegrationRecommendation {
   context: Record<string, string>;
 }
 
-// ─── Helper: unwrap route envelope if present ───
+// ─── Response wrappers (routes return { status, body }) ───
 
+interface RouteEnvelope<T> {
+  status: number;
+  body: T;
+}
+
+// Some discovery routes still return a direct payload while others use { status, body }.
 function unwrap<T>(res: unknown): T {
   if (res && typeof res === "object" && "body" in res && "status" in res) {
-    return (res as { body: T }).body;
+    return (res as RouteEnvelope<T>).body;
   }
   return res as T;
 }
@@ -66,9 +75,9 @@ export const discoveryApi = {
     return unwrap<DiscoveryStatus>(res);
   },
 
-  async scan(): Promise<{ catalog: DiscoveryScanCatalog }> {
+  async scan(): Promise<DiscoveryScanResult> {
     const res = await apiClient.post<Record<string, never>, unknown>("/v1/discovery/scan", {});
-    return unwrap<{ catalog: DiscoveryScanCatalog }>(res);
+    return unwrap<DiscoveryScanResult>(res);
   },
 
   async getPrograms(params?: {

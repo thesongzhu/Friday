@@ -750,8 +750,8 @@ describe("FridayAgentRoutes", () => {
 
       await route.handler(ctx);
 
-      // Should subscribe to 14 event types (12 run events + 2 subagent events)
-      expect(emitter.on).toHaveBeenCalledTimes(20);
+      // Should subscribe to 27 event types (18 run events + 2 subagent events + 7 autonomous events)
+      expect(emitter.on).toHaveBeenCalledTimes(27);
       // Should register close handler
       expect(mockRes.on).toHaveBeenCalledWith("close", expect.any(Function));
     });
@@ -806,7 +806,7 @@ describe("FridayAgentRoutes", () => {
       expect(mockRes.write).toHaveBeenCalledWith(
         expect.stringContaining('"replayed":true'),
       );
-      expect(emitter.on).toHaveBeenCalledTimes(20);
+      expect(emitter.on).toHaveBeenCalledTimes(27);
     });
   });
 

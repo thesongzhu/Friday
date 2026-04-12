@@ -380,7 +380,7 @@ export function listFridayProviderTemplates(): FridayProviderTemplate[] {
       authModes,
       baseUrlHints,
       modelDefaults,
-      reasoningHints: meta.reasoningHints ?? defaultReasoningHints(kind),
+      reasoningHints: meta.reasoningHints?.length ? meta.reasoningHints : defaultReasoningHints(kind),
       requiredSecrets: buildRequiredSecrets(authModes),
     };
   });
