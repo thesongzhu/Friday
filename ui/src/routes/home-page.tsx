@@ -319,6 +319,9 @@ export function HomePage() {
                       <p className="text-sm text-[color:var(--color-text-secondary)]">
                         {localize(locale, "现在没有正在运行的任务。", "No task is actively running right now.")}
                       </p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">
+                        {localize(locale, "此处显示 Friday 当前正在执行的任务", "Shows tasks Friday is currently running")}
+                      </p>
                       <ActionButton tone="secondary" onClick={() => navigate("/chat")}>
                         <Sparkles className="mr-2 h-4 w-4" />
                         {localize(locale, "开始新任务", "Start a task")}
@@ -358,6 +361,9 @@ export function HomePage() {
                       <p className="text-sm text-[color:var(--color-text-secondary)]">
                         {localize(locale, "当前没有需要你确认的自动修复。", "There are no approvals waiting on you right now.")}
                       </p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">
+                        {localize(locale, "当 Friday 需要你审批时会显示在这里", "Appears when Friday needs your approval")}
+                      </p>
                       <ActionButton tone="secondary" onClick={() => navigate("/assistant")}>
                         <CheckCircle2 className="mr-2 h-4 w-4" />
                         {localize(locale, "查看助手", "Open assistant")}
@@ -389,6 +395,9 @@ export function HomePage() {
                     <div className="space-y-3">
                       <p className="text-sm text-[color:var(--color-text-secondary)]">
                         {localize(locale, "还没有固定在跑的自动化。", "No recurring automation is pinned into your flow yet.")}
+                      </p>
+                      <p className="text-xs text-[color:var(--color-text-tertiary)]">
+                        {localize(locale, "你设置的定时自动化会显示在这里", "Your scheduled automations appear here")}
                       </p>
                       <ActionButton tone="secondary" onClick={() => navigate("/automations")}>
                         <Clock3 className="mr-2 h-4 w-4" />

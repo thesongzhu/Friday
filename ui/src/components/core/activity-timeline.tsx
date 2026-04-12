@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { ShellCard } from "@/components/core/primitives";
+import { useMemo, useState } from "react";
+import { ShellCard, StatusPill } from "@/components/core/primitives";
 import { localize } from "@/lib/i18n/localized-text";
 import type { AgentRunRecord } from "@/lib/api/types";
 
@@ -18,8 +18,11 @@ interface TimelineEvent {
   id: string;
   type: TimelineEventType;
   title: string;
+  fullTitle: string;
   timestamp: string;
   tone: TimelineTone;
+  status: string;
+  durationMs?: number;
 }
 
 // ─── Props ───
@@ -69,8 +72,11 @@ function deriveEvents(runs: AgentRunRecord[], locale: "zh" | "en"): TimelineEven
         title: locale === "zh"
           ? `完成任务: ${taskLabel}`
           : `Completed: ${taskLabel}`,
+        fullTitle: run.task,
         timestamp: run.completedAt ?? run.startedAt,
         tone: "success",
+        status: run.status,
+        durationMs: run.durationMs,
       });
     } else if (run.status === "failed" || run.status === "failed_tests") {
       events.push({
@@ -79,8 +85,11 @@ function deriveEvents(runs: AgentRunRecord[], locale: "zh" | "en"): TimelineEven
         title: locale === "zh"
           ? `任务失败: ${taskLabel}`
           : `Failed: ${taskLabel}`,
+        fullTitle: run.task,
         timestamp: run.completedAt ?? run.startedAt,
         tone: "warning",
+        status: run.status,
+        durationMs: run.durationMs,
       });
     } else if (run.status === "cancelled") {
       events.push({
@@ -89,8 +98,11 @@ function deriveEvents(runs: AgentRunRecord[], locale: "zh" | "en"): TimelineEven
         title: locale === "zh"
           ? `已取消: ${taskLabel}`
           : `Cancelled: ${taskLabel}`,
+        fullTitle: run.task,
         timestamp: run.completedAt ?? run.startedAt,
         tone: "neutral",
+        status: run.status,
+        durationMs: run.durationMs,
       });
     } else if (ACTIVE_STATUSES.has(run.status)) {
       events.push({
@@ -99,8 +111,11 @@ function deriveEvents(runs: AgentRunRecord[], locale: "zh" | "en"): TimelineEven
         title: locale === "zh"
           ? `正在执行: ${taskLabel}`
           : `Running: ${taskLabel}`,
+        fullTitle: run.task,
         timestamp: run.startedAt,
         tone: "info",
+        status: run.status,
+        durationMs: run.durationMs,
       });
     }
   }
@@ -112,6 +127,30 @@ function deriveEvents(runs: AgentRunRecord[], locale: "zh" | "en"): TimelineEven
 
   return events.slice(0, 8);
 }
+
+function formatDuration(ms: number, locale: "zh" | "en"): string {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return locale === "zh" ? `${seconds} 秒` : `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) {
+    return locale === "zh"
+      ? `${minutes} 分 ${remainingSeconds} 秒`
+      : `${minutes}m ${remainingSeconds}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return locale === "zh"
+    ? `${hours} 小时 ${remainingMinutes} 分`
+    : `${hours}h ${remainingMinutes}m`;
+}
+
+const STATUS_LABELS: Record<string, { zh: string; en: string; tone: "success" | "warning" | "neutral" | "danger" }> = {
+  completed: { zh: "已完成", en: "Completed", tone: "success" },
+  failed: { zh: "失败", en: "Failed", tone: "danger" },
+  failed_tests: { zh: "测试失败", en: "Tests Failed", tone: "warning" },
+  cancelled: { zh: "已取消", en: "Cancelled", tone: "neutral" },
+};
 
 // ─── Dot color map ───
 
@@ -126,6 +165,7 @@ const DOT_COLORS: Record<TimelineTone, string> = {
 
 export function ActivityTimeline({ locale, runs }: ActivityTimelineProps) {
   const events = useMemo(() => deriveEvents(runs, locale), [runs, locale]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   return (
     <ShellCard eyebrow={localize(locale, "活动时间线", "Activity Timeline")}>
@@ -141,28 +181,66 @@ export function ActivityTimeline({ locale, runs }: ActivityTimelineProps) {
             style={{ height: `calc(100% - 12px)` }}
           />
 
-          {events.map((event, index) => (
-            <div
-              key={event.id}
-              className="relative flex items-start gap-3"
-              style={{ minHeight: index < events.length - 1 ? 36 : undefined }}
-            >
-              {/* Colored dot */}
+          {events.map((event, index) => {
+            const isExpanded = expandedId === event.id;
+            const statusMeta = STATUS_LABELS[event.status];
+            return (
               <div
-                className={`absolute -left-4 top-[6px] h-2 w-2 shrink-0 rounded-full ring-2 ring-[color:var(--color-bg-surface)] ${DOT_COLORS[event.tone]}`}
-              />
+                key={event.id}
+                className="relative"
+                style={{ minHeight: index < events.length - 1 ? 36 : undefined }}
+              >
+                {/* Colored dot */}
+                <div
+                  className={`absolute -left-4 top-[6px] h-2 w-2 shrink-0 rounded-full ring-2 ring-[color:var(--color-bg-surface)] ${DOT_COLORS[event.tone]}`}
+                />
 
-              {/* Content */}
-              <div className="flex min-w-0 flex-1 items-baseline justify-between gap-2 pb-2">
-                <p className="min-w-0 truncate text-sm text-[color:var(--color-text-primary)]">
-                  {event.title}
-                </p>
-                <span className="shrink-0 text-[11px] text-[color:var(--color-text-tertiary)]">
-                  {relativeTime(event.timestamp, locale)}
-                </span>
+                {/* Clickable content */}
+                <button
+                  type="button"
+                  onClick={() => setExpandedId(isExpanded ? null : event.id)}
+                  className="flex min-w-0 w-full items-baseline justify-between gap-2 pb-2 text-left transition-colors hover:bg-[color:var(--color-bg-hover)] rounded-lg -mx-1 px-1"
+                >
+                  <p className={`min-w-0 text-sm text-[color:var(--color-text-primary)] ${isExpanded ? "" : "truncate"}`}>
+                    {isExpanded ? event.fullTitle : event.title}
+                  </p>
+                  <span className="shrink-0 text-[11px] text-[color:var(--color-text-tertiary)]">
+                    {relativeTime(event.timestamp, locale)}
+                  </span>
+                </button>
+
+                {/* Expanded detail */}
+                {isExpanded && (
+                  <div className="ml-1 mb-2 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-3 py-2 space-y-1.5">
+                    {statusMeta && (
+                      <div className="flex items-center gap-2">
+                        <StatusPill tone={statusMeta.tone}>
+                          {locale === "zh" ? statusMeta.zh : statusMeta.en}
+                        </StatusPill>
+                        {event.durationMs != null && (
+                          <span className="text-[11px] text-[color:var(--color-text-tertiary)]">
+                            {formatDuration(event.durationMs, locale)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {!statusMeta && event.durationMs != null && (
+                      <p className="text-[11px] text-[color:var(--color-text-tertiary)]">
+                        {formatDuration(event.durationMs, locale)}
+                      </p>
+                    )}
+                    <a
+                      href="/sessions"
+                      onClick={(e) => { e.stopPropagation(); }}
+                      className="inline-block text-xs text-[color:var(--color-accent)] hover:underline"
+                    >
+                      {localize(locale, "查看完整会话 \u2192", "View full session \u2192")}
+                    </a>
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </ShellCard>
