@@ -23,7 +23,7 @@ import {
   persistCrossBorderAssistantNavigationSnapshot,
 } from "@/lib/packs/cross-border-snapshot";
 import { buildPackAssistantHref, buildPackChatHref, buildPackFlowHref } from "@/lib/packs/pack-links";
-import { FRIDAY_PACKS, getPackById, type FridayPackDefinition, type HomeWidgetId } from "@/lib/packs/pack-registry";
+import { FRIDAY_PACKS, getAllPacks, getPackById, type FridayPackDefinition, type HomeWidgetId } from "@/lib/packs/pack-registry";
 import { buildSkillHref } from "@/lib/skills/view-models";
 import {
   describeRunHealth,
@@ -164,7 +164,7 @@ export function HomePage() {
   const pinnedPacks = pinnedPackIds
     .map((packId) => getPackById(packId))
     .filter((pack): pack is FridayPackDefinition => Boolean(pack));
-  const recommendedPacks = FRIDAY_PACKS
+  const recommendedPacks = getAllPacks()
     .filter((pack) => !pinnedPackIds.includes(pack.id))
     .sort((left, right) => Number(right.kind === "industry") - Number(left.kind === "industry"))
     .slice(0, locale === "zh" ? 5 : 3);

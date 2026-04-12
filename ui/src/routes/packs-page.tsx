@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Plus, Trash2 } from "lucide-react";
 import { ActionButton, ShellCard } from "@/components/core/primitives";
+import { CustomPackBuilder } from "@/components/core/custom-pack-builder";
 import { PackCard } from "@/components/packs/pack-card";
 import { PackQuickSheet } from "@/components/packs/pack-quick-sheet";
 import { useAppNavigate } from "@/hooks/use-app-navigate";
@@ -7,7 +9,7 @@ import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences"
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { localize } from "@/lib/i18n/localized-text";
 import { buildPackAssistantHref, buildPackChatHref, buildPackFlowHref } from "@/lib/packs/pack-links";
-import { getPackById, listPacksByKind } from "@/lib/packs/pack-registry";
+import { getPackById, listPacksByKind, loadCustomPackInputs, deleteCustomPack } from "@/lib/packs/pack-registry";
 import { buildSkillHref } from "@/lib/skills/view-models";
 import { useAppLocale } from "@/providers/locale-provider";
 
@@ -19,9 +21,21 @@ export function PacksPage() {
   const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
   const [pendingPackPath, setPendingPackPath] = useState<string | null>(null);
   const [renderTaskSection, setRenderTaskSection] = useState(false);
+  const [showBuilder, setShowBuilder] = useState(false);
+  const [customPackVersion, setCustomPackVersion] = useState(0);
 
-  const industries = useMemo(() => listPacksByKind("industry"), []);
-  const tasks = useMemo(() => listPacksByKind("task"), []);
+  const industries = useMemo(() => listPacksByKind("industry"), [customPackVersion]);
+  const tasks = useMemo(() => listPacksByKind("task"), [customPackVersion]);
+  const customPackInputs = useMemo(() => loadCustomPackInputs(), [customPackVersion]);
+
+  const handleCustomPackSaved = useCallback(() => {
+    setCustomPackVersion((v) => v + 1);
+  }, []);
+
+  const handleDeleteCustomPack = useCallback((index: number) => {
+    deleteCustomPack(index);
+    setCustomPackVersion((v) => v + 1);
+  }, []);
   const selectedPack = selectedPackId ? getPackById(selectedPackId) ?? null : null;
 
   useEffect(() => {
@@ -93,6 +107,45 @@ export function PacksPage() {
         </div>
       </ShellCard>
 
+      <ShellCard title={localize(locale, "自定义包", "Custom Packs")}>
+        <div className="grid gap-4 md:grid-cols-2">
+          {customPackInputs.map((input, index) => {
+            const packId = `custom-${index}-${input.name.replace(/\s+/g, "-").toLowerCase()}`;
+            const pack = getPackById(packId);
+            return pack ? (
+              <div key={packId} className="relative">
+                <PackCard
+                  pack={pack}
+                  pinned={pinnedPackIds.includes(packId)}
+                  note={localize(locale, input.description, input.descriptionEn || input.description)}
+                  onOpen={() => setSelectedPackId(packId)}
+                  onPin={!pinnedPackIds.includes(packId) ? () => pinPack(packId) : undefined}
+                  onUnpin={pinnedPackIds.includes(packId) ? () => unpinPack(packId) : undefined}
+                />
+                <button
+                  type="button"
+                  onClick={() => handleDeleteCustomPack(index)}
+                  className="absolute right-3 top-3 rounded-lg p-1.5 text-[color:var(--color-text-tertiary)] hover:bg-[color:var(--color-bg-hover)] hover:text-[color:var(--color-danger)]"
+                  title={localize(locale, "删除", "Delete")}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ) : null;
+          })}
+
+          {/* Create button card */}
+          <button
+            type="button"
+            onClick={() => setShowBuilder(true)}
+            className="flex min-h-[100px] items-center justify-center rounded-2xl border-2 border-dashed border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-6 text-sm font-medium text-[color:var(--color-text-secondary)] transition hover:border-[color:var(--color-accent)] hover:text-[color:var(--color-accent)]"
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            {localize(locale, "创建自定义包", "Create Custom Pack")}
+          </button>
+        </div>
+      </ShellCard>
+
       {renderTaskSection ? (
         <ShellCard title={localize(locale, "任务入口", "Tasks")}>
           <div className="grid gap-4 md:grid-cols-2">
@@ -116,6 +169,12 @@ export function PacksPage() {
           </div>
         </ShellCard>
       )}
+
+      <CustomPackBuilder
+        open={showBuilder}
+        onClose={() => setShowBuilder(false)}
+        onSaved={handleCustomPackSaved}
+      />
 
       <PackQuickSheet
         open={Boolean(selectedPack)}

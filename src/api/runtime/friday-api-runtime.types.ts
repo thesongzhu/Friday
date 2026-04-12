@@ -136,6 +136,8 @@ export interface CreateFridayApiRuntimeDeps {
   /** The port the HTTP server is listening on, used to detect if a restart is needed. */
   serverPort?: number;
   stateDir?: string;
+  /** Absolute path to the managed-skills directory used for skill content edits. */
+  managedSkillsDir?: string;
   /** Allow loopback/private network addresses for self-hosted deployments using local providers. */
   allowPrivateNetwork?: boolean;
   pluginService?: FridayPluginService;
