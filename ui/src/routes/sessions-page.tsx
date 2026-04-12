@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { sessionsApi } from "@/lib/api/sessions";
+import { toast } from "sonner";
 import { SkeletonList } from "@/components/core/primitives";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -41,33 +42,37 @@ function formatDate(iso: string): string {
   }
 }
 
-function exportSession(sessionKey: string, messages: SessionMessage[], format: "json" | "markdown") {
-  let content: string;
-  let filename: string;
-  let mimeType: string;
+function exportSession(sessionKey: string, messages: SessionMessage[], format: "json" | "markdown", locale: "zh" | "en") {
+  try {
+    let content: string;
+    let filename: string;
+    let mimeType: string;
 
-  if (format === "json") {
-    content = JSON.stringify({ sessionKey, messages }, null, 2);
-    filename = `friday-session-${sessionKey}.json`;
-    mimeType = "application/json";
-  } else {
-    const lines = [`# Friday Session: ${sessionKey}\n`];
-    for (const msg of messages) {
-      lines.push(`## ${msg.role} (${formatDate(msg.createdAt)})\n`);
-      lines.push(`${msg.content}\n`);
+    if (format === "json") {
+      content = JSON.stringify({ sessionKey, messages }, null, 2);
+      filename = `friday-session-${sessionKey}.json`;
+      mimeType = "application/json";
+    } else {
+      const lines = [`# Friday Session: ${sessionKey}\n`];
+      for (const msg of messages) {
+        lines.push(`## ${msg.role} (${formatDate(msg.createdAt)})\n`);
+        lines.push(`${msg.content}\n`);
+      }
+      content = lines.join("\n");
+      filename = `friday-session-${sessionKey}.md`;
+      mimeType = "text/markdown";
     }
-    content = lines.join("\n");
-    filename = `friday-session-${sessionKey}.md`;
-    mimeType = "text/markdown";
-  }
 
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    toast.error(localize(locale, "导出失败", "Export failed"));
+  }
 }
 
 export function SessionsPage() {
@@ -152,14 +157,14 @@ export function SessionsPage() {
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => exportSession(selectedSession, messages, "json")}
+                    onClick={() => exportSession(selectedSession, messages, "json", locale)}
                     className="rounded-lg border border-[color:var(--color-border-soft)] px-3 py-1 text-xs text-[color:var(--color-text-secondary)] transition-colors hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-bg-surface-strong)]"
                   >
                     {localize(locale, "导出 JSON", "Export JSON")}
                   </button>
                   <button
                     type="button"
-                    onClick={() => exportSession(selectedSession, messages, "markdown")}
+                    onClick={() => exportSession(selectedSession, messages, "markdown", locale)}
                     className="rounded-lg border border-[color:var(--color-border-soft)] px-3 py-1 text-xs text-[color:var(--color-text-secondary)] transition-colors hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-bg-surface-strong)]"
                   >
                     {localize(locale, "导出 Markdown", "Export Markdown")}

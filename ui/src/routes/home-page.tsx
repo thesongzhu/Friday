@@ -33,6 +33,7 @@ import {
   toneForRunHealth,
 } from "@/lib/runs/run-health";
 import { cn } from "@/lib/utils/cn";
+import { toast } from "sonner";
 import { useAppLocale } from "@/providers/locale-provider";
 
 const ACTIVE_RUN_STATUSES = new Set([
@@ -121,18 +122,22 @@ export function HomePage() {
   });
 
   const openCrossBorderAssistant = async () => {
-    const latestSnapshot = await queryClient.fetchQuery({
-      queryKey: ["cross-border-pack", "snapshot"],
-      queryFn: () => crossBorderPackApi.getSnapshot(),
-    });
-    const navigationSnapshot = buildCrossBorderAssistantNavigationSnapshot(crossBorderSnapshotQuery.data, latestSnapshot);
-    if (navigationSnapshot) {
-      queryClient.setQueryData(["cross-border-pack", "snapshot"], navigationSnapshot);
+    try {
+      const latestSnapshot = await queryClient.fetchQuery({
+        queryKey: ["cross-border-pack", "snapshot"],
+        queryFn: () => crossBorderPackApi.getSnapshot(),
+      });
+      const navigationSnapshot = buildCrossBorderAssistantNavigationSnapshot(crossBorderSnapshotQuery.data, latestSnapshot);
+      if (navigationSnapshot) {
+        queryClient.setQueryData(["cross-border-pack", "snapshot"], navigationSnapshot);
+      }
+      persistCrossBorderAssistantNavigationSnapshot(navigationSnapshot);
+      navigate(buildPackAssistantHref("industry-cross-border-ecommerce"), {
+        state: buildCrossBorderAssistantNavigationState(navigationSnapshot),
+      });
+    } catch {
+      toast.error(localize(locale, "打开助手失败", "Failed to open assistant"));
     }
-    persistCrossBorderAssistantNavigationSnapshot(navigationSnapshot);
-    navigate(buildPackAssistantHref("industry-cross-border-ecommerce"), {
-      state: buildCrossBorderAssistantNavigationState(navigationSnapshot),
-    });
   };
 
   useEffect(() => {

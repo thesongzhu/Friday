@@ -399,44 +399,53 @@ export function SetupPage() {
   // ── Discovery + skill scan handler (runs automatically on step 3 mount) ──
 
   async function handleStep3Load() {
+    const timeout = setTimeout(() => {
+      setSkillScanLoading(false);
+      setSkillScanDone(true);
+    }, 30000);
+
     setDiscoveryScanning(true);
     setSkillScanLoading(true);
 
     try {
-      const scanResult = await discoveryApi.scan();
-      setDiscoveryProgramCount(scanResult.catalog.programCount);
       try {
-        const programsResult = await discoveryApi.getPrograms();
-        setDiscoveredPrograms(programsResult.programs.slice(0, 5));
+        const scanResult = await discoveryApi.scan();
+        setDiscoveryProgramCount(scanResult.catalog.programCount);
+        try {
+          const programsResult = await discoveryApi.getPrograms();
+          setDiscoveredPrograms(programsResult.programs.slice(0, 5));
+        } catch {
+          setDiscoveredPrograms([]);
+        }
+        try {
+          const recsResult = await discoveryApi.getRecommendations({ minConfidence: 0.5 });
+          setDiscoveryRecommendations(recsResult.recommendations.slice(0, 5));
+        } catch {
+          // recommendations are optional
+        }
+        setDiscoveryScanned(true);
       } catch {
-        setDiscoveredPrograms([]);
+        // Discovery not enabled or failed — silently skip
+      } finally {
+        setDiscoveryScanning(false);
       }
-      try {
-        const recsResult = await discoveryApi.getRecommendations({ minConfidence: 0.5 });
-        setDiscoveryRecommendations(recsResult.recommendations.slice(0, 5));
-      } catch {
-        // recommendations are optional
-      }
-      setDiscoveryScanned(true);
-    } catch {
-      // Discovery not enabled or failed — silently skip
-    } finally {
-      setDiscoveryScanning(false);
-    }
 
-    try {
-      const result = await scanMigrateApi.scanLocal();
-      const sorted = [...result.items].sort(
-        (a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime(),
-      );
-      setSkillScanItems(sorted.slice(0, 10));
-      // Pre-select all convertible items
-      setSelectedSkillPaths(new Set(sorted.slice(0, 10).filter((i) => i.convertible).map((i) => i.sourcePath)));
-      setSkillScanDone(true);
-    } catch {
-      setSkillScanDone(true); // mark done even on failure so UI shows empty state
+      try {
+        const result = await scanMigrateApi.scanLocal();
+        const sorted = [...result.items].sort(
+          (a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime(),
+        );
+        setSkillScanItems(sorted.slice(0, 10));
+        // Pre-select all convertible items
+        setSelectedSkillPaths(new Set(sorted.slice(0, 10).filter((i) => i.convertible).map((i) => i.sourcePath)));
+        setSkillScanDone(true);
+      } catch {
+        setSkillScanDone(true); // mark done even on failure so UI shows empty state
+      } finally {
+        setSkillScanLoading(false);
+      }
     } finally {
-      setSkillScanLoading(false);
+      clearTimeout(timeout);
     }
   }
 

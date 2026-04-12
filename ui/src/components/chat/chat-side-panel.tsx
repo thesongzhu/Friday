@@ -88,7 +88,9 @@ export function ChatSidePanel() {
           startNewConversation();
           break;
         case "clear":
-          clearHistory();
+          if (window.confirm(localize(locale, "确定清空对话记录吗？", "Clear chat history?"))) {
+            clearHistory();
+          }
           break;
         case "skills":
           navigate("/skills");
