@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
-  CalendarClock,
   MessageCircle,
   MessageSquarePlus,
   Send,
@@ -258,23 +257,6 @@ export function ChatSidePanel() {
                   </div>
                 )}
               </div>
-            ) : null}
-            {/* Save as Automation shortcut */}
-            {messages.length >= 2
-              && !isStreaming
-              && messages[messages.length - 1]?.role === "assistant"
-              && messages[messages.length - 1]?.status === "done" ? (
-              <button
-                type="button"
-                onClick={() => {
-                  const firstUserMsg = messages.find((m) => m.role === "user");
-                  navigate(`/automations?name=${encodeURIComponent((firstUserMsg?.content ?? "").slice(0, 50))}&task=${encodeURIComponent(firstUserMsg?.content ?? "")}`);
-                }}
-                className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-text-secondary)] transition hover:border-[color:var(--color-border-strong)] hover:text-[color:var(--color-text-primary)]"
-              >
-                <CalendarClock className="h-3 w-3" />
-                {localize(locale, "保存为自动化", "Save as Automation")}
-              </button>
             ) : null}
             <div ref={bottomRef} />
           </div>
