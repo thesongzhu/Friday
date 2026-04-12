@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Brain, Shield, TrendingUp } from "lucide-react";
+import { BookOpen, Brain, ChevronDown, Shield, TrendingUp } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { learningApi } from "@/lib/api/learning";
 import { localize } from "@/lib/i18n/localized-text";
@@ -14,6 +15,7 @@ import { SkeletonLine } from "@/components/core/primitives";
 export function LearningInsightCard() {
   const { locale } = useAppLocale();
   const navigate = useNavigate();
+  const [expandedStat, setExpandedStat] = useState<string | null>(null);
   const { data: overview, isLoading } = useQuery({
     queryKey: ["learning", "overview"],
     queryFn: () => learningApi.getOverview(5),
@@ -109,17 +111,118 @@ export function LearningInsightCard() {
               <button
                 key={stat.label}
                 type="button"
-                onClick={() => navigate("/settings#learning")}
-                className={`flex items-center gap-2 rounded-xl ${stat.bg} px-2.5 py-2 text-left transition hover:opacity-80`}
+                onClick={() => setExpandedStat(expandedStat === stat.label ? null : stat.label)}
+                className={`flex items-center gap-2 rounded-xl ${stat.bg} px-2.5 py-2 text-left transition hover:opacity-80 ${expandedStat === stat.label ? "ring-1 ring-[color:var(--color-border-strong)]" : ""}`}
               >
                 <stat.icon className={`h-3.5 w-3.5 shrink-0 ${stat.tone} opacity-60`} aria-hidden="true" />
-                <div>
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium leading-none text-[color:var(--color-text-secondary)]">{stat.value}</p>
                   <p className="mt-0.5 text-[10px] text-[color:var(--color-text-faint)]">{stat.label}</p>
                 </div>
+                <ChevronDown className={`h-3 w-3 shrink-0 text-[color:var(--color-text-faint)] transition-transform ${expandedStat === stat.label ? "rotate-180" : ""}`} aria-hidden="true" />
               </button>
             ))}
           </div>
+
+          {/* Expanded detail section */}
+          {expandedStat && (
+            <div className="mt-3 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-3 py-3">
+              {expandedStat === localize(locale, "教训", "Lessons") && (
+                overview.lessons.length > 0 ? (
+                  <div className="space-y-2">
+                    {overview.lessons.slice(0, 3).map((item) => (
+                      <div key={item.lesson.id} className="rounded-lg bg-[color:var(--color-bg-surface)] px-3 py-2">
+                        <p className="text-xs font-medium text-[color:var(--color-text-primary)]">{item.lesson.title}</p>
+                        <p className="mt-1 text-[11px] text-[color:var(--color-text-secondary)]">
+                          {localize(locale, "原因", "Cause")}: {item.lesson.cause}
+                        </p>
+                        <p className="text-[11px] text-[color:var(--color-text-secondary)]">
+                          {localize(locale, "修复", "Fix")}: {item.lesson.fix}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-[color:var(--color-text-secondary)]">
+                    {localize(locale, "点击「管理」查看完整详情", "Click Manage for full details")}
+                  </p>
+                )
+              )}
+
+              {expandedStat === localize(locale, "模式", "Patterns") && (
+                overview.patterns.length > 0 ? (
+                  <div className="space-y-2">
+                    {overview.patterns.slice(0, 3).map((item) => (
+                      <div key={item.patternId} className="rounded-lg bg-[color:var(--color-bg-surface)] px-3 py-2">
+                        <p className="text-xs font-medium text-[color:var(--color-text-primary)]">{item.kind}</p>
+                        <p className="mt-1 text-[11px] text-[color:var(--color-text-secondary)]">{item.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-[color:var(--color-text-secondary)]">
+                    {localize(locale, "点击「管理」查看完整详情", "Click Manage for full details")}
+                  </p>
+                )
+              )}
+
+              {expandedStat === localize(locale, "自动修复", "Auto-fixes") && (
+                overview.rejectedFixes.length > 0 || overview.coverage.autoFixActions > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-[color:var(--color-text-secondary)]">
+                      {localize(
+                        locale,
+                        `共 ${String(overview.coverage.autoFixActions)} 次自动修复`,
+                        `${String(overview.coverage.autoFixActions)} auto-fix action(s) total`,
+                      )}
+                    </p>
+                    {overview.rejectedFixes.slice(0, 3).map((item) => (
+                      <div key={item.actionId} className="rounded-lg bg-[color:var(--color-bg-surface)] px-3 py-2">
+                        <p className="text-xs font-medium text-[color:var(--color-text-primary)]">{item.title}</p>
+                        {item.reason && (
+                          <p className="mt-1 text-[11px] text-[color:var(--color-text-secondary)]">{item.reason}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-[color:var(--color-text-secondary)]">
+                    {localize(locale, "点击「管理」查看完整详情", "Click Manage for full details")}
+                  </p>
+                )
+              )}
+
+              {expandedStat === localize(locale, "诊断", "Diagnoses") && (
+                overview.rollbackHotspots.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-[color:var(--color-text-secondary)]">
+                      {localize(
+                        locale,
+                        `共 ${String(overview.coverage.incidents)} 次诊断`,
+                        `${String(overview.coverage.incidents)} diagnosis event(s)`,
+                      )}
+                    </p>
+                    {overview.rollbackHotspots.slice(0, 3).map((item) => (
+                      <div key={item.fingerprint} className="rounded-lg bg-[color:var(--color-bg-surface)] px-3 py-2">
+                        <p className="text-xs font-medium text-[color:var(--color-text-primary)]">{item.fingerprint}</p>
+                        <p className="mt-1 text-[11px] text-[color:var(--color-text-secondary)]">
+                          {localize(
+                            locale,
+                            `回滚 ${String(item.rolledBackCount)} / 应用 ${String(item.appliedCount)} / 拒绝 ${String(item.rejectedCount)}`,
+                            `Rolled back ${String(item.rolledBackCount)} / Applied ${String(item.appliedCount)} / Rejected ${String(item.rejectedCount)}`,
+                          )}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-[color:var(--color-text-secondary)]">
+                    {localize(locale, "点击「管理」查看完整详情", "Click Manage for full details")}
+                  </p>
+                )
+              )}
+            </div>
+          )}
 
           {overview.recentRejectedFixes.length > 0 && (
             <div className="mt-3 rounded-xl bg-[color:var(--color-bg-contrast)] px-3 py-2">
