@@ -9,6 +9,7 @@ import {
   RefreshCcw,
   Rocket,
   ShoppingCart,
+  Sparkles,
   TrendingUp,
   Users,
   Wrench,
@@ -575,11 +576,11 @@ export function getDefaultVisibleWidgets(): HomeWidgetId[] {
 }
 
 export function getPackById(packId: string): FridayPackDefinition | undefined {
-  return FRIDAY_PACKS.find((pack) => pack.id === packId);
+  return getAllPacks().find((pack) => pack.id === packId);
 }
 
 export function listPacksByKind(kind: FridayPackKind): FridayPackDefinition[] {
-  return FRIDAY_PACKS.filter((pack) => pack.kind === kind);
+  return getAllPacks().filter((pack) => pack.kind === kind);
 }
 
 export function getDefaultPinnedPackIds(profileType: UserProfileType): string[] {
@@ -599,4 +600,81 @@ export function sortPacksByStoredOrder(packIds: string[], order: string[]): stri
     const rightIndex = orderIndex.get(right) ?? Number.MAX_SAFE_INTEGER;
     return leftIndex - rightIndex;
   });
+}
+
+// ─── Custom pack storage (localStorage) ───
+
+const CUSTOM_PACKS_KEY = "friday.custom-packs";
+
+export interface CustomPackInput {
+  name: string;
+  nameEn: string;
+  description: string;
+  descriptionEn: string;
+  skillIds: string[];
+  entryPrompts: string[];
+}
+
+function loadCustomPacks(): FridayPackDefinition[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_PACKS_KEY);
+    if (!raw) return [];
+    const items = JSON.parse(raw) as CustomPackInput[];
+    return items.map((item, index) => ({
+      id: `custom-${index}-${item.name.replace(/\s+/g, "-").toLowerCase()}`,
+      kind: "industry" as FridayPackKind,
+      builtIn: false,
+      icon: Sparkles,
+      title: localizedText(item.name, item.nameEn || item.name),
+      summary: localizedText(item.description, item.descriptionEn || item.description),
+      defaultLauncher: { type: "wizard" as const, wizardId: `custom-${index}` },
+      backingTemplateIds: [],
+      supportsContinueLast: false,
+      curatedSkills: item.skillIds.map((id) => ({
+        skillId: id,
+        title: localizedText(id, id),
+        summary: localizedText("", ""),
+        starterPrompt: localizedText("", ""),
+      })),
+      productCopy: {
+        audience: localizedText(item.description, item.descriptionEn || item.description),
+        resultTitle: localizedText(item.name, item.nameEn || item.name),
+        resultSummary: localizedText(item.description, item.descriptionEn || item.description),
+        entryPrompts: item.entryPrompts.map((p, i) => ({
+          id: `custom-prompt-${i}`,
+          label: localizedText(p, p),
+          prompt: localizedText(p, p),
+        })),
+        deliverables: [],
+        assistantHandoff: null,
+      },
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export function saveCustomPack(input: CustomPackInput): void {
+  const existing = loadCustomPackInputs();
+  existing.push(input);
+  localStorage.setItem(CUSTOM_PACKS_KEY, JSON.stringify(existing));
+}
+
+export function loadCustomPackInputs(): CustomPackInput[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_PACKS_KEY);
+    return raw ? (JSON.parse(raw) as CustomPackInput[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function deleteCustomPack(index: number): void {
+  const existing = loadCustomPackInputs();
+  existing.splice(index, 1);
+  localStorage.setItem(CUSTOM_PACKS_KEY, JSON.stringify(existing));
+}
+
+export function getAllPacks(): FridayPackDefinition[] {
+  return [...FRIDAY_PACKS, ...loadCustomPacks()];
 }
