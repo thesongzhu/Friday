@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, CalendarClock, Check, MessageSquarePlus, Trash2 } from "lucide-react";
+import { ArrowRight, MessageSquarePlus, Trash2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
-import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { ChatMessageBubble } from "@/components/chat/chat-message";
@@ -18,7 +17,6 @@ import { useUserProfile } from "@/hooks/use-user-profile";
 import { localize } from "@/lib/i18n/localized-text";
 import { buildPackAssistantHref, buildPackFlowHref } from "@/lib/packs/pack-links";
 import { getPackById } from "@/lib/packs/pack-registry";
-import { automationsApi } from "@/lib/api/automations";
 import { sessionsApi, type SessionUsageResponse } from "@/lib/api/sessions";
 import { buildSkillHref } from "@/lib/skills/view-models";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -79,7 +77,7 @@ export function ChatPage() {
       setSessionUsage(null);
       return;
     }
-    sessionsApi.getUsage(sessionKey).then(setSessionUsage).catch(() => {});
+    sessionsApi.getUsage(sessionKey).then(setSessionUsage).catch(() => { setSessionUsage(null); });
   }, [messages.length, sessionKey]);
 
   useEffect(() => {
