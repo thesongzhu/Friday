@@ -9,7 +9,7 @@ import { providersApi } from "@/lib/api/providers";
 import { setupApi } from "@/lib/api/setup";
 import { systemApi } from "@/lib/api/system";
 import { discoveryApi } from "@/lib/api/discovery";
-import type { IntegrationRecommendation } from "@/lib/api/discovery";
+import type { DiscoveredProgram, IntegrationRecommendation } from "@/lib/api/discovery";
 import { scanMigrateApi } from "@/lib/api/scan-migrate";
 import type { LocalSkillScanItem } from "@/lib/api/scan-migrate";
 import { getIntegrationDescription } from "@/lib/discovery/integration-descriptions";
@@ -157,16 +157,16 @@ export function SetupPage() {
 
   // ── Discovery state (new) ──
   const [discoveryScanned, setDiscoveryScanned] = useState(false);
+  const [discoveryScanning, setDiscoveryScanning] = useState(false);
+  const [discoveredPrograms, setDiscoveredPrograms] = useState<DiscoveredProgram[]>([]);
   const [discoveryRecommendations, setDiscoveryRecommendations] = useState<IntegrationRecommendation[]>([]);
   const [discoveryProgramCount, setDiscoveryProgramCount] = useState(0);
-
   // ── Skill scan state ──
   const [skillScanItems, setSkillScanItems] = useState<LocalSkillScanItem[]>([]);
   const [skillScanDone, setSkillScanDone] = useState(false);
   const [skillScanLoading, setSkillScanLoading] = useState(false);
   const [selectedSkillPaths, setSelectedSkillPaths] = useState<Set<string>>(new Set());
   const [skillImporting, setSkillImporting] = useState(false);
-
   // ── Existing queries ──
 
   const { data: setupStatus } = useQuery({
@@ -400,10 +400,18 @@ export function SetupPage() {
   // ── Discovery + skill scan handler (runs automatically on step 3 mount) ──
 
   async function handleStep3Load() {
-    // --- Sub-section A: Program Discovery (optional, graceful fallback) ---
+    setDiscoveryScanning(true);
+    setSkillScanLoading(true);
+
     try {
       const scanResult = await discoveryApi.scan();
       setDiscoveryProgramCount(scanResult.catalog.programCount);
+      try {
+        const programsResult = await discoveryApi.getPrograms();
+        setDiscoveredPrograms(programsResult.programs.slice(0, 5));
+      } catch {
+        setDiscoveredPrograms([]);
+      }
       try {
         const recsResult = await discoveryApi.getRecommendations({ minConfidence: 0.5 });
         setDiscoveryRecommendations(recsResult.recommendations.slice(0, 5));
@@ -413,10 +421,10 @@ export function SetupPage() {
       setDiscoveryScanned(true);
     } catch {
       // Discovery not enabled or failed — silently skip
+    } finally {
+      setDiscoveryScanning(false);
     }
 
-    // --- Sub-section B: Skill scan ---
-    setSkillScanLoading(true);
     try {
       const result = await scanMigrateApi.scanLocal();
       const sorted = [...result.items].sort(
@@ -813,10 +821,10 @@ export function SetupPage() {
 
   // Auto-load data when entering step 3
   useEffect(() => {
-    if (currentStep === 3 && !skillScanDone && !skillScanLoading) {
+    if (currentStep === 3 && !skillScanDone && !skillScanLoading && !discoveryScanning) {
       void handleStep3Load();
     }
-  }, [currentStep]);
+  }, [currentStep, discoveryScanning, skillScanDone, skillScanLoading]);
 
   function toggleSkillPath(path: string) {
     setSelectedSkillPaths((prev) => {
@@ -828,7 +836,8 @@ export function SetupPage() {
   }
 
   function renderStep3() {
-    const isLoading = skillScanLoading && !skillScanDone;
+    const isLoading = discoveryScanning || (skillScanLoading && !skillScanDone);
+    const hasDiscoveryCards = discoveryRecommendations.length > 0 || discoveredPrograms.length > 0;
 
     return (
       <StepContainer>
@@ -854,7 +863,7 @@ export function SetupPage() {
 
         <div className="mt-8 w-full max-w-xl space-y-10 text-left">
           {/* ── Sub-section A: Program Discovery ── */}
-          {discoveryScanned && discoveryRecommendations.length > 0 && (
+          {discoveryScanned && (
             <div>
               <h2 className="text-lg font-semibold text-[color:var(--color-text-primary)]">
                 {localize(locale, "发现你电脑上的工具", "Discover Your Tools")}
@@ -867,27 +876,56 @@ export function SetupPage() {
                 )}
               </p>
               <div className="mt-4 space-y-2">
-                {discoveryRecommendations.slice(0, 5).map((rec) => {
-                  const friendlyDesc = getIntegrationDescription(rec.programName, locale);
-                  return (
-                    <div
-                      key={rec.programId}
-                      className="flex items-center justify-between rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-3"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
-                          {rec.programName}
+                {discoveryRecommendations.length > 0
+                  ? discoveryRecommendations.slice(0, 5).map((rec) => {
+                      const friendlyDesc = getIntegrationDescription(rec.programName, locale);
+                      return (
+                        <div
+                          key={rec.programId}
+                          className="flex items-center justify-between rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-3"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+                              {rec.programName}
+                            </p>
+                            <p className="mt-0.5 text-xs text-[color:var(--color-text-tertiary)]">
+                              {friendlyDesc ?? rec.rationale}
+                            </p>
+                          </div>
+                          <StatusPill tone="neutral" className="ml-3 shrink-0">
+                            {titleCase(rec.integrationPath)}
+                          </StatusPill>
+                        </div>
+                      );
+                    })
+                  : hasDiscoveryCards
+                    ? discoveredPrograms.slice(0, 5).map((prog) => (
+                        <div
+                          key={prog.id}
+                          className="flex items-center justify-between rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-3"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+                              {prog.name}
+                            </p>
+                            <p className="mt-0.5 text-xs text-[color:var(--color-text-tertiary)]">
+                              {titleCase(prog.category)}{prog.version ? ` · ${prog.version}` : ""}
+                            </p>
+                          </div>
+                          <StatusPill tone="neutral" className="ml-3 shrink-0">
+                            {titleCase(prog.category)}
+                          </StatusPill>
+                        </div>
+                      ))
+                    : (
+                        <p className="text-sm text-[color:var(--color-text-tertiary)]">
+                          {localize(
+                            locale,
+                            "这次没有拿到可展示的程序推荐，但你仍然可以继续导入已有的 AI 配置。",
+                            "No program recommendations were available this time, but you can still import existing AI configs.",
+                          )}
                         </p>
-                        <p className="mt-0.5 text-xs text-[color:var(--color-text-tertiary)]">
-                          {friendlyDesc ?? rec.rationale}
-                        </p>
-                      </div>
-                      <StatusPill tone="neutral" className="ml-3 shrink-0">
-                        {titleCase(rec.integrationPath)}
-                      </StatusPill>
-                    </div>
-                  );
-                })}
+                      )}
               </div>
             </div>
           )}
