@@ -33,9 +33,10 @@ export function PacksPage() {
   }, []);
 
   const handleDeleteCustomPack = useCallback((index: number) => {
+    if (!window.confirm(localize(locale, "确定删除这个自定义包吗？", "Are you sure you want to delete this custom pack?"))) return;
     deleteCustomPack(index);
     setCustomPackVersion((v) => v + 1);
-  }, []);
+  }, [locale]);
   const selectedPack = selectedPackId ? getPackById(selectedPackId) ?? null : null;
 
   useEffect(() => {

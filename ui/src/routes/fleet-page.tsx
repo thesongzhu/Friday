@@ -372,11 +372,13 @@ export function FleetPage() {
                             type="button"
                             className="inline-flex items-center rounded-2xl border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-4 py-2 text-sm font-medium text-[color:var(--color-text-primary)] hover:border-[color:var(--color-accent)] hover:bg-[color:var(--color-accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
                             disabled={remediationMutation.isPending}
-                            onClick={() =>
+                            onClick={() => {
+                              if (!window.confirm(localize(locale, "确定执行此修复步骤吗？", "Are you sure you want to run this recovery step?"))) return;
                               remediationMutation.mutate({
                                 satelliteId: selectedSatelliteId,
                                 actionId: step.actionId!,
-                              })
+                              });
+                            }
                             }
                           >
                             {remediationMutation.isPending ? localize(locale, "运行中...", "Running...") : localize(locale, "执行步骤", "Run step")}

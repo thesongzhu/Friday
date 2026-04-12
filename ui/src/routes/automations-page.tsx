@@ -147,6 +147,13 @@ export function AutomationsPage() {
                 toast.error(localize(locale, "需要名称和任务模板", "Name and task template are required"));
                 return;
               }
+              if (cron.trim().length > 0) {
+                const cronParts = cron.trim().split(/\s+/);
+                if (cronParts.length !== 5) {
+                  toast.error(localize(locale, "定时格式应为 5 段（分 时 日 月 周），如 0 9 * * *", "Cron format must have 5 fields (min hour day month weekday), e.g. 0 9 * * *"));
+                  return;
+                }
+              }
               createAutomationMutation.mutate();
             }}
           >
@@ -166,13 +173,18 @@ export function AutomationsPage() {
               placeholder={localize(locale, "描述触发自动化时要运行的任务。", "Describe the task to run when this automation is triggered.")}
             />
             <div className="grid gap-3 md:grid-cols-[1fr_220px]">
-              <input
-                data-testid="automations-cron-input"
-                value={cron}
-                onChange={(event) => setCron(event.target.value)}
-                className="agent-input"
-                placeholder={localize(locale, "Cron 表达式（可选）", "Cron schedule (optional)")}
-              />
+              <div>
+                <input
+                  data-testid="automations-cron-input"
+                  value={cron}
+                  onChange={(event) => setCron(event.target.value)}
+                  className="agent-input"
+                  placeholder={localize(locale, "Cron 表达式（可选）", "Cron schedule (optional)")}
+                />
+                <p className="mt-1 text-xs text-[color:var(--color-text-faint)]">
+                  {localize(locale, "格式：分 时 日 月 周（如 0 9 * * *）", "Format: min hour day month weekday (e.g. 0 9 * * *)")}
+                </p>
+              </div>
               <input
                 data-testid="automations-timezone-input"
                 value={timezone}

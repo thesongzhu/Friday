@@ -11,6 +11,7 @@ import {
   startRegistration,
 } from "@simplewebauthn/browser";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 import {
   AlertTriangle,
@@ -278,10 +279,10 @@ function ApprovalCard({
 
       <div className="flex gap-2">
         <ActionButton tone="secondary" onClick={onApprove} disabled={disabled}>
-          Approve
+          {localize(locale as "zh" | "en", "批准", "Approve")}
         </ActionButton>
         <ActionButton tone="danger" onClick={onReject} disabled={disabled}>
-          Reject
+          {localize(locale as "zh" | "en", "拒绝", "Reject")}
         </ActionButton>
       </div>
     </div>
@@ -456,7 +457,7 @@ export function AgentPage() {
       void refetchRuns();
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to start run");
+      toast.error(error instanceof Error ? error.message : localize(locale, "启动运行失败", "Failed to start run"));
     },
   });
 
@@ -467,7 +468,7 @@ export function AgentPage() {
       void refetchRuns();
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to cancel run");
+      toast.error(error instanceof Error ? error.message : localize(locale, "取消运行失败", "Failed to cancel run"));
     },
   });
 
@@ -482,7 +483,7 @@ export function AgentPage() {
       ]);
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to approve plan");
+      toast.error(error instanceof Error ? error.message : localize(locale, "批准计划失败", "Failed to approve plan"));
     },
   });
 
@@ -497,7 +498,7 @@ export function AgentPage() {
       ]);
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to reject plan");
+      toast.error(error instanceof Error ? error.message : localize(locale, "拒绝计划失败", "Failed to reject plan"));
     },
   });
 
@@ -508,7 +509,7 @@ export function AgentPage() {
       toast.success("Tool approved");
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to approve tool");
+      toast.error(error instanceof Error ? error.message : localize(locale, "批准工具使用失败", "Failed to approve tool"));
     },
   });
 
@@ -519,7 +520,7 @@ export function AgentPage() {
       toast.success("Tool rejected");
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to reject tool");
+      toast.error(error instanceof Error ? error.message : localize(locale, "拒绝工具使用失败", "Failed to reject tool"));
     },
   });
 
@@ -549,7 +550,7 @@ export function AgentPage() {
       void queryClient.invalidateQueries({ queryKey: systemKeys.session() });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "System action failed");
+      toast.error(error instanceof Error ? error.message : localize(locale, "系统操作失败", "System action failed"));
     },
   });
 
@@ -567,7 +568,7 @@ export function AgentPage() {
       void queryClient.invalidateQueries({ queryKey: systemKeys.remoteDevices() });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to register trusted device");
+      toast.error(error instanceof Error ? error.message : localize(locale, "注册受信设备失败", "Failed to register trusted device"));
     },
   });
 
@@ -579,7 +580,7 @@ export function AgentPage() {
       void queryClient.invalidateQueries({ queryKey: systemKeys.remoteSessions() });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to revoke trusted device");
+      toast.error(error instanceof Error ? error.message : localize(locale, "撤销受信设备失败", "Failed to revoke trusted device"));
     },
   });
 
@@ -592,7 +593,7 @@ export function AgentPage() {
       void queryClient.invalidateQueries({ queryKey: systemKeys.state() });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to clear trusted-device passkey");
+      toast.error(error instanceof Error ? error.message : localize(locale, "清除设备通行密钥失败", "Failed to clear trusted-device passkey"));
     },
   });
 
@@ -604,7 +605,7 @@ export function AgentPage() {
       void queryClient.invalidateQueries({ queryKey: systemKeys.state() });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to close remote session");
+      toast.error(error instanceof Error ? error.message : localize(locale, "关闭远程会话失败", "Failed to close remote session"));
     },
   });
 
@@ -627,7 +628,7 @@ export function AgentPage() {
       void queryClient.invalidateQueries({ queryKey: systemKeys.remoteSessions() });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to enroll passkey");
+      toast.error(error instanceof Error ? error.message : localize(locale, "注册通行密钥失败", "Failed to enroll passkey"));
     },
   });
 
@@ -655,7 +656,7 @@ export function AgentPage() {
       void queryClient.invalidateQueries({ queryKey: systemKeys.state() });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to open remote session");
+      toast.error(error instanceof Error ? error.message : localize(locale, "打开远程会话失败", "Failed to open remote session"));
     },
   });
 
