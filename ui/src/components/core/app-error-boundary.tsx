@@ -35,18 +35,19 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
               Friday
             </p>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight text-[color:var(--color-text-primary)]">
-              Something went wrong
+              {document.documentElement.getAttribute("data-locale") === "zh" ? "出了点问题" : "Oops, something went wrong"}
             </h1>
             <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">
-              Friday hit a client-side error before the current page finished rendering. Reload once. If it happens again,
-              export the local diagnostics buffer and inspect the last route transition or API error.
+              {document.documentElement.getAttribute("data-locale") === "zh"
+                ? "Friday 遇到了一个意外错误。请刷新页面重试。如果问题持续出现，请联系支持。"
+                : "Friday encountered an unexpected error. Please refresh the page to try again. If the problem persists, contact support."}
             </p>
             <button
               type="button"
               onClick={() => window.location.reload()}
               className="mt-5 inline-flex min-h-[44px] items-center rounded-full bg-[color:var(--color-text-primary)] px-4 text-sm font-medium text-[color:var(--color-bg-base)]"
             >
-              Reload
+              {document.documentElement.getAttribute("data-locale") === "zh" ? "刷新页面" : "Reload"}
             </button>
           </div>
         </div>
