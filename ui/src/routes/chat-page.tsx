@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, MessageSquarePlus, Trash2 } from "lucide-react";
+import { ArrowRight, CalendarClock, Check, MessageSquarePlus, Trash2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
+import { useMutation } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { ChatMessageBubble } from "@/components/chat/chat-message";
 import { ChatInput } from "@/components/chat/chat-input";
@@ -16,6 +18,7 @@ import { useUserProfile } from "@/hooks/use-user-profile";
 import { localize } from "@/lib/i18n/localized-text";
 import { buildPackAssistantHref, buildPackFlowHref } from "@/lib/packs/pack-links";
 import { getPackById } from "@/lib/packs/pack-registry";
+import { automationsApi } from "@/lib/api/automations";
 import { sessionsApi, type SessionUsageResponse } from "@/lib/api/sessions";
 import { buildSkillHref } from "@/lib/skills/view-models";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -54,6 +57,55 @@ export function ChatPage() {
   const lastCompletedMessageIdRef = useRef<string | null>(null);
   const [sessionUsage, setSessionUsage] = useState<SessionUsageResponse | null>(null);
   const activePack = packIdParam ? getPackById(packIdParam) ?? null : null;
+
+  // ── Save as Automation ──
+  const [showSaveAutomation, setShowSaveAutomation] = useState(false);
+  const [automationName, setAutomationName] = useState("");
+  const [automationSchedule, setAutomationSchedule] = useState("");
+  const [automationSaved, setAutomationSaved] = useState(false);
+
+  const canSaveAsAutomation =
+    messages.length >= 2
+    && !isStreaming
+    && messages[messages.length - 1]?.role === "assistant"
+    && messages[messages.length - 1]?.status === "done";
+
+  function openSaveAutomation() {
+    const firstUserMsg = messages.find((m) => m.role === "user");
+    setAutomationName(firstUserMsg?.content.slice(0, 50) ?? "");
+    setAutomationSchedule("");
+    setAutomationSaved(false);
+    setShowSaveAutomation(true);
+  }
+
+  const SCHEDULE_PRESETS: { label: { zh: string; en: string }; cron: string }[] = [
+    { label: { zh: "手动", en: "Manual" }, cron: "" },
+    { label: { zh: "每天 9:00", en: "Daily 9am" }, cron: "0 9 * * *" },
+    { label: { zh: "每周一", en: "Every Monday" }, cron: "0 9 * * 1" },
+    { label: { zh: "每小时", en: "Hourly" }, cron: "0 * * * *" },
+  ];
+
+  const saveAutomationMutation = useMutation({
+    mutationFn: () => {
+      const firstUserMsg = messages.find((m) => m.role === "user");
+      return automationsApi.create({
+        name: automationName.trim(),
+        taskTemplate: firstUserMsg?.content ?? automationName,
+        schedule: automationSchedule
+          ? { type: "cron", cron: automationSchedule, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
+          : undefined,
+        enabled: true,
+      });
+    },
+    onSuccess: () => {
+      toast.success(localize(locale, "已保存为自动化任务", "Saved as automation"));
+      setAutomationSaved(true);
+      setTimeout(() => setShowSaveAutomation(false), 1500);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : localize(locale, "保存失败", "Failed to save"));
+    },
+  });
 
   useEffect(() => {
     const prompt = searchParams.get("prompt")?.trim();
@@ -310,6 +362,80 @@ export function ChatPage() {
             ) : null}
 
             {isStreaming && streamingActions.length > 0 ? <ChatActionCard actions={streamingActions} /> : null}
+
+            {/* Save as Automation */}
+            {canSaveAsAutomation && !showSaveAutomation && !automationSaved ? (
+              <div className="flex justify-center pt-2">
+                <button
+                  type="button"
+                  onClick={openSaveAutomation}
+                  className="inline-flex min-h-[40px] items-center gap-2 rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 text-sm font-medium text-[color:var(--color-text-secondary)] shadow-sm transition hover:border-[color:var(--color-border-strong)] hover:text-[color:var(--color-text-primary)]"
+                >
+                  <CalendarClock className="h-4 w-4" />
+                  {localize(locale, "保存为自动化", "Save as Automation")}
+                </button>
+              </div>
+            ) : null}
+
+            {showSaveAutomation ? (
+              <div className="mx-auto max-w-lg rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5 shadow-[var(--shadow-floating)]">
+                {automationSaved ? (
+                  <div className="flex items-center justify-center gap-2 py-3 text-sm font-medium text-emerald-600">
+                    <Check className="h-4 w-4" />
+                    {localize(locale, "已保存为自动化任务", "Saved as automation")}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">
+                      {localize(locale, "保存为自动化", "Save as Automation")}
+                    </p>
+                    <input
+                      value={automationName}
+                      onChange={(e) => setAutomationName(e.target.value)}
+                      className="agent-input"
+                      placeholder={localize(locale, "任务名称", "Task name")}
+                    />
+                    <div>
+                      <p className="mb-1.5 text-xs text-[color:var(--color-text-faint)]">
+                        {localize(locale, "定时", "Schedule")}
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {SCHEDULE_PRESETS.map((preset) => (
+                          <button
+                            key={preset.cron}
+                            type="button"
+                            onClick={() => setAutomationSchedule(preset.cron)}
+                            className={`inline-flex min-h-[32px] items-center rounded-full border px-3 text-xs font-medium transition ${
+                              automationSchedule === preset.cron
+                                ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]"
+                                : "border-[color:var(--color-border-soft)] text-[color:var(--color-text-secondary)] hover:border-[color:var(--color-border-strong)]"
+                            }`}
+                          >
+                            {localize(locale, preset.label.zh, preset.label.en)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <ActionButton
+                        disabled={!automationName.trim() || saveAutomationMutation.isPending}
+                        onClick={() => saveAutomationMutation.mutate()}
+                      >
+                        {saveAutomationMutation.isPending
+                          ? localize(locale, "保存中...", "Saving...")
+                          : localize(locale, "保存", "Save")}
+                      </ActionButton>
+                      <ActionButton
+                        tone="secondary"
+                        onClick={() => setShowSaveAutomation(false)}
+                      >
+                        {localize(locale, "取消", "Cancel")}
+                      </ActionButton>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
         )}
         <div ref={bottomRef} />
