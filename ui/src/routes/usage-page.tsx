@@ -120,6 +120,7 @@ export function UsagePage() {
     const reqs = h.successCount + h.errorCount;
     const tokens = h.successCount * 800;
     return {
+      id: h.providerId,
       name: meta?.name ?? h.providerId,
       kind: meta?.kind ?? h.providerKind,
       requests: reqs,
@@ -232,7 +233,7 @@ export function UsagePage() {
                   </thead>
                   <tbody>
                     {costRows.map((row) => (
-                      <tr key={row.name} className="border-b border-[color:var(--color-border-soft)] last:border-0">
+                      <tr key={row.id} className="border-b border-[color:var(--color-border-soft)] last:border-0">
                         <td className="py-2.5 pr-4">
                           <p className="font-medium text-[color:var(--color-text-primary)]">{row.name}</p>
                           <p className="text-xs text-[color:var(--color-text-secondary)]">{row.kind}</p>
