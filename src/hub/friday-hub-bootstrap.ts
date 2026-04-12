@@ -4269,7 +4269,7 @@ export async function createFridayHub(
     importSkill: async (sourcePath, formatHint) => {
       try {
         const result = await converterService.import({
-          source: { uri: `file://${sourcePath}` },
+          source: { uri: sourcePath },
           formatHint: (formatHint ?? "auto") as FridaySkillSourceFormat | "auto",
           target: "managed",
           replace: false,
