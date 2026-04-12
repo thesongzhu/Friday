@@ -55,7 +55,31 @@ export const FRIDAY_GLOSSARY: Record<string, GlossaryEntry> = {
   },
   pattern: {
     term: "Pattern",
-    definition: "A recurring behavior that Friday has learned from past episodes — like common tool sequences or frequent failure modes.",
+    definition: "A work habit Friday noticed from your interactions.",
+  },
+  confidence: {
+    term: "Confidence",
+    definition: "How sure Friday is about a learned preference. Higher = more reliable.",
+  },
+  rollback: {
+    term: "Rollback",
+    definition: "When Friday undoes an action that didn't work as expected.",
+  },
+  hotspot: {
+    term: "Hotspot",
+    definition: "A problem area where fixes often fail and need to be retried.",
+  },
+  lesson: {
+    term: "Lesson",
+    definition: "Something Friday learned from a past mistake — it won't repeat the same error.",
+  },
+  evidence: {
+    term: "Evidence",
+    definition: "The number of times Friday has observed this preference.",
+  },
+  "auto-fix": {
+    term: "Auto-fix",
+    definition: "Friday automatically fixes a detected problem without asking you first.",
   },
 };
 

@@ -80,18 +80,42 @@ export function LearningInsightCard() {
 
       {hasActivity ? (
         <>
+          {/* Human-friendly summary sentence — primary message */}
+          <p className="text-sm text-[color:var(--color-text-primary)] mb-3">
+            {overview.coverage.patterns > 0 &&
+              localize(
+                locale,
+                `Friday 已了解你的 ${String(overview.coverage.patterns)} 个工作习惯`,
+                `Friday has learned ${String(overview.coverage.patterns)} of your work habits`,
+              )}
+            {overview.coverage.patterns > 0 && overview.coverage.autoFixActions > 0 &&
+              localize(
+                locale,
+                `，并自动修复了 ${String(overview.coverage.autoFixActions)} 个问题`,
+                `, and auto-fixed ${String(overview.coverage.autoFixActions)} issues`,
+              )}
+            {overview.coverage.patterns > 0 && overview.coverage.autoFixActions === 0 && overview.coverage.lessons > 0 &&
+              localize(
+                locale,
+                `，从过去的经验中学到了 ${String(overview.coverage.lessons)} 条教训`,
+                `, and learned ${String(overview.coverage.lessons)} lessons from past experience`,
+              )}
+            {overview.coverage.patterns > 0 ? "." : ""}
+          </p>
+
+          {/* Stat tiles — secondary, muted */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {stats.map((stat) => (
               <button
                 key={stat.label}
                 type="button"
                 onClick={() => navigate("/settings#learning")}
-                className={`flex items-center gap-2.5 rounded-xl ${stat.bg} px-3 py-2.5 text-left transition hover:opacity-80`}
+                className={`flex items-center gap-2 rounded-xl ${stat.bg} px-2.5 py-2 text-left transition hover:opacity-80`}
               >
-                <stat.icon className={`h-4 w-4 shrink-0 ${stat.tone}`} aria-hidden="true" />
+                <stat.icon className={`h-3.5 w-3.5 shrink-0 ${stat.tone} opacity-60`} aria-hidden="true" />
                 <div>
-                  <p className="text-lg font-semibold leading-none text-[color:var(--color-text-primary)]">{stat.value}</p>
-                  <p className="mt-0.5 text-[11px] text-[color:var(--color-text-secondary)]">{stat.label}</p>
+                  <p className="text-sm font-medium leading-none text-[color:var(--color-text-secondary)]">{stat.value}</p>
+                  <p className="mt-0.5 text-[10px] text-[color:var(--color-text-faint)]">{stat.label}</p>
                 </div>
               </button>
             ))}
@@ -126,12 +150,23 @@ export function LearningInsightCard() {
               <p className="text-xs text-amber-700">
                 {localize(
                   locale,
-                  `${String(overview.rollbackHotspots.length)} 个热点问题频繁回滚 — Friday 正在学习更好的修复方案。`,
-                  `${String(overview.rollbackHotspots.length)} hotspot(s) with frequent rollbacks — Friday is learning better fixes.`,
+                  `Friday 在 ${String(overview.rollbackHotspots.length)} 个地方尝试修复后发现效果不好，已自动撤销并在学习更好的方案。`,
+                  `Friday tried fixes in ${String(overview.rollbackHotspots.length)} areas but rolled them back — it's learning better approaches.`,
                 )}
               </p>
             </div>
           )}
+
+          {/* Manage link */}
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              onClick={() => navigate("/settings#learning")}
+              className="text-xs text-[color:var(--color-text-faint)] hover:text-[color:var(--color-text-secondary)] transition-colors"
+            >
+              {localize(locale, "管理 →", "Manage →")}
+            </button>
+          </div>
         </>
       ) : (
         <p className="text-sm text-[color:var(--color-text-secondary)]">
