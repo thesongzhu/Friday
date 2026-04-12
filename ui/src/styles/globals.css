@@ -514,6 +514,11 @@
 }
 .overflow-x-chips::-webkit-scrollbar { display: none; }
 
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar { display: none; }
+
 /* ── Setup wizard step fade-in ── */
 .setup-step-enter {
   animation: setup-fade-in 0.5s ease-out;

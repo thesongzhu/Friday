@@ -32,14 +32,14 @@ const NAV_ICONS: Record<string, LucideIcon> = {
 
 export function QuickAccessBar(props: { items: AgentOsNavItem[]; locale: AppLocale }) {
   return (
-    <div className="mb-3 flex flex-wrap items-center gap-2">
+    <div className="mb-3 flex items-center gap-2 overflow-x-auto scrollbar-none pb-1 lg:flex-wrap lg:overflow-x-visible lg:pb-0">
       {props.items.map((item) => {
         const Icon = NAV_ICONS[item.path];
         return (
           <NavLink
             key={item.path}
             to={item.path}
-            className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-text-secondary)] transition-colors hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-bg-surface-strong)] hover:text-[color:var(--color-text-primary)]"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-text-secondary)] transition-colors hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-bg-surface-strong)] hover:text-[color:var(--color-text-primary)]"
           >
             {Icon ? <Icon className="h-3.5 w-3.5" /> : null}
             <span>{resolveLocalizedText(item.label, props.locale)}</span>
