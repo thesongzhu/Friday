@@ -1628,6 +1628,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     for (const route of createFridaySkillRoutes({
       skillRegistry: deps.skillRegistry,
       lifecycle: deps.skillLifecycle,
+      managedSkillsDir: deps.managedSkillsDir,
     })) {
       routes.register(route);
     }

@@ -10,6 +10,9 @@ import { setupApi } from "@/lib/api/setup";
 import { systemApi } from "@/lib/api/system";
 import { discoveryApi } from "@/lib/api/discovery";
 import type { DiscoveredProgram, IntegrationRecommendation } from "@/lib/api/discovery";
+import { scanMigrateApi } from "@/lib/api/scan-migrate";
+import type { LocalSkillScanItem } from "@/lib/api/scan-migrate";
+import { getIntegrationDescription } from "@/lib/discovery/integration-descriptions";
 import {
   FRIDAY_ASSISTANT_STARTER_TASKS,
   getAssistantStarterTask,
@@ -158,7 +161,12 @@ export function SetupPage() {
   const [discoveredPrograms, setDiscoveredPrograms] = useState<DiscoveredProgram[]>([]);
   const [discoveryRecommendations, setDiscoveryRecommendations] = useState<IntegrationRecommendation[]>([]);
   const [discoveryProgramCount, setDiscoveryProgramCount] = useState(0);
-
+  // ── Skill scan state ──
+  const [skillScanItems, setSkillScanItems] = useState<LocalSkillScanItem[]>([]);
+  const [skillScanDone, setSkillScanDone] = useState(false);
+  const [skillScanLoading, setSkillScanLoading] = useState(false);
+  const [selectedSkillPaths, setSelectedSkillPaths] = useState<Set<string>>(new Set());
+  const [skillImporting, setSkillImporting] = useState(false);
   // ── Existing queries ──
 
   const { data: setupStatus } = useQuery({
@@ -389,15 +397,21 @@ export function SetupPage() {
     },
   });
 
-  // ── Discovery scan handler ──
+  // ── Discovery + skill scan handler (runs automatically on step 3 mount) ──
 
-  async function handleDiscoveryScan() {
+  async function handleStep3Load() {
     setDiscoveryScanning(true);
+    setSkillScanLoading(true);
+
     try {
       const scanResult = await discoveryApi.scan();
       setDiscoveryProgramCount(scanResult.catalog.programCount);
-      const programsResult = await discoveryApi.getPrograms();
-      setDiscoveredPrograms(programsResult.programs.slice(0, 5));
+      try {
+        const programsResult = await discoveryApi.getPrograms();
+        setDiscoveredPrograms(programsResult.programs.slice(0, 5));
+      } catch {
+        setDiscoveredPrograms([]);
+      }
       try {
         const recsResult = await discoveryApi.getRecommendations({ minConfidence: 0.5 });
         setDiscoveryRecommendations(recsResult.recommendations.slice(0, 5));
@@ -405,21 +419,58 @@ export function SetupPage() {
         // recommendations are optional
       }
       setDiscoveryScanned(true);
+    } catch {
+      // Discovery not enabled or failed — silently skip
+    } finally {
+      setDiscoveryScanning(false);
+    }
+
+    try {
+      const result = await scanMigrateApi.scanLocal();
+      const sorted = [...result.items].sort(
+        (a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime(),
+      );
+      setSkillScanItems(sorted.slice(0, 10));
+      // Pre-select all convertible items
+      setSelectedSkillPaths(new Set(sorted.slice(0, 10).filter((i) => i.convertible).map((i) => i.sourcePath)));
+      setSkillScanDone(true);
+    } catch {
+      setSkillScanDone(true); // mark done even on failure so UI shows empty state
+    } finally {
+      setSkillScanLoading(false);
+    }
+  }
+
+  async function handleSkillImport() {
+    if (selectedSkillPaths.size === 0) return;
+    setSkillImporting(true);
+    try {
+      const items = Array.from(selectedSkillPaths).map((sourcePath) => ({ sourcePath }));
+      const result = await scanMigrateApi.importBatch(items);
       toast.success(
         localize(
           locale,
-          `发现了 ${scanResult.catalog.programCount} 个程序`,
-          `Discovered ${scanResult.catalog.programCount} programs`,
+          `已导入 ${result.importedCount} 个技能`,
+          `Imported ${result.importedCount} skills`,
         ),
       );
+      if (result.failedCount > 0) {
+        toast.warning(
+          localize(
+            locale,
+            `${result.failedCount} 个导入失败`,
+            `${result.failedCount} failed to import`,
+          ),
+        );
+      }
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
-          : localize(locale, "扫描失败", "Scan failed"),
+          : localize(locale, "导入失败", "Import failed"),
       );
     } finally {
-      setDiscoveryScanning(false);
+      setSkillImporting(false);
     }
   }
 
@@ -766,9 +817,28 @@ export function SetupPage() {
     );
   }
 
-  // ─── STEP 3 — Program Discovery ───
+  // ─── STEP 3 — Program Discovery + Skill Import ───
+
+  // Auto-load data when entering step 3
+  useEffect(() => {
+    if (currentStep === 3 && !skillScanDone && !skillScanLoading && !discoveryScanning) {
+      void handleStep3Load();
+    }
+  }, [currentStep, discoveryScanning, skillScanDone, skillScanLoading]);
+
+  function toggleSkillPath(path: string) {
+    setSelectedSkillPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
 
   function renderStep3() {
+    const isLoading = discoveryScanning || (skillScanLoading && !skillScanDone);
+    const hasDiscoveryCards = discoveryRecommendations.length > 0 || discoveredPrograms.length > 0;
+
     return (
       <StepContainer>
         <BackLink />
@@ -779,73 +849,152 @@ export function SetupPage() {
         <p className="mt-4 max-w-lg text-lg text-[color:var(--color-text-secondary)]">
           {localize(
             locale,
-            "Friday 可以扫描你电脑上的程序并推荐集成",
-            "Friday can scan your programs and recommend integrations",
+            "Friday 正在扫描你电脑上的程序和已有的 AI 配置。",
+            "Friday is scanning your programs and existing AI configs.",
           )}
         </p>
 
-        {!discoveryScanned ? (
-          <button
-            type="button"
-            onClick={handleDiscoveryScan}
-            disabled={discoveryScanning}
-            className="mt-10 flex items-center gap-3 rounded-full bg-[color:var(--color-accent)] px-10 py-4 text-lg font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
-          >
-            <Search className="h-5 w-5" />
-            {discoveryScanning
-              ? localize(locale, "扫描中...", "Scanning...")
-              : localize(locale, "扫描", "Scan")}
-          </button>
-        ) : (
-          <div className="mt-8 w-full max-w-md text-left">
-            <p className="text-center text-lg font-medium text-[color:var(--color-text-primary)]">
-              {localize(
-                locale,
-                `发现了 ${discoveryProgramCount} 个程序`,
-                `Found ${discoveryProgramCount} programs`,
-              )}
-            </p>
-
-            {/* Top programs / recommendations */}
-            <div className="mt-6 space-y-3">
-              {discoveryRecommendations.length > 0
-                ? discoveryRecommendations.slice(0, 5).map((rec) => (
-                    <div
-                      key={rec.programId}
-                      className="flex items-center justify-between rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-3"
-                    >
-                      <div>
-                        <p className="text-sm font-medium text-[color:var(--color-text-primary)]">
-                          {rec.programName}
-                        </p>
-                        <p className="text-xs text-[color:var(--color-text-tertiary)]">
-                          {rec.rationale}
-                        </p>
-                      </div>
-                      <StatusPill tone="success">
-                        {Math.round(rec.confidence * 100)}%
-                      </StatusPill>
-                    </div>
-                  ))
-                : discoveredPrograms.slice(0, 5).map((prog) => (
-                    <div
-                      key={prog.id}
-                      className="flex items-center justify-between rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-3"
-                    >
-                      <div>
-                        <p className="text-sm font-medium text-[color:var(--color-text-primary)]">
-                          {prog.name}
-                        </p>
-                        <p className="text-xs text-[color:var(--color-text-tertiary)]">
-                          {titleCase(prog.category)}{prog.version ? ` · ${prog.version}` : ""}
-                        </p>
-                      </div>
-                      <StatusPill tone="neutral">{titleCase(prog.category)}</StatusPill>
-                    </div>
-                  ))}
-            </div>
+        {isLoading && (
+          <div className="mt-10 flex items-center gap-3 text-[color:var(--color-text-tertiary)]">
+            <Search className="h-5 w-5 animate-pulse" />
+            <span className="text-base">{localize(locale, "扫描中...", "Scanning...")}</span>
           </div>
         )}
+
+        <div className="mt-8 w-full max-w-xl space-y-10 text-left">
+          {/* ── Sub-section A: Program Discovery ── */}
+          {discoveryScanned && (
+            <div>
+              <h2 className="text-lg font-semibold text-[color:var(--color-text-primary)]">
+                {localize(locale, "发现你电脑上的工具", "Discover Your Tools")}
+              </h2>
+              <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
+                {localize(
+                  locale,
+                  `Friday 发现了你安装的 ${discoveryProgramCount} 个程序，以下是可以帮你自动化的功能。`,
+                  `Friday found ${discoveryProgramCount} programs on your computer. Here's what it can automate for you.`,
+                )}
+              </p>
+              <div className="mt-4 space-y-2">
+                {discoveryRecommendations.length > 0
+                  ? discoveryRecommendations.slice(0, 5).map((rec) => {
+                      const friendlyDesc = getIntegrationDescription(rec.programName, locale);
+                      return (
+                        <div
+                          key={rec.programId}
+                          className="flex items-center justify-between rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-3"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+                              {rec.programName}
+                            </p>
+                            <p className="mt-0.5 text-xs text-[color:var(--color-text-tertiary)]">
+                              {friendlyDesc ?? rec.rationale}
+                            </p>
+                          </div>
+                          <StatusPill tone="neutral" className="ml-3 shrink-0">
+                            {titleCase(rec.integrationPath)}
+                          </StatusPill>
+                        </div>
+                      );
+                    })
+                  : hasDiscoveryCards
+                    ? discoveredPrograms.slice(0, 5).map((prog) => (
+                        <div
+                          key={prog.id}
+                          className="flex items-center justify-between rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-3"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+                              {prog.name}
+                            </p>
+                            <p className="mt-0.5 text-xs text-[color:var(--color-text-tertiary)]">
+                              {titleCase(prog.category)}{prog.version ? ` · ${prog.version}` : ""}
+                            </p>
+                          </div>
+                          <StatusPill tone="neutral" className="ml-3 shrink-0">
+                            {titleCase(prog.category)}
+                          </StatusPill>
+                        </div>
+                      ))
+                    : (
+                        <p className="text-sm text-[color:var(--color-text-tertiary)]">
+                          {localize(
+                            locale,
+                            "这次没有拿到可展示的程序推荐，但你仍然可以继续导入已有的 AI 配置。",
+                            "No program recommendations were available this time, but you can still import existing AI configs.",
+                          )}
+                        </p>
+                      )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Sub-section B: Skill Import ── */}
+          {skillScanDone && (
+            <div>
+              <h2 className="text-lg font-semibold text-[color:var(--color-text-primary)]">
+                {localize(locale, "导入已有的 AI 配置", "Import Existing AI Configs")}
+              </h2>
+              {skillScanItems.length > 0 ? (
+                <>
+                  <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
+                    {localize(
+                      locale,
+                      `Friday 在你的电脑上找到了 ${skillScanItems.length} 个来自 Claude Code、Codex 等工具的技能配置。`,
+                      `Friday found ${skillScanItems.length} skill configs from Claude Code, Codex, and other tools on your computer.`,
+                    )}
+                  </p>
+                  <div className="mt-4 space-y-2">
+                    {skillScanItems.map((item) => (
+                      <label
+                        key={item.sourcePath}
+                        className="flex cursor-pointer items-center gap-3 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-3 transition hover:border-[color:var(--color-border-strong)]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedSkillPaths.has(item.sourcePath)}
+                          onChange={() => toggleSkillPath(item.sourcePath)}
+                          className="h-4 w-4 shrink-0 rounded border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-surface)] accent-[color:var(--color-accent)]"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-[color:var(--color-text-primary)]">
+                            {item.name}
+                          </p>
+                          {item.description && (
+                            <p className="mt-0.5 truncate text-xs text-[color:var(--color-text-tertiary)]">
+                              {item.description}
+                            </p>
+                          )}
+                        </div>
+                        <StatusPill tone="neutral" className="ml-2 shrink-0">
+                          {item.sourceTool}
+                        </StatusPill>
+                      </label>
+                    ))}
+                  </div>
+                  {selectedSkillPaths.size > 0 && (
+                    <div className="mt-4 flex justify-center">
+                      <ActionButton
+                        tone="secondary"
+                        onClick={handleSkillImport}
+                        disabled={skillImporting}
+                      >
+                        {skillImporting
+                          ? localize(locale, "导入中...", "Importing...")
+                          : localize(locale, `导入选中 (${selectedSkillPaths.size})`, `Import Selected (${selectedSkillPaths.size})`)}
+                      </ActionButton>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="mt-2 text-sm text-[color:var(--color-text-tertiary)]">
+                  {localize(locale, "未找到本地 AI 配置", "No local AI configs found")}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
 
         <ContinueButton onClick={goNext} />
         <SkipLink onClick={goNext} />

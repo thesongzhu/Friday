@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BadgeCheck, Download, Package, RefreshCcw, ShieldCheck, Trash2 } from "lucide-react";
+import { BadgeCheck, Download, MessageSquare, Package, RefreshCcw, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { DeepLinkPreviewDialog } from "@/components/deeplink/deeplink-preview-dialog";
 import { toast } from "sonner";
 import { ActionButton, ConfirmDialog, EmptyState, ShellCard, SkeletonCard, SkeletonList, StatusPill } from "@/components/core/primitives";
 import { HelpTooltip } from "@/components/core/help-tooltip";
 import { SkillImportWizard } from "@/components/core/skill-import-wizard";
+import { SkillScannerPanel } from "@/components/core/skill-scanner-panel";
 import { localize, type AppLocale } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 import { skillsApi } from "@/lib/api/skills";
@@ -134,7 +135,9 @@ export function SkillsPage() {
   const [recentGeneratorSessionId, setRecentGeneratorSessionId] = useState<string | null>(null);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showImportWizard, setShowImportWizard] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
   const [deleteConfirmSkillId, setDeleteConfirmSkillId] = useState<string | null>(null);
+  // Edit mode removed — skills use "Regenerate" flow instead of inline editing
   const requestedSkillId = searchParams.get("skillId");
   const requestedFocus = searchParams.get("focus");
   const focus: FridaySkillFocus =
@@ -294,7 +297,16 @@ export function SkillsPage() {
   return (
     <div data-testid="skills-page" className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
       <div className="space-y-4">
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setShowScanner(true)}
+            data-testid="skills-scanner-button"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-1.5 text-sm text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-hover)]"
+          >
+            <Search className="h-3.5 w-3.5" />
+            {localize(locale, "扫描与迁移", "Scan & Migrate")}
+          </button>
           <button
             type="button"
             onClick={() => setShowImportWizard(true)}
@@ -603,6 +615,13 @@ export function SkillsPage() {
                 <p className="mt-3 text-[color:var(--color-text-secondary)]">
                   {detail.description || localize(locale, "此技能暂无描述记录。", "No description recorded for this skill.")}
                 </p>
+                {detail.tags.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {detail.tags.map((tag) => (
+                      <span key={tag} className="rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-2.5 py-0.5 text-xs text-[color:var(--color-text-tertiary)]">{tag}</span>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="mt-4 grid gap-2 text-xs text-[color:var(--color-text-tertiary)]">
                   <p>{localize(locale, "来源", "Source")}: {detail.source}</p>
                   <p>{localize(locale, "起源", "Origin")}: {detail.origin}</p>
@@ -637,6 +656,18 @@ export function SkillsPage() {
                   </div>
                 ) : null}
                 <div className="mt-4 flex flex-wrap gap-3">
+                  <Link
+                    className="inline-flex items-center rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
+                    to={buildSkillGeneratorHref({
+                      goal: locale === "zh"
+                        ? `基于现有技能"${detail.name}"重新生成一个改进版本。原始描述：${detail.description ?? ""}`
+                        : `Regenerate an improved version based on existing skill "${detail.name}". Original description: ${detail.description ?? ""}`,
+                      from: "skills",
+                    })}
+                  >
+                    <RefreshCcw className="mr-2 h-4 w-4" />
+                    {localize(locale, "重新生成", "Regenerate")}
+                  </Link>
                   {detail.installedVersion ? (
                     <ActionButton
                       onClick={() => void verifyMutation.mutateAsync(detail.skillId)}
@@ -679,6 +710,13 @@ export function SkillsPage() {
                     to={buildObservabilityHref({ focus: "assistant" })}
                   >
                     {localize(locale, "打开诊断", "Open diagnostics")}
+                  </Link>
+                  <Link
+                    className="inline-flex items-center gap-1.5 rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-surface-strong)]"
+                    to={`/chat?prefill=${encodeURIComponent(locale === "zh" ? `修改技能 "${detail.name}" 的` : `Modify skill "${detail.name}"`)}`}
+                  >
+                    <MessageSquare className="h-4 w-4" />
+                    {localize(locale, "和 Friday 对话修改", "Modify via Chat")}
                   </Link>
                 </div>
               </div>
@@ -872,6 +910,7 @@ export function SkillsPage() {
         onCancel={() => setDeleteConfirmSkillId(null)}
       />
       <SkillImportWizard open={showImportWizard} onClose={() => setShowImportWizard(false)} />
+      <SkillScannerPanel open={showScanner} onClose={() => setShowScanner(false)} />
     </div>
   );
 }

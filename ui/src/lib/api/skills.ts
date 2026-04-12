@@ -203,6 +203,17 @@ export const skillsApi = {
     return data.verdict;
   },
 
+  async updateSkillContent(skillId: string, input: {
+    description?: string;
+    name?: string;
+    tags?: string[];
+  }): Promise<void> {
+    await apiClient.patch<typeof input, unknown>(
+      `/v1/skills/${encodeURIComponent(skillId)}/content`,
+      input,
+    );
+  },
+
   async verifySkill(skillId: string): Promise<SkillVerificationEvidence> {
     const data = await apiClient.post<Record<string, never>, SkillVerifyResponse>(
       `/v1/skills/${encodeURIComponent(skillId)}/verify`,
