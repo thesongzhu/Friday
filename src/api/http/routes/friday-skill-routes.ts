@@ -5,13 +5,17 @@
  * orchestration on the same route family.
  */
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { FridaySkillLifecycleService, FridaySkillRegistry } from "#skills";
 import { FridayDomainError } from "#errors";
+import { resolveSafeInstallDir } from "#utilities";
 
 export interface FridaySkillRoutesDeps {
   skillRegistry?: FridaySkillRegistry;
   lifecycle?: FridaySkillLifecycleService;
+  managedSkillsDir?: string;
 }
 
 function toLegacyCompatibleListItem(item: {
@@ -265,6 +269,62 @@ export function createFridaySkillRoutes(
       },
     },
   );
+
+  if (deps.managedSkillsDir) {
+    routes.push({
+      operationId: "skills.content.update",
+      method: "PATCH",
+      path: "/v1/skills/:skillId/content",
+      auth: { public: false, anyOfScopes: ["skill.write", "hub.admin"] },
+      async handler(ctx) {
+        const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
+        const body = asRecord(ctx.body);
+        const description = asOptionalString(body.description, "description");
+        const name = asOptionalString(body.name, "name");
+        const tags = body.tags !== undefined ? asStringArray(body.tags, "tags") : undefined;
+
+        const skillDir = resolveSafeInstallDir(deps.managedSkillsDir!, skillId);
+        if (!existsSync(skillDir)) {
+          throw new FridayDomainError("SKILL_NOT_FOUND", `Skill directory "${skillId}" not found`, {
+            httpStatus: 404,
+          });
+        }
+
+        if (description) {
+          const mdPath = join(skillDir, "SKILL.md");
+          if (existsSync(mdPath)) {
+            let content = readFileSync(mdPath, "utf-8");
+            if (content.startsWith("---")) {
+              const endIdx = content.indexOf("---", 3);
+              if (endIdx !== -1) {
+                const frontmatter = content.slice(0, endIdx + 3);
+                const rest = content.slice(endIdx + 3);
+                const updated = frontmatter.replace(
+                  /^description:.*$/m,
+                  `description: ${description}`,
+                );
+                content = updated + rest;
+              }
+            }
+            writeFileSync(mdPath, content);
+          }
+        }
+
+        if (name || tags) {
+          const manifestPath = join(skillDir, "skill.manifest.json");
+          if (existsSync(manifestPath)) {
+            const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<string, unknown>;
+            if (name) manifest.name = name;
+            if (tags) manifest.tags = tags;
+            writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+          }
+        }
+
+        const skill = deps.lifecycle?.getSkill(skillId) ?? null;
+        return { updated: true, skillId, skill };
+      },
+    });
+  }
 
   return routes;
 }

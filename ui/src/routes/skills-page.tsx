@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BadgeCheck, Download, Package, RefreshCcw, Search, ShieldCheck, Trash2 } from "lucide-react";
+import { BadgeCheck, Download, MessageSquare, Package, Pencil, RefreshCcw, Search, ShieldCheck, Trash2, X as XIcon } from "lucide-react";
 import { DeepLinkPreviewDialog } from "@/components/deeplink/deeplink-preview-dialog";
 import { toast } from "sonner";
 import { ActionButton, ConfirmDialog, EmptyState, ShellCard, SkeletonCard, SkeletonList, StatusPill } from "@/components/core/primitives";
@@ -137,6 +137,7 @@ export function SkillsPage() {
   const [showImportWizard, setShowImportWizard] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [deleteConfirmSkillId, setDeleteConfirmSkillId] = useState<string | null>(null);
+  // Edit mode removed — skills use "Regenerate" flow instead of inline editing
   const requestedSkillId = searchParams.get("skillId");
   const requestedFocus = searchParams.get("focus");
   const focus: FridaySkillFocus =
@@ -596,102 +597,125 @@ export function SkillsPage() {
           ) : detail ? (
             <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
               <div className="agent-subcard p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="font-medium text-[color:var(--color-text-primary)]">{detail.name}</p>
-                    <p className="text-xs text-[color:var(--color-text-tertiary)]">{detail.skillId}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {detail.starter ? <StatusPill tone="success">{localize(locale, "入门包", "starter pack")}</StatusPill> : null}
-                    <StatusPill tone={toneForSkillLifecycle(detail)}>
-                      {detail.installedVersion ?? detail.latestVersion ?? localize(locale, "无版本", "unversioned")}
-                    </StatusPill>
-                    <StatusPill>{formatOriginType(detail.originType, locale)}</StatusPill>
-                    <StatusPill tone={toneForMaturity(detail.maturity)}>{formatMaturity(detail.maturity, locale)}</StatusPill>
-                    {isCliFirstSkill(detail) ? <StatusPill tone="success">{localize(locale, "CLI 优先", "CLI-first")}</StatusPill> : null}
-                  </div>
-                </div>
-                <p className="mt-3 text-[color:var(--color-text-secondary)]">
-                  {detail.description || localize(locale, "此技能暂无描述记录。", "No description recorded for this skill.")}
-                </p>
-                <div className="mt-4 grid gap-2 text-xs text-[color:var(--color-text-tertiary)]">
-                  <p>{localize(locale, "来源", "Source")}: {detail.source}</p>
-                  <p>{localize(locale, "起源", "Origin")}: {detail.origin}</p>
-                  <p>{localize(locale, "发布者", "Publisher")}: {detail.publisher ?? localize(locale, "未知", "Unknown")}</p>
-                  <p>{localize(locale, "来源信任", "Source trust")}: {detail.sourceDetails?.trustPolicy ?? localize(locale, "本地", "local")}</p>
-                  <p>{localize(locale, "信任层级", "Trust tier")}: {detail.catalogEntry?.trustTier ?? localize(locale, "本地", "local")}</p>
-                  <p>{localize(locale, "已安装版本", "Installed version")}: {detail.installedVersion ?? localize(locale, "未安装", "not installed")}</p>
-                  <p>{localize(locale, "最新版本", "Latest version")}: {detail.latestVersion ?? localize(locale, "未知", "unknown")}</p>
-                  <p>{localize(locale, "入门包", "Starter pack")}: {detail.starter ? localize(locale, "是", "yes") : localize(locale, "否", "no")}</p>
-                  <p>{localize(locale, "来源类型", "Origin type")}: {formatOriginType(detail.originType, locale)}</p>
-                  <p>{localize(locale, "成熟度", "Maturity")}: {formatMaturity(detail.maturity, locale)}</p>
-                  <p>{localize(locale, "实现状态", "Implementation status")}: {detail.catalogEntry?.implementationStatus ?? localize(locale, "已安装", "installed")}</p>
-                </div>
-                {detail.catalogEntry?.recommendedNextAction ? (
-                  <div className="mt-4 rounded-[20px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4 text-sm text-[color:var(--color-text-secondary)]">
-                    <p className="font-medium text-[color:var(--color-text-primary)]">{localize(locale, "最佳下一步操作", "Next best action")}</p>
-                    <p className="mt-2">{detail.catalogEntry.recommendedNextAction}</p>
-                    {detail.catalogEntry.blockedReasons && detail.catalogEntry.blockedReasons.length > 0 ? (
-                      <div className="mt-3 space-y-1 text-xs text-[color:var(--color-text-tertiary)]">
-                        {detail.catalogEntry.blockedReasons.map((reason) => (
-                          <p key={reason}>{localize(locale, "已阻止", "Blocked")}: {reason}</p>
+                <>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-[color:var(--color-text-primary)]">{detail.name}</p>
+                        <p className="text-xs text-[color:var(--color-text-tertiary)]">{detail.skillId}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {detail.starter ? <StatusPill tone="success">{localize(locale, "入门包", "starter pack")}</StatusPill> : null}
+                        <StatusPill tone={toneForSkillLifecycle(detail)}>
+                          {detail.installedVersion ?? detail.latestVersion ?? localize(locale, "无版本", "unversioned")}
+                        </StatusPill>
+                        <StatusPill>{formatOriginType(detail.originType, locale)}</StatusPill>
+                        <StatusPill tone={toneForMaturity(detail.maturity)}>{formatMaturity(detail.maturity, locale)}</StatusPill>
+                        {isCliFirstSkill(detail) ? <StatusPill tone="success">{localize(locale, "CLI 优先", "CLI-first")}</StatusPill> : null}
+                      </div>
+                    </div>
+                    <p className="mt-3 text-[color:var(--color-text-secondary)]">
+                      {detail.description || localize(locale, "此技能暂无描述记录。", "No description recorded for this skill.")}
+                    </p>
+                    {detail.tags.length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {detail.tags.map((tag) => (
+                          <span key={tag} className="rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-2.5 py-0.5 text-xs text-[color:var(--color-text-tertiary)]">{tag}</span>
                         ))}
                       </div>
                     ) : null}
-                    {detail.catalogEntry.firstUsePrompts && detail.catalogEntry.firstUsePrompts.length > 0 ? (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {detail.catalogEntry.firstUsePrompts.map((prompt) => (
-                          <StatusPill key={prompt}>{prompt}</StatusPill>
-                        ))}
+                    <div className="mt-4 grid gap-2 text-xs text-[color:var(--color-text-tertiary)]">
+                      <p>{localize(locale, "来源", "Source")}: {detail.source}</p>
+                      <p>{localize(locale, "起源", "Origin")}: {detail.origin}</p>
+                      <p>{localize(locale, "发布者", "Publisher")}: {detail.publisher ?? localize(locale, "未知", "Unknown")}</p>
+                      <p>{localize(locale, "来源信任", "Source trust")}: {detail.sourceDetails?.trustPolicy ?? localize(locale, "本地", "local")}</p>
+                      <p>{localize(locale, "信任层级", "Trust tier")}: {detail.catalogEntry?.trustTier ?? localize(locale, "本地", "local")}</p>
+                      <p>{localize(locale, "已安装版本", "Installed version")}: {detail.installedVersion ?? localize(locale, "未安装", "not installed")}</p>
+                      <p>{localize(locale, "最新版本", "Latest version")}: {detail.latestVersion ?? localize(locale, "未知", "unknown")}</p>
+                      <p>{localize(locale, "入门包", "Starter pack")}: {detail.starter ? localize(locale, "是", "yes") : localize(locale, "否", "no")}</p>
+                      <p>{localize(locale, "来源类型", "Origin type")}: {formatOriginType(detail.originType, locale)}</p>
+                      <p>{localize(locale, "成熟度", "Maturity")}: {formatMaturity(detail.maturity, locale)}</p>
+                      <p>{localize(locale, "实现状态", "Implementation status")}: {detail.catalogEntry?.implementationStatus ?? localize(locale, "已安装", "installed")}</p>
+                    </div>
+                    {detail.catalogEntry?.recommendedNextAction ? (
+                      <div className="mt-4 rounded-[20px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4 text-sm text-[color:var(--color-text-secondary)]">
+                        <p className="font-medium text-[color:var(--color-text-primary)]">{localize(locale, "最佳下一步操作", "Next best action")}</p>
+                        <p className="mt-2">{detail.catalogEntry.recommendedNextAction}</p>
+                        {detail.catalogEntry.blockedReasons && detail.catalogEntry.blockedReasons.length > 0 ? (
+                          <div className="mt-3 space-y-1 text-xs text-[color:var(--color-text-tertiary)]">
+                            {detail.catalogEntry.blockedReasons.map((reason) => (
+                              <p key={reason}>{localize(locale, "已阻止", "Blocked")}: {reason}</p>
+                            ))}
+                          </div>
+                        ) : null}
+                        {detail.catalogEntry.firstUsePrompts && detail.catalogEntry.firstUsePrompts.length > 0 ? (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {detail.catalogEntry.firstUsePrompts.map((prompt) => (
+                              <StatusPill key={prompt}>{prompt}</StatusPill>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
-                  </div>
-                ) : null}
-                <div className="mt-4 flex flex-wrap gap-3">
-                  {detail.installedVersion ? (
-                    <ActionButton
-                      onClick={() => void verifyMutation.mutateAsync(detail.skillId)}
-                      disabled={verifyMutation.isPending}
-                    >
-                      <BadgeCheck className="mr-2 h-4 w-4" />
-                      {localize(locale, "验证", "Verify")}
-                    </ActionButton>
-                  ) : (
-                    <ActionButton
-                      onClick={() => void installMutation.mutateAsync(detail.skillId)}
-                      disabled={installMutation.isPending}
-                    >
-                      <Download className="mr-2 h-4 w-4" />
-                      {localize(locale, "安装", "Install")}
-                    </ActionButton>
-                  )}
-                  {detail.updateAvailable ? (
-                    <ActionButton
-                      tone="secondary"
-                      onClick={() => void updateMutation.mutateAsync(detail.skillId)}
-                      disabled={updateMutation.isPending}
-                    >
-                      <RefreshCcw className="mr-2 h-4 w-4" />
-                      {localize(locale, "更新", "Update")}
-                    </ActionButton>
-                  ) : null}
-                  {!detail.starter && (detail.installedVersion || detail.registryLoaded) ? (
-                    <ActionButton
-                      tone="danger"
-                      onClick={() => setDeleteConfirmSkillId(detail.skillId)}
-                      disabled={deleteMutation.isPending}
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      {localize(locale, "移除", "Remove")}
-                    </ActionButton>
-                  ) : null}
-                  <Link
-                    className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
-                    to={buildObservabilityHref({ focus: "assistant" })}
-                  >
-                    {localize(locale, "打开诊断", "Open diagnostics")}
-                  </Link>
-                </div>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <Link
+                        className="inline-flex items-center rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
+                        to={`/skills/generator?goal=${encodeURIComponent(locale === "zh" ? `基于现有技能"${detail.name}"重新生成一个改进版本。原始描述：${detail.description ?? ""}` : `Regenerate an improved version based on existing skill "${detail.name}". Original description: ${detail.description ?? ""}`)}`}
+                      >
+                        <RefreshCcw className="mr-2 h-4 w-4" />
+                        {localize(locale, "重新生成", "Regenerate")}
+                      </Link>
+                      {detail.installedVersion ? (
+                        <ActionButton
+                          onClick={() => void verifyMutation.mutateAsync(detail.skillId)}
+                          disabled={verifyMutation.isPending}
+                        >
+                          <BadgeCheck className="mr-2 h-4 w-4" />
+                          {localize(locale, "验证", "Verify")}
+                        </ActionButton>
+                      ) : (
+                        <ActionButton
+                          onClick={() => void installMutation.mutateAsync(detail.skillId)}
+                          disabled={installMutation.isPending}
+                        >
+                          <Download className="mr-2 h-4 w-4" />
+                          {localize(locale, "安装", "Install")}
+                        </ActionButton>
+                      )}
+                      {detail.updateAvailable ? (
+                        <ActionButton
+                          tone="secondary"
+                          onClick={() => void updateMutation.mutateAsync(detail.skillId)}
+                          disabled={updateMutation.isPending}
+                        >
+                          <RefreshCcw className="mr-2 h-4 w-4" />
+                          {localize(locale, "更新", "Update")}
+                        </ActionButton>
+                      ) : null}
+                      {!detail.starter && (detail.installedVersion || detail.registryLoaded) ? (
+                        <ActionButton
+                          tone="danger"
+                          onClick={() => setDeleteConfirmSkillId(detail.skillId)}
+                          disabled={deleteMutation.isPending}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          {localize(locale, "移除", "Remove")}
+                        </ActionButton>
+                      ) : null}
+                      <Link
+                        className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
+                        to={buildObservabilityHref({ focus: "assistant" })}
+                      >
+                        {localize(locale, "打开诊断", "Open diagnostics")}
+                      </Link>
+                      <Link
+                        className="inline-flex items-center gap-1.5 rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-surface-strong)]"
+                        to={`/chat?prefill=${encodeURIComponent(locale === "zh" ? `修改技能 "${detail.name}" 的` : `Modify skill "${detail.name}"`)}`}
+                      >
+                        <MessageSquare className="h-4 w-4" />
+                        {localize(locale, "和 Friday 对话修改", "Modify via Chat")}
+                      </Link>
+                    </div>
+                  </>
               </div>
 
               <div className="agent-subcard p-4">

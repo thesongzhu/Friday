@@ -3915,6 +3915,7 @@ export async function createFridayHub(
     serverHost: config.host ?? "127.0.0.1",
     serverPort: config.port ?? 3141,
     stateDir: config.stateDir ?? ".",
+    managedSkillsDir: config.skillDirs[1] ?? "managed-skills",
     allowPrivateNetwork: config.ssrfPolicy?.allowPrivateNetwork,
     configManager,
     computeChecksum,
