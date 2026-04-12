@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, Clock3, ListFilter, Pin, Plus, Sparkles } from "lucide-react";
+import { ActivityTimeline } from "@/components/core/activity-timeline";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { LearningInsightCard } from "@/components/core/learning-insight-card";
 import { computeIntentWidgetOrder, recordPageVisit } from "@/lib/home/intent-engine";
@@ -463,6 +464,8 @@ export function HomePage() {
             );
           })}
         </div>
+
+        <ActivityTimeline locale={locale} runs={recentRuns} />
       </section>
 
       <section className="space-y-3">
