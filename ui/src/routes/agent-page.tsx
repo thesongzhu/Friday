@@ -197,6 +197,16 @@ const RISK_BADGE: Record<
   blocked:     { tone: "danger",  en: "BLOCKED",     zh: "禁止" },
 };
 
+const RISK_HELP_TEXT: Record<
+  NonNullable<PendingToolApprovalViewModel["riskLevel"]>,
+  { en: string; zh: string }
+> = {
+  safe:        { zh: "此操作是安全的，不会修改重要数据。",         en: "This operation is safe and won't modify important data." },
+  guarded:     { zh: "此操作受保护，Friday 会小心执行。",         en: "This operation is protected. Friday will proceed carefully." },
+  destructive: { zh: "此操作会修改或删除数据，请仔细确认。",      en: "This operation may modify or delete data. Please confirm carefully." },
+  blocked:     { zh: "此操作被安全策略禁止。",                    en: "This operation is blocked by safety policy." },
+};
+
 function ApprovalCard({
   approval,
   locale,
@@ -231,6 +241,11 @@ function ApprovalCard({
           </StatusPill>
         )}
       </p>
+      {approval.riskLevel && (
+        <p className="mb-2 text-[11px] text-[color:var(--color-text-faint)]">
+          {locale === "zh" ? RISK_HELP_TEXT[approval.riskLevel].zh : RISK_HELP_TEXT[approval.riskLevel].en}
+        </p>
+      )}
       <p className="mb-3 text-xs text-[color:var(--color-text-secondary)]">{approval.reason}</p>
 
       {paramKeys.length > 0 && (
