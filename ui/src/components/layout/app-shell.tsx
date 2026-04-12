@@ -164,8 +164,8 @@ export function AppShell() {
   }, [locale]);
 
   return (
-    <div className="h-screen bg-[color:var(--color-bg-base)] text-[color:var(--color-text-primary)] lg:overflow-hidden">
-      <div className="relative flex h-full w-full pb-24 lg:pb-0">
+    <div className="min-h-screen bg-[color:var(--color-bg-base)] text-[color:var(--color-text-primary)] lg:h-screen lg:overflow-hidden">
+      <div className="relative flex min-h-screen w-full pb-24 lg:h-full lg:min-h-0 lg:pb-0">
         <aside data-testid="app-shell-rail" role="navigation" aria-label="Main navigation" className="hidden lg:block lg:w-[248px] lg:shrink-0">
           <div className="flex h-full flex-col border-r border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-chrome)] px-4 py-5 shadow-[inset_-1px_0_0_rgba(51,41,34,0.04)] backdrop-blur-md">
             <div className="border-b border-[color:var(--color-border-soft)] pb-4">

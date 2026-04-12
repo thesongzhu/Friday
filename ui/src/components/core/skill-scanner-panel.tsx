@@ -403,7 +403,7 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="relative mx-4 flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] shadow-2xl">
+      <div className="relative mx-4 flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] shadow-2xl sm:max-h-[85vh]">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[color:var(--color-border-soft)] px-6 py-4">
           <h2 className="text-lg font-semibold text-[color:var(--color-text-primary)]">
