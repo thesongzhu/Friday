@@ -89,6 +89,9 @@ function createMockWebhookRelay(): LarkWebhookRelayService & {
     get _handler() {
       return handler;
     },
+    setAppSecret() {
+      // no-op in test mock
+    },
     async start(onEvent) {
       listening = true;
       handler = onEvent;

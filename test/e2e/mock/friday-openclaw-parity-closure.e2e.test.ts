@@ -831,10 +831,9 @@ describe("Friday OpenClaw Parity Closure E2E", () => {
 
   it("E route failure path: scheduler cron automation surfaces error state for failed runs", async () => {
     const mock = env.mockFor("anthropic");
-    // GAP 3 graceful degradation: single LLM failure per run produces a
-    // synthetic response and completes the run instead of failing. The
-    // scheduler sees "completed" runs. To still verify the failure-path
-    // plumbing we confirm runs are created and complete with degraded output.
+    // LLM failure per run produces a synthetic response but now correctly
+    // records the run as "failed". The scheduler sees "error" status.
+    // We verify runs are created and the failure surfaces properly.
     mock.setDefault({
       type: "network_error",
       message: "scheduled upstream failure",
@@ -860,9 +859,9 @@ describe("Friday OpenClaw Parity Closure E2E", () => {
     const automationId = createRes.json.data.automation.id;
     const jobId = `agent-automation:${automationId}`;
 
-    // With GAP 3, single-failure runs complete with degraded synthetic response
-    // instead of hard-failing. Wait for the scheduler to record at least one run.
-    const schedulerRow = await waitForSchedulerStatus(env.stateDir, jobId, "ok");
+    // Single-failure runs now correctly fail. Wait for the scheduler to record at
+    // least one run — which will surface as an error status since the run failed.
+    const schedulerRow = await waitForSchedulerStatus(env.stateDir, jobId, "error");
     expect(schedulerRow).toBeTruthy();
 
     const getRes = await apiFetch<{ automation: AutomationRecord }>(

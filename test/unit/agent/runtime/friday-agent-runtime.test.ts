@@ -2565,9 +2565,9 @@ describe("FridayAgentRuntime", () => {
 
     const result = await runtime.executeRun({ task: "Should degrade gracefully" });
 
-    // First LLM failure now degrades to a completed run with synthetic response
-    expect(result.status).toBe("completed");
-    expect(result.response).toContain("temporary connection issue");
+    // First LLM failure now degrades to a failed run with synthetic response
+    expect(result.status).toBe("failed");
+    expect(result.response).toContain("connection");
     expect(degradedEvents.length).toBeGreaterThanOrEqual(1);
     expect(modeChangedEvents.length).toBeGreaterThanOrEqual(1);
   });
@@ -4576,8 +4576,8 @@ describe("FridayAgentRuntime", () => {
 
     const repo = createFridayAgentRunRepository();
     const run = db.withReadConnection((reader) => repo.getById(reader, result.runId));
-    // First LLM error is now gracefully degraded — run completes with synthetic response
-    expect(result.status).toBe("completed");
+    // First LLM error is now gracefully degraded — run fails with synthetic response
+    expect(result.status).toBe("failed");
     expect(run?.actualExecution).toMatchObject({
       requestedModel: "gpt-5.4-mini",
       taskProfileId: "deterministic",

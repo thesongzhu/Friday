@@ -71,6 +71,7 @@ function estimateCost(tokens: number): string {
 }
 
 function formatNumber(n: number): string {
+  if (!Number.isFinite(n)) return "0";
   return n.toLocaleString();
 }
 
@@ -103,12 +104,12 @@ export function UsagePage() {
   const isError = healthError || providersError;
 
   // Aggregate stats from provider health data.
-  const totalRequests = healthItems.reduce((sum, p) => sum + p.successCount + p.errorCount, 0);
-  const totalErrors = healthItems.reduce((sum, p) => sum + p.errorCount, 0);
-  const totalSuccess = healthItems.reduce((sum, p) => sum + p.successCount, 0);
+  const totalRequests = healthItems.reduce((sum, p) => sum + (p.successCount ?? 0) + (p.errorCount ?? 0), 0);
+  const totalErrors = healthItems.reduce((sum, p) => sum + (p.errorCount ?? 0), 0);
+  const totalSuccess = healthItems.reduce((sum, p) => sum + (p.successCount ?? 0), 0);
   const errorRate = totalRequests > 0 ? ((totalErrors / totalRequests) * 100).toFixed(1) : "0.0";
 
-  // Rough token estimate: 800 tokens per successful request (placeholder).
+  // Illustrative token estimate derived from successful request counts.
   const estimatedTotalTokens = totalSuccess * 800;
   const estimatedInputTokens = Math.round(estimatedTotalTokens * 0.35);
   const estimatedOutputTokens = estimatedTotalTokens - estimatedInputTokens;
@@ -117,8 +118,8 @@ export function UsagePage() {
   const providerMap = new Map(providers.map((p) => [p.id, p]));
   const costRows = healthItems.map((h) => {
     const meta = providerMap.get(h.providerId);
-    const reqs = h.successCount + h.errorCount;
-    const tokens = h.successCount * 800;
+    const reqs = (h.successCount ?? 0) + (h.errorCount ?? 0);
+    const tokens = (h.successCount ?? 0) * 800;
     return {
       id: h.providerId,
       name: meta?.name ?? h.providerId,
