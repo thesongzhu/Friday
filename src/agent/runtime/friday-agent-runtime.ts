@@ -247,6 +247,7 @@ export function createFridayAgentRuntime(
 
   // ─── Per-run event sequence counter ───
   const runSeqCounters = new Map<string, number>();
+  const droppedEventCounters = new Map<string, number>();
 
   // ─── Per-run file checkpoints (GAP 8) ───
   const runCheckpoints = new Map<string, FridayRunCheckpoint>();
@@ -301,7 +302,7 @@ export function createFridayAgentRuntime(
     runId: string,
   ): void {
     if (runEventRepository) {
-      const seq = nextSeq(runId);
+      let seq = nextSeq(runId);
       const now = nowIso();
       try {
         db.withWriteTransaction((writer) =>
@@ -316,8 +317,35 @@ export function createFridayAgentRuntime(
           }),
         );
       } catch (err) {
-        // Non-fatal: event persistence failure should not kill the run
-        console.warn("[friday][agent-runtime] event-persist:", err instanceof Error ? err.message : String(err));
+        // On UNIQUE constraint violation (seq collision), refresh from DB and retry once
+        if (err instanceof Error && err.message.includes("UNIQUE constraint")) {
+          try {
+            const existingEvents = db.withReadConnection((reader) =>
+              runEventRepository!.list(reader, runId),
+            );
+            const recoveredSeq = (existingEvents.at(-1)?.seq ?? 0) + 1;
+            runSeqCounters.set(runId, recoveredSeq);
+            seq = recoveredSeq;
+            db.withWriteTransaction((writer) =>
+              runEventRepository!.append(writer, {
+                eventId: idGenerator(),
+                runId,
+                seq,
+                eventName,
+                payload,
+                emittedAt: now,
+                createdAt: now,
+              }),
+            );
+          } catch (retryErr) {
+            droppedEventCounters.set(runId, (droppedEventCounters.get(runId) ?? 0) + 1);
+            console.warn("[friday][agent-runtime] event-persist-retry:", retryErr instanceof Error ? retryErr.message : String(retryErr));
+          }
+        } else {
+          // Non-fatal: event persistence failure should not kill the run
+          droppedEventCounters.set(runId, (droppedEventCounters.get(runId) ?? 0) + 1);
+          console.warn("[friday][agent-runtime] event-persist:", err instanceof Error ? err.message : String(err));
+        }
       }
     }
     eventEmitter.emit(eventName as keyof typeof eventEmitter extends never ? never : Parameters<typeof eventEmitter.emit>[0], payload as never);
@@ -1395,6 +1423,7 @@ export function createFridayAgentRuntime(
         let artifactTruthRetries = 0;
         let starterSkillRoutingRetries = 0;
         let llmConsecutiveFailures = 0;
+        let llmDegraded = false;
         const fileVersionTracker = createFridayFileVersionTracker();
         const runCheckpoint = deps.workdir
           ? createFridayRunCheckpoint({ runId, stateDir: deps.workdir, db, nowIso })
@@ -1546,11 +1575,15 @@ export function createFridayAgentRuntime(
                   message: `LLM provider temporarily unavailable: ${llmErrorMsg}`,
                 });
 
-                // Synthesize a minimal response so the run completes instead of crashing
+                // Synthesize a minimal response so the user sees a message, but mark the run as degraded
+                // so it will be recorded as failed (not completed)
+                llmDegraded = true;
+                const degradedText = hasCjkText(params.task)
+                  ? "AI 服务暂时无法连接。请稍后重试，或告诉我你希望如何继续。"
+                  : "I'm experiencing a temporary connection issue with my AI service. " +
+                    "Please try again in a moment, or let me know how you'd like to proceed.";
                 streamResult = {
-                  assistantText: "I'm experiencing a temporary connection issue with my AI service. " +
-                    "Based on the context available, I can still assist — please let me know how you'd like to proceed, " +
-                    "or try again in a moment.",
+                  assistantText: degradedText,
                   toolUseBlocks: [],
                   inputTokens: 0,
                   outputTokens: 0,
@@ -2428,11 +2461,12 @@ export function createFridayAgentRuntime(
         // ─── Derive summary from response (IMPL-6) ───
         const summaryText = deriveSummary(responseText);
 
-        // 8. Finalize — success
+        // 8. Finalize — success or degraded-as-failed
+        const finalStatus = llmDegraded ? "failed" as const : "completed" as const;
         const durationMs = Date.now() - startedAt;
         const completedAt = nowIso();
         const persistedArtifacts = persistRunArtifacts({
-          status: "completed",
+          status: finalStatus,
           response: responseText,
           durationMs,
           completedAt,
@@ -2443,9 +2477,15 @@ export function createFridayAgentRuntime(
         db.withWriteTransaction((writer) =>
           repo.update(writer, {
             id: runId,
-            status: "completed",
+            status: finalStatus,
             completedAt,
             durationMs,
+            ...(llmDegraded
+              ? {
+                  errorCode: FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
+                  errorMessage: "LLM provider temporarily unavailable — run degraded with synthetic response",
+                }
+              : {}),
             usageInput: totalInputTokens,
             usageOutput: totalOutputTokens,
             costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
@@ -2460,19 +2500,32 @@ export function createFridayAgentRuntime(
           }),
         );
 
-        handleTrackedEvent("agent.run.completed", {
-          runId,
-          durationMs,
-          toolCallCount: allToolCalls.length,
-          testsPassed,
-          artifacts: persistedArtifacts.artifacts.map((a) => ({ type: a.type, path: a.path })),
-        });
+        if (llmDegraded) {
+          handleTrackedEvent("agent.run.failed", {
+            runId,
+            error: {
+              code: FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
+              message: "LLM provider temporarily unavailable — run degraded with synthetic response",
+            },
+            durationMs,
+            routeId: "agent.execute.run.llm_degraded",
+            correlationId: runCorrelationId,
+          });
+        } else {
+          handleTrackedEvent("agent.run.completed", {
+            runId,
+            durationMs,
+            toolCallCount: allToolCalls.length,
+            testsPassed,
+            artifacts: persistedArtifacts.artifacts.map((a) => ({ type: a.type, path: a.path })),
+          });
+        }
 
         await mirrorAssistantResponse(responseText, allToolCalls);
 
         return await finalizeResult({
           runId,
-          status: "completed",
+          status: finalStatus,
           response: responseText,
           toolCallCount: allToolCalls.length,
           durationMs,
@@ -2573,7 +2626,12 @@ export function createFridayAgentRuntime(
         if (progressTimer) clearInterval(progressTimer);
         eventEmitter.off("agent.subagent.spawned", onSubagentSpawned);
         eventEmitter.off("agent.subagent.completed", onSubagentCompleted);
+        const droppedEvents = droppedEventCounters.get(runId) ?? 0;
+        if (droppedEvents > 0) {
+          console.warn(`[friday][agent-runtime] run ${runId} dropped ${droppedEvents} event(s) due to persistence failures`);
+        }
         runSeqCounters.delete(runId);
+        droppedEventCounters.delete(runId);
       }
     },
   };

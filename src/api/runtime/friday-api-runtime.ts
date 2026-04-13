@@ -719,19 +719,19 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       return { workflow, latestVersion, publishedVersion };
     },
     updateWorkflow: (workflowId, input) => {
-      const workflow = workflowRuntime.crud.updateWorkflow({
+      const updateInput = {
         workflowId,
         expectedRevision: input.expectedRevision,
         etag: input.etag,
         name: input.name,
         description: input.description,
         tags: input.tags,
-      });
-      let version;
+      };
       if (input.graph) {
-        version = workflowRuntime.crud.createVersion(workflowId, input.graph);
+        return workflowRuntime.crud.updateWorkflowWithGraph(updateInput, input.graph);
       }
-      return { workflow, version };
+      const workflow = workflowRuntime.crud.updateWorkflow(updateInput);
+      return { workflow };
     },
     archiveWorkflow: (workflowId) => {
       workflowRuntime.crud.archiveWorkflow(workflowId, "api");

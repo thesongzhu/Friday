@@ -77,7 +77,10 @@ export function ChatPage() {
       setSessionUsage(null);
       return;
     }
-    sessionsApi.getUsage(sessionKey).then(setSessionUsage).catch(() => { setSessionUsage(null); });
+    sessionsApi.getUsage(sessionKey).then(setSessionUsage).catch((err) => {
+      console.warn("[friday][chat] Failed to fetch session usage:", err);
+      setSessionUsage(null);
+    });
   }, [messages.length, sessionKey]);
 
   useEffect(() => {

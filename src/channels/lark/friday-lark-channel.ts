@@ -370,6 +370,9 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
           if (!webhookRelay) {
             throw new FridayDomainError("VALIDATION_ERROR", "Lark webhook mode requires webhookRelay dependency", { httpStatus: 400 });
           }
+          if (config!.appSecret) {
+            webhookRelay.setAppSecret(config!.appSecret);
+          }
           await webhookRelay.start((event) => {
             const msg = parseMessageEvent(event);
             if (msg && onMessage) {
