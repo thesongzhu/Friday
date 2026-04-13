@@ -1130,7 +1130,7 @@ export function ObservabilityPage() {
                 <SloCard
                   key={slo.id}
                   slo={slo}
-                  onDelete={(id, etag) => deleteSloMutation.mutate({ sloId: id, etag })}
+                  onDelete={(id, etag) => { if (window.confirm("确认删除此 SLO？")) deleteSloMutation.mutate({ sloId: id, etag }); }}
                   deletePending={deleteSloMutation.isPending}
                 />
               ))}
@@ -1178,7 +1178,7 @@ export function ObservabilityPage() {
                         type="button"
                         className="rounded-lg p-1.5 text-[color:var(--color-text-faint)] transition hover:bg-[color:var(--color-bg-surface)] hover:text-[color:var(--color-text-primary)]"
                         disabled={deleteDestinationMutation.isPending}
-                        onClick={() => deleteDestinationMutation.mutate(destination.id)}
+                        onClick={() => { if (window.confirm("确认删除此告警目标？")) deleteDestinationMutation.mutate(destination.id); }}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>

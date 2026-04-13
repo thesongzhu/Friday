@@ -23,6 +23,16 @@ export interface FridayWorkflowCrudService {
   getWorkflowBySlug(slug: string): FridayWorkflowEntity | null;
   listWorkflows(input?: FridayWorkflowListInput): FridayWorkflowEntity[];
   updateWorkflow(input: FridayWorkflowUpdateInput): FridayWorkflowEntity;
+  /**
+   * Update workflow metadata and create a new graph version in a single transaction.
+   * Prevents partial updates where metadata changes but version creation fails.
+   */
+  updateWorkflowWithGraph(
+    input: FridayWorkflowUpdateInput,
+    graph: FridayCompiledWorkflowGraphV2 | Record<string, unknown>,
+    createdByUserId?: UUID,
+    changeNote?: string,
+  ): { workflow: FridayWorkflowEntity; version: FridayWorkflowVersionEntity };
   archiveWorkflow(id: UUID, deletedBy: string): void;
   /**
    * Create a workflow and its initial version in a single transaction.
@@ -113,6 +123,45 @@ export function createFridayWorkflowCrudService(
 
       return deps.db.withWriteTransaction((db) => {
         return deps.workflowRepo.updateWorkflow(db, input, newEtag, nowIso);
+      });
+    },
+
+    updateWorkflowWithGraph(input, graph, createdByUserId, changeNote) {
+      if (graph == null || typeof graph !== "object" || Array.isArray(graph)) {
+        throw new FridayDomainError("INVALID_GRAPH", "Graph must be a non-null object", { httpStatus: 400 });
+      }
+      const structuralErrors = validateGraphStructure(graph as Record<string, unknown>);
+      if (structuralErrors.length > 0) {
+        throw new FridayDomainError("INVALID_GRAPH", structuralErrors[0]!, { httpStatus: 400 });
+      }
+
+      const isCompiled =
+        graph != null &&
+        typeof graph === "object" &&
+        "schemaVersion" in graph &&
+        graph.schemaVersion === "2.0";
+      if (isCompiled) {
+        const validation = validator.validate(graph as FridayCompiledWorkflowGraphV2);
+        if (!validation.valid) {
+          const firstError = validation.errors[0]!;
+          throw new FridayDomainError(firstError.code, firstError.message, { httpStatus: 400 });
+        }
+      }
+
+      const graphJson = JSON.stringify(graph);
+      const checksum = deps.computeChecksum(graphJson);
+      const newEtag = deps.computeEtag();
+
+      return deps.db.withWriteTransaction((db) => {
+        const nowIso = deps.nowIso();
+        const workflow = deps.workflowRepo.updateWorkflow(db, input, newEtag, nowIso);
+        const versionNumber = deps.workflowRepo.incrementVersionNumber(db, input.workflowId, nowIso);
+        const versionId = deps.idGenerator();
+        const version = deps.workflowRepo.insertVersion(
+          db, versionId, input.workflowId, versionNumber, checksum, graphJson,
+          createdByUserId, changeNote, nowIso,
+        );
+        return { workflow, version };
       });
     },
 

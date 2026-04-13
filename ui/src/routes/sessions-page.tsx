@@ -28,6 +28,7 @@ function useSessionMessages(sessionKey: string | null) {
     queryFn: async (): Promise<SessionMessage[]> => {
       if (!sessionKey) return [];
       const records = await sessionsApi.listMessages(sessionKey);
+      // FridaySessionMessageRecord and SessionMessage share the same shape — cast is safe
       return records as unknown as SessionMessage[];
     },
     enabled: sessionKey !== null,

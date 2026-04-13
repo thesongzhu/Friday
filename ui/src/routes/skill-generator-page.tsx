@@ -74,7 +74,7 @@ export function SkillGeneratorPage() {
   }, [requestedGoal, requestedSessionId, searchParams, setSearchParams]);
 
   useEffect(() => {
-    const goalFromQuery = searchParams.get("goal");
+    const goalFromQuery = searchParams.get("goal")?.trim()?.slice(0, 500) ?? null;
     if (goalFromQuery && goalInput.trim().length === 0) {
       setGoalInput(goalFromQuery);
     }

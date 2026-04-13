@@ -173,8 +173,27 @@ export function createFridayChannelWebhookRoutes(
             503,
           );
         }
-        const result = relay.handleHttpWebhook(ctx.rawBody ?? "");
+        const result = relay.handleHttpWebhook(
+          ctx.rawBody ?? "",
+          ctx.headers["x-lark-signature"],
+          ctx.headers["x-lark-request-timestamp"],
+          ctx.headers["x-lark-request-nonce"],
+        );
         if (!result.accepted) {
+          if (result.statusCode === 401) {
+            throwChannelWebhookError(
+              result.code ?? "LARK_SIGNATURE_MISSING",
+              "Lark webhook signature headers are missing",
+              401,
+            );
+          }
+          if (result.statusCode === 403) {
+            throwChannelWebhookError(
+              result.code ?? "LARK_SIGNATURE_INVALID",
+              "Lark webhook signature is invalid",
+              403,
+            );
+          }
           if (result.statusCode === 400) {
             throwChannelWebhookError(
               result.code ?? "LARK_PAYLOAD_INVALID",

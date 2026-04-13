@@ -290,6 +290,9 @@ export function GuidedFlowPage() {
     onSuccess: () => {
       setPhase("executing");
     },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : localize(locale, "批准计划失败", "Failed to approve plan"));
+    },
   });
 
   const rejectPlan = useMutation({
@@ -301,6 +304,9 @@ export function GuidedFlowPage() {
       setPhase("choosing");
       setExecutionRunId(null);
       setSelectedChoice(null);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : localize(locale, "拒绝计划失败", "Failed to reject plan"));
     },
   });
 
