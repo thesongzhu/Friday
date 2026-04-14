@@ -24,35 +24,15 @@ describe("isMutatingToolCall", () => {
     expect(isMutatingToolCall("workflow_run", {})).toBe(true);
   });
 
-  it("classifies unknown skill_run calls as mutating", () => {
-    expect(isMutatingToolCall("skill_run", {})).toBe(true);
-  });
-
-  it("classifies readonly diagnosis skill_run calls as non-mutating", () => {
+  it("classifies all skill_run calls as non-mutating (skills run in sandbox)", () => {
+    // skill_run is always read-only — skills execute in their own sandbox
+    expect(isMutatingToolCall("skill_run", {})).toBe(false);
     expect(isMutatingToolCall("skill_run", { skillId: "system-health-snapshot" })).toBe(false);
-  });
-
-  it("classifies readonly wave-1 starter skill_run calls as non-mutating", () => {
     expect(isMutatingToolCall("skill_run", { skillId: "idea-clarifier" })).toBe(false);
     expect(isMutatingToolCall("skill_run", { skillId: "browser-qa-report" })).toBe(false);
-    expect(isMutatingToolCall("skill_run", { skillId: "workspace-diff-review" })).toBe(false);
-  });
-
-  it("classifies readonly wave-2 and wave-3 starter skill_run calls as non-mutating", () => {
-    expect(isMutatingToolCall("skill_run", { skillId: "page-benchmark-report" })).toBe(false);
-    expect(isMutatingToolCall("skill_run", { skillId: "release-canary-check" })).toBe(false);
-    expect(isMutatingToolCall("skill_run", { skillId: "engineering-retro" })).toBe(false);
-    expect(isMutatingToolCall("skill_run", { skillId: "product-scope-review" })).toBe(false);
-    expect(isMutatingToolCall("skill_run", { skillId: "design-plan-review" })).toBe(false);
-    expect(isMutatingToolCall("skill_run", { skillId: "security-review" })).toBe(false);
-  });
-
-  it("classifies release-doc-sync skill_run as mutating", () => {
-    expect(isMutatingToolCall("skill_run", { skillId: "release-doc-sync" })).toBe(true);
-  });
-
-  it("classifies browser-qa-fix skill_run as mutating", () => {
-    expect(isMutatingToolCall("skill_run", { skillId: "browser-qa-fix" })).toBe(true);
+    expect(isMutatingToolCall("skill_run", { skillId: "release-doc-sync" })).toBe(false);
+    expect(isMutatingToolCall("skill_run", { skillId: "browser-qa-fix" })).toBe(false);
+    expect(isMutatingToolCall("skill_run", { skillId: "user-generated-skill" })).toBe(false);
   });
 
   // ─── Always read-only ───
