@@ -17,10 +17,6 @@
   <img src="https://github.com/thesongzhu/Friday/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
-<p align="center">
-  <img src="docs/images/screenshot-assistant.png" width="720" alt="Friday 助手界面">
-</p>
-
 ---
 
 ## Friday 是什么？
@@ -109,17 +105,6 @@ docker-compose up -d
 ```
 
 > **第一次用？** Friday 会引导你完成初始设置 — 连接 API Key、选个性格，就可以开始了。
-
----
-
-## 界面预览
-
-<table>
-<tr>
-<td align="center"><img src="docs/images/screenshot-assistant.png" width="400"><br><b>助手收件箱</b><br><sub>问题、任务、审批，一个界面搞定</sub></td>
-<td align="center"><img src="docs/images/screenshot-settings.png" width="400"><br><b>设置 & 性格</b><br><sub>模型路由、AI 性格、系统诊断</sub></td>
-</tr>
-</table>
 
 ---
 

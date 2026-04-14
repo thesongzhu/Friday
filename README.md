@@ -17,10 +17,6 @@
   <img src="https://github.com/thesongzhu/Friday/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
-<p align="center">
-  <img src="docs/images/screenshot-assistant.png" width="720" alt="Friday Assistant">
-</p>
-
 ---
 
 ## What is Friday?
@@ -109,17 +105,6 @@ docker-compose up -d
 ```
 
 > **First time?** Friday will guide you through setup — connect your API key, pick a persona, and you're ready to go.
-
----
-
-## Screenshots
-
-<table>
-<tr>
-<td align="center"><img src="docs/images/screenshot-assistant.png" width="400"><br><b>Assistant Inbox</b><br><sub>Issues, tasks, and approvals in one place</sub></td>
-<td align="center"><img src="docs/images/screenshot-settings.png" width="400"><br><b>Settings & Persona</b><br><sub>Model routing, persona, and diagnostics</sub></td>
-</tr>
-</table>
 
 ---
 
