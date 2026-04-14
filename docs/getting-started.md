@@ -477,7 +477,7 @@ open http://localhost:3141
 ## Next Steps
 
 - **Environment variables** — See [.env.example](../.env.example) for all `FRIDAY_*` configuration.
-- **Docker** — See [docker-compose.yml](../docker-compose.yml) for containerized deployment.
+- **Docker** — See [docker-compose.yml](../docker/docker-compose.yml) for containerized deployment.
 - **Style guide** — See [friday-style-guide.md](friday-style-guide.md) for contribution conventions.
 - **Recent changes** — See [CHANGELOG.md](CHANGELOG.md) for latest updates.
 - **Production** — See [README.md](../README.md#production-notes) for hardening tips.

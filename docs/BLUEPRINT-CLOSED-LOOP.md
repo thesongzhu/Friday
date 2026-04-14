@@ -57,7 +57,7 @@ Use:
 - `docs/RELEASING.md`
 - `docs/RELEASE_NOTES_TEMPLATE.md`
 - `CHANGELOG.md`
-- `SECURITY.md`
+- `.github/SECURITY.md`
 
 Exit criteria:
 

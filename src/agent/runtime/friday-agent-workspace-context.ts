@@ -87,15 +87,15 @@ function isMissingFsError(err: unknown): boolean {
 
 /** Identity files are always injected when present. */
 const IDENTITY_WORKSPACE_FILES = [
-  "AGENTS.md",
-  "SOUL.md",
+  "context/AGENTS.md",
+  "context/SOUL.md",
  ] as const;
 
 /** Candidate files are injected only when relevant to the current turn. */
 const CANDIDATE_WORKSPACE_FILES = [
-  "USER.md",
-  "MEMORY.md",
-  "memory.md",
+  "context/USER.md",
+  "context/MEMORY.md",
+  "context/memory.md",
 ] as const;
 
 /** Maximum size per file to prevent context window exhaustion (32 KB). */
@@ -661,16 +661,17 @@ function buildWorkspacePromptFragment(
     const trimmed = file.content.trim();
     if (trimmed.length === 0) continue;
 
-    // Respect total size limit
+    // Respect total size limit — strip "context/" prefix for workspace files
+    const displayName = file.name.startsWith("context/") ? path.basename(file.name) : file.name;
     if (totalSize + trimmed.length > MAX_TOTAL_CONTEXT_CHARS) {
       const remaining = MAX_TOTAL_CONTEXT_CHARS - totalSize;
       if (remaining > 200) {
-        sections.push(`## ${file.name}\n${trimmed.slice(0, remaining)}\n...(truncated)`);
+        sections.push(`## ${displayName}\n${trimmed.slice(0, remaining)}\n...(truncated)`);
       }
       break;
     }
 
-    sections.push(`## ${file.name}\n${trimmed}`);
+    sections.push(`## ${displayName}\n${trimmed}`);
     totalSize += trimmed.length;
   }
 
