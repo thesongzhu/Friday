@@ -81,6 +81,8 @@ describe("FridayAgentLlmClient", () => {
       stopReason: "end_turn",
       inputTokens: 10,
       outputTokens: 5,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
     });
   });
 
@@ -133,6 +135,8 @@ describe("FridayAgentLlmClient", () => {
       stopReason: "tool_use",
       inputTokens: 15,
       outputTokens: 8,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
     });
   });
 
@@ -205,7 +209,7 @@ describe("FridayAgentLlmClient", () => {
 
     const body = JSON.parse(options.body as string) as Record<string, unknown>;
     expect(body.model).toBe("claude-3");
-    expect(body.system).toBe("System prompt here");
+    expect(body.system).toEqual([{ type: "text", text: "System prompt here" }]);
     expect(body.stream).toBe(true);
 
     const tools = body.tools as Array<{ name: string; input_schema: unknown }>;
@@ -327,6 +331,8 @@ describe("FridayAgentLlmClient", () => {
       stopReason: "end_turn",
       inputTokens: 1,
       outputTokens: 1,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
     });
   });
 

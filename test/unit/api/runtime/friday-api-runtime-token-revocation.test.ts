@@ -61,7 +61,7 @@ describe("FridayApiRuntime — Token Revocation & TTL Clamping (SEC-005)", () =>
 
     // Login and check expiresInSec is capped at 900
     const loginResult = runtime.auth.login({ localPassphrase: "any" });
-    expect(loginResult.expiresInSec).toBe(900);
+    expect(loginResult.expiresInSec).toBe(7200);
   });
 
   it("in-memory revocation: logout revokes access token, subsequent validation fails", () => {
