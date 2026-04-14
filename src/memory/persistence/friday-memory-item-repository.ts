@@ -8,7 +8,7 @@ import type {
 } from "../model/friday-memory.types.js";
 import { FridayDomainError } from "#errors";
 import { safeJsonParse } from "#utilities";
-import { FRIDAY_MEMORY_ERROR_CODES, FRIDAY_MEMORY_DEFAULT_LIMIT } from "../friday-memory.constants.js";
+import { FRIDAY_MEMORY_DEFAULT_LIMIT, FRIDAY_MEMORY_ERROR_CODES } from "../friday-memory.constants.js";
 
 // ─── Row shape ───
 
