@@ -3078,7 +3078,25 @@ export async function createFridayHub(
         sessionService: hubSessionService,
         agentRuntimeGetter: childRuntimeGetter,
         analyzeImages,
-        gatewayService,
+        gatewayService: gatewayService
+          ? createFridayGatewayService({
+              statusFn: (sig) => gatewayService!.status(sig),
+              restartFn: async () => ({
+                success: false,
+                message: "Sub-agents cannot restart the gateway. Escalate to the parent agent.",
+              }),
+              configGetFn: (key, sig) => gatewayService!.configGet(key, sig),
+              configSetFn: async (_key, _value) => ({
+                success: false,
+                key: _key,
+                value: _value,
+              }),
+              updateFn: async () => ({
+                success: false,
+                message: "Sub-agents cannot trigger gateway updates.",
+              }),
+            })
+          : undefined,
         channelRegistry,
         schedulerRepository: schedulerRepo,
         schedulerService: jobScheduler,

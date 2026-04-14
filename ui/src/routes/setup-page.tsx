@@ -655,7 +655,19 @@ export function SetupPage() {
             "Friday can read local state, request control leases, and execute actions behind your approval. Confirm this is your local device.",
           )}
         </p>
-        <label className="mt-10 inline-flex cursor-pointer items-center gap-3 text-base text-[color:var(--color-text-primary)]">
+        <div className="mt-6 max-w-lg rounded-lg border border-[color:var(--color-border-default)] bg-[color:var(--color-bg-surface)] p-4 text-sm leading-relaxed text-[color:var(--color-text-tertiary)]">
+          <p className="font-medium text-[color:var(--color-text-secondary)]">
+            {localize(locale, "免责声明", "Disclaimer")}
+          </p>
+          <p className="mt-2">
+            {localize(
+              locale,
+              "Friday 是一个开源项目，按\u201C现状\u201D提供，不附带任何明示或暗示的担保。作者和贡献者不对因使用本软件而产生的任何直接或间接损失承担责任。本软件不包含也永远不会包含任何收费功能、内购或付费订阅。",
+              "Friday is an open-source project provided \"as is\" without warranty of any kind, express or implied. The authors and contributors shall not be held liable for any direct or indirect damages arising from the use of this software. This software does not and will never include any paid features, in-app purchases, or subscriptions.",
+            )}
+          </p>
+        </div>
+        <label className="mt-6 inline-flex cursor-pointer items-center gap-3 text-base text-[color:var(--color-text-primary)]">
           <input
             type="checkbox"
             checked={acknowledgedSecurity}
@@ -664,8 +676,8 @@ export function SetupPage() {
           />
           {localize(
             locale,
-            "我了解这是一个受监控的本地操作终端。",
-            "I understand this is a supervised local operator shell.",
+            "我已阅读上述免责声明，并了解这是一个受监控的本地操作终端。",
+            "I have read the disclaimer above and understand this is a supervised local operator shell.",
           )}
         </label>
         <ContinueButton onClick={goNext} disabled={!acknowledgedSecurity} />
