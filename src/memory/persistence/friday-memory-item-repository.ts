@@ -8,7 +8,7 @@ import type {
 } from "../model/friday-memory.types.js";
 import { FridayDomainError } from "#errors";
 import { safeJsonParse } from "#utilities";
-import { FRIDAY_MEMORY_ERROR_CODES } from "../friday-memory.constants.js";
+import { FRIDAY_MEMORY_DEFAULT_LIMIT, FRIDAY_MEMORY_ERROR_CODES } from "../friday-memory.constants.js";
 
 // ─── Row shape ───
 
@@ -197,7 +197,7 @@ export function createFridayMemoryItemRepository(): FridayMemoryItemRepository {
       }
 
       const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-      const limit = input?.limit ?? 100;
+      const limit = input?.limit ?? FRIDAY_MEMORY_DEFAULT_LIMIT;
       params.push(limit);
 
       const rows = db

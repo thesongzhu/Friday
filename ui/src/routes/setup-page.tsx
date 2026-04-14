@@ -32,6 +32,9 @@ import {
   getMbtiDefaults,
   getMbtiDescription,
 } from "@/lib/persona/communication-persona";
+import { CHANNEL_META, CHANNEL_KINDS_ORDERED } from "@/lib/channels/channel-meta";
+import type { ChannelKind } from "@/lib/setup/types";
+import { useSaveChannelsMutation } from "@/hooks/use-setup";
 
 // ─── Provider recommendation helper (unchanged) ───
 
@@ -138,7 +141,7 @@ export function SetupPage() {
   const { locale, setLocale } = useAppLocale();
 
   // ── Step state machine ──
-  type SetupStep = 0 | 1 | 2 | 3 | 4 | 5;
+  type SetupStep = 0 | 1 | 2 | 3 | 4 | 5 | 6;
   const [currentStep, setCurrentStep] = useState<SetupStep>(0);
 
   // ── Existing state (kept intact) ──
@@ -154,6 +157,12 @@ export function SetupPage() {
   const [providerValidated, setProviderValidated] = useState(false);
   const [communicationMbti, setCommunicationMbti] = useState<FridayCommunicationMbti | "">("");
   const [communicationSaved, setCommunicationSaved] = useState(false);
+
+  // ── Channel state ──
+  const [enabledChannels, setEnabledChannels] = useState<Set<ChannelKind>>(new Set());
+  const [channelConfigs, setChannelConfigs] = useState<Record<string, Record<string, string>>>({});
+  const [channelsSaved, setChannelsSaved] = useState(false);
+  const [expandedChannel, setExpandedChannel] = useState<ChannelKind | null>(null);
 
   // ── Discovery state (new) ──
   const [discoveryScanned, setDiscoveryScanned] = useState(false);
@@ -356,6 +365,29 @@ export function SetupPage() {
     },
   });
 
+  const saveChannelsMutation = useSaveChannelsMutation();
+
+  function handleSaveChannels() {
+    const channelsPayload = Array.from(enabledChannels).map((kind) => ({
+      kind,
+      enabled: true,
+      config: channelConfigs[kind] ?? {},
+    }));
+    saveChannelsMutation.mutate(
+      { channels: channelsPayload },
+      {
+        onSuccess: () => {
+          setChannelsSaved(true);
+          toast.success(localize(locale, "渠道已保存", "Channels saved"));
+          goNext();
+        },
+        onError: (error) => {
+          toast.error(error instanceof Error ? error.message : localize(locale, "保存渠道失败", "Failed to save channels"));
+        },
+      },
+    );
+  }
+
   const completeSetupMutation = useMutation({
     mutationFn: () => {
       const starterTaskId = FRIDAY_ASSISTANT_STARTER_TASKS[0]?.id ?? "";
@@ -364,13 +396,14 @@ export function SetupPage() {
         "security",
         ...(communicationSaved ? (["communication"] as const) : []),
         ...(providerValidated ? (["provider"] as const) : []),
+        ...(channelsSaved ? (["channels"] as const) : []),
         "done",
       ];
       const skippedSteps: SetupStepId[] = [
         ...(communicationSaved ? [] : (["communication"] as const)),
         ...(providerValidated ? [] : (["provider"] as const)),
+        ...(channelsSaved ? [] : (["channels"] as const)),
         "network",
-        "channels",
         "skills",
       ];
       return setupApi.completeSetup({ completedSteps, skippedSteps });
@@ -485,7 +518,7 @@ export function SetupPage() {
   // ── Navigation helpers ──
 
   function goNext() {
-    if (currentStep < 5) setCurrentStep((currentStep + 1) as SetupStep);
+    if (currentStep < 6) setCurrentStep((currentStep + 1) as SetupStep);
   }
   function goBack() {
     if (currentStep > 0) setCurrentStep((currentStep - 1) as SetupStep);
@@ -521,7 +554,7 @@ export function SetupPage() {
   function Eyebrow({ step }: { step: number }) {
     return (
       <p className="agent-eyebrow mb-4">
-        {localize(locale, `步骤 ${step} / 5`, `Step ${step} of 5`)}
+        {localize(locale, `步骤 ${step} / 6`, `Step ${step} of 6`)}
       </p>
     );
   }
@@ -562,7 +595,7 @@ export function SetupPage() {
   function BottomDots() {
     return (
       <div className="fixed bottom-8 left-0 right-0">
-        <StepDots current={currentStep} total={6} />
+        <StepDots current={currentStep} total={7} />
       </div>
     );
   }
@@ -1011,15 +1044,161 @@ export function SetupPage() {
     );
   }
 
-  // ─── STEP 4 — Communication Style ───
+  // ─── STEP 4 — Connect Channels ───
+
+  function toggleChannel(kind: ChannelKind) {
+    setEnabledChannels((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) {
+        next.delete(kind);
+        if (expandedChannel === kind) setExpandedChannel(null);
+      } else {
+        next.add(kind);
+        setExpandedChannel(kind);
+      }
+      return next;
+    });
+  }
+
+  function updateChannelConfig(kind: ChannelKind, key: string, value: string) {
+    setChannelConfigs((prev) => ({
+      ...prev,
+      [kind]: { ...prev[kind], [key]: value },
+    }));
+  }
 
   function renderStep4() {
+    return (
+      <StepContainer>
+        <BackLink />
+        <Eyebrow step={4} />
+        <h1 className="text-4xl font-semibold tracking-tight text-[color:var(--color-text-primary)] sm:text-5xl">
+          {localize(locale, "连接你的渠道", "Connect Your Channels")}
+        </h1>
+        <p className="mt-4 max-w-lg text-lg text-[color:var(--color-text-secondary)]">
+          {localize(
+            locale,
+            "Friday 可以在这些平台上自动回复消息。选择要连接的渠道，稍后也可以在设置中更改。",
+            "Friday can auto-reply on these platforms. Choose channels to connect — you can change this later in Settings.",
+          )}
+        </p>
+
+        <div className="mt-8 w-full max-w-2xl space-y-2 text-left">
+          {CHANNEL_KINDS_ORDERED.map((kind) => {
+            const meta = CHANNEL_META[kind];
+            const enabled = enabledChannels.has(kind);
+            const expanded = expandedChannel === kind && enabled;
+            const config = channelConfigs[kind] ?? {};
+
+            return (
+              <div
+                key={kind}
+                className={`rounded-2xl border-2 transition ${
+                  enabled
+                    ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]"
+                    : "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)]"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleChannel(kind)}
+                  className="flex w-full items-center gap-3 px-4 py-3"
+                >
+                  <span className="text-xl">{meta.emoji}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+                      {localize(locale, meta.nameZh, meta.name)}
+                    </p>
+                    <p className="text-xs text-[color:var(--color-text-tertiary)]">
+                      {localize(locale, meta.descriptionZh, meta.description)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {meta.capabilities.directMessages && (
+                      <StatusPill tone="neutral">DM</StatusPill>
+                    )}
+                    {meta.capabilities.groupMessages && (
+                      <StatusPill tone="neutral">{localize(locale, "群组", "Group")}</StatusPill>
+                    )}
+                    <div className={`h-5 w-9 rounded-full transition ${enabled ? "bg-[color:var(--color-accent)]" : "bg-[color:var(--color-border-strong)]"} flex items-center ${enabled ? "justify-end" : "justify-start"} px-0.5`}>
+                      <div className="h-4 w-4 rounded-full bg-white shadow" />
+                    </div>
+                  </div>
+                </button>
+
+                {expanded && meta.fields.length > 0 && (
+                  <div className="border-t border-[color:var(--color-border-soft)] px-4 pb-4 pt-3">
+                    <div className="space-y-3">
+                      {meta.fields.map((field) => (
+                        <div key={field.key}>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--color-text-tertiary)]">
+                            {localize(locale, field.labelZh, field.label)}
+                            {field.required && <span className="ml-1 text-[color:var(--color-danger)]">*</span>}
+                          </label>
+                          <input
+                            type={field.secret ? "password" : "text"}
+                            placeholder={localize(locale, field.placeholderZh, field.placeholder)}
+                            value={config[field.key] ?? ""}
+                            onChange={(e) => updateChannelConfig(kind, field.key, e.target.value)}
+                            className="agent-input px-3 py-2 text-sm"
+                            autoComplete="off"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {expanded && meta.fields.length === 0 && (
+                  <div className="border-t border-[color:var(--color-border-soft)] px-4 pb-3 pt-2">
+                    <p className="text-xs text-[color:var(--color-text-tertiary)]">
+                      {localize(locale, "此渠道无需额外配置。", "No additional configuration needed.")}
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {enabledChannels.size > 0 && (
+          <div className="mt-4 text-sm text-[color:var(--color-text-secondary)]">
+            {localize(
+              locale,
+              `已选择 ${enabledChannels.size} 个渠道`,
+              `${enabledChannels.size} channel${enabledChannels.size > 1 ? "s" : ""} selected`,
+            )}
+          </div>
+        )}
+
+        <ContinueButton
+          onClick={() => {
+            if (enabledChannels.size > 0) {
+              handleSaveChannels();
+            } else {
+              goNext();
+            }
+          }}
+          label={enabledChannels.size > 0
+            ? localize(locale, "保存并继续", "Save & Continue")
+            : localize(locale, "继续", "Continue")}
+          disabled={saveChannelsMutation.isPending}
+        />
+        <SkipLink onClick={goNext} />
+        <BottomDots />
+      </StepContainer>
+    );
+  }
+
+  // ─── STEP 5 — Communication Style ───
+
+  function renderStep5() {
     const preview = buildPersonaPreview(getMbtiDefaults(communicationMbti || null), locale, communicationMbti || null);
 
     return (
       <StepContainer>
         <BackLink />
-        <Eyebrow step={4} />
+        <Eyebrow step={5} />
         <h1 className="text-4xl font-semibold tracking-tight text-[color:var(--color-text-primary)] sm:text-5xl">
           {localize(locale, "选择沟通风格", "Choose Communication Style")}
         </h1>
@@ -1086,9 +1265,9 @@ export function SetupPage() {
     );
   }
 
-  // ─── STEP 5 — Completion ───
+  // ─── STEP 6 — Completion ───
 
-  function renderStep5() {
+  function renderStep6() {
     // Build summary lines
     const summaryItems: string[] = [];
     if (providerValidated) {
@@ -1098,6 +1277,11 @@ export function SetupPage() {
     if (discoveryScanned) {
       summaryItems.push(
         localize(locale, `${discoveryProgramCount} 个程序`, `${discoveryProgramCount} programs`),
+      );
+    }
+    if (channelsSaved && enabledChannels.size > 0) {
+      summaryItems.push(
+        localize(locale, `${enabledChannels.size} 个渠道`, `${enabledChannels.size} channels`),
       );
     }
     if (communicationSaved && communicationMbti) {
@@ -1154,6 +1338,7 @@ export function SetupPage() {
         {currentStep === 3 && renderStep3()}
         {currentStep === 4 && renderStep4()}
         {currentStep === 5 && renderStep5()}
+        {currentStep === 6 && renderStep6()}
       </div>
     </div>
   );

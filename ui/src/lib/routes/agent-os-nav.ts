@@ -32,6 +32,12 @@ export const AGENT_OS_NAV_PRIMARY: AgentOsNavItem[] = [
 
 // Ordered by cognitive flow: create → manage → monitor → configure
 export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
+  // ── Channels ──
+  {
+    label: localizedText("渠道", "Channels"),
+    path: "/channels",
+    description: localizedText("监控和管理 Friday 在 Discord、Telegram、Slack 等平台上的对话。", "Monitor and manage Friday's conversations across Discord, Telegram, Slack, and more."),
+  },
   // ── Create & Build ──
   {
     label: localizedText("能力包", "Skills"),
@@ -112,6 +118,9 @@ export function resolvePageTitle(pathname: string): LocalizedText {
   }
   if (pathname.startsWith("/observability")) {
     return localizedText("可观测性", "Observability");
+  }
+  if (pathname.startsWith("/channels")) {
+    return localizedText("渠道", "Channels");
   }
   if (pathname.startsWith("/settings")) {
     return localizedText("设置", "Settings");

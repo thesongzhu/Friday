@@ -370,7 +370,14 @@ export function createFridayAgentRoutes(
           limit = Math.min(parsed, AGENT_MAX_LIST_LIMIT);
         }
 
-        const status = query.status as FridayAgentRunStatus | undefined;
+        const VALID_RUN_STATUSES: Set<string> = new Set([
+          "pending", "planning", "awaiting_clarification", "awaiting_plan_approval",
+          "executing", "testing", "fixing", "completed", "failed", "failed_tests", "cancelled",
+        ]);
+        const rawStatus = query.status as string | undefined;
+        const status = rawStatus && VALID_RUN_STATUSES.has(rawStatus)
+          ? rawStatus as FridayAgentRunStatus
+          : undefined;
 
         const items = deps.listRuns({ status, limit, cursor: query.cursor });
         const response: FridayListAgentRunsResponse = { items };

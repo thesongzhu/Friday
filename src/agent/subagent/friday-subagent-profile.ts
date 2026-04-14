@@ -1,6 +1,6 @@
 import type { FridayAgentTaskProfileId } from "../runtime/friday-agent-task-profile.js";
 
-export type FridaySubagentProfileId = "explore" | "plan" | "debug" | "review";
+export type FridaySubagentProfileId = "explore" | "plan" | "debug" | "review" | "execute";
 
 export interface FridaySubagentProfileInput {
   id?: FridaySubagentProfileId;
@@ -72,6 +72,18 @@ const FRIDAY_SUBAGENT_PROFILE_DEFAULTS: Record<
       "Keep summaries short after enumerating findings.",
     ],
   },
+  execute: {
+    id: "execute",
+    label: "Execute",
+    description: "Full-access execution with tool mutations allowed.",
+    taskProfile: "default",
+    readOnly: false,
+    maxTurns: 6,
+    instructions: [
+      "Execute the delegated task using all available tools including write operations.",
+      "Store results, feedback, and memory as instructed. Do not skip mutations.",
+    ],
+  },
 };
 
 export function resolveFridaySubagentProfile(
@@ -91,6 +103,10 @@ export function resolveFridaySubagentProfile(
 
 export function inferFridaySubagentProfile(task: string, label?: string): FridaySubagentProfileId {
   const text = `${label ?? ""}\n${task}`.toLowerCase();
+  // Execute profile: tasks that require write access (memory, files, feedback, etc.)
+  if (DIRECT_WRITE_HINTS.test(text)) {
+    return "execute";
+  }
   if (/\b(review|audit|risk|regression|test gap|diff)\b/.test(text)) {
     return "review";
   }
@@ -104,11 +120,11 @@ export function inferFridaySubagentProfile(task: string, label?: string): Friday
 }
 
 const DIRECT_WRITE_HINTS =
-  /\b(write|edit|modify|update|patch|rewrite|rename|delete|remove)\b/i;
+  /\b(write|edit|modify|update|patch|rewrite|rename|delete|remove|store|save|create|generate|import|record|feedback|remember|learn|preference)\b/i;
 const IMPLEMENTATION_HINTS =
-  /\b(fix|implement|refactor)\b/i;
+  /\b(fix|implement|refactor|store|save|create|record|feedback|learn)\b/i;
 const IMPLEMENTATION_DOMAINS =
-  /\b(file|files|code|repo|repository|workflow|skill|test|tests|docs|document|folder|directory|workspace|project)\b/i;
+  /\b(file|files|code|repo|repository|workflow|skill|test|tests|docs|document|folder|directory|workspace|project|memory|automation)\b/i;
 const BROWSER_MUTATION_HINTS =
   /\b(open|navigate|click|type|fill|select|press|drag|upload|take|capture|attach)\b/i;
 const BROWSER_MUTATION_DOMAINS =

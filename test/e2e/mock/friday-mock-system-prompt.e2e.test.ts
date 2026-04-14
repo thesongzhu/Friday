@@ -36,8 +36,14 @@ function extractSystemPrompt(mockCalls: Array<{ bodyJson?: unknown }>): string {
   const firstCall = mockCalls[0];
   if (!firstCall?.bodyJson) return "";
   const body = firstCall.bodyJson as Record<string, unknown>;
-  // Anthropic API: system prompt in the `system` field
+  // Anthropic API: system prompt in the `system` field (string or array of content blocks)
   if (typeof body.system === "string") return body.system;
+  if (Array.isArray(body.system)) {
+    return (body.system as Array<{ type: string; text: string }>)
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n");
+  }
   // OpenAI API: system prompt as first message with role "system"
   if (Array.isArray(body.messages)) {
     const sysMsg = (body.messages as Array<{ role: string; content: string }>).find(
@@ -168,8 +174,8 @@ describe("Friday Mock System Prompt E2E", () => {
 
     // Error handling guidance
     expect(prompt).toContain("retry");
-    expect(prompt).toContain("diagnose");
-    expect(prompt).toMatch(/2-3 different approaches/);
+    expect(prompt).toContain("Diagnose");
+    expect(prompt).toMatch(/MUST NOT immediately report the failure/);
   });
 
   it("system prompt tool list includes memory tools when available", async () => {
