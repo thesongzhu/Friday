@@ -1214,30 +1214,42 @@ export function createFridayWorkflowExecutionService(
 
       // Start execution (non-blocking)
       scheduleRunExecution(plan).catch(async (error) => {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error(
-          `[friday][E-WF-RUN-ASYNC-001] Unhandled workflow execution error for run ${runId}: ${errorMessage}`,
-        );
-        // Ensure run is marked failed on unhandled errors
-        deps.db.withWriteTransaction((db) => {
-          deps.runRepo.finalizeRun(db, runId, "failed", deps.nowIso(), {
-            code: "WORKFLOW_EXECUTION_ERROR",
-            message: `Unhandled execution error: ${errorMessage}`,
+        try {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          void deps.publishEvent?.("workflow.run.error", {
+            runId,
+            code: "E-WF-RUN-ASYNC-001",
+            message: `Unhandled workflow execution error for run ${runId}: ${errorMessage}`,
           });
-        });
-        const counts = deps.db.withReadConnection((db) =>
-          deps.nodeRepo.countByStatus(db, runId),
-        );
-        await notifyRunCompleted({
-          runId,
-          workflowId: input.workflowId,
-          workflowVersionId: versionId,
-          status: "failed",
-          plan,
-          failedNodes: counts.failed,
-          completedNodes: counts.completed,
-          cancelledNodes: counts.cancelled,
-        });
+          // Ensure run is marked failed on unhandled errors
+          deps.db.withWriteTransaction((db) => {
+            deps.runRepo.finalizeRun(db, runId, "failed", deps.nowIso(), {
+              code: "WORKFLOW_EXECUTION_ERROR",
+              message: `Unhandled execution error: ${errorMessage}`,
+            });
+          });
+          const counts = deps.db.withReadConnection((db) =>
+            deps.nodeRepo.countByStatus(db, runId),
+          );
+          await notifyRunCompleted({
+            runId,
+            workflowId: input.workflowId,
+            workflowVersionId: versionId,
+            status: "failed",
+            plan,
+            failedNodes: counts.failed,
+            completedNodes: counts.completed,
+            cancelledNodes: counts.cancelled,
+          });
+        } catch (innerError) {
+          // Last-resort: prevent unhandled rejection from crashing the process
+          const msg = innerError instanceof Error ? innerError.message : String(innerError);
+          void deps.publishEvent?.("workflow.run.error", {
+            runId,
+            code: "E-WF-RUN-ASYNC-001-INNER",
+            message: `Failed to finalize run ${runId} after execution error: ${msg}`,
+          });
+        }
       });
 
       // Return the queued run entity
@@ -1365,30 +1377,41 @@ export function createFridayWorkflowExecutionService(
       });
 
       scheduleRunExecution(plan).catch(async (error) => {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error(
-          `[friday][E-WF-RUN-ASYNC-002] Resume execution failed for run ${runId}: ${errorMessage}`,
-        );
-        // P1-RT-001: Mark run as failed on unhandled resume errors
-        deps.db.withWriteTransaction((db) => {
-          deps.runRepo.finalizeRun(db, runId, "failed", deps.nowIso(), {
-            code: "WORKFLOW_EXECUTION_ERROR",
-            message: `Resume execution error: ${errorMessage}`,
+        try {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          void deps.publishEvent?.("workflow.run.error", {
+            runId,
+            code: "E-WF-RUN-ASYNC-002",
+            message: `Resume execution failed for run ${runId}: ${errorMessage}`,
           });
-        });
-        const counts = deps.db.withReadConnection((db) =>
-          deps.nodeRepo.countByStatus(db, runId),
-        );
-        await notifyRunCompleted({
-          runId,
-          workflowId: runEntity.workflowId,
-          workflowVersionId: runEntity.workflowVersionId,
-          status: "failed",
-          plan,
-          failedNodes: counts.failed,
-          completedNodes: counts.completed,
-          cancelledNodes: counts.cancelled,
-        });
+          // P1-RT-001: Mark run as failed on unhandled resume errors
+          deps.db.withWriteTransaction((db) => {
+            deps.runRepo.finalizeRun(db, runId, "failed", deps.nowIso(), {
+              code: "WORKFLOW_EXECUTION_ERROR",
+              message: `Resume execution error: ${errorMessage}`,
+            });
+          });
+          const counts = deps.db.withReadConnection((db) =>
+            deps.nodeRepo.countByStatus(db, runId),
+          );
+          await notifyRunCompleted({
+            runId,
+            workflowId: runEntity.workflowId,
+            workflowVersionId: runEntity.workflowVersionId,
+            status: "failed",
+            plan,
+            failedNodes: counts.failed,
+            completedNodes: counts.completed,
+            cancelledNodes: counts.cancelled,
+          });
+        } catch (innerError) {
+          const msg = innerError instanceof Error ? innerError.message : String(innerError);
+          void deps.publishEvent?.("workflow.run.error", {
+            runId,
+            code: "E-WF-RUN-ASYNC-002-INNER",
+            message: `Failed to finalize resumed run ${runId}: ${msg}`,
+          });
+        }
       });
 
       return deps.db.withReadConnection((db) =>
@@ -1542,30 +1565,41 @@ export function createFridayWorkflowExecutionService(
       });
 
       scheduleRunExecution(plan).catch(async (error) => {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error(
-          `[friday][E-WF-RUN-ASYNC-003] Retry execution failed for run ${runId}: ${errorMessage}`,
-        );
-        // P1-RT-002: Mark run as failed on unhandled retry errors
-        deps.db.withWriteTransaction((db) => {
-          deps.runRepo.finalizeRun(db, runId, "failed", deps.nowIso(), {
-            code: "WORKFLOW_EXECUTION_ERROR",
-            message: `Retry execution error: ${errorMessage}`,
+        try {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          void deps.publishEvent?.("workflow.run.error", {
+            runId,
+            code: "E-WF-RUN-ASYNC-003",
+            message: `Retry execution failed for run ${runId}: ${errorMessage}`,
           });
-        });
-        const counts = deps.db.withReadConnection((db) =>
-          deps.nodeRepo.countByStatus(db, runId),
-        );
-        await notifyRunCompleted({
-          runId,
-          workflowId: runEntity.workflowId,
-          workflowVersionId: runEntity.workflowVersionId,
-          status: "failed",
-          plan,
-          failedNodes: counts.failed,
-          completedNodes: counts.completed,
-          cancelledNodes: counts.cancelled,
-        });
+          // P1-RT-002: Mark run as failed on unhandled retry errors
+          deps.db.withWriteTransaction((db) => {
+            deps.runRepo.finalizeRun(db, runId, "failed", deps.nowIso(), {
+              code: "WORKFLOW_EXECUTION_ERROR",
+              message: `Retry execution error: ${errorMessage}`,
+            });
+          });
+          const counts = deps.db.withReadConnection((db) =>
+            deps.nodeRepo.countByStatus(db, runId),
+          );
+          await notifyRunCompleted({
+            runId,
+            workflowId: runEntity.workflowId,
+            workflowVersionId: runEntity.workflowVersionId,
+            status: "failed",
+            plan,
+            failedNodes: counts.failed,
+            completedNodes: counts.completed,
+            cancelledNodes: counts.cancelled,
+          });
+        } catch (innerError) {
+          const msg = innerError instanceof Error ? innerError.message : String(innerError);
+          void deps.publishEvent?.("workflow.run.error", {
+            runId,
+            code: "E-WF-RUN-ASYNC-003-INNER",
+            message: `Failed to finalize retried run ${runId}: ${msg}`,
+          });
+        }
       });
 
       return deps.db.withReadConnection((db) =>
@@ -1624,30 +1658,41 @@ export function createFridayWorkflowExecutionService(
         activePlans.set(run.id, plan);
 
         scheduleRunExecution(plan).catch(async (error) => {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          console.error(
-            `[friday][E-WF-RUN-ASYNC-004] Recovery execution failed for run ${run.id}: ${errorMessage}`,
-          );
-          // P1-RT-003: Mark run as failed on unhandled recovery errors
-          deps.db.withWriteTransaction((db) => {
-            deps.runRepo.finalizeRun(db, run.id, "failed", deps.nowIso(), {
-              code: "WORKFLOW_EXECUTION_ERROR",
-              message: `Recovery execution error: ${errorMessage}`,
+          try {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            void deps.publishEvent?.("workflow.run.error", {
+              runId: run.id,
+              code: "E-WF-RUN-ASYNC-004",
+              message: `Recovery execution failed for run ${run.id}: ${errorMessage}`,
             });
-          });
-          const counts = deps.db.withReadConnection((db) =>
-            deps.nodeRepo.countByStatus(db, run.id),
-          );
-          await notifyRunCompleted({
-            runId: run.id,
-            workflowId: run.workflowId,
-            workflowVersionId: run.workflowVersionId,
-            status: "failed",
-            plan,
-            failedNodes: counts.failed,
-            completedNodes: counts.completed,
-            cancelledNodes: counts.cancelled,
-          });
+            // P1-RT-003: Mark run as failed on unhandled recovery errors
+            deps.db.withWriteTransaction((db) => {
+              deps.runRepo.finalizeRun(db, run.id, "failed", deps.nowIso(), {
+                code: "WORKFLOW_EXECUTION_ERROR",
+                message: `Recovery execution error: ${errorMessage}`,
+              });
+            });
+            const counts = deps.db.withReadConnection((db) =>
+              deps.nodeRepo.countByStatus(db, run.id),
+            );
+            await notifyRunCompleted({
+              runId: run.id,
+              workflowId: run.workflowId,
+              workflowVersionId: run.workflowVersionId,
+              status: "failed",
+              plan,
+              failedNodes: counts.failed,
+              completedNodes: counts.completed,
+              cancelledNodes: counts.cancelled,
+            });
+          } catch (innerError) {
+            const msg = innerError instanceof Error ? innerError.message : String(innerError);
+            void deps.publishEvent?.("workflow.run.error", {
+              runId: run.id,
+              code: "E-WF-RUN-ASYNC-004-INNER",
+              message: `Failed to finalize recovered run ${run.id}: ${msg}`,
+            });
+          }
         });
         recovered++;
       }

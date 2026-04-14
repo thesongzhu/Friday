@@ -51,10 +51,12 @@ export interface FridayChannelEntryAdapterDeps {
   idGenerator: () => string;
   /** Resolve a session key from channel + chat identifiers. */
   resolveSessionKey: (message: FridayChannelInboundMessage) => string;
+  /** Optional: resolve a persona/system-prompt override for this channel kind. */
+  resolveChannelPersona?: (channelKind: string) => { persona?: string; systemPrompt?: string } | undefined;
 }
 
 export function createFridayChannelEntryAdapter(deps: FridayChannelEntryAdapterDeps) {
-  const { engine, idGenerator, resolveSessionKey } = deps;
+  const { engine, idGenerator, resolveSessionKey, resolveChannelPersona } = deps;
 
   async function handleMessage(msg: FridayChannelInboundMessage): Promise<FridayEngineRunResult> {
     const task = msg.text.trim();
@@ -72,6 +74,10 @@ export function createFridayChannelEntryAdapter(deps: FridayChannelEntryAdapterD
       };
     }
 
+    // Resolve optional per-channel persona
+    const personaConfig = resolveChannelPersona?.(msg.channelKind);
+    const channelPersona = personaConfig?.systemPrompt || personaConfig?.persona || undefined;
+
     const input: FridayEngineRunInput = {
       task,
       runId: idGenerator(),
@@ -84,6 +90,7 @@ export function createFridayChannelEntryAdapter(deps: FridayChannelEntryAdapterD
       executionContext: {
         surface: "channel",
         interactive: true,
+        channelPersona,
       },
       tenantContext: {
         hubId: "default",

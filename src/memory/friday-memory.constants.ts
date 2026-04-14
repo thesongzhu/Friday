@@ -2,7 +2,7 @@ export const FRIDAY_MEMORY_FTS_TABLE = "memory_items_fts";
 export const FRIDAY_MEMORY_EMBEDDINGS_TABLE = "memory_embeddings";
 
 export const FRIDAY_MEMORY_DEFAULT_LIMIT = 20;
-export const FRIDAY_MEMORY_MAX_LIMIT = 100;
+export const FRIDAY_MEMORY_MAX_LIMIT = 500;
 export const FRIDAY_MEMORY_DEFAULT_CANDIDATE_LIMIT = 250;
 
 export const FRIDAY_MEMORY_DEFAULT_FTS_WEIGHT = 0.45;
