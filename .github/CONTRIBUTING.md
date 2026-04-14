@@ -87,4 +87,4 @@ Every PR should include:
 ## Security
 - Never commit secrets.
 - Keep `.env.example` sanitized.
-- Report vulnerabilities via GitHub Security Advisories as described in `SECURITY.md`.
+- Report vulnerabilities via GitHub Security Advisories as described in `.github/SECURITY.md`.
