@@ -116,8 +116,12 @@ export function createFridaySessionService(
     };
   }
 
-  /** Walk parent chain to find rootSessionKey. */
-  function resolveRootSessionKey(parentKey: string): string {
+  /** Walk parent chain to find rootSessionKey. Depth-limited to prevent infinite recursion. */
+  function resolveRootSessionKey(parentKey: string, depth = 0): string {
+    if (depth > 10) {
+      // Safety valve: prevent infinite recursion on corrupted parent chains
+      return parentKey;
+    }
     const parentSession = deps.db.withReadConnection((db) => sessionRepo.getByKey(db, parentKey));
     if (parentSession?.rootSessionKey) {
       return parentSession.rootSessionKey;
@@ -125,7 +129,7 @@ export function createFridaySessionService(
     // If parent doesn't exist yet or has no root, walk up via key parsing
     const parentParts = parseFridaySessionKey(parentKey);
     if (parentParts.kind === "subagent" && parentParts.parentKey) {
-      return resolveRootSessionKey(parentParts.parentKey);
+      return resolveRootSessionKey(parentParts.parentKey, depth + 1);
     }
     // The parent is a conversation key — it is the root
     return parentKey;

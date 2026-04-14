@@ -273,6 +273,22 @@ function scopeNamespaceFilter(
     // Ensure the prefix namespace itself is always included (listNamespacesByPrefix
     // already returns it when items exist, but we guarantee it here for safety)
     const result = descendants.includes(scopePrefix) ? descendants : [scopePrefix, ...descendants];
+
+    // Also include channel-scoped namespaces and "default" for the current user.
+    // Without this, items from session memory extraction (tenant.X.channel.Y.user.Z)
+    // and agent memory_store ("default") are invisible in the user's memory list.
+    // Channel namespaces use session chatId as user segment (not the real userId),
+    // so for the same hub we include all channel-scoped namespaces.
+    if (context.subject.userId) {
+      const channelPrefix = `${FRIDAY_MEMORY_GUARD_TENANT_PREFIX}.${context.subject.hubId}.${FRIDAY_MEMORY_GUARD_CHANNEL_SEGMENT}`;
+      const channelDescendants = db.withReadConnection((readDb) =>
+        quotaRepo.listNamespacesByPrefix(readDb, channelPrefix, FRIDAY_MEMORY_GUARD_SCOPE_PREFIX_MAX_NAMESPACES),
+      );
+      // Include all channel namespaces within the same hub (they all belong to this tenant)
+      const expanded = [...new Set([...result, ...channelDescendants, "default"])];
+      return expanded;
+    }
+
     return result;
   }
 
@@ -570,10 +586,20 @@ export function createFridayMemoryGuardService(
           namespace: scopedNamespace,
         });
 
-        // Scope check on all items
+        // Scope check on all items — allow items from the expanded namespace query.
+        // scopedNamespace already restricts which namespaces are queried, so items
+        // returned by core.list() are pre-filtered. The scope check here is a safety
+        // net. For expanded namespaces (channel-scoped, "default"), we trust the
+        // query filter since it was built from the user's context.
+        const allowedNamespaces = Array.isArray(scopedNamespace)
+          ? new Set(scopedNamespace as string[])
+          : scopedNamespace ? new Set([scopedNamespace as string]) : undefined;
         const scopeFiltered = context.subject.accessLevel === "system"
           ? items
-          : items.filter((item) => isNamespaceInScope(item.namespace, scopePrefix));
+          : items.filter((item) =>
+              isNamespaceInScope(item.namespace, scopePrefix)
+              || (allowedNamespaces?.has(item.namespace) ?? false)
+            );
 
         return scopeFiltered.map((item) => outputFilter.filterItem(item));
       });

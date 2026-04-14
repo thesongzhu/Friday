@@ -75,7 +75,7 @@ import {
   resolveFridayPipelineRuntimeConfig,
 } from "#workflows";
 import { createFridayWorkflowTriggerRepository } from "#workflows";
-import { createFridayApiRuntime, createFridayDeterministicPipelineRuntime } from "#api";
+import { createFridayApiRuntime, createFridayDeterministicPipelineRuntime, getChannelPersona } from "#api";
 import type { FridaySystemRoutesDeps } from "#api";
 import {
   createFridayRulesRepository,
@@ -373,7 +373,7 @@ const FRIDAY_AGENT_ROUTE_DEFAULT_MODEL = "default";
 const FRIDAY_HUB_SKILL_COMPAT_VERSION = "1.0.0";
 
 const FRIDAY_CHANNEL_MAX_MESSAGE_LENGTH = 4000;
-const FRIDAY_CHANNEL_CONTEXT_HISTORY_LIMIT = 24;
+const FRIDAY_CHANNEL_CONTEXT_HISTORY_LIMIT = Number(process.env.FRIDAY_SESSION_HISTORY_LIMIT) || 24;
 
 function createDiscoveryScannerForPlatform(platform: NodeJS.Platform) {
   switch (platform) {
@@ -473,14 +473,21 @@ async function autoDetectProvidersFromEnv(
     }
   }
 
-  // Set default routing if none configured and we registered at least one provider
-  if (detected.length > 0) {
-    const routing = await providerService.getRoutingConfig();
-    if (!routing.defaultProviderId) {
+  // Set default routing if none configured — use newly detected or existing providers
+  const routing = await providerService.getRoutingConfig();
+  if (!routing.defaultProviderId) {
+    // Collect candidates: newly detected first, then existing enabled providers
+    const candidates = detected.length > 0
+      ? detected
+      : existing
+          .filter((p) => p.enabled)
+          .map((p) => ({ kind: p.kind as FridayProviderKind, id: p.id }));
+
+    if (candidates.length > 0) {
       // Pick best provider by priority
-      let chosen = detected[0]!;
+      let chosen = candidates[0]!;
       for (const priorityKind of ROUTING_PRIORITY) {
-        const match = detected.find((d) => d.kind === priorityKind);
+        const match = candidates.find((d) => d.kind === priorityKind);
         if (match) {
           chosen = match;
           break;
@@ -492,8 +499,9 @@ async function autoDetectProvidersFromEnv(
         await providerService.setRoutingConfig({
           defaultProviderId: chosen.id,
           defaultModel,
-          fallbackProviderIds: detected
+          fallbackProviderIds: candidates
             .filter((d) => d.id !== chosen.id)
+            .slice(0, 3)
             .map((d) => d.id),
         });
       } catch (err) {
@@ -1093,14 +1101,16 @@ export async function createFridayHub(
       // Re-yield the collected events, enriching message_end with route metadata + cost
       for (const event of events) {
         if (event.type === "message_end" && route) {
+          const cacheRead = event.cacheReadInputTokens ?? 0;
+          const cacheWrite = event.cacheCreationInputTokens ?? 0;
           const costUsd = costCalculator.calculate({
             providerKind: route.provider.kind,
             model: route.model,
             usage: {
               input: event.inputTokens,
               output: event.outputTokens,
-              cacheRead: 0,
-              cacheWrite: 0,
+              cacheRead,
+              cacheWrite,
               total: event.inputTokens + event.outputTokens,
             },
           });
@@ -2944,8 +2954,8 @@ export async function createFridayHub(
         usage: {
           input: usage.inputTokens,
           output: usage.outputTokens,
-          cacheRead: 0,
-          cacheWrite: 0,
+          cacheRead: usage.cacheReadInputTokens ?? 0,
+          cacheWrite: usage.cacheCreationInputTokens ?? 0,
           total: usage.inputTokens + usage.outputTokens,
         },
         costUsd: usage.costUsd ?? 0,
@@ -3114,8 +3124,8 @@ export async function createFridayHub(
             usage: {
               input: usage.inputTokens,
               output: usage.outputTokens,
-              cacheRead: 0,
-              cacheWrite: 0,
+              cacheRead: usage.cacheReadInputTokens ?? 0,
+              cacheWrite: usage.cacheCreationInputTokens ?? 0,
               total: usage.inputTokens + usage.outputTokens,
             },
             costUsd: usage.costUsd ?? 0,
@@ -5289,6 +5299,7 @@ export async function createFridayHub(
             const channelEntryAdapter = createFridayChannelEntryAdapter({
               engine: channelOrchestrationEngine,
               idGenerator: () => runId,
+              resolveChannelPersona: (channelKind) => getChannelPersona(channelKind),
               resolveSessionKey: (inboundMessage) => resolveFridayChannelSessionKey({
                 channelKind: inboundMessage.channelKind,
                 chatId: inboundMessage.chatId,

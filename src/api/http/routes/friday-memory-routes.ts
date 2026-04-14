@@ -12,7 +12,7 @@ import type {
 } from "../../model/friday-api-memory.types.js";
 import type { FridayMemoryGuardServiceFactory } from "#memory";
 import { FridayDomainError } from "#errors";
-import { FRIDAY_MEMORY_ERROR_CODES } from "#memory";
+import { FRIDAY_MEMORY_ERROR_CODES, FRIDAY_MEMORY_MAX_LIMIT } from "#memory";
 
 // ─── Dependencies ───
 
@@ -158,16 +158,19 @@ export function createFridayMemoryRoutes(
       auth: { public: false, anyOfScopes: ["hub.admin"] },
       rateLimitPolicyId: "memory.write",
       async handler(ctx): Promise<FridayMemoryStoreResponse> {
-        // DX-003: Default namespace to "default" if not provided
-        if (ctx.body != null && typeof ctx.body === "object") {
-          const b = ctx.body as Record<string, unknown>;
+        // DX-003: Default namespace to "default" if not provided (immutable clone)
+        const rawBody = ctx.body != null && typeof ctx.body === "object"
+          ? { ...(ctx.body as Record<string, unknown>) }
+          : ctx.body;
+        if (rawBody != null && typeof rawBody === "object") {
+          const b = rawBody as Record<string, unknown>;
           if (b.namespace === undefined || b.namespace === null || b.namespace === "") {
             b.namespace = "default";
           }
         }
-        validateStoreNumericFields(ctx.body);
-        validateStoreBody(ctx.body);
-        const body = ctx.body;
+        validateStoreNumericFields(rawBody);
+        validateStoreBody(rawBody);
+        const body = rawBody;
         const memory = deps.memoryGuardFactory.forPrincipal(ctx.principal);
         const item = await memory.store(body.namespace, body.content, {
           source: body.source,
@@ -242,7 +245,7 @@ export function createFridayMemoryRoutes(
           if (!Number.isInteger(parsed) || parsed < 1) {
             throw new FridayDomainError("VALIDATION_ERROR", "limit must be a positive integer", { httpStatus: 400 });
           }
-          limit = Math.min(parsed, 100);
+          limit = Math.min(parsed, FRIDAY_MEMORY_MAX_LIMIT);
         }
         const includeExpired = query.includeExpired === "true";
 

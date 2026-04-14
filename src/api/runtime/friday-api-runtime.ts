@@ -117,7 +117,7 @@ import type {
   FridayRunTimelineEntry,
 } from "../model/friday-api-workflow.types.js";
 
-const DEFAULT_ACCESS_TTL = 900; // 15 min
+const DEFAULT_ACCESS_TTL = 3600; // 1 hour
 const DEFAULT_REFRESH_TTL = 604_800; // 7 days
 const CURRENT_EPOCH = 1;
 const SESSION_CONTEXT_HISTORY_LIMIT = 24;
@@ -301,7 +301,7 @@ function resolveTenantIdFromContext(ctx: {
 }
 
 export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): FridayApiRuntime {
-  const accessTokenTtlSec = Math.min(deps.accessTokenTtlSec ?? DEFAULT_ACCESS_TTL, DEFAULT_ACCESS_TTL);
+  const accessTokenTtlSec = deps.accessTokenTtlSec ?? DEFAULT_ACCESS_TTL;
   const refreshTokenTtlSec = deps.refreshTokenTtlSec ?? DEFAULT_REFRESH_TTL;
   const serverVersion = deps.serverVersion ?? "1.0.0";
   const stateDir = deps.stateDir ?? ".";

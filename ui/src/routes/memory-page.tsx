@@ -28,7 +28,7 @@ export function MemoryPage() {
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: ["memory", "items"],
-    queryFn: () => memoryApi.listItems({ limit: 100 }),
+    queryFn: () => memoryApi.listItems({ limit: 200 }),
   });
 
   const { data: searchResults, isLoading: isSearching, isError: isSearchError } = useQuery({

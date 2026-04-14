@@ -445,7 +445,7 @@ function useDeferredMount(active: boolean, timeoutMs = 140): boolean {
       return;
     }
 
-    if (typeof window === "undefined" || Boolean(process.env.VITEST)) {
+    if (typeof window === "undefined" || (typeof process !== "undefined" && Boolean(process.env.VITEST))) {
       setMounted(true);
       return;
     }

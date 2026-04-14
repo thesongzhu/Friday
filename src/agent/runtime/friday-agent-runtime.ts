@@ -3,6 +3,8 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import { FridayDomainError } from "#errors";
 import type { FridayEvaluationContext, FridayEvaluationResult } from "#rules";
+import { buildToolErrorRecoveryHint } from "./friday-agent-tool-error-recovery.js";
+import type { ToolErrorContext } from "./friday-agent-tool-error-recovery.js";
 import type {
   FridayProviderAttempt,
   FridayProviderBackendKind,
@@ -680,6 +682,8 @@ export function createFridayAgentRuntime(
       );
       const timeSensitiveNewsRequested = hasTimeSensitiveNewsIntent(params.task, messages);
       const allToolCalls: FridayAgentToolCallRecord[] = [];
+      let toolErrorRecoveryCount = 0;
+      const TOOL_ERROR_RECOVERY_MAX = 2;
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
       let responseText = "";
@@ -1686,6 +1690,8 @@ export function createFridayAgentRuntime(
                 inputTokens,
                 outputTokens,
                 costUsd: turnMeta.costUsd,
+                cacheReadInputTokens: turnMeta.cacheReadInputTokens,
+                cacheCreationInputTokens: turnMeta.cacheCreationInputTokens,
               });
             } catch (err) {
               // Non-fatal: usage persistence should not break run execution.
@@ -2188,6 +2194,31 @@ export function createFridayAgentRuntime(
             role: "user",
             content: toolResultBlocks,
           });
+
+          // 7b. Tool error recovery: inject mandatory retry hint for recoverable errors.
+          // This forces the LLM to attempt alternatives instead of immediately reporting failure.
+          if (toolErrorRecoveryCount < TOOL_ERROR_RECOVERY_MAX) {
+            const iterationStartIndex = allToolCalls.length - toolResultBlocks.length;
+            const currentErrors: ToolErrorContext[] = [];
+            for (let i = Math.max(0, iterationStartIndex); i < allToolCalls.length; i++) {
+              const call = allToolCalls[i];
+              if (call?.result.isError) {
+                currentErrors.push({
+                  toolName: call.toolName,
+                  errorContent: call.result.content,
+                  errorCode: call.result.errorCode,
+                  args: call.args,
+                });
+              }
+            }
+            if (currentErrors.length > 0) {
+              const hint = buildToolErrorRecoveryHint(currentErrors);
+              if (hint) {
+                toolErrorRecoveryCount++;
+                messages.push({ role: "user", content: hint.text });
+              }
+            }
+          }
         }
 
         // Check if we hit the loop limit
@@ -4252,6 +4283,8 @@ interface TurnMeta {
   routingDecisionReason?: string;
   learningAdjusted?: boolean;
   routeDecisionTrace?: FridayAgentActualExecution["routeDecisionTrace"];
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
 }
 
 interface StreamLlmResponseResult {
@@ -4324,6 +4357,8 @@ async function streamLlmResponse(
             routingDecisionReason: event.routingDecisionReason,
             learningAdjusted: event.learningAdjusted,
             routeDecisionTrace: event.routeDecisionTrace,
+            cacheReadInputTokens: event.cacheReadInputTokens,
+            cacheCreationInputTokens: event.cacheCreationInputTokens,
           };
         }
         break;

@@ -14,6 +14,8 @@ import { localize, type AppLocale } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 import { ChannelConfigForm } from "@/components/core/channel-config-form";
 import { DiscoveryPanel } from "@/components/core/discovery-panel";
+import { CHANNEL_META } from "@/lib/channels/channel-meta";
+import type { ChannelKind } from "@/lib/setup/types";
 import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { channelsApi } from "@/lib/api/channels";
 import { healthApi } from "@/lib/api/health";
@@ -939,18 +941,28 @@ export function SettingsPage() {
             </div>
 
             <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{localize(locale, "通道健康", "Channel health")}</p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{localize(locale, "通道健康", "Channel health")}</p>
+                <Link to="/channels" className="text-xs font-medium text-[color:var(--color-accent)] transition hover:opacity-80">
+                  {localize(locale, "查看渠道对话 →", "View channel conversations →")}
+                </Link>
+              </div>
               {channels.length === 0 ? (
                 <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "此运行时未注册任何通道。", "No channels are registered in this runtime.")}</p>
               ) : (
-                channels.map((channel) => (
+                channels.map((channel) => {
+                  const meta = CHANNEL_META[channel.kind as ChannelKind];
+                  return (
                   <div key={channel.kind} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-medium text-[color:var(--color-text-primary)]">{channel.kind}</p>
-                        <p className="text-xs text-[color:var(--color-text-tertiary)]">
-                          running {String(channel.running)} · restarts {channel.health.restartCount}
-                        </p>
+                      <div className="flex items-center gap-2">
+                        {meta && <span className="text-lg">{meta.emoji}</span>}
+                        <div>
+                          <p className="font-medium text-[color:var(--color-text-primary)]">{meta?.name ?? channel.kind}</p>
+                          <p className="text-xs text-[color:var(--color-text-tertiary)]">
+                            running {String(channel.running)} · restarts {channel.health.restartCount}
+                          </p>
+                        </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <StatusPill tone={toneForChannelState(channel.health.state)}>{channel.health.state}</StatusPill>
@@ -984,7 +996,8 @@ export function SettingsPage() {
                       </p>
                     ) : null}
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
 

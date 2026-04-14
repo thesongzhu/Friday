@@ -35,6 +35,7 @@ const SessionsPage = lazy(async () => import("@/routes/sessions-page").then((mod
 const ChatPage = lazy(async () => import("@/routes/chat-page").then((module) => ({ default: module.ChatPage })));
 const MemoryPage = lazy(async () => import("@/routes/memory-page").then((module) => ({ default: module.MemoryPage })));
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
+const ChannelsPage = lazy(async () => import("@/routes/channels-page").then((module) => ({ default: module.ChannelsPage })));
 
 function FullscreenMessage(props: { title: string | LocalizedText; detail: string | LocalizedText; actions?: Array<string | LocalizedText> }) {
   const { locale } = useAppLocale();
@@ -299,6 +300,14 @@ export const router = createBrowserRouter([
           {
             index: true,
             element: <DefaultEntryRedirect />,
+          },
+          {
+            path: "channels",
+            element: (
+              <RouteSuspense title={localizedText("加载渠道", "Loading channels")} detail={localizedText("Friday 正在准备渠道监控面板。", "Friday is preparing the channel monitor.")}>
+                <ChannelsPage />
+              </RouteSuspense>
+            ),
           },
           {
             path: "command-center",

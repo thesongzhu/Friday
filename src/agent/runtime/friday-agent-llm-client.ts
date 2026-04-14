@@ -12,6 +12,7 @@ import type {
   FridayProviderAuthMode,
   FridayProviderBackendKind,
 } from "#providers";
+import { createFridayProviderPromptCacheAdapter } from "#providers";
 
 import { validateGatewayUrl } from "../tools/friday-agent-gateway-validation.js";
 import { FRIDAY_AGENT_ERROR_CODES } from "../friday-agent.constants.js";
@@ -194,7 +195,23 @@ async function* handleAnthropicStream(
     "browser",
   ]);
 
+  // ── Prompt caching for Anthropic ──
+  // Apply cache_control to system prompt to save ~90% input tokens on subsequent calls.
+  // Reference: skills/generator/llm/friday-provider-inference-client.ts:447-494
+  const cacheAdapter = createFridayProviderPromptCacheAdapter();
+  const cacheResult = cacheAdapter.applyAnthropicCacheHints({
+    systemPrompt: params.systemPrompt,
+    userPrompt: "",
+    hints: {
+      api: "anthropic-messages",
+      providerKind: "anthropic",
+      anthropic: { enabled: !isBearerAuth, systemCache: true, userStaticBlockIndexes: [] },
+      openaiSystemCache: { enabled: false },
+    },
+  });
+
   let systemField: string | AnthropicSystemBlock[];
+  let cacheHeaders: Record<string, string> = {};
   if (isBearerAuth) {
     // OAuth beta requires system as an array of blocks (matching Claude Code format).
     const inner = params.systemPrompt.length > OAUTH_MAX_SYSTEM_CHARS
@@ -205,7 +222,9 @@ async function* handleAnthropicStream(
       { type: "text" as const, text: inner },
     ];
   } else {
-    systemField = params.systemPrompt;
+    // Use cache-annotated system blocks (adds cache_control: { type: "ephemeral" })
+    systemField = cacheResult.systemBlocks as AnthropicSystemBlock[];
+    cacheHeaders = cacheResult.extraHeaders;
   }
 
   let tools: AnthropicToolDefinition[];
@@ -249,6 +268,7 @@ async function* handleAnthropicStream(
     headers: {
       "Content-Type": "application/json",
       "anthropic-version": "2023-06-01",
+      ...cacheHeaders,
       ...(isBearerAuth
         ? {
             "Authorization": `Bearer ${apiKey}`,
@@ -1002,6 +1022,8 @@ async function* parseAnthropicSSEStream(
   // Track usage and model for message_end
   let inputTokens = 0;
   let outputTokens = 0;
+  let cacheReadInputTokens = 0;
+  let cacheCreationInputTokens = 0;
   let responseModel = "";
 
   for await (const chunk of body) {
@@ -1036,6 +1058,8 @@ async function* parseAnthropicSSEStream(
         const usage = message?.usage as Record<string, unknown> | undefined;
         if (usage) {
           inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
+          cacheReadInputTokens = typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0;
+          cacheCreationInputTokens = typeof usage.cache_creation_input_tokens === "number" ? usage.cache_creation_input_tokens : 0;
         }
         // Extract actual model from Anthropic message_start response
         if (typeof message?.model === "string") {
@@ -1097,6 +1121,8 @@ async function* parseAnthropicSSEStream(
           stopReason: stopReason as "end_turn" | "tool_use" | "max_tokens" | "stop_sequence",
           inputTokens,
           outputTokens,
+          cacheReadInputTokens,
+          cacheCreationInputTokens,
           ...(responseModel ? { actualModel: responseModel, actualProviderKind: "anthropic", actualProviderApi: "anthropic-messages" } : {}),
         };
       }
