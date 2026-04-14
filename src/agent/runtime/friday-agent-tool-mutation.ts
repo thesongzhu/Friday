@@ -70,42 +70,9 @@ const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>)
     const action = typeof args.action === "string" ? args.action : "";
     return action !== "status" && action !== "config_get";
   },
-  mcp: (args) => {
-    // MCP: read operations (list_tools, list_resources, read_resource) are not mutating
-    const method = typeof args.method === "string" ? args.method : "";
-    const readOnlyMethods = new Set([
-      "list_tools", "list_resources", "list_prompts",
-      "read_resource", "get_prompt",
-      "tools/list", "resources/list", "resources/read", "prompts/list", "prompts/get",
-    ]);
-    return !readOnlyMethods.has(method);
-  },
-  skill_run: (args) => {
-    const skillId = typeof args.skillId === "string" ? args.skillId : "";
-    const readOnlySkills = new Set([
-      "repo-health-check",
-      "workspace-change-risk-review",
-      "release-readiness-check",
-      "log-error-triage",
-      "local-service-diagnose",
-      "incident-brief-generator",
-      "system-health-snapshot",
-      "review-open-issues",
-      "autofix-readiness-review",
-      "failed-deploy-recovery-brief",
-      "idea-clarifier",
-      "implementation-plan-review",
-      "browser-qa-report",
-      "workspace-diff-review",
-      "page-benchmark-report",
-      "release-canary-check",
-      "engineering-retro",
-      "product-scope-review",
-      "design-plan-review",
-      "security-review",
-    ]);
-    return !readOnlySkills.has(skillId);
-  },
+  // MCP servers run in their own sandbox with their own security.
+  // Agent readOnly should not block MCP tool calls.
+  // skill_run is now in READ_ONLY_TOOLS — skills run in their own sandbox
 };
 
 // Tools that are always read-only
@@ -124,6 +91,8 @@ const READ_ONLY_TOOLS = new Set([
   "list_subagents",
   "agents_list",
   "skills_list",
+  "skill_run",   // Skills execute in their own sandbox; agent readOnly shouldn't block them
+  "mcp",         // MCP servers run in their own sandbox with their own security
   "capabilities",
   "task_status",
   "image_analysis",
