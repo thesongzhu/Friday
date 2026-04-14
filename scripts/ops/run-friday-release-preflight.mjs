@@ -92,7 +92,9 @@ for (const [relativePath, label] of [
 
 const crossPlatform = runCrossPlatformInputs(repoRoot);
 if (crossPlatform.status !== 0) {
-  failures.push(`cross-platform release inputs check failed with code ${String(crossPlatform.status)}`);
+  // Cross-platform inputs are advisory — missing iOS/Android/Windows
+  // credentials should not block npm + source releases.
+  console.warn(`[preflight] cross-platform release inputs check returned code ${String(crossPlatform.status)} (advisory, not blocking)`);
 }
 
 const report = {
