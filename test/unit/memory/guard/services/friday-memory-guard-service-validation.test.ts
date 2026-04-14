@@ -80,10 +80,10 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       await guard.list();
 
-      // Should call core.list with the prefix itself + expanded descendants
+      // Should call core.list with the prefix itself + expanded descendants + "default"
       expect(core.list).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", ...descendants],
+          namespace: ["tenant.default.user.user1", ...descendants, "default"],
         }),
       );
     });
@@ -114,7 +114,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
       const callArgs = vi.mocked(core.search).mock.calls[0];
       expect(callArgs[1]).toEqual(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", ...descendants],
+          namespace: ["tenant.default.user.user1", ...descendants, "default"],
         }),
       );
     });
@@ -130,7 +130,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.prune).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", ...descendants],
+          namespace: ["tenant.default.user.user1", ...descendants, "default"],
         }),
       );
     });
@@ -198,7 +198,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.list).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", ...descendants],
+          namespace: ["tenant.default.user.user1", ...descendants, "default"],
         }),
       );
     });
@@ -215,7 +215,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.list).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: descendants,
+          namespace: [...descendants, "default"],
         }),
       );
     });
@@ -232,7 +232,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
       const callArgs = vi.mocked(core.search).mock.calls[0];
       expect(callArgs[1]).toEqual(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", "tenant.default.user.user1.archive"],
+          namespace: ["tenant.default.user.user1", "tenant.default.user.user1.archive", "default"],
         }),
       );
     });
@@ -248,7 +248,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.prune).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", "tenant.default.user.user1.old"],
+          namespace: ["tenant.default.user.user1", "tenant.default.user.user1.old", "default"],
         }),
       );
     });
