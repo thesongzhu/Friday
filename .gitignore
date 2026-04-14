@@ -33,3 +33,4 @@ reports/enablement/artifacts/*
 !reports/enablement/artifacts/.gitkeep
 artifacts/
 docs/CX*-FIX-PLAN*.md
+roi-calculator.js
