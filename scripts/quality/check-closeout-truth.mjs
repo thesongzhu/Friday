@@ -7,16 +7,9 @@ const phaseId = validatePhaseArg(process.argv[2]);
 
 const checks = {
   phase1: [
-    {
-      path: "README.md",
-      required: [
-        "### Canonical Contract Notes",
-        "/v1/realtime/*` is the canonical realtime surface.",
-        "/v1/workflow-approvals*` is the canonical approvals surface.",
-        "/v1/diagnosis/*` and `/v1/auto-fix/*` are the canonical self-healing route families.",
-        "`sessionKey` is the canonical session route shape.",
-      ],
-    },
+    // Canonical contract notes live in docs/current-source-of-truth.md.
+    // README.md is the user-facing landing page and should not carry
+    // API contract fragments.
     {
       path: "docs/current-source-of-truth.md",
       required: [
@@ -65,13 +58,7 @@ const checks = {
         "Satellite-offline execution failures must surface as explicit blocked or retryable state",
       ],
     },
-    {
-      path: "README.md",
-      required: [
-        "Fleet & Distributed Execution",
-        "Register satellites, pair and sync them, place workflow nodes on `hub`, explicit satellites, or capability-matched nodes, and operate the fleet from `/fleet`.",
-      ],
-    },
+    // Fleet & Distributed Execution details moved to docs/current-source-of-truth.md
   ],
   phase3: [
     {
@@ -99,14 +86,7 @@ const checks = {
         "Rules simulation, rule version history, and audit-log visibility",
       ],
     },
-    {
-      path: "README.md",
-      required: [
-        "acceptance tests now support sandboxed custom checks plus version history",
-        "retry now includes provider-level circuit breakers and replay evidence",
-        "rules expose simulation plus explainable audit trails",
-      ],
-    },
+    // Phase 4 acceptance/retry/rules details moved to docs/current-source-of-truth.md
   ],
   phase5: [
     {
@@ -119,25 +99,10 @@ const checks = {
         "/v1/marketplace/requests*` is the canonical connector-only request board",
       ],
     },
-    {
-      path: "README.md",
-      required: [
-        "Skills lifecycle closeout",
-        "Plugin Marketplace & Commerce",
-        "connector-only request board",
-      ],
-    },
+    // Skills lifecycle and marketplace details moved to docs/current-source-of-truth.md
   ],
   marketplace: [
-    {
-      path: "README.md",
-      required: [
-        "creator-support-first",
-        "the platform does not take a commission or provide escrow, guarantees, or after-sales support.",
-        "/v1/marketplace/assets*` is the canonical public catalog and detail read surface",
-        "/v1/marketplace/requests*` is the connector-only request board",
-      ],
-    },
+    // Marketplace contract details moved to docs/current-source-of-truth.md and architecture RFC
     {
       path: "docs/current-source-of-truth.md",
       required: [
