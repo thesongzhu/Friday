@@ -28,7 +28,7 @@ For everything beyond the main product overview, use the [Documentation Hub](doc
 - **MCP management UI**: `/mcp` page for viewing MCP server status, transport, tool/resource counts, and configuration guidance.
 - **Session browser**: `/sessions` page with status filtering, transcript viewer, and JSON/Markdown export.
 - **Cost dashboard**: `/usage` page with provider health, request counts, error rates, and cost estimation.
-- **Engineering doctrine**: `BELIEFS.md` codifies 10 engineering principles. ESLint strict rules added for console, complexity, function size, and security patterns.
+- **Engineering doctrine**: `context/BELIEFS.md` codifies 10 engineering principles. ESLint strict rules added for console, complexity, function size, and security patterns.
 - **Capability grant lifecycle**: SQLite persistence, revoke API, and grant routes for full issue → use → expire → revoke flow.
 - **SIEM export**: JSONL file export and HTTP webhook export sinks on the existing hash-chained audit trail.
 - **Linux packaging**: Complete .deb and .AppImage packaging with build scripts.
@@ -148,7 +148,7 @@ Detailed boundary docs:
 ## Key Features
 
 - **Skills** — Discover, validate, and execute skills from directories or archives. Shell, Node, Python, HTTP.
-- **Workspace Context** — Repo-scoped `AGENTS.md`, `SOUL.md`, `USER.md`, `MEMORY.md`, and daily `memory/*.md` files shape agent behavior without turning reusable logic into prompt sprawl.
+- **Workspace Context** — Repo-scoped `context/AGENTS.md`, `context/SOUL.md`, `context/USER.md`, `context/MEMORY.md`, and daily `memory/*.md` files shape agent behavior without turning reusable logic into prompt sprawl.
 - **Skills Lifecycle** — Catalog, install, update, verify, delete, and manage marketplace sources from `/skills`.
 - **Skills-First Marketplace Backbone** — Friday's marketplace direction continues to build on the skills lifecycle first. Workflow and agent assets may join the public ecosystem, but they extend the same trust, verification, install, and enable backbone rather than replacing it.
 - **Declarative Public Marketplace** — Public marketplace assets are moving to a declarative-first model with explicit permission previews, signature/hash checks, and framework-owned execution instead of arbitrary executable packages.
@@ -322,10 +322,10 @@ friday converters
 
 Friday can load repo-level context on each agent run:
 
-- `AGENTS.md` for repo rules and task routing
-- `SOUL.md` for style and response discipline
-- `USER.md` for maintainer preferences
-- `MEMORY.md` for durable project facts
+- `context/AGENTS.md` for repo rules and task routing
+- `context/SOUL.md` for style and response discipline
+- `context/USER.md` for maintainer preferences
+- `context/MEMORY.md` for durable project facts
 - `memory/YYYY-MM-DD.md` for short-lived daily notes
 
 Use these files for guidance and context. Keep reusable execution logic in `skills/`, and move repeated routines into automations or workflows.
@@ -929,7 +929,7 @@ curl http://localhost:3141/v1/health
 # → {"ok":true,"data":{"status":"ok","version":"0.3.1","uptime":42},...}
 ```
 
-See [Dockerfile](Dockerfile) and [docker-compose.yml](docker-compose.yml) for full configuration.
+See [Dockerfile](docker/Dockerfile) and [docker-compose.yml](docker/docker-compose.yml) for full configuration.
 
 ---
 
@@ -1209,7 +1209,7 @@ export FRIDAY_MCP_SERVERS='[
 2. **Use HTTPS** — put Friday behind a reverse proxy (nginx, Caddy, Traefik) for TLS.
 3. **Restrict CORS** — set `FRIDAY_CORS_ORIGINS` to your frontend domain(s) in production.
 4. **Persistent state** — mount `/data` as a Docker volume to preserve SQLite databases across restarts.
-5. **Non-root container** — the Dockerfile runs as `node` (uid 1000) by default.
+5. **Non-root container** — the `docker/Dockerfile` runs as `node` (uid 1000) by default.
 6. **Health checks** — `GET /v1/health` returns `200` when the hub is ready. Use it for load balancer probes.
 7. **Run enablement hardening** — `npm run ops:harden-local-enablement` to migrate local runtime to strict channel policy + token secret + MCP + desktop defaults.
 8. **Verify enablement gaps** — `npm run check:enablement-gaps` to fail fast on insecure/missing runtime toggles.
@@ -1251,7 +1251,7 @@ Style guide: `docs/friday-style-guide.md`
 - Zero `as any` — strict TypeScript throughout
 
 Release process: `docs/RELEASING.md`  
-Security policy: `SECURITY.md`
+Security policy: `.github/SECURITY.md`
 Troubleshooting / self-recovery: `docs/TROUBLESHOOTING.md`  
 Extending (plugins/skills/workflows): `docs/EXTENDING.md`  
 Closed-loop blueprint: `docs/BLUEPRINT-CLOSED-LOOP.md`

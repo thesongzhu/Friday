@@ -35,7 +35,7 @@ Before tagging, confirm these release surfaces are complete:
 - `CHANGELOG.md` contains the target version section
 - release notes are prepared (use `docs/RELEASE_NOTES_TEMPLATE.md`)
 - `LICENSE` is present (MIT)
-- `SECURITY.md` is current
+- `.github/SECURITY.md` is current
 - latest `CI` workflow run for `main` is green
 
 ## Standard Release (npm + GitHub Release)
@@ -87,4 +87,4 @@ You can force behavior with repository variable `RELEASE_PUBLISH_NPM`:
 
 - npm package issues: publish a patch version and deprecate the broken version.
 - GitHub tag issues: create a follow-up patch tag; do not force-move existing release tags.
-- Security incidents: follow `SECURITY.md`, patch forward, and publish advisory notes in release changelog.
+- Security incidents: follow `.github/SECURITY.md`, patch forward, and publish advisory notes in release changelog.
