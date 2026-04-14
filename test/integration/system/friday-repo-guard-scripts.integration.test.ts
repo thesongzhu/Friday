@@ -34,7 +34,7 @@ async function createSecurityFixture(): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "friday-security-guard-"));
   await writeFileWithParents(root, "package.json", JSON.stringify({
     name: "friday-security-fixture",
-    version: "0.4.2",
+    version: "1.0.0",
     scripts: {
       "ops:doctor:runtime": "node scripts/ops/friday-local-runtime-doctor.mjs",
       "check:provider-reliability": "vitest run test/unit/providers/model/friday-provider-templates.test.ts",

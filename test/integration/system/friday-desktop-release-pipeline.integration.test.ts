@@ -24,7 +24,7 @@ async function createFixtureRepo(): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "friday-desktop-release-pipeline-"));
   await writeFileWithParents(root, "package.json", JSON.stringify({
     name: "friday-fixture",
-    version: "0.4.2",
+    version: "1.0.0",
     scripts: {
       "check:companion:release-env": "bash scripts/ops/check-friday-companion-release-env.sh",
       "build:companion:native": "bash scripts/ops/build-friday-companion-app.sh",
