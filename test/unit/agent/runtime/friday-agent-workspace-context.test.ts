@@ -18,6 +18,7 @@ let tmpDir: string;
 
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-ws-ctx-"));
+  await fs.mkdir(path.join(tmpDir, "context"), { recursive: true });
 });
 
 afterEach(async () => {
@@ -27,28 +28,28 @@ afterEach(async () => {
 describe("loadFridayWorkspaceContext", () => {
   describe("workspace file loading", () => {
     it("loads AGENTS.md when present", async () => {
-      await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "# Agent Instructions\nDo X, Y, Z.");
+      await fs.writeFile(path.join(tmpDir, "context", "AGENTS.md"), "# Agent Instructions\nDo X, Y, Z.");
       const ctx = await loadFridayWorkspaceContext(tmpDir);
       expect(ctx.promptFragment).toContain("AGENTS.md");
       expect(ctx.promptFragment).toContain("Do X, Y, Z.");
     });
 
     it("loads SOUL.md when present", async () => {
-      await fs.writeFile(path.join(tmpDir, "SOUL.md"), "# Personality\nBe helpful and concise.");
+      await fs.writeFile(path.join(tmpDir, "context", "SOUL.md"), "# Personality\nBe helpful and concise.");
       const ctx = await loadFridayWorkspaceContext(tmpDir);
       expect(ctx.promptFragment).toContain("SOUL.md");
       expect(ctx.promptFragment).toContain("Be helpful and concise.");
     });
 
     it("loads USER.md when present", async () => {
-      await fs.writeFile(path.join(tmpDir, "USER.md"), "# User\nName: Alex\nLanguage: Chinese");
+      await fs.writeFile(path.join(tmpDir, "context", "USER.md"), "# User\nName: Alex\nLanguage: Chinese");
       const ctx = await loadFridayWorkspaceContext(tmpDir);
       expect(ctx.promptFragment).toContain("USER.md");
       expect(ctx.promptFragment).toContain("Alex");
     });
 
     it("loads MEMORY.md when present", async () => {
-      await fs.writeFile(path.join(tmpDir, "MEMORY.md"), "# Memory\n- User prefers dark mode");
+      await fs.writeFile(path.join(tmpDir, "context", "MEMORY.md"), "# Memory\n- User prefers dark mode");
       const ctx = await loadFridayWorkspaceContext(tmpDir);
       expect(ctx.promptFragment).toContain("MEMORY.md");
       expect(ctx.promptFragment).toContain("dark mode");
@@ -69,9 +70,9 @@ describe("loadFridayWorkspaceContext", () => {
     });
 
     it("loads multiple files in injection order", async () => {
-      await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "agents-content");
-      await fs.writeFile(path.join(tmpDir, "SOUL.md"), "soul-content");
-      await fs.writeFile(path.join(tmpDir, "USER.md"), "user-content");
+      await fs.writeFile(path.join(tmpDir, "context", "AGENTS.md"), "agents-content");
+      await fs.writeFile(path.join(tmpDir, "context", "SOUL.md"), "soul-content");
+      await fs.writeFile(path.join(tmpDir, "context", "USER.md"), "user-content");
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
       const agentsIdx = ctx.promptFragment.indexOf("agents-content");
@@ -84,12 +85,12 @@ describe("loadFridayWorkspaceContext", () => {
     });
 
     it("deduplicates MEMORY.md and memory.md pointing to same file", async () => {
-      await fs.writeFile(path.join(tmpDir, "MEMORY.md"), "memory content here");
+      await fs.writeFile(path.join(tmpDir, "context", "MEMORY.md"), "memory content here");
       // Create a symlink from memory.md → MEMORY.md
       try {
         await fs.symlink(
-          path.join(tmpDir, "MEMORY.md"),
-          path.join(tmpDir, "memory.md"),
+          path.join(tmpDir, "context", "MEMORY.md"),
+          path.join(tmpDir, "context", "memory.md"),
         );
       } catch {
         // Symlinks may not be available on all platforms — skip dedup test
@@ -104,18 +105,18 @@ describe("loadFridayWorkspaceContext", () => {
 
     it("truncates files larger than 32KB", async () => {
       const largeContent = "x".repeat(40_000);
-      await fs.writeFile(path.join(tmpDir, "AGENTS.md"), largeContent);
+      await fs.writeFile(path.join(tmpDir, "context", "AGENTS.md"), largeContent);
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      const agentsFile = ctx.files.find((f) => f.name === "AGENTS.md");
+      const agentsFile = ctx.files.find((f) => f.name === "context/AGENTS.md");
       expect(agentsFile).toBeDefined();
       expect(agentsFile!.content!.length).toBeLessThan(40_000);
       expect(agentsFile!.content).toContain("...(truncated)");
     });
 
     it("skips empty files", async () => {
-      await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "");
-      await fs.writeFile(path.join(tmpDir, "SOUL.md"), "real content");
+      await fs.writeFile(path.join(tmpDir, "context", "AGENTS.md"), "");
+      await fs.writeFile(path.join(tmpDir, "context", "SOUL.md"), "real content");
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
       // AGENTS.md content is empty, should not appear in prompt
@@ -282,14 +283,14 @@ describe("loadFridayWorkspaceContext", () => {
 
   describe("prompt fragment structure", () => {
     it("wraps content in Workspace Context header", async () => {
-      await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "test content");
+      await fs.writeFile(path.join(tmpDir, "context", "AGENTS.md"), "test content");
       const ctx = await loadFridayWorkspaceContext(tmpDir);
       expect(ctx.promptFragment).toContain("# Workspace Context");
     });
 
     it("uses ## headers for each file section", async () => {
-      await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "agents");
-      await fs.writeFile(path.join(tmpDir, "SOUL.md"), "soul");
+      await fs.writeFile(path.join(tmpDir, "context", "AGENTS.md"), "agents");
+      await fs.writeFile(path.join(tmpDir, "context", "SOUL.md"), "soul");
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
       expect(ctx.promptFragment).toContain("## AGENTS.md");
@@ -298,9 +299,9 @@ describe("loadFridayWorkspaceContext", () => {
 
     it("respects total context size limit of 64KB", async () => {
       // Write large files that together exceed 64KB
-      await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "a".repeat(30_000));
-      await fs.writeFile(path.join(tmpDir, "SOUL.md"), "b".repeat(30_000));
-      await fs.writeFile(path.join(tmpDir, "USER.md"), "c".repeat(30_000));
+      await fs.writeFile(path.join(tmpDir, "context", "AGENTS.md"), "a".repeat(30_000));
+      await fs.writeFile(path.join(tmpDir, "context", "SOUL.md"), "b".repeat(30_000));
+      await fs.writeFile(path.join(tmpDir, "context", "USER.md"), "c".repeat(30_000));
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
       // Total should be capped
@@ -311,19 +312,19 @@ describe("loadFridayWorkspaceContext", () => {
 
   describe("task-aware relevant block selection", () => {
     it("annotates identity and candidate files with selection metadata", async () => {
-      await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "Always follow repository instructions.");
-      await fs.writeFile(path.join(tmpDir, "SOUL.md"), "Stay concise.");
-      await fs.writeFile(path.join(tmpDir, "USER.md"), "User likes sourdough recipes.");
-      await fs.writeFile(path.join(tmpDir, "MEMORY.md"), "User prefers dark mode in editors.");
+      await fs.writeFile(path.join(tmpDir, "context", "AGENTS.md"), "Always follow repository instructions.");
+      await fs.writeFile(path.join(tmpDir, "context", "SOUL.md"), "Stay concise.");
+      await fs.writeFile(path.join(tmpDir, "context", "USER.md"), "User likes sourdough recipes.");
+      await fs.writeFile(path.join(tmpDir, "context", "MEMORY.md"), "User prefers dark mode in editors.");
 
       const ctx = await loadFridayWorkspaceContext(tmpDir, {
         task: "How do I bake sourdough bread?",
       });
 
-      const agentsFile = ctx.files.find((file) => file.name === "AGENTS.md");
-      const soulFile = ctx.files.find((file) => file.name === "SOUL.md");
-      const userFile = ctx.files.find((file) => file.name === "USER.md");
-      const memoryFile = ctx.files.find((file) => file.name === "MEMORY.md");
+      const agentsFile = ctx.files.find((file) => file.name === "context/AGENTS.md");
+      const soulFile = ctx.files.find((file) => file.name === "context/SOUL.md");
+      const userFile = ctx.files.find((file) => file.name === "context/USER.md");
+      const memoryFile = ctx.files.find((file) => file.name === "context/MEMORY.md");
 
       expect(agentsFile?.kind).toBe("identity");
       expect(agentsFile?.selected).toBe(true);
@@ -343,10 +344,10 @@ describe("loadFridayWorkspaceContext", () => {
     });
 
     it("keeps identity blocks and filters candidate blocks by task relevance", async () => {
-      await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "Always follow repository instructions.");
-      await fs.writeFile(path.join(tmpDir, "SOUL.md"), "Stay concise.");
-      await fs.writeFile(path.join(tmpDir, "USER.md"), "User likes sourdough recipes.");
-      await fs.writeFile(path.join(tmpDir, "MEMORY.md"), "User prefers dark mode in editors.");
+      await fs.writeFile(path.join(tmpDir, "context", "AGENTS.md"), "Always follow repository instructions.");
+      await fs.writeFile(path.join(tmpDir, "context", "SOUL.md"), "Stay concise.");
+      await fs.writeFile(path.join(tmpDir, "context", "USER.md"), "User likes sourdough recipes.");
+      await fs.writeFile(path.join(tmpDir, "context", "MEMORY.md"), "User prefers dark mode in editors.");
 
       const ctx = await loadFridayWorkspaceContext(tmpDir, {
         task: "How do I bake sourdough bread?",
@@ -428,8 +429,8 @@ describe("loadFridayWorkspaceContext", () => {
     });
 
     it("includes all candidate blocks when no task-aware filtering input is provided", async () => {
-      await fs.writeFile(path.join(tmpDir, "USER.md"), "User likes sourdough recipes.");
-      await fs.writeFile(path.join(tmpDir, "MEMORY.md"), "User prefers dark mode in editors.");
+      await fs.writeFile(path.join(tmpDir, "context", "USER.md"), "User likes sourdough recipes.");
+      await fs.writeFile(path.join(tmpDir, "context", "MEMORY.md"), "User prefers dark mode in editors.");
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
 
