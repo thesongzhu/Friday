@@ -32,6 +32,8 @@ export interface FridayAgentExecutionContext {
   interactive?: boolean;
   browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
   packId?: string;
+  /** Per-channel persona/role instruction injected by the channel entry adapter. */
+  channelPersona?: string;
 }
 
 export interface FridayAgentConversationContext {
@@ -245,6 +247,10 @@ export interface FridayAgentUsageTurn {
   inputTokens: number;
   outputTokens: number;
   costUsd?: number;
+  /** Anthropic prompt cache: tokens read from cache. */
+  cacheReadInputTokens?: number;
+  /** Anthropic prompt cache: tokens written to cache. */
+  cacheCreationInputTokens?: number;
 }
 
 export interface FridayAgentResumeRunParams {

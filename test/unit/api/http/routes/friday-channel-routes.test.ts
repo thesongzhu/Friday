@@ -71,8 +71,8 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
 describe("createFridayChannelRoutes", () => {
   it("registers channel list and detail routes", () => {
     const routes = createFridayChannelRoutes(createDeps());
-    expect(routes.map((route) => route.operationId)).toEqual(["channels.list", "channels.get"]);
-    expect(routes.map((route) => route.path)).toEqual(["/v1/channels", "/v1/channels/:kind"]);
+    expect(routes.map((route) => route.operationId)).toEqual(["channels.list", "channels.get", "channels.persona.get", "channels.persona.update"]);
+    expect(routes.map((route) => route.path)).toEqual(["/v1/channels", "/v1/channels/:kind", "/v1/channels/:kind/persona", "/v1/channels/:kind/persona"]);
   });
 
   it("returns channel views", async () => {

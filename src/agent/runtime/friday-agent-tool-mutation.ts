@@ -6,13 +6,21 @@
 const MUTATING_TOOLS = new Set([
   "write",
   "edit",
-  "exec",
   "memory_store",
   "workflow_run",
 ]);
 
+// Shell commands that are read-only (inspection, listing, searching)
+const READ_ONLY_SHELL_COMMANDS = /^\s*(ls|find|cat|head|tail|wc|grep|rg|awk|sed\s+-n|sort|uniq|diff|file|stat|which|where|type|echo|pwd|date|uname|whoami|id|env|printenv|df|du|free|top\s+-bn|uptime|hostname|nproc|test\s|[\[]\s)/;
+
 // Tools that are mutating only for certain actions/sub-operations
 const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>) => boolean> = {
+  exec: (args) => {
+    // Shell commands: read-only commands (ls, find, cat, grep, etc.) are not mutating
+    const command = typeof args.command === "string" ? args.command.trim() : "";
+    if (!command) return true; // empty command → treat as mutating for safety
+    return !READ_ONLY_SHELL_COMMANDS.test(command);
+  },
   system: (args) => {
     const action = typeof args.action === "string" ? args.action : "";
     const readOnlyActions = new Set([
@@ -61,6 +69,16 @@ const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>)
   gateway: (args) => {
     const action = typeof args.action === "string" ? args.action : "";
     return action !== "status" && action !== "config_get";
+  },
+  mcp: (args) => {
+    // MCP: read operations (list_tools, list_resources, read_resource) are not mutating
+    const method = typeof args.method === "string" ? args.method : "";
+    const readOnlyMethods = new Set([
+      "list_tools", "list_resources", "list_prompts",
+      "read_resource", "get_prompt",
+      "tools/list", "resources/list", "resources/read", "prompts/list", "prompts/get",
+    ]);
+    return !readOnlyMethods.has(method);
   },
   skill_run: (args) => {
     const skillId = typeof args.skillId === "string" ? args.skillId : "";

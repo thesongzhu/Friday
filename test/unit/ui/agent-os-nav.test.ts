@@ -13,6 +13,7 @@ describe("agent os navigation", () => {
 
   it("advanced nav contains operator and system pages", () => {
     expect(AGENT_OS_NAV_ADVANCED.map((item) => item.path)).toEqual([
+      "/channels",
       "/skills",
       "/workflows",
       "/automations",

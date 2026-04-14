@@ -31,6 +31,10 @@ export interface FridayAgentLlmMessageEndEvent {
   stopReason: "end_turn" | "tool_use" | "max_tokens" | "stop_sequence";
   inputTokens: number;
   outputTokens: number;
+  /** Anthropic prompt cache: tokens read from cache (saves input cost). */
+  cacheReadInputTokens?: number;
+  /** Anthropic prompt cache: tokens written to cache on first call. */
+  cacheCreationInputTokens?: number;
   /** Actual provider that served this response (IMPL-2). */
   actualProviderId?: string;
   /** Actual model used (may differ from requested). */

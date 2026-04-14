@@ -22,12 +22,17 @@ export interface CreateFridayAgentMemoryToolsDeps {
 // ─── Namespace scoping ───
 
 /**
- * Returns a session-scoped namespace to isolate agent memory per run.
- * If a sessionId is available the namespace is prefixed so that the
- * default "agent" namespace becomes "agent:<sessionId>" rather than a
- * single global bucket shared across all runs.
+ * Returns the namespace for memory operations.
+ *
+ * For user-facing namespaces ("default", "user", "preference"), we do NOT
+ * scope by sessionId so that memories are accessible across sessions and
+ * subagents. Only internal/agent namespaces get session-scoped to prevent
+ * pollution between concurrent runs.
  */
 function scopedNamespace(raw: string, sessionId: string | undefined): string {
+  // User-facing namespaces should be globally accessible, not session-scoped
+  const userFacingNamespaces = new Set(["default", "user", "preference", "system"]);
+  if (userFacingNamespaces.has(raw)) return raw;
   if (!sessionId) return raw;
   return `${raw}:${sessionId}`;
 }
