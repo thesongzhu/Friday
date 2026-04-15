@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { FRIDAY_VERSION } from "../lib/version.js";
 import { createFridayAutonomousEngine } from "../agent/autonomous/friday-autonomous-engine.js";
+import { createFridayAutonomousRepository } from "../agent/autonomous/friday-autonomous-repository.js";
 import { createFridayAgentAutonomousTool } from "../agent/tools/friday-agent-autonomous-tool.js";
 import { createFridayAgentSetupAssistantTool } from "../agent/tools/friday-agent-setup-assistant-tool.js";
 import { createFridayAgentSetupTool } from "../agent/tools/friday-agent-setup-tool.js";
@@ -5432,6 +5433,7 @@ export async function createFridayHub(
     // The autonomous tool writes entries; the event bridge reads them.
     const autonomousGoalRunIdMap: Map<string, string> = new Map();
 
+    const autonomousRepo = createFridayAutonomousRepository();
     const autonomousEngine = createFridayAutonomousEngine({
       agentRuntime: {
         executeRun: (params) =>
@@ -5445,6 +5447,10 @@ export async function createFridayHub(
       browserManager: autonomousBrowserManager,
       idGenerator,
       nowIso,
+      persistence: {
+        sqlite: stateRuntime!.sqlite,
+        repository: autonomousRepo,
+      },
       eventEmitter: {
         emit: (event, payload) => {
           // Bridge autonomous events into the agent run SSE stream.
