@@ -112,8 +112,8 @@ Distributed tracing across all modules. SLO monitoring with multi-window burn-ra
 </td>
 <td>
 
-### macOS Native Companion
-Swift/AppKit desktop app. launchd auto-start. Passkey-based remote access. Desktop shortcuts and notification actions. Sparkle auto-updates with delta releases.
+### Plug & Play
+Drop in a skill or workflow and it just works — no config, no glue code. Import a `.tgz`, paste a `friday://` deep link, or generate one with AI. Preflight checks handle verification, permissions, and dependencies automatically.
 
 </td>
 </tr>
