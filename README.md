@@ -15,6 +15,7 @@
   <img src="https://img.shields.io/badge/Tests-10000%2B-success?style=flat-square" alt="Tests">
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript">
   <img src="https://github.com/thesongzhu/Friday/actions/workflows/ci.yml/badge.svg" alt="CI">
+  <a href="https://discord.gg/x2rd4WsY"><img src="https://img.shields.io/discord/1234567890?style=flat-square&logo=discord&label=Discord&color=5865F2" alt="Discord"></a>
 </p>
 
 ---
@@ -175,6 +176,7 @@ friday import ./my.tgz   # Install a skill
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href=".github/CONTRIBUTING.md">Contributing</a> ·
   <a href=".github/SECURITY.md">Security</a> ·
+  <a href="https://discord.gg/x2rd4WsY">Discord</a> ·
   <a href="LICENSE">MIT License</a>
 </p>
 
