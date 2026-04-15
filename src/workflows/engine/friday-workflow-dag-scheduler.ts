@@ -150,10 +150,19 @@ export function createFridayWorkflowDagScheduler(): FridayWorkflowDagScheduler {
         inbound.set(node.id, []);
       }
 
-      // Populate from edges
+      // Populate from edges (with validation)
       for (const edge of graph.graph.edges) {
-        outbound.get(edge.sourceNodeId)!.push(edge.targetNodeId);
-        inbound.get(edge.targetNodeId)!.push(edge.sourceNodeId);
+        const sourceList = outbound.get(edge.sourceNodeId);
+        const targetList = inbound.get(edge.targetNodeId);
+        if (!sourceList || !targetList) {
+          throw new FridayDomainError(
+            "WORKFLOW_INVALID_EDGE",
+            `Edge references unknown node: ${!sourceList ? edge.sourceNodeId : edge.targetNodeId}`,
+            { httpStatus: 400 },
+          );
+        }
+        sourceList.push(edge.targetNodeId);
+        targetList.push(edge.sourceNodeId);
       }
 
       // Entry nodes: zero inbound edges

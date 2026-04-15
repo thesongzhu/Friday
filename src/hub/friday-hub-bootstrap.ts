@@ -329,6 +329,7 @@ const warnedMessages = new Set<string>();
 
 function warnOnce(warn: FridayWarnSink, message: string): void {
   if (warnedMessages.has(message)) return;
+  if (warnedMessages.size > 500) warnedMessages.clear();
   warnedMessages.add(message);
   warn(message);
 }
@@ -645,12 +646,10 @@ export async function createFridayHub(
            VALUES (?, ?, ?, ?, NULL, 1, NULL, ?, ?, NULL)`,
         ).run("admin-001", "admin@friday.dev", "Admin", "admin", nowIso, nowIso);
       });
-      // P2: Always warn when creating passwordless admin (password_hash = NULL)
-      if (!isFridayTestSecurityWarningSuppressed()) {
-        warnHubBootstrapOnce(
-          "[friday][SECURITY] Created default admin user (admin@friday.dev) with NO password — set a passphrase via the setup wizard for production use",
-        );
-      }
+      // Always warn when creating passwordless admin (password_hash = NULL)
+      console.warn(
+        "[friday][SECURITY] Created default admin user (admin@friday.dev) with NO password — set a passphrase via POST /v1/auth/bootstrap/local-passphrase or the setup wizard before exposing this instance to a network.",
+      );
     }
   }
 
@@ -5617,7 +5616,7 @@ export async function createFridayHub(
       if (desktopSessionManager?.isConnected()) {
         desktopSessionManager.disconnect();
       }
-      await browserManager.close();
+      await browserManager?.close();
       await subagentRegistry.drain();
       // 4. API runtime — no async teardown yet (HTTP server stop is CLI concern)
       // 5. Workflow runtime — scheduler now handles cron lifecycle

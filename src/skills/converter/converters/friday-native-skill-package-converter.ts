@@ -42,6 +42,16 @@ export function createNativeSkillPackageConverter(): FridaySkillConverter {
         return null;
       }
 
+      // Detect .friday.tgz pack files — these are native Friday packages
+      if (source.uri.endsWith(".friday.tgz")) {
+        return {
+          converterId: CONVERTER_ID,
+          format: "friday-package",
+          confidence: 1.0,
+          reasons: ["Source is a .friday.tgz archive (native Friday skill pack)"],
+        };
+      }
+
       const manifestPath = resolveManifestPath(source.uri);
       if (!manifestPath) {
         return null;

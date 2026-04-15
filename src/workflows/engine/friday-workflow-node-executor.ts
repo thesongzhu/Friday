@@ -108,12 +108,21 @@ export function createFridayWorkflowNodeExecutor(
             deps.expressionEvaluator,
           );
 
+          // Apply per-node timeout (default 2 minutes) in addition to any external signal
+          const nodeTimeoutMs = typeof config.timeoutMs === "number" && config.timeoutMs > 0
+            ? config.timeoutMs
+            : 120_000;
+          const timeoutSignal = AbortSignal.timeout(nodeTimeoutMs);
+          const effectiveSignal = input.signal
+            ? AbortSignal.any([input.signal, timeoutSignal])
+            : timeoutSignal;
+
           const result = await deps.invokeSkill(
             skillId,
             input.runId,
             input.nodeId,
             resolvedArgs,
-            input.signal,
+            effectiveSignal,
           );
           return { output: (result ?? null) as JsonValue };
         }

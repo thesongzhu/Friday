@@ -25,10 +25,11 @@ describe("FridaySkillPackageArchiver", () => {
       writeFileSync(join(skillDir, "skill.manifest.json"), JSON.stringify({ id: "my-skill" }));
       writeFileSync(join(skillDir, "run.sh"), "#!/bin/bash\necho hello");
 
-      const outputFile = join(testDir, "output", "my-skill-1.0.0.friday.tgz");
+      // Pass output without archive extension; the archiver appends .friday.tgz
+      const outputFile = join(testDir, "output", "my-skill-1.0.0");
       const result = archiver.packSkill(skillDir, outputFile);
 
-      expect(result.packageFile).toBe(outputFile);
+      expect(result.packageFile).toBe(outputFile + ".friday.tgz");
       expect(existsSync(result.packageFile)).toBe(true);
       expect(result.checksumSha256).toBeTruthy();
 
@@ -50,6 +51,19 @@ describe("FridaySkillPackageArchiver", () => {
       expect(existsSync(result.packageFile)).toBe(true);
     });
 
+    it("strips existing archive extensions before appending .friday.tgz", () => {
+      const skillDir = join(testDir, "my-skill");
+      mkdirSync(skillDir);
+      writeFileSync(join(skillDir, "skill.manifest.json"), "{}");
+
+      const outputFile = join(testDir, "output", "my-skill-1.0.0.tar.gz");
+      const result = archiver.packSkill(skillDir, outputFile);
+
+      // .tar.gz should be stripped, then .friday.tgz appended
+      expect(result.packageFile).toBe(join(testDir, "output", "my-skill-1.0.0.friday.tgz"));
+      expect(existsSync(result.packageFile)).toBe(true);
+    });
+
     it("throws when skill directory does not exist", () => {
       const outputFile = join(testDir, "output.friday.tgz");
       expect(() => archiver.packSkill("/nonexistent/skill/dir", outputFile)).toThrow(
@@ -62,9 +76,11 @@ describe("FridaySkillPackageArchiver", () => {
       mkdirSync(skillDir);
       writeFileSync(join(skillDir, "manifest.json"), "{}");
 
-      const outputFile = join(testDir, "deep", "nested", "output.friday.tgz");
+      // Use a name without .tgz extension so the archiver appends .friday.tgz cleanly
+      const outputFile = join(testDir, "deep", "nested", "output");
       const result = archiver.packSkill(skillDir, outputFile);
 
+      expect(result.packageFile).toBe(outputFile + ".friday.tgz");
       expect(existsSync(result.packageFile)).toBe(true);
     });
 
@@ -74,7 +90,7 @@ describe("FridaySkillPackageArchiver", () => {
       writeFileSync(join(skillDir, "skill.manifest.json"), "{}");
       writeFileSync(join(skillDir, "assets", "icon.txt"), "icon");
 
-      const outputFile = join(testDir, "output.friday.tgz");
+      const outputFile = join(testDir, "output");
       const result = archiver.packSkill(skillDir, outputFile);
 
       expect(existsSync(result.packageFile)).toBe(true);
@@ -96,8 +112,8 @@ describe("FridaySkillPackageArchiver", () => {
       writeFileSync(join(skillDir, "skill.manifest.json"), JSON.stringify({ id: "my-skill" }));
       writeFileSync(join(skillDir, "run.sh"), "#!/bin/bash\necho hello");
 
-      const archivePath = join(testDir, "archive.friday.tgz");
-      archiver.packSkill(skillDir, archivePath);
+      const packResult = archiver.packSkill(skillDir, join(testDir, "archive"));
+      const archivePath = packResult.packageFile;
 
       // Unpack
       const outputDir = join(testDir, "extracted");
@@ -115,8 +131,8 @@ describe("FridaySkillPackageArchiver", () => {
       mkdirSync(skillDir);
       writeFileSync(join(skillDir, "test.txt"), "test");
 
-      const archivePath = join(testDir, "archive.friday.tgz");
-      archiver.packSkill(skillDir, archivePath);
+      const packResult = archiver.packSkill(skillDir, join(testDir, "archive"));
+      const archivePath = packResult.packageFile;
 
       const outputDir = join(testDir, "deep", "nested", "output");
       archiver.unpackSkill(archivePath, outputDir);
@@ -143,8 +159,7 @@ describe("FridaySkillPackageArchiver", () => {
       writeFileSync(join(skillDir, "prompts", "main.txt"), "Hello world");
 
       // Pack
-      const archivePath = join(testDir, "round-trip.friday.tgz");
-      const packResult = archiver.packSkill(skillDir, archivePath);
+      const packResult = archiver.packSkill(skillDir, join(testDir, "round-trip"));
 
       // Unpack
       const outputDir = join(testDir, "unpacked");

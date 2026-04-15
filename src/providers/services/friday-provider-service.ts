@@ -1474,15 +1474,22 @@ export function createFridayProviderService(
           profile.config.validation = validationState;
 
           if (validationState.status === "failed") {
-            throw new FridayDomainError(
-              validationState.errorCode ?? "PROVIDER_UNKNOWN_ERROR",
-              validationState.errorMessage ?? "Validation failed",
-              { httpStatus: 422, details: { validation: validationState } },
-            );
+            // Allow PAYMENT_REQUIRED through — key is valid, just no credits.
+            // The provider is saved with a warning so the user can add credits later.
+            if (validationState.errorCode === "PROVIDER_PAYMENT_REQUIRED") {
+              console.warn("[friday][provider-service] Provider saved with payment-required warning — add credits to activate");
+            } else {
+              throw new FridayDomainError(
+                validationState.errorCode ?? "PROVIDER_UNKNOWN_ERROR",
+                validationState.errorMessage ?? "Validation failed",
+                { httpStatus: 422, details: { validation: validationState } },
+              );
+            }
           }
         } catch (err) {
           if (err instanceof FridayDomainError) throw err;
-          // Non-domain errors during validation: record state but do NOT persist
+          // Non-domain errors during validation: record state, log warning, but still persist
+          console.warn("[friday][provider-service] Provider validation failed (non-domain):", err instanceof Error ? err.message : String(err));
           profile.config.validation = {
             status: "failed",
             checkedAt: deps.nowIso(),

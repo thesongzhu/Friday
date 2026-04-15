@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Navigate, Outlet, createBrowserRouter, useLocation } from "react-router-dom";
+import { Navigate, Outlet, createBrowserRouter, useLocation, useRouteError } from "react-router-dom";
 import { AppShell } from "@/components/layout/app-shell";
 import { useAuth } from "@/hooks/use-auth";
 import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences";
@@ -193,6 +193,25 @@ function LegacyRedirectPage() {
   return <Navigate to={target ?? "/assistant"} replace />;
 }
 
+function RouteErrorBoundary() {
+  const error = useRouteError();
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", gap: "16px", fontFamily: "system-ui, sans-serif" }}>
+      <h2 style={{ margin: 0, fontSize: "20px" }}>Something went wrong</h2>
+      <p style={{ margin: 0, color: "#666", maxWidth: "400px", textAlign: "center" }}>
+        {error instanceof Error ? error.message : "An unexpected error occurred while loading this page."}
+      </p>
+      <button
+        type="button"
+        onClick={() => window.location.reload()}
+        style={{ padding: "8px 20px", borderRadius: "6px", border: "1px solid #ccc", cursor: "pointer", background: "#fff" }}
+      >
+        Reload Page
+      </button>
+    </div>
+  );
+}
+
 export const router = createBrowserRouter([
   {
     path: "/login",
@@ -200,6 +219,7 @@ export const router = createBrowserRouter([
   },
   {
     path: "/",
+    errorElement: <RouteErrorBoundary />,
     element: (
       <RequireAuth>
         <SetupGate />
