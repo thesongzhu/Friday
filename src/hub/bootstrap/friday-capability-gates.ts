@@ -25,7 +25,7 @@ export function resolveFridayCapabilityGates(
   return {
     desktopEnabled: envEqualsTrue(env.FRIDAY_DESKTOP_ENABLED),
     systemEnabled: envNotFalse(env.FRIDAY_SYSTEM_ENABLED),
-    discoveryEnabled: envEqualsTrue(env.FRIDAY_DISCOVERY_ENABLED),
+    discoveryEnabled: envNotFalse(env.FRIDAY_DISCOVERY_ENABLED),
     mcpServerEnabled: envEqualsTrue(env.FRIDAY_MCP_SERVER_ENABLED),
     marketplaceCommerceEnabled: envNotFalse(env.FRIDAY_MARKETPLACE_COMMERCE_ENABLED),
     marketplaceInstallRequired: envNotFalse(env.FRIDAY_MARKETPLACE_INSTALL_REQUIRED),

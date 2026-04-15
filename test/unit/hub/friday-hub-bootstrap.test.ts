@@ -114,24 +114,24 @@ describe("createFridayHub", () => {
       hub = await createIsolatedHub();
 
       const warnings = warnSpy.mock.calls.map(([message]) => String(message));
-      // Module-level warnOnce deduplicates across all hub instances in the same
-      // process, so earlier test runs may have already emitted the admin-user
-      // warning.  The key assertion is that the SECOND hub does not duplicate it.
+      // The admin-user warning now always prints via console.warn (no longer
+      // deduplicated by warnOnce), so each hub bootstrap emits it once.
       const adminWarnings = warnings.filter((message) => message.includes("Created default admin user"));
-      expect(adminWarnings.length).toBeLessThanOrEqual(1);
+      expect(adminWarnings.length).toBe(2);
       expect(warnings.filter((message) => message.includes("No model routing configured"))).toHaveLength(0);
     } finally {
       warnSpy.mockRestore();
     }
   });
 
-  it("suppresses passwordless admin warning when test security warning suppression is enabled", async () => {
+  it("always emits passwordless admin warning regardless of test security warning suppression", async () => {
     process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       hub = await createIsolatedHub();
       const warnings = warnSpy.mock.calls.map(([message]) => String(message));
-      expect(warnings.filter((message) => message.includes("Created default admin user"))).toHaveLength(0);
+      // Suppression env var no longer prevents the admin warning from being emitted
+      expect(warnings.filter((message) => message.includes("Created default admin user"))).toHaveLength(1);
     } finally {
       warnSpy.mockRestore();
     }

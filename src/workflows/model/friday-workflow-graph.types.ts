@@ -52,7 +52,9 @@ export function validateGraphStructure(raw: Record<string, unknown>): string[] {
     if (typeof n.id !== "string" || n.id === "") {
       errors.push(`nodes[${i}]: missing or invalid 'id' (must be a non-empty string)`);
     }
-    if (typeof n.type !== "string" || n.type === "") {
+    // Accept both 'type' and 'kind' for node definitions (kind is a common alias)
+    const nodeType = typeof n.type === "string" && n.type !== "" ? n.type : typeof n.kind === "string" && n.kind !== "" ? n.kind : "";
+    if (nodeType === "") {
       errors.push(`nodes[${i}]: missing or invalid 'type' (must be a non-empty string)`);
     }
     // Position: required for visual editor graphs, optional for compiled graphs

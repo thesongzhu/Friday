@@ -531,7 +531,7 @@ describe("CX-008: AbortSignal passthrough", () => {
     };
   }
 
-  it("passes signal to invokeSkill for action nodes", async () => {
+  it("passes signal to invokeSkill for action nodes (combined with timeout)", async () => {
     let receivedSignal: AbortSignal | undefined;
     const executor = createFridayWorkflowNodeExecutor({
       expressionEvaluator,
@@ -552,7 +552,10 @@ describe("CX-008: AbortSignal passthrough", () => {
     };
 
     await executor.executeNode(makeInput(node, ac.signal));
-    expect(receivedSignal).toBe(ac.signal);
+    // Signal is now an AbortSignal.any() combining input signal with a timeout signal
+    expect(receivedSignal).toBeDefined();
+    expect(receivedSignal).not.toBe(ac.signal);
+    expect(receivedSignal).toBeInstanceOf(AbortSignal);
   });
 
   it("passes signal to invokeSkill for ai nodes", async () => {
@@ -603,7 +606,7 @@ describe("CX-008: AbortSignal passthrough", () => {
     expect(invokeSkillCalled).toBe(false); // trigger doesn't invoke skill
   });
 
-  it("signal is undefined when not provided", async () => {
+  it("signal is a timeout signal when no input signal provided", async () => {
     let receivedSignal: AbortSignal | undefined = undefined;
     const executor = createFridayWorkflowNodeExecutor({
       expressionEvaluator,
@@ -623,6 +626,8 @@ describe("CX-008: AbortSignal passthrough", () => {
     };
 
     await executor.executeNode(makeInput(node)); // no signal
-    expect(receivedSignal).toBeUndefined();
+    // Action nodes now always get a timeout signal even without an input signal
+    expect(receivedSignal).toBeDefined();
+    expect(receivedSignal).toBeInstanceOf(AbortSignal);
   });
 });

@@ -1402,6 +1402,25 @@ function buildConfig(parsed: ParsedArgs): FridayHubConfig {
 
 async function cmdStart(parsed: ParsedArgs): Promise<void> {
   const startupBinding = resolveStartupNetworkBinding(parsed);
+
+  // Early port availability check — fail fast before heavy hub initialization
+  const net = await import("node:net");
+  await new Promise<void>((resolve, reject) => {
+    const tester = net.createServer();
+    tester.once("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        console.error(`\n❌ Port ${startupBinding.port} is already in use.`);
+        console.error(`  Try: friday start --port ${startupBinding.port + 1}`);
+        console.error(`  Or:  lsof -i :${startupBinding.port}  (to find the process using it)\n`);
+        process.exit(1);
+      }
+      reject(err);
+    });
+    tester.listen(startupBinding.port, startupBinding.host, () => {
+      tester.close(() => resolve());
+    });
+  });
+
   const startupChannels = prepareStartupChannelsConfig();
   const trustProxyMode = parseFridayHttpTrustProxyMode(process.env.FRIDAY_HTTP_TRUST_PROXY);
   if (startupChannels.compatMode && !process.env.FRIDAY_CHANNEL_SECRET_POLICY) {

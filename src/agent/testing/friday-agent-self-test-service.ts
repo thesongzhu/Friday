@@ -34,7 +34,8 @@ export function createFridayAgentSelfTestService(
         }
       }
 
-      // If no artifacts matched a specific strategy, return a generic pass
+      // If no artifacts matched a specific strategy, return a "not evaluated" result
+      // (previously returned passed:true which was misleading for failed runs)
       if (results.length === 0) {
         results.push({
           strategy: "llm_eval",

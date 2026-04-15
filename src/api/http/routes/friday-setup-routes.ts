@@ -890,6 +890,22 @@ export function createFridaySetupRoutes(
           }
         }
 
+        // Idempotency: if setup is already complete, return existing timestamp
+        const existingState = deps.db.withReadConnection((db) => {
+          return db.prepare(
+            `SELECT setup_completed_at FROM friday_setup_state WHERE id = 'singleton' AND setup_completed_at IS NOT NULL`,
+          ).get() as { setup_completed_at: string } | undefined;
+        });
+        if (existingState?.setup_completed_at) {
+          return { setupCompletedAt: existingState.setup_completed_at };
+        }
+
+        // If provider step was not explicitly handled, auto-mark as skipped
+        const providerHandled = completedSteps.includes("provider") || skippedSteps.includes("provider");
+        if (!providerHandled) {
+          skippedSteps.push("provider");
+        }
+
         // "done" must always be persisted as the completion sentinel.
         const normalizedCompletedSteps = Array.from(
           new Set([...completedSteps, "done"]),

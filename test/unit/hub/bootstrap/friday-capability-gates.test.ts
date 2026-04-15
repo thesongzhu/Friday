@@ -8,7 +8,7 @@ describe("resolveFridayCapabilityGates", () => {
 
     expect(gates.desktopEnabled).toBe(false);
     expect(gates.systemEnabled).toBe(true);
-    expect(gates.discoveryEnabled).toBe(false);
+    expect(gates.discoveryEnabled).toBe(true);
     expect(gates.mcpServerEnabled).toBe(false);
     expect(gates.marketplaceCommerceEnabled).toBe(true);
     expect(gates.marketplaceInstallRequired).toBe(true);

@@ -37,9 +37,11 @@ export function createFridaySkillPackageArchiver(): FridaySkillPackageArchiver {
       mkdirSync(outputDir, { recursive: true });
 
       // Ensure output file ends with .friday.tgz
+      // If it already ends with .friday.tgz, use as-is.
+      // Otherwise strip common archive extensions before appending.
       const finalOutputFile = outputFile.endsWith(".friday.tgz")
         ? outputFile
-        : `${outputFile}.friday.tgz`;
+        : `${outputFile.replace(/\.(tar\.gz|tgz|tar|zip)$/i, "")}.friday.tgz`;
 
       // Create tar.gz archive from the skill directory contents
       // We cd into the skill dir so paths in the archive are relative
