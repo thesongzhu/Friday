@@ -47,7 +47,7 @@ import {
   resolveFridayRoutingStabilityWarning,
 } from "#providers";
 import type { FridayEncryptedEnvelope, FridayProviderApi, FridayProviderKind, FridayProviderService } from "#providers";
-import { createFridayProviderContextCompactor, createFridayProviderTokenEstimator, createFridayProviderContextPruner } from "#providers";
+import { createFridayProviderContextCompactor, createFridayProviderContextPruner, createFridayProviderTokenEstimator } from "#providers";
 import { FridaySkillRegistryImpl, safeParseFridaySkillManifestV2 } from "#skills";
 import { createFridaySkillExecutor } from "#skills";
 import { createFridaySkillGeneratorService } from "#skills/generator";
@@ -114,6 +114,7 @@ import {
   createFridayAgentAgentsListTool,
   createFridayAgentArtifactWriter,
   createFridayAgentAutomationRepository,
+  createFridayAgentCompactionBridge,
   createFridayAgentCronTool,
   createFridayAgentEventEmitter,
   createFridayAgentFeedbackTool,
@@ -127,8 +128,6 @@ import {
   createFridayAgentReviewGate,
   createFridayAgentRunEventRepository,
   createFridayAgentRunRepository,
-  createFridayAgentCompactionBridge,
-  createFridayCompactionMemorySink,
   createFridayAgentRuntime,
   createFridayAgentSelfTestService,
   createFridayAgentSkillGeneratorTool,
@@ -137,6 +136,7 @@ import {
   createFridayAgentSubagentTools,
   createFridayAgentToolRegistry,
   createFridayAgentWorkflowGeneratorTool,
+  createFridayCompactionMemorySink,
   createFridayMcpAdapter,
   createFridaySubagentRegistry,
   createFridayWorkspaceContextEngine,
