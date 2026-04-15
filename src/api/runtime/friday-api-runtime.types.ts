@@ -52,6 +52,7 @@ import type { FridayAgentLoopRoutesDeps } from "../http/routes/friday-agent-loop
 import type { FridaySystemRoutesDeps } from "../http/routes/friday-system-routes.js";
 import type { FridayUixRoutesDeps } from "../http/routes/friday-uix-routes.js";
 import type { FridayCrossBorderPackRoutesDeps } from "../http/routes/friday-cross-border-pack-routes.js";
+import type { FridayPackagingRoutesDeps } from "../http/routes/friday-packaging-routes.js";
 import type {
   LarkWebhookRelayService,
   LineWebhookListenerService,
@@ -275,4 +276,6 @@ export interface CreateFridayApiRuntimeDeps {
     larkWebhookRelay?: LarkWebhookRelayService;
   };
   outboxQueueService?: FridayOutboxQueueService;
+  /** Optional: packaging system route surface (publish, install, upgrade, rollback, keys). */
+  packaging?: FridayPackagingRoutesDeps;
 }

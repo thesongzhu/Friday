@@ -40,7 +40,7 @@ friday --help
 ### Option B: npm global install (when published)
 
 ```bash
-npm install -g friday
+npm install -g @thesongzhu/friday
 friday --help
 ```
 
@@ -240,7 +240,7 @@ curl http://localhost:3141/v1/health
   "ok": true,
   "data": {
     "status": "ok",
-    "version": "0.3.0",
+    "version": "1.0.0",
     "uptime": 5
   },
   "requestId": "abc-123"
@@ -479,8 +479,8 @@ open http://localhost:3141
 - **Environment variables** — See [.env.example](../.env.example) for all `FRIDAY_*` configuration.
 - **Docker** — See [docker-compose.yml](../docker/docker-compose.yml) for containerized deployment.
 - **Style guide** — See [friday-style-guide.md](friday-style-guide.md) for contribution conventions.
-- **Recent changes** — See [CHANGELOG.md](CHANGELOG.md) for latest updates.
-- **Production** — See [README.md](../README.md#production-notes) for hardening tips.
+- **Recent changes** — See [CHANGELOG.md](../CHANGELOG.md) for latest updates.
+- **Production** — See [README.md](../README.md) for hardening tips.
 
 ---
 

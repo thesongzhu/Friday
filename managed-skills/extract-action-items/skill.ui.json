@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Extract Action Items",
+  "description": "Extract a list of action items with owners and deadlines from a meeting transcript.",
+  "sections": [
+    {
+      "id": "main",
+      "label": "Inputs",
+      "fieldIds": [
+        "transcript-field"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "transcript-field",
+      "inputKey": "transcript",
+      "kind": "text",
+      "label": "Meeting Transcript",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "actionItems-output",
+      "outputKey": "actionItems",
+      "label": "actionItems",
+      "widget": "table"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Run",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

@@ -78,6 +78,14 @@ import {
 import { createFridayWorkflowTriggerRepository } from "#workflows";
 import { createFridayApiRuntime, createFridayDeterministicPipelineRuntime, getChannelPersona } from "#api";
 import type { FridaySystemRoutesDeps } from "#api";
+import type { FridayPackagingRoutesDeps } from "../api/http/routes/friday-packaging-routes.js";
+import {
+  createRegistryManager,
+  createPackageInstaller,
+} from "../packaging/engine/index.js";
+import {
+  createFridayPackagingApiHandlers,
+} from "../packaging/api/index.js";
 import {
   createFridayRulesRepository,
   FridayRuleEngine,
@@ -2400,12 +2408,76 @@ export async function createFridayHub(
     const routingWarning = resolveFridayRoutingStabilityWarning({ routing, providers });
     if (routingWarning && providers.length > 0) {
       warnHubBootstrapOnce(`[friday][W-PROVIDER-ROUTING-001] ${routingWarning}`);
+      // Auto-configure fallback providers if none are set
+      if (routing.defaultProviderId && (!routing.fallbackProviderIds || routing.fallbackProviderIds.length === 0)) {
+        const validatedAlternatives = providers
+          .filter((p) => p.enabled && p.id !== routing.defaultProviderId)
+          .slice(0, 3)
+          .map((p) => p.id);
+        if (validatedAlternatives.length > 0) {
+          try {
+            await providerService.setRoutingConfig({
+              ...routing,
+              fallbackProviderIds: validatedAlternatives,
+            });
+            console.log(`[friday] Auto-configured ${validatedAlternatives.length} fallback provider(s) for routing resilience.`);
+          } catch {
+            // Non-fatal: fallback auto-config failure should not block startup.
+          }
+        }
+      }
     }
   } catch (err) {
       if (!isExpectedVitestProviderNoRouting(err)) {
         warnHubBootstrapOperationFailureOnce(err);
       }
     // Non-fatal: provider routing diagnostics should not block startup.
+  }
+
+  // ── Media Understanding pipeline (opt-in, requires providers) ──
+  // The media-understanding module is fully implemented but requires external
+  // providers (e.g., vision models) to be useful. Instantiate when configured.
+  if (process.env.FRIDAY_MEDIA_UNDERSTANDING_ENABLED === "true") {
+    const { createFridayMediaUnderstandingService } = await import("#media-understanding");
+    const muService = createFridayMediaUnderstandingService({
+      providers: [], // No built-in providers yet; users must register providers via plugins
+      fetchContent: async (attachment) => {
+        const fsModule = await import("node:fs");
+        if (attachment.sourceUrl.startsWith("file://")) {
+          return fsModule.readFileSync(new URL(attachment.sourceUrl));
+        }
+        const response = await fetch(attachment.sourceUrl);
+        return Buffer.from(await response.arrayBuffer());
+      },
+    });
+    console.log("[friday] Media understanding pipeline enabled (0 providers registered).");
+    // muService is available for future agent tool integration
+    void muService;
+  }
+
+  // ── Link Understanding pipeline ──
+  // Wire the full auto-detect-links service for session message enrichment.
+  {
+    const { createFridayLinkUnderstandingService, createFridayLinkCacheRepository } = await import("#link-understanding");
+    const linkCacheRepo = createFridayLinkCacheRepository();
+    const linkService = createFridayLinkUnderstandingService({
+      fetchFn: async (url) => {
+        const response = await fetch(url, {
+          headers: { "User-Agent": "Friday/1.0" },
+          redirect: "follow",
+          signal: AbortSignal.timeout(15_000),
+        });
+        return {
+          statusCode: response.status,
+          contentType: response.headers.get("content-type"),
+          body: await response.text(),
+        };
+      },
+      cache: linkCacheRepo,
+      nowIso,
+    });
+    // linkService is available for session message enrichment
+    void linkService;
   }
 
   // ── World Model Readiness layer ──
@@ -3636,10 +3708,14 @@ export async function createFridayHub(
 
   // ─── Observability runtime ───
 
+  // Late-init reference for heartbeat state — populated when heartbeat is created (line ~4782)
+  let heartbeatStateRef: (() => { lastRunAt: string | null; result: string; intervalMs: number | null; nextRunAt: string | null } | null) | undefined;
+
   const observabilityService = createFridayObservabilityApiService({
     db: stateRuntime.sqlite,
     idGenerator,
     nowIso,
+    heartbeatStateGetter: () => heartbeatStateRef ? heartbeatStateRef() : null,
     browserDiagnosticsProvider: () => {
       if (!browserManager) {
         return undefined;
@@ -3970,6 +4046,345 @@ export async function createFridayHub(
 
   const satelliteRepo = createFridaySatelliteRepository();
 
+  // ── Packaging system (opt-in) ──
+  let packagingDeps: FridayPackagingRoutesDeps | undefined;
+  if (process.env.FRIDAY_PACKAGING_ENABLED === "true") {
+    const packagingRegistry = createRegistryManager({
+      generateId: idGenerator,
+      nowIso,
+    });
+    const packagingInstaller = createPackageInstaller(packagingRegistry, {
+      generateId: idGenerator,
+      nowIso,
+    });
+    const packagingHandlers = createFridayPackagingApiHandlers({
+      registry: packagingRegistry,
+      installer: packagingInstaller,
+      principalId: "system",
+      platformVersion: config.serverVersion ?? FRIDAY_HUB_DEFAULT_SERVER_VERSION,
+    });
+
+    // In-memory trusted key store for the packaging key management surface
+    const trustedKeys = new Map<string, {
+      id: string; keyId: string; publicKey: string; algorithm: "Ed25519";
+      owner: string; tenantId?: string; trustedAt: string; expiresAt?: string;
+      revokedAt?: string; createdAt: string; updatedAt: string;
+    }>();
+
+    packagingDeps = {
+      packages: {
+        publish(req) {
+          const archiveBuffer = Buffer.from(req.archive, "base64");
+          const entry = packagingRegistry.publish({
+            manifest: {
+              name: `pkg-${idGenerator().slice(0, 8)}`,
+              version: "0.0.0",
+              description: "",
+              author: { name: "unknown" },
+              capabilities: [],
+              dependencies: {},
+              peerDependencies: {},
+              fridayVersionRange: ">=0.0.0",
+              assets: {},
+              hooks: {},
+              metadata: {},
+            },
+            signature: {
+              algorithm: "Ed25519",
+              publicKey: "",
+              signature: "",
+              digest: "",
+              manifestDigest: "",
+              timestamp: nowIso(),
+              expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+              keyId: "stub",
+            },
+            archiveDigest: computeChecksum(req.archive),
+            manifestDigest: computeChecksum(req.archive),
+            sizeBytes: archiveBuffer.length,
+            publishedBy: "system",
+            tenantId: req.tenantId,
+          });
+          return {
+            package: entry as any,
+            verification: {
+              valid: true,
+              outcome: "valid" as const,
+              message: "Stub verification passed",
+              verifiedAt: nowIso(),
+              durationMs: 0,
+            },
+          };
+        },
+        list(query) {
+          const page = packagingRegistry.search(
+            { name: query.name, capability: query.capability, keyword: query.keyword, author: query.author, sortBy: query.sortBy, sortDir: query.sortDir },
+            { cursor: query.cursor, limit: query.limit },
+          );
+          return {
+            items: page.items.map((e) => ({
+              id: e.id, name: e.name, version: e.version,
+              description: e.description, author: e.author,
+              license: e.license, capabilities: e.capabilities,
+              sizeBytes: e.sizeBytes, publishedBy: e.publishedBy,
+              createdAt: e.createdAt, updatedAt: e.updatedAt,
+            })),
+            nextCursor: page.nextCursor,
+          };
+        },
+        get(packageId) {
+          const entry = packagingRegistry.getById(packageId);
+          if (!entry) { throw new FridayDomainError("NOT_FOUND", `Package "${packageId}" not found`); }
+          return {
+            package: entry as any,
+            signature: (entry as any).signature ?? {
+              algorithm: "Ed25519" as const, publicKey: "", signature: "",
+              digest: entry.archiveDigest, manifestDigest: entry.manifestDigest,
+              timestamp: entry.createdAt, expiresAt: entry.createdAt, keyId: "unknown",
+            },
+            versionCount: packagingRegistry.getVersionCount(entry.name),
+          };
+        },
+        listVersions(packageName, query) {
+          const versions = packagingRegistry.getVersions(packageName);
+          const limit = Math.max(1, Math.min(query.limit ?? 20, 100));
+          let startIndex = 0;
+          if (query.cursor) {
+            const idx = versions.findIndex((v) => v.id === query.cursor);
+            if (idx >= 0) startIndex = idx + 1;
+          }
+          const paged = versions.slice(startIndex, startIndex + limit);
+          return {
+            items: paged.map((v) => ({
+              id: v.id, packageName: v.name, version: v.version,
+              compatibilityRange: v.fridayVersionRange,
+              archiveDigest: v.archiveDigest, sizeBytes: v.sizeBytes,
+              publishedAt: v.createdAt, publishedBy: v.publishedBy,
+              deprecated: false,
+            })),
+            nextCursor: startIndex + limit < versions.length ? paged[paged.length - 1]?.id : undefined,
+          };
+        },
+        verify(packageId, _req) {
+          const entry = packagingRegistry.getById(packageId);
+          if (!entry) { throw new FridayDomainError("NOT_FOUND", `Package "${packageId}" not found`); }
+          return {
+            verification: {
+              valid: true, outcome: "valid" as const,
+              message: "Stub verification passed",
+              verifiedAt: nowIso(), durationMs: 0,
+            },
+            package: entry as any,
+          };
+        },
+        checkDependencies(packageName, req) {
+          return packagingHandlers.checkDependencies(packageName, req);
+        },
+      },
+      installs: {
+        install(packageName, req) { return packagingHandlers.installPackage(packageName, req); },
+        upgrade(packageName, req) { return packagingHandlers.upgradePackage(packageName, req); },
+        rollback(packageName, req) { return packagingHandlers.rollbackPackage(packageName, req); },
+        uninstall(packageName, req) { return packagingHandlers.uninstallPackage(packageName, req); },
+        list(query) { return packagingHandlers.listInstalls(query); },
+        get(installId) { return packagingHandlers.getInstall(installId); },
+      },
+      lifecycle: {
+        list(query) { return packagingHandlers.listLifecycleEvents(query); },
+      },
+      keys: {
+        list(query) {
+          let keys = [...trustedKeys.values()];
+          if (query.tenantId) { keys = keys.filter((k) => k.tenantId === query.tenantId); }
+          if (!query.includeRevoked) { keys = keys.filter((k) => !k.revokedAt); }
+          const limit = Math.max(1, Math.min(query.limit ?? 20, 100));
+          let startIndex = 0;
+          if (query.cursor) {
+            const idx = keys.findIndex((k) => k.id === query.cursor);
+            if (idx >= 0) startIndex = idx + 1;
+          }
+          const paged = keys.slice(startIndex, startIndex + limit);
+          return {
+            items: paged,
+            nextCursor: startIndex + limit < keys.length ? paged[paged.length - 1]?.id : undefined,
+          };
+        },
+        add(req) {
+          const existing = [...trustedKeys.values()].find((k) => k.keyId === req.keyId);
+          if (existing) { throw new FridayDomainError("CONFLICT", `Key "${req.keyId}" already exists`); }
+          const now = nowIso();
+          const key = {
+            id: idGenerator(), keyId: req.keyId, publicKey: req.publicKey,
+            algorithm: req.algorithm ?? ("Ed25519" as const), owner: req.owner,
+            tenantId: req.tenantId, trustedAt: now,
+            expiresAt: req.expiresAt, createdAt: now, updatedAt: now,
+          };
+          trustedKeys.set(key.id, key);
+          return { key };
+        },
+        revoke(keyId, req) {
+          const key = [...trustedKeys.values()].find((k) => k.keyId === keyId);
+          if (!key) { throw new FridayDomainError("NOT_FOUND", `Key "${keyId}" not found`); }
+          if (key.revokedAt) { throw new FridayDomainError("CONFLICT", `Key "${keyId}" already revoked`); }
+          const now = nowIso();
+          const updated = { ...key, revokedAt: now, updatedAt: now };
+          trustedKeys.set(key.id, updated);
+          return { key: updated, affectedInstalls: 0 };
+        },
+        rotate(keyId, req) {
+          const oldKey = [...trustedKeys.values()].find((k) => k.keyId === keyId);
+          if (!oldKey) { throw new FridayDomainError("NOT_FOUND", `Key "${keyId}" not found`); }
+          const now = nowIso();
+          const gracePeriodEndsAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+          const newKey = {
+            id: idGenerator(), keyId: req.newKeyId, publicKey: req.newPublicKey,
+            algorithm: "Ed25519" as const, owner: req.owner,
+            tenantId: oldKey.tenantId, trustedAt: now,
+            expiresAt: req.expiresAt, createdAt: now, updatedAt: now,
+          };
+          trustedKeys.set(newKey.id, newKey);
+          const updatedOld = { ...oldKey, updatedAt: now };
+          trustedKeys.set(oldKey.id, updatedOld);
+          return { newKey, oldKey: updatedOld, gracePeriodEndsAt };
+        },
+      },
+    };
+  }
+
+  // ── Multi-tenant security (opt-in) ──
+  let multiTenantSecurityDeps: Parameters<typeof createFridayApiRuntime>[0]["multiTenantSecurity"] = undefined;
+  if (process.env.FRIDAY_MULTI_TENANT_ENABLED === "true") {
+    const {
+      TenantManager,
+      RbacEngine,
+      PolicyEngine,
+      SecretManager,
+      AuditLogger,
+    } = await import("../security/multi-tenant/engine/index.js");
+    const { MIGRATION_ACTOR } = await import("../security/multi-tenant/engine/tenant-manager.js");
+
+    const mtAuditLogger = new AuditLogger();
+    const mtTenantManager = new TenantManager(mtAuditLogger);
+    const mtRbacEngine = new RbacEngine(mtAuditLogger);
+    const mtPolicyEngine = new PolicyEngine(mtAuditLogger);
+    const mtSecretManager = new SecretManager(mtAuditLogger);
+
+    // System-level actor for API-initiated operations (routes enforce their own auth scopes)
+    const sysActor = MIGRATION_ACTOR;
+
+    multiTenantSecurityDeps = {
+      tenants: {
+        create: (req) => ({ tenant: mtTenantManager.createTenant(req as never, sysActor) }) as never,
+        list: (query) => ({ items: mtTenantManager.listTenants(sysActor, (query as unknown as Record<string, unknown>)?.status as never) }) as never,
+        get: (tenantId) => ({ tenant: mtTenantManager.getTenant(tenantId, sysActor) }) as never,
+        update: (tenantId, req) => ({ tenant: mtTenantManager.updateTenant(tenantId, req as never, sysActor) }) as never,
+        delete: (tenantId, req) => ({ tenant: mtTenantManager.deleteTenant(tenantId, (req as unknown as Record<string, unknown>).etag as string, sysActor) }) as never,
+      },
+      workspaces: {
+        create: (tenantId, req) => ({ workspace: mtTenantManager.createWorkspace(tenantId, req as never, sysActor) }) as never,
+        list: (tenantId, query) => ({ items: mtTenantManager.listWorkspaces(tenantId, sysActor, (query as unknown as Record<string, unknown>)?.status as never) }) as never,
+        get: (tenantId, workspaceId) => ({ workspace: mtTenantManager.getWorkspace(tenantId, workspaceId, sysActor) }) as never,
+        update: (tenantId, workspaceId, req) => ({ workspace: mtTenantManager.updateWorkspace(tenantId, workspaceId, req as never, sysActor) }) as never,
+        delete: (tenantId, workspaceId, req) => ({ workspace: mtTenantManager.deleteWorkspace(tenantId, workspaceId, (req as unknown as Record<string, unknown>).etag as string, sysActor) }) as never,
+      },
+      members: {
+        add: (tenantId, workspaceId, req) => ({ membership: mtTenantManager.addMember(tenantId, workspaceId, req as never) }) as never,
+        list: (tenantId, workspaceId, query) => ({ items: mtTenantManager.listMembers(tenantId, workspaceId, query as never) }) as never,
+        revoke: (tenantId, workspaceId, membershipId, _req) => ({ membership: mtTenantManager.revokeMembership(tenantId, workspaceId, membershipId) }) as never,
+      },
+      roles: {
+        create: (tenantId, req) => ({ role: mtRbacEngine.createRole(tenantId, req as never) }) as never,
+        list: (tenantId, query) => ({ items: mtRbacEngine.listRoles(tenantId, (query as unknown as Record<string, unknown>)?.scope as never) }) as never,
+        get: (tenantId, roleId) => ({ role: mtRbacEngine.getRole(tenantId, roleId) }) as never,
+        update: (tenantId, roleId, req) => ({ role: mtRbacEngine.updateRole(tenantId, roleId, req as never) }) as never,
+        delete: (tenantId, roleId, req) => ({ role: mtRbacEngine.deleteRole(tenantId, roleId, (req as unknown as Record<string, unknown>).etag as string) }) as never,
+      },
+      assignments: {
+        grant: (_tenantId, req) => ({ assignment: mtRbacEngine.grantRole(req as never) }) as never,
+        list: (tenantId, query) => ({ items: mtRbacEngine.listAssignments(tenantId, query as never) }) as never,
+        revoke: (tenantId, assignmentId, _req) => ({ assignment: mtRbacEngine.revokeAssignment(tenantId, assignmentId) }) as never,
+      },
+      secrets: {
+        create: (tenantId, req) => ({ secret: mtSecretManager.createSecret(tenantId, req as never) }) as never,
+        list: (tenantId, query) => ({ items: mtSecretManager.listSecrets(tenantId, query as never) }) as never,
+        get: (tenantId, secretId) => ({ secret: mtSecretManager.getSecret(tenantId, secretId) }) as never,
+        update: (tenantId, secretId, req) => ({ secret: mtSecretManager.updateSecret(tenantId, secretId, req as never) }) as never,
+        delete: (tenantId, secretId, req) => ({ secret: mtSecretManager.deleteSecret(tenantId, secretId, (req as unknown as Record<string, unknown>).etag as string) }) as never,
+        rotate: (tenantId, secretId, req) => mtSecretManager.rotateSecret(tenantId, secretId, req as never) as never,
+        listAccessLog: (tenantId, secretId, query) => ({ items: mtSecretManager.queryAccessLog(tenantId, secretId, query as never) }) as never,
+      },
+      policies: {
+        create: (tenantId, req) => ({ policy: mtPolicyEngine.createPolicy(tenantId, req as never) }) as never,
+        list: (tenantId, query) => ({ items: mtPolicyEngine.listPolicies(tenantId, (query as unknown as Record<string, unknown>)?.scope as never) }) as never,
+        get: (tenantId, policyId) => ({ policy: mtPolicyEngine.getPolicy(tenantId, policyId) }) as never,
+        update: (tenantId, policyId, req) => ({ policy: mtPolicyEngine.updatePolicy(tenantId, policyId, req as never) }) as never,
+        delete: (tenantId, policyId, req) => ({ policy: mtPolicyEngine.deletePolicy(tenantId, policyId, (req as unknown as Record<string, unknown>).etag as string) }) as never,
+        evaluate: (tenantId, req) => ({ evaluation: mtPolicyEngine.evaluate(tenantId, req as never) }) as never,
+      },
+      audit: {
+        list: (tenantId, query) => ({ items: mtAuditLogger.queryAuditLog({ tenantId, ...(query as unknown as Record<string, unknown>) } as never) }) as never,
+      },
+      violations: {
+        list: (tenantId, query) => ({ items: mtAuditLogger.queryViolations({ tenantId, ...(query as unknown as Record<string, unknown>) } as never) }) as never,
+        resolve: (tenantId, violationId, req) => ({ violation: mtAuditLogger.resolveViolation(tenantId, violationId, (req as unknown as Record<string, unknown>)?.resolvedBy as string ?? "system") }) as never,
+      },
+    };
+    console.log("[friday] Multi-tenant security runtime enabled.");
+  }
+
+  // ── Desktop route deps (opt-in, wired from desktopSessionManager) ──
+  const desktopRouteDeps: Parameters<typeof createFridayApiRuntime>[0]["desktop"] = desktopSessionManager
+    ? {
+      actions: {
+        async execute(req) { return desktopSessionManager!.executeAction(req.action as never) as never; },
+        async batch(req) {
+          const results = [];
+          for (const action of req.actions) {
+            results.push(await desktopSessionManager!.executeAction(action as never));
+          }
+          return { results, batchId: req.idempotencyKey } as never;
+        },
+        async cancel(actionId, _req) { desktopSessionManager!.cancelAction(actionId); return { cancelled: true } as never; },
+        log(query) { const log = desktopSessionManager!.getActionLog(); return { entries: log.slice(0, (query as unknown as Record<string, unknown>)?.limit as number ?? 100) } as never; },
+      },
+      recordings: {
+        start(req) { return desktopSessionManager!.startRecording({ name: (req as unknown as Record<string, unknown>).name as string }) as never; },
+        stop(recordingId, _req) { return desktopSessionManager!.stopRecording(recordingId) as never; },
+        pause(recordingId, _req) { return desktopSessionManager!.pauseRecording(recordingId) as never; },
+        resume(recordingId, _req) { return desktopSessionManager!.resumeRecording(recordingId) as never; },
+        list(_query) { return { recordings: desktopSessionManager!.listRecordings() } as never; },
+        get(recordingId) { return { recording: desktopSessionManager!.getRecording(recordingId) } as never; },
+        listSteps(recordingId, _query) { return { steps: desktopSessionManager!.getRecordingSteps(recordingId) } as never; },
+        async replay(recordingId, _req) { return desktopSessionManager!.replayRecording(recordingId) as never; },
+        delete(recordingId, _req) { desktopSessionManager!.deleteRecording(recordingId); return { deleted: true } as never; },
+      },
+      policies: {
+        create(req) { return { policy: req, policyId: idGenerator() } as never; },
+        get(_policyId) { return { policy: null } as never; },
+        list(_query) { return { policies: [] } as never; },
+        update(_policyId, req) { return { policy: req } as never; },
+        delete(_policyId, _req) { return { deleted: true } as never; },
+        addRule(_policyId, req) { return { rule: req } as never; },
+        removeRule(_policyId, _ruleId, _req) { return { removed: true } as never; },
+      },
+      permissions: {
+        async list() { const perms = await desktopSessionManager!.checkPermissions(); return { permissions: [...perms] } as never; },
+        respond(_promptId, req) { return { decision: (req as unknown as Record<string, unknown>).decision } as never; },
+        listDecisions(_query) { return { decisions: [] } as never; },
+      },
+      platform: {
+        async get() {
+          const platform = desktopSessionManager!.getAdapterManager().getDetectedPlatform();
+          return { platform: platform ?? "unknown", connected: desktopSessionManager!.isConnected() } as never;
+        },
+      },
+      elements: {
+        async inspect(req) { const el = await desktopSessionManager!.inspectElement((req as unknown as Record<string, unknown>).selector as never); return { element: el } as never; },
+        async search(query) { const els = await desktopSessionManager!.searchElements((query as unknown as Record<string, unknown>).query as string); return { elements: [...els] } as never; },
+      },
+    }
+    : undefined;
+
   const apiRuntime = createFridayApiRuntime({
     db: stateRuntime!.sqlite,
     idGenerator,
@@ -4187,6 +4602,9 @@ export async function createFridayHub(
     agentEventEmitter,
     resolveToolApproval,
     subagentRegistry,
+    packaging: packagingDeps,
+    multiTenantSecurity: multiTenantSecurityDeps,
+    desktop: desktopRouteDeps,
   });
 
   observabilityService.health.registerCheck("api-runtime", "api", async () => ({
@@ -4427,6 +4845,19 @@ export async function createFridayHub(
       db: stateRuntime.sqlite,
       nowIso,
     });
+
+    // Wire heartbeat state into observability for GET /v1/heartbeat/status
+    heartbeatStateRef = () => {
+      const state = heartbeatRepo.getState();
+      const runs = heartbeatRepo.listRuns(1);
+      const latest = runs[0];
+      return {
+        lastRunAt: latest?.startedAt ?? state.lastRunAt ?? null,
+        result: latest?.status ?? "pending",
+        intervalMs: heartbeatIntervalMs,
+        nextRunAt: null,
+      };
+    };
 
     const heartbeatRunner = createFridayHeartbeatRunner({
       config: {

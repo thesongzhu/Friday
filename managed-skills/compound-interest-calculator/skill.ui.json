@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Compound Interest Calculator",
+  "description": "Calculate compound interest given principal, rate, time, and compounding frequency",
+  "sections": [],
+  "fields": [],
+  "outputs": [],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Run",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

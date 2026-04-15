@@ -81,7 +81,6 @@ export const FRIDAY_PROVIDER_PRESETS: Record<FridayProviderKind, FridayProviderP
   google: hostedPreset("google", "google-generative-ai", "api-key", "https://generativelanguage.googleapis.com"),
   "google-vertex": hostedPreset("google-vertex", "google-generative-ai", "api-key", ""),
   "google-antigravity": hostedPreset("google-antigravity", "google-generative-ai", "api-key", ""),
-  "google-gemini-cli": hostedPreset("google-gemini-cli", "google-generative-ai", "api-key", ""),
   openrouter: hostedPreset("openrouter", "openai-responses", "bearer-token", "https://openrouter.ai/api"),
   xai: hostedPreset("xai", "openai-responses", "bearer-token", "https://api.x.ai", "us"),
   mistral: hostedPreset("mistral", "openai-responses", "bearer-token", "https://api.mistral.ai"),

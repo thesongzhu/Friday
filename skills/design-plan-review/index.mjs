@@ -1,4 +1,10 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { asString, compact } from "../_shared/friday-runtime-skill-utils.mjs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const designChecklist = readFileSync(join(__dirname, "references/design-checklist.md"), "utf-8");
 
 function normalizeGoal(input) {
   return asString(input.goal ?? input.text ?? input.plan);
@@ -40,6 +46,7 @@ export async function execute(input = {}) {
   return {
     summary: `Design plan review: ${compact(goal, 120)}`,
     nextStep: recommendations[0] ?? "Feed the reviewed plan into browser-qa-report or implementation-plan-review once the UI work starts.",
+    checklist: designChecklist,
     details: {
       scores,
       recommendations,

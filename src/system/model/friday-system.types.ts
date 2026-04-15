@@ -1,10 +1,10 @@
 import type { FridayDesktopPlatform, FridayDesktopRiskLevel } from "../../desktop/model/friday-desktop.types.js";
-import type {
-  AuthenticationResponseJSON,
-  PublicKeyCredentialCreationOptionsJSON,
-  PublicKeyCredentialRequestOptionsJSON,
-  RegistrationResponseJSON,
-} from "@simplewebauthn/server";
+
+/** Lightweight stand-in types replacing the removed @simplewebauthn/server dependency. */
+export type PublicKeyCredentialCreationOptionsJSON = Record<string, unknown>;
+export type PublicKeyCredentialRequestOptionsJSON = Record<string, unknown>;
+export type RegistrationResponseJSON = Record<string, unknown>;
+export type AuthenticationResponseJSON = Record<string, unknown>;
 
 export type UUID = string;
 export type ISODateTime = string;

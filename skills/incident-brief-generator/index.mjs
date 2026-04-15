@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   detectPortListeners,
   detectProcessesByName,
@@ -7,6 +10,9 @@ import {
   readWorkspaceRoot,
   triageLogs,
 } from "../_shared/devops-skill-utils.mjs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const incidentBriefTemplate = readFileSync(join(__dirname, "assets/incident-brief-template.md"), "utf-8");
 
 export async function execute(input = {}) {
   const repoRoot = await findRepoRoot(readWorkspaceRoot(input));
@@ -45,26 +51,18 @@ export async function execute(input = {}) {
   if (port != null && listeners.length === 0) nextActions.push("Confirm the startup path, env config, and whether the service bound to the intended port.");
   if (nextActions.length === 0) nextActions.push("Capture a wider incident timeline and add more evidence if the issue persists.");
 
-  const briefMarkdown = [
-    `# Incident Brief: ${path.basename(repoRoot)}`,
-    "",
-    "## Situation",
-    symptoms || "An incident summary was requested, but no explicit symptom statement was provided.",
-    "",
-    "## Impact",
-    healthUrl && health && !health.ok
-      ? `Health checks against ${healthUrl} are failing with status ${String(health.status)}.`
-      : "Impact still needs to be confirmed from the available evidence.",
-    "",
-    "## Evidence",
-    ...(evidenceLines.length > 0 ? evidenceLines : ["- No structured evidence was provided."]),
-    "",
-    "## Likely Causes",
-    ...likelyCauses.map((cause) => `- ${cause}`),
-    "",
-    "## Next Actions",
-    ...nextActions.map((step) => `- ${step}`),
-  ].join("\n");
+  const briefMarkdown = incidentBriefTemplate
+    .replace("{{title}}", path.basename(repoRoot))
+    .replace("{{severity}}", likelyCauses.length > 1 ? "high" : "medium")
+    .replace("{{status}}", "investigating")
+    .replace("{{timestamp}}", new Date().toISOString())
+    .replace("{{situation_summary}}", symptoms || "An incident summary was requested, but no explicit symptom statement was provided.")
+    .replace("| Users affected | {{users_affected}} |", `| Users affected | ${healthUrl && health && !health.ok ? "Potentially all users hitting " + healthUrl : "Unknown"} |`)
+    .replace("| Services degraded | {{services_degraded}} |", `| Services degraded | ${port != null && listeners.length === 0 ? "Service on port " + String(port) : "Under investigation"} |`)
+    .replace("| Revenue impact | {{revenue_impact}} |", "| Revenue impact | To be determined |")
+    .replace(/\{\{#each evidence\}\}[\s\S]*?\{\{\/each\}\}/m, evidenceLines.length > 0 ? evidenceLines.join("\n") : "- No structured evidence was provided.")
+    .replace(/\{\{#each causes\}\}[\s\S]*?\{\{\/each\}\}/m, likelyCauses.map((cause, i) => `${i + 1}. ${cause}`).join("\n"))
+    .replace(/\{\{#each actions\}\}[\s\S]*?\{\{\/each\}\}/m, nextActions.map((step) => `- [ ] ${step}`).join("\n"));
 
   return {
     summary: `Incident brief prepared for ${path.basename(repoRoot)} with ${evidenceLines.length} evidence line(s).`,

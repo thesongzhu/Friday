@@ -5,7 +5,7 @@
  * - `friday auth login anthropic`
  * - `friday auth setup-token anthropic`
  * - `friday auth paste-token anthropic`
- * - `friday auth attach-cli codex|claude|gemini`
+ * - `friday auth attach-cli codex|claude`
  * - `friday auth status [--provider-id <id>]`
  */
 
@@ -57,13 +57,6 @@ const CLI_AUTH_TARGETS = {
     name: "Claude CLI",
     supportedModels: DEFAULT_ANTHROPIC_MODELS,
     defaultModel: DEFAULT_ANTHROPIC_MODELS[0]!,
-  },
-  gemini: {
-    kind: "google-gemini-cli" as FridayProviderKind,
-    backendId: "gemini-cli" as FridayProviderCliBackendId,
-    name: "Gemini CLI",
-    supportedModels: ["gemini-2.5-pro"],
-    defaultModel: "gemini-2.5-pro",
   },
 } as const;
 
@@ -276,7 +269,7 @@ export async function runFridayCliAuthAttachCli(
   if (!spec) {
     throw new FridayDomainError(
       "VALIDATION_ERROR",
-      "attach-cli currently supports: codex, claude, gemini",
+      "attach-cli currently supports: codex, claude",
       { httpStatus: 400 },
     );
   }

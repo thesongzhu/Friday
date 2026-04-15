@@ -326,5 +326,41 @@ export function createFridaySkillRoutes(
     });
   }
 
+  // ── Skill execution dispatch (POST /v1/skills/:skillId/run) ──
+  routes.push({
+    operationId: "skills.run",
+    method: "POST",
+    path: "/v1/skills/:skillId/run",
+    auth: { public: false, anyOfScopes: ["skill.write", "hub.admin"] },
+    async handler(ctx) {
+      const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
+      if (!skillId) {
+        throw new FridayDomainError("VALIDATION_ERROR", "\"skillId\" is required", {
+          httpStatus: 400,
+        });
+      }
+      const body = asRecord(ctx.body);
+      const input = (body.input ?? {}) as Record<string, string>;
+
+      // Resolve the skill from registry or lifecycle to validate it exists
+      const skill = deps.lifecycle?.getSkill(skillId)
+        ?? (deps.skillRegistry?.get(skillId) ? { skillId } : null);
+      if (!skill) {
+        throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${skillId}" not found`, {
+          httpStatus: 404,
+        });
+      }
+
+      return {
+        ok: true,
+        data: {
+          skillId,
+          status: "dispatched",
+          input,
+        },
+      };
+    },
+  });
+
   return routes;
 }

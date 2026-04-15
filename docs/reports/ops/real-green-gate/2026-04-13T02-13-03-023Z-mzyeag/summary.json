@@ -1,0 +1,878 @@
+{
+  "runId": "2026-04-13T02-13-03-023Z-mzyeag",
+  "generatedAt": "2026-04-13T02:15:10.926Z",
+  "repoRoot": "/Users/jarvis/Projects/Friday",
+  "branch": "main",
+  "preflight": {
+    "checkedAt": "2026-04-13T02:13:03.454Z",
+    "gitStatus": {
+      "ok": true,
+      "command": "git status --short --branch",
+      "durationMs": 42,
+      "stdout": "## main...origin/main [behind 46]\n M README.md\n M docs/VISION.md\n M docs/architecture/marketplace-commerce-rfc.md\n M docs/current-source-of-truth.md\n M docs/ops/friday-agent-os-beta-onboarding.md\n M docs/ops/friday-autostart-macos.md\n M docs/ops/friday-capability-matrix.md\n M docs/ops/friday-companion-release-macos.md\n M docs/ops/friday-cross-platform-downloads.md\n M docs/reference/CODE_INDEX.md\n M skills/browser-qa-report/index.mjs\n M src/agent/runtime/friday-agent-runtime.ts\n M test/e2e/mock/friday-openclaw-parity-closure.e2e.test.ts\n M test/unit/agent/runtime/friday-agent-runtime.test.ts\n M test/unit/skills/runtime/friday-wave1-starter-skills.test.ts\n M test/unit/validation/real-world-local-auth.test.ts\n M ui/src/routes/chat-page.tsx\n M ui/src/routes/guided-flow-page.tsx\n M ui/src/routes/mcp-page.tsx\n M ui/src/routes/memory-page.tsx\n M ui/src/routes/observability-page.tsx\n M ui/src/routes/sessions-page.tsx\n M ui/src/routes/skill-generator-page.tsx\n M ui/src/routes/skills-page.tsx\n M ui/src/routes/usage-page.tsx\n M validation/real-world/lib/local-auth.mjs\n?? .claude/\n?? docs/reports/repo/FRIDAY_CAPABILITY_COVERAGE_MATRIX_2026-04-09.md\n?? docs/reports/repo/FRIDAY_DEFECT_LEDGER_2026-04-09.md\n?? docs/reports/repo/FRIDAY_DOC_TRUTH_RECONCILIATION_2026-04-09.md\n?? docs/reports/repo/FRIDAY_FULL_RELEASE_AUDIT_2026-04-09.md\n?? docs/reports/repo/FRIDAY_OPENCLAW_REDDIT_PARITY_MATRIX_2026-04-09.md\n?? docs/reports/repo/FRIDAY_TEST_ASSET_TRIAGE_2026-04-09.md",
+      "stderr": ""
+    },
+    "gitHead": {
+      "ok": true,
+      "command": "git rev-parse HEAD",
+      "durationMs": 11,
+      "stdout": "ea0d7b60774ff0a8bec81e6a792b6084bc6758e0",
+      "stderr": ""
+    },
+    "envTruth": {
+      "collectedAt": "2026-04-13T02:13:03.454Z",
+      "baseUrl": "http://127.0.0.1:3141",
+      "uiBaseUrl": "http://127.0.0.1:3141",
+      "auth": {
+        "ok": true,
+        "mode": "mint_local_admin",
+        "source": "mint_local_admin_token",
+        "details": {
+          "source": "mint_local_admin_token",
+          "mintedAt": "2026-04-13T02:13:03.000Z",
+          "accessTokenTtlSec": 3600,
+          "userId": "admin-001",
+          "userEmail": "admin@friday.dev",
+          "role": "admin",
+          "tenantId": "admin-001",
+          "sessionId": "3739cecc-6268-4057-a4cf-1cc6e904943f",
+          "stateDbPath": "/Users/jarvis/Library/Application Support/Friday/state/friday.db",
+          "tokenSecretSource": "/Users/jarvis/Projects/Friday/.env"
+        },
+        "user": {
+          "id": "admin-001",
+          "email": "admin@friday.dev",
+          "displayName": "Admin",
+          "role": "admin"
+        }
+      },
+      "publicChecks": {
+        "health": {
+          "ok": true,
+          "status": 200,
+          "durationMs": 356,
+          "requestId": "39f4231c-b6e0-4dd6-9c26-549630eb07ae"
+        },
+        "version": {
+          "ok": true,
+          "status": 200,
+          "durationMs": 1,
+          "requestId": "1883cbad-129f-4a88-8838-4f15f275ae5d"
+        }
+      },
+      "authedChecks": {
+        "setupStatus": {
+          "ok": true,
+          "status": 200,
+          "durationMs": 1,
+          "requestId": "d005a01d-a93d-45a1-94f9-0750246e2ec1"
+        },
+        "providers": {
+          "ok": true,
+          "status": 200,
+          "durationMs": 2,
+          "requestId": "12236bcb-331f-4c7b-9948-44dbc9e74078"
+        },
+        "modelRouting": {
+          "ok": true,
+          "status": 200,
+          "durationMs": 0,
+          "requestId": "afb9850a-47b1-49d3-b8c0-81951a7c223e"
+        },
+        "persona": {
+          "ok": true,
+          "status": 200,
+          "durationMs": 9,
+          "requestId": "03e808fd-32a1-424c-8ca8-eca7816b5e00"
+        },
+        "userProfile": {
+          "ok": true,
+          "status": 200,
+          "durationMs": 1,
+          "requestId": "e6e71310-2447-47df-862b-5481fc20b2ff"
+        }
+      },
+      "setupStatus": {
+        "needsSetup": false,
+        "setupCompletedAt": "2026-04-12T00:23:03.052Z",
+        "providerCount": 10,
+        "channelCount": 1,
+        "skillsCount": 93,
+        "network": {
+          "host": "127.0.0.1",
+          "port": 3141,
+          "mode": "local",
+          "previewUrls": [
+            "http://localhost:3141",
+            "http://127.0.0.1:3141"
+          ]
+        }
+      },
+      "userProfile": {
+        "profileType": "beginner",
+        "onboardedAt": "2026-04-04T01:41:05.594Z"
+      },
+      "derived": {
+        "setupUserProfileTruthMismatch": false
+      },
+      "routing": {
+        "defaultProviderId": "cd654203-3f72-4b8b-a2bd-51491405d6dd",
+        "defaultModel": "gpt-4o-mini",
+        "fallbackProviderIds": []
+      },
+      "providers": [
+        {
+          "id": "cd654203-3f72-4b8b-a2bd-51491405d6dd",
+          "kind": "openai",
+          "name": "OpenAI ChatGPT",
+          "baseUrl": "https://api.openai.com",
+          "enabled": true,
+          "defaultModel": "gpt-4o-mini",
+          "config": {
+            "api": "openai-completions",
+            "authMode": "bearer-token",
+            "backendKind": "http",
+            "deploymentKind": "hosted",
+            "regionTag": "global",
+            "keySource": {
+              "kind": "secret-ref",
+              "refKey": "provider:cd654203-3f72-4b8b-a2bd-51491405d6dd:apiKey"
+            },
+            "supportedModels": [
+              "gpt-4o-mini",
+              "gpt-4.1-mini",
+              "gpt-4o"
+            ],
+            "httpConfig": {
+              "headersPolicy": "custom"
+            },
+            "validation": {
+              "status": "ok",
+              "checkedAt": "2026-04-11T20:58:07.848Z"
+            }
+          },
+          "createdAt": "2026-03-01T01:43:13.681Z",
+          "updatedAt": "2026-04-11T20:58:05.602Z"
+        },
+        {
+          "id": "2bba9a01-10b7-4ce8-842f-5afb2e58d64a",
+          "kind": "openai",
+          "name": "Benchmark OpenAI",
+          "baseUrl": "https://api.openai.com/v1",
+          "enabled": false,
+          "defaultModel": "gpt-4o-mini",
+          "config": {
+            "api": "openai-responses",
+            "authMode": "api-key",
+            "keySource": {
+              "kind": "env-ref",
+              "envVar": "OPENAI_API_KEY"
+            },
+            "supportedModels": [
+              "gpt-4o-mini"
+            ],
+            "validation": {
+              "status": "never"
+            },
+            "backendKind": "http",
+            "deploymentKind": "hosted",
+            "regionTag": "global"
+          },
+          "createdAt": "2026-03-08T21:33:26.654Z",
+          "updatedAt": "2026-03-13T07:40:30.962Z"
+        },
+        {
+          "id": "51e9fb20-ff4e-4bc2-a6bd-9a75a4776808",
+          "kind": "openai",
+          "name": "Benchmark OpenAI Completions",
+          "baseUrl": "https://api.openai.com",
+          "enabled": false,
+          "defaultModel": "gpt-4o-mini",
+          "config": {
+            "api": "openai-completions",
+            "authMode": "api-key",
+            "keySource": {
+              "kind": "env-ref",
+              "envVar": "OPENAI_API_KEY"
+            },
+            "supportedModels": [
+              "gpt-4o-mini",
+              "gpt-4o"
+            ],
+            "validation": {
+              "status": "ok",
+              "checkedAt": "2026-03-08T21:35:31.653Z"
+            },
+            "backendKind": "http",
+            "deploymentKind": "hosted",
+            "regionTag": "global"
+          },
+          "createdAt": "2026-03-08T21:35:30.990Z",
+          "updatedAt": "2026-03-13T07:40:30.972Z"
+        },
+        {
+          "id": "ecb38b46-a7d5-496d-8d9c-4273883a1250",
+          "kind": "openai",
+          "name": "Benchmark OpenAI Completions",
+          "baseUrl": "https://api.openai.com",
+          "enabled": false,
+          "defaultModel": "gpt-4o-mini",
+          "config": {
+            "api": "openai-completions",
+            "authMode": "api-key",
+            "keySource": {
+              "kind": "env-ref",
+              "envVar": "OPENAI_API_KEY"
+            },
+            "supportedModels": [
+              "gpt-4o-mini",
+              "gpt-4o"
+            ],
+            "validation": {
+              "status": "ok",
+              "checkedAt": "2026-03-08T21:40:41.822Z"
+            },
+            "backendKind": "http",
+            "deploymentKind": "hosted",
+            "regionTag": "global"
+          },
+          "createdAt": "2026-03-08T21:40:41.296Z",
+          "updatedAt": "2026-03-13T07:40:30.980Z"
+        },
+        {
+          "id": "a98ef04c-8d53-417b-89b0-c48c82e51c29",
+          "kind": "anthropic",
+          "name": "Claude Max (OAuth)",
+          "baseUrl": "https://api.anthropic.com",
+          "enabled": true,
+          "defaultModel": "claude-sonnet-4-20250514",
+          "config": {
+            "api": "anthropic-messages",
+            "authMode": "oauth",
+            "oauthProvider": "anthropic",
+            "keySource": {
+              "kind": "none"
+            },
+            "supportedModels": [
+              "claude-sonnet-4-20250514",
+              "claude-opus-4-20250514"
+            ],
+            "validation": {
+              "status": "ok",
+              "checkedAt": "2026-03-13T22:45:16.729Z"
+            },
+            "backendKind": "http",
+            "deploymentKind": "hosted",
+            "regionTag": "global"
+          },
+          "createdAt": "2026-03-13T19:14:00.975Z",
+          "updatedAt": "2026-03-13T19:14:00.975Z"
+        },
+        {
+          "id": "af9dc2b0-28db-433b-9faf-6cc360ac1ebd",
+          "kind": "anthropic",
+          "name": "Anthropic Claude",
+          "baseUrl": "https://api.anthropic.com",
+          "enabled": true,
+          "defaultModel": "claude-3-5-sonnet-20241022",
+          "config": {
+            "api": "anthropic-messages",
+            "authMode": "oauth",
+            "oauthProvider": "anthropic",
+            "keySource": {
+              "kind": "none"
+            },
+            "supportedModels": [
+              "claude-3-5-sonnet-20241022",
+              "claude-3-5-haiku-20241022",
+              "claude-3-opus-20240229"
+            ],
+            "validation": {
+              "status": "never",
+              "errorMessage": "OAuth login required"
+            },
+            "backendKind": "http",
+            "deploymentKind": "hosted",
+            "regionTag": "global"
+          },
+          "createdAt": "2026-03-13T22:44:47.892Z",
+          "updatedAt": "2026-03-13T22:44:47.892Z"
+        },
+        {
+          "id": "27b66384-e52a-4045-b295-f8b8de21328c",
+          "kind": "anthropic",
+          "name": "Claude (OAuth)",
+          "baseUrl": "https://api.anthropic.com",
+          "enabled": true,
+          "defaultModel": "claude-sonnet-4-20250514",
+          "config": {
+            "api": "anthropic-messages",
+            "authMode": "oauth",
+            "oauthProvider": "anthropic",
+            "keySource": {
+              "kind": "none"
+            },
+            "supportedModels": [
+              "claude-sonnet-4-20250514",
+              "claude-opus-4-20250514"
+            ],
+            "validation": {
+              "status": "ok",
+              "checkedAt": "2026-04-01T04:11:04.239Z"
+            },
+            "backendKind": "http",
+            "deploymentKind": "hosted",
+            "regionTag": "global"
+          },
+          "createdAt": "2026-03-27T01:43:27.611Z",
+          "updatedAt": "2026-03-27T01:48:48.945Z"
+        },
+        {
+          "id": "11053bd1-a47b-4e07-a195-59a56a96c83c",
+          "kind": "anthropic",
+          "name": "Claude OAuth",
+          "baseUrl": "https://api.anthropic.com",
+          "enabled": true,
+          "defaultModel": "claude-sonnet-4-20250514",
+          "config": {
+            "api": "anthropic-messages",
+            "authMode": "oauth",
+            "oauthProvider": "anthropic",
+            "keySource": {
+              "kind": "none"
+            },
+            "supportedModels": [
+              "claude-sonnet-4-20250514"
+            ],
+            "validation": {
+              "status": "ok",
+              "checkedAt": "2026-04-01T04:16:02.951Z"
+            },
+            "backendKind": "http",
+            "deploymentKind": "hosted",
+            "regionTag": "global"
+          },
+          "createdAt": "2026-03-27T02:04:42.116Z",
+          "updatedAt": "2026-03-27T02:04:42.116Z"
+        },
+        {
+          "id": "67353985-c68e-4220-9d80-8dd05849887d",
+          "kind": "openai-codex",
+          "name": "Codex CLI",
+          "baseUrl": "",
+          "enabled": true,
+          "defaultModel": "codex",
+          "config": {
+            "api": "openai-responses",
+            "authMode": "external-session",
+            "backendKind": "cli",
+            "deploymentKind": "hosted",
+            "regionTag": "global",
+            "keySource": {
+              "kind": "none"
+            },
+            "supportedModels": [
+              "codex"
+            ],
+            "cliConfig": {
+              "backendId": "codex-cli",
+              "binaryPath": "/Users/jarvis/.nvm/versions/node/v22.22.0/bin/codex"
+            },
+            "validation": {
+              "status": "ok",
+              "checkedAt": "2026-04-01T08:43:18.270Z"
+            }
+          },
+          "createdAt": "2026-04-01T08:43:18.270Z",
+          "updatedAt": "2026-04-01T08:43:18.270Z"
+        },
+        {
+          "id": "df917f7f-9109-4cd0-8040-299e0a34765a",
+          "kind": "anthropic",
+          "name": "Claude CLI",
+          "baseUrl": "",
+          "enabled": true,
+          "defaultModel": "claude-sonnet-4-20250514",
+          "config": {
+            "api": "anthropic-messages",
+            "authMode": "external-session",
+            "backendKind": "cli",
+            "deploymentKind": "hosted",
+            "regionTag": "global",
+            "keySource": {
+              "kind": "none"
+            },
+            "supportedModels": [
+              "claude-sonnet-4-20250514",
+              "claude-opus-4-20250514"
+            ],
+            "cliConfig": {
+              "backendId": "claude-cli",
+              "binaryPath": "/Users/jarvis/.nvm/versions/node/v22.22.0/bin/claude"
+            },
+            "validation": {
+              "status": "ok",
+              "checkedAt": "2026-04-01T08:43:26.561Z"
+            }
+          },
+          "createdAt": "2026-04-01T08:43:26.561Z",
+          "updatedAt": "2026-04-01T08:43:26.561Z"
+        }
+      ],
+      "enabledProviders": [
+        {
+          "id": "cd654203-3f72-4b8b-a2bd-51491405d6dd",
+          "kind": "openai",
+          "name": "OpenAI ChatGPT",
+          "baseUrl": "https://api.openai.com",
+          "enabled": true,
+          "defaultModel": "gpt-4o-mini",
+          "config": {
+            "api": "openai-completions",
+            "authMode": "bearer-token",
+            "backendKind": "http",
+            "deploymentKind": "hosted",
+            "regionTag": "global",
+            "keySource": {
+              "kind": "secret-ref",
+              "refKey": "provider:cd654203-3f72-4b8b-a2bd-51491405d6dd:apiKey"
+            },
+            "supportedModels": [
+              "gpt-4o-mini",
+              "gpt-4.1-mini",
+              "gpt-4o"
+            ],
+            "httpConfig": {
+              "headersPolicy": "custom"
+            },
+            "validation": {
+              "status": "ok",
+              "checkedAt": "2026-04-11T20:58:07.848Z"
+            }
+          },
+          "createdAt": "2026-03-01T01:43:13.681Z",
+          "updatedAt": "2026-04-11T20:58:05.602Z"
+        },
+        {
+          "id": "a98ef04c-8d53-417b-89b0-c48c82e51c29",
+          "kind": "anthropic",
+          "name": "Claude Max (OAuth)",
+          "baseUrl": "https://api.anthropic.com",
+          "enabled": true,
+          "defaultModel": "claude-sonnet-4-20250514",
+          "config": {
+            "api": "anthropic-messages",
+            "authMode": "oauth",
+            "oauthProvider": "anthropic",
+            "keySource": {
+              "kind": "none"
+            },
+            "supportedModels": [
+              "claude-sonnet-4-20250514",
+              "claude-opus-4-20250514"
+            ],
+            "validation": {
+              "status": "ok",
+              "checkedAt": "2026-03-13T22:45:16.729Z"
+            },
+            "backendKind": "http",
+            "deploymentKind": "hosted",
+            "regionTag": "global"
+          },
+          "createdAt": "2026-03-13T19:14:00.975Z",
+          "updatedAt": "2026-03-13T19:14:00.975Z"
+        },
+        {
+          "id": "af9dc2b0-28db-433b-9faf-6cc360ac1ebd",
+          "kind": "anthropic",
+          "name": "Anthropic Claude",
+          "baseUrl": "https://api.anthropic.com",
+          "enabled": true,
+          "defaultModel": "claude-3-5-sonnet-20241022",
+          "config": {
+            "api": "anthropic-messages",
+            "authMode": "oauth",
+            "oauthProvider": "anthropic",
+            "keySource": {
+              "kind": "none"
+            },
+            "supportedModels": [
+              "claude-3-5-sonnet-20241022",
+              "claude-3-5-haiku-20241022",
+              "claude-3-opus-20240229"
+            ],
+            "validation": {
+              "status": "never",
+              "errorMessage": "OAuth login required"
+            },
+            "backendKind": "http",
+            "deploymentKind": "hosted",
+            "regionTag": "global"
+          },
+          "createdAt": "2026-03-13T22:44:47.892Z",
+          "updatedAt": "2026-03-13T22:44:47.892Z"
+        },
+        {
+          "id": "27b66384-e52a-4045-b295-f8b8de21328c",
+          "kind": "anthropic",
+          "name": "Claude (OAuth)",
+          "baseUrl": "https://api.anthropic.com",
+          "enabled": true,
+          "defaultModel": "claude-sonnet-4-20250514",
+          "config": {
+            "api": "anthropic-messages",
+            "authMode": "oauth",
+            "oauthProvider": "anthropic",
+            "keySource": {
+              "kind": "none"
+            },
+            "supportedModels": [
+              "claude-sonnet-4-20250514",
+              "claude-opus-4-20250514"
+            ],
+            "validation": {
+              "status": "ok",
+              "checkedAt": "2026-04-01T04:11:04.239Z"
+            },
+            "backendKind": "http",
+            "deploymentKind": "hosted",
+            "regionTag": "global"
+          },
+          "createdAt": "2026-03-27T01:43:27.611Z",
+          "updatedAt": "2026-03-27T01:48:48.945Z"
+        },
+        {
+          "id": "11053bd1-a47b-4e07-a195-59a56a96c83c",
+          "kind": "anthropic",
+          "name": "Claude OAuth",
+          "baseUrl": "https://api.anthropic.com",
+          "enabled": true,
+          "defaultModel": "claude-sonnet-4-20250514",
+          "config": {
+            "api": "anthropic-messages",
+            "authMode": "oauth",
+            "oauthProvider": "anthropic",
+            "keySource": {
+              "kind": "none"
+            },
+            "supportedModels": [
+              "claude-sonnet-4-20250514"
+            ],
+            "validation": {
+              "status": "ok",
+              "checkedAt": "2026-04-01T04:16:02.951Z"
+            },
+            "backendKind": "http",
+            "deploymentKind": "hosted",
+            "regionTag": "global"
+          },
+          "createdAt": "2026-03-27T02:04:42.116Z",
+          "updatedAt": "2026-03-27T02:04:42.116Z"
+        },
+        {
+          "id": "67353985-c68e-4220-9d80-8dd05849887d",
+          "kind": "openai-codex",
+          "name": "Codex CLI",
+          "baseUrl": "",
+          "enabled": true,
+          "defaultModel": "codex",
+          "config": {
+            "api": "openai-responses",
+            "authMode": "external-session",
+            "backendKind": "cli",
+            "deploymentKind": "hosted",
+            "regionTag": "global",
+            "keySource": {
+              "kind": "none"
+            },
+            "supportedModels": [
+              "codex"
+            ],
+            "cliConfig": {
+              "backendId": "codex-cli",
+              "binaryPath": "/Users/jarvis/.nvm/versions/node/v22.22.0/bin/codex"
+            },
+            "validation": {
+              "status": "ok",
+              "checkedAt": "2026-04-01T08:43:18.270Z"
+            }
+          },
+          "createdAt": "2026-04-01T08:43:18.270Z",
+          "updatedAt": "2026-04-01T08:43:18.270Z"
+        },
+        {
+          "id": "df917f7f-9109-4cd0-8040-299e0a34765a",
+          "kind": "anthropic",
+          "name": "Claude CLI",
+          "baseUrl": "",
+          "enabled": true,
+          "defaultModel": "claude-sonnet-4-20250514",
+          "config": {
+            "api": "anthropic-messages",
+            "authMode": "external-session",
+            "backendKind": "cli",
+            "deploymentKind": "hosted",
+            "regionTag": "global",
+            "keySource": {
+              "kind": "none"
+            },
+            "supportedModels": [
+              "claude-sonnet-4-20250514",
+              "claude-opus-4-20250514"
+            ],
+            "cliConfig": {
+              "backendId": "claude-cli",
+              "binaryPath": "/Users/jarvis/.nvm/versions/node/v22.22.0/bin/claude"
+            },
+            "validation": {
+              "status": "ok",
+              "checkedAt": "2026-04-01T08:43:26.561Z"
+            }
+          },
+          "createdAt": "2026-04-01T08:43:26.561Z",
+          "updatedAt": "2026-04-01T08:43:26.561Z"
+        }
+      ],
+      "providerLanes": {
+        "default": {
+          "id": "default-cd654203-3f72-4b8b-a2bd-51491405d6dd-gpt-4o-mini",
+          "laneKey": "default",
+          "source": "routing.default",
+          "providerId": "cd654203-3f72-4b8b-a2bd-51491405d6dd",
+          "providerName": "OpenAI ChatGPT",
+          "providerKind": "openai",
+          "backendKind": "http",
+          "model": "gpt-4o-mini"
+        },
+        "fallback": {
+          "id": "fallback-a98ef04c-8d53-417b-89b0-c48c82e51c29-claude-sonnet-4-20250514",
+          "laneKey": "fallback",
+          "source": "heuristic.fallback",
+          "providerId": "a98ef04c-8d53-417b-89b0-c48c82e51c29",
+          "providerName": "Claude Max (OAuth)",
+          "providerKind": "anthropic",
+          "backendKind": "http",
+          "model": "claude-sonnet-4-20250514"
+        }
+      },
+      "enabledProviderLanes": [
+        {
+          "id": "candidate-cd654203-3f72-4b8b-a2bd-51491405d6dd-gpt-4o-mini",
+          "laneKey": "candidate",
+          "source": "providers.list",
+          "providerId": "cd654203-3f72-4b8b-a2bd-51491405d6dd",
+          "providerName": "OpenAI ChatGPT",
+          "providerKind": "openai",
+          "backendKind": "http",
+          "model": "gpt-4o-mini"
+        },
+        {
+          "id": "candidate-a98ef04c-8d53-417b-89b0-c48c82e51c29-claude-sonnet-4-20250514",
+          "laneKey": "candidate",
+          "source": "providers.list",
+          "providerId": "a98ef04c-8d53-417b-89b0-c48c82e51c29",
+          "providerName": "Claude Max (OAuth)",
+          "providerKind": "anthropic",
+          "backendKind": "http",
+          "model": "claude-sonnet-4-20250514"
+        },
+        {
+          "id": "candidate-af9dc2b0-28db-433b-9faf-6cc360ac1ebd-claude-3-5-sonnet-20241022",
+          "laneKey": "candidate",
+          "source": "providers.list",
+          "providerId": "af9dc2b0-28db-433b-9faf-6cc360ac1ebd",
+          "providerName": "Anthropic Claude",
+          "providerKind": "anthropic",
+          "backendKind": "http",
+          "model": "claude-3-5-sonnet-20241022"
+        },
+        {
+          "id": "candidate-27b66384-e52a-4045-b295-f8b8de21328c-claude-sonnet-4-20250514",
+          "laneKey": "candidate",
+          "source": "providers.list",
+          "providerId": "27b66384-e52a-4045-b295-f8b8de21328c",
+          "providerName": "Claude (OAuth)",
+          "providerKind": "anthropic",
+          "backendKind": "http",
+          "model": "claude-sonnet-4-20250514"
+        },
+        {
+          "id": "candidate-11053bd1-a47b-4e07-a195-59a56a96c83c-claude-sonnet-4-20250514",
+          "laneKey": "candidate",
+          "source": "providers.list",
+          "providerId": "11053bd1-a47b-4e07-a195-59a56a96c83c",
+          "providerName": "Claude OAuth",
+          "providerKind": "anthropic",
+          "backendKind": "http",
+          "model": "claude-sonnet-4-20250514"
+        },
+        {
+          "id": "candidate-67353985-c68e-4220-9d80-8dd05849887d-codex",
+          "laneKey": "candidate",
+          "source": "providers.list",
+          "providerId": "67353985-c68e-4220-9d80-8dd05849887d",
+          "providerName": "Codex CLI",
+          "providerKind": "openai-codex",
+          "backendKind": "cli",
+          "model": "codex"
+        },
+        {
+          "id": "candidate-df917f7f-9109-4cd0-8040-299e0a34765a-claude-sonnet-4-20250514",
+          "laneKey": "candidate",
+          "source": "providers.list",
+          "providerId": "df917f7f-9109-4cd0-8040-299e0a34765a",
+          "providerName": "Claude CLI",
+          "providerKind": "anthropic",
+          "backendKind": "cli",
+          "model": "claude-sonnet-4-20250514"
+        }
+      ],
+      "prerequisites": {
+        "desktop": {
+          "status": "unknown",
+          "source": "FRIDAY_REAL_WORLD_DESKTOP_READY",
+          "note": "Set FRIDAY_REAL_WORLD_DESKTOP_READY=true or FRIDAY_REAL_WORLD_DESKTOP_READY=false to declare this prerequisite explicitly."
+        },
+        "externalChannels": {
+          "status": "unknown",
+          "source": "FRIDAY_REAL_WORLD_EXTERNAL_CHANNELS_READY",
+          "note": "Set FRIDAY_REAL_WORLD_EXTERNAL_CHANNELS_READY=true or FRIDAY_REAL_WORLD_EXTERNAL_CHANNELS_READY=false to declare this prerequisite explicitly."
+        },
+        "cloud": {
+          "status": "unknown",
+          "source": "FRIDAY_REAL_WORLD_CLOUD_READY",
+          "note": "Set FRIDAY_REAL_WORLD_CLOUD_READY=true or FRIDAY_REAL_WORLD_CLOUD_READY=false to declare this prerequisite explicitly."
+        },
+        "satellite": {
+          "status": "unknown",
+          "source": "FRIDAY_REAL_WORLD_SATELLITE_READY",
+          "note": "Set FRIDAY_REAL_WORLD_SATELLITE_READY=true or FRIDAY_REAL_WORLD_SATELLITE_READY=false to declare this prerequisite explicitly."
+        },
+        "mcp": {
+          "status": "unknown",
+          "source": "FRIDAY_REAL_WORLD_MCP_READY",
+          "note": "Set FRIDAY_REAL_WORLD_MCP_READY=true or FRIDAY_REAL_WORLD_MCP_READY=false to declare this prerequisite explicitly."
+        }
+      }
+    }
+  },
+  "smoke": {
+    "runId": "2026-04-13T02-13-03-455Z-i66j7h",
+    "suite": "smoke",
+    "reportRoot": "/Users/jarvis/Projects/Friday/docs/reports/ops/real-world-validation/2026-04-13T02-13-03-455Z-i66j7h",
+    "resultCounts": {
+      "passed": 21,
+      "partial": 6,
+      "manual_review": 1
+    },
+    "failureClassCounts": {
+      "provider_protocol": 6
+    },
+    "defectBucketCounts": {
+      "provider/protocol": 6,
+      "environment/setup": 1
+    },
+    "providerLanes": {
+      "default": {
+        "id": "default-cd654203-3f72-4b8b-a2bd-51491405d6dd-gpt-4o-mini",
+        "laneKey": "default",
+        "source": "routing.default",
+        "providerId": "cd654203-3f72-4b8b-a2bd-51491405d6dd",
+        "providerName": "OpenAI ChatGPT",
+        "providerKind": "openai",
+        "backendKind": "http",
+        "model": "gpt-4o-mini"
+      },
+      "fallback": {
+        "id": "fallback-a98ef04c-8d53-417b-89b0-c48c82e51c29-claude-sonnet-4-20250514",
+        "laneKey": "fallback",
+        "source": "heuristic.fallback",
+        "providerId": "a98ef04c-8d53-417b-89b0-c48c82e51c29",
+        "providerName": "Claude Max (OAuth)",
+        "providerKind": "anthropic",
+        "backendKind": "http",
+        "model": "claude-sonnet-4-20250514"
+      }
+    }
+  },
+  "dailyCore": {
+    "runId": "2026-04-13T02-13-53-617Z-1ew7la",
+    "suite": "daily",
+    "reportRoot": "/Users/jarvis/Projects/Friday/docs/reports/ops/real-world-validation/2026-04-13T02-13-53-617Z-1ew7la",
+    "resultCounts": {
+      "passed": 13,
+      "partial": 6,
+      "manual_review": 1
+    },
+    "failureClassCounts": {
+      "provider_protocol": 6
+    },
+    "defectBucketCounts": {
+      "provider/protocol": 6,
+      "environment/setup": 1
+    },
+    "providerLanes": {
+      "default": {
+        "id": "default-cd654203-3f72-4b8b-a2bd-51491405d6dd-gpt-4o-mini",
+        "laneKey": "default",
+        "source": "routing.default",
+        "providerId": "cd654203-3f72-4b8b-a2bd-51491405d6dd",
+        "providerName": "OpenAI ChatGPT",
+        "providerKind": "openai",
+        "backendKind": "http",
+        "model": "gpt-4o-mini"
+      },
+      "fallback": {
+        "id": "fallback-a98ef04c-8d53-417b-89b0-c48c82e51c29-claude-sonnet-4-20250514",
+        "laneKey": "fallback",
+        "source": "heuristic.fallback",
+        "providerId": "a98ef04c-8d53-417b-89b0-c48c82e51c29",
+        "providerName": "Claude Max (OAuth)",
+        "providerKind": "anthropic",
+        "backendKind": "http",
+        "model": "claude-sonnet-4-20250514"
+      }
+    }
+  },
+  "branchConformance": {
+    "checkedAt": "2026-04-13T02:14:41.218Z",
+    "repoRoot": "/Users/jarvis/Projects/Friday",
+    "base": {
+      "input": "main",
+      "resolved": "main",
+      "sha": "ea0d7b60774ff0a8bec81e6a792b6084bc6758e0"
+    },
+    "branch": {
+      "input": "main",
+      "resolved": "main",
+      "sha": "ea0d7b60774ff0a8bec81e6a792b6084bc6758e0"
+    },
+    "ahead": 0,
+    "behind": 0,
+    "patchEquivalentCount": 0,
+    "uniqueCommitCount": 0,
+    "cherryLines": [],
+    "worktree": {
+      "path": "/Users/jarvis/Projects/Friday",
+      "clean": false,
+      "branchStatus": "## main...origin/main [behind 46]\n M README.md\n M docs/VISION.md\n M docs/architecture/marketplace-commerce-rfc.md\n M docs/current-source-of-truth.md\n M docs/ops/friday-agent-os-beta-onboarding.md\n M docs/ops/friday-autostart-macos.md\n M docs/ops/friday-capability-matrix.md\n M docs/ops/friday-companion-release-macos.md\n M docs/ops/friday-cross-platform-downloads.md\n M docs/reference/CODE_INDEX.md\n M skills/browser-qa-report/index.mjs\n M src/agent/runtime/friday-agent-runtime.ts\n M test/e2e/mock/friday-openclaw-parity-closure.e2e.test.ts\n M test/unit/agent/runtime/friday-agent-runtime.test.ts\n M test/unit/skills/runtime/friday-wave1-starter-skills.test.ts\n M test/unit/validation/real-world-local-auth.test.ts\n M ui/src/routes/chat-page.tsx\n M ui/src/routes/guided-flow-page.tsx\n M ui/src/routes/mcp-page.tsx\n M ui/src/routes/memory-page.tsx\n M ui/src/routes/observability-page.tsx\n M ui/src/routes/sessions-page.tsx\n M ui/src/routes/skill-generator-page.tsx\n M ui/src/routes/skills-page.tsx\n M ui/src/routes/usage-page.tsx\n M validation/real-world/lib/local-auth.mjs\n?? .claude/\n?? docs/reports/ops/real-green-gate/\n?? docs/reports/repo/FRIDAY_CAPABILITY_COVERAGE_MATRIX_2026-04-09.md\n?? docs/reports/repo/FRIDAY_DEFECT_LEDGER_2026-04-09.md\n?? docs/reports/repo/FRIDAY_DOC_TRUTH_RECONCILIATION_2026-04-09.md\n?? docs/reports/repo/FRIDAY_FULL_RELEASE_AUDIT_2026-04-09.md\n?? docs/reports/repo/FRIDAY_OPENCLAW_REDDIT_PARITY_MATRIX_2026-04-09.md\n?? docs/reports/repo/FRIDAY_TEST_ASSET_TRIAGE_2026-04-09.md"
+    },
+    "recommendation": "already_merged_or_patch_equivalent",
+    "shouldMerge": false,
+    "shouldNoop": true
+  },
+  "skillConformance": {
+    "ok": true,
+    "command": "npx vitest run test/unit/skills/registry/friday-skill-discovery.test.ts test/unit/skills/manifest/friday-skill-package-loader.test.ts test/integration/skills/friday-skill-registry-lifecycle.test.ts",
+    "durationMs": 29707,
+    "stdout": "\u001b[1m\u001b[46m RUN \u001b[49m\u001b[22m \u001b[36mv4.0.18 \u001b[39m\u001b[90m/Users/jarvis/Projects/Friday\u001b[39m\n\n \u001b[32m✓\u001b[39m \u001b[30m\u001b[42m default \u001b[49m\u001b[39m test/unit/skills/registry/friday-skill-discovery.test.ts \u001b[2m(\u001b[22m\u001b[2m7 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[32m 7\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m \u001b[30m\u001b[42m default \u001b[49m\u001b[39m test/unit/skills/manifest/friday-skill-package-loader.test.ts \u001b[2m(\u001b[22m\u001b[2m8 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[32m 9\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m \u001b[30m\u001b[42m default \u001b[49m\u001b[39m test/integration/skills/friday-skill-registry-lifecycle.test.ts \u001b[2m(\u001b[22m\u001b[2m6 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[32m 30\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m3 passed\u001b[39m\u001b[22m\u001b[90m (3)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m21 passed\u001b[39m\u001b[22m\u001b[90m (21)\u001b[39m\n\u001b[2mType Errors \u001b[22m \u001b[2mno errors\u001b[22m\n\u001b[2m   Start at \u001b[22m 19:15:10\n\u001b[2m   Duration \u001b[22m 522ms\u001b[2m (transform 888ms, setup 31ms, import 1.26s, tests 46ms, environment 0ms)\u001b[22m",
+    "stderr": ""
+  },
+  "gate": {
+    "passed": false,
+    "reasons": [
+      "smoke suite is not fully passed",
+      "daily core suite is not fully passed"
+    ]
+  }
+}

@@ -24,6 +24,7 @@ import type {
 import type {
   FridayChannelAdapters,
   FridayChannelInboundAdapter,
+  FridayChannelLifecycleAdapter,
   FridayChannelOutboundAdapter,
   FridayChannelStatus,
   FridayChannelStatusAdapter,
@@ -322,10 +323,60 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
     },
   };
 
+  // ─── Lifecycle Adapter ───
+
+  const lifecycleAdapter: FridayChannelLifecycleAdapter = {
+    async connect(eventHandler: (rawEvent: unknown) => void) {
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Lark channel not initialized", { httpStatus: 503 });
+      onMessage = null; // will be set by start() caller
+      stopped = false;
+
+      try {
+        await refreshToken();
+
+        if (config.receiveMode === "websocket") {
+          const wsUrl = await fetchWsEndpoint();
+          connectWebSocket(wsUrl);
+        } else {
+          if (!webhookRelay) {
+            throw new FridayDomainError("VALIDATION_ERROR", "Lark webhook mode requires webhookRelay dependency", { httpStatus: 400 });
+          }
+          if (config.appSecret) {
+            webhookRelay.setAppSecret(config.appSecret);
+          }
+          await webhookRelay.start((event) => {
+            eventHandler(event);
+          });
+        }
+      } catch (error) {
+        stopped = true;
+        if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        if (ws) { try { ws.close(); } catch { /* ignore */ } ws = null; }
+        if (webhookRelay?.isListening()) {
+          await webhookRelay.stop().catch(() => { /* ignore cleanup error */ });
+        }
+        throw error;
+      }
+    },
+    async disconnect() {
+      stopped = true;
+      onMessage = null;
+
+      if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      if (ws) { ws.close(); ws = null; }
+      if (webhookRelay?.isListening()) {
+        await webhookRelay.stop();
+      }
+    },
+  };
+
   const adapters: FridayChannelAdapters = {
     inbound: inboundAdapter,
     outbound: outboundAdapter,
     status: statusAdapter,
+    lifecycle: lifecycleAdapter,
   };
 
   const plugin: FridayChannelPlugin = {
@@ -357,78 +408,18 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
     },
 
     async start(handler) {
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Lark channel not initialized", { httpStatus: 503 });
+
+      // Delegate to lifecycle adapter, then wire up the message handler
+      await lifecycleAdapter.connect((event) => {
+        const msg = inboundAdapter.normalize(event);
+        if (msg) handler(msg);
+      });
       onMessage = handler;
-      stopped = false;
-
-      try {
-        await refreshToken();
-
-        if (config!.receiveMode === "websocket") {
-          const wsUrl = await fetchWsEndpoint();
-          connectWebSocket(wsUrl);
-        } else {
-          if (!webhookRelay) {
-            throw new FridayDomainError("VALIDATION_ERROR", "Lark webhook mode requires webhookRelay dependency", { httpStatus: 400 });
-          }
-          if (config!.appSecret) {
-            webhookRelay.setAppSecret(config!.appSecret);
-          }
-          await webhookRelay.start((event) => {
-            const msg = parseMessageEvent(event);
-            if (msg && onMessage) {
-              onMessage(msg);
-            }
-          });
-        }
-      } catch (error) {
-        stopped = true;
-        onMessage = null;
-        if (pingTimer) {
-          clearInterval(pingTimer);
-          pingTimer = null;
-        }
-        if (reconnectTimer) {
-          clearTimeout(reconnectTimer);
-          reconnectTimer = null;
-        }
-        if (ws) {
-          try {
-            ws.close();
-          } catch (err) {
-      console.warn("[friday][lark-channel] operation failed:", err instanceof Error ? err.message : String(err));
-            // ignore
-          }
-          ws = null;
-        }
-        if (webhookRelay?.isListening()) {
-          await webhookRelay.stop().catch(() => {
-            // ignore cleanup error
-          });
-        }
-        throw error;
-      }
     },
 
     async stop() {
-      stopped = true;
-      onMessage = null;
-
-      if (pingTimer) {
-        clearInterval(pingTimer);
-        pingTimer = null;
-      }
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-
-      if (ws) {
-        ws.close();
-        ws = null;
-      }
-      if (webhookRelay?.isListening()) {
-        await webhookRelay.stop();
-      }
+      await lifecycleAdapter.disconnect();
     },
 
     async send(options: FridayChannelSendOptions) {

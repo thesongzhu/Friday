@@ -58,7 +58,7 @@ const CAPABILITY_MATRIX: Record<FridaySupportedChannelKind, FridayChannelCapabil
     kind: "telegram",
     supportsInbound: true,
     supportsOutbound: true,
-    supportsTyping: false,
+    supportsTyping: true,
     supportsDirectMessages: true,
     supportsGroupMessages: true,
   },
@@ -82,7 +82,7 @@ const CAPABILITY_MATRIX: Record<FridaySupportedChannelKind, FridayChannelCapabil
     kind: "slack",
     supportsInbound: true,
     supportsOutbound: true,
-    supportsTyping: false,
+    supportsTyping: true,
     supportsDirectMessages: true,
     supportsGroupMessages: true,
   },
@@ -92,14 +92,14 @@ const CAPABILITY_MATRIX: Record<FridaySupportedChannelKind, FridayChannelCapabil
     supportsOutbound: true,
     supportsTyping: false,
     supportsDirectMessages: true,
-    supportsGroupMessages: true,
+    supportsGroupMessages: false,
   },
   irc: {
     kind: "irc",
     supportsInbound: true,
     supportsOutbound: true,
     supportsTyping: false,
-    supportsDirectMessages: false,
+    supportsDirectMessages: true,
     supportsGroupMessages: true,
   },
   line: {
@@ -200,7 +200,9 @@ export function getFridayChannelSecretFieldDescriptors(
       ];
     }
     case "signal":
-      return [];
+      return [
+        { field: "baseUrl", required: false, reason: "Signal REST API base URL" },
+      ];
     case "slack": {
       const mode = String(config.mode ?? "socket").trim().toLowerCase();
       const descriptors: FridayChannelSecretFieldDescriptor[] = [

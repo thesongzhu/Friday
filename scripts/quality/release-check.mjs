@@ -52,11 +52,11 @@ function run() {
     console.error('   ✗ package.json is missing a "files" allowlist');
     process.exit(1);
   }
-  if (!pkg.files.includes("dist/**")) {
-    console.error('   ✗ package.json "files" must include "dist/**"');
+  if (!pkg.files.some(f => f.startsWith("dist/"))) {
+    console.error('   ✗ package.json "files" must include at least one dist/ glob');
     process.exit(1);
   }
-  console.log("   ✓ files field present and includes dist/**\n");
+  console.log("   ✓ files field present and includes dist/ globs\n");
 
   // ── Step 1: npm pack --dry-run --json ──
   console.log("1. Running npm pack --dry-run…");

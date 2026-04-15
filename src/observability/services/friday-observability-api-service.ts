@@ -302,6 +302,7 @@ export interface CreateFridayObservabilityApiServiceDeps {
   idGenerator: () => string;
   nowIso: () => string;
   browserDiagnosticsProvider?: () => FridayObservabilityBrowserRuntimeSummary | undefined;
+  heartbeatStateGetter?: () => { lastRunAt: string | null; result: string; intervalMs: number | null; nextRunAt: string | null } | null;
 }
 
 export const FRIDAY_BUILT_IN_SELF_HEALING_ALERT_RULE_ID = "builtin-self-healing-repeat-failures";
@@ -2204,6 +2205,33 @@ export function createFridayObservabilityApiService(
         };
       },
     },
+    metrics: {
+      getSnapshot() {
+        const metricNames = COUNTER_METRICS.map((m) => m.name);
+        const collected: Record<string, number> = {};
+        for (const name of metricNames) {
+          collected[name] = metricValueFromSnapshots(metrics.getAllSnapshots(name));
+        }
+        return {
+          collectedAt: deps.nowIso(),
+          metrics: collected,
+          summary: `In-memory metrics collector active with ${metricNames.length} counter(s).`,
+        };
+      },
+    },
+    heartbeat: deps.heartbeatStateGetter
+      ? {
+        getStatus() {
+          const state = deps.heartbeatStateGetter!();
+          return {
+            lastRunAt: state?.lastRunAt ?? null,
+            result: state?.result ?? "unknown",
+            intervalMs: state?.intervalMs ?? null,
+            nextRunAt: state?.nextRunAt ?? null,
+          };
+        },
+      }
+      : undefined,
   };
 
   return {

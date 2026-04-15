@@ -1,6 +1,8 @@
 services:
   friday-hub:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     image: friday:local
     init: true
     restart: unless-stopped
@@ -12,7 +14,6 @@ services:
       FRIDAY_TOKEN_SECRET: ${FRIDAY_TOKEN_SECRET}
       FRIDAY_CORS_ORIGINS: ${FRIDAY_CORS_ORIGINS:-}
       FRIDAY_LOG_REQUESTS: ${FRIDAY_LOG_REQUESTS:-true}
-      FRIDAY_AUTO_SETUP: ${FRIDAY_AUTO_SETUP:-false}
     ports:
       - "${FRIDAY_PORT:-3141}:${FRIDAY_PORT:-3141}"
     volumes:

@@ -92,10 +92,10 @@ async function expectRouteError(fn: Promise<unknown>, code: string): Promise<voi
 }
 
 describe("FridaySessionRoutes", () => {
-  it("creates 19 routes (10 core + 1 export + 1 reset + 3 fork + 4 extraction)", () => {
+  it("creates 20 routes (10 core + 1 delete + 1 export + 1 reset + 3 fork + 4 extraction)", () => {
     const svc = createMockService();
     const routes = createFridaySessionRoutes({ sessionService: svc });
-    expect(routes).toHaveLength(19);
+    expect(routes).toHaveLength(20);
   });
 
   it("all routes have unique operationIds", () => {

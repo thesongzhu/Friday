@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   findRepoRoot,
   parseGitStatusLines,
@@ -6,6 +9,9 @@ import {
   readWorkspaceRoot,
   runCommand,
 } from "../_shared/devops-skill-utils.mjs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const diffReviewChecklist = readFileSync(join(__dirname, "references/diff-review-checklist.md"), "utf-8");
 
 const HOTSPOT_PATTERNS = [
   { severity: "high", title: "Agent runtime boundary touched", pattern: /^src\/agent\// },
@@ -90,6 +96,7 @@ export async function execute(input = {}) {
       : findings[0]?.severity === "high"
         ? `Inspect this hotspot first: ${findings[0].title}.`
         : "Run release-readiness-check or sync docs before landing the diff.",
+    checklist: diffReviewChecklist,
     details: {
       repoRoot,
       highestSeverity,
