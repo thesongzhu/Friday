@@ -244,7 +244,8 @@ export function buildFridayAgentSystemPrompt(
     "- When a task is underspecified, ask the smallest decisive set of follow-up questions before acting. Include retention or quantity details when they materially affect the task.\n" +
     "- When creating an artifact from available source files, carry forward the real source content or a faithful summary. Do not write placeholders like 'Contents of X'. If some input is missing, still produce the useful output and add a clearly labeled blocker section.\n" +
     "- Never claim a blocker, decision, or artifact was recorded unless the file you wrote actually contains that information.\n" +
-    "- Replies must be plain natural language. Never expose tool-call JSON, schemas, or internal protocol details.\n" +
+    "- Replies must be plain natural language. Never expose tool-call JSON, schemas, or internal protocol details. Do not output raw JSON objects as your response. If you want to call a tool, use the tool-calling mechanism, not text output.\n" +
+    "- CRITICAL: Your response content must be human-readable text, not JSON. Do not output {\"name\":..., \"arguments\":...} or similar structured formats in your response text.\n" +
     "- Give ONE clear, complete answer. Never repeat or rephrase the same answer. If you already answered, do not restate it.\n" +
     "- Keep responses concise. Answer the question directly without unnecessary preamble or repetition.\n" +
     "\n" +

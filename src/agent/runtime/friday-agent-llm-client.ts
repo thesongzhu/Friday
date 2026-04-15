@@ -386,9 +386,26 @@ async function* handleOllamaStream(
     ? responseBody.eval_count
     : 0;
 
-  // Emit text content if present
-  const textContent = message?.content ?? "";
+  // Emit text content if present.
+  // Post-process: some local models (especially coder variants) output raw JSON
+  // tool-call format as text instead of using the tool_call mechanism. Strip it
+  // to avoid exposing internal protocol details to the user.
+  let textContent = message?.content ?? "";
   if (textContent) {
+    const trimmed = textContent.trim();
+    // Detect raw JSON tool-call format: {"name": "...", "arguments": {...}}
+    if (/^\s*\{\s*"name"\s*:/.test(trimmed) && /"arguments"\s*:/.test(trimmed)) {
+      try {
+        const parsed = JSON.parse(trimmed) as { name?: string; arguments?: Record<string, unknown> };
+        if (parsed.name && parsed.arguments) {
+          // Convert to a natural language response instead of exposing raw JSON
+          const args = Object.entries(parsed.arguments).map(([k, v]) => `${k}: ${String(v)}`).join(", ");
+          textContent = `I tried to use "${parsed.name}" with ${args}, but this model doesn't support structured tool calls. Please try a larger model (7B+) for tool-capable tasks.`;
+        }
+      } catch {
+        // Not valid JSON, leave as-is
+      }
+    }
     yield { type: "text_delta", text: textContent };
   }
 
