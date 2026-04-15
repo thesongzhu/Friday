@@ -78,8 +78,8 @@ YAML-based rule DSL with allow/deny/warn/audit decisions. Pre- and post-executio
 <tr>
 <td>
 
-### Skill Marketplace & Generator
-AI-powered skill generation with self-test before save. Marketplace with 0% commission — users directly support creators. Shell safety scanner blocks 20+ dangerous patterns.
+### Skill Generator & Safety
+AI-powered skill generation with self-test before save. Shell safety scanner blocks 20+ dangerous patterns. Each skill is sandboxed, verified, and version-tracked.
 
 </td>
 <td>
@@ -204,7 +204,7 @@ Edit these files and Friday adapts immediately — no restart needed.
 <details>
 <summary><b>Skills System</b></summary>
 
-Skills are like apps for Friday. Install from the marketplace, import from archives, or generate with AI. Each skill is sandboxed, verified, and version-tracked.
+Skills are like apps for Friday. Import from archives or generate with AI. Each skill is sandboxed, verified, and version-tracked.
 
 ```bash
 friday list              # See installed skills
