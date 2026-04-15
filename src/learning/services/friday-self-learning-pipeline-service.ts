@@ -34,6 +34,10 @@ export interface FridaySelfLearningPipelineService {
   ): FridaySelfLearningProcessResult[];
 }
 
+export interface FridayLearningMemoryWriter {
+  store(namespace: string, content: string, metadata?: Record<string, unknown>): Promise<unknown>;
+}
+
 export interface CreateSelfLearningPipelineServiceDeps {
   db: FridaySqliteLayer;
   events: FridayLearningEventCollectionService;
@@ -48,6 +52,8 @@ export interface CreateSelfLearningPipelineServiceDeps {
   diagnosisService?: FridayErrorDiagnosisService;
   planService?: FridayAutoFixPlanService;
   riskService?: FridayAutoFixRiskAssessmentService;
+  /** Optional memory service for persisting extracted preferences as searchable memory items. */
+  memoryWriter?: FridayLearningMemoryWriter;
   idGenerator: () => string;
   nowIso: () => string;
 }
@@ -96,6 +102,27 @@ export function createFridaySelfLearningPipelineService(
       signals: extractedSignals,
       nowIso,
     });
+
+    // 3b. Persist preference signals to memory for cross-session retrieval
+    if (deps.memoryWriter) {
+      const preferenceSignals = extractedSignals.filter(
+        (s) => s.kind === "preference" || s.kind === "correction",
+      );
+      for (const signal of preferenceSignals) {
+        const content = typeof signal.value === "string"
+          ? `${signal.key}: ${signal.value}`
+          : `${signal.key}: ${JSON.stringify(signal.value)}`;
+        // Fire-and-forget: must not block the synchronous pipeline
+        void deps.memoryWriter.store("learning.preferences", content, {
+          source: `learning:${event.userId}:${event.eventId}`,
+          key: `pref:${signal.key}`,
+          tags: ["learning", "auto", "preference", event.userId],
+          memoryType: "preference",
+          confidence: signal.confidence,
+          ttlSeconds: 30 * 24 * 60 * 60, // 30 days
+        }).catch(() => {/* non-fatal */});
+      }
+    }
 
     // 4. Classify/create incidents if error signals exist
     const errorSignals = extractedSignals.filter((s) => s.kind === "error");
