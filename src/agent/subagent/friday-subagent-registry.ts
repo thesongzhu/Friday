@@ -411,9 +411,10 @@ export function createFridaySubagentRegistry(
       }
 
       // Timed out waiting
+      const timeoutSec = Math.round((timeoutMs ?? FRIDAY_SUBAGENT_DEFAULT_TIMEOUT_MS) / 1000);
       throw new FridayDomainError(
         FRIDAY_SUBAGENT_ERROR_CODES.SPAWN_FAILED,
-        `Timed out waiting for sub-agent '${subagentId}' to complete`,
+        `Sub-agent '${subagentId}' timed out after ${String(timeoutSec)}s. This may happen with slower models or complex tasks. Try a faster model, simplify the task, or increase timeoutMs.`,
         { httpStatus: 504 },
       );
     },

@@ -93,7 +93,7 @@ Cross-platform desktop control: click, type, screenshot, scroll, drag on macOS /
 <td>
 
 ### Distributed Fleet
-Hub + satellite architecture. Capability-based workflow placement. Heartbeat monitoring, offline detection, and explicit blocking state — no silent fallback. Fleet dashboard at `/fleet`.
+Hub + satellite architecture. Capability-based workflow placement. Heartbeat monitoring, offline detection, and explicit blocking state — no silent fallback.
 
 </td>
 <td>

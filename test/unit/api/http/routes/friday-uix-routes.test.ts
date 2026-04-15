@@ -213,7 +213,7 @@ function makePreference(input: {
 describe("FridayUixRoutes", () => {
   it("creates assistant route definitions", () => {
     const routes = createFridayUixRoutes({ service: makeService() });
-    expect(routes).toHaveLength(17);
+    expect(routes).toHaveLength(18);
     expect(routes.map((route) => route.operationId)).toEqual([
       "uix.intents.resolve",
       "uix.templates.list",
@@ -224,6 +224,7 @@ describe("FridayUixRoutes", () => {
       "uix.preferences.update",
       "uix.preferences.delete",
       "uix.persona.get",
+      "uix.persona.update",
       "uix.templates.execute",
       "uix.wizards.start",
       "uix.wizards.continue",

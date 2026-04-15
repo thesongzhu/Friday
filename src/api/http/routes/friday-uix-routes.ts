@@ -267,6 +267,39 @@ export function createFridayUixRoutes(
       },
     },
     {
+      operationId: "uix.persona.update",
+      method: "PUT",
+      path: "/v1/uix/persona",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      async handler(ctx): Promise<FridayGetCommunicationPersonaResponse> {
+        const userId = requireUserId(ctx.principal);
+        const body = ctx.body as Record<string, unknown> | null;
+        const settings = (body?.settings ?? {}) as Record<string, unknown>;
+
+        // Map persona settings to user preferences with category "communication"
+        const validKeys = new Set(["tone", "verbosity", "structure", "questionStyle", "directness", "emojiStyle", "jargonTolerance", "assumptionStyle", "confirmationStyle"]);
+        const preferences: Array<{ category: "communication"; key: string; value: string }> = [];
+        for (const [key, value] of Object.entries(settings)) {
+          if (validKeys.has(key) && typeof value === "string" && value.trim().length > 0) {
+            preferences.push({ category: "communication", key, value: value.trim() });
+          }
+        }
+
+        if (preferences.length === 0) {
+          throw new FridayDomainError("VALIDATION_ERROR", "At least one valid persona setting is required. Valid keys: " + [...validKeys].join(", "), { httpStatus: 400 });
+        }
+
+        deps.service.updatePreferences({
+          userId,
+          request: { preferences },
+        });
+
+        return {
+          persona: deps.service.getPersona({ userId }),
+        };
+      },
+    },
+    {
       operationId: "uix.templates.execute",
       method: "POST",
       path: "/v1/uix/templates/:templateId/execute",
