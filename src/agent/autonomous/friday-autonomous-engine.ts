@@ -101,11 +101,54 @@ export function createFridayAutonomousEngine(
     ...deps.config,
   };
 
-  // ─── In-memory state ───
+  const persistence = deps.persistence;
+
+  // ─── In-memory state (L1 cache — SQLite is L2 via write-through) ───
   const goals = new Map<UUID, FridayAutonomousGoal>();
   const steps = new Map<UUID, FridayAutonomousStep>();
   const iterations = new Map<UUID, FridayAutonomousIteration[]>();
   const abortControllers = new Map<UUID, AbortController>();
+
+  // ─── Startup recovery: load non-terminal goals from SQLite ───
+  if (persistence) {
+    try {
+      const activeGoals = persistence.sqlite.withReadConnection((db) =>
+        persistence.repository.listActiveGoals(db),
+      );
+      for (const goal of activeGoals) {
+        if (goal.status === "executing" || goal.status === "planning" || goal.status === "verifying") {
+          // Goals interrupted by restart cannot resume (no AbortController, no LLM context).
+          const failedGoal: FridayAutonomousGoal = {
+            ...goal,
+            status: "failed",
+            failureReason: "Interrupted by process restart",
+            completedAt: nowIso(),
+          };
+          goals.set(goal.id, failedGoal);
+          persistence.sqlite.withWriteTransaction((db) =>
+            persistence.repository.updateGoal(db, goal.id, {
+              status: "failed",
+              failureReason: "Interrupted by process restart",
+              completedAt: failedGoal.completedAt,
+            }),
+          );
+        } else {
+          // Pending goals: rehydrate into cache for potential re-execution
+          goals.set(goal.id, goal);
+          const goalSteps = persistence.sqlite.withReadConnection((db) =>
+            persistence.repository.getStepsByGoalId(db, goal.id),
+          );
+          for (const step of goalSteps) steps.set(step.id, step);
+          const goalIters = persistence.sqlite.withReadConnection((db) =>
+            persistence.repository.getIterationsByGoalId(db, goal.id),
+          );
+          if (goalIters.length > 0) iterations.set(goal.id, goalIters);
+        }
+      }
+    } catch {
+      // Non-fatal: if recovery fails, engine starts with empty state (same as before persistence)
+    }
+  }
 
   // ─── Emit helper ───
   function emit(event: string, payload: Record<string, unknown>): void {
@@ -573,28 +616,37 @@ export function createFridayAutonomousEngine(
       observations: [],
     };
     steps.set(step.id, step);
+    if (persistence) {
+      try { persistence.sqlite.withWriteTransaction((db) => persistence.repository.createStep(db, step)); } catch { /* non-fatal */ }
+    }
     return step;
   }
 
   /**
-   * Update a goal in the in-memory store.
+   * Update a goal in the in-memory store (write-through to SQLite).
    */
   function updateGoal(goalId: UUID, updates: Partial<FridayAutonomousGoal>): FridayAutonomousGoal {
     const current = goals.get(goalId);
     if (!current) throw new FridayDomainError("NOT_FOUND", `Goal ${goalId} not found`, { httpStatus: 404 });
     const updated = { ...current, ...updates } as FridayAutonomousGoal;
     goals.set(goalId, updated);
+    if (persistence) {
+      try { persistence.sqlite.withWriteTransaction((db) => persistence.repository.updateGoal(db, goalId, updates)); } catch { /* non-fatal */ }
+    }
     return updated;
   }
 
   /**
-   * Update a step in the in-memory store.
+   * Update a step in the in-memory store (write-through to SQLite).
    */
   function updateStep(stepId: UUID, updates: Partial<FridayAutonomousStep>): FridayAutonomousStep {
     const current = steps.get(stepId);
     if (!current) throw new FridayDomainError("NOT_FOUND", `Step ${stepId} not found`, { httpStatus: 404 });
     const updated = { ...current, ...updates } as FridayAutonomousStep;
     steps.set(stepId, updated);
+    if (persistence) {
+      try { persistence.sqlite.withWriteTransaction((db) => persistence.repository.updateStep(db, stepId, updates)); } catch { /* non-fatal */ }
+    }
     return updated;
   }
 
@@ -839,6 +891,9 @@ export function createFridayAutonomousEngine(
             usageOutput,
           };
           goalIterations.push(iteration);
+          if (persistence) {
+            try { persistence.sqlite.withWriteTransaction((db) => persistence.repository.appendIteration(db, iteration)); } catch { /* non-fatal */ }
+          }
           emit("autonomous.iteration.completed", { goalId: goal.id, stepId, index: iterIndex });
 
           // Delay between iterations
@@ -988,6 +1043,9 @@ export function createFridayAutonomousEngine(
       createdAt: nowIso(),
     };
     goals.set(goal.id, goal);
+    if (persistence) {
+      try { persistence.sqlite.withWriteTransaction((db) => persistence.repository.createGoal(db, goal)); } catch { /* non-fatal */ }
+    }
     emit("autonomous.goal.created", { goalId: goal.id, description: goal.description });
     return goal;
   }
@@ -1044,11 +1102,31 @@ export function createFridayAutonomousEngine(
     },
 
     getGoal(goalId: UUID): FridayAutonomousGoal | null {
-      return goals.get(goalId) ?? null;
+      const cached = goals.get(goalId);
+      if (cached) return cached;
+      if (!persistence) return null;
+      try {
+        return persistence.sqlite.withReadConnection((db) => persistence.repository.getGoal(db, goalId));
+      } catch { return null; }
     },
 
     listGoals(filters?: FridayAutonomousGoalListFilters): readonly FridayAutonomousGoal[] {
-      let result = Array.from(goals.values());
+      if (!persistence) {
+        let result = Array.from(goals.values());
+        if (filters?.status) result = result.filter((g) => g.status === filters.status);
+        if (filters?.source) result = result.filter((g) => g.source === filters.source);
+        if (filters?.parentGoalId) result = result.filter((g) => g.parentGoalId === filters.parentGoalId);
+        if (filters?.limit) result = result.slice(0, filters.limit);
+        return result;
+      }
+      // Merge SQLite + Map (Map values are more recent)
+      const merged = new Map<UUID, FridayAutonomousGoal>();
+      try {
+        const dbGoals = persistence.sqlite.withReadConnection((db) => persistence.repository.listGoals(db, filters));
+        for (const g of dbGoals) merged.set(g.id, g);
+      } catch { /* fall back to Map only */ }
+      for (const [id, g] of goals) merged.set(id, g);
+      let result = Array.from(merged.values());
       if (filters?.status) result = result.filter((g) => g.status === filters.status);
       if (filters?.source) result = result.filter((g) => g.source === filters.source);
       if (filters?.parentGoalId) result = result.filter((g) => g.parentGoalId === filters.parentGoalId);
@@ -1057,7 +1135,12 @@ export function createFridayAutonomousEngine(
     },
 
     getIterations(goalId: UUID): readonly FridayAutonomousIteration[] {
-      return iterations.get(goalId) ?? [];
+      const cached = iterations.get(goalId);
+      if (cached && cached.length > 0) return cached;
+      if (!persistence) return [];
+      try {
+        return persistence.sqlite.withReadConnection((db) => persistence.repository.getIterationsByGoalId(db, goalId));
+      } catch { return []; }
     },
   };
 }

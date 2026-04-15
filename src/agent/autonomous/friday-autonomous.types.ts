@@ -540,5 +540,14 @@ export interface CreateFridayAutonomousEngineDeps {
 
   /** Engine configuration overrides. */
   readonly config?: Partial<FridayAutonomousEngineConfig>;
+
+  /** Optional SQLite persistence for goal/step/iteration state. When provided, enables write-through to survive restarts. */
+  readonly persistence?: {
+    readonly sqlite: {
+      withWriteTransaction<T>(fn: (db: import("better-sqlite3").Database) => T): T;
+      withReadConnection<T>(fn: (db: import("better-sqlite3").Database) => T): T;
+    };
+    readonly repository: import("./friday-autonomous-repository.js").FridayAutonomousRepository;
+  };
 }
 import type { FridayProviderTenantContext } from "#providers";
