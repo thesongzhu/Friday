@@ -72,6 +72,16 @@ async function validateOpenAi(
     if (res.status === 401 || res.status === 403) {
       return makeFailedState("PROVIDER_AUTH_INVALID", "Authentication failed", res.status);
     }
+    if (res.status === 402) {
+      let msg = "Insufficient credit balance";
+      try {
+        const body = (await res.json()) as { error?: { message?: string } };
+        if (body?.error?.message) msg = body.error.message;
+      } catch {
+        // ignore parse errors
+      }
+      return makeFailedState("PROVIDER_PAYMENT_REQUIRED", msg, 402);
+    }
     if (!res.ok) {
       return makeFailedState("PROVIDER_UNREACHABLE", `HTTP ${String(res.status)}`, res.status);
     }
@@ -117,16 +127,29 @@ async function validateAnthropic(
     if (res.status === 401 || res.status === 403) {
       return makeFailedState("PROVIDER_AUTH_INVALID", "Authentication failed", res.status);
     }
+    if (res.status === 402) {
+      let msg = "Insufficient credit balance";
+      try {
+        const errBody = (await res.json()) as { error?: { message?: string } };
+        if (errBody?.error?.message) msg = errBody.error.message;
+      } catch {
+        // ignore parse errors
+      }
+      return makeFailedState("PROVIDER_PAYMENT_REQUIRED", msg, 402);
+    }
     // A successful (200) or rate-limited (429) or overloaded (529) response means auth is valid
     if (res.ok || res.status === 429 || res.status === 529) {
       return makeOkState();
     }
-    // 400 with "invalid_api_key" is auth failure
+    // 400 with "invalid_api_key" is auth failure; credit balance errors are payment-required
     if (res.status === 400) {
       try {
         const errBody = (await res.json()) as { error?: { type?: string; message?: string } };
         if (errBody.error?.type === "invalid_api_key") {
           return makeFailedState("PROVIDER_AUTH_INVALID", errBody.error.message ?? "Invalid API key", 400);
+        }
+        if (errBody.error?.message && /credit balance/i.test(errBody.error.message)) {
+          return makeFailedState("PROVIDER_PAYMENT_REQUIRED", errBody.error.message, 400);
         }
       } catch (err) {
         // ignore parse errors
@@ -152,6 +175,16 @@ async function validateGoogle(
     const res = await fetchWithTimeout(url, { method: "GET", headers });
     if (res.status === 401 || res.status === 403) {
       return makeFailedState("PROVIDER_AUTH_INVALID", "Authentication failed", res.status);
+    }
+    if (res.status === 402) {
+      let msg = "Insufficient credit balance";
+      try {
+        const body = (await res.json()) as { error?: { message?: string } };
+        if (body?.error?.message) msg = body.error.message;
+      } catch {
+        // ignore parse errors
+      }
+      return makeFailedState("PROVIDER_PAYMENT_REQUIRED", msg, 402);
     }
     if (!res.ok) {
       return makeFailedState("PROVIDER_UNREACHABLE", `HTTP ${String(res.status)}`, res.status);

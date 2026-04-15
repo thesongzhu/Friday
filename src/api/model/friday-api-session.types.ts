@@ -61,6 +61,7 @@ export interface FridaySessionMessageCreateRequest extends FridaySessionMessageI
 
 export interface FridaySessionMessageCreateResponse {
   message: FridaySessionMessageRecord;
+  hint?: string;
 }
 
 export interface FridaySessionMessageListResponse {

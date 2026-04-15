@@ -14,12 +14,12 @@ services:
       FRIDAY_LOG_REQUESTS: ${FRIDAY_LOG_REQUESTS:-true}
       FRIDAY_AUTO_SETUP: ${FRIDAY_AUTO_SETUP:-false}
     ports:
-      - "${FRIDAY_PORT:-3141}:3141"
+      - "${FRIDAY_PORT:-3141}:${FRIDAY_PORT:-3141}"
     volumes:
       - ${FRIDAY_STATE_DIR:-./data}:/data
       - ${FRIDAY_SKILLS_DIR:-./skills}:/skills
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3141/v1/health"]
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:${FRIDAY_PORT:-3141}/v1/health"]
       interval: 30s
       timeout: 5s
       start_period: 10s

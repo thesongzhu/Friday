@@ -140,7 +140,7 @@ JWT + RBAC 认证。SHA-256 哈希链防篡改审计日志。SSRF 防护。能�
 **方式一 — npm（推荐）**
 
 ```bash
-npm install -g friday
+npm install -g @thesongzhu/friday
 friday start
 # 打开 http://localhost:3141
 ```
@@ -151,6 +151,7 @@ friday start
 git clone https://github.com/thesongzhu/Friday.git
 cd Friday && npm install && npm run build
 npm start
+# 打开 http://localhost:3141
 ```
 
 **方式三 — Docker**
@@ -169,9 +170,9 @@ docker-compose up -d
 
 | 平台 | 方式 | 状态 |
 |------|------|------|
-| **macOS / Linux / Windows** | `npm install -g friday` | 可用 |
+| **macOS / Linux / Windows** | `npm install -g @thesongzhu/friday` | 可用 |
 | **macOS** | 原生 DMG + Homebrew | 即将推出 |
-| **Linux** | `.deb` / `.AppImage` | 可用 |
+| **Linux** | `.deb` / `.AppImage` | 即将推出 |
 | **Docker** | `docker-compose up -d` | 可用 |
 | **iOS / Android** | 移动端控制台 | 规划中 |
 
@@ -224,6 +225,16 @@ friday import ./my.tgz   # 安装一个技能
 - 所有破坏性操作需要明确批准
 
 </details>
+
+---
+
+## 重要说明
+
+- **需要 API Key。** Friday 使用你自己的 API Key（Anthropic、OpenAI、Google 等）调用 LLM 服务。由此产生的费用由你自行承担。Friday 不会通过第三方服务器代理你的密钥。
+- **小模型功能有限。** 参数量低于 70 亿（7B）的模型（如 `llama3.2:3b`、`phi-3-mini`）无法可靠地使用工具/函数调用。Friday 会自动为这些模型禁用工具声明，以防止幻觉式的工具调用。如需完整的 Agent 能力（网页搜索、代码执行、浏览器自动化等），请使用 7B 以上参数量的模型。
+- **自托管意味着自管理。** Friday 运行在你自己的机器上。你需要自行负责访问安全、API Key 管理和依赖更新。
+- **不能替代专业建议。** AI 生成的内容可能包含错误，请始终独立验证关键信息。
+- **npm 包名。** 官方 npm 包为 `@thesongzhu/friday`。npm 上的 `friday`（无 scope）是一个无关项目。
 
 ---
 

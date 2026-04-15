@@ -177,8 +177,10 @@ function validateRoutingBody(body: unknown): asserts body is FridaySetRoutingCon
   if (typeof b.defaultProviderId !== "string") {
     errors.push("defaultProviderId is required and must be a string");
   }
-  if (!Array.isArray(b.fallbackProviderIds) || !b.fallbackProviderIds.every((id: unknown) => typeof id === "string")) {
-    errors.push("fallbackProviderIds is required and must be an array of strings");
+  if (b.fallbackProviderIds === undefined) {
+    (b as Record<string, unknown>).fallbackProviderIds = [];
+  } else if (!Array.isArray(b.fallbackProviderIds) || !b.fallbackProviderIds.every((id: unknown) => typeof id === "string")) {
+    errors.push("fallbackProviderIds must be an array of strings when provided");
   }
   if (b.defaultModel !== undefined && typeof b.defaultModel !== "string") {
     errors.push("defaultModel must be a string when provided");

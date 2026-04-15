@@ -124,6 +124,35 @@ export function filterToolsByMode<T extends { name: string }>(
   return tools.filter((tool) => allowedCategories.has(resolveToolCategory(tool.name)));
 }
 
+// ─── Small model tool gating ───
+
+/**
+ * Minimum parameter count (in billions) required for reliable tool/function calling.
+ * Models below this threshold receive no tool declarations to prevent hallucinated tool calls.
+ */
+const FRIDAY_MIN_TOOL_CAPABLE_PARAMS_B = 7;
+
+/**
+ * Extract approximate parameter count (in billions) from a model name string.
+ * Handles common naming patterns like "llama3.2:3b", "qwen2.5-coder:7b",
+ * "mistral-7b-instruct", "phi-3-mini-4k-3.8b", etc.
+ * Returns null if no size can be inferred.
+ */
+export function extractModelParamsBillions(modelName: string): number | null {
+  // Match patterns like ":3b", "-7b", "_13b", ":3.8b", "-0.5b" (case-insensitive)
+  const match = modelName.toLowerCase().match(/[:\-_](\d+(?:\.\d+)?)b(?:[:\-_.]|$)/);
+  return match ? parseFloat(match[1]) : null;
+}
+
+/**
+ * Returns true if the model is known to be too small for reliable tool use.
+ * When the model size cannot be determined from the name, tools are preserved (safe default).
+ */
+export function isFridayModelTooSmallForTools(modelName: string): boolean {
+  const params = extractModelParamsBillions(modelName);
+  return params !== null && params < FRIDAY_MIN_TOOL_CAPABLE_PARAMS_B;
+}
+
 /**
  * Validate that a mode transition is allowed.
  * Returns the target mode, or throws if invalid.

@@ -4,6 +4,7 @@ import {
   FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX,
   isFridayAnthropicBearerAuthMode,
 } from "#providers";
+import { isFridayModelTooSmallForTools } from "./friday-agent-operational-mode.js";
 import {
   runFridayCliBackendTextCompletion,
 } from "#providers";
@@ -158,6 +159,12 @@ export function createFridayAgentLlmClient(
           outputTokens: 0,
         };
         return;
+      }
+
+      // Gate tools for small models (<7B parameters) to prevent hallucinated tool calls.
+      // At this point params.model is the resolved model name (e.g. "llama3.2:3b").
+      if (isFridayModelTooSmallForTools(params.model)) {
+        params = { ...params, tools: [] };
       }
 
       // Dispatch to the appropriate API handler based on provider api type

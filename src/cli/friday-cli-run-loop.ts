@@ -54,6 +54,7 @@ export function runFridayCliLoop(deps: FridayCliRunLoopDeps): Promise<void> {
       .then(() => {
         const url = `http://${listenHost === "0.0.0.0" ? "localhost" : listenHost}:${String(port)}`;
         console.log(`🚀 Friday API server listening on ${url}`);
+        console.log(`   Open ${url} in your browser to get started.`);
 
         // Auto-open browser for local mode (not when binding to all interfaces for remote access).
         if (listenHost === "127.0.0.1" || listenHost === "localhost") {

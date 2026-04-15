@@ -140,7 +140,7 @@ Per-artifact pass/fail/warn verdicts with evidence chains. Schema, threshold, qu
 **Option 1 — npm (recommended)**
 
 ```bash
-npm install -g friday
+npm install -g @thesongzhu/friday
 friday start
 # Open http://localhost:3141
 ```
@@ -151,6 +151,7 @@ friday start
 git clone https://github.com/thesongzhu/Friday.git
 cd Friday && npm install && npm run build
 npm start
+# Open http://localhost:3141
 ```
 
 **Option 3 — Docker**
@@ -169,9 +170,9 @@ docker-compose up -d
 
 | Platform | Method | Status |
 |----------|--------|--------|
-| **macOS / Linux / Windows** | `npm install -g friday` | Available |
+| **macOS / Linux / Windows** | `npm install -g @thesongzhu/friday` | Available |
 | **macOS** | Native DMG + Homebrew | Coming soon |
-| **Linux** | `.deb` / `.AppImage` | Available |
+| **Linux** | `.deb` / `.AppImage` | Coming soon |
 | **Docker** | `docker-compose up -d` | Available |
 | **iOS / Android** | Mobile console | Planned |
 
@@ -224,6 +225,16 @@ friday import ./my.tgz   # Install a skill
 - All operations require explicit approval for destructive actions
 
 </details>
+
+---
+
+## Important Notes
+
+- **API keys are required.** Friday uses your own API keys (Anthropic, OpenAI, Google, etc.) to call LLM providers. You are responsible for any costs incurred. Friday never proxies your keys through third-party servers.
+- **Small models have limited capabilities.** Models with fewer than 7 billion parameters (e.g., `llama3.2:3b`, `phi-3-mini`) cannot reliably use tools/function calling. Friday automatically disables tool declarations for these models to prevent hallucinated tool invocations. For full agent capabilities (web search, code execution, browser automation, etc.), use models with 7B+ parameters.
+- **Self-hosted means self-managed.** Friday runs on your machine. You are responsible for securing access, managing API keys, and keeping dependencies up to date.
+- **Not a substitute for professional advice.** AI-generated outputs may contain errors. Always verify critical information independently.
+- **npm package name.** The official npm package is `@thesongzhu/friday`. The unscoped `friday` package on npm is an unrelated project.
 
 ---
 
