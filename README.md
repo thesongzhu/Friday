@@ -43,7 +43,7 @@ Bring your own API keys. Install skills like apps. Connect your favorite messagi
 <td width="50%">
 
 ### Visual Workflows
-Drag-and-drop workflow builder. Design complex automations visually, deploy with one click, and let Friday handle the rest.
+Drag-and-drop DAG workflow builder. Chain skills, rules, and conditions visually. One-click deploy to hub or edge satellites. Live execution tracing.
 
 </td>
 </tr>
@@ -51,27 +51,83 @@ Drag-and-drop workflow builder. Design complex automations visually, deploy with
 <td>
 
 ### 10 Messaging Platforms
-Discord · Slack · Telegram · WhatsApp · Signal · LINE · IRC · QQ · Lark · Webchat — one Friday, everywhere you chat.
+Discord · Slack · Telegram · WhatsApp · Signal · LINE · IRC · QQ · Lark · Webchat — one Friday, everywhere you chat. Per-channel allowlists and health monitoring.
 
 </td>
 <td>
 
-### Memory & Learning
-Friday remembers what matters. Vector-powered memory, adaptive communication style, and a personality that evolves with your preferences.
+### Memory & Adaptive Persona
+16-personality MBTI templates with 9 tunable dimensions. Bayesian confidence decay on learned facts. Friday's tone, directness, and guidance style evolve to match you.
 
 </td>
 </tr>
 <tr>
 <td>
 
-### Self-Healing
-Something breaks? Friday detects issues, diagnoses root causes, proposes risk-rated fixes, and waits for your approval before acting.
+### Self-Healing with Supervision
+Closed-loop incident pipeline: detect → diagnose → risk-rate → propose fix → get approval → execute → verify → rollback if needed → learn. Auto-pauses after 3 consecutive failures.
 
 </td>
 <td>
 
-### Safe & Observable
-JWT auth, role-based access, hash-chained audit trail, cost dashboard, and full observability. You're always in control.
+### Rules Engine & Policy
+YAML-based rule DSL with allow/deny/warn/audit decisions. Pre- and post-execution hooks gate every action. 100% of rule decisions recorded with context. Zero unsafe-action escapes.
+
+</td>
+</tr>
+<tr>
+<td>
+
+### Skill Marketplace & Generator
+AI-powered skill generation with self-test before save. Marketplace with 0% commission — users directly support creators. Shell safety scanner blocks 20+ dangerous patterns.
+
+</td>
+<td>
+
+### Desktop Automation
+Cross-platform desktop control: click, type, screenshot, scroll, drag on macOS / Windows / Linux. Action recording & replay. All operations pass through the Rules Engine.
+
+</td>
+</tr>
+<tr>
+<td>
+
+### Distributed Fleet
+Hub + satellite architecture. Capability-based workflow placement. Heartbeat monitoring, offline detection, and explicit blocking state — no silent fallback. Fleet dashboard at `/fleet`.
+
+</td>
+<td>
+
+### Security & Audit
+JWT + RBAC. SHA-256 hash-chained tamper-evident audit trail. SSRF guards. Capability grants with expiration. Multi-tenant ready. SIEM export (JSONL + webhook).
+
+</td>
+</tr>
+<tr>
+<td>
+
+### Full Observability
+Distributed tracing across all modules. SLO monitoring with multi-window burn-rate alerting. Cost dashboard per provider. Alert pipeline: webhook, email, Slack, PagerDuty.
+
+</td>
+<td>
+
+### macOS Native Companion
+Swift/AppKit desktop app. launchd auto-start. Passkey-based remote access. Desktop shortcuts and notification actions. Sparkle auto-updates with delta releases.
+
+</td>
+</tr>
+<tr>
+<td>
+
+### BYOK — Your Keys, Your Data
+Connect directly to OpenAI, Anthropic, Google, or any compatible provider. Provider health monitoring, circuit breakers, automatic fallback to cheaper models when budgets tighten.
+
+</td>
+<td>
+
+### Quality Gates & Acceptance
+Per-artifact pass/fail/warn verdicts with evidence chains. Schema, threshold, quality, and custom checks. Determinism > 99.5%. Escape rate < 1%. Every decision auditable.
 
 </td>
 </tr>
