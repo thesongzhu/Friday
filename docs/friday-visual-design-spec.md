@@ -260,7 +260,7 @@ Material Design 的密度模型：每级减少 4px 组件高度，不改水平�
 - [Material Design Dark Theme](https://m2.material.io/design/color/dark-theme.html)
 - [Material Design Density](https://m3.material.io/blog/material-density-web)
 - [CJK Typesetting Rules](https://fonts.google.com/knowledge/type_in_china_japan_and_korea/cjk_typesetting_rules)
-- [UI Density - Matt Strom](https://mattstromawn.com/writing/ui-density/)
+- [UI Density - Matt Strom](https://matthewstrom.com/writing/ui-density/)
 - [Chinese Market Color Perception](https://sampi.co/color-perception-considerations-in-marketing-design-for-chinese-market/)
 - [Generative AI Loading States](https://cloudscape.design/patterns/genai/genai-loading-states/)
 - [Vercel Geist Design System](https://vercel.com/geist/introduction)

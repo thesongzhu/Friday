@@ -371,15 +371,14 @@ export async function createDarwinAdapter(
         }
       }
       case "read_element": {
-        const el = makeElement(
-          config.generateId(), "unknown", action.selector.value,
-          action.selector.appBundleId ?? "unknown",
-          { x: 0, y: 0, width: 0, height: 0 },
-        );
-        return makeSuccessResult(config, action, "darwin", startedAt, { elementData: el });
+        return makeFailureResult(config, action, "darwin", startedAt, "failed",
+          "read_element is not implemented for macOS; use inspectElement or searchElements instead",
+          FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
       }
       case "drag": {
-        return makeSuccessResult(config, action, "darwin", startedAt);
+        return makeFailureResult(config, action, "darwin", startedAt, "failed",
+          "drag is not implemented for macOS",
+          FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
       }
       case "file_operation": {
         return executeFileOperation(action, startedAt);
@@ -585,10 +584,21 @@ export async function createWin32Adapter(
         return makeSuccessResult(config, action, "win32", startedAt);
       }
       case "screenshot": {
-        const tmpPath = `$env:TEMP\\friday-screenshot-${config.generateId()}.png`;
+        const screenshotId = config.generateId();
+        const tmpPath = `$env:TEMP\\friday-screenshot-${screenshotId}.png`;
         const escapedPath = escapePowerShellSingleQuoted(tmpPath);
+        const resolvedTmpPath = `${process.env.TEMP ?? process.env.TMP ?? "C:\\Windows\\Temp"}\\friday-screenshot-${screenshotId}.png`;
         await exec(`powershell -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen | Out-Null; $bmp = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width,[System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen(0,0,0,0,$bmp.Size); $bmp.Save('${escapedPath}')"`);
-        return makeSuccessResult(config, action, "win32", startedAt, { screenshotBase64: "[base64-data]" });
+        try {
+          const fs = await import("node:fs");
+          const base64 = fs.readFileSync(resolvedTmpPath).toString("base64");
+          fs.unlinkSync(resolvedTmpPath);
+          return makeSuccessResult(config, action, "win32", startedAt, { screenshotBase64: base64 });
+        } catch (readErr) {
+          return makeFailureResult(config, action, "win32", startedAt, "failed",
+            `Screenshot captured but could not read file: ${readErr instanceof Error ? readErr.message : String(readErr)}`,
+            FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
       }
       case "launch_app": {
         const appIdentifier = ensureSafeAppIdentifier(action.appIdentifier);
@@ -621,13 +631,14 @@ export async function createWin32Adapter(
         }
       }
       case "read_element": {
-        return makeSuccessResult(config, action, "win32", startedAt, {
-          elementData: makeElement(config.generateId(), "unknown", action.selector.value,
-            action.selector.appBundleId ?? "unknown", { x: 0, y: 0, width: 0, height: 0 }),
-        });
+        return makeFailureResult(config, action, "win32", startedAt, "failed",
+          "read_element is not implemented for Windows; use inspectElement or searchElements instead",
+          FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
       }
       case "drag":
-        return makeSuccessResult(config, action, "win32", startedAt);
+        return makeFailureResult(config, action, "win32", startedAt, "failed",
+          "drag is not implemented for Windows",
+          FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
       case "file_operation": {
         return executeWinFileOperation(action, startedAt);
       }
@@ -693,25 +704,14 @@ export async function createWin32Adapter(
       }
     },
 
-    async inspectElement(selector: FridayDesktopElementSelector): Promise<FridayDesktopElement | null> {
-      try {
-        return makeElement(
-          config.generateId(), "unknown", selector.value,
-          selector.appBundleId ?? "unknown",
-          { x: 0, y: 0, width: 0, height: 0 },
-        );
-      } catch (err) {
-        console.warn("[friday][desktop-adapters] win32-inspectElement:", err instanceof Error ? err.message : String(err));
-        return null;
-      }
+    async inspectElement(_selector: FridayDesktopElementSelector): Promise<FridayDesktopElement | null> {
+      // Windows UI Automation inspection is not yet implemented
+      return null;
     },
 
-    async searchElements(query: string, appBundleId?: string): Promise<FridayDesktopElement[]> {
-      return [makeElement(
-        config.generateId(), "unknown", query,
-        appBundleId ?? "unknown",
-        { x: 0, y: 0, width: 0, height: 0 },
-      )];
+    async searchElements(_query: string, _appBundleId?: string): Promise<FridayDesktopElement[]> {
+      // Windows UI Automation search is not yet implemented
+      return [];
     },
 
     getCapabilities(): FridayDesktopCapability[] {
@@ -868,13 +868,14 @@ export async function createLinuxAdapter(
         }
       }
       case "read_element": {
-        return makeSuccessResult(config, action, "linux", startedAt, {
-          elementData: makeElement(config.generateId(), "unknown", action.selector.value,
-            action.selector.appBundleId ?? "unknown", { x: 0, y: 0, width: 0, height: 0 }),
-        });
+        return makeFailureResult(config, action, "linux", startedAt, "failed",
+          "read_element is not implemented for Linux; use inspectElement or searchElements instead",
+          FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
       }
       case "drag":
-        return makeSuccessResult(config, action, "linux", startedAt);
+        return makeFailureResult(config, action, "linux", startedAt, "failed",
+          "drag is not implemented for Linux",
+          FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
       case "file_operation": {
         // Linux file operations are the same as macOS (POSIX)
         return executeLinuxFileOperation(action, startedAt);
@@ -935,20 +936,14 @@ export async function createLinuxAdapter(
       }
     },
 
-    async inspectElement(selector: FridayDesktopElementSelector): Promise<FridayDesktopElement | null> {
-      return makeElement(
-        config.generateId(), "unknown", selector.value,
-        selector.appBundleId ?? "unknown",
-        { x: 0, y: 0, width: 0, height: 0 },
-      );
+    async inspectElement(_selector: FridayDesktopElementSelector): Promise<FridayDesktopElement | null> {
+      // Linux AT-SPI2 element inspection is not yet implemented
+      return null;
     },
 
-    async searchElements(query: string, appBundleId?: string): Promise<FridayDesktopElement[]> {
-      return [makeElement(
-        config.generateId(), "unknown", query,
-        appBundleId ?? "unknown",
-        { x: 0, y: 0, width: 0, height: 0 },
-      )];
+    async searchElements(_query: string, _appBundleId?: string): Promise<FridayDesktopElement[]> {
+      // Linux AT-SPI2 element search is not yet implemented
+      return [];
     },
 
     getCapabilities(): FridayDesktopCapability[] {

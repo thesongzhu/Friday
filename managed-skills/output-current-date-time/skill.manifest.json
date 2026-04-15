@@ -7,7 +7,7 @@
   "kind": "conversation",
   "category": "utility",
   "author": {
-    "name": "Your Name"
+    "name": "Friday"
   },
   "tags": [
     "generated",
@@ -22,8 +22,8 @@
     "timeoutMsDefault": 30000
   },
   "triggers": {
-    "intents": [],
-    "phrases": [],
+    "intents": ["get_current_time", "current_datetime"],
+    "phrases": ["what time is it", "current date and time"],
     "channels": [
       "*"
     ]

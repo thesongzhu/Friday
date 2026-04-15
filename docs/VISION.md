@@ -83,7 +83,7 @@ The near-term milestone is:
 7. keep `/v1/skills/*`, `/v1/marketplace/sources*`, and `/skills` as the canonical skill lifecycle path instead of leaving skill generation disconnected from install and verification
 8. keep marketplace truth anchored to the skills lifecycle backbone even as workflow and agent assets join the broader public ecosystem
 9. keep creator support and request-board features explicitly bounded: `0%` commission, no escrow, no guarantees, and no after-sales promises
-10. keep the marketplace creator-ecosystem closeout evidence in sync with the active product story: [reports/closeout/marketplace-creator-ecosystem/latest.md](./docs/reports/closeout/marketplace-creator-ecosystem/latest.md)
+10. keep the marketplace creator-ecosystem closeout evidence in sync with the active product story: [reports/closeout/marketplace-creator-ecosystem/latest.md](./reports/closeout/marketplace-creator-ecosystem/latest.md)
 
 ## Status Labels
 

@@ -143,8 +143,9 @@ export function createFridayWhatsappChannel(deps: WhatsappChannelDeps = {}): Fri
         return { messageId: result.messages[0]?.id ?? "" };
       }
 
-      // Bridge mode: stub
-      return { messageId: `bridge-stub-${Date.now()}` };
+      // Bridge mode: not connected — message will not be delivered
+      console.warn("[friday][whatsapp-channel] Bridge mode is not connected — message was not delivered to chat:", options.chatId);
+      return { messageId: `bridge-not-delivered-${Date.now()}` };
     },
   };
 

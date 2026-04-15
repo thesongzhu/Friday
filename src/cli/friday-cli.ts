@@ -76,7 +76,7 @@ import { cmdRuns } from "./friday-cli-runs.js";
 // ─── Arg parser ───
 
 export interface ParsedArgs {
-  command: "start" | "list" | "run" | "runs" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth" | "skills" | "daemon" | "phases" | "setup";
+  command: "start" | "list" | "run" | "runs" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth" | "skills" | "daemon" | "phases" | "setup" | "tui";
   showHelp: boolean;
   skillDirs: string[];
   port: number | undefined;
@@ -2303,6 +2303,11 @@ async function main(): Promise<void> {
     case "setup":
       await cmdSetup();
       break;
+    case "tui": {
+      const { runFridayCliTui } = await import("./friday-cli-tui.js");
+      await runFridayCliTui();
+      break;
+    }
     case "help":
     default:
       printUsage(parsed.command === "help" ? undefined : parsed);

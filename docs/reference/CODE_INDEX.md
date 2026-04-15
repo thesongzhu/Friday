@@ -6,15 +6,15 @@ Date: 2026-03-04 (America/Los_Angeles)
 
 ## Key Entrypoints
 
-1. CLI entry: [`src/cli/friday-cli.ts`](./src/cli/friday-cli.ts)
+1. CLI entry: [`src/cli/friday-cli.ts`](../../src/cli/friday-cli.ts)
    - Parses CLI args and dispatches to hub/runtime operations.
-2. Hub composition root: [`src/hub/friday-hub-bootstrap.ts`](./src/hub/friday-hub-bootstrap.ts)
+2. Hub composition root: [`src/hub/friday-hub-bootstrap.ts`](../../src/hub/friday-hub-bootstrap.ts)
    - Wires state, API runtime, agent runtime, channels, jobs, browser/desktop capabilities.
-3. HTTP server: [`src/api/http/friday-http-server.ts`](./src/api/http/friday-http-server.ts)
+3. HTTP server: [`src/api/http/friday-http-server.ts`](../../src/api/http/friday-http-server.ts)
    - Owns request lifecycle, auth/error mapping, route dispatch, SSE/WS handling.
-4. Discord channel adapter: [`src/channels/discord/friday-discord-channel.ts`](./src/channels/discord/friday-discord-channel.ts)
+4. Discord channel adapter: [`src/channels/discord/friday-discord-channel.ts`](../../src/channels/discord/friday-discord-channel.ts)
    - Inbound Discord messages -> hub handler; outbound delivery back to Discord.
-5. UI app entry: [`ui/src/main.tsx`](./ui/src/main.tsx)
+5. UI app entry: [`ui/src/main.tsx`](../../ui/src/main.tsx)
    - React bootstrap for frontend panel.
 
 ## Module Index (src/*)

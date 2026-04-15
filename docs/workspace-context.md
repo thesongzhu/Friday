@@ -9,6 +9,7 @@ Use workspace context for repo policy and stable guidance. Use skills for reusab
 The current runtime loads these files fresh on each agent run:
 
 - `AGENTS.md`
+- `BELIEFS.md`
 - `SOUL.md`
 - `USER.md`
 - `MEMORY.md`
@@ -17,7 +18,8 @@ The current runtime loads these files fresh on each agent run:
 
 Current selection behavior:
 
-- `AGENTS.md` and `SOUL.md` are identity blocks. When present, they are always injected.
+- `AGENTS.md`, `BELIEFS.md`, and `SOUL.md` are identity blocks. When present, they are always injected.
+- `BELIEFS.md` contains engineering principles and design beliefs loaded as workspace context.
 - `USER.md`, `MEMORY.md`, daily memory, and exported memory items are candidate blocks. When task-aware filtering is active, Friday selects only the relevant candidates.
 - Files are read fresh each run, so edits take effect without restarting the hub.
 
@@ -26,6 +28,7 @@ Current selection behavior:
 | Layer | Put Here | Avoid Putting Here |
 |---|---|---|
 | `AGENTS.md` | repo rules, routing defaults, risk boundaries, evidence rules | long SOPs, step-by-step playbooks, reusable business logic |
+| `BELIEFS.md` | engineering principles, design beliefs, architectural values | implementation details, operational runbooks |
 | `SOUL.md` | style, tone, response discipline, anti-hallucination defaults | repo facts, operational runbooks |
 | `USER.md` | maintainer preferences and editing defaults | hard product contract, durable repo truth |
 | `MEMORY.md` | durable facts about how this repo works | per-day notes, ephemeral blockers |

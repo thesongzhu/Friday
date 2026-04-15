@@ -6,6 +6,18 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "ui:dev"],
       "port": 5173
+    },
+    {
+      "name": "friday-api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "port": 3141
+    },
+    {
+      "name": "friday-test",
+      "runtimeExecutable": "/Users/jarvis/.nvm/versions/node/v22.22.0/bin/node",
+      "runtimeArgs": ["-e", "const h=require('http');h.createServer((q,s)=>{const o={hostname:'127.0.0.1',port:3142,path:q.url,method:q.method,headers:q.headers};const p=h.request(o,r=>{s.writeHead(r.statusCode,r.headers);r.pipe(s)});q.pipe(p);p.on('error',()=>{s.writeHead(502);s.end()})}).listen(3199,()=>console.log('proxy on 3199'))"],
+      "port": 3199
     }
   ]
 }

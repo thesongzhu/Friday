@@ -1,5 +1,8 @@
 import * as fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { asNumber, asString, compact } from "../_shared/friday-runtime-skill-utils.mjs";
 import {
   ensureDir,
@@ -9,6 +12,9 @@ import {
   skillEvidenceRoot,
   writeSkillEvidenceJson,
 } from "../_shared/devops-skill-utils.mjs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const retroTemplate = readFileSync(join(__dirname, "assets/retro-template.md"), "utf-8");
 
 const SKILL_ID = "engineering-retro";
 
@@ -133,6 +139,24 @@ export async function execute(input = {}) {
     payload,
   );
 
+  const retroMarkdown = retroTemplate
+    .replace(/\{\{period\}\}/g, `Last ${sinceDays} day(s)`)
+    .replace("{{team}}", contributors.map((c) => c.author).join(", ") || "Unknown")
+    .replace("{{timestamp}}", new Date().toISOString())
+    .replace(/\{\{#each shipped\}\}[\s\S]*?\{\{\/each\}\}/m, commits.slice(0, 10).map((c) => `- **${c.hash.slice(0, 8)}** — ${c.subject}`).join("\n"))
+    .replace(/\{\{#each went_well\}\}[\s\S]*?\{\{\/each\}\}/m, wins.map((w) => `- ${w}`).join("\n") || "- No wins identified.")
+    .replace(/\{\{#each could_improve\}\}[\s\S]*?\{\{\/each\}\}/m, risks.map((r) => `- ${r}`).join("\n") || "- No risks identified.")
+    .replace("{{metrics.commits}}", String(commits.length))
+    .replace("{{metrics.prev_commits}}", "—")
+    .replace("{{metrics.commits_trend}}", "—")
+    .replace("{{metrics.prs_merged}}", "—")
+    .replace("{{metrics.prev_prs}}", "—")
+    .replace("{{metrics.prs_trend}}", "—")
+    .replace("{{metrics.incidents}}", "—")
+    .replace("{{metrics.prev_incidents}}", "—")
+    .replace("{{metrics.incidents_trend}}", "—")
+    .replace(/\{\{#each action_items\}\}[\s\S]*?\{\{\/each\}\}/m, followUps.map((f) => `- [ ] ${f}`).join("\n"));
+
   return {
     summary: commits.length > 0
       ? `Engineering retro: summarized ${commits.length} recent commit(s) across the last ${sinceDays} day(s).`
@@ -140,6 +164,7 @@ export async function execute(input = {}) {
     nextStep: risks.length > 0
       ? `Address the highest retro risk first: ${risks[0]}`
       : "Use this retro as the release or sprint wrap-up note and keep the evidence trend going.",
+    retroMarkdown,
     details: {
       sinceDays,
       contributors,

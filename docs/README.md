@@ -4,6 +4,12 @@ This is the single entrypoint for Friday documentation.
 
 Use this page to find the current product truth first, then drill into reference material, reports, and archived history.
 
+## Getting Started
+
+- [Getting Started Guide](getting-started.md)
+- [Releasing](RELEASING.md)
+- [Style Guide](friday-style-guide.md)
+
 ## Start Here
 
 - [Project README](../README.md)

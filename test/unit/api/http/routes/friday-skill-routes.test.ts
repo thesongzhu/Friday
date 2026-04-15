@@ -174,6 +174,7 @@ describe("createFridaySkillRoutes", () => {
       "skills.delete",
       "skills.manifest.validate",
       "skills.verify",
+      "skills.run",
     ]);
   });
 

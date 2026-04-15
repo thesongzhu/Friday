@@ -591,7 +591,6 @@ export function createFridayAgentProviderTool(
       case "anthropic":
         return "https://api.anthropic.com";
       case "google":
-      case "google-gemini-cli":
         return "https://generativelanguage.googleapis.com";
       case "ollama":
         return "http://localhost:11434";
@@ -609,7 +608,6 @@ export function createFridayAgentProviderTool(
       case "anthropic":
         return "anthropic-messages";
       case "google":
-      case "google-gemini-cli":
         return "google-generative-ai";
       case "ollama":
         return "ollama";
@@ -627,7 +625,6 @@ export function createFridayAgentProviderTool(
       case "anthropic":
         return ["claude-sonnet-4-20250514", "claude-opus-4-20250514"];
       case "google":
-      case "google-gemini-cli":
         return ["gemini-2.0-flash", "gemini-1.5-pro"];
       case "ollama":
         return ["llama3.2:3b", "qwen2.5-coder:7b"];
@@ -662,8 +659,7 @@ export function createFridayAgentProviderTool(
       case "anthropic":
         return "claude-cli";
       case "google":
-      case "google-gemini-cli":
-        return "gemini-cli";
+        return undefined;
       default:
         return undefined;
     }

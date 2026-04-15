@@ -564,6 +564,20 @@ export function createFridaySessionRoutes(
       },
     },
 
+    // 3b. DELETE /v1/sessions/:sessionKey — delete (archive) session
+    {
+      operationId: "sessions.delete",
+      method: "DELETE",
+      path: "/v1/sessions/:sessionKey",
+      auth: { public: false, anyOfScopes: ["session.write"] },
+      async handler(ctx): Promise<FridaySessionArchiveResponse> {
+        const { sessionKey } = ctx.params as { sessionKey: string };
+        const key = decodeSessionKeyParam(sessionKey);
+        const session = await deps.sessionService.archiveSession(key);
+        return { session };
+      },
+    },
+
     // 4. POST /v1/sessions/:sessionKey/archive — archive session
     {
       operationId: "sessions.archive",

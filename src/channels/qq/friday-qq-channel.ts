@@ -21,6 +21,7 @@ import type {
 import type {
   FridayChannelAdapters,
   FridayChannelInboundAdapter,
+  FridayChannelLifecycleAdapter,
   FridayChannelOutboundAdapter,
   FridayChannelStatus,
   FridayChannelStatusAdapter,
@@ -345,10 +346,42 @@ export function createFridayQqChannel(): FridayChannelPlugin {
     },
   };
 
+  // ─── Lifecycle Adapter ───
+
+  const lifecycleAdapter: FridayChannelLifecycleAdapter = {
+    async connect(eventHandler: (rawEvent: unknown) => void) {
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "QQ channel not initialized", { httpStatus: 503 });
+      onMessage = null; // will be set by start() caller
+      stopped = false;
+
+      try {
+        await refreshToken();
+        const gatewayUrl = await fetchGatewayUrl();
+        connectWebSocket(gatewayUrl);
+      } catch (error) {
+        stopped = true;
+        if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        if (ws) { try { ws.close(); } catch { /* ignore */ } ws = null; }
+        throw error;
+      }
+    },
+    async disconnect() {
+      stopped = true;
+      reconnectEpoch += 1;
+      onMessage = null;
+
+      if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      if (ws) { ws.close(); ws = null; }
+    },
+  };
+
   const adapters: FridayChannelAdapters = {
     inbound: inboundAdapter,
     outbound: outboundAdapter,
     status: statusAdapter,
+    lifecycle: lifecycleAdapter,
   };
 
   const plugin: FridayChannelPlugin = {
@@ -374,64 +407,27 @@ export function createFridayQqChannel(): FridayChannelPlugin {
     },
 
     async start(handler) {
-      onMessage = handler;
-      stopped = false;
+      if (!config) throw new FridayDomainError("NOT_INITIALIZED", "QQ channel not initialized", { httpStatus: 503 });
 
-      try {
-        await refreshToken();
-        const gatewayUrl = await fetchGatewayUrl();
-        connectWebSocket(gatewayUrl);
-      } catch (error) {
-        stopped = true;
-        onMessage = null;
-        if (heartbeatTimer) {
-          clearInterval(heartbeatTimer);
-          heartbeatTimer = null;
-        }
-        if (reconnectTimer) {
-          clearTimeout(reconnectTimer);
-          reconnectTimer = null;
-        }
-        if (ws) {
-          try {
-            ws.close();
-          } catch (err) {
-      console.warn("[friday][qq-channel] operation failed:", err instanceof Error ? err.message : String(err));
-            // ignore
-          }
-          ws = null;
-        }
-        throw error;
-      }
+      // Delegate to lifecycle adapter, then wire up the message handler
+      await lifecycleAdapter.connect((event) => {
+        const msg = inboundAdapter.normalize(event);
+        if (msg) handler(msg);
+      });
+      onMessage = handler;
     },
 
     async stop() {
-      stopped = true;
-      reconnectEpoch += 1;
-      onMessage = null;
-
-      if (heartbeatTimer) {
-        clearInterval(heartbeatTimer);
-        heartbeatTimer = null;
-      }
-
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-
-      if (ws) {
-        ws.close();
-        ws = null;
-      }
+      await lifecycleAdapter.disconnect();
     },
 
     async send(options: FridayChannelSendOptions) {
       const accessToken = await ensureToken();
-      const { chatId, text, replyTo } = options;
+      const { chatId, text, replyTo, chatType } = options;
 
-      // Determine if group or direct based on chat context
-      // QQ API requires msg_id for passive replies in groups
+      // Determine if group or direct based on chatType from the inbound message
+      const isDirect = chatType === "direct";
+
       const body: Record<string, unknown> = {
         content: text,
         msg_type: 0,
@@ -441,8 +437,10 @@ export function createFridayQqChannel(): FridayChannelPlugin {
         body.msg_id = replyTo;
       }
 
-      // Try group message endpoint first
-      const url = `${apiBase()}/v2/groups/${chatId}/messages`;
+      // Use the correct endpoint based on chat type
+      const url = isDirect
+        ? `${apiBase()}/v2/users/${chatId}/messages`
+        : `${apiBase()}/v2/groups/${chatId}/messages`;
 
       const response = await fetch(url, {
         method: "POST",

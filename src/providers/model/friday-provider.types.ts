@@ -14,7 +14,6 @@ export const FRIDAY_PROVIDER_KINDS = [
   "google",
   "google-vertex",
   "google-antigravity",
-  "google-gemini-cli",
   "openrouter",
   "xai",
   "mistral",
@@ -84,7 +83,6 @@ export type FridayProviderRegionTag =
 export const FRIDAY_PROVIDER_CLI_BACKEND_IDS = [
   "codex-cli",
   "claude-cli",
-  "gemini-cli",
 ] as const;
 
 export type FridayProviderCliBackendId =
