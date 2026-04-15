@@ -80,8 +80,8 @@ import { createFridayApiRuntime, createFridayDeterministicPipelineRuntime, getCh
 import type { FridaySystemRoutesDeps } from "#api";
 import type { FridayPackagingRoutesDeps } from "../api/http/routes/friday-packaging-routes.js";
 import {
-  createRegistryManager,
   createPackageInstaller,
+  createRegistryManager,
 } from "../packaging/engine/index.js";
 import {
   createFridayPackagingApiHandlers,
