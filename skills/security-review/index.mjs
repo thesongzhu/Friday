@@ -1,5 +1,8 @@
 import fs from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { asString } from "../_shared/friday-runtime-skill-utils.mjs";
 import {
   findRepoRoot,
@@ -7,6 +10,9 @@ import {
   runCommand,
   writeSkillEvidenceJson,
 } from "../_shared/devops-skill-utils.mjs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const securityChecklist = readFileSync(join(__dirname, "references/security-checklist.md"), "utf-8");
 
 const SKILL_ID = "security-review";
 const MAX_SCAN_FILE_BYTES = 512 * 1024;
@@ -215,6 +221,7 @@ export async function execute(input = {}) {
     nextStep: findings[0]
       ? `Follow the highest-signal item first: ${findings[0].title}.`
       : "Use the threat model to pick the next focused manual audit surface before shipping.",
+    checklist: securityChecklist,
     details: {
       findings,
       threatModel,

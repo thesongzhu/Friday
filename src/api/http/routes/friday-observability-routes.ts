@@ -109,6 +109,14 @@ export interface FridayObservabilityRoutesDeps {
       req: FridayDeleteAlertRuleRequest,
     ): FridayDeleteAlertRuleResponse | Promise<FridayDeleteAlertRuleResponse>;
   };
+  /** Optional: metrics snapshot from the in-memory metrics collector. */
+  metrics?: {
+    getSnapshot(): unknown | Promise<unknown>;
+  };
+  /** Optional: heartbeat system status. */
+  heartbeat?: {
+    getStatus(): unknown | Promise<unknown>;
+  };
 }
 
 // ─── Factory ───
@@ -412,5 +420,33 @@ export function createFridayObservabilityRoutes(
         return deps.alertRules.delete(ruleId, body);
       },
     },
+    // ─── Metrics endpoint ───
+    ...(deps.metrics
+      ? [
+          {
+            operationId: "observability.metrics.snapshot",
+            method: "GET" as const,
+            path: "/v1/observability/metrics",
+            auth: { public: false as const, anyOfScopes: ["diagnosis.read" as const] },
+            async handler() {
+              return deps.metrics!.getSnapshot();
+            },
+          },
+        ]
+      : []),
+    // ─── Heartbeat status endpoint ───
+    ...(deps.heartbeat
+      ? [
+          {
+            operationId: "observability.heartbeat.status",
+            method: "GET" as const,
+            path: "/v1/heartbeat/status",
+            auth: { public: false as const, anyOfScopes: ["diagnosis.read" as const] },
+            async handler() {
+              return deps.heartbeat!.getStatus();
+            },
+          },
+        ]
+      : []),
   ];
 }

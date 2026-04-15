@@ -184,6 +184,39 @@ export function createFridayMemoryRoutes(
       },
     },
 
+    // ─── Store (alias: POST /v1/memory/items) ───
+    {
+      operationId: "memory.items.create",
+      method: "POST",
+      path: "/v1/memory/items",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      rateLimitPolicyId: "memory.write",
+      async handler(ctx): Promise<FridayMemoryStoreResponse> {
+        const rawBody = ctx.body != null && typeof ctx.body === "object"
+          ? { ...(ctx.body as Record<string, unknown>) }
+          : ctx.body;
+        if (rawBody != null && typeof rawBody === "object") {
+          const b = rawBody as Record<string, unknown>;
+          if (b.namespace === undefined || b.namespace === null || b.namespace === "") {
+            b.namespace = "default";
+          }
+        }
+        validateStoreNumericFields(rawBody);
+        validateStoreBody(rawBody);
+        const body = rawBody;
+        const memory = deps.memoryGuardFactory.forPrincipal(ctx.principal);
+        const item = await memory.store(body.namespace, body.content, {
+          source: body.source,
+          key: body.key,
+          tags: body.tags,
+          metadata: body.metadata,
+          ttlSeconds: body.ttlSeconds,
+          expiresAt: body.expiresAt,
+        });
+        return { item };
+      },
+    },
+
     // ─── Search ───
     {
       operationId: "memory.search",

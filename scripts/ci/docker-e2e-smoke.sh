@@ -46,7 +46,7 @@ echo "[docker-e2e] layer=${LAYER}"
 
 if [[ "${SKIP_BUILD}" != "true" ]]; then
   echo "[docker-e2e] building image ${IMAGE_TAG}"
-  docker build -f "${ROOT_DIR}/Dockerfile" -t "${IMAGE_TAG}" "${ROOT_DIR}" \
+  docker build -f "${ROOT_DIR}/docker/Dockerfile" -t "${IMAGE_TAG}" "${ROOT_DIR}" \
     2>&1 | tee "${ARTIFACT_DIR}/docker-build.log"
 else
   echo "[docker-e2e] skipping docker build (FRIDAY_DOCKER_SKIP_BUILD=true)"

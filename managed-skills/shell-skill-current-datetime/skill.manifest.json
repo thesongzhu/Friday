@@ -7,7 +7,7 @@
   "kind": "system",
   "category": "utility",
   "author": {
-    "name": "Your Name"
+    "name": "Friday"
   },
   "tags": [
     "generated",
@@ -22,8 +22,8 @@
     "timeoutMsDefault": 30000
   },
   "triggers": {
-    "intents": [],
-    "phrases": [],
+    "intents": ["get_datetime"],
+    "phrases": ["get date time"],
     "channels": [
       "*"
     ]

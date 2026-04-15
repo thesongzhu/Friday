@@ -1,10 +1,5 @@
 import type {
   AuthenticationResponseJSON,
-  PublicKeyCredentialCreationOptionsJSON,
-  PublicKeyCredentialRequestOptionsJSON,
-  RegistrationResponseJSON,
-} from "@simplewebauthn/server";
-import type {
   FridaySystemApprovalDecision,
   FridaySystemApprovalRule,
   FridaySystemEvent,
@@ -17,6 +12,9 @@ import type {
   FridaySystemSnapshot,
   FridaySystemWindowLayout,
   FridayTrustedDevicePlatform,
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+  RegistrationResponseJSON,
   UUID,
 } from "../../system/model/friday-system.types.js";
 import type { FridayDesktopRiskLevel } from "../../desktop/model/friday-desktop.types.js";

@@ -12,6 +12,8 @@ export const FRIDAY_WORKFLOW_NODE_TYPES = {
   CONDITION: "condition",
   TRANSFORM: "transform",
   APPROVAL: "approval",
+  DATA: "data",
+  AI: "ai",
 } as const;
 
 export const FRIDAY_WORKFLOW_ACTION_TYPES = {

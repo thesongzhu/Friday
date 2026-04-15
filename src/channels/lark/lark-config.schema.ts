@@ -6,7 +6,7 @@
 import { z } from "zod";
 
 export const FridayLarkChannelConfigSchema = z.object({
-  kind: z.union([z.literal("lark"), z.literal("feishu")]),
+  kind: z.enum(["lark", "feishu"]),
   enabled: z.boolean().default(true),
   /** Lark/Feishu application ID. */
   appId: z.string().min(1),

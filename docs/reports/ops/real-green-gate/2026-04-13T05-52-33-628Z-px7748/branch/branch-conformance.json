@@ -1,0 +1,27 @@
+{
+  "checkedAt": "2026-04-13T05:52:35.041Z",
+  "repoRoot": "/Users/jarvis/Projects/Friday",
+  "base": {
+    "input": "main",
+    "resolved": "main",
+    "sha": "32953360d21b43e9b29b3bcf48c6885ed823d953"
+  },
+  "branch": {
+    "input": "main",
+    "resolved": "main",
+    "sha": "32953360d21b43e9b29b3bcf48c6885ed823d953"
+  },
+  "ahead": 0,
+  "behind": 0,
+  "patchEquivalentCount": 0,
+  "uniqueCommitCount": 0,
+  "cherryLines": [],
+  "worktree": {
+    "path": "/Users/jarvis/Projects/Friday",
+    "clean": false,
+    "branchStatus": "## main...origin/main\n?? docs/reports/ops/real-green-gate/\n?? docs/reports/repo/FRIDAY_CAPABILITY_COVERAGE_MATRIX_2026-04-09.md\n?? docs/reports/repo/FRIDAY_DEFECT_LEDGER_2026-04-09.md\n?? docs/reports/repo/FRIDAY_DOC_TRUTH_RECONCILIATION_2026-04-09.md\n?? docs/reports/repo/FRIDAY_FULL_RELEASE_AUDIT_2026-04-09.md\n?? docs/reports/repo/FRIDAY_OPENCLAW_REDDIT_PARITY_MATRIX_2026-04-09.md\n?? docs/reports/repo/FRIDAY_TEST_ASSET_TRIAGE_2026-04-09.md"
+  },
+  "recommendation": "already_merged_or_patch_equivalent",
+  "shouldMerge": false,
+  "shouldNoop": true
+}

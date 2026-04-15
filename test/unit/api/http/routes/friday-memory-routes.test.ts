@@ -68,8 +68,8 @@ describe("FridayMemoryRoutes", () => {
 
   // ─── Route registration ───
 
-  it("registers 6 memory routes", () => {
-    expect(routes).toHaveLength(6);
+  it("registers 7 memory routes", () => {
+    expect(routes).toHaveLength(7);
   });
 
   it("has correct operation IDs", () => {

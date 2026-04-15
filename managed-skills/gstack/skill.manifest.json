@@ -2,7 +2,7 @@
   "schemaVersion": "2.0",
   "id": "gstack",
   "name": "gstack",
-  "description": "<!-- AUTO-GENERATED from SKILL.md.tmpl — do not edit directly -->",
+  "description": "GStack browser automation and QA testing skill",
   "version": "1.0.0",
   "kind": "conversation",
   "category": "utility",

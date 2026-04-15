@@ -7,6 +7,8 @@
 
 import { z } from "zod";
 
+import { FridayQqChannelConfigSchema } from "./qq/qq-config.schema.js";
+import { FridayLarkChannelConfigSchema } from "./lark/lark-config.schema.js";
 import { FridayDiscordChannelConfigSchema } from "./discord/discord-config.schema.js";
 import { FridayTelegramChannelConfigSchema } from "./telegram/telegram-config.schema.js";
 import { FridayWhatsappChannelConfigSchema } from "./whatsapp/whatsapp-config.schema.js";
@@ -15,6 +17,9 @@ import { FridaySlackChannelConfigSchema } from "./slack/slack-config.schema.js";
 import { FridayWebchatChannelConfigSchema } from "./webchat/webchat-config.schema.js";
 import { FridayIrcChannelConfigSchema } from "./irc/irc-config.schema.js";
 import { FridayLineChannelConfigSchema } from "./line/line-config.schema.js";
+
+// Re-export so existing consumers still work
+export { FridayQqChannelConfigSchema, FridayLarkChannelConfigSchema };
 
 // ─── Config Schemas ───
 
@@ -33,28 +38,6 @@ export const FRIDAY_SUPPORTED_CHANNEL_KINDS = [
 ] as const;
 
 export type FridaySupportedChannelKind = (typeof FRIDAY_SUPPORTED_CHANNEL_KINDS)[number];
-
-export const FridayQqChannelConfigSchema = z.object({
-  kind: z.literal("qq"),
-  enabled: z.boolean().default(true),
-  appId: z.string().min(1),
-  appSecret: z.string().min(1),
-  sandbox: z.boolean().default(false),
-  allowedUsers: z.array(z.string()).optional(),
-  allowedGroups: z.array(z.string()).optional(),
-});
-
-export const FridayLarkChannelConfigSchema = z.object({
-  kind: z.enum(["lark", "feishu"]),
-  enabled: z.boolean().default(true),
-  appId: z.string().min(1),
-  appSecret: z.string().min(1),
-  /** Use Feishu (China) API endpoints instead of international Lark. */
-  useFeishu: z.boolean().default(false),
-  allowedUsers: z.array(z.string()).optional(),
-  allowedChats: z.array(z.string()).optional(),
-  receiveMode: z.enum(["websocket", "webhook"]).default("websocket"),
-});
 
 export const FridayChannelInstanceConfigSchema = z.discriminatedUnion("kind", [
   FridayQqChannelConfigSchema,

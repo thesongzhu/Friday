@@ -91,6 +91,8 @@ export interface FridayChannelSendOptions {
   images?: string[];
   /** Optional message ID to reply to. */
   replyTo?: string;
+  /** Chat type hint for channels that use different endpoints per chat type. */
+  chatType?: "direct" | "group";
 }
 
 // ─── Channel Plugin Interface ───

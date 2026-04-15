@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "1.0",
+  "layout": "card",
+  "components": [
+    {
+      "type": "output",
+      "field": "result",
+      "label": "Status",
+      "format": "json"
+    }
+  ]
+}

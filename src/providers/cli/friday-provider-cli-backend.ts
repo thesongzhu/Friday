@@ -34,12 +34,6 @@ const CLI_BACKEND_SPECS: Record<FridayProviderCliBackendId, FridayCliBackendSpec
     versionArgs: ["--version"],
     statusArgs: ["auth", "status"],
   },
-  "gemini-cli": {
-    id: "gemini-cli",
-    binaryNames: ["gemini"],
-    versionArgs: ["--version"],
-    statusArgs: ["auth", "status"],
-  },
 };
 
 function sanitizeEnv(extraAllowlist?: readonly string[]): NodeJS.ProcessEnv {
@@ -359,11 +353,5 @@ export async function runFridayCliBackendTextCompletion(input: {
         await rm(tempDir, { recursive: true, force: true }).catch(() => {});
       }
     }
-    case "gemini-cli":
-      throw new FridayDomainError(
-        "LLM_ERROR",
-        "Gemini CLI backend is not wired for non-interactive inference yet",
-        { httpStatus: 501 },
-      );
   }
 }

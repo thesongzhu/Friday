@@ -87,6 +87,7 @@ import { createFridayObservabilityRoutes } from "../http/routes/friday-observabi
 import { createFridaySatellitePairingRoutes } from "../http/routes/friday-satellite-pairing-routes.js";
 import { createFridaySatelliteRuntimeRoutes } from "../http/routes/friday-satellite-runtime-routes.js";
 import { createFridayChannelWebhookRoutes } from "../http/routes/friday-channel-webhook-routes.js";
+import { createFridayPackagingRoutes } from "../http/routes/friday-packaging-routes.js";
 import {
   buildFridayAgentRunContextSummarySnapshot,
   buildFridayAgentRunHealthSnapshot,
@@ -1580,6 +1581,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // Register channel webhook relay routes (optional)
   if (deps.channelWebhooks) {
     for (const route of createFridayChannelWebhookRoutes(deps.channelWebhooks)) {
+      routes.register(route);
+    }
+  }
+
+  // Register packaging routes (optional)
+  if (deps.packaging) {
+    for (const route of createFridayPackagingRoutes(deps.packaging)) {
       routes.register(route);
     }
   }
