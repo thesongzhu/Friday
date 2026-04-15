@@ -16,6 +16,7 @@ import type { PolicyExtension } from "../../security/policy-extension-chain.js";
 import {
   FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
   FRIDAY_AGENT_COMPACTION_THRESHOLD,
+  FRIDAY_AGENT_COMPACTION_USE_PROVIDER,
   FRIDAY_AGENT_ERROR_CODES,
   FRIDAY_AGENT_MAX_ATTEMPTS,
   FRIDAY_AGENT_MAX_LOOP_ITERATIONS,
@@ -236,6 +237,8 @@ export function createFridayAgentRuntime(
     contextEngine,
     decisionEngine,
     starterSkillRouting,
+    compactionBridge,
+    compactionMemorySink,
   } = deps;
 
   // Clone the tools array so registerTool does not mutate the caller's array.
@@ -1443,16 +1446,56 @@ export function createFridayAgentRuntime(
 
           iterations++;
 
-          // ── Context compaction: layered retention (Plan C) ──
-          // Replace old middle messages with a summary to prevent context overflow.
-          const preCompactionLen = messages.length;
-          const compacted = compactMessagesIfNeeded(
-            messages,
-            FRIDAY_AGENT_COMPACTION_THRESHOLD,
-            FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
-          );
-          if (compacted.length < preCompactionLen) {
-            messages.splice(0, messages.length, ...compacted);
+          // ── Context compaction: layered retention ──
+          // When the provider bridge is available and the feature flag is on,
+          // use semantic block-level compaction (scoring, structured extraction,
+          // optional LLM summarization).  Falls back to the legacy one-line
+          // text compaction on any error.
+          if (FRIDAY_AGENT_COMPACTION_USE_PROVIDER && compactionBridge && messages.length > FRIDAY_AGENT_COMPACTION_THRESHOLD) {
+            try {
+              const bridgeResult = await compactionBridge.compact({
+                messages,
+                systemPrompt: effectiveSystemPrompt,
+                task: params.task,
+                contextWindowTokens: 200_000, // Default to Anthropic window; overrideable via provider
+              });
+              if (bridgeResult.compacted) {
+                messages.splice(0, messages.length, ...bridgeResult.messages);
+
+                // Non-blocking: persist structured summary to memory for cross-session retrieval
+                if (compactionMemorySink && bridgeResult.summary) {
+                  void compactionMemorySink.persist({
+                    sessionKey: params.sessionKey ?? runId,
+                    runId,
+                    summary: bridgeResult.summary,
+                    blocks: bridgeResult.blocks,
+                    compactedAt: nowIso(),
+                  }).catch(() => {/* swallow — must never block agent loop */});
+                }
+              }
+            } catch {
+              // Graceful degradation: fall through to legacy compaction
+              const preCompactionLen = messages.length;
+              const compacted = compactMessagesIfNeeded(
+                messages,
+                FRIDAY_AGENT_COMPACTION_THRESHOLD,
+                FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
+              );
+              if (compacted.length < preCompactionLen) {
+                messages.splice(0, messages.length, ...compacted);
+              }
+            }
+          } else {
+            // Legacy path: simple text-based compaction (Plan C)
+            const preCompactionLen = messages.length;
+            const compacted = compactMessagesIfNeeded(
+              messages,
+              FRIDAY_AGENT_COMPACTION_THRESHOLD,
+              FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
+            );
+            if (compacted.length < preCompactionLen) {
+              messages.splice(0, messages.length, ...compacted);
+            }
           }
 
           // Emit executing event per iteration (IMPL-3)

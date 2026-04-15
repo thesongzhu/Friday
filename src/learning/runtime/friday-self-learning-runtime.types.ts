@@ -45,4 +45,6 @@ export interface CreateFridaySelfLearningRuntimeDeps {
   stepExecutors?: Partial<Record<FridayAutoFixStepKind, StepExecutor>>;
   /** Override auto-fix step verifiers for production use. */
   stepVerifiers?: Partial<Record<FridayAutoFixStepKind, StepVerifier>>;
+  /** Optional memory writer for persisting learned preferences to cross-session memory. */
+  memoryWriter?: { store(namespace: string, content: string, metadata?: Record<string, unknown>): Promise<unknown> };
 }
