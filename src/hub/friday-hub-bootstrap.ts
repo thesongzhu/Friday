@@ -47,6 +47,7 @@ import {
   resolveFridayRoutingStabilityWarning,
 } from "#providers";
 import type { FridayEncryptedEnvelope, FridayProviderApi, FridayProviderKind, FridayProviderService } from "#providers";
+import { createFridayProviderContextCompactor, createFridayProviderContextPruner, createFridayProviderTokenEstimator } from "#providers";
 import { FridaySkillRegistryImpl, safeParseFridaySkillManifestV2 } from "#skills";
 import { createFridaySkillExecutor } from "#skills";
 import { createFridaySkillGeneratorService } from "#skills/generator";
@@ -113,6 +114,7 @@ import {
   createFridayAgentAgentsListTool,
   createFridayAgentArtifactWriter,
   createFridayAgentAutomationRepository,
+  createFridayAgentCompactionBridge,
   createFridayAgentCronTool,
   createFridayAgentEventEmitter,
   createFridayAgentFeedbackTool,
@@ -134,6 +136,7 @@ import {
   createFridayAgentSubagentTools,
   createFridayAgentToolRegistry,
   createFridayAgentWorkflowGeneratorTool,
+  createFridayCompactionMemorySink,
   createFridayMcpAdapter,
   createFridaySubagentRegistry,
   createFridayWorkspaceContextEngine,
@@ -2672,6 +2675,7 @@ export async function createFridayHub(
     nowIso,
     stepExecutors: hubAutoFixSupport.stepExecutors,
     stepVerifiers: hubAutoFixSupport.stepVerifiers,
+    memoryWriter: memoryService,
   });
 
   // P1-01: Assign immediately so learningContextBuilder and communicationPromptBuilder
@@ -2857,6 +2861,56 @@ export async function createFridayHub(
     };
   };
 
+  // ── Compaction pipeline: bridge + memory sink ──
+  const agentTokenEstimator = createFridayProviderTokenEstimator();
+  const agentContextPruner = createFridayProviderContextPruner();
+  const agentContextCompactor = createFridayProviderContextCompactor({
+    estimator: agentTokenEstimator,
+    pruner: agentContextPruner,
+  });
+  const agentCompactionBridge = createFridayAgentCompactionBridge({
+    compactor: agentContextCompactor,
+    estimator: agentTokenEstimator,
+    pruner: agentContextPruner,
+    idGenerator,
+    nowIso,
+    // Route compaction summarization to a fast/cheap model via the provider service.
+    defaultSummarize: async (prompt) => {
+      try {
+        const { result } = await providerService.runWithFallback({
+          requestedModel: "haiku", // Prefer cheapest model; falls back to whatever is available
+          run: async (_route, credential) => {
+            const client = createFridayAgentLlmClient({
+              baseUrl: _route.provider.baseUrl,
+              apiKey: credential ?? "",
+              api: _route.provider.config.api,
+              backendKind: _route.provider.config.backendKind,
+              authMode: _route.provider.config.authMode,
+            });
+            const chunks: string[] = [];
+            for await (const event of client.stream({
+              model: _route.model,
+              systemPrompt: prompt.system,
+              messages: [{ role: "user", content: prompt.user }],
+              tools: [],
+              signal: AbortSignal.timeout(30_000),
+            })) {
+              if (event.type === "text_delta") chunks.push(event.text);
+            }
+            return chunks.join("");
+          },
+        });
+        return result;
+      } catch {
+        // LLM summarization failure is non-fatal — template extraction is used instead
+        return "";
+      }
+    },
+  });
+  const agentCompactionMemorySink = memoryService
+    ? createFridayCompactionMemorySink({ memoryService, idGenerator, nowIso })
+    : undefined;
+
   const agentRuntime = createFridayAgentRuntime({
     db: stateRuntime!.sqlite,
     llmClient: agentLlmClient,
@@ -2870,6 +2924,8 @@ export async function createFridayHub(
     reviewGate: agentReviewGate,
     runEventRepository: agentRunEventRepository,
     selfTestService: agentSelfTestService,
+    compactionBridge: agentCompactionBridge,
+    compactionMemorySink: agentCompactionMemorySink,
     sessionMirror: async (sessionKey, message) => {
       await hubSessionService.addMessage(sessionKey, message);
     },
@@ -3121,6 +3177,8 @@ export async function createFridayHub(
         reviewGate: agentReviewGate,
         runEventRepository: agentRunEventRepository,
         selfTestService: agentSelfTestService,
+        compactionBridge: agentCompactionBridge,
+        compactionMemorySink: agentCompactionMemorySink,
         sessionMirror: async (sessionKey, message) => {
           await hubSessionService.addMessage(sessionKey, message);
         },

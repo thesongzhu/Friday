@@ -48,6 +48,9 @@ export const FRIDAY_AGENT_COMPACTION_THRESHOLD = 40;
 /** Context compaction: number of recent messages to keep in full. */
 export const FRIDAY_AGENT_COMPACTION_KEEP_RECENT = 8;
 
+/** Feature flag: use the provider-level semantic compactor instead of simple text summary. */
+export const FRIDAY_AGENT_COMPACTION_USE_PROVIDER = true;
+
 /** Active run statuses that should be failed on boot recovery. */
 export const FRIDAY_AGENT_ACTIVE_STATUSES = [
   "pending",

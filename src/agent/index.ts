@@ -13,9 +13,21 @@ export {
   FRIDAY_AGENT_TOOL_RESULT_CAPS,
   FRIDAY_AGENT_COMPACTION_THRESHOLD,
   FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
+  FRIDAY_AGENT_COMPACTION_USE_PROVIDER,
   FRIDAY_AGENT_ERROR_CODES,
   FRIDAY_AGENT_SESSION_KEY_PREFIX,
 } from "./friday-agent.constants.js";
+
+// ─── Compaction pipeline ───
+
+export type { FridayAgentCompactionBridge, FridayAgentCompactionBridgeResult } from "./runtime/friday-agent-compaction-bridge.js";
+export { createFridayAgentCompactionBridge } from "./runtime/friday-agent-compaction-bridge.js";
+export type { FridayCompactionMemorySink } from "./runtime/friday-agent-compaction-memory-sink.js";
+export { createFridayCompactionMemorySink } from "./runtime/friday-agent-compaction-memory-sink.js";
+export { verifyCompactionSummary } from "./runtime/friday-agent-compaction-verifier.js";
+export { groupCompactionMemoryItems, formatCompactionContextForPrompt } from "./runtime/friday-agent-compaction-context-formatter.js";
+export type { FridayPreferenceInjector } from "./runtime/friday-agent-preference-injector.js";
+export { createFridayPreferenceInjector } from "./runtime/friday-agent-preference-injector.js";
 
 // ─── Model types ───
 
