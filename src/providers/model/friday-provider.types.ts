@@ -544,6 +544,7 @@ export interface FridayAuthProfileRow {
 export type FridayProviderValidationErrorCode =
   | "PROVIDER_ENV_VAR_MISSING"
   | "PROVIDER_AUTH_INVALID"
+  | "PROVIDER_PAYMENT_REQUIRED"
   | "PROVIDER_UNREACHABLE"
   | "PROVIDER_MODEL_UNAVAILABLE"
   | "PROVIDER_UNKNOWN_ERROR";

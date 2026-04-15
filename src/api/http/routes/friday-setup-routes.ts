@@ -259,8 +259,30 @@ async function fetchAnthropicModels(baseUrl: string, apiKey: string, ssrf?: { al
     if (res.status === 401 || res.status === 403) {
       throw new FridayDomainError("PROVIDER_AUTH_INVALID", "Invalid API key", { httpStatus: 401, details: { hint: "Anthropic keys start with 'sk-ant-'. Check your key at https://console.anthropic.com/settings/keys" } });
     }
+    if (res.status === 402) {
+      let msg = "Insufficient credit balance — add credits at https://console.anthropic.com/settings/billing";
+      try {
+        const errBody = (await res.json()) as { error?: { message?: string } };
+        if (errBody?.error?.message) msg = errBody.error.message;
+      } catch {
+        // ignore parse errors
+      }
+      throw new FridayDomainError("PROVIDER_PAYMENT_REQUIRED", msg, { httpStatus: 402, details: { hint: "Your API key is valid but has no credits. Visit https://console.anthropic.com/settings/billing to add credits." } });
+    }
     if (res.status === 429) {
       throw new FridayDomainError("PROVIDER_RATE_LIMITED", "Upstream rate limit", { httpStatus: 429, retryable: true });
+    }
+    // 400 with credit balance error is payment-required
+    if (res.status === 400) {
+      try {
+        const errBody = (await res.json()) as { error?: { type?: string; message?: string } };
+        if (errBody?.error?.message && /credit balance/i.test(errBody.error.message)) {
+          throw new FridayDomainError("PROVIDER_PAYMENT_REQUIRED", errBody.error.message, { httpStatus: 402, details: { hint: "Your API key is valid but has no credits. Visit https://console.anthropic.com/settings/billing to add credits." } });
+        }
+      } catch (err) {
+        if (err instanceof FridayDomainError) throw err;
+        // ignore parse errors
+      }
     }
     // 200, 529 all mean the key is valid
     const validated = res.ok || res.status === 529;
@@ -407,8 +429,8 @@ export function createFridaySetupRoutes(
           }
         })();
 
-        const host = state.network_host;
-        const port = state.network_port;
+        const host = deps.runningHost ?? state.network_host;
+        const port = deps.runningPort ?? state.network_port;
         const mode = state.network_mode as NetworkMode;
 
         const completedSteps = parseStepIds(state.completed_steps);

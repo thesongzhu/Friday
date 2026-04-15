@@ -687,7 +687,10 @@ export function createFridaySessionRoutes(
         validateCreateMessageBody(ctx.body);
         const body = ctx.body;
         const message = await deps.sessionService.addMessage(key, body);
-        return { message };
+        return {
+          message,
+          hint: "This endpoint stores the message only. To trigger an AI response, use POST /v1/sessions/:sessionKey/run with a { \"task\": \"...\" } body.",
+        };
       },
     },
 

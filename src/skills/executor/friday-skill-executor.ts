@@ -441,6 +441,18 @@ export function createFridaySkillExecutor(
               break;
             }
 
+            case "builtin": {
+              execResult = {
+                runId,
+                status: "failed",
+                output: {},
+                stdout: "",
+                stderr: `Skill "${manifest.id}" is a conversation skill and cannot be run from the CLI. Use the web UI chat or POST /v1/sessions/:key/run instead.`,
+                durationMs: 0,
+              };
+              break;
+            }
+
             default: {
               execResult = {
                 runId,

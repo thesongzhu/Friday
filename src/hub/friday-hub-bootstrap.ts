@@ -2396,7 +2396,7 @@ export async function createFridayHub(
       providerService.listProviders(),
     ]);
     const routingWarning = resolveFridayRoutingStabilityWarning({ routing, providers });
-    if (routingWarning) {
+    if (routingWarning && providers.length > 0) {
       warnHubBootstrapOnce(`[friday][W-PROVIDER-ROUTING-001] ${routingWarning}`);
     }
   } catch (err) {
