@@ -64,7 +64,7 @@ describe("cross-channel identity mapping", () => {
         identityMap: {},
       },
     );
-    expect(key).toBe("channel:discord:c-1--thread--t-42");
+    expect(key).toBe("channel:discord:c-1-thread-t-42");
   });
 
   it("does not disable any tools regardless of channel kind", () => {

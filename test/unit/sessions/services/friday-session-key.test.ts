@@ -314,7 +314,7 @@ describe("FridaySessionKey", () => {
 
     it("collapses legacy channel thread keys into a 3-segment canonical slot", () => {
       expect(canonicalizeFridaySessionKey("channel:Discord:C 1:thread:T 42"))
-        .toBe("channel:discord:c-1--thread--t-42");
+        .toBe("channel:discord:c-1-thread-t-42");
     });
 
     it("normalizes segments with special characters", () => {

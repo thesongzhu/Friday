@@ -122,9 +122,9 @@ function makeDeps(): FridayObservabilityRoutesDeps {
 
 describe("B-005 FridayObservabilityRoutes", () => {
   describe("route registration", () => {
-    it("registers all 25 routes", () => {
+    it("registers all 26 routes", () => {
       const routes = createFridayObservabilityRoutes(makeDeps());
-      expect(routes.length).toBe(25);
+      expect(routes.length).toBe(26);
     });
 
     it("has unique operationIds", () => {
@@ -477,7 +477,7 @@ describe("B-005 FridayObservabilityRoutes", () => {
     });
 
     it("expected scope distribution", () => {
-      expect(readRoutes.length).toBe(13);
+      expect(readRoutes.length).toBe(14);
       expect(writeRoutes.length).toBe(12);
     });
   });
