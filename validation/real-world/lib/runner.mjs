@@ -9,7 +9,7 @@ import {
   validateCatalog,
 } from "./defs.mjs";
 import { collectEnvironmentTruth, resolveScenarioBlockers, resolveScenarioLanes } from "./env-truth.mjs";
-import { executeScenario } from "./executors.mjs";
+import { closeSharedUiProbeSession, executeScenario } from "./executors.mjs";
 import { createRunId, ensureDir, resolveValidationReportRoot, writeJson } from "./io.mjs";
 import { evaluateBehavioralRubric, finalizeArtifact, runLlmJudge } from "./judge.mjs";
 import { writeReports } from "./reporting.mjs";
@@ -253,18 +253,22 @@ export async function runRealWorldValidation(options = {}) {
     }
   }
 
-  const summary = writeReports({
-    repoRoot,
-    reportRoot,
-    runId,
-    suite,
-    scenarios,
-    artifacts,
-    envTruth,
-    options,
-  });
-  return {
-    ...summary,
-    reportRoot,
-  };
+  try {
+    const summary = writeReports({
+      repoRoot,
+      reportRoot,
+      runId,
+      suite,
+      scenarios,
+      artifacts,
+      envTruth,
+      options,
+    });
+    return {
+      ...summary,
+      reportRoot,
+    };
+  } finally {
+    await closeSharedUiProbeSession();
+  }
 }

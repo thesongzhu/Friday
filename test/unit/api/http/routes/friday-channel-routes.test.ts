@@ -1,11 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createFridayChannelRoutes, type FridayChannelRoutesDeps } from "#api";
+import {
+  createFridayChannelRoutes,
+  hydrateChannelPersonaStore,
+  resetChannelPersonaStore,
+  type FridayChannelRoutesDeps,
+} from "#api";
 
 const NOW = "2026-04-08T12:00:00.000Z";
 
 function createDeps(): FridayChannelRoutesDeps {
   return {
+    nowIso: () => NOW,
+    persistPersona: vi.fn(),
     registry: {
       listViews: vi.fn(() => [
         {
@@ -69,6 +76,10 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
 }
 
 describe("createFridayChannelRoutes", () => {
+  beforeEach(() => {
+    resetChannelPersonaStore();
+  });
+
   it("registers channel list and detail routes", () => {
     const routes = createFridayChannelRoutes(createDeps());
     expect(routes.map((route) => route.operationId)).toEqual(["channels.list", "channels.get", "channels.persona.get", "channels.persona.update"]);
@@ -108,6 +119,123 @@ describe("createFridayChannelRoutes", () => {
         kind: "telegram",
         running: true,
       },
+    });
+  });
+
+  it("returns null persona when none is configured", async () => {
+    const routes = createFridayChannelRoutes(createDeps());
+    const route = routes.find((item) => item.operationId === "channels.persona.get");
+    const result = await route!.handler(makeCtx({ params: { kind: "discord" } }) as never);
+
+    expect(result).toEqual({
+      kind: "discord",
+      persona: null,
+    });
+  });
+
+  it("stores and returns a channel persona", async () => {
+    const routes = createFridayChannelRoutes(createDeps());
+    const updateRoute = routes.find((item) => item.operationId === "channels.persona.update");
+    const getRoute = routes.find((item) => item.operationId === "channels.persona.get");
+
+    const updateResult = await updateRoute!.handler(makeCtx({
+      params: { kind: "discord" },
+      body: {
+        persona: "A concise operator persona",
+        systemPrompt: "",
+      },
+    }) as never);
+    const getResult = await getRoute!.handler(makeCtx({ params: { kind: "discord" } }) as never);
+
+    expect(updateResult).toMatchObject({
+      kind: "discord",
+      persona: {
+        persona: "A concise operator persona",
+        systemPrompt: "",
+        updatedAt: NOW,
+      },
+    });
+    expect(getResult).toMatchObject({
+      kind: "discord",
+      persona: {
+        persona: "A concise operator persona",
+        systemPrompt: "",
+        updatedAt: NOW,
+      },
+    });
+  });
+
+  it("clears a stored channel persona when both fields are empty", async () => {
+    const routes = createFridayChannelRoutes(createDeps());
+    const updateRoute = routes.find((item) => item.operationId === "channels.persona.update");
+    const getRoute = routes.find((item) => item.operationId === "channels.persona.get");
+
+    await updateRoute!.handler(makeCtx({
+      params: { kind: "slack" },
+      body: {
+        persona: "Temporary persona",
+        systemPrompt: "Temporary system prompt",
+      },
+    }) as never);
+    const clearResult = await updateRoute!.handler(makeCtx({
+      params: { kind: "slack" },
+      body: {
+        persona: "",
+        systemPrompt: "",
+      },
+    }) as never);
+    const getResult = await getRoute!.handler(makeCtx({ params: { kind: "slack" } }) as never);
+
+    expect(clearResult).toEqual({
+      kind: "slack",
+      persona: null,
+      cleared: true,
+    });
+    expect(getResult).toEqual({
+      kind: "slack",
+      persona: null,
+    });
+  });
+
+  it("hydrates persisted personas into the runtime store", async () => {
+    hydrateChannelPersonaStore({
+      discord: {
+        persona: "Persisted persona",
+        systemPrompt: "Persisted system prompt",
+        updatedAt: NOW,
+      },
+    });
+    const routes = createFridayChannelRoutes(createDeps());
+    const route = routes.find((item) => item.operationId === "channels.persona.get");
+    const result = await route!.handler(makeCtx({ params: { kind: "discord" } }) as never);
+
+    expect(result).toEqual({
+      kind: "discord",
+      persona: {
+        persona: "Persisted persona",
+        systemPrompt: "Persisted system prompt",
+        updatedAt: NOW,
+      },
+    });
+  });
+
+  it("persists persona updates through the configured callback", async () => {
+    const deps = createDeps();
+    const routes = createFridayChannelRoutes(deps);
+    const updateRoute = routes.find((item) => item.operationId === "channels.persona.update");
+
+    await updateRoute!.handler(makeCtx({
+      params: { kind: "discord" },
+      body: {
+        persona: "Persist me",
+        systemPrompt: "",
+      },
+    }) as never);
+
+    expect(deps.persistPersona).toHaveBeenCalledWith("discord", {
+      persona: "Persist me",
+      systemPrompt: "",
+      updatedAt: NOW,
     });
   });
 

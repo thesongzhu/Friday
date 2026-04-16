@@ -30,6 +30,7 @@ import type {
   FridayRuleRow,
 } from "#rules";
 import type { FridaySqliteLayer } from "#state";
+import { canonicalizeFridaySessionKey } from "#sessions";
 import type { FridaySessionMessageRecord } from "#sessions";
 import type {
   FridayAutoFixStepKind,
@@ -45,6 +46,10 @@ import type { FridaySkillSecurityProfile } from "#skills";
 import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridaySkillConverterService } from "#skills/converter";
 import type { FridayProviderService } from "#providers";
+import {
+  normalizeFridayModelRoutingConfig,
+  normalizeFridayProviderSupportedModels,
+} from "#providers";
 import type { FridayWorkflowGeneratorService, FridayWorkflowRuntime } from "#workflows";
 import type { FridayApiRuntime } from "#api";
 import type { FridayChannelRegistry, WebchatWsService } from "#channels";
@@ -137,20 +142,20 @@ export function resolveFridayChannelSessionKey(
 ): string {
   const threadId = typeof msg.threadId === "string" ? msg.threadId.trim() : "";
 
-  const withThread = (base: string): string => {
+  const withThread = (baseSlot: string): string => {
     if (threadId.length === 0) {
-      return base;
+      return baseSlot;
     }
-    return `${base}:thread:${threadId}`;
+    return `${baseSlot}--thread--${threadId}`;
   };
 
   if (options.crossChannelIdentityEnabled && msg.chatType === "direct") {
     const mapped = options.identityMap[`${msg.channelKind}:${msg.senderId}`];
     if (mapped) {
-      return withThread(`omni:default:${mapped}`);
+      return canonicalizeFridaySessionKey(`omni:default:${withThread(mapped)}`);
     }
   }
-  return withThread(`channel:${msg.channelKind}:${msg.chatId}`);
+  return canonicalizeFridaySessionKey(`channel:${msg.channelKind}:${withThread(msg.chatId)}`);
 }
 
 export function resolveFridayChannelDisabledToolNames(_channelKind: string): string[] {
@@ -843,10 +848,11 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
         "fallbackProviderId",
         "providerId",
       );
+      const normalizedRouting = normalizeFridayModelRoutingConfig(routing);
       const eligibleProviders = providers.filter((provider) =>
         provider.enabled &&
-        provider.id !== routing.defaultProviderId &&
-        (requestedModel == null || provider.config.supportedModels.includes(requestedModel)));
+        provider.id !== normalizedRouting.defaultProviderId &&
+        (requestedModel == null || normalizeFridayProviderSupportedModels(provider.config.supportedModels).includes(requestedModel)));
       const nextProviderId = preferredProviderId && eligibleProviders.some((provider) => provider.id === preferredProviderId)
         ? preferredProviderId
         : eligibleProviders[0]?.id;
@@ -855,10 +861,10 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
       }
       const nextModel = requestedModel
         ?? providers.find((provider) => provider.id === nextProviderId)?.defaultModel
-        ?? routing.defaultModel;
+        ?? normalizedRouting.defaultModel;
       const fallbackProviderIds = [
-        routing.defaultProviderId,
-        ...routing.fallbackProviderIds,
+        normalizedRouting.defaultProviderId,
+        ...normalizedRouting.fallbackProviderIds,
       ].filter((providerId, index, all) =>
         providerId &&
         providerId !== nextProviderId &&
@@ -867,13 +873,13 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
         defaultProviderId: nextProviderId,
         defaultModel: nextModel,
         fallbackProviderIds,
-        ...(routing.enforceRequestedModel !== undefined
-          ? { enforceRequestedModel: routing.enforceRequestedModel }
+        ...(normalizedRouting.enforceRequestedModel !== undefined
+          ? { enforceRequestedModel: normalizedRouting.enforceRequestedModel }
           : {}),
       });
       if (payload) {
         payload._modelFallbackRequested = true;
-        payload._routeSwitchedFrom = routing.defaultProviderId;
+        payload._routeSwitchedFrom = normalizedRouting.defaultProviderId;
         payload._routeSwitchedTo = nextProviderId;
         payload._fallbackAt = deps.nowIso();
       }

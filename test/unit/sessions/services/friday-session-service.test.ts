@@ -144,6 +144,36 @@ describe("FridaySessionService", () => {
       const items = await service.listSessions({ limit: 2 });
       expect(items).toHaveLength(2);
     });
+
+    it("repairs legacy channel rows on service initialization", async () => {
+      await service.createSession({ channel: "irc", chatId: "friday-codex-audit" });
+      db.withWriteTransaction((writer) => {
+        writer.prepare(
+          `UPDATE sessions
+              SET session_key = ?,
+                  root_session_key = ?,
+                  channel = 'channel',
+                  account_id = 'irc'
+            WHERE session_key = ?`,
+        ).run(
+          "channel:irc:friday-codex-audit",
+          "channel:irc:friday-codex-audit",
+          "irc:default:friday-codex-audit",
+        );
+      });
+
+      service = createFridaySessionService({
+        db,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => NOW,
+      });
+
+      const items = await service.listSessions({ channel: "irc" });
+      expect(items).toHaveLength(1);
+      expect(items[0].key).toBe("channel:irc:friday-codex-audit");
+      expect(items[0].channel).toBe("irc");
+      expect(items[0].accountId).toBe("default");
+    });
   });
 
   // ─── getSession ───
@@ -221,6 +251,23 @@ describe("FridaySessionService", () => {
       expect(msg.role).toBe("user");
       const session = await service.getSession("discord:default:autocreate1");
       expect(session).not.toBeNull();
+    });
+
+    it("auto-creates legacy channel sessions with the real channel kind", async () => {
+      await service.addMessage("channel:irc:#Friday Codex Audit", {
+        role: "user",
+        content: "hello",
+      });
+
+      const session = await service.getSession("channel:irc:#Friday Codex Audit");
+      expect(session).not.toBeNull();
+      expect(session!.key).toBe("channel:irc:friday-codex-audit");
+      expect(session!.channel).toBe("irc");
+      expect(session!.accountId).toBe("default");
+      expect(session!.chatId).toBe("friday-codex-audit");
+
+      const items = await service.listSessions({ channel: "irc" });
+      expect(items.map((item) => item.key)).toContain("channel:irc:friday-codex-audit");
     });
 
     it("handles idempotency", async () => {

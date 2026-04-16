@@ -111,4 +111,55 @@ describe("friday-provider-context-compactor", () => {
     expect(result.keptMessages[0]?.messageId).toBe("compaction-summary");
     expect(result.keptMessages[0]?.content).toContain("[Conversation Block Summaries]");
   });
+
+  it("emits a structured summary when recent oversized tool results are pruned without dropping blocks", async () => {
+    const compactor = createFridayProviderContextCompactor({
+      estimator: {
+        estimateTextTokens(text) {
+          return Math.ceil(text.length / 4);
+        },
+        estimateMessagesTokens(messages) {
+          return messages.reduce((total, message) => total + Math.ceil(message.content.length / 4) + 8, 0);
+        },
+        getContextWindow() {
+          return 256;
+        },
+      },
+      pruner: {
+        prune(messages) {
+          return {
+            messages: messages.map((message) =>
+              message.role === "tool-result"
+                ? { ...message, content: `${message.content.slice(0, 120)}\n[...pruned recent tool result...]\n${message.content.slice(-80)}` }
+                : { ...message }),
+            prunedCount: 1,
+          };
+        },
+      },
+    });
+
+    const messages: FridayProviderContextMessage[] = [
+      makeMessage({ index: 1, role: "user", content: "Read the large runtime artifact and keep the exact path in mind." }),
+      makeMessage({ index: 2, role: "assistant", content: "I will inspect the file with the read tool." }),
+      makeMessage({
+        index: 3,
+        role: "tool-result",
+        content: `read dist/agent/runtime/friday-agent-runtime.js.map ${"A".repeat(18_000)} ENOENT dist/ui/assets/runtime-missing.js.map`,
+      }),
+    ];
+
+    const result = await compactor.compact({
+      systemPrompt: "You are auditing Friday runtime behavior.",
+      userPrompt: "Preserve the key tool output while shrinking the prompt budget.",
+      messages,
+      contextWindowTokens: 40,
+      summarize: async () => "{\"summaryText\":\"unused\"}",
+    });
+
+    expect(result.compacted).toBe(true);
+    expect(result.droppedMessages).toHaveLength(0);
+    expect(result.summary?.summaryText).toContain("dist/agent/runtime/friday-agent-runtime.js.map");
+    expect(result.summary?.fileOperations).toContain("dist/agent/runtime/friday-agent-runtime.js.map");
+    expect(result.summary?.summaryText.length ?? 0).toBeGreaterThan(0);
+  });
 });

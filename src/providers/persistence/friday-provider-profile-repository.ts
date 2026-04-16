@@ -6,6 +6,7 @@ import type {
   FridayProviderProfile,
   FridayProviderProfileRow,
 } from "../model/friday-provider.types.js";
+import { normalizeFridayProviderSupportedModels } from "../model/friday-provider.types.js";
 import { getFridayProviderPreset } from "../model/friday-provider-catalog.js";
 
 // ─── Repository interface ───
@@ -39,6 +40,8 @@ function rowToProfile(row: FridayProviderProfileRow): FridayProviderProfile {
     backendKind: config.backendKind ?? preset.backendKind,
     deploymentKind: config.deploymentKind ?? preset.deploymentKind,
     regionTag: config.regionTag ?? preset.regionTag,
+    keySource: config.keySource ?? { kind: "none" },
+    supportedModels: normalizeFridayProviderSupportedModels(config.supportedModels),
   };
 
   return {

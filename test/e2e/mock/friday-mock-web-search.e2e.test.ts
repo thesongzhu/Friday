@@ -98,6 +98,51 @@ const MOCK_DDG_HTML_EMPTY = `
 </body></html>
 `;
 
+const MOCK_GOOGLE_NEWS_RSS = `
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <item>
+      <title>Headline A - Example</title>
+      <link>https://news.google.com/rss/articles/a</link>
+      <pubDate>Sat, 14 Mar 2026 09:00:00 GMT</pubDate>
+      <description><![CDATA[Latest dated result A]]></description>
+    </item>
+    <item>
+      <title>Headline B - Example</title>
+      <link>https://news.google.com/rss/articles/b</link>
+      <pubDate>Fri, 13 Mar 2026 09:00:00 GMT</pubDate>
+      <description><![CDATA[Older dated result B]]></description>
+    </item>
+  </channel>
+</rss>
+`;
+
+function buildRecentGoogleNewsRss(): string {
+  const now = Date.now();
+  const recentDate = new Date(now - 2 * 60 * 60 * 1000).toUTCString();
+  const olderDate = new Date(now - 20 * 60 * 60 * 1000).toUTCString();
+  return `
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <item>
+      <title>Headline A - Example</title>
+      <link>https://news.google.com/rss/articles/a</link>
+      <pubDate>${recentDate}</pubDate>
+      <description><![CDATA[Latest dated result A]]></description>
+    </item>
+    <item>
+      <title>Headline B - Example</title>
+      <link>https://news.google.com/rss/articles/b</link>
+      <pubDate>${olderDate}</pubDate>
+      <description><![CDATA[Older dated result B]]></description>
+    </item>
+  </channel>
+</rss>
+`;
+}
+
 // ─── Tests ───
 
 describe("Friday Mock Web Search E2E", () => {
@@ -251,15 +296,15 @@ describe("Friday Mock Web Search E2E", () => {
     expect(mock.calls.length).toBe(2);
   });
 
-  it("search freshness parameter is forwarded to DuckDuckGo URL", async () => {
+  it("search freshness parameter routes latest-news lookup to Google News RSS", async () => {
     const mock = env.mockFor("anthropic");
     let capturedUrl = "";
 
-    injectRoute("https://html.duckduckgo.com", async (input) => {
+    injectRoute("https://news.google.com/rss/search", async (input) => {
       capturedUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
-      return new Response(MOCK_DDG_HTML_3_RESULTS, {
+      return new Response(MOCK_GOOGLE_NEWS_RSS, {
         status: 200,
-        headers: { "content-type": "text/html" },
+        headers: { "content-type": "application/xml" },
       });
     });
 
@@ -281,10 +326,8 @@ describe("Friday Mock Web Search E2E", () => {
       { task: "Search recent news", providerId, model, timeoutMs: 15_000 },
     );
 
-    // DuckDuckGo doesn't support freshness natively, but the URL should still be called
-    expect(capturedUrl).toContain("html.duckduckgo.com");
-    // encodeURIComponent uses %20, not +
-    expect(capturedUrl).toContain("recent%20news");
+    expect(capturedUrl).toContain("news.google.com/rss/search");
+    expect(capturedUrl).toContain("q=recent+news");
   });
 
   it("numResults parameter limits search results", async () => {
@@ -441,13 +484,13 @@ describe("Friday Mock Web Search E2E", () => {
     );
   });
 
-  it("default DuckDuckGo latest news flow downgrades to unverified latestness", async () => {
+  it("default latest news flow uses dated Google News evidence", async () => {
     const mock = env.mockFor("anthropic");
 
-    injectRoute("https://html.duckduckgo.com", async () =>
-      new Response(MOCK_DDG_HTML_3_RESULTS, {
+    injectRoute("https://news.google.com/rss/search", async () =>
+      new Response(buildRecentGoogleNewsRss(), {
         status: 200,
-        headers: { "content-type": "text/html" },
+        headers: { "content-type": "application/xml" },
       }),
     );
 
@@ -458,11 +501,9 @@ describe("Friday Mock Web Search E2E", () => {
     });
     mock.enqueue({
       type: "text",
-      text: "以下是关于伊朗的三条最新新闻。",
-    });
-    mock.enqueue({
-      type: "text",
-      text: "这些是我找到的搜索结果。",
+      text:
+        "1. Headline A (2026-03-14) https://news.google.com/rss/articles/a\n" +
+        "2. Headline B (2026-03-13) https://news.google.com/rss/articles/b",
     });
 
     const res = await apiFetch<AgentRunResult>(
@@ -474,8 +515,8 @@ describe("Friday Mock Web Search E2E", () => {
     );
 
     expect(res.json.data.status).toBe("completed");
-    expect(res.json.data.response).toContain("could not verify");
-    expect(res.json.data.response).toContain("(UTC)");
-    expect(mock.calls.length).toBe(3);
+    expect(res.json.data.response).toContain("2026-03-14");
+    expect(res.json.data.response).toContain("https://news.google.com/rss/articles/a");
+    expect(mock.calls.length).toBe(2);
   });
 });

@@ -25,6 +25,9 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 const DEFAULT_PROTOCOL_VERSION = "2024-11-05";
 const MAX_LIST_PAGES = 20;
 const FRAME_SEPARATOR = Buffer.from("\r\n\r\n", "utf8");
+const LINE_SEPARATOR = "\n";
+
+type FridayMcpStdioProtocol = "content-length" | "jsonl";
 
 type SpawnLike = typeof spawn;
 type WarnLike = (message: string) => void;
@@ -992,21 +995,21 @@ async function withMcpSession<T>(params: {
   });
 
   try {
-    await session.request(
-      "initialize",
-      {
-        protocolVersion: DEFAULT_PROTOCOL_VERSION,
-        capabilities: {},
-        clientInfo: { name: "friday", version: FRIDAY_VERSION },
-      },
-      {
-        signal: params.signal,
-        timeoutMs: params.server.timeoutMs ?? params.requestTimeoutMs,
-      },
-    );
-    session.notify("notifications/initialized", {});
-    return await params.run(session);
+    return await runWithSession();
   } catch (error) {
+    if (
+      (params.server.transport ?? "stdio") === "stdio"
+      && isInitializeTimeoutError(error)
+    ) {
+      return await runWithSession("jsonl").catch((retryError) => {
+        throw wrapMcpError(retryError, {
+          routeId: params.routeId,
+          correlationId: params.correlationId,
+          serverId: params.server.id,
+          transport: params.server.transport ?? "stdio",
+        });
+      });
+    }
     throw wrapMcpError(error, {
       routeId: params.routeId,
       correlationId: params.correlationId,
@@ -1016,6 +1019,46 @@ async function withMcpSession<T>(params: {
   } finally {
     await session.close();
   }
+
+  async function runWithSession(
+    stdioProtocol?: FridayMcpStdioProtocol,
+  ): Promise<T> {
+    const activeSession = stdioProtocol
+      ? createTransportSession({
+          server: params.server,
+          spawnImpl: params.spawnImpl,
+          requestTimeoutMs: params.requestTimeoutMs,
+          routeId: params.routeId,
+          correlationId: params.correlationId,
+          stdioProtocol,
+        })
+      : session;
+
+    try {
+      await activeSession.request(
+        "initialize",
+        {
+          protocolVersion: DEFAULT_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: "friday", version: FRIDAY_VERSION },
+        },
+        {
+          signal: params.signal,
+          timeoutMs: params.server.timeoutMs ?? params.requestTimeoutMs,
+        },
+      );
+      activeSession.notify("notifications/initialized", {});
+      return await params.run(activeSession);
+    } finally {
+      if (activeSession !== session) {
+        await activeSession.close();
+      }
+    }
+  }
+}
+
+function isInitializeTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.message === "MCP request timed out: initialize";
 }
 
 function wrapMcpError(
@@ -1047,6 +1090,7 @@ function createTransportSession(params: {
   requestTimeoutMs: number;
   routeId: string;
   correlationId: string;
+  stdioProtocol?: FridayMcpStdioProtocol;
 }): McpSession {
   const transport = params.server.transport ?? "stdio";
   if (transport === "stdio") {
@@ -1210,6 +1254,7 @@ function createStdioMcpSession(params: {
   requestTimeoutMs: number;
   routeId: string;
   correlationId: string;
+  stdioProtocol?: FridayMcpStdioProtocol;
 }): McpSession {
   const command = typeof params.server.command === "string"
     ? params.server.command.trim()
@@ -1238,6 +1283,7 @@ function createStdioMcpSession(params: {
   let isClosed = false;
   let stderrTail = "";
   const pending = new Map<string, PendingRequest>();
+  const stdioProtocol = params.stdioProtocol ?? "content-length";
 
   const exitPromise = new Promise<void>((resolve) => {
     child.once("exit", () => resolve());
@@ -1246,7 +1292,7 @@ function createStdioMcpSession(params: {
   child.stdout.on("data", (chunk: Uint8Array) => {
     buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
     try {
-      for (const message of decodeFrames(() => buffer, (next) => { buffer = next; })) {
+      for (const message of decodeStdioMessages(() => buffer, (next) => { buffer = next; })) {
         handleInboundMessage(message);
       }
     } catch (error) {
@@ -1315,7 +1361,7 @@ function createStdioMcpSession(params: {
         });
 
         try {
-          writeFrame(
+          writeStdioMessage(
             child.stdin,
             {
               jsonrpc: "2.0",
@@ -1323,6 +1369,7 @@ function createStdioMcpSession(params: {
               method,
               params: requestParams,
             },
+            stdioProtocol,
           );
         } catch (error) {
           pending.delete(key);
@@ -1338,13 +1385,14 @@ function createStdioMcpSession(params: {
         return;
       }
       try {
-        writeFrame(
+        writeStdioMessage(
           child.stdin,
           {
             jsonrpc: "2.0",
             method,
             params: requestParams,
           },
+          stdioProtocol,
         );
       } catch (err) {
         // Best-effort notification only.
@@ -1358,13 +1406,14 @@ function createStdioMcpSession(params: {
       }
 
       try {
-        writeFrame(
+        writeStdioMessage(
           child.stdin,
           {
             jsonrpc: "2.0",
             method: "exit",
             params: {},
           },
+          stdioProtocol,
         );
       } catch (err) {
         // ignore
@@ -1452,6 +1501,69 @@ function writeFrame(
   const body = Buffer.from(JSON.stringify(payload), "utf8");
   const header = Buffer.from(`Content-Length: ${String(body.length)}\r\n\r\n`, "utf8");
   stream.write(Buffer.concat([header, body]));
+}
+
+function writeJsonLine(
+  stream: NodeJS.WritableStream,
+  payload: Record<string, unknown>,
+): void {
+  stream.write(Buffer.from(`${JSON.stringify(payload)}${LINE_SEPARATOR}`, "utf8"));
+}
+
+function writeStdioMessage(
+  stream: NodeJS.WritableStream,
+  payload: Record<string, unknown>,
+  protocol: FridayMcpStdioProtocol,
+): void {
+  if (protocol === "jsonl") {
+    writeJsonLine(stream, payload);
+    return;
+  }
+  writeFrame(stream, payload);
+}
+
+function* decodeStdioMessages(
+  getBuffer: () => Buffer<ArrayBufferLike>,
+  setBuffer: (buffer: Buffer<ArrayBufferLike>) => void,
+): Generator<unknown, void, unknown> {
+  while (true) {
+    const buffer = getBuffer();
+    const frameHeaderEnd = buffer.indexOf(FRAME_SEPARATOR);
+    if (frameHeaderEnd >= 0) {
+      const headerText = buffer.subarray(0, frameHeaderEnd).toString("utf8");
+      const contentLength = readContentLength(headerText);
+      if (contentLength >= 0) {
+        const messageStart = frameHeaderEnd + FRAME_SEPARATOR.length;
+        const frameEnd = messageStart + contentLength;
+        if (buffer.length < frameEnd) {
+          return;
+        }
+        const body = buffer.subarray(messageStart, frameEnd).toString("utf8");
+        setBuffer(buffer.subarray(frameEnd));
+        yield JSON.parse(body);
+        continue;
+      }
+    }
+
+    const newlineIndex = buffer.indexOf(LINE_SEPARATOR);
+    if (newlineIndex < 0) {
+      return;
+    }
+
+    const line = buffer.subarray(0, newlineIndex).toString("utf8").trim();
+    setBuffer(buffer.subarray(newlineIndex + LINE_SEPARATOR.length));
+    if (!line) {
+      continue;
+    }
+
+    try {
+      yield JSON.parse(line);
+    } catch (error) {
+      if (line.startsWith("{") || line.startsWith("[")) {
+        throw error;
+      }
+    }
+  }
 }
 
 function* decodeFrames(

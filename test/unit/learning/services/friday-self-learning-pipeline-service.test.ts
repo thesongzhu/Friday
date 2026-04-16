@@ -85,6 +85,62 @@ describe("FridaySelfLearningPipelineService", () => {
     };
   }
 
+  function seedWorkflowRun(runId: string): void {
+    db.writer.prepare(
+      `INSERT INTO workflows (
+        id, slug, name, description, owner_user_id, latest_version_number,
+        published_version_number, is_archived, revision, etag, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "wf-1",
+      "wf-1",
+      "Workflow 1",
+      "Synthetic workflow for learning tests",
+      "test-user",
+      1,
+      1,
+      0,
+      1,
+      "etag-wf-1",
+      NOW,
+      NOW,
+    );
+    db.writer.prepare(
+      `INSERT INTO workflow_versions (
+        id, workflow_id, version_number, checksum, graph_json, created_by_user_id,
+        is_published, change_note, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "wf-version-1",
+      "wf-1",
+      1,
+      "checksum-wf-1",
+      "{\"nodes\":[],\"edges\":[]}",
+      "test-user",
+      1,
+      "Synthetic version for learning tests",
+      NOW,
+      NOW,
+    );
+    db.writer.prepare(
+      `INSERT INTO workflow_runs (
+        id, workflow_id, workflow_version_id, status, trigger_type, trigger_payload_json,
+        started_by_user_id, started_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runId,
+      "wf-1",
+      "wf-version-1",
+      "failed",
+      "manual",
+      "{}",
+      "test-user",
+      NOW,
+      NOW,
+      NOW,
+    );
+  }
+
   it("processEvent collects the event and returns result", () => {
     const event = makeEvent();
     const result = pipeline.processEvent(event);
@@ -192,6 +248,27 @@ describe("FridaySelfLearningPipelineService", () => {
     expect(result.diagnosisCreated[0]!.incidentId).toBe(
       result.incidentsCreated[0]!.incidentId,
     );
+  });
+
+  it("carries workflow runId and nodeId through incident and diagnosis creation", () => {
+    seedWorkflowRun("run-workflow-123");
+    const event = makeEvent({
+      eventId: "evt-workflow-node-001",
+      kind: "error_incident",
+      payload: {
+        category: "workflow",
+        message: "node execution failed",
+        workflowRunId: "run-workflow-123",
+        nodeId: "node-transform-1",
+      },
+    });
+
+    const result = pipeline.processEvent(event);
+
+    expect(result.incidentsCreated[0]!.runId).toBe("run-workflow-123");
+    expect(result.incidentsCreated[0]!.nodeId).toBe("node-transform-1");
+    expect(result.diagnosisCreated[0]!.runId).toBe("run-workflow-123");
+    expect(result.diagnosisCreated[0]!.nodeId).toBe("node-transform-1");
   });
 
   it("processEvent creates learned lessons for error signals", () => {

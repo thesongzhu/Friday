@@ -128,6 +128,21 @@ interface SkillSourceResponse {
   source: SkillSourceRecord;
 }
 
+interface SkillSourceSyncResult {
+  sourceId: string;
+  sourceName: string;
+  skillsSynced: number;
+  versionsSynced: number;
+  errors: string[];
+}
+
+interface SkillSourceSyncResponse {
+  results: SkillSourceSyncResult[];
+  staleSourceIds: string[];
+  totalSources: number;
+  totalErrors: number;
+}
+
 // ─── Response wrappers ───
 
 interface ListConvertersResponse {
@@ -262,6 +277,13 @@ export const skillsApi = {
   async deleteSource(sourceId: string): Promise<{ removed: true; sourceId: string }> {
     return apiClient.del<{ removed: true; sourceId: string }>(
       `/v1/marketplace/sources/${encodeURIComponent(sourceId)}`,
+    );
+  },
+
+  async syncSources(input: { sourceId?: string } = {}): Promise<SkillSourceSyncResponse> {
+    return apiClient.post<{ sourceId?: string }, SkillSourceSyncResponse>(
+      "/v1/marketplace/skills/sync",
+      input,
     );
   },
 

@@ -17,6 +17,10 @@ function statusBadge(status: string | undefined, locale: import("@/lib/i18n/loca
   switch (status) {
     case "connected":
       return <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-accent-soft)] px-2 py-0.5 text-xs font-medium text-[color:var(--color-accent)]">{localize(locale, "已连接", "Connected")}</span>;
+    case "configured":
+      return <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-bg-subtle)] px-2 py-0.5 text-xs font-medium text-[color:var(--color-text-secondary)]">{localize(locale, "已配置", "Configured")}</span>;
+    case "deferred":
+      return <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-bg-subtle)] px-2 py-0.5 text-xs font-medium text-[color:var(--color-text-secondary)]">{localize(locale, "待加载", "Deferred")}</span>;
     case "error":
       return <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium status-error">{localize(locale, "错误", "Error")}</span>;
     case "disconnected":
@@ -39,8 +43,8 @@ export function McpPage() {
         <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
           {localize(
             locale,
-            "管理连接到 Friday 的 Model Context Protocol 服务器。MCP 服务器通过外部工具、资源和提示扩展 agent 能力。",
-            "Manage Model Context Protocol servers connected to Friday. MCP servers extend agent capabilities with external tools, resources, and prompts.",
+            "管理连接到 Friday 的 Model Context Protocol 服务器。这是一个按环境启用的运维面板；空状态通常表示当前机器未配置，而不是 Friday 整体损坏。",
+            "Manage Model Context Protocol servers connected to Friday. This is an environment-gated operator surface; an empty state usually means nothing is configured on this machine, not that Friday is broken.",
           )}
         </p>
       </div>

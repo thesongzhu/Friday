@@ -204,6 +204,164 @@ describe("FridayErrorDiagnosisService", () => {
     expect(result.autoFixEligible).toBe(true);
   });
 
+  it("boosts structured workflow runtime failures with run and node evidence", () => {
+    db.writer.prepare(
+      `INSERT INTO workflows (
+        id, slug, name, latest_version_number, revision, is_archived, etag, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "wf-1",
+      "workflow-runtime-proof",
+      "Workflow Runtime Proof",
+      1,
+      1,
+      0,
+      "etag-wf-1",
+      NOW,
+      NOW,
+    );
+    db.writer.prepare(
+      `INSERT INTO workflow_versions (
+        id, workflow_id, version_number, checksum, graph_json, created_by_user_id,
+        is_published, change_note, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "wf-version-1",
+      "wf-1",
+      1,
+      "checksum-wf-1",
+      "{\"nodes\":[],\"edges\":[]}",
+      "test-user",
+      1,
+      "Synthetic version for diagnosis test",
+      NOW,
+      NOW,
+    );
+    db.writer.prepare(
+      `INSERT INTO workflow_runs (
+        id, workflow_id, workflow_version_id, status, trigger_type, trigger_payload_json,
+        started_by_user_id, started_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "wf-run-1",
+      "wf-1",
+      "wf-version-1",
+      "failed",
+      "manual",
+      "{}",
+      "test-user",
+      NOW,
+      NOW,
+      NOW,
+    );
+
+    const workflowRuntimeIncident: FridayErrorIncidentEntity = {
+      ...baseIncident,
+      incidentId: "inc-workflow-runtime",
+      category: "workflow",
+      severity: "medium",
+      signature: "sig-workflow-runtime",
+      runId: "wf-run-1",
+      nodeId: "ai-1",
+      context: {
+        source: "workflow_runtime",
+        workflowId: "wf-1",
+        workflowVersionId: "wf-v-1",
+      },
+    };
+    const incidentRepo = createFridayErrorIncidentRepository();
+    incidentRepo.insert(db.writer, workflowRuntimeIncident);
+
+    const result = service.diagnose({ incident: workflowRuntimeIncident, nowIso: NOW });
+
+    expect(result.diagnosis.confidence).toBeGreaterThanOrEqual(0.6);
+    expect(result.autoFixEligible).toBe(true);
+  });
+
+  it("preserves workflow run context in lesson-backed retry plans", () => {
+    db.writer.prepare(
+      `INSERT INTO workflows (
+        id, slug, name, latest_version_number, revision, is_archived, etag, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "wf-ctx-1",
+      "workflow-context-proof",
+      "Workflow Context Proof",
+      1,
+      1,
+      0,
+      "etag-wf-ctx-1",
+      NOW,
+      NOW,
+    );
+    db.writer.prepare(
+      `INSERT INTO workflow_versions (
+        id, workflow_id, version_number, checksum, graph_json, created_by_user_id,
+        is_published, change_note, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "wf-ctx-version-1",
+      "wf-ctx-1",
+      1,
+      "checksum-wf-ctx-1",
+      "{\"nodes\":[],\"edges\":[]}",
+      "test-user",
+      1,
+      "Synthetic version for plan payload test",
+      NOW,
+      NOW,
+    );
+    db.writer.prepare(
+      `INSERT INTO workflow_runs (
+        id, workflow_id, workflow_version_id, status, trigger_type, trigger_payload_json,
+        started_by_user_id, started_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "wf-ctx-run-1",
+      "wf-ctx-1",
+      "wf-ctx-version-1",
+      "failed",
+      "manual",
+      "{}",
+      "test-user",
+      NOW,
+      NOW,
+      NOW,
+    );
+    const lessonRepo = createFridayLearnedLessonRepository();
+    lessonRepo.upsertByFingerprint(db.writer, {
+      id: "lesson-wf-ctx",
+      fingerprint: "sig-workflow-context",
+      title: "Retry workflow action",
+      cause: "Known transient workflow failure",
+      fix: "Retry the failed workflow operation",
+      nowIso: NOW,
+    });
+
+    const workflowRuntimeIncident: FridayErrorIncidentEntity = {
+      ...baseIncident,
+      incidentId: "inc-workflow-context",
+      category: "workflow",
+      severity: "medium",
+      signature: "sig-workflow-context",
+      runId: "wf-ctx-run-1",
+      nodeId: "ai-ctx-1",
+      context: {
+        source: "workflow_runtime",
+        workflowId: "wf-ctx-1",
+      },
+    };
+    const incidentRepo = createFridayErrorIncidentRepository();
+    incidentRepo.insert(db.writer, workflowRuntimeIncident);
+
+    const result = service.diagnose({ incident: workflowRuntimeIncident, nowIso: NOW });
+    const payload = result.candidatePlans[0]?.steps[0]?.payload as Record<string, unknown> | undefined;
+
+    expect(result.autoFixEligible).toBe(true);
+    expect(payload?.runId).toBe("wf-ctx-run-1");
+    expect(payload?.nodeId).toBe("ai-ctx-1");
+  });
+
   it("excludes negative lessons (rejected fixes) from candidate plans", () => {
     const lessonRepo = createFridayLearnedLessonRepository();
 

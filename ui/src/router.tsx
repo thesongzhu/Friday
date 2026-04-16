@@ -7,6 +7,7 @@ import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences"
 import { useSetupStatusQuery } from "@/hooks/use-setup";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { uixSnapshotsApi } from "@/lib/api/uix-snapshots";
+import { HIDE_MARKETPLACE_UI } from "@/lib/feature-flags";
 import { localizedText, resolveLocalizedText, type LocalizedText } from "@/lib/i18n/localized-text";
 import { resolveLegacyRedirect } from "@/lib/routes/legacy-routes";
 import { describeSetupStatusFailure } from "@/lib/setup/setup-status-diagnostics";
@@ -18,11 +19,12 @@ const AutomationsPage = lazy(async () => import("@/routes/automations-page").the
 const FleetPage = lazy(async () => import("@/routes/fleet-page").then((module) => ({ default: module.FleetPage })));
 const GuidedFlowPage = lazy(async () => import("@/routes/guided-flow-page").then((module) => ({ default: module.GuidedFlowPage })));
 const HomePage = lazy(async () => import("@/routes/home-page").then((module) => ({ default: module.HomePage })));
-
+const LoginPage = lazy(async () => import("@/routes/login-page").then((module) => ({ default: module.LoginPage })));
 const MarketplacePage = lazy(async () => import("@/routes/marketplace-page").then((module) => ({ default: module.MarketplacePage })));
 const ObservabilityPage = lazy(async () => import("@/routes/observability-page").then((module) => ({ default: module.ObservabilityPage })));
 const OnboardingPage = lazy(async () => import("@/routes/onboarding-page").then((module) => ({ default: module.OnboardingPage })));
 const PacksPage = lazy(async () => import("@/routes/packs-page").then((module) => ({ default: module.PacksPage })));
+const PluginsPage = lazy(async () => import("@/routes/plugins-page").then((module) => ({ default: module.PluginsPage })));
 const CrossBorderPackSetupPage = lazy(async () => import("@/routes/cross-border-pack-setup-page").then((module) => ({ default: module.CrossBorderPackSetupPage })));
 const SettingsPage = lazy(async () => import("@/routes/settings-page").then((module) => ({ default: module.SettingsPage })));
 const SetupPage = lazy(async () => import("@/routes/setup-page").then((module) => ({ default: module.SetupPage })));
@@ -67,9 +69,11 @@ function FullscreenMessage(props: { title: string | LocalizedText; detail: strin
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { isAuthenticated, isLoading, login: doLogin } = useAuth();
+  const location = useLocation();
   const [retrying, setRetrying] = useState(false);
 
-  // Auto-login silently — no login page, just keep trying local auth.
+  // Try local auth first, then fall back to the real login route if this machine
+  // does not allow local bypass or the session bootstrap failed.
   useEffect(() => {
     if (!isLoading && !isAuthenticated && !retrying) {
       setRetrying(true);
@@ -85,6 +89,10 @@ function RequireAuth({ children }: { children: ReactNode }) {
   }, [isLoading, isAuthenticated, retrying, doLogin]);
 
   if (isLoading || !isAuthenticated) {
+    if (!isLoading && !isAuthenticated) {
+      const redirectTo = `${location.pathname}${location.search}${location.hash}`;
+      return <Navigate to="/login" replace state={{ redirectTo }} />;
+    }
     return (
       <FullscreenMessage
         title={localizedText("启动 Friday", "Starting Friday")}
@@ -215,7 +223,14 @@ function RouteErrorBoundary() {
 export const router = createBrowserRouter([
   {
     path: "/login",
-    element: <Navigate to="/" replace />,
+    element: (
+      <RouteSuspense
+        title={localizedText("加载登录", "Loading access")}
+        detail={localizedText("Friday 正在准备登录入口。", "Friday is preparing the access surface.")}
+      >
+        <LoginPage />
+      </RouteSuspense>
+    ),
   },
   {
     path: "/",
@@ -348,8 +363,20 @@ export const router = createBrowserRouter([
           {
             path: "marketplace",
             element: (
-              <RouteSuspense title={localizedText("加载市场", "Loading marketplace")} detail={localizedText("Friday 正在准备创作者生态。", "Friday is preparing the public creator ecosystem.")}>
-                <MarketplacePage />
+              HIDE_MARKETPLACE_UI
+                ? <Navigate to="/assistant" replace />
+                : (
+                    <RouteSuspense title={localizedText("加载市场", "Loading marketplace")} detail={localizedText("Friday 正在准备创作者生态。", "Friday is preparing the public creator ecosystem.")}>
+                      <MarketplacePage />
+                    </RouteSuspense>
+                  )
+            ),
+          },
+          {
+            path: "plugins",
+            element: (
+              <RouteSuspense title={localizedText("加载插件", "Loading plugins")} detail={localizedText("Friday 正在准备插件库存和运行时状态。", "Friday is preparing the plugin inventory and runtime status.")}>
+                <PluginsPage />
               </RouteSuspense>
             ),
           },

@@ -384,22 +384,7 @@ export function createFridayUixRoutes(
         const userId = requireUserId(ctx.principal);
         const current = readUserProfileResponse(deps.service, userId);
         const profileType = current.profileType ?? "beginner";
-        const onboardedAt = current.onboardedAt ?? new Date().toISOString();
-        if (current.profileType === null || current.onboardedAt === null) {
-          deps.service.updatePreferences({
-            userId,
-            request: {
-              preferences: [
-                ...(current.profileType === null
-                  ? [{ category: "uix", key: "user.profile_type", value: profileType }]
-                  : []),
-                ...(current.onboardedAt === null
-                  ? [{ category: "uix", key: "user.onboarded_at", value: onboardedAt }]
-                  : []),
-              ],
-            } as never,
-          });
-        }
+        const onboardedAt = current.onboardedAt ?? null;
         return { profileType, onboardedAt };
       },
     },

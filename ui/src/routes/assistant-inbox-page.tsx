@@ -344,7 +344,7 @@ export function AssistantInboxPage() {
 
         <ActionButton tone="secondary" className="w-full" onClick={() => navigate("/command-center")}>
           <CheckCircle2 className="mr-2 h-4 w-4" aria-hidden="true" />
-          {localize(locale, "进入更深的控制台", "Go deeper")}
+          {localize(locale, "进入操作控制台", "Open operator console")}
           <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
         </ActionButton>
       </div>

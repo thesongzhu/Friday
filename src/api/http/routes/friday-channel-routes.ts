@@ -4,11 +4,9 @@ import type { FridayRouteDefinition } from "../../model/friday-api-common.types.
 
 export interface FridayChannelRoutesDeps {
   registry: FridayChannelRegistry;
+  nowIso?: () => string;
+  persistPersona?: (kind: string, config: FridayChannelPersonaConfig | null) => void | Promise<void>;
 }
-
-// ─── In-memory channel persona store ───
-// Persisted across requests but not across restarts.
-// A future iteration can persist to SQLite.
 
 const channelPersonaStore = new Map<string, FridayChannelPersonaConfig>();
 
@@ -20,8 +18,43 @@ export interface FridayChannelPersonaConfig {
   updatedAt: string;
 }
 
+function normalizeChannelPersonaConfig(value: unknown): FridayChannelPersonaConfig | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const persona = typeof record.persona === "string" ? record.persona.trim() : "";
+  const systemPrompt = typeof record.systemPrompt === "string" ? record.systemPrompt.trim() : "";
+  const updatedAt = typeof record.updatedAt === "string" ? record.updatedAt : "";
+  if (!persona && !systemPrompt) {
+    return null;
+  }
+  return {
+    persona,
+    systemPrompt,
+    updatedAt: updatedAt || new Date().toISOString(),
+  };
+}
+
 export function getChannelPersona(kind: string): FridayChannelPersonaConfig | undefined {
   return channelPersonaStore.get(kind);
+}
+
+export function hydrateChannelPersonaStore(input: Record<string, unknown> | null | undefined): void {
+  channelPersonaStore.clear();
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return;
+  }
+  for (const [kind, value] of Object.entries(input)) {
+    const normalized = normalizeChannelPersonaConfig(value);
+    if (normalized) {
+      channelPersonaStore.set(kind, normalized);
+    }
+  }
+}
+
+export function resetChannelPersonaStore(): void {
+  channelPersonaStore.clear();
 }
 
 export function createFridayChannelRoutes(
@@ -87,7 +120,7 @@ export function createFridayChannelRoutes(
         const systemPromptText = typeof body.systemPrompt === "string" ? body.systemPrompt.trim() : "";
 
         if (!personaText && !systemPromptText) {
-          // Clear persona
+          await deps.persistPersona?.(kind, null);
           channelPersonaStore.delete(kind);
           return { kind, persona: null, cleared: true };
         }
@@ -95,8 +128,9 @@ export function createFridayChannelRoutes(
         const config: FridayChannelPersonaConfig = {
           persona: personaText,
           systemPrompt: systemPromptText,
-          updatedAt: new Date().toISOString(),
+          updatedAt: deps.nowIso ? deps.nowIso() : new Date().toISOString(),
         };
+        await deps.persistPersona?.(kind, config);
         channelPersonaStore.set(kind, config);
         return { kind, persona: config };
       },

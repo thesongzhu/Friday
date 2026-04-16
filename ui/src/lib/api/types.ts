@@ -2418,9 +2418,19 @@ export interface FridayHealthResponse {
       supportedKinds?: string[];
       enabledKinds?: string[];
     };
+    search?: {
+      provider?: string;
+      latestness?: "provider_backed" | "unverified";
+      warning?: string;
+    };
     system?: {
       enabled?: boolean;
       remoteMode?: "trusted_private_network" | "disabled" | "unavailable";
+      healthStatus?: "healthy" | "degraded" | "safe_mode" | "unavailable";
+      companionConnected?: boolean;
+      companionReadiness?: "ready" | "degraded" | "unavailable";
+      reasons?: string[];
+      warning?: string;
     };
   };
 }

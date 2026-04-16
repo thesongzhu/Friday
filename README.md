@@ -12,7 +12,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Node-%E2%89%A522-brightgreen?style=flat-square" alt="Node ≥22">
   <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="MIT">
-  <img src="https://img.shields.io/badge/Tests-10000%2B-success?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/Release%20Truth-evidence--driven-blue?style=flat-square" alt="Release Truth">
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript">
   <img src="https://github.com/thesongzhu/Friday/actions/workflows/ci.yml/badge.svg" alt="CI">
   <a href="https://discord.gg/x2rd4WsY"><img src="https://img.shields.io/discord/1234567890?style=flat-square&logo=discord&label=Discord&color=5865F2" alt="Discord"></a>
@@ -28,16 +28,25 @@ Bring your own API keys. Install skills like apps. Connect your favorite messagi
 
 > Think of Friday as your personal AI that starts as a helpful assistant and gradually becomes an indispensable partner in everything you do.
 
+## Runtime Snapshot
+
+This README is a **runtime snapshot**, not a blanket release-proof promise.
+
+- Some surfaces below are operator-only, env-gated, permission-gated, or empty until configured.
+- `npm test` and browser suites that depend on mock hub wiring are useful regressions, but they are **not** release proof.
+- For the active contract, use [`docs/current-source-of-truth.md`](docs/current-source-of-truth.md).
+- For release evidence rules, use [`docs/release-evidence-policy.md`](docs/release-evidence-policy.md).
+
 ---
 
-## What Friday Can Do
+## Current Runtime Surface
 
 <table>
 <tr>
 <td width="50%">
 
 ### Chat & Execute
-30+ built-in tools, 52+ skills. Ask Friday to research, write, code, analyze, automate — and it actually does it, not just talks about it.
+Built-in tools and managed skills. Ask Friday to research, write, code, analyze, and automate through the tools and skills currently installed and enabled on this runtime.
 
 </td>
 <td width="50%">
@@ -50,8 +59,8 @@ Drag-and-drop DAG workflow builder. Chain skills, rules, and conditions visually
 <tr>
 <td>
 
-### 10 Messaging Platforms
-Discord · Slack · Telegram · WhatsApp · Signal · LINE · IRC · QQ · Lark · Webchat — one Friday, everywhere you chat. Per-channel allowlists and health monitoring.
+### Messaging Integrations (Env-Gated)
+Discord · Slack · Telegram · WhatsApp · Signal · LINE · IRC · QQ · Lark · Webchat — one Friday, everywhere you chat when the channel credentials and runtime wiring are configured. Per-channel allowlists and health monitoring.
 
 </td>
 <td>
@@ -84,8 +93,8 @@ AI-powered skill generation with self-test before save. Shell safety scanner blo
 </td>
 <td>
 
-### Desktop Automation
-Cross-platform desktop control: click, type, screenshot, scroll, drag on macOS / Windows / Linux. Action recording & replay. All operations pass through the Rules Engine.
+### Desktop Automation (Permission-Gated)
+Cross-platform desktop control: click, type, screenshot, scroll, drag on macOS / Windows / Linux. Action recording & replay. Availability depends on machine permissions, companion readiness, and Rules Engine policy.
 
 </td>
 </tr>
@@ -99,21 +108,21 @@ Hub + satellite architecture. Capability-based workflow placement. Heartbeat mon
 <td>
 
 ### Security & Audit
-JWT + RBAC. SHA-256 hash-chained tamper-evident audit trail. SSRF guards. Capability grants with expiration. Multi-tenant ready. SIEM export (JSONL + webhook).
+JWT + RBAC. SHA-256 hash-chained tamper-evident audit trail. SSRF guards. Capability grants with expiration. Tenant-isolation building blocks exist in code, but multi-tenant runtime surfaces are env-gated and not enabled by default. SIEM export (JSONL + webhook).
 
 </td>
 </tr>
 <tr>
 <td>
 
-### Full Observability
+### Observability (Operator-Facing)
 Distributed tracing across all modules. SLO monitoring with multi-window burn-rate alerting. Cost dashboard per provider. Alert pipeline: webhook, email, Slack, PagerDuty.
 
 </td>
 <td>
 
-### Plug & Play
-Drop in a skill or workflow and it just works — no config, no glue code. Import a `.tgz`, paste a `friday://` deep link, or generate one with AI. Preflight checks handle verification, permissions, and dependencies automatically.
+### Import & Enablement (Bounded)
+Drop in a skill or workflow and Friday can verify and wire it up through imports, deep links, or generation flows. Some assets still depend on source configuration, preflight checks, and runtime permissions.
 
 </td>
 </tr>
@@ -126,8 +135,8 @@ Connect directly to OpenAI, Anthropic, Google, or any compatible provider. Provi
 </td>
 <td>
 
-### Quality Gates & Acceptance
-Per-artifact pass/fail/warn verdicts with evidence chains. Schema, threshold, quality, and custom checks. Determinism > 99.5%. Escape rate < 1%. Every decision auditable.
+### Quality Gates & Acceptance (Advanced)
+Per-artifact pass/fail/warn verdicts with evidence chains. Schema, threshold, quality, and custom checks. Advanced and operator-heavy by default.
 
 </td>
 </tr>
@@ -137,7 +146,7 @@ Per-artifact pass/fail/warn verdicts with evidence chains. Schema, threshold, qu
 
 ## Quick Start
 
-**Option 1 — npm (recommended)**
+**Option 1 — npm package**
 
 ```bash
 npm install -g @thesongzhu/friday
@@ -162,7 +171,7 @@ docker-compose up -d
 # Open http://localhost:3141
 ```
 
-> **First time?** Friday will guide you through setup — connect your API key, pick a persona, and you're ready to go.
+> **First time?** Friday will guide you through setup. The exact path depends on which providers, permissions, and optional surfaces are available on this machine.
 
 ---
 

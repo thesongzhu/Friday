@@ -174,7 +174,14 @@ export function createFridayAutoFixRoutes(
         const { actionId } = ctx.params as { actionId: string };
         const updated = await deps.service.executeAction({ actionId });
         return {
-          action: toActionRecord(deps, updated),
+          action: toActionRecord(deps, updated.details),
+          result: {
+            success: updated.result.success,
+            verificationPassed: updated.result.verificationPassed,
+            rollbackAttempted: updated.result.rollbackAttempted,
+            rollbackSucceeded: updated.result.rollbackSucceeded,
+            ...(updated.result.errorMessage ? { errorMessage: updated.result.errorMessage } : {}),
+          },
         };
       },
     },
@@ -195,7 +202,14 @@ export function createFridayAutoFixRoutes(
         }
         const updated = await deps.service.rollbackAction({ actionId, reason });
         return {
-          action: toActionRecord(deps, updated),
+          action: toActionRecord(deps, updated.details),
+          result: {
+            success: updated.result.success,
+            verificationPassed: updated.result.verificationPassed,
+            rollbackAttempted: updated.result.rollbackAttempted,
+            rollbackSucceeded: updated.result.rollbackSucceeded,
+            ...(updated.result.errorMessage ? { errorMessage: updated.result.errorMessage } : {}),
+          },
         };
       },
     },

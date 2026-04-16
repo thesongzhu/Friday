@@ -253,6 +253,33 @@ function combineSummaries(blocks: readonly FridayContextCompactionBlockSummary[]
   };
 }
 
+function collectPrunedBlockSummaries(params: {
+  originalMessages: readonly FridayProviderContextMessage[];
+  prunedMessages: readonly FridayProviderContextMessage[];
+  blocks: readonly FridayProviderContextCompactionBlock[];
+}): FridayContextCompactionBlockSummary[] {
+  const prunedMessageIds = new Set<string>();
+  const limit = Math.min(params.originalMessages.length, params.prunedMessages.length);
+  for (let index = 0; index < limit; index++) {
+    const original = params.originalMessages[index];
+    const pruned = params.prunedMessages[index];
+    if (!original || !pruned) {
+      continue;
+    }
+    if (original.messageId === pruned.messageId && original.content !== pruned.content) {
+      prunedMessageIds.add(pruned.messageId);
+    }
+  }
+
+  if (prunedMessageIds.size === 0) {
+    return [];
+  }
+
+  return params.blocks
+    .filter((block) => block.messages.some((message) => prunedMessageIds.has(message.messageId)))
+    .map((block) => block.summary);
+}
+
 export function createFridayProviderContextCompactor(deps: {
   estimator: FridayProviderTokenEstimator;
   pruner: FridayProviderContextPruner;
@@ -288,6 +315,11 @@ export function createFridayProviderContextCompactor(deps: {
       const scoredBlocks = scoreBlocks(buildBlocks(prunedMessages), userPrompt);
 
       if (scoredBlocks.length <= MAX_RAW_BLOCKS) {
+        const prunedBlockSummaries = collectPrunedBlockSummaries({
+          originalMessages: messages,
+          prunedMessages,
+          blocks: scoredBlocks,
+        });
         const afterTokens =
           baseTokens +
           estimator.estimateMessagesTokens(
@@ -300,6 +332,9 @@ export function createFridayProviderContextCompactor(deps: {
           keptMessages: prunedMessages,
           droppedMessages: [],
           prunedMessageCount: pruneResult.prunedCount,
+          summary: prunedBlockSummaries.length > 0
+            ? combineSummaries(prunedBlockSummaries)
+            : undefined,
           blocks: scoredBlocks.map((block) => block.summary),
         };
       }

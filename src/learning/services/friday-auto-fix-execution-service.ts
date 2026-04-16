@@ -54,6 +54,15 @@ export interface CreateAutoFixExecutionServiceDeps {
 }
 
 /**
+ * Step kinds that mutate external/runtime state and therefore require an
+ * explicit rollback plan before execution can proceed.
+ */
+export const AUTO_FIX_STEP_KINDS_REQUIRING_ROLLBACK_PLAN: ReadonlySet<FridayAutoFixStepKind> = new Set([
+  "apply_config_patch",
+  "grant_permission",
+]);
+
+/**
  * Default executors perform real operations for each step kind.
  *
  * When hub-level services are available (skill registry, workflow runtime,
@@ -61,7 +70,7 @@ export interface CreateAutoFixExecutionServiceDeps {
  * These defaults handle each kind with best-effort deterministic logic using
  * only the step payload, without requiring external service references.
  */
-const DEFAULT_EXECUTORS: Record<FridayAutoFixStepKind, StepExecutor> = {
+export const DEFAULT_EXECUTORS: Record<FridayAutoFixStepKind, StepExecutor> = {
   retry_node: (step) => {
     // Retry is a signal to the pipeline to re-run the node.
     // The executor validates that the step has a valid target.
@@ -153,7 +162,7 @@ const DEFAULT_EXECUTORS: Record<FridayAutoFixStepKind, StepExecutor> = {
  * external state (e.g. query the skill registry to confirm a skill is
  * disabled, or re-run a health check).
  */
-const DEFAULT_VERIFIERS: Record<FridayAutoFixStepKind, StepVerifier> = {
+export const DEFAULT_VERIFIERS: Record<FridayAutoFixStepKind, StepVerifier> = {
   retry_node: (step) => {
     if (!hasVerifySpec(step)) return true; // no verify spec → auto-pass
     const payload = step.payload as Record<string, unknown> | null;
@@ -288,8 +297,10 @@ export function createFridayAutoFixExecutionService(
         );
       }
 
-      // For Tier 1+, ensure rollback plan exists
-      if (action.riskTier >= 1 && !action.plan.rollbackPlan && !action.rollbackPlan) {
+      const requiresRollbackPlan = action.plan.steps.some((step) =>
+        AUTO_FIX_STEP_KINDS_REQUIRING_ROLLBACK_PLAN.has(step.kind));
+
+      if (requiresRollbackPlan && !action.plan.rollbackPlan && !action.rollbackPlan) {
         return deps.db.withWriteTransaction((db) => {
           const rejected = deps.actionRepo.markRejected(db, actionId, nowIso);
           if (!rejected) throw new FridayDomainError("AUTOFIX_ACTION_NOT_FOUND", `Action ${actionId} not found`, { httpStatus: 404 });

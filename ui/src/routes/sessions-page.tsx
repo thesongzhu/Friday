@@ -77,7 +77,7 @@ function exportSession(sessionKey: string, messages: SessionMessage[], format: "
 }
 
 export function SessionsPage() {
-  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<FridaySessionStatus | "">("");
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const { data: sessions = [], isLoading, isError } = useSessionList({ status: statusFilter || undefined });
   const { data: messages = [] } = useSessionMessages(selectedSession);
@@ -97,13 +97,17 @@ export function SessionsPage() {
         <select
           aria-label={localize(locale, "按状态筛选", "Filter by status")}
           value={statusFilter}
-          onChange={(e) => { setStatusFilter(e.target.value); setSelectedSession(null); }}
+          onChange={(e) => {
+            setStatusFilter(e.target.value as FridaySessionStatus | "");
+            setSelectedSession(null);
+          }}
           className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-1.5 text-sm text-[color:var(--color-text-primary)]"
         >
           <option value="">{localize(locale, "所有状态", "All statuses")}</option>
           <option value="active">{localize(locale, "进行中", "Active")}</option>
-          <option value="completed">{localize(locale, "已完成", "Completed")}</option>
+          <option value="idle">{localize(locale, "空闲", "Idle")}</option>
           <option value="archived">{localize(locale, "已归档", "Archived")}</option>
+          <option value="pruned">{localize(locale, "已清理", "Pruned")}</option>
         </select>
       </div>
 

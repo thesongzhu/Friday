@@ -29,6 +29,7 @@ import { agentApi } from "@/lib/api/agent";
 import { skillsApi } from "@/lib/api/skills";
 import { authStorage } from "@/lib/storage/auth-storage";
 import { systemApi } from "@/lib/api/system";
+import { HIDE_TRUSTED_DEVICE_UI } from "@/lib/feature-flags";
 import type {
   FridaySystemApprovalRule,
   FridaySystemEvent,
@@ -329,6 +330,7 @@ export function AgentPage() {
   const { data: remoteDevices = [] } = useQuery({
     queryKey: systemKeys.remoteDevices(),
     queryFn: () => systemApi.listRemoteDevices(),
+    enabled: !HIDE_TRUSTED_DEVICE_UI,
     retry: 0,
     refetchInterval: 20_000,
   });
@@ -336,6 +338,7 @@ export function AgentPage() {
   const { data: remoteSessions = [] } = useQuery({
     queryKey: systemKeys.remoteSessions(),
     queryFn: () => systemApi.listRemoteSessions({ limit: 20 }),
+    enabled: !HIDE_TRUSTED_DEVICE_UI,
     retry: 0,
     refetchInterval: 15_000,
   });
@@ -1012,7 +1015,6 @@ export function AgentPage() {
               <div className="space-y-4">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Metric label="Health" value={state.health.status} tone={mapTone(state.health.status)} />
-                  <Metric label="Remote Mode" value={session.remoteMode} tone={mapTone(session.remoteMode === "trusted_private_network" ? "active" : "unavailable")} />
                   <Metric label="Workspace" value={state.workspaceRoot} mono />
                   <Metric label="Active Task" value={state.activeTask ?? "None"} />
                   <Metric
@@ -1223,83 +1225,85 @@ export function AgentPage() {
           </div>
         </ShellCard>
 
-        <ShellCard
-          eyebrow={locale === "zh" ? "受信设备" : "Trusted Devices"}
-          title={locale === "zh" ? "远程访问" : "Remote Access"}
-          aside={<StatusPill tone={remoteDevices.some((item) => item.status === "active") ? "success" : "neutral"}>{remoteDevices.length} devices / {remoteSessions.filter((item) => item.status === "active").length} sessions</StatusPill>}
-        >
-          <form
-            className="space-y-3 rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!remoteLabel.trim() || !remoteFingerprint.trim()) {
-                toast.error(locale === "zh" ? "需要标签和指纹" : "Label and fingerprint are required");
-                return;
-              }
-              remoteRegisterMutation.mutate();
-            }}
+        {!HIDE_TRUSTED_DEVICE_UI ? (
+          <ShellCard
+            eyebrow={locale === "zh" ? "受信设备" : "Trusted Devices"}
+            title={locale === "zh" ? "远程访问" : "Remote Access"}
+            aside={<StatusPill tone={remoteDevices.some((item) => item.status === "active") ? "success" : "neutral"}>{remoteDevices.length} devices / {remoteSessions.filter((item) => item.status === "active").length} sessions</StatusPill>}
           >
-            <div className="grid gap-3">
-              <input
-                value={remoteLabel}
-                onChange={(event) => setRemoteLabel(event.target.value)}
-                placeholder={locale === "zh" ? "设备标签" : "Device label"}
-                className="agent-input"
-              />
-              <input
-                value={remoteFingerprint}
-                onChange={(event) => setRemoteFingerprint(event.target.value)}
-                placeholder={locale === "zh" ? "指纹" : "Fingerprint"}
-                className="agent-input"
-              />
-            </div>
-            <p className="text-sm text-[color:var(--color-text-tertiary)]">
-              {locale === "zh" ? "先将浏览器注册为受信设备，然后在下方的设备卡片中注册通行密钥。" : "Register the browser as a trusted device first, then enroll a passkey on the device card below."}
-            </p>
-            <ActionButton type="submit" disabled={remoteRegisterMutation.isPending}>
-              {locale === "zh" ? "注册受信设备" : "Register Trusted Device"}
-            </ActionButton>
-          </form>
-
-          <div className="mt-4 space-y-3">
-            {remoteDevices.length === 0 ? (
-              <p className="text-sm text-[color:var(--color-text-tertiary)]">{locale === "zh" ? "暂无已注册的受信设备。" : "No trusted devices registered yet."}</p>
-            ) : remoteDevices.map((device) => (
-              <RemoteDeviceCard
-                key={device.id}
-                device={device}
-                passkeysSupported={passkeysSupported}
-                onEnrollPasskey={() => remoteEnrollPasskeyMutation.mutate(device.id)}
-                onClearPasskey={() => remoteClearPasskeyMutation.mutate(device.id)}
-                onOpenSession={() => remoteOpenSessionMutation.mutate(device.id)}
-                onRevoke={() => remoteRevokeMutation.mutate(device.id)}
-                enrolling={remoteEnrollPasskeyMutation.isPending && remoteEnrollPasskeyMutation.variables === device.id}
-                clearingPasskey={remoteClearPasskeyMutation.isPending && remoteClearPasskeyMutation.variables === device.id}
-                openingSession={remoteOpenSessionMutation.isPending && remoteOpenSessionMutation.variables === device.id}
-                hasActiveSession={remoteSessions.some((sessionItem) =>
-                  sessionItem.deviceId === device.id && sessionItem.status === "active"
-                )}
-              />
-            ))}
-          </div>
-
-          <div className="mt-4 space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
-              {locale === "zh" ? "远程会话" : "Remote sessions"}
-            </p>
-            {remoteSessions.length === 0 ? (
+            <form
+              className="space-y-3 rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!remoteLabel.trim() || !remoteFingerprint.trim()) {
+                  toast.error(locale === "zh" ? "需要标签和指纹" : "Label and fingerprint are required");
+                  return;
+                }
+                remoteRegisterMutation.mutate();
+              }}
+            >
+              <div className="grid gap-3">
+                <input
+                  value={remoteLabel}
+                  onChange={(event) => setRemoteLabel(event.target.value)}
+                  placeholder={locale === "zh" ? "设备标签" : "Device label"}
+                  className="agent-input"
+                />
+                <input
+                  value={remoteFingerprint}
+                  onChange={(event) => setRemoteFingerprint(event.target.value)}
+                  placeholder={locale === "zh" ? "指纹" : "Fingerprint"}
+                  className="agent-input"
+                />
+              </div>
               <p className="text-sm text-[color:var(--color-text-tertiary)]">
-                {locale === "zh" ? "暂无远程会话记录。从私有网络连接后，受信设备的活跃会话将显示在此。" : "No remote sessions recorded yet. Active trusted-device sessions will appear here once connected from a private network."}
+                {locale === "zh" ? "先将浏览器注册为受信设备，然后在下方的设备卡片中注册通行密钥。" : "Register the browser as a trusted device first, then enroll a passkey on the device card below."}
               </p>
-            ) : remoteSessions.map((sessionItem) => (
-              <RemoteSessionCard
-                key={sessionItem.id}
-                session={sessionItem}
-                onClose={() => remoteCloseSessionMutation.mutate(sessionItem.id)}
-              />
-            ))}
-          </div>
-        </ShellCard>
+              <ActionButton type="submit" disabled={remoteRegisterMutation.isPending}>
+                {locale === "zh" ? "注册受信设备" : "Register Trusted Device"}
+              </ActionButton>
+            </form>
+
+            <div className="mt-4 space-y-3">
+              {remoteDevices.length === 0 ? (
+                <p className="text-sm text-[color:var(--color-text-tertiary)]">{locale === "zh" ? "暂无已注册的受信设备。" : "No trusted devices registered yet."}</p>
+              ) : remoteDevices.map((device) => (
+                <RemoteDeviceCard
+                  key={device.id}
+                  device={device}
+                  passkeysSupported={passkeysSupported}
+                  onEnrollPasskey={() => remoteEnrollPasskeyMutation.mutate(device.id)}
+                  onClearPasskey={() => remoteClearPasskeyMutation.mutate(device.id)}
+                  onOpenSession={() => remoteOpenSessionMutation.mutate(device.id)}
+                  onRevoke={() => remoteRevokeMutation.mutate(device.id)}
+                  enrolling={remoteEnrollPasskeyMutation.isPending && remoteEnrollPasskeyMutation.variables === device.id}
+                  clearingPasskey={remoteClearPasskeyMutation.isPending && remoteClearPasskeyMutation.variables === device.id}
+                  openingSession={remoteOpenSessionMutation.isPending && remoteOpenSessionMutation.variables === device.id}
+                  hasActiveSession={remoteSessions.some((sessionItem) =>
+                    sessionItem.deviceId === device.id && sessionItem.status === "active"
+                  )}
+                />
+              ))}
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
+                {locale === "zh" ? "远程会话" : "Remote sessions"}
+              </p>
+              {remoteSessions.length === 0 ? (
+                <p className="text-sm text-[color:var(--color-text-tertiary)]">
+                  {locale === "zh" ? "暂无远程会话记录。从私有网络连接后，受信设备的活跃会话将显示在此。" : "No remote sessions recorded yet. Active trusted-device sessions will appear here once connected from a private network."}
+                </p>
+              ) : remoteSessions.map((sessionItem) => (
+                <RemoteSessionCard
+                  key={sessionItem.id}
+                  session={sessionItem}
+                  onClose={() => remoteCloseSessionMutation.mutate(sessionItem.id)}
+                />
+              ))}
+            </div>
+          </ShellCard>
+        ) : null}
 
         <ShellCard
           eyebrow={locale === "zh" ? "事件时间线" : "Event Timeline"}

@@ -7,6 +7,10 @@ import type {
   FridayProviderProfile,
   FridayResolvedProviderRoute,
 } from "../model/friday-provider.types.js";
+import {
+  normalizeFridayModelRoutingConfig,
+  normalizeFridayProviderSupportedModels,
+} from "../model/friday-provider.types.js";
 
 // ─── Key redaction ───
 
@@ -135,10 +139,11 @@ function resolveRequestedModelForProvider(
   supportedModels: string[],
 ): string | null {
   if (!requestedModel.trim()) return null;
-  if (supportedModels.length === 0) return null;
+  const normalizedSupportedModels = normalizeFridayProviderSupportedModels(supportedModels);
+  if (normalizedSupportedModels.length === 0) return null;
 
   const req = normalizeModelId(requestedModel);
-  const normalized = supportedModels.map((raw) => ({
+  const normalized = normalizedSupportedModels.map((raw) => ({
     raw,
     norm: normalizeModelId(raw),
   }));
@@ -157,7 +162,7 @@ function resolveImplicitModelForProvider(params: {
   provider: FridayProviderProfile;
 }): string {
   const { routingDefaultModel, provider } = params;
-  const supportedModels = provider.config.supportedModels ?? [];
+  const supportedModels = normalizeFridayProviderSupportedModels(provider.config.supportedModels);
   const requested = routingDefaultModel?.trim();
 
   if (requested) {
@@ -255,7 +260,8 @@ export function createFridayProviderFallback(
 
   return {
     resolveCandidates(params) {
-      const { routing, providers, requestedModel } = params;
+      const { providers, requestedModel } = params;
+      const routing = normalizeFridayModelRoutingConfig(params.routing);
       const providerMap = new Map<string, FridayProviderProfile>();
       for (const p of providers) {
         providerMap.set(p.id, p);
@@ -286,7 +292,7 @@ export function createFridayProviderFallback(
         if (requested) {
           const matched = resolveRequestedModelForProvider(
             requested,
-            provider.config.supportedModels,
+            normalizeFridayProviderSupportedModels(provider.config.supportedModels),
           );
           if (!matched) continue;
           candidates.push({ provider, model: matched });

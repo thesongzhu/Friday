@@ -115,7 +115,8 @@ export interface FridayObservabilityRoutesDeps {
   };
   /** Optional: heartbeat system status. */
   heartbeat?: {
-    getStatus(): unknown | Promise<unknown>;
+    getStatus?(): unknown | Promise<unknown>;
+    trigger?(): unknown | Promise<unknown>;
   };
 }
 
@@ -435,7 +436,7 @@ export function createFridayObservabilityRoutes(
         ]
       : []),
     // ─── Heartbeat status endpoint ───
-    ...(deps.heartbeat
+    ...(deps.heartbeat?.getStatus
       ? [
           {
             operationId: "observability.heartbeat.status",
@@ -443,7 +444,20 @@ export function createFridayObservabilityRoutes(
             path: "/v1/heartbeat/status",
             auth: { public: false as const, anyOfScopes: ["diagnosis.read" as const] },
             async handler() {
-              return deps.heartbeat!.getStatus();
+              return deps.heartbeat!.getStatus!();
+            },
+          },
+        ]
+      : []),
+    ...(deps.heartbeat?.trigger
+      ? [
+          {
+            operationId: "observability.heartbeat.trigger",
+            method: "POST" as const,
+            path: "/v1/heartbeat/trigger",
+            auth: { public: false as const, anyOfScopes: ["diagnosis.write" as const] },
+            async handler() {
+              return deps.heartbeat!.trigger!();
             },
           },
         ]
