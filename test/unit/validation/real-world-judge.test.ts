@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { selectJudgeLane } from "../../../validation/real-world/lib/env-truth.mjs";
 import { finalizeArtifact, runLlmJudge } from "../../../validation/real-world/lib/judge.mjs";
 
 describe("real-world judge gating", () => {
@@ -61,8 +62,8 @@ describe("real-world judge gating", () => {
       },
       envTruth: {
         providerLanes: {
-          default: { providerId: "provider-default", model: "claude-sonnet-4-20250514" },
-          fallback: { providerId: "provider-fallback", model: "gpt-4o-mini" },
+          default: { id: "default-provider-default", providerId: "provider-default", model: "claude-sonnet-4-20250514", backendKind: "http" },
+          fallback: { id: "fallback-provider-fallback", providerId: "provider-fallback", model: "gpt-4o-mini", backendKind: "http" },
         },
         enabledProviderLanes: [],
       },
@@ -73,6 +74,18 @@ describe("real-world judge gating", () => {
     expect(judge.verdict).toBe("pass");
     expect(judge.confidence).toBe(0.81);
     expect(judge.reasons).toEqual(["deterministic evidence satisfied"]);
+  });
+
+  it("skips judge execution when the only alternate lane is CLI-only", () => {
+    const judgeLane = selectJudgeLane({
+      providerLanes: {
+        default: { id: "default-provider-default", providerId: "provider-default", model: "gpt-4o-mini", backendKind: "http" },
+        fallback: { id: "fallback-provider-cli", providerId: "provider-cli", model: "claude-sonnet-4-20250514", backendKind: "cli" },
+      },
+      enabledProviderLanes: [],
+    }, { providerId: "provider-default", backendKind: "http" });
+
+    expect(judgeLane).toBeNull();
   });
 
   it("keeps a passed artifact green when the judge is disabled", () => {

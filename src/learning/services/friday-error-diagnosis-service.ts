@@ -50,6 +50,25 @@ const INTERNAL_RUNTIME_AUTO_FIX_SOURCES = new Set([
   "skill_generator",
 ]);
 
+function isStructuredInternalRuntimeFailure(
+  incident: FridayErrorIncidentEntity,
+): boolean {
+  const source = typeof incident.context.source === "string"
+    ? incident.context.source
+    : undefined;
+  if (!source) {
+    return false;
+  }
+  if (INTERNAL_RUNTIME_AUTO_FIX_SOURCES.has(source)) {
+    return true;
+  }
+  if (source !== "workflow_runtime" || incident.category !== "workflow") {
+    return false;
+  }
+  return typeof incident.runId === "string" && incident.runId.trim().length > 0
+    && typeof incident.nodeId === "string" && incident.nodeId.trim().length > 0;
+}
+
 export function createFridayErrorDiagnosisService(
   deps: CreateErrorDiagnosisServiceDeps,
 ): FridayErrorDiagnosisService {
@@ -125,10 +144,7 @@ export function createFridayErrorDiagnosisService(
 
     // Internal structured runtime failures are deterministic product signals,
     // so they can safely enter the supervised loop at lower recurrence counts.
-    const source = typeof incident.context.source === "string"
-      ? incident.context.source
-      : undefined;
-    if (source && INTERNAL_RUNTIME_AUTO_FIX_SOURCES.has(source)) {
+    if (isStructuredInternalRuntimeFailure(incident)) {
       confidence = clamp01(confidence + 0.3);
     }
 
@@ -166,6 +182,17 @@ export function createFridayErrorDiagnosisService(
 
     // 7. Build candidate plans from matched lessons
     const candidatePlans: FridayAutoFixPlan[] = [];
+    const basePayload: JsonObject = {
+      incidentId: incident.incidentId,
+      category: incident.category,
+      signature: incident.signature,
+      ...(typeof incident.runId === "string" ? { runId: incident.runId } : {}),
+      ...(typeof incident.nodeId === "string" ? { nodeId: incident.nodeId } : {}),
+      ...(typeof incident.context.providerId === "string" ? { providerId: incident.context.providerId } : {}),
+      ...(typeof incident.context.actualProviderId === "string" ? { actualProviderId: incident.context.actualProviderId } : {}),
+      ...(typeof incident.context.model === "string" ? { model: incident.context.model } : {}),
+      ...(typeof incident.context.actualModel === "string" ? { actualModel: incident.context.actualModel } : {}),
+    };
 
     if (autoFixEligible && matchedLessons.length > 0) {
       const TIER_1_KINDS = new Set(["apply_config_patch", "grant_permission"]);
@@ -182,6 +209,7 @@ export function createFridayErrorDiagnosisService(
               kind: planStepKind,
               target,
               payload: {
+                ...basePayload,
                 lessonId: l.id,
                 fix: l.fix,
                 ...(l.mitigation ?? {}),
@@ -209,7 +237,7 @@ export function createFridayErrorDiagnosisService(
                 stepId: deps.idGenerator(),
                 kind: planStepKind,
                 target,
-                payload: { revert: true, lessonId: l.id },
+                payload: { revert: true, ...basePayload, lessonId: l.id },
               },
             ],
           };

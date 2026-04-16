@@ -20,6 +20,10 @@ import type {
   FridayProviderValidationState,
   FridayResolvedProviderRoute,
 } from "../model/friday-provider.types.js";
+import {
+  normalizeFridayModelRoutingConfig,
+  normalizeFridayProviderSupportedModels,
+} from "../model/friday-provider.types.js";
 
 import type {
   FridayCostRoutingDecision,
@@ -872,6 +876,8 @@ export function createFridayProviderService(
       backendKind,
       deploymentKind: profile.config.deploymentKind ?? preset.deploymentKind,
       regionTag: profile.config.regionTag ?? preset.regionTag,
+      keySource: profile.config.keySource ?? { kind: "none" },
+      supportedModels: normalizeFridayProviderSupportedModels(profile.config.supportedModels),
       httpConfig: backendKind === "http"
         ? {
             headersPolicy: profile.config.httpConfig?.headersPolicy ?? "custom",
@@ -926,6 +932,7 @@ export function createFridayProviderService(
     let backendHealth: FridayProviderHealthStatus = "healthy";
     let authHealth: FridayProviderHealthStatus = "healthy";
     let cliSession: FridayProviderDoctorReport["cliSession"];
+    const validationState = normalized.config.validation;
 
     if (!normalized.enabled) {
       backendHealth = "degraded";
@@ -954,6 +961,29 @@ export function createFridayProviderService(
     } else if (normalized.config.keySource.kind === "none" && normalized.config.authMode !== "none") {
       authHealth = "missing";
       reasons.push("credential_missing");
+    }
+
+    if (validationState?.status === "failed") {
+      switch (validationState.errorCode) {
+        case "PROVIDER_ENV_VAR_MISSING":
+          authHealth = "missing";
+          break;
+        case "PROVIDER_AUTH_INVALID":
+        case "PROVIDER_PAYMENT_REQUIRED":
+          if (authHealth === "healthy" || authHealth === "status_unknown") {
+            authHealth = "degraded";
+          }
+          break;
+        case "PROVIDER_UNREACHABLE":
+        case "PROVIDER_MODEL_UNAVAILABLE":
+        case "PROVIDER_UNKNOWN_ERROR":
+        default:
+          if (backendHealth === "healthy") {
+            backendHealth = "degraded";
+          }
+          break;
+      }
+      reasons.push("validation_failed");
     }
 
     if ((normalized.config.supportedModels?.length ?? 0) === 0) {
@@ -1074,11 +1104,13 @@ export function createFridayProviderService(
         .get(ROUTING_SETTINGS_KEY) as { value_json: string } | undefined,
     );
     if (!row) return null;
-    return safeJsonParse<FridayModelRoutingConfig>(row.value_json) ?? null;
+    const parsed = safeJsonParse<FridayModelRoutingConfig>(row.value_json);
+    return parsed ? normalizeFridayModelRoutingConfig(parsed) : null;
   }
 
   function saveRoutingConfig(config: FridayModelRoutingConfig): void {
-    const json = JSON.stringify(config);
+    const normalized = normalizeFridayModelRoutingConfig(config);
+    const json = JSON.stringify(normalized);
     const now = deps.nowIso();
     deps.db.withWriteTransaction((db) => {
       const existing = db
@@ -1100,51 +1132,53 @@ export function createFridayProviderService(
   }
 
   function validateRoutingConfig(input: FridayModelRoutingConfig): FridayModelRoutingConfig {
+    const normalizedInput = normalizeFridayModelRoutingConfig(input);
     const providers = deps.db.withReadConnection((db) => profileRepo.list(db));
     const providerMap = new Map<string, FridayProviderProfile>();
     for (const provider of providers) {
       providerMap.set(provider.id, provider);
     }
 
-    if (!input.defaultProviderId) {
-      if (input.fallbackProviderIds.length > 0) {
+    if (!normalizedInput.defaultProviderId) {
+      if (normalizedInput.fallbackProviderIds.length > 0) {
         throw new FridayDomainError(
           "VALIDATION_ERROR",
           "fallbackProviderIds cannot be set when defaultProviderId is empty",
           { httpStatus: 400 },
         );
       }
-      return input;
+      return normalizedInput;
     }
 
-    const defaultProvider = providerMap.get(input.defaultProviderId);
+    const defaultProvider = providerMap.get(normalizedInput.defaultProviderId);
     if (!defaultProvider) {
       throw new FridayDomainError(
         "VALIDATION_ERROR",
-        `defaultProviderId "${input.defaultProviderId}" does not match an existing provider`,
+        `defaultProviderId "${normalizedInput.defaultProviderId}" does not match an existing provider`,
         { httpStatus: 400 },
       );
     }
     if (!defaultProvider.enabled) {
       throw new FridayDomainError(
         "VALIDATION_ERROR",
-        `defaultProviderId "${input.defaultProviderId}" is disabled`,
+        `defaultProviderId "${normalizedInput.defaultProviderId}" is disabled`,
         { httpStatus: 400 },
       );
     }
+    const supportedModels = normalizeFridayProviderSupportedModels(defaultProvider.config.supportedModels);
     if (
-      input.defaultModel &&
-      defaultProvider.config.supportedModels.length > 0 &&
-      !defaultProvider.config.supportedModels.includes(input.defaultModel)
+      normalizedInput.defaultModel &&
+      supportedModels.length > 0 &&
+      !supportedModels.includes(normalizedInput.defaultModel)
     ) {
       throw new FridayDomainError(
         "VALIDATION_ERROR",
-        `defaultModel "${input.defaultModel}" is not supported by provider "${input.defaultProviderId}"`,
+        `defaultModel "${normalizedInput.defaultModel}" is not supported by provider "${normalizedInput.defaultProviderId}"`,
         { httpStatus: 400 },
       );
     }
 
-    for (const fallbackProviderId of input.fallbackProviderIds) {
+    for (const fallbackProviderId of normalizedInput.fallbackProviderIds) {
       const fallbackProvider = providerMap.get(fallbackProviderId);
       if (!fallbackProvider) {
         throw new FridayDomainError(
@@ -1162,29 +1196,30 @@ export function createFridayProviderService(
       }
     }
 
-    return input;
+    return normalizedInput;
   }
 
   function explainNoCandidates(
     routing: FridayModelRoutingConfig,
     providers: FridayProviderProfile[],
   ): string {
+    const normalizedRouting = normalizeFridayModelRoutingConfig(routing);
     const providerMap = new Map<string, FridayProviderProfile>();
     for (const provider of providers) {
       providerMap.set(provider.id, provider);
     }
 
     const details: string[] = [];
-    if (routing.defaultProviderId) {
+    if (normalizedRouting.defaultProviderId) {
       details.push(
         describeRoutingReference(
           providerMap,
           "defaultProviderId",
-          routing.defaultProviderId,
+          normalizedRouting.defaultProviderId,
         ),
       );
     }
-    for (const fallbackProviderId of routing.fallbackProviderIds) {
+    for (const fallbackProviderId of normalizedRouting.fallbackProviderIds) {
       details.push(
         describeRoutingReference(
           providerMap,
@@ -1420,7 +1455,7 @@ export function createFridayProviderService(
         keySource: keySource.kind === "secret-ref" && keyInput.inlineSecret !== null
           ? { kind: "secret-ref", refKey: secretRefKey(id) }
           : keySource,
-        supportedModels: input.supportedModels,
+        supportedModels: normalizeFridayProviderSupportedModels(input.supportedModels),
         headers: input.headers,
         httpConfig: backendKind === "http" ? { headersPolicy: "custom" } : undefined,
         cliConfig: backendKind === "cli" ? input.cliConfig : undefined,
@@ -1574,7 +1609,9 @@ export function createFridayProviderService(
         regionTag: patch.regionTag ?? existing.config.regionTag,
         ...(oauthProvider != null ? { oauthProvider } : {}),
         keySource,
-        supportedModels: patch.supportedModels ?? existing.config.supportedModels,
+        supportedModels: normalizeFridayProviderSupportedModels(
+          patch.supportedModels ?? existing.config.supportedModels,
+        ),
         headers: patch.headers ?? existing.config.headers,
         httpConfig: nextBackendKind === "http"
           ? existing.config.httpConfig ?? { headersPolicy: "custom" }
@@ -1797,18 +1834,15 @@ export function createFridayProviderService(
     async getRoutingConfig() {
       const config = loadRoutingConfig();
       if (!config) {
-        return {
-          defaultProviderId: "",
-          fallbackProviderIds: [],
-        };
+        return normalizeFridayModelRoutingConfig(null);
       }
-      return config;
+      return normalizeFridayModelRoutingConfig(config);
     },
 
     async setRoutingConfig(input) {
       const validated = validateRoutingConfig(input);
       saveRoutingConfig(validated);
-      return validated;
+      return normalizeFridayModelRoutingConfig(validated);
     },
 
     async resolveRoute(requestedModel, requestedProviderId) {

@@ -367,6 +367,7 @@ export interface CreateFridayWorkflowRuntimeDeps {
     triggerPayload?: JsonObject;
     context?: JsonObject;
   }) => Promise<{ contextPatch?: JsonObject } | void>;
+  onRunCompleted?: CreateWorkflowExecutionServiceDeps["onRunCompleted"];
 }
 
 /** @deprecated Use `CreateFridayWorkflowRuntimeDeps` instead. */
@@ -1068,68 +1069,85 @@ export function createFridayWorkflowRuntime(
         success: input.status === "completed",
       });
     } : undefined,
-    onRunCompleted: pipelineEnabled ? async (input) => {
-      const workflow = deps.db.withReadConnection((db) =>
-        workflowRepo.getWorkflowById(db, input.workflowId),
-      );
-      const workflowType = workflow?.slug ?? "workflow";
-      const tags = workflow?.tags ?? [];
-      const toolsUsed = input.plan.compiledGraph.graph.nodes
-        .map((node) => asRecord(node.config))
-        .flatMap((config) => [asString(config.skillId), asString(config.ref), asString(config.toolId)])
-        .filter((item): item is string => typeof item === "string");
-      const parameterKeys = Array.from(new Set(
-        input.plan.compiledGraph.graph.nodes.flatMap((node) => Object.keys(asRecord(node.config.args))),
-      ));
+    onRunCompleted: async (input) => {
+      if (pipelineEnabled) {
+        const workflow = deps.db.withReadConnection((db) =>
+          workflowRepo.getWorkflowById(db, input.workflowId),
+        );
+        const workflowType = workflow?.slug ?? "workflow";
+        const tags = workflow?.tags ?? [];
+        const toolsUsed = input.plan.compiledGraph.graph.nodes
+          .map((node) => asRecord(node.config))
+          .flatMap((config) => [asString(config.skillId), asString(config.ref), asString(config.toolId)])
+          .filter((item): item is string => typeof item === "string");
+        const parameterKeys = Array.from(new Set(
+          input.plan.compiledGraph.graph.nodes.flatMap((node) => Object.keys(asRecord(node.config.args))),
+        ));
 
-      const feedback = await playbookBridge.recordFeedback({
-        runId: input.runId,
-        workflowId: input.workflowId,
-        workflowType,
-        tags,
-        nodeSequence: input.plan.compiledGraph.graph.nodes.map((node) => ({
-          nodeType: node.type,
-          adapterType: asString((node.config as Record<string, unknown>).actionType),
-        })),
-        toolsUsed,
-        parameterKeys,
-        durationMs: 0,
-        cost: {
-          tokenCost: 0,
-          apiCallCost: 0,
-          latencyMs: 0,
-        },
-        success: input.status === "completed",
-        completedAt: deps.nowIso(),
-      });
-
-      pipelineEventEmitter.emit(
-        "pipeline.playbook.feedback.recorded",
-        {
-          candidateId: feedback.candidate?.id ?? null,
-          success: input.status === "completed",
-          durationMs: 0,
-        },
-        {
+        const feedback = await playbookBridge.recordFeedback({
           runId: input.runId,
           workflowId: input.workflowId,
-        },
-      );
+          workflowType,
+          tags,
+          nodeSequence: input.plan.compiledGraph.graph.nodes.map((node) => ({
+            nodeType: node.type,
+            adapterType: asString((node.config as Record<string, unknown>).actionType),
+          })),
+          toolsUsed,
+          parameterKeys,
+          durationMs: 0,
+          cost: {
+            tokenCost: 0,
+            apiCallCost: 0,
+            latencyMs: 0,
+          },
+          success: input.status === "completed",
+          completedAt: deps.nowIso(),
+        });
 
-      if (feedback.promotionDecision?.decision === "promote" && feedback.candidate) {
-        if (feedback.candidate.promotedPlaybookId) {
-          const version = versionManager.evolve(
-            feedback.candidate.promotedPlaybookId,
-            feedback.candidate,
-            "Auto-evolved from workflow feedback",
-          );
-          if (version) {
-            const score = await scoreCalculator.recalculate(version.playbookId);
+        pipelineEventEmitter.emit(
+          "pipeline.playbook.feedback.recorded",
+          {
+            candidateId: feedback.candidate?.id ?? null,
+            success: input.status === "completed",
+            durationMs: 0,
+          },
+          {
+            runId: input.runId,
+            workflowId: input.workflowId,
+          },
+        );
+
+        if (feedback.promotionDecision?.decision === "promote" && feedback.candidate) {
+          if (feedback.candidate.promotedPlaybookId) {
+            const version = versionManager.evolve(
+              feedback.candidate.promotedPlaybookId,
+              feedback.candidate,
+              "Auto-evolved from workflow feedback",
+            );
+            if (version) {
+              const score = await scoreCalculator.recalculate(version.playbookId);
+              pipelineEventEmitter.emit(
+                "pipeline.playbook.promoted",
+                {
+                  candidateId: feedback.candidate.id,
+                  playbookId: version.playbookId,
+                  compositeScore: score.compositeScore,
+                },
+                {
+                  runId: input.runId,
+                  workflowId: input.workflowId,
+                },
+              );
+            }
+          } else {
+            const created = versionManager.createFromCandidate(feedback.candidate);
+            const score = await scoreCalculator.recalculate(created.playbook.id);
             pipelineEventEmitter.emit(
               "pipeline.playbook.promoted",
               {
                 candidateId: feedback.candidate.id,
-                playbookId: version.playbookId,
+                playbookId: created.playbook.id,
                 compositeScore: score.compositeScore,
               },
               {
@@ -1138,24 +1156,11 @@ export function createFridayWorkflowRuntime(
               },
             );
           }
-        } else {
-          const created = versionManager.createFromCandidate(feedback.candidate);
-          const score = await scoreCalculator.recalculate(created.playbook.id);
-          pipelineEventEmitter.emit(
-            "pipeline.playbook.promoted",
-            {
-              candidateId: feedback.candidate.id,
-              playbookId: created.playbook.id,
-              compositeScore: score.compositeScore,
-            },
-            {
-              runId: input.runId,
-              workflowId: input.workflowId,
-            },
-          );
         }
       }
-    } : undefined,
+
+      await deps.onRunCompleted?.(input);
+    },
     requestNodeApproval: async (input) => {
       if (approvalCallback) {
         await approvalCallback(input);

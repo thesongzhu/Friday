@@ -41,8 +41,9 @@ export function createFridayProviderContextPruner(): FridayProviderContextPruner
         const distanceFromEnd = totalMessages - 1 - i;
         const isStale = distanceFromEnd >= STALE_TURN_DISTANCE;
         const isLarge = msg.content.length > LARGE_CONTENT_CHARS;
+        const isToolResult = msg.role === "tool-result";
 
-        if (isStale && isLarge) {
+        if (isLarge && (isStale || isToolResult)) {
           // Retain head + "[...pruned...]" + tail
           const head = msg.content.slice(0, RETAIN_HEAD_CHARS);
           const tail = msg.content.slice(-RETAIN_TAIL_CHARS);

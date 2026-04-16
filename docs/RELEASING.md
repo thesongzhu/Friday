@@ -11,13 +11,14 @@ This document defines the release process for Friday.
 
 ## Release Quality Gate
 
-Run this from the repository root before tagging:
+Run both of these from the repository root before tagging:
 
 ```bash
+npm run release:verify:repo
 npm run release:verify
 ```
 
-This verifies:
+`release:verify:repo` verifies deterministic repo health:
 
 - typecheck
 - lint
@@ -26,6 +27,14 @@ This verifies:
 - migration/adversarial/SSD quality checks
 - install smoke test (`npm pack` + isolated install/run)
 - release artifact validation (`release:check`)
+
+`release:verify` verifies live proof only:
+
+- real green gate against a live Friday runtime
+- no-mock leak scan over proof inputs
+- current truth-audit artifacts
+
+Do not tag a release if `release:verify` is green but the truth artifacts still conclude `shipable with explicit de-scope` or `not shipable` and the release notes do not carry that boundary forward.
 
 ## Release Artifacts (Must Be Present)
 
@@ -37,6 +46,12 @@ Before tagging, confirm these release surfaces are complete:
 - `LICENSE` is present (MIT)
 - `.github/SECURITY.md` is current
 - latest `CI` workflow run for `main` is green
+- current runtime snapshot is captured
+- current claim matrix is present
+- current defect ledger is present
+- current isolated review result is present
+- no-mock contamination check for the proof inputs passes
+- release verdict is explicitly recorded as `shipable as-is`, `shipable with explicit de-scope`, or `not shipable`
 
 ## Standard Release (npm + GitHub Release)
 
@@ -47,15 +62,17 @@ Before tagging, confirm these release surfaces are complete:
 npm version <patch|minor|major> --no-git-tag-version
 ```
 
-3. Run `npm run release:verify` again.
-4. Commit release metadata:
+3. Run `npm run release:verify:repo` again.
+4. Run `npm run release:verify` again.
+5. Link the current runtime snapshot, claim matrix, defect ledger, isolated review result, and ship verdict in the release notes.
+6. Commit release metadata:
 
 ```bash
 git add package.json package-lock.json CHANGELOG.md
 git commit -m "chore(release): vX.Y.Z"
 ```
 
-5. Create and push a tag:
+7. Create and push a tag:
 
 ```bash
 git tag vX.Y.Z
@@ -63,7 +80,7 @@ git push origin main
 git push origin vX.Y.Z
 ```
 
-6. `release.yml` runs on the tag:
+8. `release.yml` runs on the tag:
    - re-runs release verification
    - verifies `tag == package.json version`
    - publishes to npm when mode allows and credentials are available

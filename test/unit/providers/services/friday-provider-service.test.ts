@@ -9,6 +9,7 @@ import { createFridayPreferenceFactRepository } from "#learning";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
 
 import type { FridayProviderService } from "#providers";
+import type { FridayModelRoutingConfig } from "#providers";
 
 describe("FridayProviderService", () => {
   let db: FridaySqliteLayer;
@@ -288,6 +289,33 @@ describe("FridayProviderService", () => {
       const list = await service.listProviders();
       expect(list).toHaveLength(2);
     });
+
+    it("normalizes legacy provider configs missing supportedModels", async () => {
+      db.withWriteTransaction((conn) => {
+        conn.prepare(
+          `INSERT INTO provider_profiles
+           (id, kind, display_name, endpoint_url, enabled, default_model, config_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          "legacy-provider",
+          "openai",
+          "Legacy Provider",
+          "https://legacy.test",
+          1,
+          "gpt-4o",
+          JSON.stringify({
+            api: "openai-completions",
+            authMode: "api-key",
+          }),
+          NOW,
+          NOW,
+        );
+      });
+
+      const [provider] = await service.listProviders();
+      expect(provider.config.supportedModels).toEqual([]);
+      expect(provider.config.keySource).toEqual({ kind: "none" });
+    });
   });
 
   describe("getProvider", () => {
@@ -564,6 +592,44 @@ describe("FridayProviderService", () => {
         activeProfileKey: "default",
       });
     });
+
+    it("surfaces failed validation state in doctor reports", async () => {
+      const profile = await service.createProvider({
+        kind: "openai",
+        name: "OpenAI Missing Env",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "$OPENAI_API_KEY",
+        supportedModels: ["gpt-4o"],
+        validateOnSave: false,
+      });
+
+      db.withWriteTransaction((conn) => {
+        conn.prepare(
+          `UPDATE provider_profiles
+              SET config_json = ?, updated_at = ?
+            WHERE id = ?`,
+        ).run(
+          JSON.stringify({
+            ...profile.config,
+            validation: {
+              status: "failed",
+              checkedAt: NOW,
+              errorCode: "PROVIDER_ENV_VAR_MISSING",
+              errorMessage: "Environment variable is missing",
+            },
+          }),
+          NOW,
+          profile.id,
+        );
+      });
+
+      const report = await service.doctorProvider(profile.id);
+      expect(report.authHealth).toBe("missing");
+      expect(report.routingEligible).toBe(false);
+      expect(report.reasons).toContain("validation_failed");
+    });
   });
 
   describe("routing config", () => {
@@ -571,6 +637,30 @@ describe("FridayProviderService", () => {
       const config = await service.getRoutingConfig();
       expect(config.defaultProviderId).toBe("");
       expect(config.fallbackProviderIds).toEqual([]);
+    });
+
+    it("normalizes legacy routing rows missing fallbackProviderIds", async () => {
+      db.withWriteTransaction((conn) => {
+        conn.prepare(
+          `INSERT INTO hub_settings (key, value_json, revision, created_at, updated_at)
+           VALUES (?, ?, 1, ?, ?)`,
+        ).run(
+          "llm.routing.v1",
+          JSON.stringify({
+            defaultProviderId: "legacy-provider",
+            defaultModel: "gpt-4o",
+          }),
+          NOW,
+          NOW,
+        );
+      });
+
+      const config = await service.getRoutingConfig();
+      expect(config).toEqual({
+        defaultProviderId: "legacy-provider",
+        defaultModel: "gpt-4o",
+        fallbackProviderIds: [],
+      });
     });
 
     it("set and get roundtrip", async () => {
@@ -666,6 +756,30 @@ describe("FridayProviderService", () => {
       expect(config.defaultModel).toBe("claude-3");
     });
 
+    it("normalizes routing input when fallbackProviderIds is omitted", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "P1",
+        baseUrl: "https://p1.test",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+
+      const config = await service.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        defaultModel: "gpt-4o",
+      } as FridayModelRoutingConfig);
+
+      expect(config).toEqual({
+        defaultProviderId: "test-id-0001",
+        defaultModel: "gpt-4o",
+        fallbackProviderIds: [],
+      });
+    });
+
     it("rejects an unknown defaultProviderId", async () => {
       await expect(
         service.setRoutingConfig({
@@ -704,6 +818,47 @@ describe("FridayProviderService", () => {
       await expect(service.resolveRoute()).rejects.toThrow(
         "No model routing configured",
       );
+    });
+
+    it("resolves legacy providers missing supportedModels without crashing", async () => {
+      db.withWriteTransaction((conn) => {
+        conn.prepare(
+          `INSERT INTO provider_profiles
+           (id, kind, display_name, endpoint_url, enabled, default_model, config_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          "legacy-provider",
+          "openai",
+          "Legacy Provider",
+          "https://legacy.test",
+          1,
+          "gpt-4o",
+          JSON.stringify({
+            api: "openai-completions",
+            authMode: "api-key",
+            keySource: { kind: "none" },
+          }),
+          NOW,
+          NOW,
+        );
+
+        conn.prepare(
+          `INSERT INTO hub_settings (key, value_json, revision, created_at, updated_at)
+           VALUES (?, ?, 1, ?, ?)`,
+        ).run(
+          "llm.routing.v1",
+          JSON.stringify({
+            defaultProviderId: "legacy-provider",
+            defaultModel: "gpt-4o",
+          }),
+          NOW,
+          NOW,
+        );
+      });
+
+      const route = await service.resolveRoute();
+      expect(route.provider.id).toBe("legacy-provider");
+      expect(route.model).toBe("gpt-4o");
     });
 
     it("resolves the default provider", async () => {

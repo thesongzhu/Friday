@@ -119,6 +119,24 @@ describe("FridaySessionKey", () => {
       expect(parts.canonicalKey).toBe("discord:default:user1");
     });
 
+    it("parses legacy channel-scoped key as the real channel kind", () => {
+      const parts = parseFridaySessionKey("channel:irc:friday-codex-audit");
+      expect(parts.kind).toBe("conversation");
+      expect(parts.channel).toBe("irc");
+      expect(parts.accountId).toBe("default");
+      expect(parts.chatId).toBe("friday-codex-audit");
+      expect(parts.canonicalKey).toBe("channel:irc:friday-codex-audit");
+    });
+
+    it("parses legacy system-scoped key into canonical conversation parts", () => {
+      const parts = parseFridaySessionKey("system:heartbeat");
+      expect(parts.kind).toBe("conversation");
+      expect(parts.channel).toBe("system");
+      expect(parts.accountId).toBe("default");
+      expect(parts.chatId).toBe("heartbeat");
+      expect(parts.canonicalKey).toBe("system:default:heartbeat");
+    });
+
     it("parses subagent key", () => {
       const parts = parseFridaySessionKey("subagent:discord:default:user1:task-1");
       expect(parts.kind).toBe("subagent");
@@ -203,6 +221,12 @@ describe("FridaySessionKey", () => {
     });
   });
 
+  describe("canonicalizeFridaySessionKey", () => {
+    it("normalizes legacy system-scoped keys to 3 segments", () => {
+      expect(canonicalizeFridaySessionKey("system:heartbeat")).toBe("system:default:heartbeat");
+    });
+  });
+
   // ─── normalizeFridaySessionKey ───
 
   describe("normalizeFridaySessionKey", () => {
@@ -281,6 +305,16 @@ describe("FridaySessionKey", () => {
   describe("canonicalizeFridaySessionKey", () => {
     it("normalizes a conversation key", () => {
       expect(canonicalizeFridaySessionKey("Discord:Default:Chat123")).toBe("discord:default:chat123");
+    });
+
+    it("normalizes a legacy channel-scoped key without changing its persisted shape", () => {
+      expect(canonicalizeFridaySessionKey("channel:IRC:#Friday Codex Audit"))
+        .toBe("channel:irc:friday-codex-audit");
+    });
+
+    it("collapses legacy channel thread keys into a 3-segment canonical slot", () => {
+      expect(canonicalizeFridaySessionKey("channel:Discord:C 1:thread:T 42"))
+        .toBe("channel:discord:c-1-thread-t-42");
     });
 
     it("normalizes segments with special characters", () => {

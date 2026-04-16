@@ -144,6 +144,12 @@ export function FleetPage() {
   const detail = detailQuery.data;
   const recoverySteps = buildFleetRecoverySteps(detail ?? null);
   const runtimeRecoveryCard = buildFleetRuntimeRecoveryCard(detail ?? null);
+  const fleetNeedsRecoveryCount = overview
+    ? overview.totals.degraded + overview.totals.offline + overview.totals.revoked
+    : 0;
+  const fleetNeedsAttention = overview
+    ? fleetNeedsRecoveryCount > 0 || overview.health.state !== "healthy"
+    : false;
   const fleetLoopRuns = (loopRunsQuery.data ?? []).filter((record) => {
     const summary = `${record.action?.summary.title ?? ""} ${record.incident?.summary.rootCauseSummary ?? ""}`.toLowerCase();
     return summary.includes("satellite") || summary.includes("fleet");
@@ -157,8 +163,8 @@ export function FleetPage() {
           title={localize(locale, "通过引导操作恢复降级节点", "Recover degraded nodes with guided actions")}
           aside={
             overview ? (
-              <StatusPill tone={overview.totals.degraded > 0 ? "warning" : "success"}>
-                {overview.totals.degraded > 0 ? (locale === "zh" ? "需要关注" : "needs attention") : (locale === "zh" ? "稳定" : "stable")}
+              <StatusPill tone={fleetNeedsAttention ? "warning" : "success"}>
+                {fleetNeedsAttention ? (locale === "zh" ? "需要关注" : "needs attention") : (locale === "zh" ? "稳定" : "stable")}
               </StatusPill>
             ) : undefined
           }
@@ -174,8 +180,8 @@ export function FleetPage() {
                 <FleetMetricCard
                   icon={<RadioTower className="h-4 w-4" />}
                   label={locale === "zh" ? "需要恢复" : "Needs recovery"}
-                  value={String(overview.totals.degraded)}
-                  detail={`${overview.totals.online} ${locale === "zh" ? "在线" : "online"} / ${overview.totals.satellites} ${locale === "zh" ? "总计" : "total"}`}
+                  value={String(fleetNeedsRecoveryCount)}
+                  detail={`${overview.totals.online} ${locale === "zh" ? "就绪" : "ready"} / ${overview.totals.satellites} ${locale === "zh" ? "总计" : "total"}`}
                 />
                 <FleetMetricCard
                   icon={<Link2 className="h-4 w-4" />}
@@ -202,9 +208,9 @@ export function FleetPage() {
               <div className="grid gap-3 sm:grid-cols-2">
                 <FleetMetricCard
                   icon={<RadioTower className="h-4 w-4" />}
-                  label={localize(locale, "在线节点", "Online satellites")}
+                  label={localize(locale, "就绪节点", "Ready satellites")}
                   value={String(overview.totals.online)}
-                  detail={`${overview.totals.satellites} ${locale === "zh" ? "已注册" : "registered"} · ${overview.totals.degraded} ${locale === "zh" ? "降级" : "degraded"}`}
+                  detail={`${overview.totals.satellites} ${locale === "zh" ? "已注册" : "registered"} · ${fleetNeedsRecoveryCount} ${locale === "zh" ? "需要恢复" : "need recovery"}`}
                 />
                 <FleetMetricCard
                   icon={<ShieldCheck className="h-4 w-4" />}

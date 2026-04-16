@@ -122,6 +122,11 @@ export interface FridayIncidentDiagnosisDetails {
   autoFixEligible: boolean;
 }
 
+export interface FridaySelfHealingExecutionDetails {
+  details: FridaySelfHealingActionDetails;
+  result: FridayAutoFixExecutionResult;
+}
+
 export interface FridayLearningLessonRecord {
   lesson: FridayLearnedLessonEntity;
   disabled: boolean;
@@ -302,11 +307,11 @@ export interface FridaySelfHealingApiService {
   }): FridayLearningPatternRecord;
   executeAction(input: {
     actionId: string;
-  }): Promise<FridaySelfHealingActionDetails>;
+  }): Promise<FridaySelfHealingExecutionDetails>;
   rollbackAction(input: {
     actionId: string;
     reason: string;
-  }): Promise<FridaySelfHealingActionDetails>;
+  }): Promise<FridaySelfHealingExecutionDetails>;
   getMetrics(input: {
     day?: string;
     fromDay?: string;
@@ -319,6 +324,7 @@ export interface FridaySelfHealingApiService {
   reportStructuredFailure(input: {
     userId: string;
     runId?: string;
+    nodeId?: string;
     category: FridayErrorIncidentEntity["category"];
     severity: FridayErrorIncidentEntity["severity"];
     message: string;
@@ -1249,7 +1255,10 @@ export function createFridaySelfHealingApiService(
         actionId: details.action.actionId,
         correlationId: details.action.actionId,
       });
-      return details;
+      return {
+        details,
+        result,
+      };
     },
 
     async rollbackAction(input) {
@@ -1266,7 +1275,10 @@ export function createFridaySelfHealingApiService(
         actionId: details.action.actionId,
         correlationId: input.actionId,
       });
-      return details;
+      return {
+        details,
+        result,
+      };
     },
 
     getMetrics(input) {
@@ -1369,6 +1381,9 @@ export function createFridaySelfHealingApiService(
           severity: input.severity,
           message: input.message,
           ...(input.context ?? {}),
+          ...(typeof input.nodeId === "string" && input.nodeId.trim().length > 0
+            ? { nodeId: input.nodeId.trim() }
+            : {}),
         },
       });
       this.emitProcessResults([result], input.correlationId);

@@ -101,7 +101,7 @@ describe("FridayAgentWebSearchTool", () => {
       `,
     }) as unknown as typeof fetch;
 
-    const tool = createFridayAgentWebSearchTool();
+    const tool = createFridayAgentWebSearchTool({ provider: "duckduckgo" });
 
     const result = await tool.execute(
       { query: "Iran latest news", freshness: "day", numResults: 1 },
@@ -117,6 +117,52 @@ describe("FridayAgentWebSearchTool", () => {
       hasDates: false,
     });
     expect(result.metadata?.warning).toContain("latest-ness is unverified");
+  });
+
+  it("uses Google News RSS for default time-sensitive news lookups", async () => {
+    const now = new Date();
+    const recentDate = new Date(now.getTime() - 2 * 60 * 60 * 1000).toUTCString();
+    const olderDate = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000).toUTCString();
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => `<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0">
+          <channel>
+            <item>
+              <title>Recent headline - Example</title>
+              <link>https://news.google.com/rss/articles/recent</link>
+              <pubDate>${recentDate}</pubDate>
+              <description><![CDATA[Recent dated headline]]></description>
+            </item>
+            <item>
+              <title>Older headline - Example</title>
+              <link>https://news.google.com/rss/articles/older</link>
+              <pubDate>${olderDate}</pubDate>
+              <description><![CDATA[Older dated headline]]></description>
+            </item>
+          </channel>
+        </rss>`,
+    }) as unknown as typeof fetch;
+
+    const tool = createFridayAgentWebSearchTool();
+
+    const result = await tool.execute(
+      { query: "OpenAI latest news", freshness: "day", numResults: 5 },
+      signal(),
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content).toContain("Recent headline");
+    expect(result.content).not.toContain("Older headline");
+    expect(result.metadata).toMatchObject({
+      provider: "google_news_rss",
+      freshnessRequested: "day",
+      freshnessApplied: true,
+      hasDates: true,
+      warning: null,
+    });
   });
 
   it("does not silently fall back when Serper is configured without an API key", async () => {

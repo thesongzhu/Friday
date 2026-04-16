@@ -44,6 +44,20 @@ export function createFridaySessionService(
   const sessionRepo = createFridaySessionRepository();
   const messageRepo = createFridaySessionMessageRepository();
   const FOCUS_METADATA_KEY = "conversationFocus";
+  const LEGACY_CHANNEL_SESSION_BACKFILL_SQL = `
+    UPDATE sessions
+       SET channel = account_id,
+           account_id = 'default',
+           updated_at = ?
+     WHERE channel = 'channel'
+       AND session_key LIKE 'channel:%'
+       AND account_id IS NOT NULL
+       AND account_id != ''
+  `;
+
+  deps.db.withWriteTransaction((db) => {
+    db.prepare(LEGACY_CHANNEL_SESSION_BACKFILL_SQL).run(deps.nowIso());
+  });
 
   function readConversationFocus(
     session: FridaySessionRecord | null,

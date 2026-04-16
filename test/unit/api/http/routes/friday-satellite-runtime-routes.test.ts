@@ -100,6 +100,49 @@ describe("FridaySatelliteRuntimeRoutes", () => {
     expect(result).toMatchObject({ accepted: true, status: "online" });
   });
 
+  it("rejects capability reports with missing keys as a validation error", async () => {
+    const route = findRoute("satellites.capabilities.update");
+    await expect(
+      route.handler(
+        makeCtx("sat-1", {
+          body: {
+            revision: 1,
+            generatedAt: NOW,
+            runtime: { os: "darwin", arch: "arm64", appVersion: "1.0.0", nodeVersion: "22.0.0" },
+            capabilities: [{ kind: "shell", available: true }],
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      httpStatus: 400,
+    } satisfies Partial<FridayDomainError>);
+    expect(deps.updateCapabilities).not.toHaveBeenCalled();
+  });
+
+  it("forwards valid capability reports", async () => {
+    const route = findRoute("satellites.capabilities.update");
+    const result = await route.handler(
+      makeCtx("sat-1", {
+        body: {
+          revision: 2,
+          generatedAt: NOW,
+          runtime: { os: "darwin", arch: "arm64", appVersion: "1.0.0", nodeVersion: "22.0.0" },
+          capabilities: [{ key: "shell", available: true, metadata: { transport: "http-poll" } }],
+        },
+      }),
+    );
+
+    expect(deps.updateCapabilities).toHaveBeenCalledWith({
+      satelliteId: "sat-1",
+      revision: 2,
+      generatedAt: NOW,
+      runtime: { os: "darwin", arch: "arm64", appVersion: "1.0.0", nodeVersion: "22.0.0" },
+      capabilities: [{ key: "shell", available: true, metadata: { transport: "http-poll" } }],
+    });
+    expect(result).toEqual({ accepted: true });
+  });
+
   it("rejects satellite principal mismatch", async () => {
     const route = findRoute("satellites.sync.pull");
     await expect(

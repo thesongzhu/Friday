@@ -179,12 +179,13 @@ export function ChannelsPage() {
   for (const ch of registry) {
     registryMap.set(ch.kind, ch);
   }
+  const registeredChannelKinds = new Set(registry.map((channel) => channel.kind));
 
   const connectedChannels = registry.filter((ch) => ch.running);
   const selectedSession = sessions.find((s) => s.key === selectedSessionKey) ?? null;
 
-  // Filter sessions that belong to channel channels (not "chat")
-  const channelSessions = sessions.filter((s) => s.channel !== "chat");
+  // Only treat sessions as channel sessions when they belong to a registered channel kind.
+  const channelSessions = sessions.filter((session) => registeredChannelKinds.has(getSessionChannelKind(session)));
 
   // Escalation detection: channels with errors or sessions that need attention
   const channelsWithErrors = registry.filter((ch) =>

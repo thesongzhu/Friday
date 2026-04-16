@@ -107,7 +107,7 @@ export interface CreateFridayAgentToolRegistryOptions {
   extractionService?: FridaySessionMemoryExtractionService;
   /** Provider service for LLM provider management tool. */
   providerService?: FridayProviderService;
-  /** Web search provider: "serper" | "tavily" | "duckduckgo". Defaults to "duckduckgo". */
+  /** Web search provider: "auto" | "serper" | "tavily" | "duckduckgo" | "google_news_rss". Defaults to "auto". */
   webSearchProvider?: string;
   /** API key for the configured web search provider. */
   webSearchApiKey?: string;

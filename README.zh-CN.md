@@ -12,7 +12,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Node-%E2%89%A522-brightgreen?style=flat-square" alt="Node ≥22">
   <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="MIT">
-  <img src="https://img.shields.io/badge/Tests-10000%2B-success?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/Release%20Truth-evidence--driven-blue?style=flat-square" alt="Release Truth">
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript">
   <img src="https://github.com/thesongzhu/Friday/actions/workflows/ci.yml/badge.svg" alt="CI">
   <a href="https://discord.gg/x2rd4WsY"><img src="https://img.shields.io/discord/1234567890?style=flat-square&logo=discord&label=Discord&color=5865F2" alt="Discord"></a>
@@ -28,16 +28,25 @@ Friday 不只是一个 AI 工具 — 它是一个**会学习你的习惯、记�
 
 > 把 Friday 想象成你的私人 AI：一开始是个靠谱的助手，慢慢变成你做任何事都离不开的搭档。
 
+## 当前运行态快照
+
+这份 README 反映的是 **当前运行态快照**，不是无条件的发布证明。
+
+- 下方有些能力是 operator-only、依赖环境变量、依赖机器权限，或者在未配置时会显示为空状态。
+- `npm test` 和依赖 mock hub 的浏览器套件仍然有价值，但它们**不是**发布证明。
+- 当前有效契约以 [`docs/current-source-of-truth.md`](docs/current-source-of-truth.md) 为准。
+- 发布证据规则以 [`docs/release-evidence-policy.md`](docs/release-evidence-policy.md) 为准。
+
 ---
 
-## Friday 能做什么
+## 当前运行态表面
 
 <table>
 <tr>
 <td width="50%">
 
 ### 对话 & 执行
-30+ 内置工具，52+ 技能。让 Friday 帮你调研、写作、编程、分析、自动化 — 它真的会去做，不是光说不练。
+内置工具与托管技能。让 Friday 通过当前运行态里已安装、已启用的工具和技能去调研、写作、编程、分析与自动化。
 
 </td>
 <td width="50%">
@@ -50,8 +59,8 @@ Friday 不只是一个 AI 工具 — 它是一个**会学习你的习惯、记�
 <tr>
 <td>
 
-### 10 个聊天平台
-Discord · Slack · Telegram · WhatsApp · Signal · LINE · IRC · QQ · 飞书 · 网页聊天 — 一个 Friday，哪里都能找到它。支持按频道白名单和健康监控。
+### 聊天集成（依赖环境）
+Discord · Slack · Telegram · WhatsApp · Signal · LINE · IRC · QQ · 飞书 · 网页聊天。只有当对应凭证、路由和运行态接线完成时，这些通道才真正可用。支持按频道白名单和健康监控。
 
 </td>
 <td>
@@ -84,8 +93,8 @@ AI 驱动的技能生成，保存前自动自测。Shell 安全扫描器拦截 2
 </td>
 <td>
 
-### 桌面自动化
-跨平台桌面控制：macOS / Windows / Linux 上的点击、输入、截图、滚动、拖拽。支持操作录制与回放，所有动作必须经过规则引擎。
+### 桌面自动化（依赖权限）
+跨平台桌面控制：macOS / Windows / Linux 上的点击、输入、截图、滚动、拖拽。可用性取决于本机权限、companion readiness 和规则引擎策略。
 
 </td>
 </tr>
@@ -99,21 +108,21 @@ Hub + Satellite 架构。基于能力的工作流调度，心跳监控和离线�
 <td>
 
 ### 安全 & 审计
-JWT + RBAC 认证。SHA-256 哈希链防篡改审计日志。SSRF 防护。能力授权支持过期与撤销。多租户就绪。SIEM 导出（JSONL + Webhook）。
+JWT + RBAC 认证。SHA-256 哈希链防篡改审计日志。SSRF 防护。能力授权支持过期与撤销。多租户相关能力在代码中存在，但当前运行态默认不会启用，仍受环境变量开关控制。SIEM 导出（JSONL + Webhook）。
 
 </td>
 </tr>
 <tr>
 <td>
 
-### 全链路可观测
+### 可观测性（偏运维）
 分布式追踪贯穿所有模块。SLO 监控 + 多窗口燃烧率告警。按提供商的成本看板。告警管线：Webhook、邮件、Slack、PagerDuty。
 
 </td>
 <td>
 
-### 即插即用
-技能和工作流拿来就能用 — 无需配置，无需胶水代码。导入 `.tgz`、粘贴 `friday://` 深度链接、或用 AI 直接生成。预检自动完成验证、权限和依赖处理。
+### 导入与启用（有边界）
+技能和工作流可以通过导入、深度链接或生成流程接入 Friday，但部分资产仍依赖 source 配置、预检结果和运行态权限。
 
 </td>
 </tr>
@@ -126,8 +135,8 @@ JWT + RBAC 认证。SHA-256 哈希链防篡改审计日志。SSRF 防护。能�
 </td>
 <td>
 
-### 质量门禁 & 验收
-逐产物 pass/fail/warn 判定，附完整证据链。支持 Schema、阈值、质量和自定义检查。确定性 > 99.5%，逃逸率 < 1%。每个决策可审计。
+### 质量门禁 & 验收（高级）
+逐产物 pass/fail/warn 判定，附完整证据链。支持 Schema、阈值、质量和自定义检查。默认更偏高级/运维场景。
 
 </td>
 </tr>
@@ -137,7 +146,7 @@ JWT + RBAC 认证。SHA-256 哈希链防篡改审计日志。SSRF 防护。能�
 
 ## 快速开始
 
-**方式一 — npm（推荐）**
+**方式一 — npm 包**
 
 ```bash
 npm install -g @thesongzhu/friday
@@ -162,7 +171,7 @@ docker-compose up -d
 # 打开 http://localhost:3141
 ```
 
-> **第一次用？** Friday 会引导你完成初始设置 — 连接 API Key、选个性格，就可以开始了。
+> **第一次用？** Friday 会引导你完成初始设置，但具体流程取决于这台机器上可用的 provider、权限和可选能力。
 
 ---
 

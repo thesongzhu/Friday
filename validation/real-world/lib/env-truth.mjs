@@ -62,6 +62,15 @@ function isCliProvider(provider) {
   return provider?.config?.backendKind === "cli" || provider?.config?.authMode === "external-session";
 }
 
+function providerHealthSnapshot(providerHealthById, providerId) {
+  return providerId ? providerHealthById.get(providerId) ?? null : null;
+}
+
+function isProviderHealthEligible(snapshot) {
+  if (!snapshot) return false;
+  return snapshot.routingEligible === true && snapshot.validationStatus !== "failed";
+}
+
 function uniqueProviders(providers) {
   const seen = new Set();
   return providers.filter((provider) => {
@@ -80,13 +89,21 @@ function chooseDefaultLane(providers, routing) {
   return buildLane(provider, resolveProviderModel(provider, routing.defaultModel), "default", "routing.default");
 }
 
-function chooseFallbackLane(providers, routing, defaultLane) {
+function chooseFallbackLane(providers, routing, defaultLane, providerHealthById = new Map()) {
   const enabled = providers.filter((provider) => provider.enabled && provider.id !== defaultLane?.providerId);
   const preferredIds = asArray(routing?.fallbackProviderIds);
   const fromPreferred = uniqueProviders(preferredIds
     .map((providerId) => enabled.find((provider) => provider.id === providerId))
     .filter(Boolean));
+  const preferredKinds = new Set(fromPreferred.map((provider) => provider.kind).filter((value) => typeof value === "string"));
+  const eligibleByHealth = (provider) => isProviderHealthEligible(providerHealthSnapshot(providerHealthById, provider.id));
   const candidates = uniqueProviders([
+    ...fromPreferred.filter((provider) => eligibleByHealth(provider) && provider.kind !== defaultLane?.providerKind),
+    ...enabled.filter((provider) => eligibleByHealth(provider) && preferredKinds.has(provider.kind) && provider.kind !== defaultLane?.providerKind),
+    ...enabled.filter((provider) => eligibleByHealth(provider) && provider.kind !== defaultLane?.providerKind),
+    ...fromPreferred.filter((provider) => eligibleByHealth(provider)),
+    ...enabled.filter((provider) => eligibleByHealth(provider) && preferredKinds.has(provider.kind)),
+    ...enabled.filter((provider) => eligibleByHealth(provider)),
     ...fromPreferred.filter((provider) => !isCliProvider(provider) && providerValidationStatus(provider) === "ok" && provider.kind !== defaultLane?.providerKind),
     ...enabled.filter((provider) => !isCliProvider(provider) && providerValidationStatus(provider) === "ok" && provider.kind !== defaultLane?.providerKind),
     ...fromPreferred.filter((provider) => !isCliProvider(provider) && providerValidationStatus(provider) === "ok"),
@@ -145,12 +162,24 @@ function deriveTruthSignals({ setupStatus, userProfile }) {
 }
 
 export function selectJudgeLane(envTruth, testedLane) {
-  const candidates = [
+  const providerHealthById = new Map(asArray(envTruth?.providerHealth)
+    .filter((entry) => entry && typeof entry.providerId === "string")
+    .map((entry) => [entry.providerId, entry]));
+  const candidates = uniqueProviders([
     envTruth?.providerLanes?.default,
     envTruth?.providerLanes?.fallback,
     ...asArray(envTruth?.enabledProviderLanes),
-  ].filter(Boolean);
-  return candidates.find((candidate) => candidate.providerId !== testedLane?.providerId) ?? null;
+  ].filter(Boolean));
+  const alternatives = candidates.filter((candidate) => candidate.providerId !== testedLane?.providerId);
+  const healthyAlternatives = alternatives.filter((candidate) => {
+    const snapshot = providerHealthById.get(candidate.providerId);
+    if (!snapshot) {
+      return candidate.backendKind !== "cli";
+    }
+    return snapshot.routingEligible === true && snapshot.validationStatus !== "failed";
+  });
+  const nonCliAlternative = healthyAlternatives.find((candidate) => candidate.backendKind !== "cli");
+  return nonCliAlternative ?? healthyAlternatives[0] ?? null;
 }
 
 export function resolveScenarioLanes(scenario, envTruth) {
@@ -262,8 +291,12 @@ export async function collectEnvironmentTruth({
   const setupStatus = auth.ok
     ? await safeRequest(() => client.request("GET", "/v1/setup/status"), { status: 0 })
     : { ok: false, status: 0, error: "auth unavailable" };
+  const bootstrapStatusResponse = await safeRequest(() => client.request("GET", "/v1/auth/bootstrap/status"), { status: 0 });
   const providersResponse = auth.ok
     ? await safeRequest(() => client.request("GET", "/v1/providers"), { status: 0 })
+    : { ok: false, status: 0, error: "auth unavailable" };
+  const providerHealthResponse = auth.ok
+    ? await safeRequest(() => client.request("GET", "/v1/providers/health"), { status: 0 })
     : { ok: false, status: 0, error: "auth unavailable" };
   const routingResponse = auth.ok
     ? await safeRequest(() => client.request("GET", "/v1/model-routing"), { status: 0 })
@@ -278,14 +311,19 @@ export async function collectEnvironmentTruth({
   const providers = asArray(providersResponse.json?.data?.items).filter(
     (provider) => provider && typeof provider === "object",
   );
+  const providerHealth = asArray(providerHealthResponse.json?.data?.items).filter(
+    (entry) => entry && typeof entry === "object" && typeof entry.providerId === "string",
+  );
+  const providerHealthById = new Map(providerHealth.map((entry) => [entry.providerId, entry]));
   const routing = routingResponse.json?.data?.routing ?? null;
   const enabledProviders = providers.filter((provider) => provider.enabled);
   const defaultLane = chooseDefaultLane(enabledProviders, routing);
-  const fallbackLane = chooseFallbackLane(enabledProviders, routing, defaultLane);
+  const fallbackLane = chooseFallbackLane(enabledProviders, routing, defaultLane, providerHealthById);
   const enabledProviderLanes = enabledProviders
     .map((provider) => buildLane(provider, resolveProviderModel(provider), "candidate", "providers.list"))
     .filter(Boolean);
   const resolvedSetupStatus = setupStatus.json?.data ?? null;
+  const resolvedBootstrapStatus = bootstrapStatusResponse.json?.data ?? bootstrapStatusResponse.json ?? null;
   const resolvedUserProfile = userProfileResponse.json?.data ?? userProfileResponse.json ?? null;
   const derived = deriveTruthSignals({
     setupStatus: resolvedSetupStatus,
@@ -300,19 +338,23 @@ export async function collectEnvironmentTruth({
     publicChecks: {
       health: summarizePublicResponse(health),
       version: summarizePublicResponse(version),
+      bootstrapStatus: summarizePublicResponse(bootstrapStatusResponse),
     },
     authedChecks: {
       setupStatus: summarizeAuthedResponse(setupStatus),
       providers: summarizeAuthedResponse(providersResponse),
+      providerHealth: summarizeAuthedResponse(providerHealthResponse),
       modelRouting: summarizeAuthedResponse(routingResponse),
       persona: summarizeAuthedResponse(personaResponse),
       userProfile: summarizeAuthedResponse(userProfileResponse),
     },
+    bootstrapStatus: resolvedBootstrapStatus,
     setupStatus: resolvedSetupStatus,
     userProfile: resolvedUserProfile,
     derived,
     routing,
     providers,
+    providerHealth,
     enabledProviders,
     providerLanes: {
       default: defaultLane,

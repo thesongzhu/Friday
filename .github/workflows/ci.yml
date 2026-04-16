@@ -212,11 +212,12 @@ jobs:
 
       - name: Enforce secrets baseline
         run: |
-          # Ops report CSVs contain commit SHAs that trigger deterministic false positives.
-          # Keep source-code scanning strict while excluding generated report artifacts.
+          # Generated proof/audit artifacts contain commit SHAs, correlation ids, and
+          # encoded payload fragments that trigger deterministic false positives.
+          # Keep source-code scanning strict while excluding machine-generated report JSONs.
           git ls-files -z | xargs -0 detect-secrets-hook \
             --baseline .secrets.baseline \
-            --exclude-files '(^|/)node_modules(/|$)|(^|/)dist(/|$)|(^|/)coverage(/|$)|(^|/)package-lock\.json$|(^|/)pnpm-lock\.yaml$|\.snap$|(^|/)managed-skills/[^/]+/conversion\.report\.json$|(^|/)docs/reports/ops/.*\.csv$'
+            --exclude-files '(^|/)node_modules(/|$)|(^|/)dist(/|$)|(^|/)coverage(/|$)|(^|/)package-lock\.json$|(^|/)pnpm-lock\.yaml$|\.snap$|(^|/)managed-skills/[^/]+/conversion\.report\.json$|(^|/)docs/reports/ops/.*\.csv$|(^|/)docs/reports/ops/real-green-gate/.*\.json$|(^|/)docs/reports/repo/FRIDAY_.*\.json$'
           echo "✅ No new secrets detected"
 
       - name: Remediation guidance
@@ -227,7 +228,7 @@ jobs:
           echo "To fix:"
           echo "  1. Remove the secret from the code"
           echo "  2. If it's a false positive, update the baseline:"
-          echo "     detect-secrets scan --exclude-files '(^|/)node_modules(/|$)|(^|/)dist(/|$)|(^|/)coverage(/|$)|(^|/)package-lock\\.json$|(^|/)pnpm-lock\\.yaml$|\\.snap$' > .secrets.baseline"
+          echo "     detect-secrets scan --exclude-files '(^|/)node_modules(/|$)|(^|/)dist(/|$)|(^|/)coverage(/|$)|(^|/)package-lock\\.json$|(^|/)pnpm-lock\\.yaml$|\\.snap$|(^|/)managed-skills/[^/]+/conversion\\.report\\.json$|(^|/)docs/reports/ops/.*\\.csv$|(^|/)docs/reports/ops/real-green-gate/.*\\.json$|(^|/)docs/reports/repo/FRIDAY_.*\\.json$' > .secrets.baseline"
           echo "     detect-secrets audit .secrets.baseline"
           echo "  3. Commit the updated .secrets.baseline"
 

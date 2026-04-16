@@ -10,6 +10,9 @@ export {
   FRIDAY_PROVIDER_BACKEND_KINDS,
   FRIDAY_PROVIDER_CLI_BACKEND_IDS,
   isFridayAnthropicBearerAuthMode,
+  normalizeFridayProviderSupportedModels,
+  normalizeFridayModelRoutingConfig,
+  resolveFridayProviderPreferredModel,
 } from "./model/friday-provider.types.js";
 export {
   FRIDAY_PROVIDER_PRESETS,

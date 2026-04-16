@@ -58,6 +58,19 @@ export interface CreateSelfLearningPipelineServiceDeps {
   nowIso: () => string;
 }
 
+function readContextString(
+  value: JsonObject,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  return undefined;
+}
+
 function computeIncidentSignature(
   category: string,
   key: string,
@@ -134,6 +147,8 @@ export function createFridaySelfLearningPipelineService(
       deps.db.withWriteTransaction((db) => {
         for (const signal of errorSignals) {
           const signalValue = signal.value as JsonObject;
+          const signalRunId = signal.runId ?? readContextString(signalValue, "runId", "workflowRunId");
+          const signalNodeId = readContextString(signalValue, "nodeId");
           const category =
             (signalValue["category"] as string) ??
             (signal.key.startsWith("tool_failure:") ? "tool" : "workflow");
@@ -152,8 +167,8 @@ export function createFridaySelfLearningPipelineService(
           const incident: FridayErrorIncidentEntity = {
             incidentId: deps.idGenerator(),
             userId: signal.userId,
-            runId: signal.runId,
-            nodeId: undefined,
+            runId: signalRunId,
+            nodeId: signalNodeId,
             ts: signal.ts,
             category: category as FridayErrorIncidentEntity["category"],
             severity: derivedSeverity,
@@ -252,8 +267,8 @@ export function createFridaySelfLearningPipelineService(
             const diagnosis: FridayDiagnosisRecordEntity = {
               id: deps.idGenerator(),
               incidentId: incident.incidentId,
-              runId: signal.runId,
-              nodeId: undefined,
+              runId: signalRunId,
+              nodeId: signalNodeId,
               errorFingerprint: signature,
               confidence: signal.confidence,
               diagnosis: {

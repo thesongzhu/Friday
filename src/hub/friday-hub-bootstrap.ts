@@ -77,8 +77,13 @@ import {
   resolveFridayPipelineRuntimeConfig,
 } from "#workflows";
 import { createFridayWorkflowTriggerRepository } from "#workflows";
-import { createFridayApiRuntime, createFridayDeterministicPipelineRuntime, getChannelPersona } from "#api";
-import type { FridaySystemRoutesDeps } from "#api";
+import {
+  createFridayApiRuntime,
+  createFridayDeterministicPipelineRuntime,
+  getChannelPersona,
+  hydrateChannelPersonaStore,
+} from "#api";
+import type { FridayChannelPersonaConfig, FridaySystemRoutesDeps } from "#api";
 import type { FridayPackagingRoutesDeps } from "../api/http/routes/friday-packaging-routes.js";
 import {
   createPackageInstaller,
@@ -147,6 +152,7 @@ import {
   createFridayAgentWorkflowGeneratorTool,
   createFridayCompactionMemorySink,
   createFridayMcpAdapter,
+  createFridayPreferenceInjector,
   createFridaySubagentRegistry,
   createFridayWorkspaceContextEngine,
   createFridayWorldStateManager,
@@ -957,11 +963,15 @@ export async function createFridayHub(
   // P2-03: Bounded event buffers prevent OOM if publisher init is delayed.
   const FRIDAY_EVENT_BUFFER_MAX = 10_000;
   const workflowRealtimeEventBuffer: Array<{ streamId: string; event: string; payload: Record<string, unknown> }> = [];
+  // Default learning user for runtime-originated remediation and feedback events.
+  const learningDefaultUserId = "admin-001";
   let workflowRealtimeEventPublisher:
     | {
       publish(streamId: string, event: string, payload: Record<string, unknown>): void;
     }
     | undefined;
+  let selfHealingApiServiceRef: ReturnType<typeof createFridaySelfHealingApiService> | null = null;
+  let workflowRuntimeRef: ReturnType<typeof createFridayWorkflowRuntime> | null = null;
 
   const publishWorkflowRealtimeEvent = async (event: string, payload: unknown): Promise<void> => {
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
@@ -996,8 +1006,85 @@ export async function createFridayHub(
     }
   };
 
+  const reportWorkflowRunFailureToSelfHealing = async (input: {
+    runId: string;
+    workflowId: string;
+    workflowVersionId: string;
+    failedNodes: number;
+    sourceEvent: string;
+  }): Promise<void> => {
+    const workflowRuntime = workflowRuntimeRef;
+    const selfHealingApiService = selfHealingApiServiceRef;
+    if (!workflowRuntime || !selfHealingApiService) {
+      return;
+    }
+
+    try {
+      const run = workflowRuntime.execution.getRun(input.runId);
+      if (!run || run.status !== "failed") {
+        return;
+      }
+
+      const runNodes = workflowRuntime.execution.getRunNodes(input.runId);
+      const failedRunNodes = runNodes.filter((node) => node.status === "failed");
+      const latestFailedNode = failedRunNodes
+        .slice()
+        .sort((left, right) => {
+          if (left.updatedAt !== right.updatedAt) {
+            return right.updatedAt.localeCompare(left.updatedAt);
+          }
+          return right.attempt - left.attempt;
+        })[0];
+      const userId = typeof run.startedByUserId === "string" && run.startedByUserId.trim().length > 0
+        ? run.startedByUserId.trim()
+        : learningDefaultUserId;
+
+      const existingOpenIncident = selfHealingApiService.listIncidents({
+        userId,
+        status: "open",
+        limit: 100,
+      }).find((details) =>
+        details.incident.category === "workflow"
+          && details.incident.runId === input.runId
+          && (details.incident.nodeId ?? null) === (latestFailedNode?.nodeId ?? null));
+
+      if (existingOpenIncident) {
+        return;
+      }
+
+      selfHealingApiService.reportStructuredFailure({
+        userId,
+        runId: input.runId,
+        nodeId: latestFailedNode?.nodeId,
+        category: "workflow",
+        severity: "medium",
+        message: run.failure?.message ?? `${input.failedNodes} workflow node(s) failed`,
+        correlationId: `workflow:${input.sourceEvent}:${input.runId}`,
+        context: {
+          workflowId: input.workflowId,
+          workflowVersionId: input.workflowVersionId,
+          failedNodeCount: input.failedNodes,
+          source: "workflow_runtime",
+          sourceEvent: input.sourceEvent,
+          ...(typeof run.failure?.code === "string" ? { failureCode: run.failure.code } : {}),
+          ...(typeof run.failure?.message === "string" ? { failureMessage: run.failure.message } : {}),
+          ...(latestFailedNode
+            ? {
+                failedNodeId: latestFailedNode.nodeId,
+                failedNodeAttempt: latestFailedNode.attempt,
+                failedNodeStatus: latestFailedNode.status,
+                ...(typeof latestFailedNode.error?.code === "string" ? { failedNodeErrorCode: latestFailedNode.error.code } : {}),
+                ...(typeof latestFailedNode.error?.message === "string" ? { failedNodeErrorMessage: latestFailedNode.error.message } : {}),
+              }
+            : {}),
+        },
+      });
+    } catch (error) {
+      warnHubBootstrapOperationFailureOnce(error);
+    }
+  };
+
   let crossBorderPackServiceRef: FridayCrossBorderPackService | null = null;
-  let workflowRuntimeRef: ReturnType<typeof createFridayWorkflowRuntime> | null = null;
 
   const workflowRuntime = createFridayWorkflowRuntime({
     db: stateRuntime!.sqlite,
@@ -1021,6 +1108,18 @@ export async function createFridayHub(
         managedWorkflowId: input.workflowId,
       });
       return contextPatch ? { contextPatch } : undefined;
+    },
+    onRunCompleted: async (input) => {
+      if (input.status !== "failed") {
+        return;
+      }
+      await reportWorkflowRunFailureToSelfHealing({
+        runId: input.runId,
+        workflowId: input.workflowId,
+        workflowVersionId: input.workflowVersionId,
+        failedNodes: input.failedNodes,
+        sourceEvent: "workflow.run.completed",
+      });
     },
   });
   const workflowBuilderRuntime = createFridayWorkflowBuilderRuntime({
@@ -1572,12 +1671,17 @@ export async function createFridayHub(
   const hasConfiguredSearchKey = Boolean(
     process.env.FRIDAY_SERPER_API_KEY?.trim() || process.env.FRIDAY_TAVILY_API_KEY?.trim(),
   );
+  const publicSearchProvider = !configuredSearchProvider || configuredSearchProvider === "auto"
+    ? "google_news_rss+duckduckgo_html"
+    : configuredSearchProvider === "duckduckgo"
+      ? "duckduckgo_html"
+      : configuredSearchProvider;
   const searchWarning = configuredSearchProvider === "serper" && !process.env.FRIDAY_SERPER_API_KEY?.trim()
     ? 'Configured search provider "serper" is missing FRIDAY_SERPER_API_KEY; time-sensitive news lookup is unverified.'
     : configuredSearchProvider === "tavily" && !process.env.FRIDAY_TAVILY_API_KEY?.trim()
       ? 'Configured search provider "tavily" is missing FRIDAY_TAVILY_API_KEY; time-sensitive news lookup is unverified.'
-      : !configuredSearchProvider
-        ? "FRIDAY_SEARCH_PROVIDER is not configured; Friday will fall back to DuckDuckGo HTML search and time-sensitive news lookup is unverified."
+      : configuredSearchProvider === "duckduckgo"
+        ? 'Configured search provider "duckduckgo" does not verify publication dates for time-sensitive news lookup.'
         : !hasConfiguredSearchKey && (configuredSearchProvider === "serper" || configuredSearchProvider === "tavily")
           ? `Search provider "${configuredSearchProvider}" has no API key configured; time-sensitive news lookup is unverified.`
           : undefined;
@@ -2983,6 +3087,9 @@ export async function createFridayHub(
   const agentCompactionMemorySink = memoryService
     ? createFridayCompactionMemorySink({ memoryService, idGenerator, nowIso })
     : undefined;
+  const agentPreferenceInjector = memoryService
+    ? createFridayPreferenceInjector({ memoryService, nowIso })
+    : undefined;
 
   const agentRuntime = createFridayAgentRuntime({
     db: stateRuntime!.sqlite,
@@ -3012,7 +3119,14 @@ export async function createFridayHub(
       if (!_learningContextRef) return { preferences: {} };
       return _learningContextRef.buildContext(input);
     },
-    communicationPromptBuilder: (input) => {
+    communicationPromptBuilder: async (input) => {
+      const fragments: string[] = [];
+      if (agentPreferenceInjector) {
+        const injected = await agentPreferenceInjector.loadPreferences(input.userId);
+        if (injected.fragment.trim().length > 0) {
+          fragments.push(injected.fragment.trim());
+        }
+      }
       const explicitPreferences = stateRuntime.sqlite.withReadConnection((db) =>
         uixUserPreferenceRepository.listByPrincipal(db, {
           principalId: input.userId,
@@ -3023,7 +3137,11 @@ export async function createFridayHub(
         explicitPreferences,
         learnedPreferences,
       });
-      return buildFridayCommunicationPromptFragment(persona);
+      const personaFragment = buildFridayCommunicationPromptFragment(persona);
+      if (personaFragment.trim().length > 0) {
+        fragments.push(personaFragment.trim());
+      }
+      return fragments.length > 0 ? fragments.join("\n\n") : null;
     },
     starterSkillRouting: {
       enabled: starterSkillRoutingEnforced,
@@ -3258,6 +3376,34 @@ export async function createFridayHub(
         workdir: workspaceRoot,
         artifactWriter: agentArtifactWriter,
         evaluateRules,
+        learningContextBuilder: (input) => {
+          if (!_learningContextRef) return { preferences: {} };
+          return _learningContextRef.buildContext(input);
+        },
+        communicationPromptBuilder: async (input) => {
+          const fragments: string[] = [];
+          if (agentPreferenceInjector) {
+            const injected = await agentPreferenceInjector.loadPreferences(input.userId);
+            if (injected.fragment.trim().length > 0) {
+              fragments.push(injected.fragment.trim());
+            }
+          }
+          const explicitPreferences = stateRuntime.sqlite.withReadConnection((db) =>
+            uixUserPreferenceRepository.listByPrincipal(db, {
+              principalId: input.userId,
+              category: "communication",
+            }));
+          const learnedPreferences = _learningContextRef?.buildContext(input).preferences ?? {};
+          const persona = resolveFridayCommunicationPersona({
+            explicitPreferences,
+            learnedPreferences,
+          });
+          const personaFragment = buildFridayCommunicationPromptFragment(persona);
+          if (personaFragment.trim().length > 0) {
+            fragments.push(personaFragment.trim());
+          }
+          return fragments.length > 0 ? fragments.join("\n\n") : null;
+        },
         starterSkillRouting: {
           enabled: starterSkillRoutingEnforced,
           skills: listInstalledStarterSkills(),
@@ -3711,12 +3857,19 @@ export async function createFridayHub(
 
   // Late-init reference for heartbeat state — populated when heartbeat is created (line ~4782)
   let heartbeatStateRef: (() => { lastRunAt: string | null; result: string; intervalMs: number | null; nextRunAt: string | null } | null) | undefined;
+  let heartbeatTriggerRef: (() => Promise<unknown>) | undefined;
 
   const observabilityService = createFridayObservabilityApiService({
     db: stateRuntime.sqlite,
     idGenerator,
     nowIso,
     heartbeatStateGetter: () => heartbeatStateRef ? heartbeatStateRef() : null,
+    heartbeatTrigger: async () => {
+      if (!heartbeatTriggerRef) {
+        throw new FridayDomainError("HEARTBEAT_UNAVAILABLE", "Heartbeat runner is not available in this runtime.", { httpStatus: 503 });
+      }
+      return heartbeatTriggerRef();
+    },
     browserDiagnosticsProvider: () => {
       if (!browserManager) {
         return undefined;
@@ -3795,6 +3948,7 @@ export async function createFridayHub(
       },
     },
   });
+  selfHealingApiServiceRef = selfHealingApiService;
   agentLoopService = createFridayAgentLoopService({
     db: stateRuntime.sqlite,
     idGenerator,
@@ -3951,9 +4105,6 @@ export async function createFridayHub(
     const results = selfLearningRuntime.pipeline.processBatch(events);
     selfHealingApiService.emitProcessResults(results);
   };
-
-  // Default learning user for runtime-originated remediation and feedback events.
-  const learningDefaultUserId = "admin-001";
 
   const marketplaceAssetCatalogService =
     marketplaceRuntime && marketplaceCommercePersistence
@@ -4386,6 +4537,66 @@ export async function createFridayHub(
     }
     : undefined;
 
+  const CHANNEL_PERSONA_SETTINGS_KEY = "channels.persona.v1";
+
+  function loadPersistedChannelPersonas(): Record<string, FridayChannelPersonaConfig> {
+    const row = stateRuntime!.sqlite.withReadConnection((db) =>
+      db
+        .prepare("SELECT value_json FROM hub_settings WHERE key = ?")
+        .get(CHANNEL_PERSONA_SETTINGS_KEY) as { value_json: string } | undefined,
+    );
+    if (!row) {
+      return {};
+    }
+    const parsed = safeJsonParse<Record<string, unknown>>(row.value_json);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    const personas: Record<string, FridayChannelPersonaConfig> = {};
+    for (const [kind, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        continue;
+      }
+      const record = value as Record<string, unknown>;
+      const persona = typeof record.persona === "string" ? record.persona.trim() : "";
+      const systemPrompt = typeof record.systemPrompt === "string" ? record.systemPrompt.trim() : "";
+      const updatedAt = typeof record.updatedAt === "string" ? record.updatedAt : nowIso();
+      if (!persona && !systemPrompt) {
+        continue;
+      }
+      personas[kind] = {
+        persona,
+        systemPrompt,
+        updatedAt,
+      };
+    }
+    return personas;
+  }
+
+  function savePersistedChannelPersonas(input: Record<string, FridayChannelPersonaConfig>): void {
+    const json = JSON.stringify(input);
+    const now = nowIso();
+    stateRuntime!.sqlite.withWriteTransaction((db) => {
+      const existing = db
+        .prepare("SELECT key FROM hub_settings WHERE key = ?")
+        .get(CHANNEL_PERSONA_SETTINGS_KEY) as { key: string } | undefined;
+      if (existing) {
+        db.prepare(
+          `UPDATE hub_settings SET value_json = ?, revision = revision + 1, updated_at = ?
+           WHERE key = ?`,
+        ).run(json, now, CHANNEL_PERSONA_SETTINGS_KEY);
+      } else {
+        db.prepare(
+          `INSERT INTO hub_settings (key, value_json, revision, created_at, updated_at)
+           VALUES (?, ?, 1, ?, ?)`,
+        ).run(CHANNEL_PERSONA_SETTINGS_KEY, json, now, now);
+      }
+    });
+  }
+
+  hydrateChannelPersonaStore(loadPersistedChannelPersonas());
+
   const apiRuntime = createFridayApiRuntime({
     db: stateRuntime!.sqlite,
     idGenerator,
@@ -4429,7 +4640,19 @@ export async function createFridayHub(
     agentLoop: { service: agentLoopService },
     observability: observabilityService.routes,
     observabilityService,
-    channels: { registry: channelRegistry },
+    channels: {
+      registry: channelRegistry,
+      nowIso,
+      persistPersona(kind, config) {
+        const personas = loadPersistedChannelPersonas();
+        if (config) {
+          personas[kind] = config;
+        } else {
+          delete personas[kind];
+        }
+        savePersistedChannelPersonas(personas);
+      },
+    },
     system: systemRouteDeps,
     uix: {
       service: uixService,
@@ -4443,9 +4666,7 @@ export async function createFridayHub(
       service: crossBorderPackService,
     },
     searchHealth: {
-      provider: configuredSearchProvider && configuredSearchProvider.length > 0
-        ? configuredSearchProvider
-        : "duckduckgo_html",
+      provider: publicSearchProvider,
       latestness: searchWarning ? "unverified" : "provider_backed",
       ...(searchWarning ? { warning: searchWarning } : {}),
     },
@@ -4866,7 +5087,7 @@ export async function createFridayHub(
         intervalMs: heartbeatIntervalMs,
         cooldownMs: heartbeatCooldownMs,
         timeoutMs: heartbeatTimeoutMs,
-        sessionKey: process.env.FRIDAY_HEARTBEAT_SESSION_KEY ?? "system:heartbeat",
+        sessionKey: process.env.FRIDAY_HEARTBEAT_SESSION_KEY ?? "system:default:heartbeat",
         principalId: process.env.FRIDAY_HEARTBEAT_PRINCIPAL_ID ?? "system",
         tenantContext: {
           hubId: "default",
@@ -4901,7 +5122,7 @@ export async function createFridayHub(
       onActionRequired: async (result) => {
         if (!result.responseText || result.responseText.trim().length === 0) return;
         await hubSessionService.addMessage(
-          process.env.FRIDAY_HEARTBEAT_SESSION_KEY ?? "system:heartbeat",
+          process.env.FRIDAY_HEARTBEAT_SESSION_KEY ?? "system:default:heartbeat",
           {
             role: "assistant",
             content: result.responseText,
@@ -4914,6 +5135,7 @@ export async function createFridayHub(
     });
 
     heartbeatJob = createFridayHeartbeatJob({ runner: heartbeatRunner });
+    heartbeatTriggerRef = () => heartbeatJob!.run();
   }
 
   // ─── Unified Job Scheduler (F10: register ALL job modules) ───

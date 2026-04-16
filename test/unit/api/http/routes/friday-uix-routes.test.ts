@@ -382,40 +382,20 @@ describe("FridayUixRoutes", () => {
     expect(result.items[0]?.id).toBe("issue-1");
   });
 
-  it("self-heals missing user-profile preferences on read", async () => {
+  it("returns default profile type without mutating onboarding state on read", async () => {
     const service = makeService();
-    vi.mocked(service.listPreferences).mockReturnValueOnce({
+    vi.mocked(service.listPreferences).mockReturnValue({
       items: [],
       nextCursor: undefined,
-    }).mockReturnValueOnce({
-      items: [
-        makePreference({ id: "uix-1", category: "uix", key: "user.profile_type", value: "beginner" }),
-        makePreference({ id: "uix-2", category: "uix", key: "user.onboarded_at", value: NOW }),
-      ],
-      nextCursor: undefined,
-    });
-    vi.mocked(service.updatePreferences).mockReturnValue({
-      preferences: [],
-      created: 2,
-      updated: 0,
     });
     const routes = createFridayUixRoutes({ service });
     const route = routes.find((entry) => entry.operationId === "uix.user.profile.get")!;
 
-    const result = await route.handler(makeCtx()) as { profileType: string; onboardedAt: string };
+    const result = await route.handler(makeCtx()) as { profileType: string; onboardedAt: string | null };
 
-    expect(service.updatePreferences).toHaveBeenCalledWith({
-      userId: "user-1",
-      request: {
-        preferences: [
-          { category: "uix", key: "user.profile_type", value: "beginner" },
-          { category: "uix", key: "user.onboarded_at", value: expect.any(String) },
-        ],
-      },
-    });
+    expect(service.updatePreferences).not.toHaveBeenCalled();
     expect(result.profileType).toBe("beginner");
-    expect(typeof result.onboardedAt).toBe("string");
-    expect(Number.isFinite(Date.parse(result.onboardedAt))).toBe(true);
+    expect(result.onboardedAt).toBeNull();
   });
 
   it("returns persisted user-profile values after update", async () => {
