@@ -11,6 +11,7 @@ import { Activity, AlertTriangle, Brain, Cpu, DollarSign, Globe2, KeyRound, Mess
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { localize, type AppLocale } from "@/lib/i18n/localized-text";
+import { HIDE_MARKETPLACE_UI, HIDE_TRUSTED_DEVICE_UI } from "@/lib/feature-flags";
 import { useAppLocale } from "@/providers/locale-provider";
 import { ChannelConfigForm } from "@/components/core/channel-config-form";
 import { DiscoveryPanel } from "@/components/core/discovery-panel";
@@ -38,6 +39,14 @@ import {
 function formatTimestamp(value?: string): string {
   if (!value) return "—";
   return new Date(value).toLocaleString();
+}
+
+function resolveFirstSupportedModel(provider: {
+  config: {
+    supportedModels?: string[];
+  };
+}): string | undefined {
+  return provider.config.supportedModels?.find((model) => typeof model === "string" && model.trim().length > 0);
 }
 
 function toneForStatus(value?: string): "neutral" | "success" | "warning" | "danger" {
@@ -351,7 +360,7 @@ export function SettingsPage() {
             <span className="text-[11px] font-semibold uppercase tracking-[0.18em]">{localize(locale, "操作控制台", "Operator Console")}</span>
           </div>
           <p className="mt-4 text-[13px] leading-relaxed text-[color:var(--color-text-secondary)]">
-            {localize(locale, "审批、远程会话、系统控制", "Approvals, remote sessions, system controls")}
+            {localize(locale, "审批、系统控制与运行态快照", "Approvals, system controls, and runtime snapshots")}
           </p>
         </Link>
         <Link to="/observability" className="group flex flex-col justify-between rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-5 transition hover:border-[color:var(--color-border-strong)] hover:shadow-[var(--shadow-card-hover)]">
@@ -377,6 +386,14 @@ export function SettingsPage() {
       {/* ── Program Discovery ── */}
       <DiscoveryPanel />
 
+      <div className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-4 text-sm text-[color:var(--color-text-secondary)]">
+        {localize(
+          locale,
+          "这个页面混合了 operator-only、环境依赖和仅当前机器可见的状态。空卡片、降级或未配置不代表 Friday 对所有用户都可用或不可用，只代表当前 runtime 的真实快照。",
+          "This page mixes operator-only, env-gated, and machine-local surfaces. Empty cards, degraded states, or missing config describe the current runtime snapshot only; they are not universal product promises.",
+        )}
+      </div>
+
     <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
       <div className="space-y-4">
         <ShellCard eyebrow={localize(locale, "系统健康", "System Health")} title={localize(locale, "诊断", "Diagnostics")}>
@@ -384,7 +401,9 @@ export function SettingsPage() {
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <DiagnosticTile icon={<Cpu className="h-4 w-4" />} label={localize(locale, "API 状态", "API Status")} value={health.status} />
-                <DiagnosticTile icon={<Wifi className="h-4 w-4" />} label={localize(locale, "远程模式", "Remote Mode")} value={health.capabilities?.system?.remoteMode ?? localize(locale, "不可用", "unavailable")} />
+                {HIDE_TRUSTED_DEVICE_UI ? null : (
+                  <DiagnosticTile icon={<Wifi className="h-4 w-4" />} label={localize(locale, "远程模式", "Remote Mode")} value={health.capabilities?.system?.remoteMode ?? localize(locale, "不可用", "unavailable")} />
+                )}
                 <DiagnosticTile icon={<Shield className="h-4 w-4" />} label={localize(locale, "系统已启用", "System Enabled")} value={String(Boolean(health.capabilities?.system?.enabled))} />
                 <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label={localize(locale, "运行时间", "Uptime")} value={`${health.uptime}s`} />
               </div>
@@ -448,7 +467,7 @@ export function SettingsPage() {
                     </div>
                   </div>
                   <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">
-                    {localize(locale, "默认模型：", "Default model: ")}{provider.defaultModel ?? provider.config.supportedModels[0] ?? localize(locale, "未设置", "Not set")}
+                    {localize(locale, "默认模型：", "Default model: ")}{provider.defaultModel ?? resolveFirstSupportedModel(provider) ?? localize(locale, "未设置", "Not set")}
                   </p>
                   {healthItem ? (
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -1013,10 +1032,16 @@ export function SettingsPage() {
             <div className="space-y-2">
               {[
                 { name: localize(locale, "插件", "Plugins"), enabled: health.capabilities?.plugins?.runtimeMode === "full" },
-                { name: localize(locale, "市场", "Marketplace"), enabled: health.capabilities?.plugins?.marketplaceAvailable === true },
                 { name: localize(locale, "系统编排", "System orchestration"), enabled: health.capabilities?.system?.enabled === true },
-                { name: localize(locale, "商务", "Commerce"), enabled: health.capabilities?.marketplace?.commerceEnabled === true },
                 { name: localize(locale, "通道", "Channels"), enabled: (health.capabilities?.channels?.enabledKinds?.length ?? 0) > 0 },
+                ...(
+                  HIDE_MARKETPLACE_UI
+                    ? []
+                    : [
+                        { name: localize(locale, "市场", "Marketplace"), enabled: health.capabilities?.plugins?.marketplaceAvailable === true },
+                        { name: localize(locale, "商务", "Commerce"), enabled: health.capabilities?.marketplace?.commerceEnabled === true },
+                      ]
+                ),
               ].map((tool) => (
                 <div key={tool.name} className="flex items-center justify-between rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm">
                   <div className="flex items-center gap-2">
@@ -1028,6 +1053,27 @@ export function SettingsPage() {
                   </StatusPill>
                 </div>
               ))}
+              <div className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3">
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <Wrench className="h-3.5 w-3.5 text-[color:var(--color-text-faint)]" />
+                    <span className="text-[color:var(--color-text-secondary)]">{localize(locale, "搜索时效性", "Search latestness")}</span>
+                  </div>
+                  <StatusPill tone={health.capabilities?.search?.latestness === "provider_backed" ? "success" : "warning"}>
+                    {health.capabilities?.search?.latestness === "provider_backed"
+                      ? localize(locale, "已验证", "verified")
+                      : localize(locale, "未验证", "unverified")}
+                  </StatusPill>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                  {health.capabilities?.search?.warning
+                    ?? localize(
+                      locale,
+                      "当前没有额外的搜索时效性告警。",
+                      "No additional search-latestness warning is reported for this runtime.",
+                    )}
+                </p>
+              </div>
             </div>
           ) : (
             <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "正在加载工具状态…", "Loading tool status...")}</p>

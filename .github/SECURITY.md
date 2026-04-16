@@ -32,4 +32,4 @@ Please do not open public issues for security reports.
 
 - Share minimal proof-of-concept details until a patch is released.
 - If credentials/secrets are involved, rotate them immediately after patching.
-- Use the patched version tag and re-run `npm run release:verify` before rollout.
+- Use the patched version tag, re-run `npm run release:verify:repo`, then re-run `npm run release:verify` before rollout.

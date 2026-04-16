@@ -61,6 +61,7 @@ Use:
 
 Exit criteria:
 
+- `npm run release:verify:repo` passes
 - `npm run release:verify` passes
 - release tag matches package version
 - release notes generated from template

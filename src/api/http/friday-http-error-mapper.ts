@@ -19,6 +19,17 @@ const FRIDAY_GENERIC_5XX_MESSAGE = "Internal Server Error";
 
 export function mapErrorToApiError(error: unknown, statusCode: number): FridayApiError {
   if (statusCode >= 500) {
+    if (error instanceof FridayDomainError && statusCode === 501) {
+      const apiError: FridayApiError = {
+        code: error.code,
+        message: error.message,
+        retryable: error.retryable,
+      };
+      if (error.details && Object.keys(error.details).length > 0) {
+        apiError.details = error.details as Record<string, JsonValue>;
+      }
+      return apiError;
+    }
     // Mask all 5xx messages to prevent information leakage
     return {
       code: error instanceof FridayDomainError ? error.code : FRIDAY_ERROR_CODES.INTERNAL_ERROR,

@@ -48,6 +48,15 @@ export const FRIDAY_AGENT_COMPACTION_THRESHOLD = 40;
 /** Context compaction: number of recent messages to keep in full. */
 export const FRIDAY_AGENT_COMPACTION_KEEP_RECENT = 8;
 
+/**
+ * Context compaction soft token window for the interactive agent loop.
+ *
+ * We compact well before a hosted model's theoretical max window so long
+ * read/tool chains do not overflow on the next turn before the compactor
+ * gets a chance to summarize.
+ */
+export const FRIDAY_AGENT_COMPACTION_SOFT_WINDOW_TOKENS = 32_768;
+
 /** Feature flag: use the provider-level semantic compactor instead of simple text summary. */
 export const FRIDAY_AGENT_COMPACTION_USE_PROVIDER = true;
 

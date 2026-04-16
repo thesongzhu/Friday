@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search } from "lucide-react";
+import { HIDE_MARKETPLACE_UI } from "@/lib/feature-flags";
 import { localize, type AppLocale } from "@/lib/i18n/localized-text";
 
 interface CommandItem {
@@ -32,6 +33,10 @@ const COMMANDS: CommandItem[] = [
   { id: "workflow-builder", label: "Workflow Builder", labelZh: "工作流编辑器", path: "/workflows/builder", section: "Tools", sectionZh: "工具" },
 ];
 
+const AVAILABLE_COMMANDS = HIDE_MARKETPLACE_UI
+  ? COMMANDS.filter((command) => command.path !== "/marketplace")
+  : COMMANDS;
+
 export function CommandPalette(props: { locale: AppLocale; onClose: () => void }) {
   const { locale, onClose } = props;
   const navigate = useNavigate();
@@ -39,7 +44,7 @@ export function CommandPalette(props: { locale: AppLocale; onClose: () => void }
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  const filtered = COMMANDS.filter((cmd) => {
+  const filtered = AVAILABLE_COMMANDS.filter((cmd) => {
     const q = query.toLowerCase();
     if (!q) return true;
     return cmd.label.toLowerCase().includes(q) || cmd.labelZh.includes(q) || cmd.path.includes(q);

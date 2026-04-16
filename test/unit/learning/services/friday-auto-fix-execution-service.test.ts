@@ -494,6 +494,59 @@ describe("FridayAutoFixExecutionService", () => {
     expect(result.errorMessage).toContain("rollback plan");
   });
 
+  it("allows approved-style Tier 2 retry actions to execute without a rollback plan", async () => {
+    const actionRepo = createFridayAutoFixActionRepository();
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+
+    incidentRepo.insert(db.writer, {
+      incidentId: "inc-003",
+      userId: "test-user",
+      ts: NOW,
+      category: "workflow",
+      severity: "high",
+      signature: "sig-workflow",
+      context: {},
+      autoFixEligible: true,
+      status: "open",
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    diagnosisRepo.insert(db.writer, {
+      id: "diag-003",
+      incidentId: "inc-003",
+      errorFingerprint: "sig-workflow",
+      confidence: 0.8,
+      diagnosis: { summary: "workflow retry" },
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    actionRepo.insert(db.writer, {
+      actionId: "action-003",
+      incidentId: "inc-003",
+      userId: "test-user",
+      riskTier: 2,
+      plan: {
+        ...basePlan,
+        title: "Auto-fix: retry workflow",
+        summary: "Retry the failed workflow operation",
+      },
+      status: "planned",
+      outcome: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    const result = await service.execute("action-003");
+
+    expect(result.success).toBe(true);
+    expect(result.verificationPassed).toBe(true);
+    expect(result.action.status).toBe("applied");
+    expect(result.errorMessage).toBeUndefined();
+  });
+
   describe("verification-fail → rollback path", () => {
     it("triggers rollback when verification fails and rollback plan exists", async () => {
       const actionRepo = createFridayAutoFixActionRepository();

@@ -145,6 +145,13 @@ export interface FridayAutoFixApprovalResponse {
 
 export interface FridayAutoFixExecutionResponse {
   action: FridayFixPlanRecord;
+  result: {
+    success: boolean;
+    verificationPassed: boolean;
+    rollbackAttempted: boolean;
+    rollbackSucceeded: boolean;
+    errorMessage?: string;
+  };
 }
 
 export interface FridayAutoFixMetricsResponse {

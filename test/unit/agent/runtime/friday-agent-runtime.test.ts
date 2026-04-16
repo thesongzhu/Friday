@@ -4838,6 +4838,39 @@ describe("FridayAgentRuntime", () => {
     expect(capturedSystemPrompt).toContain("</user-preferences>");
   });
 
+  it("awaits communicationPromptBuilder fragments before sending the prompt", async () => {
+    let capturedSystemPrompt = "";
+
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedSystemPrompt = params.systemPrompt;
+        yield { type: "text_delta", text: "ok" };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 2 };
+      },
+    };
+
+    const communicationPromptBuilder = vi.fn().mockResolvedValue("[Learned Preferences]\n- Remember canary: COMPACTION_CANARY");
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      communicationPromptBuilder,
+    });
+
+    await runtime.executeRun({ task: "Hello", principalId: "user-123" });
+
+    expect(communicationPromptBuilder).toHaveBeenCalledWith({ userId: "user-123", nowIso: NOW });
+    expect(capturedSystemPrompt).toContain("[Learned Preferences]");
+    expect(capturedSystemPrompt).toContain("COMPACTION_CANARY");
+  });
+
   it("uses learned timezone preference when no explicit timezone is provided", async () => {
     let callCount = 0;
     const llmClient: FridayAgentLlmClient = {
@@ -5151,4 +5184,5 @@ describe("FridayAgentRuntime", () => {
       },
     });
   });
+
 });

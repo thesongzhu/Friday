@@ -998,7 +998,12 @@ function WorkflowBuilderEditor() {
   const templateDetailQuery = useQuery({
     queryKey: ["workflow-builder", "template", selectedTemplateId],
     queryFn: () => workflowBuilderApi.getTemplate(selectedTemplateId!),
-    enabled: Boolean(catalogQueriesEnabled && selectedTemplateId && !selectedStableTemplate),
+    enabled: Boolean(
+      catalogQueriesEnabled
+      && templatesQuery.isSuccess
+      && selectedTemplateId
+      && !selectedStableTemplate,
+    ),
   });
 
   const selectedTemplate = templateDetailQuery.data?.template ?? selectedRegularTemplate;

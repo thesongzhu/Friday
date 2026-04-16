@@ -17,6 +17,7 @@ import * as path from "node:path";
 import * as net from "node:net";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import Database from "better-sqlite3";
+import { chromium } from "playwright";
 
 import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
@@ -28,6 +29,22 @@ import type { FridayHttpServer } from "#api";
 const itOllama = process.env.E2E_OLLAMA === "1" ? it : it.skip;
 const itReal = process.env.E2E_REAL === "1" ? it : it.skip;
 const itRealOllama = (process.env.E2E_REAL === "1" && process.env.E2E_OLLAMA === "1") ? it : it.skip;
+
+function resolveUiStaticDir(): string | undefined {
+  const uiStaticDir = path.resolve(process.cwd(), "dist/ui");
+  const indexPath = path.join(uiStaticDir, "index.html");
+  return fs.existsSync(indexPath) ? uiStaticDir : undefined;
+}
+
+const UI_STATIC_DIR = resolveUiStaticDir();
+const CHROMIUM_AVAILABLE = (() => {
+  try {
+    return Boolean(UI_STATIC_DIR) && fs.existsSync(chromium.executablePath());
+  } catch {
+    return false;
+  }
+})();
+const itBrowser = CHROMIUM_AVAILABLE ? it : it.skip;
 
 // ─── Helpers ───
 
@@ -102,6 +119,7 @@ describe("Setup Wizard E2E", () => {
       port,
       host: "127.0.0.1",
       logRequests: false,
+      uiStaticDir: UI_STATIC_DIR,
     });
     await httpServer.listen();
     baseUrl = `http://127.0.0.1:${String(port)}`;
@@ -162,6 +180,37 @@ describe("Setup Wizard E2E", () => {
       expect(json.ok).toBe(true);
       expect(json.data.needsSetup).toBe(true);
       expect(json.data.setupCompletedAt).toBeNull();
+    });
+
+    it("A1b: reading user-profile before setup does not mark onboarding complete", async () => {
+      const profileRes = await fetch(`${baseUrl}/v1/uix/user-profile`, {
+        headers: authHeaders(accessToken),
+      });
+      expect(profileRes.status).toBe(200);
+      const profileJson = (await profileRes.json()) as {
+        ok: boolean;
+        data: {
+          profileType: string | null;
+          onboardedAt: string | null;
+        };
+      };
+      expect(profileJson.ok).toBe(true);
+      expect(profileJson.data.profileType).toBe("beginner");
+      expect(profileJson.data.onboardedAt).toBeNull();
+
+      const prefsRes = await fetch(`${baseUrl}/v1/uix/preferences?category=uix`, {
+        headers: authHeaders(accessToken),
+      });
+      expect(prefsRes.status).toBe(200);
+      const prefsJson = (await prefsRes.json()) as {
+        ok: boolean;
+        data: {
+          items: Array<{ key: string; value: unknown }>;
+        };
+      };
+      expect(prefsJson.ok).toBe(true);
+      expect(prefsJson.data.items.find((item) => item.key === "user.profile_type")).toBeUndefined();
+      expect(prefsJson.data.items.find((item) => item.key === "user.onboarded_at")).toBeUndefined();
     });
 
     it("A2: detect ollama should return models payload (skip if not running)", async () => {
@@ -475,6 +524,41 @@ describe("Setup Wizard E2E", () => {
       expect(json.data.needsSetup).toBe(false);
       expect(json.data.setupCompletedAt).not.toBeNull();
       expect(json.data.channelCount).toBeGreaterThanOrEqual(1);
+    });
+
+    it("A12b: setup completion keeps onboarding pending until the user finishes onboarding", async () => {
+      const profileRes = await fetch(`${baseUrl}/v1/uix/user-profile`, {
+        headers: authHeaders(accessToken),
+      });
+      expect(profileRes.status).toBe(200);
+      const profileJson = (await profileRes.json()) as {
+        ok: boolean;
+        data: {
+          profileType: string | null;
+          onboardedAt: string | null;
+        };
+      };
+      expect(profileJson.ok).toBe(true);
+      expect(profileJson.data.profileType).toBe("beginner");
+      expect(profileJson.data.onboardedAt).toBeNull();
+    });
+
+    itBrowser("A12c: browser redirects to onboarding after setup completes", async () => {
+      const browser = await chromium.launch({ headless: true });
+      const context = await browser.newContext({
+        baseURL: baseUrl,
+        timezoneId: "America/Los_Angeles",
+      });
+      const page = await context.newPage();
+      try {
+        await page.goto("/", { waitUntil: "networkidle" });
+        await page.waitForURL("**/onboarding", { timeout: 30_000 });
+        await page.locator("[data-testid='onboarding-page']").waitFor({ state: "visible", timeout: 30_000 });
+        expect(new URL(page.url()).pathname).toBe("/onboarding");
+      } finally {
+        await context.close();
+        await browser.close();
+      }
     });
 
     it("A13: full wizard API flow should pass end-to-end", async () => {

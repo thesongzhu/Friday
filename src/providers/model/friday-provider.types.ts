@@ -293,6 +293,61 @@ export interface FridayModelRoutingConfig {
   enforceRequestedModel?: boolean;
 }
 
+function normalizeFridayStringList(input: readonly string[] | null | undefined): string[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const raw of input) {
+    if (typeof raw !== "string") {
+      continue;
+    }
+    const value = raw.trim();
+    if (value.length === 0 || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    normalized.push(value);
+  }
+
+  return normalized;
+}
+
+export function normalizeFridayProviderSupportedModels(
+  input: readonly string[] | null | undefined,
+): string[] {
+  return normalizeFridayStringList(input);
+}
+
+export function resolveFridayProviderPreferredModel(
+  provider: Pick<FridayProviderProfile, "defaultModel" | "config">,
+): string | undefined {
+  return provider.defaultModel ?? normalizeFridayProviderSupportedModels(provider.config.supportedModels)[0];
+}
+
+export function normalizeFridayModelRoutingConfig(
+  input: Partial<FridayModelRoutingConfig> | null | undefined,
+): FridayModelRoutingConfig {
+  const defaultProviderId = typeof input?.defaultProviderId === "string"
+    ? input.defaultProviderId.trim()
+    : "";
+  const defaultModel = typeof input?.defaultModel === "string"
+    ? input.defaultModel.trim()
+    : undefined;
+
+  return {
+    defaultProviderId,
+    ...(defaultModel ? { defaultModel } : {}),
+    fallbackProviderIds: normalizeFridayStringList(input?.fallbackProviderIds),
+    ...(input?.enforceRequestedModel !== undefined
+      ? { enforceRequestedModel: Boolean(input.enforceRequestedModel) }
+      : {}),
+  };
+}
+
 // ─── Fallback attempt tracking ───
 
 /** Reason category for a provider failure. */

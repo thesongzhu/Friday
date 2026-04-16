@@ -41,6 +41,7 @@ Useful flags:
 node scripts/validation/run-real-world-validation.mjs --list-scenarios
 node scripts/validation/run-real-world-validation.mjs --suite smoke --scenario l3-summary-misroute-guard
 node scripts/validation/run-real-world-validation.mjs --suite nightly --layer L5 --judge never
+node scripts/validation/run-real-world-validation.mjs --suite smoke
 node scripts/validation/run-real-world-validation.mjs --suite smoke --mint-local-admin-token
 ```
 
@@ -53,6 +54,7 @@ Default runtime target:
 - `FRIDAY_ACCESS_TOKEN`: optional bearer token for non-local auth
 - `FRIDAY_LOCAL_PASSPHRASE`: optional local passphrase for `/v1/auth/login`
 - `FRIDAY_AUTH_EMAIL` / `FRIDAY_AUTH_PASSWORD`: optional email/password login pair
+- `--mint-local-admin-token` is a fallback for special environments only; prefer real login whenever the runtime already supports it
 
 Operator-only local mint fallback:
 

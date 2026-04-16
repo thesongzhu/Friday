@@ -100,6 +100,21 @@ function makeDeps(): FridayObservabilityRoutesDeps {
       update: vi.fn().mockReturnValue({ rule: { id: "r-1" } }),
       delete: vi.fn().mockReturnValue({ deleted: true, ruleId: "r-1" }),
     },
+    heartbeat: {
+      getStatus: vi.fn().mockReturnValue({
+        lastRunAt: null,
+        result: "unknown",
+        intervalMs: 900000,
+        nextRunAt: null,
+      }),
+      trigger: vi.fn().mockResolvedValue({
+        triggered: true,
+        result: {
+          status: "ok",
+          actionRequired: false,
+        },
+      }),
+    },
   };
 }
 
@@ -107,9 +122,9 @@ function makeDeps(): FridayObservabilityRoutesDeps {
 
 describe("B-005 FridayObservabilityRoutes", () => {
   describe("route registration", () => {
-    it("registers all 24 routes", () => {
+    it("registers all 26 routes", () => {
       const routes = createFridayObservabilityRoutes(makeDeps());
-      expect(routes.length).toBe(24);
+      expect(routes.length).toBe(26);
     });
 
     it("has unique operationIds", () => {
@@ -422,6 +437,30 @@ describe("B-005 FridayObservabilityRoutes", () => {
     });
   });
 
+  describe("heartbeat routes", () => {
+    it("GET /v1/heartbeat/status delegates to getStatus", async () => {
+      const deps = makeDeps();
+      const routes = createFridayObservabilityRoutes(deps);
+      const route = findRoute(routes, "observability.heartbeat.status");
+
+      expect(route.method).toBe("GET");
+      expect(route.auth).toEqual({ public: false, anyOfScopes: ["diagnosis.read"] });
+      await route.handler(makeCtx());
+      expect(deps.heartbeat?.getStatus).toHaveBeenCalledTimes(1);
+    });
+
+    it("POST /v1/heartbeat/trigger delegates to trigger", async () => {
+      const deps = makeDeps();
+      const routes = createFridayObservabilityRoutes(deps);
+      const route = findRoute(routes, "observability.heartbeat.trigger");
+
+      expect(route.method).toBe("POST");
+      expect(route.auth).toEqual({ public: false, anyOfScopes: ["diagnosis.write"] });
+      await route.handler(makeCtx());
+      expect(deps.heartbeat?.trigger).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("scope contract snapshot", () => {
     const routes = createFridayObservabilityRoutes(makeDeps());
 
@@ -438,8 +477,8 @@ describe("B-005 FridayObservabilityRoutes", () => {
     });
 
     it("expected scope distribution", () => {
-      expect(readRoutes.length).toBe(13);
-      expect(writeRoutes.length).toBe(11);
+      expect(readRoutes.length).toBe(14);
+      expect(writeRoutes.length).toBe(12);
     });
   });
 });

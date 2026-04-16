@@ -108,6 +108,8 @@ export function createFridayAutonomousEngine(
   const steps = new Map<UUID, FridayAutonomousStep>();
   const iterations = new Map<UUID, FridayAutonomousIteration[]>();
   const abortControllers = new Map<UUID, AbortController>();
+  const restartInterruptionReason = "Interrupted by process restart";
+  const restartInterruptedAt = nowIso();
 
   // ─── Startup recovery: load non-terminal goals from SQLite ───
   if (persistence) {
@@ -121,17 +123,30 @@ export function createFridayAutonomousEngine(
           const failedGoal: FridayAutonomousGoal = {
             ...goal,
             status: "failed",
-            failureReason: "Interrupted by process restart",
-            completedAt: nowIso(),
+            failureReason: restartInterruptionReason,
+            completedAt: restartInterruptedAt,
           };
           goals.set(goal.id, failedGoal);
           persistence.sqlite.withWriteTransaction((db) =>
             persistence.repository.updateGoal(db, goal.id, {
               status: "failed",
-              failureReason: "Interrupted by process restart",
+              failureReason: restartInterruptionReason,
               completedAt: failedGoal.completedAt,
             }),
           );
+          const goalSteps = persistence.sqlite.withReadConnection((db) =>
+            persistence.repository.getStepsByGoalId(db, goal.id),
+          );
+          for (const step of goalSteps) {
+            if (step.status === "completed" || step.status === "failed" || step.status === "skipped") continue;
+            persistence.sqlite.withWriteTransaction((db) =>
+              persistence.repository.updateStep(db, step.id, {
+                status: step.status === "pending" ? "skipped" : "failed",
+                failureReason: restartInterruptionReason,
+                completedAt: restartInterruptedAt,
+              }),
+            );
+          }
         } else {
           // Pending goals: rehydrate into cache for potential re-execution
           goals.set(goal.id, goal);

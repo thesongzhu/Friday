@@ -137,7 +137,7 @@ export function OnboardingPage() {
   }));
 
   return (
-    <div className="flex min-h-[calc(100vh-7rem)] items-center justify-center pb-6">
+    <div data-testid="onboarding-page" className="flex min-h-[calc(100vh-7rem)] items-center justify-center pb-6">
       <div className="w-full max-w-4xl space-y-5">
         <section className="rounded-[32px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-6 py-6 shadow-[var(--shadow-floating)]">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">

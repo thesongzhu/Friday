@@ -3,6 +3,10 @@ import type { FridaySqliteLayer } from "#state";
 import type { FridayAutoFixActionRepository } from "../persistence/friday-auto-fix-action-repository.js";
 import type { UUID } from "../model/friday-learning.types.js";
 import type { FridayAutoFixExecutionResult, FridayAutoFixPlan } from "../model/friday-auto-fix.types.js";
+import {
+  DEFAULT_EXECUTORS,
+  DEFAULT_VERIFIERS,
+} from "./friday-auto-fix-execution-service.js";
 import type {
   StepExecutor,
   StepVerifier,
@@ -68,8 +72,14 @@ export function createFridayAutoFixRollbackService(
         };
       }
 
-      const executors = deps.stepExecutors ?? {};
-      const verifiers = deps.stepVerifiers ?? {};
+      const executors: Partial<Record<FridayAutoFixStepKind, StepExecutor>> = {
+        ...DEFAULT_EXECUTORS,
+        ...deps.stepExecutors,
+      };
+      const verifiers: Partial<Record<FridayAutoFixStepKind, StepVerifier>> = {
+        ...DEFAULT_VERIFIERS,
+        ...deps.stepVerifiers,
+      };
 
       for (const step of rollbackPlan.steps) {
         const executor = executors[step.kind];

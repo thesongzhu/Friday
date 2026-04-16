@@ -32,7 +32,7 @@ describe("cross-channel identity mapping", () => {
     expect(parsed["telegram:88"]).toBe("alice");
   });
 
-  it("returns legacy channel session key when mapping is disabled", () => {
+  it("returns channel-scoped session key when mapping is disabled", () => {
     const key = resolveFridayChannelSessionKey(makeMessage(), {
       crossChannelIdentityEnabled: false,
       identityMap: { "discord:u-1": "alice" },
@@ -64,7 +64,7 @@ describe("cross-channel identity mapping", () => {
         identityMap: {},
       },
     );
-    expect(key).toBe("channel:discord:c-1:thread:t-42");
+    expect(key).toBe("channel:discord:c-1-thread-t-42");
   });
 
   it("does not disable any tools regardless of channel kind", () => {

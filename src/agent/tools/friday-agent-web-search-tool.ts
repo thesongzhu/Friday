@@ -11,6 +11,7 @@ import {
 const DEFAULT_NUM_RESULTS = 5;
 const MAX_NUM_RESULTS = 20;
 const SEARCH_TIMEOUT_MS = 15_000;
+const GOOGLE_NEWS_RSS_SEARCH_URL = "https://news.google.com/rss/search";
 const DUCKDUCKGO_TIMELINESS_WARNING =
   "DuckDuckGo HTML search does not provide verified recency filtering or stable publication dates; latest-ness is unverified.";
 const SERPER_KEY_MISSING_WARNING =
@@ -21,9 +22,9 @@ const TAVILY_KEY_MISSING_WARNING =
 // ─── Options ───
 
 export interface CreateFridayAgentWebSearchToolOptions {
-  /** Search provider: "serper" | "tavily" | "duckduckgo". Defaults to "duckduckgo". */
+  /** Search provider: "auto" | "serper" | "tavily" | "duckduckgo" | "google_news_rss". Defaults to "auto". */
   provider?: string;
-  /** API key for the configured provider (not needed for duckduckgo). */
+  /** API key for the configured provider (not needed for duckduckgo/google_news_rss). */
   apiKey?: string;
 }
 
@@ -36,7 +37,9 @@ interface WebSearchResult {
   date?: string;
 }
 
-type WebSearchProvider = "serper" | "tavily" | "duckduckgo";
+type ConfiguredWebSearchProvider = "auto" | "serper" | "tavily" | "duckduckgo" | "google_news_rss";
+
+type WebSearchProvider = "serper" | "tavily" | "duckduckgo" | "google_news_rss";
 
 type WebSearchMetadata = Record<string, unknown> & {
   provider: WebSearchProvider;
@@ -51,7 +54,7 @@ type WebSearchMetadata = Record<string, unknown> & {
 export function createFridayAgentWebSearchTool(
   options?: CreateFridayAgentWebSearchToolOptions,
 ): FridayAgentToolDefinition {
-  const provider = normalizeProvider(options?.provider);
+  const configuredProvider = normalizeProvider(options?.provider);
   const apiKey = options?.apiKey;
 
   return {
@@ -98,13 +101,14 @@ export function createFridayAgentWebSearchTool(
         let results: WebSearchResult[];
         let warning: string | null = null;
         let freshnessApplied = false;
+        let provider: WebSearchProvider;
 
-        if (provider === "serper") {
+        if (configuredProvider === "serper") {
           if (!apiKey) {
             return {
               ...errorResult(SERPER_KEY_MISSING_WARNING),
               metadata: buildSearchMetadata({
-                provider,
+                provider: "serper",
                 freshnessRequested: freshness,
                 freshnessApplied: false,
                 hasDates: false,
@@ -114,12 +118,13 @@ export function createFridayAgentWebSearchTool(
           }
           results = await searchSerper(query, numResults, freshness, apiKey, timeoutController.signal);
           freshnessApplied = Boolean(freshness);
-        } else if (provider === "tavily") {
+          provider = "serper";
+        } else if (configuredProvider === "tavily") {
           if (!apiKey) {
             return {
               ...errorResult(TAVILY_KEY_MISSING_WARNING),
               metadata: buildSearchMetadata({
-                provider,
+                provider: "tavily",
                 freshnessRequested: freshness,
                 freshnessApplied: false,
                 hasDates: false,
@@ -129,13 +134,23 @@ export function createFridayAgentWebSearchTool(
           }
           results = await searchTavily(query, numResults, freshness, apiKey, timeoutController.signal);
           freshnessApplied = Boolean(freshness);
+          provider = "tavily";
+        } else if (
+          configuredProvider === "google_news_rss"
+          || (configuredProvider === "auto" && isTimeSensitiveNewsQuery(query, freshness))
+        ) {
+          results = await searchGoogleNewsRss(query, numResults, freshness, timeoutController.signal);
+          freshnessApplied = Boolean(freshness);
+          provider = "google_news_rss";
         } else {
           results = await searchDuckDuckGo(query, numResults, timeoutController.signal);
-          warning = DUCKDUCKGO_TIMELINESS_WARNING;
+          freshnessApplied = false;
+          warning = freshness ? DUCKDUCKGO_TIMELINESS_WARNING : null;
+          provider = "duckduckgo";
         }
 
         const hasDates = results.some((result) => typeof result.date === "string" && result.date.trim().length > 0);
-        if (!warning && (provider === "serper" || provider === "tavily") && freshnessApplied && !hasDates) {
+        if (!warning && (provider === "serper" || provider === "tavily" || provider === "google_news_rss") && freshnessApplied && !hasDates) {
           warning = "Search results did not include verifiable publication dates; latest-ness remains unverified.";
         }
         const metadata = buildSearchMetadata({
@@ -153,13 +168,13 @@ export function createFridayAgentWebSearchTool(
           return { content, isError: undefined, metadata };
         }
 
-        const formatted = results.map((r, i) => {
+        const formatted = results.map((result, index) => {
           const parts = [
-            `${String(i + 1)}. ${r.title}`,
-            `   URL: ${r.url}`,
+            `${String(index + 1)}. ${result.title}`,
+            `   URL: ${result.url}`,
           ];
-          if (r.date) parts.push(`   Date: ${r.date}`);
-          parts.push(`   ${r.snippet}`);
+          if (result.date) parts.push(`   Date: ${result.date}`);
+          parts.push(`   ${result.snippet}`);
           return parts.join("\n");
         });
 
@@ -181,12 +196,18 @@ export function createFridayAgentWebSearchTool(
   };
 }
 
-function normalizeProvider(provider: string | undefined): WebSearchProvider {
+function normalizeProvider(provider: string | undefined): ConfiguredWebSearchProvider {
   const normalized = provider?.trim().toLowerCase();
-  if (normalized === "serper" || normalized === "tavily" || normalized === "duckduckgo") {
+  if (
+    normalized === "auto"
+    || normalized === "serper"
+    || normalized === "tavily"
+    || normalized === "duckduckgo"
+    || normalized === "google_news_rss"
+  ) {
     return normalized;
   }
-  return "duckduckgo";
+  return "auto";
 }
 
 function buildSearchMetadata(input: {
@@ -203,6 +224,20 @@ function buildSearchMetadata(input: {
     hasDates: input.hasDates,
     warning: input.warning,
   };
+}
+
+function isTimeSensitiveNewsQuery(query: string, freshness: string | undefined): boolean {
+  if (typeof freshness === "string" && freshness.trim().length > 0) {
+    return true;
+  }
+  const normalized = query.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return false;
+  }
+  return (
+    /\b(latest|recent|today|current|breaking|headline|news)\b/.test(normalized)
+    || /(最新|最近|今天|当前|新闻|头条|快讯|报道)/.test(query)
+  );
 }
 
 // ─── Serper.dev provider (Google results) ───
@@ -297,6 +332,96 @@ async function searchTavily(
   }));
 }
 
+// ─── Google News RSS (public dated feed for time-sensitive news) ───
+
+async function searchGoogleNewsRss(
+  query: string,
+  numResults: number,
+  freshness: string | undefined,
+  signal: AbortSignal,
+): Promise<WebSearchResult[]> {
+  const url = new URL(GOOGLE_NEWS_RSS_SEARCH_URL);
+  url.searchParams.set("q", query);
+  url.searchParams.set("hl", "en-US");
+  url.searchParams.set("gl", "US");
+  url.searchParams.set("ceid", "US:en");
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (compatible; FridayAgent/1.0)",
+    },
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new FridayDomainError("INTERNAL_ERROR", `Google News RSS error: HTTP ${String(response.status)}`, { httpStatus: 500 });
+  }
+
+  const xml = await response.text();
+  const parsed = parseGoogleNewsRss(xml);
+  const filtered = applyFreshnessFilter(parsed, freshness);
+  return filtered.slice(0, numResults);
+}
+
+function parseGoogleNewsRss(xml: string): WebSearchResult[] {
+  const results: WebSearchResult[] = [];
+  const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
+
+  for (const match of xml.matchAll(itemRegex)) {
+    const block = match[1] ?? "";
+    const title = normalizeWhitespace(decodeHtmlEntities(readXmlTag(block, "title")));
+    const url = normalizeWhitespace(decodeHtmlEntities(readXmlTag(block, "link")));
+    const description = normalizeWhitespace(stripHtmlTags(decodeHtmlEntities(readXmlTag(block, "description"))));
+    const date = normalizeWhitespace(decodeHtmlEntities(readXmlTag(block, "pubDate")));
+
+    if (!title || !url) {
+      continue;
+    }
+
+    results.push({
+      title,
+      url,
+      snippet: description || title,
+      date: date || undefined,
+    });
+  }
+
+  return results;
+}
+
+function readXmlTag(block: string, tagName: string): string {
+  const pattern = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "i");
+  const match = pattern.exec(block);
+  if (!match?.[1]) {
+    return "";
+  }
+  return match[1].replace(/^<!\\[CDATA\\[/, "").replace(/\\]\\]>$/, "");
+}
+
+function applyFreshnessFilter(
+  results: WebSearchResult[],
+  freshness: string | undefined,
+): WebSearchResult[] {
+  const cutoffDays = freshness === "day"
+    ? 1
+    : freshness === "week"
+      ? 7
+      : freshness === "month"
+        ? 30
+        : null;
+  if (cutoffDays === null) {
+    return results;
+  }
+  const cutoff = Date.now() - cutoffDays * 24 * 60 * 60 * 1000;
+  return results.filter((result) => {
+    if (!result.date) {
+      return false;
+    }
+    const publishedAt = Date.parse(result.date);
+    return Number.isFinite(publishedAt) && publishedAt >= cutoff;
+  });
+}
+
 // ─── DuckDuckGo HTML lite (no API key needed) ───
 
 async function searchDuckDuckGo(
@@ -333,13 +458,12 @@ function parseDuckDuckGoHtml(html: string, maxResults: number): WebSearchResult[
   const links = [...html.matchAll(linkRegex)];
   const snippets = [...html.matchAll(snippetRegex)];
 
-  for (let i = 0; i < Math.min(links.length, maxResults); i++) {
-    const linkMatch = links[i]!;
+  for (let index = 0; index < Math.min(links.length, maxResults); index++) {
+    const linkMatch = links[index]!;
     let href = linkMatch[1] ?? "";
     const titleHtml = linkMatch[2] ?? "";
-    const snippetHtml = snippets[i]?.[1] ?? "";
+    const snippetHtml = snippets[index]?.[1] ?? "";
 
-    // DuckDuckGo wraps URLs in a redirect: //duckduckgo.com/l/?uddg=<encoded>&rut=...
     if (href.includes("uddg=")) {
       const uddgMatch = /uddg=([^&]+)/.exec(href);
       if (uddgMatch?.[1]) {
@@ -347,8 +471,8 @@ function parseDuckDuckGoHtml(html: string, maxResults: number): WebSearchResult[
       }
     }
 
-    const title = stripHtmlTags(titleHtml).trim();
-    const snippet = stripHtmlTags(snippetHtml).trim();
+    const title = normalizeWhitespace(stripHtmlTags(titleHtml));
+    const snippet = normalizeWhitespace(stripHtmlTags(snippetHtml));
 
     if (title && href) {
       results.push({ title, url: href, snippet });
@@ -359,5 +483,19 @@ function parseDuckDuckGoHtml(html: string, maxResults: number): WebSearchResult[
 }
 
 function stripHtmlTags(html: string): string {
-  return html.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ");
+  return html.replace(/<[^>]*>/g, " ");
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ");
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }

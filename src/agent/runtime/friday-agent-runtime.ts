@@ -15,6 +15,7 @@ import type { PolicyExtension } from "../../security/policy-extension-chain.js";
 
 import {
   FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
+  FRIDAY_AGENT_COMPACTION_SOFT_WINDOW_TOKENS,
   FRIDAY_AGENT_COMPACTION_THRESHOLD,
   FRIDAY_AGENT_COMPACTION_USE_PROVIDER,
   FRIDAY_AGENT_ERROR_CODES,
@@ -94,6 +95,13 @@ const TERMINAL_CONTEXT_ENGINE_STATUSES: ReadonlySet<FridayAgentRunStatus> = new 
   "failed_tests",
   "cancelled",
 ]);
+const AGENT_COMPACTION_APPROX_CHARS_PER_TOKEN = 4;
+const AGENT_COMPACTION_TRIGGER_RATIO = 0.70;
+const AGENT_COMPACTION_SOFT_CHAR_THRESHOLD = Math.floor(
+  FRIDAY_AGENT_COMPACTION_SOFT_WINDOW_TOKENS
+  * AGENT_COMPACTION_APPROX_CHARS_PER_TOKEN
+  * AGENT_COMPACTION_TRIGGER_RATIO,
+);
 
 function hasCjkText(text: string): boolean {
   return /[\u4e00-\u9fff]/u.test(text);
@@ -166,6 +174,42 @@ function buildReplyAnchorFallbackResponse(params: {
 function hasExplicitResearchIntent(task: string): boolean {
   return /\b(search|research|look up|lookup|find sources|find source|latest|news|browse|google|compare|price|current|today|now|check online)\b/i.test(task)
     || /(搜索|搜一下|查一下|查一查|上网查|最新|新闻|帮我找资料|对比|价格|多少钱|现在|当前|查查)/.test(task);
+}
+
+function isFridayValidationJudgeTask(task: string): boolean {
+  return task.trim().startsWith("You are validating a Friday real-world scenario run.");
+}
+
+const NATIVE_TOOL_STRONG_PATTERNS: ReadonlyArray<RegExp> = [
+  /\b(read|open|inspect|check|search|grep|rg|cat|ls|browse|visit|screenshot|fetch|download|list|find|run|execute|edit|modify|patch|write|create|delete|rename|move)\b[\s\S]{0,48}\b(file|files|filesystem|folder|directory|repo|repository|workspace|shell|terminal|command|browser|desktop|system|mcp)\b/i,
+  /\b(file|files|filesystem|folder|directory|repo|repository|workspace|shell|terminal|command|browser|desktop|system|mcp)\b[\s\S]{0,48}\b(read|open|inspect|check|search|grep|rg|cat|ls|browse|visit|screenshot|fetch|download|list|find|run|execute|edit|modify|patch|write|create|delete|rename|move)\b/i,
+  /\b(read|open|inspect|cat)\b[\s\S]{0,32}\b[a-z0-9_.-]+\.[a-z0-9]+\b/i,
+  /\b(create|update|edit|modify|delete|publish|run|execute|configure|install|import|debug|fix|open|list|inspect)\b[\s\S]{0,48}\b(workflow|workflows|skill|skills|memory|session|sessions|automation|automations|provider|providers|channel|channels)\b/i,
+  /\b(workflow|workflows|skill|skills|memory|session|sessions|automation|automations|provider|providers|channel|channels)\b[\s\S]{0,48}\b(create|update|edit|modify|delete|publish|run|execute|configure|install|import|debug|fix|open|list|inspect)\b/i,
+];
+
+export function inferFridayTaskRequiresNativeTools(params: {
+  task: string;
+  historyMessages?: FridayAgentMessage[];
+  readOnly: boolean;
+}): boolean {
+  if (!params.readOnly) {
+    return true;
+  }
+
+  if (isFridayValidationJudgeTask(params.task)) {
+    return false;
+  }
+
+  const corpus = [
+    params.task,
+    ...(params.historyMessages ?? []).map((message) =>
+      typeof message.content === "string" ? message.content : ""),
+  ]
+    .join("\n")
+    .toLowerCase();
+
+  return NATIVE_TOOL_STRONG_PATTERNS.some((pattern) => pattern.test(corpus));
 }
 
 function describeAbortReason(reason: unknown): string {
@@ -720,7 +764,11 @@ export function createFridayAgentRuntime(
         return {
           estimatedInputTokens: Math.max(1, Math.ceil(estimatedChars / 4)),
           complexity,
-          requiresNativeTools: true,
+          requiresNativeTools: inferFridayTaskRequiresNativeTools({
+            task: params.task,
+            historyMessages: messages,
+            readOnly: isReadOnly,
+          }),
           taskProfileId: resolvedTaskProfile.id,
         };
       };
@@ -1322,7 +1370,7 @@ export function createFridayAgentRuntime(
         }
         if (communicationPromptBuilder && principalId) {
           try {
-            const fragment = communicationPromptBuilder({ userId: principalId, nowIso: nowIso() });
+            const fragment = await communicationPromptBuilder({ userId: principalId, nowIso: nowIso() });
             if (fragment && fragment.trim().length > 0) {
               effectiveSystemPrompt += `\n\n${fragment.trim()}`;
             }
@@ -1431,6 +1479,7 @@ export function createFridayAgentRuntime(
         let starterSkillRoutingRetries = 0;
         let llmConsecutiveFailures = 0;
         let llmDegraded = false;
+        let latestLlmFailureMessage: string | undefined;
         const fileVersionTracker = createFridayFileVersionTracker();
         const runCheckpoint = deps.workdir
           ? createFridayRunCheckpoint({ runId, stateDir: deps.workdir, db, nowIso })
@@ -1451,19 +1500,41 @@ export function createFridayAgentRuntime(
           // use semantic block-level compaction (scoring, structured extraction,
           // optional LLM summarization).  Falls back to the legacy one-line
           // text compaction on any error.
-          if (FRIDAY_AGENT_COMPACTION_USE_PROVIDER && compactionBridge && messages.length > FRIDAY_AGENT_COMPACTION_THRESHOLD) {
+          if (FRIDAY_AGENT_COMPACTION_USE_PROVIDER && compactionBridge && shouldAttemptSemanticCompaction(messages)) {
             try {
+              handleTrackedEvent("agent.run.compaction_attempted", {
+                runId,
+                messageCount: messages.length,
+              });
               const bridgeResult = await compactionBridge.compact({
                 messages,
                 systemPrompt: effectiveSystemPrompt,
                 task: params.task,
-                contextWindowTokens: 200_000, // Default to Anthropic window; overrideable via provider
+                // Use an agent-loop soft budget instead of the provider's theoretical max window.
+                // This keeps long tool/read chains from overflowing before compaction can help.
+                contextWindowTokens: FRIDAY_AGENT_COMPACTION_SOFT_WINDOW_TOKENS,
+              });
+              handleTrackedEvent("agent.run.compaction_result", {
+                runId,
+                compacted: bridgeResult.compacted,
+                summaryPresent: Boolean(bridgeResult.summary),
+                blockCount: bridgeResult.blocks?.length ?? 0,
+                droppedMessageCount: bridgeResult.droppedMessageCount,
+                estimatedTokensBefore: bridgeResult.estimatedTokensBefore,
+                estimatedTokensAfter: bridgeResult.estimatedTokensAfter,
               });
               if (bridgeResult.compacted) {
                 messages.splice(0, messages.length, ...bridgeResult.messages);
 
                 // Non-blocking: persist structured summary to memory for cross-session retrieval
                 if (compactionMemorySink && bridgeResult.summary) {
+                  handleTrackedEvent("agent.run.compaction_persist_scheduled", {
+                    runId,
+                    sessionKey: params.sessionKey ?? runId,
+                    summaryPresent: true,
+                    blockCount: bridgeResult.blocks?.length ?? 0,
+                    droppedMessageCount: bridgeResult.droppedMessageCount,
+                  });
                   void compactionMemorySink.persist({
                     sessionKey: params.sessionKey ?? runId,
                     runId,
@@ -1474,6 +1545,7 @@ export function createFridayAgentRuntime(
                 }
               }
             } catch {
+              handleTrackedEvent("agent.run.compaction_failed", { runId });
               // Graceful degradation: fall through to legacy compaction
               const preCompactionLen = messages.length;
               const compacted = compactMessagesIfNeeded(
@@ -1602,6 +1674,7 @@ export function createFridayAgentRuntime(
               // First failure: degrade gracefully — switch to restricted mode and synthesize a response
               if (llmConsecutiveFailures <= 1) {
                 const llmErrorMsg = llmError instanceof Error ? llmError.message : String(llmError);
+                latestLlmFailureMessage = llmErrorMsg;
                 console.warn("[friday][agent-runtime] LLM call failed, degrading gracefully: %s", llmErrorMsg);
 
                 if (runOperationalMode !== "restricted") {
@@ -2262,6 +2335,24 @@ export function createFridayAgentRuntime(
               }
             }
           }
+
+          // Tool outputs require another model turn so the assistant can synthesize
+          // a final answer from the newly appended tool_result messages.
+          if (iterations >= FRIDAY_AGENT_MAX_LOOP_ITERATIONS) {
+            throw new FridayDomainError(
+              FRIDAY_AGENT_ERROR_CODES.LOOP_LIMIT,
+              `Agent exceeded maximum loop iterations (${String(FRIDAY_AGENT_MAX_LOOP_ITERATIONS)})`,
+              { httpStatus: 500 },
+            );
+          }
+          if (allToolCalls.length >= FRIDAY_AGENT_MAX_TOOL_CALLS) {
+            throw new FridayDomainError(
+              FRIDAY_AGENT_ERROR_CODES.TOOL_CALL_LIMIT,
+              `Agent exceeded maximum tool calls (${String(FRIDAY_AGENT_MAX_TOOL_CALLS)})`,
+              { httpStatus: 500 },
+            );
+          }
+          continue;
         }
 
         // Check if we hit the loop limit
@@ -2557,13 +2648,18 @@ export function createFridayAgentRuntime(
             ...(llmDegraded
               ? {
                   errorCode: FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
-                  errorMessage: "LLM provider temporarily unavailable — run degraded with synthetic response",
+                  errorMessage: latestLlmFailureMessage
+                    ?? "LLM provider temporarily unavailable — run degraded with synthetic response",
                 }
               : {}),
             usageInput: totalInputTokens,
             usageOutput: totalOutputTokens,
             costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
-            actualExecution,
+            actualExecution: llmDegraded
+              ? buildActualExecution({
+                  finalFailureReason: latestLlmFailureMessage,
+                })
+              : actualExecution,
             testResults: testResults as unknown as FridayAgentTestResult[],
             artifacts: persistedArtifacts.artifacts,
             responseText: responseText || undefined,
@@ -2579,7 +2675,8 @@ export function createFridayAgentRuntime(
             runId,
             error: {
               code: FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
-              message: "LLM provider temporarily unavailable — run degraded with synthetic response",
+              message: latestLlmFailureMessage
+                ?? "LLM provider temporarily unavailable — run degraded with synthetic response",
             },
             durationMs,
             routeId: "agent.execute.run.llm_degraded",
@@ -4286,6 +4383,55 @@ function extractMessageText(message: FridayAgentMessage): string {
     .filter((block): block is Extract<FridayAgentContentBlock, { type: "text" }> => block.type === "text")
     .map((block) => block.text)
     .join("\n");
+}
+
+function estimateAgentMessageChars(message: FridayAgentMessage): number {
+  if (typeof message.content === "string") {
+    return message.content.length;
+  }
+  if (!Array.isArray(message.content)) {
+    return 0;
+  }
+
+  let total = 0;
+  for (const block of message.content) {
+    if (!block || typeof block !== "object" || !("type" in block)) {
+      continue;
+    }
+    switch (block.type) {
+      case "text":
+        total += typeof block.text === "string" ? block.text.length : 0;
+        break;
+      case "tool_result":
+        total += typeof block.content === "string" ? block.content.length : String(block.content ?? "").length;
+        break;
+      case "tool_use":
+        total += (typeof block.name === "string" ? block.name.length : 0)
+          + JSON.stringify(block.input ?? {}).length;
+        break;
+      case "image":
+        total += 256;
+        break;
+      default:
+        total += JSON.stringify(block).length;
+        break;
+    }
+  }
+  return total;
+}
+
+function shouldAttemptSemanticCompaction(messages: FridayAgentMessage[]): boolean {
+  if (messages.length > FRIDAY_AGENT_COMPACTION_THRESHOLD) {
+    return true;
+  }
+  let totalChars = 0;
+  for (const message of messages) {
+    totalChars += estimateAgentMessageChars(message);
+    if (totalChars > AGENT_COMPACTION_SOFT_CHAR_THRESHOLD) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // ─── Summary derivation helper ───

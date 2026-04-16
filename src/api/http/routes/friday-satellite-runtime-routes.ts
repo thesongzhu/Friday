@@ -124,6 +124,73 @@ function requireString(body: Record<string, unknown>, field: string): string {
   return value;
 }
 
+function parseCapabilities(
+  body: Record<string, unknown>,
+): FridaySatelliteCapabilityReport["capabilities"] {
+  const raw = body.capabilities;
+  if (raw === undefined) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    throw new FridayDomainError("VALIDATION_ERROR", "capabilities must be an array when provided", {
+      httpStatus: 400,
+    });
+  }
+  return raw.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        `capabilities[${String(index)}] must be an object`,
+        { httpStatus: 400 },
+      );
+    }
+    const record = entry as Record<string, unknown>;
+    const key = typeof record.key === "string" ? record.key.trim() : "";
+    if (key.length === 0) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        `capabilities[${String(index)}].key is required`,
+        { httpStatus: 400 },
+      );
+    }
+    if (typeof record.available !== "boolean") {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        `capabilities[${String(index)}].available must be a boolean`,
+        { httpStatus: 400 },
+      );
+    }
+    const metadata = record.metadata;
+    if (
+      metadata !== undefined
+      && (metadata === null || typeof metadata !== "object" || Array.isArray(metadata))
+    ) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        `capabilities[${String(index)}].metadata must be an object when provided`,
+        { httpStatus: 400 },
+      );
+    }
+    const limits = record.limits;
+    if (
+      limits !== undefined
+      && (limits === null || typeof limits !== "object" || Array.isArray(limits))
+    ) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        `capabilities[${String(index)}].limits must be an object when provided`,
+        { httpStatus: 400 },
+      );
+    }
+    return {
+      key,
+      available: record.available,
+      metadata: metadata as Record<string, unknown> | undefined,
+      limits: limits as FridaySatelliteCapabilityReport["capabilities"][number]["limits"] | undefined,
+    };
+  });
+}
+
 export function createFridaySatelliteRuntimeRoutes(
   deps: FridaySatelliteRuntimeRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -164,7 +231,7 @@ export function createFridaySatelliteRuntimeRoutes(
           revision: requirePositiveInteger(body.revision, "revision"),
           generatedAt: requireString(body, "generatedAt"),
           runtime: body.runtime as FridaySatelliteCapabilityReport["runtime"],
-          capabilities: (body.capabilities as FridaySatelliteCapabilityReport["capabilities"]) ?? [],
+          capabilities: parseCapabilities(body),
         });
       },
     },

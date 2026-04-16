@@ -4,7 +4,7 @@ import { assertEvidenceFreshness, createPhaseSteps, getGitHead, runCommand, writ
 import { acquireWorkspaceRunLock, releaseWorkspaceRunLock } from "./workspace-run-lock.mjs";
 
 const steps = createPhaseSteps([
-  { type: "npm", label: "Release verify", script: "release:verify" },
+  { type: "npm", label: "Repo-ready verify", script: "release:verify:repo" },
   { type: "npm", label: "Phase 1 closeout", script: "closeout:phase1" },
   { type: "npm", label: "Phase 2 closeout", script: "closeout:phase2" },
   { type: "npm", label: "Phase 3 closeout", script: "closeout:phase3" },

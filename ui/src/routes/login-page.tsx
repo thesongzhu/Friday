@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Lock, ShieldCheck } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { fetchBootstrapStatus } from "@/lib/api/auth";
 import { useAuth } from "@/hooks/use-auth";
@@ -9,11 +9,19 @@ import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitive
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { isAuthenticated, login, isLoading } = useAuth();
   const [localPassphrase, setLocalPassphrase] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const redirectTo =
+    typeof location.state === "object"
+    && location.state !== null
+    && "redirectTo" in location.state
+    && typeof (location.state as { redirectTo?: unknown }).redirectTo === "string"
+      ? (location.state as { redirectTo: string }).redirectTo
+      : "/";
 
   const { data: bootstrap } = useQuery({
     queryKey: ["login", "bootstrap-status"],
@@ -23,9 +31,9 @@ export function LoginPage() {
 
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
-      navigate("/", { replace: true });
+      navigate(redirectTo, { replace: true });
     }
-  }, [isAuthenticated, isLoading, navigate]);
+  }, [isAuthenticated, isLoading, navigate, redirectTo]);
 
   async function submitLocal(): Promise<void> {
     setSubmitting(true);
@@ -33,7 +41,7 @@ export function LoginPage() {
       await login(localPassphrase.trim().length > 0
         ? { local: true, localPassphrase: localPassphrase.trim() }
         : { local: true });
-      navigate("/", { replace: true });
+      navigate(redirectTo, { replace: true });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Local login failed");
     } finally {
@@ -49,7 +57,7 @@ export function LoginPage() {
     setSubmitting(true);
     try {
       await login({ email: email.trim(), password });
-      navigate("/", { replace: true });
+      navigate(redirectTo, { replace: true });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Login failed");
     } finally {
@@ -73,7 +81,7 @@ export function LoginPage() {
           </h1>
           <p className="mt-4 max-w-xl text-base leading-7 text-[color:var(--color-text-secondary)]">
             This rebuilt UI is focused on system truth: live run control, approval surfaces,
-            trusted-device state, and local machine orchestration above macOS.
+            and local machine orchestration above macOS.
           </p>
           <div className="mt-6 flex flex-wrap gap-2">
             <StatusPill tone={bootstrap?.allowLocalBypassLogin ? "success" : "neutral"}>

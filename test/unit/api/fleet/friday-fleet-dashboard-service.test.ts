@@ -154,6 +154,18 @@ describe("FridayFleetDashboardService", () => {
     expect(overview.totals.pending).toBe(1);
   });
 
+  it("derives runtime readiness counts from real heartbeat and health instead of pairing status labels", () => {
+    insertSatellite("sat-offline", { pairingStatus: "paired" });
+    insertSatellite("sat-degraded", { pairingStatus: "paired" });
+    insertHeartbeat("sat-degraded", "2025-06-15T09:59:55.000Z", { cpu: 95, mem: 95, load: 1.2, queue: 80 });
+
+    const overview = service.getOverview();
+    expect(overview.totals.paired).toBe(2);
+    expect(overview.totals.online).toBe(0);
+    expect(overview.totals.degraded).toBe(1);
+    expect(overview.totals.offline).toBe(1);
+  });
+
   it("returns health score and state", () => {
     insertSatellite("sat-1", { pairingStatus: "online" });
     insertHeartbeat("sat-1", "2025-06-15T09:59:55.000Z", { cpu: 10, mem: 15 });

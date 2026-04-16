@@ -3,6 +3,9 @@ import { createFridayAutonomousEngine } from "../../../../src/agent/autonomous/f
 import type {
   CreateFridayAutonomousEngineDeps,
   FridayAutonomousEngine,
+  FridayAutonomousGoal,
+  FridayAutonomousIteration,
+  FridayAutonomousStep,
 } from "../../../../src/agent/autonomous/friday-autonomous.types.js";
 
 function signal(): AbortSignal {
@@ -57,6 +60,110 @@ describe("FridayAutonomousEngine", () => {
   });
 
   describe("executeGoal", () => {
+    it("marks interrupted goals and steps as terminal during startup recovery", () => {
+      const activeGoal: FridayAutonomousGoal = {
+        id: "goal-restart-1",
+        status: "executing",
+        priority: "normal",
+        source: "assistant",
+        description: "Resume interrupted work",
+        maxIterations: 5,
+        timeoutMs: 60_000,
+        iterationCount: 1,
+        stepIds: ["step-executing", "step-pending", "step-completed"],
+        currentStepIndex: 0,
+        createdAt: "2026-03-11T09:59:00Z",
+        startedAt: "2026-03-11T09:59:30Z",
+      };
+      const activeGoalSteps: FridayAutonomousStep[] = [
+        {
+          id: "step-executing",
+          goalId: activeGoal.id,
+          index: 0,
+          status: "executing",
+          domain: "exec",
+          instruction: "Run a command",
+          maxRetries: 3,
+          retryCount: 1,
+          observations: [],
+          startedAt: "2026-03-11T09:59:40Z",
+        },
+        {
+          id: "step-pending",
+          goalId: activeGoal.id,
+          index: 1,
+          status: "pending",
+          domain: "browser",
+          instruction: "Verify page state",
+          maxRetries: 3,
+          retryCount: 0,
+          observations: [],
+        },
+        {
+          id: "step-completed",
+          goalId: activeGoal.id,
+          index: 2,
+          status: "completed",
+          domain: "file",
+          instruction: "Persist artifact",
+          maxRetries: 3,
+          retryCount: 0,
+          observations: [],
+          completedAt: "2026-03-11T09:59:50Z",
+        },
+      ];
+      const repository = {
+        listActiveGoals: vi.fn().mockReturnValue([activeGoal]),
+        updateGoal: vi.fn(),
+        getStepsByGoalId: vi.fn().mockReturnValue(activeGoalSteps),
+        updateStep: vi.fn(),
+        getIterationsByGoalId: vi.fn().mockReturnValue([] satisfies FridayAutonomousIteration[]),
+      };
+      const sqlite = {
+        withReadConnection: vi.fn((fn: (db: object) => unknown) => fn({})),
+        withWriteTransaction: vi.fn((fn: (db: object) => unknown) => fn({})),
+      };
+
+      createFridayAutonomousEngine({
+        ...deps,
+        persistence: {
+          sqlite,
+          repository: repository as CreateFridayAutonomousEngineDeps["persistence"]["repository"],
+        },
+      });
+
+      expect(repository.updateGoal).toHaveBeenCalledWith(
+        expect.anything(),
+        activeGoal.id,
+        expect.objectContaining({
+          status: "failed",
+          failureReason: "Interrupted by process restart",
+          completedAt: nowIso(),
+        }),
+      );
+      expect(repository.updateStep).toHaveBeenCalledTimes(2);
+      expect(repository.updateStep).toHaveBeenNthCalledWith(
+        1,
+        expect.anything(),
+        "step-executing",
+        expect.objectContaining({
+          status: "failed",
+          failureReason: "Interrupted by process restart",
+          completedAt: nowIso(),
+        }),
+      );
+      expect(repository.updateStep).toHaveBeenNthCalledWith(
+        2,
+        expect.anything(),
+        "step-pending",
+        expect.objectContaining({
+          status: "skipped",
+          failureReason: "Interrupted by process restart",
+          completedAt: nowIso(),
+        }),
+      );
+    });
+
     it("should create a goal and return a result", async () => {
       const result = await engine.executeGoal({
         description: "Test goal",
