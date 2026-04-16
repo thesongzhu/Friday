@@ -15,6 +15,7 @@ describe("agent os navigation", () => {
     expect(AGENT_OS_NAV_ADVANCED.map((item) => item.path)).toEqual([
       "/channels",
       "/skills",
+      "/plugins",
       "/workflows",
       "/automations",
       "/memory",
@@ -34,7 +35,8 @@ describe("agent os navigation", () => {
     expect(resolvePageTitle("/home")).toEqual({ zh: "首页", en: "Home" });
     expect(resolvePageTitle("/flow/build-new")).toEqual({ zh: "引导流程", en: "Guided Flow" });
     expect(resolvePageTitle("/assistant")).toEqual({ zh: "助手", en: "Assistant" });
-    expect(resolvePageTitle("/marketplace")).toEqual({ zh: "资产市场", en: "Marketplace" });
+    expect(resolvePageTitle("/marketplace")).toEqual({ zh: "助手", en: "Assistant" });
+    expect(resolvePageTitle("/plugins")).toEqual({ zh: "插件", en: "Plugins" });
     expect(resolvePageTitle("/skills")).toEqual({ zh: "能力包", en: "Skills" });
     expect(resolvePageTitle("/workflows/123")).toEqual({ zh: "自动化", en: "Workflows" });
     expect(resolvePageTitle("/fleet")).toEqual({ zh: "执行节点", en: "Fleet" });
