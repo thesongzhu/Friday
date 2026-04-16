@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import crypto from "node:crypto";
 import path from "node:path";
 import { chromium } from "playwright";
@@ -17,6 +18,29 @@ function preview(value, max = 400) {
   return text.length > max ? `${text.slice(0, max)}...` : text;
 }
 
+function normalizeHeadingText(value) {
+  return String(value)
+    .replace(/<[^>]+>/gu, " ")
+    .replace(/^#+\s*/u, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function extractTopWorkspaceHeading(markdownText) {
+  if (typeof markdownText !== "string" || markdownText.trim().length === 0) {
+    return null;
+  }
+  const htmlHeadingMatch = markdownText.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/iu);
+  if (htmlHeadingMatch?.[1]) {
+    return normalizeHeadingText(htmlHeadingMatch[1]);
+  }
+  const markdownHeading = markdownText
+    .split(/\r?\n/u)
+    .map((entry) => entry.trim())
+    .find((entry) => /^#\s+\S+/u.test(entry));
+  return markdownHeading ? normalizeHeadingText(markdownHeading) : null;
+}
+
 function getUrlPath(value) {
   if (typeof value !== "string" || value.length === 0) return "";
   try {
@@ -33,6 +57,65 @@ function isIgnorableUiRequestFailure(message) {
 
 function scenarioTimeout(scenario, fallback) {
   return Number(scenario.execution?.timeoutMs) || fallback;
+}
+
+let sharedUiProbeSession = null;
+
+async function getSharedUiProbeSession(uiBaseUrl) {
+  if (sharedUiProbeSession?.uiBaseUrl === uiBaseUrl) {
+    return sharedUiProbeSession;
+  }
+  if (sharedUiProbeSession?.browser) {
+    await sharedUiProbeSession.browser.close().catch(() => undefined);
+  }
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    baseURL: uiBaseUrl,
+    viewport: { width: 1440, height: 960 },
+  });
+  sharedUiProbeSession = {
+    uiBaseUrl,
+    browser,
+    context,
+  };
+  return sharedUiProbeSession;
+}
+
+export async function closeSharedUiProbeSession() {
+  if (!sharedUiProbeSession?.browser) {
+    return;
+  }
+  await sharedUiProbeSession.browser.close().catch(() => undefined);
+  sharedUiProbeSession = null;
+}
+
+function interpolateTemplateString(value, context) {
+  const exactMatch = value.match(/^\{\{\s*([^}]+?)\s*\}\}$/u);
+  if (exactMatch) {
+    return resolveJsonPath(context, exactMatch[1]);
+  }
+  return value.replace(/\{\{\s*([^}]+?)\s*\}\}/gu, (_, templatePath) => {
+    const resolved = resolveJsonPath(context, templatePath);
+    if (resolved === undefined || resolved === null) {
+      return "";
+    }
+    return typeof resolved === "string" ? resolved : JSON.stringify(resolved);
+  });
+}
+
+function interpolateTemplateValue(value, context) {
+  if (typeof value === "string") {
+    return interpolateTemplateString(value, context);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => interpolateTemplateValue(entry, context));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, interpolateTemplateValue(entry, context)]),
+    );
+  }
+  return value;
 }
 
 function buildValidationSessionKey({ scenario, execution, attemptIndex }) {
@@ -185,6 +268,15 @@ function resolveAgentTurnPrompt({ scenario, execution, suite, attemptIndex, turn
 
 async function executeHttpProbe({ artifact, client, scenario }) {
   const execution = scenario.execution;
+  const templateContext = {
+    scenario: {
+      id: scenario.id,
+      entrySurface: scenario.entrySurface,
+    },
+    timestamp: String(Date.now()),
+    nowIso: nowIso(),
+  };
+  const requestPath = interpolateTemplateValue(execution.path, templateContext);
   const query = execution.query
     ? `?${new URLSearchParams(
       Object.entries(execution.query).reduce((acc, [key, value]) => {
@@ -193,10 +285,55 @@ async function executeHttpProbe({ artifact, client, scenario }) {
       }, {}),
     ).toString()}`
     : "";
-  const response = await client.request(execution.method ?? "GET", `${execution.path}${query}`, {
+  const requestBody = execution.body === undefined
+    ? undefined
+    : interpolateTemplateValue(execution.body, templateContext);
+  const response = await client.request(execution.method ?? "GET", `${requestPath}${query}`, {
     timeoutMs: scenarioTimeout(scenario, 60_000),
+    headers: execution.headers,
+    body: requestBody,
   });
   applyJsonExpectations({ artifact, response, execution });
+  artifact.raw = {
+    ...(artifact.raw ?? {}),
+    request: {
+      method: execution.method ?? "GET",
+      path: requestPath,
+      query: execution.query ?? null,
+      body: requestBody ?? null,
+    },
+  };
+  if (response.ok && Array.isArray(execution.cleanupRequests) && execution.cleanupRequests.length > 0) {
+    const cleanupContext = {
+      ...templateContext,
+      response: response.json ?? response.text ?? null,
+    };
+    const cleanupResults = [];
+    for (const cleanup of execution.cleanupRequests) {
+      const cleanupPath = interpolateTemplateValue(cleanup.path, cleanupContext);
+      const cleanupBody = cleanup.body === undefined
+        ? undefined
+        : interpolateTemplateValue(cleanup.body, cleanupContext);
+      const cleanupResponse = await client.request(cleanup.method ?? "GET", cleanupPath, {
+        timeoutMs: scenarioTimeout(scenario, 30_000),
+        headers: cleanup.headers,
+        body: cleanupBody,
+      });
+      cleanupResults.push({
+        method: cleanup.method ?? "GET",
+        path: cleanupPath,
+        status: cleanupResponse.status,
+        ok: cleanupResponse.ok,
+      });
+      artifact.observedEvidence.push(
+        `cleanup ${cleanup.method ?? "GET"} ${cleanupPath} -> ${String(cleanupResponse.status)}`,
+      );
+    }
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      cleanupResults,
+    };
+  }
   if (!response.ok && artifact.result !== "failed") {
     artifact.result = "failed";
     artifact.failureClass = "http_contract";
@@ -206,7 +343,6 @@ async function executeHttpProbe({ artifact, client, scenario }) {
 
 async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUrl, envTruth }) {
   const execution = scenario.execution;
-  const browser = await chromium.launch({ headless: true });
   const requestUrls = [];
   const requestFailures = [];
   const reloadAbortedRequestFailures = [];
@@ -215,32 +351,37 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
   let requestSequence = 0;
   let reloadAbortCutoff = null;
   const startedAt = Date.now();
+  let page;
 
   try {
-    const context = await browser.newContext({
-      baseURL: uiBaseUrl,
-      viewport: { width: 1440, height: 960 },
+    const bootstrapResponse = await client.request("GET", "/v1/auth/bootstrap/status", {
+      timeoutMs: Math.min(30_000, scenarioTimeout(scenario, 30_000)),
     });
-    const session = client.session();
-    const storageSeed = {
-      accessToken: session.accessToken,
-      refreshToken: session.refreshToken,
-      user: session.user,
-    };
-    await context.addInitScript((seed) => {
-      if (!seed?.accessToken || !seed?.user) return;
-      try {
-        localStorage.setItem("friday.auth.accessToken", seed.accessToken);
-        if (seed.refreshToken) {
-          localStorage.setItem("friday.auth.refreshToken", seed.refreshToken);
-        }
-        localStorage.setItem("friday.auth.user", JSON.stringify(seed.user));
-      } catch {
-        // Ignore localStorage failures in browser probes.
-      }
-    }, storageSeed);
+    const bootstrapStatus = bootstrapResponse.json?.data ?? bootstrapResponse.json ?? null;
+    const authCapabilities = bootstrapStatus ?? {};
+    const browserLoginAvailable = authCapabilities.allowLocalBypassLogin === true
+      || authCapabilities.allowPasswordlessLocalLogin === true;
+    if (!browserLoginAvailable) {
+      artifact.result = "blocked";
+      artifact.failureClass = "environment";
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        "Real browser probe requires a real browser-login path. This runtime does not expose local bypass/passwordless browser auth, and validation no longer seeds auth via localStorage.",
+      ];
+      artifact.observedEvidence.push(
+        `browser auth capability allowLocalBypassLogin=${String(authCapabilities.allowLocalBypassLogin === true)}`,
+        `browser auth capability allowPasswordlessLocalLogin=${String(authCapabilities.allowPasswordlessLocalLogin === true)}`,
+      );
+      artifact.raw = {
+        ...(artifact.raw ?? {}),
+        bootstrapStatus,
+        authCapabilities,
+      };
+      return artifact;
+    }
 
-    const page = await context.newPage();
+    const { context } = await getSharedUiProbeSession(uiBaseUrl);
+    page = await context.newPage();
     page.on("request", (request) => {
       requestUrls.push(request.url());
       requestSequence += 1;
@@ -378,7 +519,7 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
     artifact.notes = [...(artifact.notes ?? []), error instanceof Error ? error.message : String(error)];
     return artifact;
   } finally {
-    await browser.close();
+    await page?.close().catch(() => undefined);
   }
 }
 
@@ -537,6 +678,42 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
     contextEstimatedInputTokens: totalContextEstimatedInputTokens,
   };
   artifact.result = "passed";
+
+  if (typeof execution.expectWorkspaceFileTopH1 === "string" && execution.expectWorkspaceFileTopH1.trim().length > 0) {
+    const relativeFilePath = execution.expectWorkspaceFileTopH1.trim();
+    const absoluteFilePath = path.resolve(process.cwd(), relativeFilePath);
+    try {
+      const markdownText = await fs.readFile(absoluteFilePath, "utf8");
+      const expectedHeading = extractTopWorkspaceHeading(markdownText);
+      artifact.observedEvidence.push(
+        `workspace file ${relativeFilePath}`,
+        `workspace top heading ${expectedHeading ?? "missing"}`,
+      );
+      artifact.raw = {
+        ...(artifact.raw ?? {}),
+        workspaceFileOracle: {
+          path: relativeFilePath,
+          expectedHeading,
+        },
+      };
+      if (!expectedHeading || !normalizeHeadingText(outputText).includes(expectedHeading)) {
+        artifact.result = "failed";
+        artifact.failureClass = "tool_bridge";
+        artifact.notes = [
+          ...(artifact.notes ?? []),
+          `expected response to include workspace top heading ${JSON.stringify(expectedHeading)}`,
+        ];
+      }
+    } catch (error) {
+      artifact.result = "failed";
+      artifact.failureClass = "environment";
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        `failed to read oracle file ${relativeFilePath}: ${error instanceof Error ? error.message : String(error)}`,
+      ];
+    }
+  }
+
   if (typeof execution.expectToolCallCountMin === "number" && totalToolCalls < execution.expectToolCallCountMin) {
     artifact.result = "failed";
     artifact.failureClass = "tool_bridge";

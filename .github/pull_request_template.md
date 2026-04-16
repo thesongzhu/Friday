@@ -18,6 +18,9 @@
 - [ ] `npm run typecheck` passes
 - [ ] `npm run lint` passes
 - [ ] `npm test` passes
+- [ ] Release claims in this PR do not treat mock or browser-mock-hub evidence as ship proof
+- [ ] User-facing docs/copy stay inside current runtime evidence boundaries
+- [ ] If this PR changes release-facing claims, the claim matrix / defect ledger / de-scope wording were updated to match live evidence
 
 ### If Applicable
 - [ ] Migration added → migration chain is contiguous (`npm run check:migrations`)

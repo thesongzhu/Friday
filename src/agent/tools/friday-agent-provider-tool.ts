@@ -17,6 +17,7 @@ import {
   FRIDAY_PROVIDER_BACKEND_KINDS,
   FRIDAY_PROVIDER_CLI_BACKEND_IDS,
   FRIDAY_PROVIDER_KINDS,
+  normalizeFridayProviderSupportedModels,
 } from "../../providers/model/friday-provider.types.js";
 import type {
   FridayProviderApi,
@@ -286,7 +287,11 @@ export function createFridayAgentProviderTool(
     const authMode = (readStringParam(args, "authMode") ?? getDefaultAuthMode(kind, backendKind)) as FridayProviderAuthMode;
     const api = (readStringParam(args, "api") ?? getDefaultApi(kind)) as FridayProviderApi;
     const apiKey = readStringParam(args, "apiKey");
-    const supportedModels = (args.supportedModels as string[]) ?? getDefaultModels(kind);
+    const supportedModels = normalizeFridayProviderSupportedModels(
+      Array.isArray(args.supportedModels)
+        ? args.supportedModels.filter((value): value is string => typeof value === "string")
+        : getDefaultModels(kind),
+    );
     const defaultModel = readStringParam(args, "defaultModel") ?? supportedModels[0];
     const enabled = readBooleanParam(args, "enabled") ?? true;
     const cliConfig = readCliConfig(args, kind, backendKind);

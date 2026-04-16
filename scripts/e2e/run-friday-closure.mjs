@@ -2389,19 +2389,19 @@ async function runLocalStage(ledger) {
       await runStep(ledger, {
         id: "local.backstop.release-verify",
         stage: `${stage}.backstop`,
-        description: "Run npm run release:verify as a closure backstop",
+        description: "Run npm run release:verify:repo as a closure backstop",
       }, async () => {
         const result = await runCommand({
           id: "local.backstop.release-verify",
           stage: `${stage}.backstop`,
-          description: "npm run release:verify",
+          description: "npm run release:verify:repo",
           command: "npm",
-          args: ["run", "release:verify"],
+          args: ["run", "release:verify:repo"],
           logPath: path.join(ledger.paths.logs, "local-backstop-release-verify.log"),
           timeoutMs: 1_800_000,
         });
         if (result.code !== 0) {
-          throw new Error(`npm run release:verify failed with code ${String(result.code)}`);
+          throw new Error(`npm run release:verify:repo failed with code ${String(result.code)}`);
         }
         return { evidence: { logPath: result.logPath } };
       });

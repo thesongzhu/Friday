@@ -40,14 +40,21 @@ Use this template when preparing a release tag `vX.Y.Z`.
 
 1. `npm install -g friday@X.Y.Z` (or source rebuild)
 2. Verify config/env changes
-3. Run `npm run release:verify` in source deployments
+3. Run `npm run release:verify:repo` for repo-ready verification
+4. Run `npm run release:verify` for live proof plus truth-audit artifacts
 
 ## Verification Evidence
 
-- CI workflow run: `<url>`
-- Release workflow run: `<url>`
-- Install smoke test result: `pass/fail`
-- Known issues: `none` / list
+- Repo-ready verification: `pass/fail`
+- Runtime snapshot: `<path or url>`
+- Live proof lane(s): `real-provider / real-browser / real-runtime / cloud-live / manual-external`
+- Claim matrix: `<path or url>`
+- Defect ledger: `<path or url>`
+- Isolated review result: `<path or url>`
+- Truth audit artifact: `<path or url>`
+- No-mock contamination check: `pass/fail`
+- Ship verdict: `shipable as-is | shipable with explicit de-scope | not shipable`
+- Known de-scopes / blocked-by-env lanes: `none` / list
 
 ## Rollback
 

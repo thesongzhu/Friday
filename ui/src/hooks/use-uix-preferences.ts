@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/use-auth";
 import { uixPreferencesApi, type UixPreferenceRecord } from "@/lib/api/uix-preferences";
 
 const UIX_PREFERENCES_QUERY_KEY = ["uix", "preferences", "uix"] as const;
@@ -49,9 +50,12 @@ export interface UseUixPreferencesResult {
 }
 
 export function useUixPreferences(): UseUixPreferencesResult {
+  const { isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
   const pendingPatchRef = useRef<UixPreferenceMap>({});
   const flushTimerRef = useRef<number | null>(null);
+  const isAuthenticatedRef = useRef(isAuthenticated);
+  isAuthenticatedRef.current = isAuthenticated;
 
   const preferencesQuery = useQuery({
     queryKey: UIX_PREFERENCES_QUERY_KEY,
@@ -62,6 +66,7 @@ export function useUixPreferences(): UseUixPreferencesResult {
         return EMPTY_RECORDS;
       }
     },
+    enabled: isAuthenticated,
     staleTime: 30_000,
     retry: false,
     refetchOnWindowFocus: false,
@@ -76,7 +81,7 @@ export function useUixPreferences(): UseUixPreferencesResult {
     const patch = pendingPatchRef.current;
     pendingPatchRef.current = {};
     const entries = Object.entries(patch);
-    if (entries.length === 0) {
+    if (entries.length === 0 || !isAuthenticatedRef.current) {
       return;
     }
     try {

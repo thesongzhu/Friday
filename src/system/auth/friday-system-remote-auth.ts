@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import type {
   AuthenticationResponseJSON,
   FridaySystemRemotePasskey,
@@ -69,22 +70,30 @@ export interface FridaySystemRemoteAuthAdapter {
 
 const NOT_IMPLEMENTED_MSG = "WebAuthn/FIDO2 support has been removed. Passkey-based remote auth is not available.";
 
+function createRemotePasskeyUnavailableError(): FridayDomainError {
+  return new FridayDomainError(
+    "SYSTEM_REMOTE_PASSKEY_UNAVAILABLE",
+    NOT_IMPLEMENTED_MSG,
+    { httpStatus: 501 },
+  );
+}
+
 export function createFridaySystemRemoteAuthAdapter(): FridaySystemRemoteAuthAdapter {
   return {
     async generateRegistrationOptions(_input) {
-      throw new Error(NOT_IMPLEMENTED_MSG);
+      throw createRemotePasskeyUnavailableError();
     },
 
     async verifyRegistration(_input) {
-      throw new Error(NOT_IMPLEMENTED_MSG);
+      throw createRemotePasskeyUnavailableError();
     },
 
     async generateAuthenticationOptions(_input) {
-      throw new Error(NOT_IMPLEMENTED_MSG);
+      throw createRemotePasskeyUnavailableError();
     },
 
     async verifyAuthentication(_input) {
-      throw new Error(NOT_IMPLEMENTED_MSG);
+      throw createRemotePasskeyUnavailableError();
     },
   };
 }

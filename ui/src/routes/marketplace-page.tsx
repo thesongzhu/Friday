@@ -117,10 +117,16 @@ export function MarketplacePage() {
     queryFn: () => marketplaceApi.listRequests(),
     refetchInterval: 30_000,
   });
+  const sourcesQuery = useQuery({
+    queryKey: ["marketplace", "sources"],
+    queryFn: () => skillsApi.listSources(),
+    refetchInterval: 30_000,
+  });
 
   const assets = assetsQuery.data ?? [];
   const creators = creatorsQuery.data ?? [];
   const requests = requestsQuery.data ?? [];
+  const sourceCount = sourcesQuery.data?.length ?? 0;
   const openRequests = useMemo(
     () => requests.filter((entry) => entry.status !== "closed").slice(0, 6),
     [requests],
@@ -271,8 +277,21 @@ export function MarketplacePage() {
             />
           </div>
           <div className="agent-detail-note mt-4 p-4 text-sm text-[color:var(--color-text-secondary)]">
-            Marketplace installs stay click-first and permission-aware. Public assets are safe-by-default,
-            declarative-first, and separate from legacy executable packages.
+            {sourceCount === 0
+              ? "No marketplace sources are configured for this runtime yet, so an empty public catalog here is expected rather than a silent failure."
+              : assets.length === 0
+                ? `This runtime tracks ${sourceCount} marketplace source${sourceCount === 1 ? "" : "s"}, but none currently expose public declarative assets.`
+                : "Marketplace installs stay click-first and permission-aware. Public assets are safe-by-default, declarative-first, and separate from legacy executable packages."}
+            {sourceCount === 0 ? (
+              <div className="mt-3">
+                <Link
+                  to="/skills?focus=sources"
+                  className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
+                >
+                  Configure marketplace sources
+                </Link>
+              </div>
+            ) : null}
           </div>
         </ShellCard>
 
@@ -391,7 +410,11 @@ export function MarketplacePage() {
               );
             })}
             {featuredAssets.length === 0 ? (
-              <p className="text-sm text-[color:var(--color-text-secondary)]">No public declarative assets are available yet.</p>
+              <p className="text-sm text-[color:var(--color-text-secondary)]">
+                {sourceCount === 0
+                  ? "No marketplace sources are configured yet, so no public declarative assets are expected on this runtime."
+                  : "No public declarative assets are available from the currently tracked marketplace sources."}
+              </p>
             ) : null}
           </div>
         </ShellCard>
@@ -628,7 +651,11 @@ export function MarketplacePage() {
               </article>
             ))}
             {creators.length === 0 ? (
-              <p className="text-sm text-[color:var(--color-text-secondary)]">Creator profiles will appear here as public assets and support events accumulate.</p>
+              <p className="text-sm text-[color:var(--color-text-secondary)]">
+                {sourceCount === 0
+                  ? "Creator profiles will stay empty until this runtime tracks marketplace sources and real support activity."
+                  : "Creator profiles will appear here as public assets and support events accumulate."}
+              </p>
             ) : null}
           </div>
         </ShellCard>

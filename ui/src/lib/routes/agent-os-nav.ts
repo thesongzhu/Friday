@@ -1,4 +1,5 @@
 import type { LocalizedText } from "@/lib/i18n/localized-text";
+import { HIDE_MARKETPLACE_UI } from "@/lib/feature-flags";
 import { localizedText } from "@/lib/i18n/localized-text";
 
 export interface AgentOsNavItem {
@@ -45,6 +46,11 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     description: localizedText("查看、管理和生成 Friday 可调用的能力包。", "View, manage, and generate callable skill packs for Friday."),
   },
   {
+    label: localizedText("插件", "Plugins"),
+    path: "/plugins",
+    description: localizedText("查看真实插件库存、启停状态和本地安装入口。", "Inspect live plugin inventory, enablement state, and local install entry."),
+  },
+  {
     label: localizedText("工作流", "Workflows"),
     path: "/workflows",
     description: localizedText("部署、编辑和监控自动化工作流。", "Deploy, edit, and monitor automation workflows."),
@@ -74,7 +80,7 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
   {
     label: localizedText("会话", "Sessions"),
     path: "/sessions",
-    description: localizedText("浏览和管理远程会话记录。", "Browse and manage remote session records."),
+    description: localizedText("浏览和导出 Friday 的会话与对话历史。", "Browse and export Friday session and transcript history."),
   },
   // Settings is in the sidebar — not duplicated here.
 ];
@@ -102,10 +108,13 @@ export function resolvePageTitle(pathname: string): LocalizedText {
     return localizedText("助手", "Assistant");
   }
   if (pathname.startsWith("/marketplace")) {
-    return localizedText("资产市场", "Marketplace");
+    return HIDE_MARKETPLACE_UI ? localizedText("助手", "Assistant") : localizedText("资产市场", "Marketplace");
   }
   if (pathname.startsWith("/workflows")) {
     return localizedText("自动化", "Workflows");
+  }
+  if (pathname.startsWith("/plugins")) {
+    return localizedText("插件", "Plugins");
   }
   if (pathname.startsWith("/skills")) {
     return localizedText("能力包", "Skills");

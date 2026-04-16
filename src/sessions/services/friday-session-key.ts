@@ -140,6 +140,39 @@ export function parseFridaySessionKey(key: string, _depth = 0): FridaySessionKey
     };
   }
 
+  // Legacy channel-scoped conversation key: `channel:<channelKind>:<chatSlot>`
+  // `chatSlot` may already include encoded thread information.
+  const legacyChannelSegments = key.split(":");
+  if (legacyChannelSegments.length === 3 && legacyChannelSegments[0] === "channel") {
+    const [, channelKind, chatSlot] = legacyChannelSegments;
+    validateSegment(channelKind, "channel");
+    validateSegment(chatSlot, "chatId");
+
+    return {
+      kind: "conversation",
+      channel: channelKind,
+      accountId: FRIDAY_SESSION_DEFAULT_ACCOUNT_ID,
+      chatId: chatSlot,
+      canonicalKey: key,
+    };
+  }
+
+  // Legacy system-scoped key: `system:<chatSlot>`
+  // Older internal surfaces (for example heartbeat) used a two-segment form.
+  // Normalize them to the canonical 3-segment conversation shape.
+  if (legacyChannelSegments.length === 2 && legacyChannelSegments[0] === "system") {
+    const [, chatSlot] = legacyChannelSegments;
+    validateSegment(chatSlot, "chatId");
+
+    return {
+      kind: "conversation",
+      channel: "system",
+      accountId: FRIDAY_SESSION_DEFAULT_ACCOUNT_ID,
+      chatId: chatSlot,
+      canonicalKey: `system:${FRIDAY_SESSION_DEFAULT_ACCOUNT_ID}:${chatSlot}`,
+    };
+  }
+
   // Conversation key: `<channel>:<accountId>:<chatId>`
   const segments = key.split(":");
   if (segments.length !== 3) {
@@ -209,6 +242,46 @@ export function canonicalizeFridaySessionKey(rawKey: string, _depth = 0): string
     validateSegment(normalizedTaskId, "taskId");
 
     return `${FRIDAY_SESSION_SUBAGENT_PREFIX}:${normalizedParent}:${normalizedTaskId}`;
+  }
+
+  // Legacy channel-scoped conversation key. We keep the persisted key shape for
+  // backward compatibility, but normalize the channel kind and slot contents so
+  // session services can derive the correct `channel` column.
+  if (rawKey.startsWith("channel:")) {
+    const segments = rawKey.split(":");
+    if (segments.length === 3) {
+      const [, channelKind, chatSlot] = segments;
+      const normalizedKind = normalizeSegment(channelKind);
+      const normalizedSlot = normalizeSegment(chatSlot);
+      validateSegment(normalizedKind, "channel");
+      validateSegment(normalizedSlot, "chatId");
+      return `channel:${normalizedKind}:${normalizedSlot}`;
+    }
+
+    if (segments.length === 5 && segments[3] === "thread") {
+      const [, channelKind, chatId, , threadId] = segments;
+      const normalizedKind = normalizeSegment(channelKind);
+      const normalizedSlot = normalizeSegment(`${chatId}--thread--${threadId}`);
+      validateSegment(normalizedKind, "channel");
+      validateSegment(normalizedSlot, "chatId");
+      return `channel:${normalizedKind}:${normalizedSlot}`;
+    }
+
+    throw new FridayDomainError(
+      FRIDAY_SESSION_ERROR_CODES.INVALID_KEY,
+      `Legacy channel session key must be 'channel:<kind>:<chat>' or 'channel:<kind>:<chat>:thread:<threadId>': '${rawKey}'`,
+      { httpStatus: 400 },
+    );
+  }
+
+  if (rawKey.startsWith("system:")) {
+    const segments = rawKey.split(":");
+    if (segments.length === 2) {
+      const [, chatSlot] = segments;
+      const normalizedSlot = normalizeSegment(chatSlot);
+      validateSegment(normalizedSlot, "chatId");
+      return `system:${FRIDAY_SESSION_DEFAULT_ACCOUNT_ID}:${normalizedSlot}`;
+    }
   }
 
   // Conversation key: `<channel>:<accountId>:<chatId>`

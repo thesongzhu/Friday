@@ -530,6 +530,7 @@ export function SetupPage() {
     return (
       <div
         key={currentStep}
+        data-testid="setup-page"
         className="setup-step-enter flex min-h-screen flex-col items-center justify-center px-6 text-center"
       >
         {children}

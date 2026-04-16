@@ -303,6 +303,7 @@ export interface CreateFridayObservabilityApiServiceDeps {
   nowIso: () => string;
   browserDiagnosticsProvider?: () => FridayObservabilityBrowserRuntimeSummary | undefined;
   heartbeatStateGetter?: () => { lastRunAt: string | null; result: string; intervalMs: number | null; nextRunAt: string | null } | null;
+  heartbeatTrigger?: () => unknown | Promise<unknown>;
 }
 
 export const FRIDAY_BUILT_IN_SELF_HEALING_ALERT_RULE_ID = "builtin-self-healing-repeat-failures";
@@ -2219,17 +2220,28 @@ export function createFridayObservabilityApiService(
         };
       },
     },
-    heartbeat: deps.heartbeatStateGetter
+    heartbeat: deps.heartbeatStateGetter || deps.heartbeatTrigger
       ? {
-        getStatus() {
-          const state = deps.heartbeatStateGetter!();
-          return {
-            lastRunAt: state?.lastRunAt ?? null,
-            result: state?.result ?? "unknown",
-            intervalMs: state?.intervalMs ?? null,
-            nextRunAt: state?.nextRunAt ?? null,
-          };
-        },
+        ...(deps.heartbeatStateGetter
+          ? {
+              getStatus() {
+                const state = deps.heartbeatStateGetter!();
+                return {
+                  lastRunAt: state?.lastRunAt ?? null,
+                  result: state?.result ?? "unknown",
+                  intervalMs: state?.intervalMs ?? null,
+                  nextRunAt: state?.nextRunAt ?? null,
+                };
+              },
+            }
+          : {}),
+        ...(deps.heartbeatTrigger
+          ? {
+              trigger() {
+                return deps.heartbeatTrigger!();
+              },
+            }
+          : {}),
       }
       : undefined,
   };

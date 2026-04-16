@@ -53,6 +53,16 @@ This document is the current architecture reference for steady-state Friday runt
 - The self-learning runtime is actively wired through hub bootstrap and the public API runtime for supervised self-healing flows.
 - The supervised agent loop is a steady-state runtime surface: cooldown retries, repeated-failure halt conditions, rollback/verification evidence, and operator-visible loop state are all part of the canonical product path.
 
+## Release truth and runtime snapshots
+
+- `README.md`, settings copy, onboarding copy, and release summaries must be treated as **runtime snapshot surfaces**, not unconditional product promises.
+- Ship decisions may rely only on evidence classified as `real-provider`, `real-browser`, `real-runtime`, `cloud-live`, or `manual-external` in [`docs/release-evidence-policy.md`](./release-evidence-policy.md).
+- `mock-contract`, `mock-hub`, and `browser-mock-hub` evidence remain valid for fast regression detection, but they are not release proof and must not be presented as ship-readiness proof.
+- `npm run release:verify:repo` is the repo-ready verification path. It is not sufficient by itself to claim real-world release proof.
+- `npm run release:verify` is reserved for the real proof pack (`ops:real-green-gate` + no-mock leak scan + truth audit).
+- `/v1/packages*`, `/v1/security/tenants*`, and media-understanding runtime wiring are code-present but env-gated. They are only active on runtimes started with `FRIDAY_PACKAGING_ENABLED=true`, `FRIDAY_MULTI_TENANT_ENABLED=true`, or `FRIDAY_MEDIA_UNDERSTANDING_ENABLED=true`.
+- When those gates are off, docs, UI copy, and release notes must describe them as unavailable on the current runtime rather than "implemented" or "ready by default".
+
 ## Self-healing and beginner product surfaces
 
 - Public route families `/v1/diagnosis/*`, `/v1/auto-fix/*`, and `/v1/uix/*` are part of the active steady-state product surface.
@@ -71,6 +81,7 @@ This document is the current architecture reference for steady-state Friday runt
 
 - `/v1/providers/templates*` is the canonical setup-time provider bootstrap surface. Setup and settings should prefer template-driven provider creation over blank provider forms.
 - `/v1/providers/health` is the canonical operator-facing provider lane and health snapshot surface. It exposes lane (`primary`, `fallback`, `standby`, `disabled`), doctor summary, validation status, and fallback circuit state.
+- CLI / external-session providers are valid runtime lanes for read-only text tasks, but they are not proof of native-tool capability. If the active fallback lane is CLI-only, tool-required proof scenarios must stay explicitly bounded instead of being counted as a full provider pass.
 - Provider template truth is tiered as `official`, `verified`, `community`, or `experimental`; setup UI may highlight official and verified templates first but must not hide the rest of the catalog.
 - Provider templates may recommend default and fallback models plus required secret-reference shapes, but they must not silently override the operator's final provider configuration choice.
 - Canonical secret-ref inputs for provider credentials are `env:NAME`, legacy `$NAME`, `file:/absolute/path`, `secret://...`, and operator-gated `command:...`. Raw inline secrets remain compatibility input only and should be converted into managed secret refs when persisted.
@@ -105,7 +116,10 @@ This document is the current architecture reference for steady-state Friday runt
 ## Skills lifecycle and marketplace sources
 
 - `/v1/skills/*` is the canonical skill lifecycle surface for catalog, detail, install, update, delete, manifest validation, and verification.
+- `GET /v1/skills` is the canonical inventory/discovery snapshot for installed or discovered skills on the current runtime.
+- `GET /v1/skills/catalog` is the canonical external catalog cache surface. An empty response means the runtime has no populated catalog snapshot yet; it does not by itself mean the skills system is broken.
 - `/v1/marketplace/sources*` is the canonical source-management surface for skill marketplace feeds, enablement state, and trust-scored catalog refresh.
+- `/v1/marketplace/sources` empty state means no marketplace sources are configured for the current runtime. UI copy must treat that as a bounded configuration state, not a silent failure.
 - `/v1/marketplace/assets*` is the canonical public catalog and detail read surface for marketplace `skill`, `workflow`, and `agent` assets. It unifies discovery and detail views while keeping the skills lifecycle as the install/verify/enable backbone.
 - `/v1/marketplace/creators*` and `/v1/marketplace/assets/:assetId/support` are the canonical creator-support surfaces for asset-backed support events, creator profiles, and reputation summaries.
 - `/skills` is the operator-facing lifecycle surface for installed skills, updates, verification evidence, source policy, and generated-skill handoff from `/assistant`.
@@ -216,7 +230,8 @@ This document is the current architecture reference for steady-state Friday runt
 
 ## Canonical semantics
 
-- `/v1/health` is a public liveness and uptime surface, not the deep operator health contract. Deeper health remains on system and observability surfaces.
+- `/v1/health` is a public liveness and uptime surface plus a conservative runtime snapshot. It is not a deep operator health contract and not a blanket product promise.
+- `/v1/health` capability flags such as search latestness, local bypass, or desktop enablement must be read as the current runtime's reported state.
 - Public validation failures use the current runtime semantics: `400 VALIDATION_ERROR` is the default contract unless a route explicitly documents a different status.
 - Public auth failures use the current runtime taxonomy: `UNAUTHORIZED`, `FORBIDDEN`, `RATE_LIMITED`, and related canonical codes from `src/api/model/friday-api-error-codes.ts`.
 - Scope taxonomy is defined by the current auth model, including `security.read` / `security.write`, `fleet.read`, `diagnosis.read` / `diagnosis.write`, and the workflow, skill, plugin, and session scopes present in `src/api/model/friday-api-auth.types.ts`.
@@ -293,6 +308,7 @@ Every contract-affecting cleanup batch must pass:
 - `npm run closeout:marketplace`
 - `npm run check:ui-bundle-health`
 - `npm run check:closeout:evidence:freshness`
+- `npm run release:verify:repo`
 - `npm run release:verify`
 - `npm run closeout:final`
 

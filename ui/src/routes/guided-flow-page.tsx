@@ -385,7 +385,7 @@ export function GuidedFlowPage() {
 
   // ─── Render ───
   return (
-    <div className="py-4">
+    <div data-testid="guided-flow-page" className="py-4">
       <GuidedFlowContainer
         title={goalTitle}
         steps={containerSteps}

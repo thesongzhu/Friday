@@ -79,6 +79,37 @@ describe("FridayHub Bootstrap Integration", () => {
     };
   }
 
+  function makeFailingActionGraph(
+    workflowId: string,
+    versionId: string,
+  ): FridayCompiledWorkflowGraphV2 {
+    return {
+      schemaVersion: "2.0",
+      workflowId,
+      workflowVersionId: versionId,
+      sourceSpecSchemaVersion: "1.0",
+      graph: {
+        nodes: [
+          { id: "trigger", type: "trigger", label: "Trigger", config: {} },
+          {
+            id: "action1",
+            type: "action",
+            label: "Broken Action",
+            config: {
+              skillId: "missing-skill",
+            },
+          },
+        ],
+        edges: [
+          { id: "e1", sourceNodeId: "trigger", targetNodeId: "action1" },
+        ],
+      },
+      failurePolicy: { onFailure: "fail_fast", notifyUser: false },
+      tests: [],
+      checksum: "placeholder",
+    };
+  }
+
   async function waitForWorkflowRunStable(
     hub: FridayHub,
     runId: string,
@@ -635,6 +666,102 @@ describe("FridayHub Bootstrap Integration", () => {
           }
         }
       }
+      expect(loopRun).toBeDefined();
+      expect(loopRun!.risk_tier).toBeGreaterThanOrEqual(0);
+      expect(["verified", "awaiting_approval", "paused", "cooldown", "running", "failed", "halted"]).toContain(
+        loopRun!.status,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("turns naturally failed workflow runs into self-healing incidents and loop runs", async () => {
+    const hub = await createIsolatedHub();
+    await hub.start();
+
+    const workflow = hub.workflowRuntime.crud.createWorkflow({
+      slug: "workflow-self-healing-proof",
+      name: "Workflow Self Healing Proof",
+    });
+    const version = hub.workflowRuntime.crud.createVersion(
+      workflow.id,
+      makeFailingActionGraph(workflow.id, "placeholder"),
+    );
+    hub.workflowRuntime.crud.publishVersion(workflow.id, version.versionNumber);
+
+    const run = await hub.workflowRuntime.execution.startRun({
+      workflowId: workflow.id,
+      workflowVersionId: version.id,
+      triggerType: "manual",
+      startedByUserId: "admin-001",
+    });
+
+    const finalStatus = await waitForWorkflowRunStable(hub, run.id, 10_000);
+    expect(finalStatus).toBe("failed");
+
+    const dbPath = path.join(lastStateDir ?? "", "friday.db");
+    const db = new Database(dbPath);
+    try {
+      let incident:
+        | {
+            category: string;
+            severity: string;
+            node_id: string | null;
+            context_json: string;
+          }
+        | undefined;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        incident = db.prepare(
+          `SELECT category, severity, node_id, context_json
+           FROM error_incidents
+           WHERE run_id = ?
+           ORDER BY created_at DESC
+           LIMIT 1`,
+        ).get(run.id) as
+          | {
+              category: string;
+              severity: string;
+              node_id: string | null;
+              context_json: string;
+            }
+          | undefined;
+        if (incident) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      expect(incident).toBeDefined();
+      expect(incident!.category).toBe("workflow");
+      expect(incident!.severity).toBe("medium");
+      expect(incident!.node_id).toBe("action1");
+
+      const incidentCount = db.prepare(
+        "SELECT COUNT(*) AS count FROM error_incidents WHERE run_id = ?",
+      ).get(run.id) as { count: number };
+      expect(incidentCount.count).toBe(1);
+
+      const context = JSON.parse(incident!.context_json) as Record<string, unknown>;
+      expect(context["source"]).toBe("workflow_runtime");
+      expect(context["workflowId"]).toBe(workflow.id);
+      expect(context["failedNodeId"]).toBe("action1");
+
+      let loopRun = db.prepare(
+        "SELECT status, risk_tier, approval_required FROM friday_agent_loop_runs ORDER BY created_at DESC LIMIT 1",
+      ).get() as { status: string; risk_tier: number; approval_required: number } | undefined;
+      if (!loopRun) {
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          loopRun = db.prepare(
+            "SELECT status, risk_tier, approval_required FROM friday_agent_loop_runs ORDER BY created_at DESC LIMIT 1",
+          ).get() as { status: string; risk_tier: number; approval_required: number } | undefined;
+          if (loopRun) {
+            break;
+          }
+        }
+      }
+
       expect(loopRun).toBeDefined();
       expect(loopRun!.risk_tier).toBeGreaterThanOrEqual(0);
       expect(["verified", "awaiting_approval", "paused", "cooldown", "running", "failed", "halted"]).toContain(

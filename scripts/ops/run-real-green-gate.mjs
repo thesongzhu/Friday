@@ -3,6 +3,7 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { FridayClient } from "../../validation/real-world/lib/client.mjs";
+import { closeSharedUiProbeSession } from "../../validation/real-world/lib/executors.mjs";
 import { collectEnvironmentTruth } from "../../validation/real-world/lib/env-truth.mjs";
 import { createRunId, ensureDir, writeJson, writeText } from "../../validation/real-world/lib/io.mjs";
 import { runRealWorldValidation } from "../../validation/real-world/lib/runner.mjs";
@@ -23,6 +24,38 @@ const DAILY_CORE_SCENARIOS = [
   "l3-multi-turn-memory",
   "l4-file-tool-roundtrip",
   "l5-workflow-approval-roundtrip",
+];
+
+const PUBLIC_SURFACE_SCENARIOS = [
+  "l1-home-ui",
+  "l1-packs-ui",
+  "l1-cross-border-pack-setup-ui",
+  "l1-guided-flow-ui",
+  "l1-command-center-ui",
+  "l1-skills-ui",
+  "l1-skill-generator-ui",
+  "l1-workflows-ui",
+  "l1-workflow-builder-ui",
+  "l1-memory-ui",
+  "l1-channels-ui",
+  "l1-plugins-ui",
+  "l1-automations-ui",
+  "l1-automation-detail-redirect-ui",
+  "l1-fleet-ui",
+  "l1-mcp-ui",
+  "l1-usage-ui",
+  "l1-sessions-ui",
+  "l2-home-snapshot-contract",
+  "l2-uix-diagnostics-contract",
+  "l2-heartbeat-status-contract",
+  "l2-channels-contract",
+  "l2-channel-persona-contract",
+  "l2-channel-persona-update-contract",
+  "l2-memory-items-create-contract",
+  "l2-plugins-contract",
+  "l2-fleet-overview-contract",
+  "l2-automations-contract",
+  "l2-sessions-contract",
 ];
 
 const CLAUDE_SKILL_TESTS = [
@@ -51,6 +84,8 @@ function parseArgs(argv) {
     repoRoot: process.cwd(),
     mintLocalAdminToken: false,
     dailyCoreRepetitions: 1,
+    validationTimeoutMs: parseOptionalInteger(process.env.FRIDAY_REAL_GREEN_GATE_VALIDATION_TIMEOUT_MS) ?? 20 * 60 * 1000,
+    skillTestTimeoutMs: parseOptionalInteger(process.env.FRIDAY_REAL_GREEN_GATE_SKILL_TIMEOUT_MS) ?? 5 * 60 * 1000,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -78,6 +113,14 @@ function parseArgs(argv) {
         break;
       case "--daily-core-repetitions":
         options.dailyCoreRepetitions = Number.parseInt(next, 10) || 1;
+        index += 1;
+        break;
+      case "--validation-timeout-ms":
+        options.validationTimeoutMs = parseOptionalInteger(next) ?? options.validationTimeoutMs;
+        index += 1;
+        break;
+      case "--skill-test-timeout-ms":
+        options.skillTestTimeoutMs = parseOptionalInteger(next) ?? options.skillTestTimeoutMs;
         index += 1;
         break;
       case "--mint-local-admin-token":
@@ -119,22 +162,25 @@ function parseOptionalInteger(value) {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function exec(repoRoot, command, args) {
+function exec(repoRoot, command, args, options = {}) {
   return execFileSync(command, args, {
     cwd: repoRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: options.timeoutMs,
+    maxBuffer: options.maxBuffer ?? 10 * 1024 * 1024,
   }).trim();
 }
 
-function runCommandCapture(repoRoot, command, args) {
+function runCommandCapture(repoRoot, command, args, options = {}) {
   const startedAt = Date.now();
   try {
-    const stdout = exec(repoRoot, command, args);
+    const stdout = exec(repoRoot, command, args, options);
     return {
       ok: true,
       command: [command, ...args].join(" "),
       durationMs: Date.now() - startedAt,
+      timeoutMs: options.timeoutMs ?? null,
       stdout,
       stderr: "",
     };
@@ -143,10 +189,82 @@ function runCommandCapture(repoRoot, command, args) {
       ok: false,
       command: [command, ...args].join(" "),
       durationMs: Date.now() - startedAt,
+      timeoutMs: options.timeoutMs ?? null,
       stdout: error instanceof Error && "stdout" in error ? String(error.stdout ?? "") : "",
       stderr: error instanceof Error && "stderr" in error ? String(error.stderr ?? "") : "",
+      timedOut: Boolean(error && typeof error === "object" && "signal" in error && error.signal === "SIGTERM"),
       error: error instanceof Error ? error.message : String(error),
     };
+  }
+}
+
+function createInitialPhaseStatus() {
+  return {
+    preflight: { status: "pending" },
+    smoke: { status: "pending" },
+    dailyCore: { status: "pending" },
+    publicSurface: { status: "pending" },
+    branchConformance: { status: "pending" },
+    skillConformance: { status: "pending" },
+  };
+}
+
+function markPhase(phaseStatus, phase, status, extra = {}) {
+  const previous = phaseStatus[phase] ?? {};
+  const startedAt = previous.startedAt ?? (status === "running" ? new Date().toISOString() : undefined);
+  const finished = status === "completed" || status === "failed";
+  phaseStatus[phase] = {
+    ...previous,
+    ...extra,
+    status,
+    startedAt,
+    updatedAt: new Date().toISOString(),
+    ...(finished ? { finishedAt: new Date().toISOString() } : {}),
+  };
+}
+
+function getLastCompletedPhase(phaseStatus) {
+  return Object.entries(phaseStatus)
+    .filter(([, value]) => value?.status === "completed")
+    .sort(([, left], [, right]) => String(left.finishedAt).localeCompare(String(right.finishedAt)))
+    .map(([phase]) => phase)
+    .pop() ?? null;
+}
+
+function writePhaseStatus(reportRoot, phaseStatus) {
+  writeJson(path.join(reportRoot, "phase-status.json"), {
+    updatedAt: new Date().toISOString(),
+    lastCompletedPhase: getLastCompletedPhase(phaseStatus),
+    phases: phaseStatus,
+  });
+}
+
+async function withTimeout(label, timeoutMs, operation, onTimeout) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return operation();
+  }
+  let timer = null;
+  let timedOut = false;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } catch (error) {
+    if (timedOut && typeof onTimeout === "function") {
+      await onTimeout();
+    }
+    throw error;
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
   }
 }
 
@@ -157,21 +275,36 @@ function renderMarkdown(summary) {
     `- Run id: ${summary.runId}`,
     `- Checked at: ${summary.generatedAt}`,
     `- Gate passed: ${String(summary.gate.passed)}`,
+    `- Status: ${summary.status}`,
     `- Repo root: ${summary.repoRoot}`,
     `- Smoke report: ${summary.smoke?.reportRoot ?? "n/a"}`,
     `- Daily core report: ${summary.dailyCore?.reportRoot ?? "n/a"}`,
+    `- Public surface report: ${summary.publicSurface?.reportRoot ?? "n/a"}`,
     `- Branch conformance: ${summary.branchConformance?.recommendation ?? "n/a"}`,
     `- Skill conformance: ${summary.skillConformance?.ok === true ? "passed" : "failed"}`,
+    `- Last completed phase: ${summary.lastCompletedPhase ?? "none"}`,
     "",
     "## Gate Reasons",
     "",
     ...(summary.gate.reasons.length > 0 ? summary.gate.reasons.map((reason) => `- ${reason}`) : ["- none"]),
+    ...(summary.error?.message ? ["", "## Error", "", `- Phase: ${summary.error.phase ?? "unknown"}`, `- Message: ${summary.error.message}`] : []),
+    "",
+    "## Phases",
+    "",
+    ...Object.entries(summary.phaseStatus ?? {}).map(([phase, value]) => (
+      `- ${phase}: ${value?.status ?? "unknown"}`
+    )),
     "",
     "## Preflight",
     "",
     `- Auth ok: ${String(summary.preflight?.envTruth?.auth?.ok === true)}`,
     `- Default lane: ${summary.preflight?.envTruth?.providerLanes?.default?.model ?? "missing"}`,
     `- Fallback lane: ${summary.preflight?.envTruth?.providerLanes?.fallback?.model ?? "missing"}`,
+    "",
+    "## Public Surface",
+    "",
+    `- Report root: ${summary.publicSurface?.reportRoot ?? "n/a"}`,
+    `- Result counts: ${JSON.stringify(summary.publicSurface?.resultCounts ?? {})}`,
     "",
     "## Branch",
     "",
@@ -221,32 +354,95 @@ function summarizeRun(run) {
 }
 
 function hasOnlyPassed(run) {
+  if (!run) {
+    return false;
+  }
   const counts = run.resultCounts ?? run.results ?? {};
   return Object.entries(counts).every(([key, value]) => key === "passed" || Number(value) === 0);
 }
 
-function deriveGateReasons({ preflight, smoke, dailyCore, branchConformance, skillConformance }) {
+function deriveGateReasons({ preflight, smoke, dailyCore, publicSurface, branchConformance, skillConformance, error }) {
   const reasons = [];
-  if (preflight.envTruth?.auth?.ok !== true) {
+  if (!preflight) {
+    reasons.push("preflight did not complete");
+  }
+  if (preflight?.envTruth?.auth?.ok !== true) {
     reasons.push("preflight auth is not healthy");
   }
-  if (!preflight.envTruth?.providerLanes?.default || !preflight.envTruth?.providerLanes?.fallback) {
+  if (!preflight?.envTruth?.providerLanes?.default || !preflight?.envTruth?.providerLanes?.fallback) {
     reasons.push("provider lanes are incomplete");
   }
-  if (!hasOnlyPassed(smoke)) {
+  if (!smoke) {
+    reasons.push("smoke suite did not complete");
+  } else if (!hasOnlyPassed(smoke)) {
     reasons.push("smoke suite is not fully passed");
   }
-  if (!hasOnlyPassed(dailyCore)) {
+  if (!dailyCore) {
+    reasons.push("daily core suite did not complete");
+  } else if (!hasOnlyPassed(dailyCore)) {
     reasons.push("daily core suite is not fully passed");
   }
-  const branchReady = branchConformance?.shouldNoop === true || branchConformance?.shouldMerge === true;
-  if (!branchReady) {
+  if (!publicSurface) {
+    reasons.push("public surface suite did not complete");
+  } else if (!hasOnlyPassed(publicSurface)) {
+    reasons.push("public surface suite is not fully passed");
+  }
+  if (!branchConformance) {
+    reasons.push("branch conformance did not complete");
+  } else if (!(branchConformance.shouldNoop === true || branchConformance.shouldMerge === true)) {
     reasons.push("branch under test is neither merge-ready nor patch-equivalent to main");
   }
-  if (skillConformance?.ok !== true) {
+  if (!skillConformance) {
+    reasons.push("skill conformance did not complete");
+  } else if (skillConformance.ok !== true) {
     reasons.push("skill conformance tests failed");
   }
+  if (error?.message) {
+    reasons.push(`run terminated during ${error.phase ?? "unknown phase"}: ${error.message}`);
+  }
   return reasons;
+}
+
+function buildSummary({
+  runId,
+  repoRoot,
+  branch,
+  phaseStatus,
+  preflight,
+  smoke,
+  dailyCore,
+  publicSurface,
+  branchConformance,
+  skillConformance,
+  error,
+}) {
+  const summary = {
+    runId,
+    generatedAt: new Date().toISOString(),
+    repoRoot,
+    branch,
+    status: error ? "failed" : "completed",
+    lastCompletedPhase: getLastCompletedPhase(phaseStatus),
+    phaseStatus,
+    preflight,
+    smoke: smoke ? summarizeRun(smoke) : null,
+    dailyCore: dailyCore ? summarizeRun(dailyCore) : null,
+    publicSurface: publicSurface ? summarizeRun(publicSurface) : null,
+    branchConformance: branchConformance ?? null,
+    skillConformance: skillConformance ?? null,
+    error: error ?? null,
+  };
+  summary.gate = {
+    passed: false,
+    reasons: deriveGateReasons(summary),
+  };
+  summary.gate.passed = summary.gate.reasons.length === 0;
+  return summary;
+}
+
+function flushTerminalArtifacts(reportRoot, summary) {
+  writeJson(path.join(reportRoot, "summary.json"), summary);
+  writeText(path.join(reportRoot, "index.md"), renderMarkdown(summary));
 }
 
 async function main() {
@@ -256,111 +452,178 @@ async function main() {
   const reportRoot = options.reportRoot
     ?? path.join(repoRoot, "docs", "reports", "ops", "real-green-gate", runId);
   ensureDir(reportRoot);
-
-  const gitStatus = runCommandCapture(repoRoot, "git", ["status", "--short", "--branch"]);
-  const gitHead = runCommandCapture(repoRoot, "git", ["rev-parse", "HEAD"]);
+  const phaseStatus = createInitialPhaseStatus();
   const clientOptions = buildClientOptions(options);
   const uiBaseUrl = options.uiBaseUrl ?? process.env.FRIDAY_UI_BASE_URL ?? clientOptions.baseUrl;
-  const client = new FridayClient(clientOptions);
-  const envTruth = await collectEnvironmentTruth({
-    client,
+  const validationBaseOptions = {
+    repoRoot,
     baseUrl: clientOptions.baseUrl,
     uiBaseUrl,
-  });
-  const preflight = {
-    checkedAt: new Date().toISOString(),
-    gitStatus,
-    gitHead,
-    envTruth,
+    authMode: clientOptions.authMode,
+    accessToken: clientOptions.accessToken,
+    localPassphrase: clientOptions.localPassphrase,
+    email: clientOptions.email,
+    password: clientOptions.password,
+    mintLocalAdminToken: clientOptions.mintLocalAdminToken,
+    mintStateDbPath: clientOptions.mintStateDbPath,
+    mintTokenSecret: clientOptions.mintTokenSecret,
+    mintTokenSecretFile: clientOptions.mintTokenSecretFile,
+    mintUserId: clientOptions.mintUserId,
+    mintUserEmail: clientOptions.mintUserEmail,
+    mintTenantId: clientOptions.mintTenantId,
+    mintAccessTokenTtlSec: clientOptions.mintAccessTokenTtlSec,
   };
-  writeJson(path.join(reportRoot, "preflight.json"), preflight);
+  let preflight = null;
+  let smoke = null;
+  let dailyCore = null;
+  let publicSurface = null;
+  let branchConformance = null;
+  let skillConformance = null;
+  let terminalError = null;
 
-  const smoke = await runRealWorldValidation({
-    repoRoot,
-    suite: "smoke",
-    baseUrl: clientOptions.baseUrl,
-    uiBaseUrl,
-    authMode: clientOptions.authMode,
-    accessToken: clientOptions.accessToken,
-    localPassphrase: clientOptions.localPassphrase,
-    email: clientOptions.email,
-    password: clientOptions.password,
-    mintLocalAdminToken: clientOptions.mintLocalAdminToken,
-    mintStateDbPath: clientOptions.mintStateDbPath,
-    mintTokenSecret: clientOptions.mintTokenSecret,
-    mintTokenSecretFile: clientOptions.mintTokenSecretFile,
-    mintUserId: clientOptions.mintUserId,
-    mintUserEmail: clientOptions.mintUserEmail,
-    mintTenantId: clientOptions.mintTenantId,
-    mintAccessTokenTtlSec: clientOptions.mintAccessTokenTtlSec,
-  });
+  const startPhase = (phase) => {
+    console.error(`[real-green-gate] start ${phase}`);
+    markPhase(phaseStatus, phase, "running");
+    writePhaseStatus(reportRoot, phaseStatus);
+  };
+  const completePhase = (phase, extra = {}) => {
+    console.error(`[real-green-gate] complete ${phase}`);
+    markPhase(phaseStatus, phase, "completed", extra);
+    writePhaseStatus(reportRoot, phaseStatus);
+  };
+  const failPhase = (phase, error) => {
+    console.error(`[real-green-gate] fail ${phase}: ${error instanceof Error ? error.message : String(error)}`);
+    markPhase(phaseStatus, phase, "failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    writePhaseStatus(reportRoot, phaseStatus);
+  };
 
-  const dailyCore = await runRealWorldValidation({
-    repoRoot,
-    suite: "daily",
-    scenarioIds: DAILY_CORE_SCENARIOS,
-    repetitions: options.dailyCoreRepetitions,
-    baseUrl: clientOptions.baseUrl,
-    uiBaseUrl,
-    authMode: clientOptions.authMode,
-    accessToken: clientOptions.accessToken,
-    localPassphrase: clientOptions.localPassphrase,
-    email: clientOptions.email,
-    password: clientOptions.password,
-    mintLocalAdminToken: clientOptions.mintLocalAdminToken,
-    mintStateDbPath: clientOptions.mintStateDbPath,
-    mintTokenSecret: clientOptions.mintTokenSecret,
-    mintTokenSecretFile: clientOptions.mintTokenSecretFile,
-    mintUserId: clientOptions.mintUserId,
-    mintUserEmail: clientOptions.mintUserEmail,
-    mintTenantId: clientOptions.mintTenantId,
-    mintAccessTokenTtlSec: clientOptions.mintAccessTokenTtlSec,
-  });
+  try {
+    startPhase("preflight");
+    const gitStatus = runCommandCapture(repoRoot, "git", ["status", "--short", "--branch"]);
+    const gitHead = runCommandCapture(repoRoot, "git", ["rev-parse", "HEAD"]);
+    const client = new FridayClient(clientOptions);
+    const envTruth = await collectEnvironmentTruth({
+      client,
+      baseUrl: clientOptions.baseUrl,
+      uiBaseUrl,
+    });
+    preflight = {
+      checkedAt: new Date().toISOString(),
+      gitStatus,
+      gitHead,
+      envTruth,
+    };
+    writeJson(path.join(reportRoot, "preflight.json"), preflight);
+    completePhase("preflight");
 
-  const branchReportRoot = path.join(reportRoot, "branch");
-  const branchConformance = checkBranchConformance({
-    repoRoot,
-    base: "main",
-    branch: options.branch,
-    reportRoot: branchReportRoot,
-  });
+    startPhase("smoke");
+    smoke = await withTimeout(
+      "smoke validation",
+      options.validationTimeoutMs,
+      () => runRealWorldValidation({
+        ...validationBaseOptions,
+        suite: "smoke",
+      }),
+      async () => {
+        await closeSharedUiProbeSession();
+      },
+    );
+    completePhase("smoke", { reportRoot: smoke.reportRoot });
 
-  const skillConformance = options.skipSkillTests
-    ? {
-      ok: true,
-      skipped: true,
-      command: null,
-      stdout: "",
-      stderr: "",
+    startPhase("dailyCore");
+    dailyCore = await withTimeout(
+      "daily core validation",
+      options.validationTimeoutMs,
+      () => runRealWorldValidation({
+        ...validationBaseOptions,
+        suite: "daily",
+        scenarioIds: DAILY_CORE_SCENARIOS,
+        repetitions: options.dailyCoreRepetitions,
+      }),
+      async () => {
+        await closeSharedUiProbeSession();
+      },
+    );
+    completePhase("dailyCore", { reportRoot: dailyCore.reportRoot });
+
+    startPhase("publicSurface");
+    publicSurface = await withTimeout(
+      "public surface validation",
+      options.validationTimeoutMs,
+      () => runRealWorldValidation({
+        ...validationBaseOptions,
+        suite: "daily",
+        scenarioIds: PUBLIC_SURFACE_SCENARIOS,
+        repetitions: 1,
+      }),
+      async () => {
+        await closeSharedUiProbeSession();
+      },
+    );
+    completePhase("publicSurface", { reportRoot: publicSurface.reportRoot });
+
+    startPhase("branchConformance");
+    const branchReportRoot = path.join(reportRoot, "branch");
+    branchConformance = checkBranchConformance({
+      repoRoot,
+      base: "main",
+      branch: options.branch,
+      reportRoot: branchReportRoot,
+    });
+    completePhase("branchConformance", { reportRoot: branchReportRoot });
+
+    startPhase("skillConformance");
+    skillConformance = options.skipSkillTests
+      ? {
+        ok: true,
+        skipped: true,
+        command: null,
+        stdout: "",
+        stderr: "",
+      }
+      : runCommandCapture(
+        repoRoot,
+        "npx",
+        ["vitest", "run", ...CLAUDE_SKILL_TESTS],
+        { timeoutMs: options.skillTestTimeoutMs },
+      );
+    writeJson(path.join(reportRoot, "skill-conformance.json"), skillConformance);
+    completePhase("skillConformance");
+  } catch (error) {
+    const activePhase = Object.entries(phaseStatus)
+      .find(([, value]) => value?.status === "running")?.[0] ?? null;
+    terminalError = {
+      phase: activePhase,
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack ?? null : null,
+    };
+    if (activePhase) {
+      failPhase(activePhase, error);
     }
-    : runCommandCapture(repoRoot, "npx", ["vitest", "run", ...CLAUDE_SKILL_TESTS]);
-  writeJson(path.join(reportRoot, "skill-conformance.json"), skillConformance);
-
-  const summary = {
-    runId,
-    generatedAt: new Date().toISOString(),
-    repoRoot,
-    branch: options.branch,
-    preflight,
-    smoke: summarizeRun(smoke),
-    dailyCore: summarizeRun(dailyCore),
-    branchConformance,
-    skillConformance,
-  };
-  summary.gate = {
-    passed: false,
-    reasons: deriveGateReasons(summary),
-  };
-  summary.gate.passed = summary.gate.reasons.length === 0;
-
-  writeJson(path.join(reportRoot, "summary.json"), summary);
-  writeText(path.join(reportRoot, "index.md"), renderMarkdown(summary));
-  console.log(JSON.stringify({
-    ...summary,
-    reportRoot,
-  }, null, 2));
-  if (!summary.gate.passed) {
-    process.exitCode = 1;
+  } finally {
+    const summary = buildSummary({
+      runId,
+      repoRoot,
+      branch: options.branch,
+      phaseStatus,
+      preflight,
+      smoke,
+      dailyCore,
+      publicSurface,
+      branchConformance,
+      skillConformance,
+      error: terminalError,
+    });
+    flushTerminalArtifacts(reportRoot, summary);
+    console.log(JSON.stringify({
+      ...summary,
+      reportRoot,
+    }, null, 2));
+    if (!summary.gate.passed) {
+      process.exitCode = 1;
+    }
   }
 }
 

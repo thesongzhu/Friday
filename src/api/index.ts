@@ -182,7 +182,12 @@ export type { FridayObservabilityRoutesDeps } from "./http/routes/friday-observa
 // Desktop routes (C-003)
 export { createFridayDesktopRoutes } from "./http/routes/friday-desktop-routes.js";
 export type { FridayDesktopRoutesDeps } from "./http/routes/friday-desktop-routes.js";
-export { createFridayChannelRoutes, getChannelPersona } from "./http/routes/friday-channel-routes.js";
+export {
+  createFridayChannelRoutes,
+  getChannelPersona,
+  hydrateChannelPersonaStore,
+  resetChannelPersonaStore,
+} from "./http/routes/friday-channel-routes.js";
 export type { FridayChannelRoutesDeps, FridayChannelPersonaConfig } from "./http/routes/friday-channel-routes.js";
 export { createFridayGrantRoutes } from "./http/routes/friday-grant-routes.js";
 export type { FridayGrantRoutesDeps } from "./http/routes/friday-grant-routes.js";

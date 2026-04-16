@@ -1,19 +1,30 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api/client";
+import { providerUsageApi } from "@/lib/api/provider-usage";
 import { SkeletonCard, StatusPill } from "@/components/core/primitives";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
+import type { FridayLlmBudgetStatus, FridayProviderUsageSummary } from "@/lib/api/types";
 
 // ─── Types ───
 
 interface ProviderHealthItem {
   providerId: string;
   providerKind: string;
-  status: string;
-  successCount: number;
-  errorCount: number;
-  latencyMs: number;
-  lastChecked: string;
+  lane: "primary" | "fallback" | "standby" | "disabled";
+  enabled: boolean;
+  defaultModel?: string;
+  backendKind: string;
+  authMode: string;
+  backendHealth: string;
+  authHealth: string;
+  routingEligible: boolean;
+  validationStatus: "never" | "ok" | "failed";
+  circuitState: "closed" | "cooldown" | "unknown";
+  cooldownRemainingMs?: number;
+  lastFailureAt?: string;
+  reasons: string[];
+  suggestedAction: string;
 }
 
 interface ProviderHealthResponse {
@@ -48,6 +59,23 @@ function useProviderHealth() {
   });
 }
 
+function useProviderUsage() {
+  return useQuery({
+    queryKey: ["provider-usage", "provider"],
+    queryFn: async (): Promise<FridayProviderUsageSummary> =>
+      providerUsageApi.getUsageSummary({ groupBy: "provider" }),
+    refetchInterval: 30_000,
+  });
+}
+
+function useBudgetStatus() {
+  return useQuery({
+    queryKey: ["provider-budget"],
+    queryFn: async (): Promise<FridayLlmBudgetStatus> => providerUsageApi.getBudget(),
+    refetchInterval: 30_000,
+  });
+}
+
 function useProviders() {
   return useQuery({
     queryKey: ["providers"],
@@ -65,26 +93,64 @@ function useProviders() {
 
 // ─── Helpers ───
 
-/** Rough cost estimate using a generic placeholder rate. Not real billing. */
-function estimateCost(tokens: number): string {
-  return `~$${(tokens * 0.00001).toFixed(4)}`;
-}
-
 function formatNumber(n: number): string {
   if (!Number.isFinite(n)) return "0";
   return n.toLocaleString();
 }
 
-function statusBadge(status: string | undefined, locale: import("@/lib/i18n/localized-text").AppLocale) {
+function formatDateTime(value?: string): string {
+  if (!value) return "n/a";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "n/a" : parsed.toLocaleString();
+}
+
+function formatUsd(value: number): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function laneLabel(lane: ProviderHealthItem["lane"], locale: import("@/lib/i18n/localized-text").AppLocale): string {
+  switch (lane) {
+    case "primary":
+      return localize(locale, "主链路", "Primary");
+    case "fallback":
+      return localize(locale, "回退链路", "Fallback");
+    case "standby":
+      return localize(locale, "待命", "Standby");
+    case "disabled":
+      return localize(locale, "已禁用", "Disabled");
+    default:
+      return lane;
+  }
+}
+
+function providerStatusBadge(item: ProviderHealthItem, locale: import("@/lib/i18n/localized-text").AppLocale) {
+  if (item.validationStatus === "failed") {
+    return <StatusPill tone="danger">{localize(locale, "验证失败", "Validation failed")}</StatusPill>;
+  }
+  if (!item.routingEligible) {
+    return <StatusPill tone="warning">{localize(locale, "不可路由", "Not routable")}</StatusPill>;
+  }
+  if (item.backendHealth === "healthy" && item.authHealth === "healthy") {
+    return <StatusPill tone="success">{localize(locale, "可用", "Ready")}</StatusPill>;
+  }
+  if (item.backendHealth === "missing" || item.authHealth === "missing") {
+    return <StatusPill tone="danger">{localize(locale, "缺少依赖", "Missing dependency")}</StatusPill>;
+  }
+  return <StatusPill tone="warning">{localize(locale, "需关注", "Needs attention")}</StatusPill>;
+}
+
+function budgetStatusBadge(status: FridayLlmBudgetStatus["state"], locale: import("@/lib/i18n/localized-text").AppLocale) {
   switch (status) {
-    case "healthy":
     case "ok":
-      return <StatusPill tone="success">{localize(locale, "健康", "Healthy")}</StatusPill>;
-    case "degraded":
-      return <StatusPill tone="warning">{localize(locale, "降级", "Degraded")}</StatusPill>;
-    case "down":
-    case "error":
-      return <StatusPill tone="danger">{localize(locale, "宕机", "Down")}</StatusPill>;
+      return <StatusPill tone="success">{localize(locale, "预算正常", "Budget OK")}</StatusPill>;
+    case "near_limit":
+      return <StatusPill tone="warning">{localize(locale, "接近上限", "Near limit")}</StatusPill>;
+    case "over_limit":
+      return <StatusPill tone="danger">{localize(locale, "超出上限", "Over limit")}</StatusPill>;
     default:
       return <StatusPill>{localize(locale, "未知", "Unknown")}</StatusPill>;
   }
@@ -98,37 +164,46 @@ import { PercentBar } from "@/components/usage/usage-charts";
 export function UsagePage() {
   const { locale } = useAppLocale();
   const { data: healthItems = [], isLoading: healthLoading, isError: healthError } = useProviderHealth();
+  const { data: usageSummary, isLoading: usageLoading, isError: usageError } = useProviderUsage();
+  const { data: budgetStatus, isLoading: budgetLoading, isError: budgetError } = useBudgetStatus();
   const { data: providers = [], isLoading: providersLoading, isError: providersError } = useProviders();
 
-  const isLoading = healthLoading || providersLoading;
-  const isError = healthError || providersError;
+  const isLoading = healthLoading || usageLoading || budgetLoading || providersLoading;
+  const isError = healthError || usageError || budgetError || providersError;
 
-  // Aggregate stats from provider health data.
-  const totalRequests = healthItems.reduce((sum, p) => sum + (p.successCount ?? 0) + (p.errorCount ?? 0), 0);
-  const totalErrors = healthItems.reduce((sum, p) => sum + (p.errorCount ?? 0), 0);
-  const totalSuccess = healthItems.reduce((sum, p) => sum + (p.successCount ?? 0), 0);
-  const errorRate = totalRequests > 0 ? ((totalErrors / totalRequests) * 100).toFixed(1) : "0.0";
-
-  // Illustrative token estimate derived from successful request counts.
-  const estimatedTotalTokens = totalSuccess * 800;
-  const estimatedInputTokens = Math.round(estimatedTotalTokens * 0.35);
-  const estimatedOutputTokens = estimatedTotalTokens - estimatedInputTokens;
+  const totals = usageSummary?.totals ?? {
+    callCount: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    costUsd: 0,
+  };
+  const estimatedInputTokens = totals.inputTokens;
+  const estimatedOutputTokens = totals.outputTokens;
+  const estimatedTotalTokens = totals.totalTokens;
 
   // Build per-provider cost table by joining health with provider metadata.
   const providerMap = new Map(providers.map((p) => [p.id, p]));
-  const costRows = healthItems.map((h) => {
-    const meta = providerMap.get(h.providerId);
-    const reqs = (h.successCount ?? 0) + (h.errorCount ?? 0);
-    const tokens = (h.successCount ?? 0) * 800;
+  const healthMap = new Map(healthItems.map((item) => [item.providerId, item]));
+  const costRows = (usageSummary?.rows ?? []).map((row) => {
+    const providerId = row.providerId ?? "";
+    const meta = providerMap.get(providerId);
+    const health = healthMap.get(providerId);
     return {
-      id: h.providerId,
-      name: meta?.name ?? h.providerId,
-      kind: meta?.kind ?? h.providerKind,
-      requests: reqs,
-      tokens,
-      cost: estimateCost(tokens),
+      id: providerId,
+      name: meta?.name ?? providerId,
+      kind: meta?.kind ?? "unknown",
+      requests: row.callCount,
+      tokens: row.totalTokens,
+      costUsd: row.costUsd,
+      lane: health?.lane,
     };
   });
+  const validationFailedCount = healthItems.filter((item) => item.validationStatus === "failed").length;
+  const unroutableCount = healthItems.filter((item) => !item.routingEligible).length;
+  const cooldownCount = healthItems.filter((item) => item.circuitState === "cooldown").length;
 
   const maxTokensInRow = Math.max(...costRows.map((r) => r.tokens), 1);
 
@@ -142,8 +217,8 @@ export function UsagePage() {
         <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
           {localize(
             locale,
-            "监控提供商健康状态和请求量。下方的 Token 和成本数据为基于请求数和通用定价的粗略估算，非实际计费数据。",
-            "Monitor provider health and request volume. Token and cost figures below are rough estimates derived from request counts and generic pricing — they are not actual billing data.",
+            "这里展示的是 Friday 当前运行态的真实 usage、预算和 provider 健康快照。账单结算仍以各提供商后台为准。",
+            "This page shows Friday's live usage, budget, and provider-health snapshot for the current runtime. Final billing truth still lives in each provider console.",
           )}
         </p>
       </div>
@@ -165,10 +240,10 @@ export function UsagePage() {
           {/* ─── Token Usage Summary ─── */}
           <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5">
             <h2 className="text-sm font-medium text-[color:var(--color-text-primary)]">
-              {localize(locale, "Token 用量估算", "Token Usage Estimate")}
+              {localize(locale, "Token 用量", "Token Usage")}
             </h2>
-            <p className="mt-1 text-xs text-[color:var(--color-text-warning)]">
-              {localize(locale, "Token 数按每次成功请求约 800 个估算（输入/输出比 35/65）。实际用量因模型和提示长度而异。", "Tokens are estimated at ~800 per successful request with a 35/65 input/output split. Actual usage varies by model and prompt length.")}
+            <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
+              {localize(locale, "这里展示的是当前运行态累积记录下来的真实 token 统计，不再是按请求数反推的占位估算。", "This section shows real token totals recorded by the current runtime rather than placeholder estimates derived from request counts.")}
             </p>
             <div className="mt-4 grid grid-cols-3 gap-4">
               <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
@@ -210,6 +285,38 @@ export function UsagePage() {
             </div>
           </div>
 
+          {/* ─── Budget ─── */}
+          <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-medium text-[color:var(--color-text-primary)]">
+                {localize(locale, "月度预算", "Monthly Budget")}
+              </h2>
+              {budgetStatus ? budgetStatusBadge(budgetStatus.state, locale) : null}
+            </div>
+            {budgetStatus ? (
+              <div className="mt-4 grid grid-cols-3 gap-4">
+                <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
+                  <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "本月已花费", "Spent this month")}</p>
+                  <p className="mt-1 text-lg font-semibold text-[color:var(--color-text-primary)]">
+                    {formatUsd(budgetStatus.spentUsd)}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
+                  <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "预算上限", "Budget limit")}</p>
+                  <p className="mt-1 text-lg font-semibold text-[color:var(--color-text-primary)]">
+                    {budgetStatus.config ? formatUsd(budgetStatus.config.monthlyLimitUsd) : localize(locale, "未配置", "Unset")}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
+                  <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "剩余额度", "Remaining budget")}</p>
+                  <p className="mt-1 text-lg font-semibold text-[color:var(--color-text-primary)]">
+                    {budgetStatus.remainingUsd == null ? localize(locale, "未配置", "Unset") : formatUsd(budgetStatus.remainingUsd)}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
           {/* ─── Cost by Provider ─── */}
           <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5">
             <h2 className="text-sm font-medium text-[color:var(--color-text-primary)]">
@@ -226,10 +333,11 @@ export function UsagePage() {
                   <thead>
                     <tr className="border-b border-[color:var(--color-border-soft)] text-xs text-[color:var(--color-text-secondary)]">
                       <th className="pb-2 pr-4 font-medium">{localize(locale, "提供商", "Provider")}</th>
+                      <th className="pb-2 pr-4 font-medium">{localize(locale, "链路", "Lane")}</th>
                       <th className="pb-2 pr-4 font-medium">{localize(locale, "请求数", "Requests")}</th>
                       <th className="pb-2 pr-4 font-medium">{localize(locale, "Token 数", "Tokens")}</th>
                       <th className="pb-2 pr-4 font-medium">{localize(locale, "分布", "Distribution")}</th>
-                      <th className="pb-2 font-medium text-right">{localize(locale, "预估成本", "Est. Cost")}</th>
+                      <th className="pb-2 font-medium text-right">{localize(locale, "成本", "Cost")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -238,6 +346,9 @@ export function UsagePage() {
                         <td className="py-2.5 pr-4">
                           <p className="font-medium text-[color:var(--color-text-primary)]">{row.name}</p>
                           <p className="text-xs text-[color:var(--color-text-secondary)]">{row.kind}</p>
+                        </td>
+                        <td className="py-2.5 pr-4 text-[color:var(--color-text-secondary)]">
+                          {row.lane ? laneLabel(row.lane, locale) : localize(locale, "未知", "Unknown")}
                         </td>
                         <td className="py-2.5 pr-4 text-[color:var(--color-text-secondary)]">
                           {formatNumber(row.requests)}
@@ -249,7 +360,7 @@ export function UsagePage() {
                           <PercentBar value={row.tokens} max={maxTokensInRow} color="#6366f1" />
                         </td>
                         <td className="py-2.5 text-right font-medium text-[color:var(--color-text-primary)]">
-                          {row.cost}
+                          {formatUsd(row.costUsd)}
                         </td>
                       </tr>
                     ))}
@@ -259,42 +370,29 @@ export function UsagePage() {
             )}
           </div>
 
-          {/* ─── Error Rate & Fallback ─── */}
+          {/* ─── Routing & Validation ─── */}
           <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5">
             <h2 className="text-sm font-medium text-[color:var(--color-text-primary)]">
-              {localize(locale, "错误率与回退", "Error Rate & Fallbacks")}
+              {localize(locale, "路由与校验", "Routing & Validation")}
             </h2>
             <div className="mt-4 grid grid-cols-3 gap-4">
               <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
-                <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "总请求数", "Total Requests")}</p>
+                <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "不可路由 provider", "Non-routable providers")}</p>
                 <p className="mt-1 text-lg font-semibold text-[color:var(--color-text-primary)]">
-                  {formatNumber(totalRequests)}
+                  {formatNumber(unroutableCount)}
                 </p>
               </div>
               <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
-                <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "错误率", "Error Rate")}</p>
-                <p className={`mt-1 text-lg font-semibold ${Number(errorRate) > 5 ? "text-[color:var(--color-text-danger)]" : "text-[color:var(--color-text-success)]"}`}>
-                  {errorRate}%
+                <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "校验失败", "Validation failed")}</p>
+                <p className={`mt-1 text-lg font-semibold ${validationFailedCount > 0 ? "text-[color:var(--color-text-danger)]" : "text-[color:var(--color-text-success)]"}`}>
+                  {formatNumber(validationFailedCount)}
                 </p>
               </div>
               <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
-                <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "回退次数", "Fallback Count")}</p>
+                <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "冷却中的 provider", "Providers in cooldown")}</p>
                 <p className="mt-1 text-lg font-semibold text-[color:var(--color-text-warning)]">
-                  {formatNumber(totalErrors)}
+                  {formatNumber(cooldownCount)}
                 </p>
-              </div>
-            </div>
-
-            {/* Error bar */}
-            <div className="mt-4">
-              <div className="flex items-center gap-3">
-                <span className="w-14 text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "错误", "Errors")}</span>
-                <div className="flex-1">
-                  <PercentBar value={totalErrors} max={totalRequests} color="#ef4444" />
-                </div>
-                <span className="w-14 text-right text-xs text-[color:var(--color-text-secondary)]">
-                  {errorRate}%
-                </span>
               </div>
             </div>
           </div>
@@ -323,14 +421,25 @@ export function UsagePage() {
                           {meta?.name ?? item.providerId}
                         </p>
                         <p className="text-xs text-[color:var(--color-text-secondary)]">
-                          {item.providerKind}
-                          {" \u00b7 "}
-                          {String(item.latencyMs)}ms {localize(locale, "平均", "avg")}
-                          {" \u00b7 "}
-                          {localize(locale, "最后检查", "last checked")} {new Date(item.lastChecked).toLocaleTimeString()}
+                          {item.providerKind} {" \u00b7 "} {laneLabel(item.lane, locale)} {" \u00b7 "}
+                          {item.backendKind}/{item.authMode}
+                          {item.defaultModel ? ` · ${item.defaultModel}` : ""}
                         </p>
+                        <p className="mt-1 text-xs text-[color:var(--color-text-tertiary)]">
+                          {localize(locale, "后端", "Backend")}: {item.backendHealth}
+                          {" · "}
+                          {localize(locale, "鉴权", "Auth")}: {item.authHealth}
+                          {" · "}
+                          {localize(locale, "验证", "Validation")}: {item.validationStatus}
+                          {item.lastFailureAt ? ` · ${localize(locale, "最近失败", "Last failure")} ${formatDateTime(item.lastFailureAt)}` : ""}
+                        </p>
+                        {item.reasons.length > 0 ? (
+                          <p className="mt-1 text-xs text-[color:var(--color-text-tertiary)]">
+                            {item.reasons.join(", ")}
+                          </p>
+                        ) : null}
                       </div>
-                      {statusBadge(item.status, locale)}
+                      {providerStatusBadge(item, locale)}
                     </div>
                   );
                 })}
@@ -346,8 +455,8 @@ export function UsagePage() {
             <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
               {localize(
                 locale,
-                "上方显示的预估成本使用默认 Token 定价。您可以在",
-                "The estimated costs shown above use default token pricing. You can override per-model pricing rates in",
+                "如果这里的 usage、预算或 provider health 与你预期不一致，优先相信这些实时路由返回，而不是旧文档或旧截图。你可以在",
+                "If usage, budget, or provider health here differs from what you expected, trust these live routes over old docs or screenshots. You can adjust related pricing and routing settings in",
               )}{" "}
               <a href="/settings" className="font-medium text-indigo-600 underline underline-offset-2 dark:text-indigo-400">
                 {localize(locale, "设置", "Settings")}

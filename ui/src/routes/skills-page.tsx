@@ -4,10 +4,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BadgeCheck, Download, MessageSquare, Package, RefreshCcw, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { DeepLinkPreviewDialog } from "@/components/deeplink/deeplink-preview-dialog";
 import { toast } from "sonner";
-import { ActionButton, ConfirmDialog, EmptyState, ShellCard, SkeletonCard, SkeletonList, StatusPill } from "@/components/core/primitives";
+import { ActionButton, ConfirmDialog, EmptyState, FieldLabel, ShellCard, SkeletonCard, SkeletonList, StatusPill } from "@/components/core/primitives";
 import { HelpTooltip } from "@/components/core/help-tooltip";
 import { SkillImportWizard } from "@/components/core/skill-import-wizard";
 import { SkillScannerPanel } from "@/components/core/skill-scanner-panel";
+import { HIDE_MARKETPLACE_UI } from "@/lib/feature-flags";
 import { localize, type AppLocale } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 import { skillsApi } from "@/lib/api/skills";
@@ -137,11 +138,16 @@ export function SkillsPage() {
   const [showImportWizard, setShowImportWizard] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [deleteConfirmSkillId, setDeleteConfirmSkillId] = useState<string | null>(null);
+  const [deleteConfirmSourceId, setDeleteConfirmSourceId] = useState<string | null>(null);
+  const [deleteConfirmSourceName, setDeleteConfirmSourceName] = useState<string | null>(null);
+  const [sourceNameInput, setSourceNameInput] = useState("");
+  const [sourceBaseUrlInput, setSourceBaseUrlInput] = useState("");
+  const [sourceTrustPolicy, setSourceTrustPolicy] = useState<"strict" | "warn" | "permissive">("warn");
   // Edit mode removed — skills use "Regenerate" flow instead of inline editing
   const requestedSkillId = searchParams.get("skillId");
   const requestedFocus = searchParams.get("focus");
   const focus: FridaySkillFocus =
-    requestedFocus === "install" || requestedFocus === "verify" || requestedFocus === "sources"
+    requestedFocus === "install" || requestedFocus === "verify" || (!HIDE_MARKETPLACE_UI && requestedFocus === "sources")
       ? requestedFocus
       : "details";
 
@@ -154,17 +160,19 @@ export function SkillsPage() {
   const catalogQuery = useQuery({
     queryKey: ["skills", "catalog"],
     queryFn: () => skillsApi.listCatalog({ limit: 50 }),
+    enabled: !HIDE_MARKETPLACE_UI,
     refetchInterval: 30_000,
   });
 
   const sourcesQuery = useQuery({
     queryKey: ["skills", "sources"],
     queryFn: () => skillsApi.listSources(),
+    enabled: !HIDE_MARKETPLACE_UI,
     refetchInterval: 30_000,
   });
 
   const skills = skillsQuery.data ?? [];
-  const catalog = catalogQuery.data?.items ?? [];
+  const catalog = HIDE_MARKETPLACE_UI ? [] : (catalogQuery.data?.items ?? []);
   const sections = buildSkillOperatorSections({ skills, catalog });
 
   useEffect(() => {
@@ -280,10 +288,71 @@ export function SkillsPage() {
     },
   });
 
+  const createSourceMutation = useMutation({
+    mutationFn: () =>
+      skillsApi.createSource({
+        name: sourceNameInput.trim(),
+        baseUrl: sourceBaseUrlInput.trim(),
+        trustPolicy: sourceTrustPolicy,
+      }),
+    onSuccess: (source) => {
+      toast.success(locale === "zh" ? `已新增来源 ${source.name}` : `Added source ${source.name}`);
+      setSourceNameInput("");
+      setSourceBaseUrlInput("");
+      setSourceTrustPolicy("warn");
+      void queryClient.invalidateQueries({ queryKey: ["skills", "sources"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法新增来源", "Could not add marketplace source"));
+    },
+  });
+
+  const syncSourceMutation = useMutation({
+    mutationFn: (sourceId?: string) => skillsApi.syncSources(sourceId ? { sourceId } : {}),
+    onSuccess: (result, sourceId) => {
+      const failedResults = result.results.filter((item) => item.errors.length > 0);
+      if (failedResults.length > 0) {
+        const firstError = failedResults[0]?.errors[0];
+        toast.error(firstError ?? localize(locale, "来源同步失败", "Marketplace sync failed"));
+      } else {
+        const label = sourceId
+          ? localize(locale, "来源目录已同步", "Source catalog synced")
+          : localize(locale, "市场目录已同步", "Marketplace catalog synced");
+        const summary = locale === "zh"
+          ? `${label} · ${result.results.reduce((sum, item) => sum + item.skillsSynced, 0)} 个技能`
+          : `${label} · ${result.results.reduce((sum, item) => sum + item.skillsSynced, 0)} skills`;
+        toast.success(summary);
+      }
+      void queryClient.invalidateQueries({ queryKey: ["skills", "sources"] });
+      void queryClient.invalidateQueries({ queryKey: ["skills", "catalog"] });
+      void queryClient.invalidateQueries({ queryKey: ["skills", "list"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法同步来源", "Could not sync marketplace source"));
+    },
+  });
+
+  const deleteSourceMutation = useMutation({
+    mutationFn: (sourceId: string) => skillsApi.deleteSource(sourceId),
+    onSuccess: (_, sourceId) => {
+      toast.success(locale === "zh" ? `已移除来源 ${sourceId}` : `Removed source ${sourceId}`);
+      if (deleteConfirmSourceId === sourceId) {
+        setDeleteConfirmSourceId(null);
+        setDeleteConfirmSourceName(null);
+      }
+      void queryClient.invalidateQueries({ queryKey: ["skills", "sources"] });
+      void queryClient.invalidateQueries({ queryKey: ["skills", "catalog"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法移除来源", "Could not remove marketplace source"));
+    },
+  });
+
   const detail = detailQuery.data;
   const selectedCatalog = selectedSkillId
     ? catalog.find((item) => item.skillId === selectedSkillId) ?? null
     : null;
+  const canCreateSource = sourceNameInput.trim().length > 0 && sourceBaseUrlInput.trim().length > 0;
 
   useEffect(() => {
     if (!detail?.starter) return;
@@ -373,7 +442,7 @@ export function SkillsPage() {
                     ? localize(locale, "安装焦点", "install focus")
                     : focus === "verify"
                       ? localize(locale, "验证焦点", "verify focus")
-                      : focus === "sources"
+                      : !HIDE_MARKETPLACE_UI && focus === "sources"
                         ? localize(locale, "来源焦点", "source focus")
                         : detail?.installedVersion || detail?.registryLoaded
                           ? localize(locale, "可操作", "actionable")
@@ -397,7 +466,7 @@ export function SkillsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "选择一个技能以查看最佳的安装、验证或修复操作。", "Pick a skill to see the next best install, verify, or repair action.")}</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "选择一个已安装或内置技能以查看最佳的安装、验证或修复操作。", "Pick an installed or bundled skill to see the next best install, verify, or repair action.")}</p>
           )}
         </ShellCard>
 
@@ -520,64 +589,93 @@ export function SkillsPage() {
           </div>
         </ShellCard>
 
-        <ShellCard
-          eyebrow={localize(locale, "市场", "Marketplace")}
-          title={localize(locale, "可安装的新技能", "New skills you can install")}
-          aside={<StatusPill tone={sections.available.length > 0 ? "neutral" : "success"}>{sections.available.length} {localize(locale, "个可发现", "discoverable")}</StatusPill>}
-        >
-          <div className="space-y-3">
-            {sections.available.length === 0 ? (
-              <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "Friday 当前在已安装集之外未发现任何目录条目。", "Friday does not currently see any catalog entries beyond the installed set.")}</p>
-            ) : (
-              sections.available.slice(0, 8).map((item) => (
-                <button
-                  key={`${item.skillId}:${item.version}`}
-                  type="button"
-                  onClick={() => handleSelectSkill(item.skillId)}
-                  className="agent-selection-card"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="font-medium text-[color:var(--color-text-primary)]">{item.skillName}</p>
-                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{item.skillId}</p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <StatusPill tone={toneForCatalogReadiness(item)}>
-                        {labelForCatalogReadiness(item, locale)}
-                      </StatusPill>
-                      <StatusPill tone={item.signatureValid ? "success" : "warning"}>
-                        {localize(locale, "信任", "trust")} {item.trustScore}
-                      </StatusPill>
-                    </div>
-                  </div>
-                  <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
-                    {localize(locale, "版本", "Version")} {item.version} · {item.publisher ?? localize(locale, "未知发布者", "Unknown publisher")}
+        {!HIDE_MARKETPLACE_UI ? (
+          <ShellCard
+            eyebrow={localize(locale, "市场", "Marketplace")}
+            title={localize(locale, "可安装的新技能", "New skills you can install")}
+            aside={<StatusPill tone={sections.available.length > 0 ? "neutral" : "success"}>{sections.available.length} {localize(locale, "个可发现", "discoverable")}</StatusPill>}
+          >
+            <div className="space-y-3">
+              {sections.available.length === 0 ? (
+                <div className="space-y-2 text-sm text-[color:var(--color-text-secondary)]">
+                  <p>
+                    {(sourcesQuery.data?.length ?? 0) === 0
+                      ? localize(
+                        locale,
+                        "当前没有配置任何外部市场来源，所以公共目录为空是预期行为，不是前端坏了。",
+                        "No external marketplace sources are configured right now, so an empty public catalog is expected rather than a frontend failure.",
+                      )
+                      : localize(
+                        locale,
+                        "Friday 当前在已安装集之外未发现任何目录条目。",
+                        "Friday does not currently see any catalog entries beyond the installed set.",
+                      )}
                   </p>
-                  {item.recommendedNextAction ? (
-                    <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">
-                      {item.recommendedNextAction}
+                  <p className="text-xs text-[color:var(--color-text-tertiary)]">
+                    {(sourcesQuery.data?.length ?? 0) === 0
+                      ? localize(
+                        locale,
+                        "内置入门技能和已安装技能仍然可用；这里只是在如实反映 /v1/marketplace/sources 和 /v1/skills/catalog 的当前空状态。",
+                        "Bundled starter skills and installed skills still work; this section is simply reflecting the current empty state of /v1/marketplace/sources and /v1/skills/catalog.",
+                      )
+                      : localize(
+                        locale,
+                        "当前已跟踪来源没有提供新的可安装目录项。",
+                        "The currently tracked sources are not exposing any additional installable catalog items.",
+                      )}
+                  </p>
+                </div>
+              ) : (
+                sections.available.slice(0, 8).map((item) => (
+                  <button
+                    key={`${item.skillId}:${item.version}`}
+                    type="button"
+                    onClick={() => handleSelectSkill(item.skillId)}
+                    className="agent-selection-card"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-[color:var(--color-text-primary)]">{item.skillName}</p>
+                        <p className="text-xs text-[color:var(--color-text-tertiary)]">{item.skillId}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <StatusPill tone={toneForCatalogReadiness(item)}>
+                          {labelForCatalogReadiness(item, locale)}
+                        </StatusPill>
+                        <StatusPill tone={item.signatureValid ? "success" : "warning"}>
+                          {localize(locale, "信任", "trust")} {item.trustScore}
+                        </StatusPill>
+                      </div>
+                    </div>
+                    <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
+                      {localize(locale, "版本", "Version")} {item.version} · {item.publisher ?? localize(locale, "未知发布者", "Unknown publisher")}
                     </p>
-                  ) : null}
-                  {item.blockedReasons && item.blockedReasons.length > 0 ? (
-                    <p className="mt-1 text-xs text-[color:var(--color-text-tertiary)]">
-                      {localize(locale, "已阻止", "Blocked")}: {item.blockedReasons[0]}
-                    </p>
-                  ) : null}
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {item.originType ? <StatusPill>{formatOriginType(item.originType, locale)}</StatusPill> : null}
-                    {item.maturity ? (
-                      <StatusPill tone={toneForMaturity(item.maturity)}>{formatMaturity(item.maturity, locale)}</StatusPill>
+                    {item.recommendedNextAction ? (
+                      <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">
+                        {item.recommendedNextAction}
+                      </p>
                     ) : null}
-                    {item.trustTier ? <StatusPill>{item.trustTier}</StatusPill> : null}
-                    {item.firstUsePrompts?.slice(0, 2).map((prompt) => (
-                      <StatusPill key={prompt} tone="neutral">{prompt}</StatusPill>
-                    ))}
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
-        </ShellCard>
+                    {item.blockedReasons && item.blockedReasons.length > 0 ? (
+                      <p className="mt-1 text-xs text-[color:var(--color-text-tertiary)]">
+                        {localize(locale, "已阻止", "Blocked")}: {item.blockedReasons[0]}
+                      </p>
+                    ) : null}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {item.originType ? <StatusPill>{formatOriginType(item.originType, locale)}</StatusPill> : null}
+                      {item.maturity ? (
+                        <StatusPill tone={toneForMaturity(item.maturity)}>{formatMaturity(item.maturity, locale)}</StatusPill>
+                      ) : null}
+                      {item.trustTier ? <StatusPill>{item.trustTier}</StatusPill> : null}
+                      {item.firstUsePrompts?.slice(0, 2).map((prompt) => (
+                        <StatusPill key={prompt} tone="neutral">{prompt}</StatusPill>
+                      ))}
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          </ShellCard>
+        ) : null}
       </div>
 
       <div className="space-y-4">
@@ -593,7 +691,7 @@ export function SkillsPage() {
           }
         >
           {!selectedSkillId ? (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "选择已安装的技能或目录项以检查生命周期证据。", "Select an installed skill or catalog item to inspect lifecycle evidence.")}</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "选择已安装或内置技能以检查生命周期证据。", "Select an installed or bundled skill to inspect lifecycle evidence.")}</p>
           ) : detail ? (
             <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
               <div className="agent-subcard p-4">
@@ -626,16 +724,13 @@ export function SkillsPage() {
                   <p>{localize(locale, "来源", "Source")}: {detail.source}</p>
                   <p>{localize(locale, "起源", "Origin")}: {detail.origin}</p>
                   <p>{localize(locale, "发布者", "Publisher")}: {detail.publisher ?? localize(locale, "未知", "Unknown")}</p>
-                  <p>{localize(locale, "来源信任", "Source trust")}: {detail.sourceDetails?.trustPolicy ?? localize(locale, "本地", "local")}</p>
-                  <p>{localize(locale, "信任层级", "Trust tier")}: {detail.catalogEntry?.trustTier ?? localize(locale, "本地", "local")}</p>
                   <p>{localize(locale, "已安装版本", "Installed version")}: {detail.installedVersion ?? localize(locale, "未安装", "not installed")}</p>
                   <p>{localize(locale, "最新版本", "Latest version")}: {detail.latestVersion ?? localize(locale, "未知", "unknown")}</p>
                   <p>{localize(locale, "入门包", "Starter pack")}: {detail.starter ? localize(locale, "是", "yes") : localize(locale, "否", "no")}</p>
                   <p>{localize(locale, "来源类型", "Origin type")}: {formatOriginType(detail.originType, locale)}</p>
                   <p>{localize(locale, "成熟度", "Maturity")}: {formatMaturity(detail.maturity, locale)}</p>
-                  <p>{localize(locale, "实现状态", "Implementation status")}: {detail.catalogEntry?.implementationStatus ?? localize(locale, "已安装", "installed")}</p>
                 </div>
-                {detail.catalogEntry?.recommendedNextAction ? (
+                {!HIDE_MARKETPLACE_UI && detail.catalogEntry?.recommendedNextAction ? (
                   <div className="mt-4 rounded-[20px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4 text-sm text-[color:var(--color-text-secondary)]">
                     <p className="font-medium text-[color:var(--color-text-primary)]">{localize(locale, "最佳下一步操作", "Next best action")}</p>
                     <p className="mt-2">{detail.catalogEntry.recommendedNextAction}</p>
@@ -849,50 +944,159 @@ export function SkillsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "Friday 已从目录中了解此技能，但详细的生命周期记录仍在加载中。", "Friday knows about this skill from the catalog, but the detailed lifecycle record is still loading.")}</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "Friday 已识别到此技能条目，但详细的生命周期记录仍在加载中。", "Friday has identified this skill entry, but the detailed lifecycle record is still loading.")}</p>
           )}
         </ShellCard>
 
-        <ShellCard
-          eyebrow={localize(locale, "市场来源", "Marketplace Sources")}
-          title={localize(locale, "信任与来源策略", "Trust and source policy")}
-          aside={<StatusPill tone={sourcesQuery.data && sourcesQuery.data.length > 0 ? "success" : "neutral"}>{sourcesQuery.data?.length ?? 0} {localize(locale, "个已跟踪", "tracked")}</StatusPill>}
-        >
-          <div className="space-y-3">
-            {(sourcesQuery.data ?? []).length === 0 ? (
-              <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "暂未配置市场来源。", "No marketplace sources configured yet.")}</p>
-            ) : (
-              (sourcesQuery.data ?? []).map((source) => (
-                <div key={source.id} className="agent-subcard p-4 text-sm text-[color:var(--color-text-secondary)]">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="font-medium text-[color:var(--color-text-primary)]">{source.name}</p>
-                      <p className="mt-1 text-[color:var(--color-text-secondary)]">{source.baseUrl}</p>
-                    </div>
-                    <StatusPill tone={source.enabled ? "success" : "warning"}>
-                      {source.enabled ? localize(locale, "已启用", "enabled") : localize(locale, "已禁用", "disabled")}
-                    </StatusPill>
+        {!HIDE_MARKETPLACE_UI ? (
+          <ShellCard
+            eyebrow={localize(locale, "市场来源", "Marketplace Sources")}
+            title={localize(locale, "信任与来源策略", "Trust and source policy")}
+            aside={<StatusPill tone={sourcesQuery.data && sourcesQuery.data.length > 0 ? "success" : "neutral"}>{sourcesQuery.data?.length ?? 0} {localize(locale, "个已跟踪", "tracked")}</StatusPill>}
+          >
+            <div className="space-y-3">
+              <div className="agent-subcard p-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="max-w-2xl space-y-1">
+                    <p className="text-sm font-medium text-[color:var(--color-text-primary)]">
+                      {localize(locale, "接入真实市场来源", "Connect a real marketplace source")}
+                    </p>
+                    <p className="text-xs text-[color:var(--color-text-tertiary)]">
+                      {localize(
+                        locale,
+                        "来源根地址下需要提供 `/index.json`。先把来源接上，再执行同步，Friday 才能看到真实可安装目录。",
+                        "The source base URL must expose `/index.json`. Connect the source first, then run sync so Friday can see a real installable catalog.",
+                      )}
+                    </p>
                   </div>
-                  <div className="mt-3 grid gap-2 text-xs text-[color:var(--color-text-tertiary)]">
-                    <p>{localize(locale, "信任策略", "Trust policy")}: {source.trustPolicy}</p>
-                    <p>{localize(locale, "固定密钥", "Pinned keys")}: {source.pinnedKeyIds.length}</p>
-                    <p>{localize(locale, "更新时间", "Updated")}: {formatTimestamp(source.updatedAt)}</p>
+                  <ActionButton
+                    tone="secondary"
+                    onClick={() => void syncSourceMutation.mutateAsync(undefined)}
+                    disabled={syncSourceMutation.isPending || (sourcesQuery.data?.length ?? 0) === 0}
+                  >
+                    <RefreshCcw className="mr-2 h-4 w-4" />
+                    {localize(locale, "同步全部来源", "Sync all sources")}
+                  </ActionButton>
+                </div>
+                <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1.2fr_180px_auto]">
+                  <div className="space-y-1">
+                    <FieldLabel
+                      label={localize(locale, "来源名称", "Source name")}
+                      hint={localize(locale, "例如 Friday Official", "Example: Friday Official")}
+                    />
+                    <input
+                      value={sourceNameInput}
+                      onChange={(event) => setSourceNameInput(event.target.value)}
+                      className="w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm text-[color:var(--color-text-primary)] outline-none focus:border-[color:var(--color-accent)]"
+                      placeholder={localize(locale, "Friday Official", "Friday Official")}
+                      data-testid="marketplace-source-name-input"
+                    />
                   </div>
-                  <div className="mt-4 flex flex-wrap gap-3">
+                  <div className="space-y-1">
+                    <FieldLabel
+                      label={localize(locale, "来源地址", "Source base URL")}
+                      hint={localize(locale, "Friday 会自动请求 /index.json", "Friday will automatically request /index.json")}
+                    />
+                    <input
+                      value={sourceBaseUrlInput}
+                      onChange={(event) => setSourceBaseUrlInput(event.target.value)}
+                      className="w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm text-[color:var(--color-text-primary)] outline-none focus:border-[color:var(--color-accent)]"
+                      placeholder="https://..."
+                      data-testid="marketplace-source-base-url-input"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <FieldLabel
+                      label={localize(locale, "信任策略", "Trust policy")}
+                      hint={localize(locale, "默认先用 warn", "Start with warn by default")}
+                    />
+                    <select
+                      value={sourceTrustPolicy}
+                      onChange={(event) => setSourceTrustPolicy(event.target.value as "strict" | "warn" | "permissive")}
+                      className="w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm text-[color:var(--color-text-primary)] outline-none focus:border-[color:var(--color-accent)]"
+                      data-testid="marketplace-source-trust-policy-select"
+                    >
+                      <option value="warn">warn</option>
+                      <option value="strict">strict</option>
+                      <option value="permissive">permissive</option>
+                    </select>
+                  </div>
+                  <div className="flex items-end">
                     <ActionButton
-                      tone="secondary"
-                      onClick={() => void toggleSourceMutation.mutateAsync({ sourceId: source.id, enabled: source.enabled })}
-                      disabled={toggleSourceMutation.isPending}
+                      onClick={() => void createSourceMutation.mutateAsync()}
+                      disabled={!canCreateSource || createSourceMutation.isPending}
+                      data-testid="marketplace-source-create-button"
+                      className="w-full"
                     >
                       <ShieldCheck className="mr-2 h-4 w-4" />
-                      {source.enabled ? localize(locale, "禁用", "Disable") : localize(locale, "启用", "Enable")}
+                      {localize(locale, "新增来源", "Add source")}
                     </ActionButton>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
-        </ShellCard>
+              </div>
+              {(sourcesQuery.data ?? []).length === 0 ? (
+                <div className="space-y-2 text-sm text-[color:var(--color-text-secondary)]">
+                  <p>{localize(locale, "暂未配置市场来源。", "No marketplace sources configured yet.")}</p>
+                  <p className="text-xs text-[color:var(--color-text-tertiary)]">
+                    {localize(
+                      locale,
+                      "这表示当前运行态的 /v1/marketplace/sources 真实返回为空，不代表内置技能或已安装技能不可用。",
+                      "This means /v1/marketplace/sources is genuinely empty for the current runtime. It does not mean bundled or already installed skills are broken.",
+                    )}
+                  </p>
+                </div>
+              ) : (
+                (sourcesQuery.data ?? []).map((source) => (
+                  <div key={source.id} className="agent-subcard p-4 text-sm text-[color:var(--color-text-secondary)]">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="font-medium text-[color:var(--color-text-primary)]">{source.name}</p>
+                        <p className="mt-1 text-[color:var(--color-text-secondary)]">{source.baseUrl}</p>
+                      </div>
+                      <StatusPill tone={source.enabled ? "success" : "warning"}>
+                        {source.enabled ? localize(locale, "已启用", "enabled") : localize(locale, "已禁用", "disabled")}
+                      </StatusPill>
+                    </div>
+                    <div className="mt-3 grid gap-2 text-xs text-[color:var(--color-text-tertiary)]">
+                      <p>{localize(locale, "信任策略", "Trust policy")}: {source.trustPolicy}</p>
+                      <p>{localize(locale, "固定密钥", "Pinned keys")}: {source.pinnedKeyIds.length}</p>
+                      <p>{localize(locale, "更新时间", "Updated")}: {formatTimestamp(source.updatedAt)}</p>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <ActionButton
+                        tone="secondary"
+                        onClick={() => void syncSourceMutation.mutateAsync(source.id)}
+                        disabled={syncSourceMutation.isPending}
+                      >
+                        <RefreshCcw className="mr-2 h-4 w-4" />
+                        {localize(locale, "同步", "Sync")}
+                      </ActionButton>
+                      <ActionButton
+                        tone="secondary"
+                        onClick={() => void toggleSourceMutation.mutateAsync({ sourceId: source.id, enabled: source.enabled })}
+                        disabled={toggleSourceMutation.isPending}
+                      >
+                        <ShieldCheck className="mr-2 h-4 w-4" />
+                        {source.enabled ? localize(locale, "禁用", "Disable") : localize(locale, "启用", "Enable")}
+                      </ActionButton>
+                      <ActionButton
+                        tone="danger"
+                        onClick={() => {
+                          setDeleteConfirmSourceId(source.id);
+                          setDeleteConfirmSourceName(source.name);
+                        }}
+                        disabled={deleteSourceMutation.isPending}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        {localize(locale, "移除", "Remove")}
+                      </ActionButton>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </ShellCard>
+        ) : null}
       </div>
       <ConfirmDialog
         open={deleteConfirmSkillId !== null}
@@ -909,6 +1113,28 @@ export function SkillsPage() {
         }}
         onCancel={() => setDeleteConfirmSkillId(null)}
       />
+      {!HIDE_MARKETPLACE_UI ? (
+        <ConfirmDialog
+          open={deleteConfirmSourceId !== null}
+          title={localize(locale, "确认移除市场来源", "Remove Marketplace Source")}
+          description={deleteConfirmSourceName
+            ? localize(locale, `将移除来源 ${deleteConfirmSourceName}。已缓存的目录证据也会失去来源上下文。`, `Remove source ${deleteConfirmSourceName}. Cached catalog evidence will lose its source context.`)
+            : localize(locale, "将移除当前市场来源。", "Remove the current marketplace source.")}
+          confirmLabel={localize(locale, "移除来源", "Remove source")}
+          cancelLabel={localize(locale, "取消", "Cancel")}
+          tone="danger"
+          loading={deleteSourceMutation.isPending}
+          onConfirm={() => {
+            if (deleteConfirmSourceId) {
+              void deleteSourceMutation.mutateAsync(deleteConfirmSourceId);
+            }
+          }}
+          onCancel={() => {
+            setDeleteConfirmSourceId(null);
+            setDeleteConfirmSourceName(null);
+          }}
+        />
+      ) : null}
       <SkillImportWizard open={showImportWizard} onClose={() => setShowImportWizard(false)} />
       <SkillScannerPanel open={showScanner} onClose={() => setShowScanner(false)} />
     </div>

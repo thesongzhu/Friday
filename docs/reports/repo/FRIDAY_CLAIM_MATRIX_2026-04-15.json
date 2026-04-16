@@ -1,0 +1,50 @@
+[
+  {
+    "surface": "README.md badge",
+    "claim": "README top-level trust signals are evidence-driven rather than 10,000+ test-count proof.",
+    "realEvidence": "README uses a Release Truth badge and no longer presents 10,000+ tests as ship proof.",
+    "status": "aligned"
+  },
+  {
+    "surface": "release:verify",
+    "claim": "release:verify is reserved for live release proof and does not route through repo-only mock gates.",
+    "realEvidence": "release:verify -> npm run release:proof:real",
+    "status": "aligned"
+  },
+  {
+    "surface": "/v1/health search.latestness",
+    "claim": "Search latestness is verified.",
+    "realEvidence": "/v1/health reports capabilities.search.latestness=unverified.",
+    "status": "bounded"
+  },
+  {
+    "surface": "Skills inventory vs marketplace",
+    "claim": "Skills catalog and marketplace sources are currently populated and ready for public browsing.",
+    "realEvidence": "/v1/skills=54, /v1/skills/catalog=0, /v1/marketplace/sources=0, /v1/marketplace/assets=0.",
+    "status": "bounded"
+  },
+  {
+    "surface": "Plugin distribution",
+    "claim": "Plugin lifecycle is a first-class user-facing UI surface.",
+    "realEvidence": "/v1/plugins status=200; router has /plugins=true.",
+    "status": "aligned"
+  },
+  {
+    "surface": "Usage page",
+    "claim": "Usage reflects provider billing truth.",
+    "realEvidence": "usage-page.tsx explicitly labels token/cost figures as estimates, not billing.",
+    "status": "aligned"
+  },
+  {
+    "surface": "MCP page",
+    "claim": "An empty MCP page means Friday is broken.",
+    "realEvidence": "mcp-page.tsx explicitly models empty MCP as a configuration state.",
+    "status": "aligned"
+  },
+  {
+    "surface": "docs/current-source-of-truth.md",
+    "claim": "Current docs distinguish runtime snapshot from product promise.",
+    "realEvidence": "current-source-of-truth includes runtime snapshot / release truth language.",
+    "status": "aligned"
+  }
+]

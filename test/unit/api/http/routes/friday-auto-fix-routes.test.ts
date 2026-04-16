@@ -125,19 +125,45 @@ function makeService(): FridaySelfHealingApiService {
       action: { ...record.action, status: "rejected" as const },
     })),
     executeAction: vi.fn(async () => ({
-      ...record,
-      action: {
-        ...record.action,
-        status: "applied" as const,
-        outcome: "success" as const,
+      details: {
+        ...record,
+        action: {
+          ...record.action,
+          status: "applied" as const,
+          outcome: "success" as const,
+        },
+      },
+      result: {
+        action: {
+          ...record.action,
+          status: "applied" as const,
+          outcome: "success" as const,
+        },
+        success: true,
+        verificationPassed: true,
+        rollbackAttempted: false,
+        rollbackSucceeded: false,
       },
     })),
     rollbackAction: vi.fn(async () => ({
-      ...record,
-      action: {
-        ...record.action,
-        status: "rolled_back" as const,
-        outcome: "failed" as const,
+      details: {
+        ...record,
+        action: {
+          ...record.action,
+          status: "rolled_back" as const,
+          outcome: "failed" as const,
+        },
+      },
+      result: {
+        action: {
+          ...record.action,
+          status: "rolled_back" as const,
+          outcome: "failed" as const,
+        },
+        success: false,
+        verificationPassed: false,
+        rollbackAttempted: true,
+        rollbackSucceeded: true,
       },
     })),
     manualResolveIncident: vi.fn(),

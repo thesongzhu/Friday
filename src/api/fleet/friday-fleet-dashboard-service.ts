@@ -439,6 +439,9 @@ export function createFridayFleetDashboardService(
         let trustSum = 0;
         let lowTrustCount = 0;
         let restrictedCount = 0;
+        let runtimeOnlineCount = 0;
+        let runtimeDegradedCount = 0;
+        let runtimeOfflineCount = 0;
         const healthReasons: string[] = [];
 
         for (const sat of satellites) {
@@ -459,6 +462,13 @@ export function createFridayFleetDashboardService(
             totalNodeCount1h: totalCount,
           });
           healthSum += health.finalScore;
+          if (hbAge === null || hbAge > 90_000) {
+            runtimeOfflineCount++;
+          } else if (health.state === "healthy") {
+            runtimeOnlineCount++;
+          } else {
+            runtimeDegradedCount++;
+          }
 
           // Real trust inputs from DB — api_tokens uses user_id for user tokens;
           // for satellites, we match by principal_type + a label or ID convention.
@@ -503,9 +513,9 @@ export function createFridayFleetDashboardService(
             satellites: totalSatellites,
             pending: countMap["pending"] ?? 0,
             paired: countMap["paired"] ?? 0,
-            online: countMap["online"] ?? 0,
-            degraded: countMap["degraded"] ?? 0,
-            offline: countMap["offline"] ?? 0,
+            online: runtimeOnlineCount,
+            degraded: runtimeDegradedCount,
+            offline: runtimeOfflineCount,
             revoked: countMap["revoked"] ?? 0,
           },
           queue: {

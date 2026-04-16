@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "command": "npx vitest run test/unit/skills/registry/friday-skill-discovery.test.ts test/unit/skills/manifest/friday-skill-package-loader.test.ts test/integration/skills/friday-skill-registry-lifecycle.test.ts",
+  "durationMs": 31057,
+  "stdout": "RUN  v4.0.18 /Users/jarvis/Projects/Friday\n\n ✓ |default| test/unit/skills/registry/friday-skill-discovery.test.ts (7 tests) 8ms\n ✓ |default| test/unit/skills/manifest/friday-skill-package-loader.test.ts (8 tests) 11ms\n ✓ |default| test/integration/skills/friday-skill-registry-lifecycle.test.ts (6 tests) 35ms\n\n Test Files  3 passed (3)\n      Tests  21 passed (21)\nType Errors  no errors\n   Start at  17:36:02\n   Duration  680ms (transform 1.13s, setup 50ms, import 1.65s, tests 54ms, environment 0ms)",
+  "stderr": ""
+}
