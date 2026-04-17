@@ -1,7 +1,8 @@
 /**
  * Environment helpers for live E2E tests with real LLM providers.
  *
- * Gated by: FRIDAY_E2E_LIVE_OLLAMA=1 or FRIDAY_E2E_LIVE_OPENAI=1
+ * Canonical lane: FRIDAY_E2E_LIVE_ANTHROPIC=1 + FRIDAY_ANTHROPIC_API_KEY
+ * Optional lanes: FRIDAY_E2E_LIVE_OPENAI=1, FRIDAY_E2E_LIVE_OLLAMA=1
  * Target: FRIDAY_E2E_TARGET=local|cloud (default: local)
  * Backward compatibility: E2E_LIVE=1
  */
@@ -22,36 +23,60 @@ import {
   loginCloudAndGetTokenPair,
   type FridayE2eTarget,
 } from "./cloud-env.js";
+import {
+  hasLiveAnthropicApiKey,
+  LIVE_ANTHROPIC_MODEL,
+  liveAnthropicCredentialMessage,
+  resolveLiveAnthropicApiKeyEnvRef,
+} from "../../_helpers/live-anthropic.js";
 
 // ─── Env constants ───
 
+const FRIDAY_E2E_LIVE_ANTHROPIC = process.env.FRIDAY_E2E_LIVE_ANTHROPIC === "1";
 const FRIDAY_E2E_LIVE_OLLAMA = process.env.FRIDAY_E2E_LIVE_OLLAMA === "1";
 const FRIDAY_E2E_LIVE_OPENAI = process.env.FRIDAY_E2E_LIVE_OPENAI === "1";
 const LEGACY_E2E_LIVE = process.env.E2E_LIVE === "1";
 export const E2E_LIVE =
-  FRIDAY_E2E_LIVE_OLLAMA || FRIDAY_E2E_LIVE_OPENAI || LEGACY_E2E_LIVE;
+  FRIDAY_E2E_LIVE_ANTHROPIC || FRIDAY_E2E_LIVE_OLLAMA || FRIDAY_E2E_LIVE_OPENAI || LEGACY_E2E_LIVE;
 /** @deprecated Use E2E_LIVE instead */
 export const E2E_REAL = E2E_LIVE;
 /** @deprecated Use E2E_LIVE instead */
 export const E2E_OLLAMA = E2E_LIVE;
 export const E2E_GATED = E2E_LIVE;
 
-export type FridayLiveProviderKind = "ollama" | "openai";
+export type FridayLiveProviderKind = "anthropic" | "ollama" | "openai";
 export const LIVE_PROVIDER_KIND: FridayLiveProviderKind =
-  FRIDAY_E2E_LIVE_OPENAI ? "openai" : "ollama";
+  FRIDAY_E2E_LIVE_OPENAI
+    ? "openai"
+    : FRIDAY_E2E_LIVE_OLLAMA
+      ? "ollama"
+      : (FRIDAY_E2E_LIVE_ANTHROPIC || (LEGACY_E2E_LIVE && hasLiveAnthropicApiKey()))
+        ? "anthropic"
+        : "ollama";
 
 export const OLLAMA_BASE_URL =
   process.env.E2E_OLLAMA_BASE_URL ?? "http://127.0.0.1:11434";
 export const OPENAI_BASE_URL =
   process.env.E2E_OPENAI_BASE_URL ?? "https://api.openai.com";
+export const ANTHROPIC_BASE_URL =
+  process.env.E2E_ANTHROPIC_BASE_URL ?? "https://api.anthropic.com";
 export const OPENAI_API_KEY_ENV =
   process.env.E2E_OPENAI_API_KEY_ENV ?? "OPENAI_API_KEY";
+export const ANTHROPIC_API_KEY_ENV_REF = resolveLiveAnthropicApiKeyEnvRef();
 export const FAST_MODEL =
   process.env.E2E_FAST_MODEL ??
-  (LIVE_PROVIDER_KIND === "openai" ? "gpt-4o-mini" : "llama3.2:3b");
+  (LIVE_PROVIDER_KIND === "anthropic"
+    ? LIVE_ANTHROPIC_MODEL
+    : LIVE_PROVIDER_KIND === "openai"
+      ? "gpt-4o-mini"
+      : "llama3.2:3b");
 export const CODE_MODEL =
   process.env.E2E_CODE_MODEL ??
-  (LIVE_PROVIDER_KIND === "openai" ? "gpt-4o" : "qwen2.5-coder:7b");
+  (LIVE_PROVIDER_KIND === "anthropic"
+    ? LIVE_ANTHROPIC_MODEL
+    : LIVE_PROVIDER_KIND === "openai"
+      ? "gpt-4o"
+      : "qwen2.5-coder:7b");
 export const LIVE_TARGET: FridayE2eTarget = E2E_TARGET;
 
 // ─── Types ───
@@ -153,10 +178,18 @@ export async function ensureOpenAiReady(opts?: {
   }
 }
 
+export async function ensureAnthropicReady(): Promise<void> {
+  if (!ANTHROPIC_API_KEY_ENV_REF) {
+    throw new Error(`[Real E2E] Anthropic preflight failed: ${liveAnthropicCredentialMessage()}`);
+  }
+}
+
 // ─── Hub Environment Factory ───
 
-export async function createRealHubEnv(): Promise<RealHubEnv> {
-  if (LIVE_PROVIDER_KIND === "openai") {
+export async function createRealHubEnv(opts?: { uiStaticDir?: string }): Promise<RealHubEnv> {
+  if (LIVE_PROVIDER_KIND === "anthropic") {
+    await ensureAnthropicReady();
+  } else if (LIVE_PROVIDER_KIND === "openai") {
     await ensureOpenAiReady();
   } else if (LIVE_TARGET === "local") {
     await ensureOllamaReady();
@@ -202,6 +235,7 @@ export async function createRealHubEnv(): Promise<RealHubEnv> {
     port,
     host: "127.0.0.1",
     logRequests: false,
+    uiStaticDir: opts?.uiStaticDir,
   });
   await httpServer.listen();
   const baseUrl = `http://127.0.0.1:${String(port)}`;
