@@ -3,10 +3,10 @@ import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  createFridayBrowserE2eEnv,
-  type FridayBrowserE2eEnv,
+  createFridayMockBrowserE2eEnv,
+  type FridayMockBrowserE2eEnv,
   type FridayBrowserPageHandle,
-} from "./_helpers/browser-env.js";
+} from "./_helpers/browser-env-mock.js";
 
 const CHROMIUM_AVAILABLE = (() => {
   try {
@@ -223,7 +223,7 @@ function median(values: number[]): number {
 }
 
 async function measureRailNavigation(input: {
-  env: FridayBrowserE2eEnv;
+  env: FridayMockBrowserE2eEnv;
   startPath: string;
   startReadyTestId: string;
   clickHref: string;
@@ -274,7 +274,7 @@ async function measureRailNavigation(input: {
   };
 }
 
-async function createBuilderDraft(env: FridayBrowserE2eEnv) {
+async function createBuilderDraft(env: FridayMockBrowserE2eEnv) {
   const templateList = await env.apiFetch<{
     items: Array<{ id?: string; templateId?: string }>;
     stableItems: Array<{ id: string }>;
@@ -303,7 +303,7 @@ async function createBuilderDraft(env: FridayBrowserE2eEnv) {
 }
 
 async function measureBuilderNavigation(input: {
-  env: FridayBrowserE2eEnv;
+  env: FridayMockBrowserE2eEnv;
   pageHandle: FridayBrowserPageHandle;
   samples: number;
 }): Promise<BuilderBenchmarkResult> {
@@ -442,8 +442,8 @@ function writeBenchmarkArtifacts(input: {
   fs.writeFileSync(REPORT_MD, markdown, "utf8");
 }
 
-describe.skipIf(!CHROMIUM_AVAILABLE)("Friday UI surface interaction benchmark", () => {
-  let env: FridayBrowserE2eEnv | null = null;
+describe.skipIf(!CHROMIUM_AVAILABLE)("Friday UI surface interaction benchmark (mock hub browser E2E)", () => {
+  let env: FridayMockBrowserE2eEnv | null = null;
   let pageHandle: FridayBrowserPageHandle | null = null;
 
   afterEach(async () => {
@@ -458,7 +458,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday UI surface interaction benchmark", 
   });
 
   it("records repeatable navigation timings for home, packs, assistant, and workflow builder", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
-    env = await createFridayBrowserE2eEnv();
+    env = await createFridayMockBrowserE2eEnv();
     const homeResult = await measureRailNavigation({
       env,
       startPath: "/packs",
