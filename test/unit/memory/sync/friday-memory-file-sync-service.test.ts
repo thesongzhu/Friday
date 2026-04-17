@@ -148,6 +148,48 @@ describe("FridayMemoryFileSyncService", () => {
     );
   });
 
+  it("does not warn for bracket-prefixed plain text session content", async () => {
+    db.withWriteTransaction((conn) => {
+      conn.prepare(
+        `INSERT INTO sessions (id, session_key, channel, chat_kind, status, agent_id, metadata_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("sess-bracket", "test:session:bracket", "cli", "dm", "active", "agent-1", "{}", "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z");
+      conn.prepare(
+        `INSERT INTO session_messages (id, session_id, session_key, role, content_json, content_text, sequence, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "msg-bracket",
+        "sess-bracket",
+        "test:session:bracket",
+        "assistant",
+        "[topic_block] canonical evidence path remains /tmp/proof.txt",
+        null,
+        1,
+        "2025-01-01T00:00:00Z",
+        "2025-01-01T00:00:00Z",
+      );
+    });
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const repo = createFridayMemoryFileSyncRepository({ db });
+    const service = createFridayMemoryFileSyncService({
+      repository: repo,
+      stateDir: tmpDir,
+    });
+
+    await service.syncNow({ force: true });
+
+    const filePath = sessionKeyExportPath(tmpDir, "test:session:bracket");
+    const content = await fs.readFile(filePath, "utf8");
+    const first = JSON.parse(content.trim().split("\n")[0]!);
+    expect(first.content).toBe("[topic_block] canonical evidence path remains /tmp/proof.txt");
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      "[friday][memory-file-sync] try-parse-json:",
+      expect.any(String),
+    );
+  });
+
   it("warns only for malformed JSON-looking session content and preserves the raw payload", async () => {
     db.withWriteTransaction((conn) => {
       conn.prepare(

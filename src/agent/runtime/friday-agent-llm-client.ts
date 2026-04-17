@@ -327,7 +327,9 @@ async function* handleOllamaStream(
     { role: "system", content: params.systemPrompt },
     ...params.messages.map((m) => ({
       role: m.role,
-      content: typeof m.content === "string" ? m.content : mapContentBlocksForOpenAI(m.content),
+      content: api === "openai-responses"
+        ? mapContentBlocksForOpenAIResponses(m.role, m.content)
+        : (typeof m.content === "string" ? m.content : mapContentBlocksForOpenAI(m.content)),
     })),
   ];
 
@@ -462,7 +464,9 @@ async function* handleOpenAIStream(
     url = `${base}/v1/responses`;
     const input: Array<Record<string, unknown>> = messages.map((m) => ({
       role: m.role,
-      content: m.content,
+      content: m.role === "system"
+        ? mapContentBlocksForOpenAIResponses("system", typeof m.content === "string" ? m.content : JSON.stringify(m.content))
+        : m.content,
     }));
     body = {
       model: params.model,
@@ -567,6 +571,33 @@ function mapContentBlocksForOpenAI(
       return { type: "image_url", image_url: { url } };
     }
     return { type: "text", text: JSON.stringify(block) };
+  });
+}
+
+function mapContentBlocksForOpenAIResponses(
+  role: string,
+  content: string | FridayAgentContentBlock[],
+): Array<Record<string, unknown>> {
+  const textBlockType = role === "assistant" ? "output_text" : "input_text";
+
+  if (typeof content === "string") {
+    return [{ type: textBlockType, text: content }];
+  }
+
+  return content.map((block) => {
+    if (block.type === "text") {
+      return { type: textBlockType, text: block.text };
+    }
+    if (block.type === "image") {
+      if (role === "assistant") {
+        return { type: "output_text", text: JSON.stringify(block) };
+      }
+      const imageUrl = block.source.type === "url"
+        ? block.source.url
+        : `data:${block.source.media_type};base64,${block.source.data}`;
+      return { type: "input_image", image_url: imageUrl };
+    }
+    return { type: textBlockType, text: JSON.stringify(block) };
   });
 }
 

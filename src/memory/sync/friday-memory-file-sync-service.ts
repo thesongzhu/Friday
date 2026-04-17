@@ -698,12 +698,12 @@ function looksLikeJsonValue(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed) return false;
   if (trimmed === "true" || trimmed === "false" || trimmed === "null") return true;
+  if (trimmed[0] === "{") {
+    return /^\{\s*(?:"|\})/u.test(trimmed);
+  }
+  if (trimmed[0] === "[") {
+    return /^\[\s*(?:\]|\{|\[|"|-?\d|true\b|false\b|null\b)/u.test(trimmed);
+  }
   const first = trimmed[0];
-  return (
-    first === "{" ||
-    first === "[" ||
-    first === '"' ||
-    first === "-" ||
-    (first >= "0" && first <= "9")
-  );
+  return first === '"' || first === "-" || (first >= "0" && first <= "9");
 }

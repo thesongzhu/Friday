@@ -80,24 +80,21 @@ export function createFridayPreferenceInjector(
         }
       }
 
-      // ── Source 2: Persistent memory (preference-type items) ──
+      // ── Source 2: Persistent memory (true preference items only) ──
+      // Do NOT read compaction.* here. Compaction memory is session-scoped
+      // operational context, not a user preference. Injecting it globally
+      // leaks one session's retained facts into unrelated sessions.
       try {
         const memoryItems = await memoryService.list({
-          namespace: [
-            "compaction.decisions",
-            "compaction.todos",
-            "compaction.failures",
-            "compaction.files",
-            "compaction.questions",
-            "compaction.summary",
-          ],
-          tagsAny: ["compaction", "auto"],
+          namespace: ["learning.preferences"],
+          tagsAny: [userId],
           limit: 20,
         });
 
         for (const item of memoryItems) {
           // Skip items with persona-related tags (handled by MBTI system)
           const tags = item.tags ?? [];
+          if (!tags.includes(userId) || !tags.includes("preference")) continue;
           if (tags.some((tag: string) => PERSONA_TAGS.has(tag.toLowerCase()))) continue;
 
           const content = item.content ?? "";

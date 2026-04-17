@@ -10,7 +10,7 @@
  *   - Auth mapping: API key → secret, Bearer → secret, OAuth2 → warning
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import YAML from "yaml";
 import { FridayDomainError } from "#errors";
@@ -258,10 +258,12 @@ function resolveSourceContent(source: FridaySkillConversionSource): string | nul
   // Try reading directly as a file
   if (existsSync(source.uri)) {
     try {
-      return readFileSync(source.uri, "utf-8");
+      if (statSync(source.uri).isFile()) {
+        return readFileSync(source.uri, "utf-8");
+      }
     } catch (err) {
-    console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
-      // Not a file, try directory
+      console.warn("[friday][openai-gpt-action-converter] operation failed:", err instanceof Error ? err.message : String(err));
+      // Stat failure on the source path; continue to candidate file probing.
     }
 
     // Try common OpenAPI file names in directory
