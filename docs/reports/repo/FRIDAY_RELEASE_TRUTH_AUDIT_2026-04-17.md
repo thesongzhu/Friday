@@ -3,28 +3,28 @@
 ## Baseline
 
 - Release truth baseline: README, docs/current-source-of-truth.md, live runtime, UI router, and current public route contract.
-- Base URL: http://127.0.0.1:33241
+- Base URL: http://127.0.0.1:3141
 - Verdict: **shipable with explicit de-scope**
 
 ## Runtime Snapshot
 
 | Surface | Evidence |
 | --- | --- |
-| /v1/health | status=200 latestness=provider_backed |
-| /v1/setup/status | providerCount=2 |
+| /v1/health | status=200 latestness=unverified |
+| /v1/setup/status | providerCount=11 |
 | /v1/skills | installed=54 |
 | /v1/skills/catalog | catalog=0 |
 | /v1/marketplace/sources | sources=0 |
 | /v1/marketplace/assets | assets=0 |
 | /v1/plugins | status=200 |
 | /v1/heartbeat/status | status=200 |
-| /v1/packages | status=200 |
-| /v1/security/tenants | status=200 |
+| /v1/packages | status=404 |
+| /v1/security/tenants | status=404 |
 
 ## Evidence Taxonomy
 
 - Script counts: `{"mock-contract":98,"real-provider":6,"real-runtime":4,"cloud-live":2,"browser-mock-hub":1,"mock-hub":2,"real-browser":1}`
-- Test counts: `{"mock-hub":11,"mock-contract":731,"real-runtime":12,"real-provider":6,"cloud-live":1,"manual-external":5,"real-browser":2}`
+- Test counts: `{"mock-hub":11,"mock-contract":731,"real-runtime":12,"real-provider":6,"cloud-live":1,"manual-external":5,"real-browser":3}`
 
 ## Claim Matrix
 
@@ -32,10 +32,10 @@
 | --- | --- | --- | --- |
 | README.md badge | README top-level trust signals are evidence-driven rather than 10,000+ test-count proof. | README uses a Release Truth badge and no longer presents 10,000+ tests as ship proof. | aligned |
 | release:verify | release:verify is reserved for live release proof and does not route through repo-only mock gates. | release:verify -> npm run release:proof:real | aligned |
-| Search freshness truth | Search freshness has live proof, while /v1/health remains a runtime capability snapshot. | /v1/health reports capabilities.search.latestness=provider_backed; docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-16.md separately proves dated live MCP search results. | aligned |
+| Search freshness truth | Search freshness has live proof, while /v1/health remains a runtime capability snapshot. | /v1/health reports capabilities.search.latestness=unverified; docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-16.md separately proves dated live MCP search results. | aligned |
 | Skills inventory vs marketplace | Skills catalog and marketplace sources are currently populated and ready for public browsing. | /v1/skills=54, /v1/skills/catalog=0, /v1/marketplace/sources=0, /v1/marketplace/assets=0. | bounded |
 | Plugin distribution | Plugin lifecycle is a first-class user-facing UI surface. | /v1/plugins status=200; router has /plugins=true. | aligned |
-| Usage page | Usage reflects provider billing truth. | usage-page.tsx did not expose an estimate disclaimer. | mismatch |
+| Usage page | Usage reflects provider billing truth. | usage-page.tsx explicitly labels token/cost figures as runtime usage, not billing truth. | aligned |
 | MCP page | An empty MCP page means Friday is broken. | mcp-page.tsx explicitly models empty MCP as a configuration state. | aligned |
 | docs/current-source-of-truth.md | Current docs distinguish runtime snapshot from product promise. | current-source-of-truth includes runtime snapshot / release truth language. | aligned |
 
@@ -77,13 +77,13 @@
 | Channels 已进入真实可进入的 UI/operator surface。 | verified | /v1/channels status=200; router /channels=true. |
 | Plugins 已进入真实可进入的 UI/operator surface。 | verified | /v1/plugins status=200; router /plugins=true. |
 | 技能目录、source、marketplace assets 已达到可公开浏览状态。 | partially verified | /v1/skills=54, /v1/skills/catalog=0, /v1/marketplace/sources=0, /v1/marketplace/assets=0. |
-| /v1/skills/:skillId/run 已真实打通。 | verified | skillId=ai-inference, probeKind=built-in, status=200, returnedStatus=completed, completionDepth=executed. |
+| /v1/skills/:skillId/run 已真实打通。 | not proven | skillId=ai-inference, probeKind=built-in, status=404, returnedStatus=n/a, completionDepth=n/a. |
 | /v1/memory/items 的真实写入/读取/删除链路已打通。 | verified | create=200, read=200, delete=200. |
-| /v1/packages/* 现在默认就是当前 runtime 的公开能力。 | verified | /v1/packages status=200; current runtime only wires packaging when FRIDAY_PACKAGING_ENABLED=true. |
-| 多租户 runtime surface 当前已经默认可用。 | verified | /v1/security/tenants status=200; current runtime only wires tenant routes when FRIDAY_MULTI_TENANT_ENABLED=true. |
+| /v1/packages/* 现在默认就是当前 runtime 的公开能力。 | blocked-by-env | /v1/packages status=404; current runtime only wires packaging when FRIDAY_PACKAGING_ENABLED=true. |
+| 多租户 runtime surface 当前已经默认可用。 | blocked-by-env | /v1/security/tenants status=404; current runtime only wires tenant routes when FRIDAY_MULTI_TENANT_ENABLED=true. |
 | media-understanding 当前 runtime 已默认可用。 | blocked-by-env | Hub bootstrap only wires media-understanding behind FRIDAY_MEDIA_UNDERSTANDING_ENABLED=true; current runtime proof pack has not exercised a live enabled lane. |
-| 桌面能力现在已经达到默认可发布的 ready 状态。 | blocked-by-env | /v1/health system.healthStatus=degraded, companionReadiness=degraded. |
-| 当前 runtime 的 search freshness 已经被真实验证。 | verified | /v1/health capabilities.search.latestness=provider_backed; docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-16.md also contains a live MCP dated-query proof with time-bounded results. |
+| 桌面能力现在已经达到默认可发布的 ready 状态。 | blocked-by-env | /v1/health system.healthStatus=safe_mode, companionReadiness=degraded. |
+| 当前 runtime 的 search freshness 已经被真实验证。 | verified | /v1/health capabilities.search.latestness=unverified; docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-16.md also contains a live MCP dated-query proof with time-bounded results. |
 | 自我修复闭环已经被真实打通到 execute/verify/rollback。 | verified | docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-16.md contains live execute + verify + rollback evidence for model fallback self-healing plus separate lesson write/readback proof. |
 | compaction 已经被真实证明会触发、写入 memory，并被后续 run 读回。 | verified | docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-16.md contains live compaction trigger, SQLite writeback, memory row persistence, and reset-session readback evidence. |
 | autonomous persistence 已被真实证明可跨重启恢复。 | verified | docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-16.md contains live interrupted_recoverable -> restart -> resume_goal -> same-step completion evidence backed by SQLite readback. |

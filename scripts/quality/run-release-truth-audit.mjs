@@ -825,11 +825,15 @@ async function main() {
       realEvidence: usagePage.includes("runtime-side estimates")
         || usagePage.includes("账单真相")
         || usagePage.includes("not actual billing data")
-        ? "usage-page.tsx explicitly labels token/cost figures as estimates, not billing."
-        : "usage-page.tsx did not expose an estimate disclaimer.",
+        || usagePage.includes("Final billing truth still lives in each provider console.")
+        || usagePage.includes("账单结算仍以各提供商后台为准")
+        ? "usage-page.tsx explicitly labels token/cost figures as runtime usage, not billing truth."
+        : "usage-page.tsx did not expose a billing-truth disclaimer.",
       status: usagePage.includes("runtime-side estimates")
         || usagePage.includes("账单真相")
         || usagePage.includes("not actual billing data")
+        || usagePage.includes("Final billing truth still lives in each provider console.")
+        || usagePage.includes("账单结算仍以各提供商后台为准")
         ? "aligned"
         : "mismatch",
     },
