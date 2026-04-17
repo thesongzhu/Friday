@@ -158,6 +158,21 @@ export function createFridaySessionService(
       && err.code === FRIDAY_SESSION_ERROR_CODES.MEMORY_NAMESPACE_UNRESOLVABLE;
   }
 
+  function resolveSessionMemoryNamespaceForRecord(
+    session: FridaySessionRecord,
+    lookup: (key: string) => FridaySessionRecord | null,
+  ): string | undefined {
+    try {
+      return resolveFridaySessionMemoryNamespace(session, lookup);
+    } catch (err) {
+      const parts = parseFridaySessionKey(session.key);
+      if (!shouldDeferSubagentMemoryNamespaceResolution(parts, err)) {
+        console.warn("[friday][session-service] memory namespace resolution failed:", err instanceof Error ? err.message : String(err));
+      }
+      return undefined;
+    }
+  }
+
   return {
     async createSession(input: FridaySessionCreateInput) {
       const normalizedKey = normalizeFridaySessionKey({
@@ -592,6 +607,63 @@ export function createFridaySessionService(
       return resolveFridaySessionMemoryNamespace(session, (k) =>
         deps.db.withReadConnection((db) => sessionRepo.getByKey(db, k)),
       );
+    },
+
+    async alignSessionContext(key, input) {
+      key = canonicalizeFridaySessionKey(key);
+
+      return deps.db.withWriteTransaction((db) => {
+        const session = sessionRepo.getByKey(db, key);
+        if (!session) {
+          throw new FridayDomainError(
+            FRIDAY_SESSION_ERROR_CODES.NOT_FOUND,
+            `Session '${key}' not found`,
+            { httpStatus: 404 },
+          );
+        }
+
+        const normalizedAccountId = typeof input.accountId === "string" && input.accountId.trim().length > 0
+          ? input.accountId.trim()
+          : session.accountId;
+        const normalizedUserId = typeof input.userId === "string" && input.userId.trim().length > 0
+          ? input.userId.trim()
+          : session.userId;
+
+        const nextSession: FridaySessionRecord = {
+          ...session,
+          accountId: normalizedAccountId,
+          ...(normalizedUserId ? { userId: normalizedUserId } : {}),
+        };
+        const nextMemoryNamespace = resolveSessionMemoryNamespaceForRecord(nextSession, (sessionKey) =>
+          sessionRepo.getByKey(db, sessionKey),
+        );
+
+        const accountChanged = normalizedAccountId !== session.accountId;
+        const userChanged = normalizedUserId !== session.userId;
+        const namespaceChanged = (nextMemoryNamespace ?? undefined) !== session.memoryNamespace;
+
+        if (!accountChanged && !userChanged && !namespaceChanged) {
+          return session;
+        }
+
+        const updated = sessionRepo.updateContext(db, {
+          key,
+          nowIso: deps.nowIso(),
+          ...(accountChanged ? { accountId: normalizedAccountId } : {}),
+          ...(userChanged ? { userId: normalizedUserId } : {}),
+          ...(namespaceChanged ? { memoryNamespace: nextMemoryNamespace } : {}),
+        });
+
+        if (!updated) {
+          throw new FridayDomainError(
+            FRIDAY_SESSION_ERROR_CODES.NOT_FOUND,
+            `Session '${key}' not found`,
+            { httpStatus: 404 },
+          );
+        }
+
+        return updated;
+      });
     },
 
     async forkSession(parentKey, input) {

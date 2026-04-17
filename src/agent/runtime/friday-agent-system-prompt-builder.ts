@@ -230,6 +230,9 @@ export function buildFridayAgentSystemPrompt(
     "- For requests about what is broken, what Friday already detected, or whether self-repair is safe, prefer diagnosis/recovery starter skills before broader planning.\n" +
     "- For requests about scoping, design review, implementation plan review, QAing a page, benchmarking, canary checks, retros, reviewing a diff, or syncing release docs, prefer the corresponding starter skill before broad freeform reasoning.\n" +
     "- Only reach for skill generation or skill import when skills_list shows no good existing match.\n" +
+    "- When the user explicitly asks Friday to create, generate, save, or update a Friday skill, use the dedicated skill_generate toolchain. Do not hand-roll skill files with write/edit/exec unless skill_generate is unavailable or returns a concrete blocker.\n" +
+    "- Skill creation/update is NEVER done with skill_run. Do not call skill_run with IDs like \"skill-generator\" or \"generate-skill\" for skill-authoring requests; use skill_generate instead.\n" +
+    "- When the user explicitly asks Friday to create, generate, or deploy a workflow, use workflow_generate or the workflow toolchain before writing workflow files manually.\n" +
     "- NEVER use workflow_generate or skill_generate for questions, summaries, explanations, comparisons, translations, or analyses. These tools are ONLY for creating new automation workflows or skills when the user explicitly requests it.\n" +
     "- For generating skills, generating/deploying/exporting workflows, architecture choices, large implementation plans, and other major decisions: gather the minimum missing details, produce a concrete plan, and wait for explicit approval before execution.\n" +
     "- If a plan is already waiting for approval in the current session, treat approve/reject replies as control commands for that stored plan instead of re-planning from scratch.\n" +

@@ -150,6 +150,7 @@ import {
   createFridayAgentSubagentTools,
   createFridayAgentToolRegistry,
   createFridayAgentWorkflowGeneratorTool,
+  createFridayCompactionContextLoader,
   createFridayCompactionMemorySink,
   createFridayMcpAdapter,
   createFridayPreferenceInjector,
@@ -414,6 +415,7 @@ const ENV_PROVIDER_MAP: ReadonlyArray<{
   kind: FridayProviderKind;
   defaultModel: string;
 }> = [
+  { envVar: "FRIDAY_ANTHROPIC_API_KEY", kind: "anthropic", defaultModel: "claude-sonnet-4-20250514" },
   { envVar: "ANTHROPIC_API_KEY", kind: "anthropic", defaultModel: "claude-sonnet-4-20250514" },
   { envVar: "OPENAI_API_KEY", kind: "openai", defaultModel: "gpt-4o" },
   { envVar: "GOOGLE_API_KEY", kind: "google", defaultModel: "gemini-2.0-flash" },
@@ -459,6 +461,7 @@ async function autoDetectProvidersFromEnv(
         validateOnSave: false,
       });
       detected.push({ kind: entry.kind, id: profile.id });
+      existingKinds.add(entry.kind);
     } catch (err) {
       console.warn(
         `[friday] Auto-detect: failed to register ${entry.kind} from $${entry.envVar}:`,
@@ -3087,6 +3090,9 @@ export async function createFridayHub(
   const agentCompactionMemorySink = memoryService
     ? createFridayCompactionMemorySink({ memoryService, idGenerator, nowIso })
     : undefined;
+  const agentCompactionContextLoader = memoryService
+    ? createFridayCompactionContextLoader({ memoryService })
+    : undefined;
   const agentPreferenceInjector = memoryService
     ? createFridayPreferenceInjector({ memoryService, nowIso })
     : undefined;
@@ -3118,6 +3124,11 @@ export async function createFridayHub(
     learningContextBuilder: (input) => {
       if (!_learningContextRef) return { preferences: {} };
       return _learningContextRef.buildContext(input);
+    },
+    compactionContextBuilder: async (input) => {
+      if (!agentCompactionContextLoader) return null;
+      const loaded = await agentCompactionContextLoader.loadContext({ sessionKey: input.sessionKey });
+      return loaded.fragment.trim().length > 0 ? loaded.fragment : null;
     },
     communicationPromptBuilder: async (input) => {
       const fragments: string[] = [];
@@ -3380,6 +3391,11 @@ export async function createFridayHub(
           if (!_learningContextRef) return { preferences: {} };
           return _learningContextRef.buildContext(input);
         },
+        compactionContextBuilder: async (input) => {
+          if (!agentCompactionContextLoader) return null;
+          const loaded = await agentCompactionContextLoader.loadContext({ sessionKey: input.sessionKey });
+          return loaded.fragment.trim().length > 0 ? loaded.fragment : null;
+        },
         communicationPromptBuilder: async (input) => {
           const fragments: string[] = [];
           if (agentPreferenceInjector) {
@@ -3436,6 +3452,21 @@ export async function createFridayHub(
         defaultUserId: learningDefaultUserId,
       });
       childRuntime.registerTool(feedbackTool);
+
+      const childSkillGenTool = createFridayAgentSkillGeneratorTool({
+        generatorService: skillGenerator,
+      });
+      childRuntime.registerTool(childSkillGenTool);
+
+      const childWorkflowGenTool = createFridayAgentWorkflowGeneratorTool({
+        generatorService: workflowGenerator,
+      });
+      childRuntime.registerTool(childWorkflowGenTool);
+
+      const childSkillImportTool = createFridayAgentSkillImportTool({
+        converterService,
+      });
+      childRuntime.registerTool(childSkillImportTool);
 
       return childRuntime;
     },
@@ -3705,13 +3736,10 @@ export async function createFridayHub(
     console.log("[friday] Plugin runtime mode: stub");
   }
 
-  const enabledChannelKinds = [
-    ...new Set(
-      channelsConfig.instances
-        .filter((instance) => instance.enabled)
-        .map((instance) => instance.kind),
-    ),
-  ];
+  const getEnabledChannelKinds = () =>
+    channelRegistry.listViews()
+      .filter((view) => view.running && view.status === "connected")
+      .map((view) => view.kind);
 
   const deterministicPipeline = pipelineRuntimeConfig.enabled
     ? createFridayDeterministicPipelineRuntime({
@@ -4607,13 +4635,14 @@ export async function createFridayHub(
     converterService,
     workflowGenerator,
     skillRegistry: registry,
+    skillExecutor: executor,
     tokenSecret,
     allowPasswordlessLocalLogin,
     allowLocalBypassLogin,
     pluginRuntimeMode,
     pluginMarketplaceAvailable,
     supportedChannelKinds: [...FRIDAY_SUPPORTED_CHANNEL_KINDS],
-    enabledChannelKinds,
+    enabledChannelKinds: getEnabledChannelKinds,
     learningEventWriter,
     learningUserId: learningDefaultUserId,
     sessionService: hubSessionService,
@@ -5513,57 +5542,65 @@ export async function createFridayHub(
   // 2. image_analysis — stub analyzeImages via provider service (vision model)
   const analyzeImages: FridayImageAnalysisFn = async (request, signal) => {
     // Use the provider service to resolve a vision-capable model and call it.
-    // For now, create a graceful stub that reports service availability.
-    const resolvedModel = request.model ?? "gpt-4o";
-    const { result, route } = await providerService.runWithFallback({
-      requestedModel: resolvedModel,
+    const requestedModel = typeof request.model === "string" && request.model.trim().length > 0
+      ? request.model.trim()
+      : undefined;
+    const { result } = await providerService.runWithFallback({
+      requestedProviderId: request.providerId,
+      requestedModel,
       tenantContext: request.tenantContext,
       run: async (_route, credential) => {
-        const baseUrl = _route.provider.baseUrl ?? "https://api.openai.com/v1";
-        const response = await fetch(`${baseUrl}/chat/completions`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${credential ?? ""}`,
-          },
-          body: JSON.stringify({
-            model: _route.model,
-            messages: [
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: request.prompt },
-                  ...request.images.map((img) => ({
-                    type: "image_url" as const,
-                    image_url: {
-                      url: img.type === "url" ? img.url! : `data:${img.mimeType ?? "image/png"};base64,${img.data!}`,
-                      detail: request.detail,
-                    },
-                  })),
-                ],
-              },
-            ],
-            max_tokens: request.maxTokens ?? 1024,
-          }),
-          signal,
+        const innerClient = createFridayAgentLlmClient({
+          baseUrl: _route.provider.baseUrl,
+          apiKey: credential ?? "",
+          api: _route.provider.config.api,
+          backendKind: _route.provider.config.backendKind,
+          cliConfig: _route.provider.config.cliConfig,
+          authMode: _route.provider.config.authMode,
+          allowPrivateNetwork: config.ssrfPolicy?.allowPrivateNetwork,
         });
+        let text = "";
+        let inputTokens = 0;
+        let outputTokens = 0;
+        let responseModel = _route.model;
 
-        if (!response.ok) {
-          const body = await response.text().catch(() => "");
-          throw new FridayDomainError("INTERNAL_ERROR", `Vision API error ${String(response.status)}: ${body}`, { httpStatus: 500 });
+        for await (const event of innerClient.stream({
+          model: _route.model,
+          systemPrompt: "Analyze the provided image(s) and answer the user's request directly.",
+          messages: [{
+            role: "user",
+            content: [
+              { type: "text", text: request.prompt },
+              ...request.images.map((img) => ({
+                type: "image" as const,
+                source: img.type === "url"
+                  ? { type: "url" as const, url: img.url! }
+                  : {
+                      type: "base64" as const,
+                      media_type: img.mimeType ?? "image/png",
+                      data: img.data!,
+                    },
+              })),
+            ],
+          }],
+          tools: [],
+          signal,
+          tenantContext: request.tenantContext,
+        })) {
+          if (event.type === "text_delta") {
+            text += event.text;
+          } else if (event.type === "message_end") {
+            inputTokens = event.inputTokens;
+            outputTokens = event.outputTokens;
+            responseModel = event.actualModel ?? responseModel;
+          }
         }
 
-        const json = await response.json() as {
-          choices: Array<{ message: { content: string } }>;
-          model: string;
-          usage?: { prompt_tokens?: number; completion_tokens?: number };
-        };
-
         return {
-          text: json.choices?.[0]?.message?.content ?? "",
-          model: json.model ?? _route.model,
-          inputTokens: json.usage?.prompt_tokens,
-          outputTokens: json.usage?.completion_tokens,
+          text,
+          model: responseModel,
+          inputTokens,
+          outputTokens,
         };
       },
     });
@@ -5587,6 +5624,7 @@ export async function createFridayHub(
       request: {
         prompt: string;
         images: readonly { type: "base64" | "url"; data?: string; url?: string; mimeType?: string }[];
+        providerId?: string;
         model?: string;
         detail: "low" | "high" | "auto";
         maxTokens?: number;
@@ -5607,6 +5645,12 @@ export async function createFridayHub(
       : undefined;
     const autonomousBrowserManager = browserManager
       ? {
+          launch: async (sessionId: string) => {
+            await browserManager.launch(sessionId);
+          },
+          close: async (sessionId: string) => {
+            await browserManager.close(sessionId);
+          },
           screenshot: async (sessionId: string) => {
             const { page } = await browserManager.getPage(
               sessionId,
@@ -5619,6 +5663,24 @@ export async function createFridayHub(
           snapshot: async (sessionId: string) => ({
             content: await browserManager.snapshotAria(sessionId),
           }),
+          title: async (sessionId: string) => {
+            const { page } = await browserManager.getPage(
+              sessionId,
+              { createIfMissing: true },
+            );
+            return {
+              title: await page.title(),
+            };
+          },
+          url: async (sessionId: string) => {
+            const { page } = await browserManager.getPage(
+              sessionId,
+              { createIfMissing: true },
+            );
+            return {
+              url: page.url(),
+            };
+          },
           act: async (sessionId: string, action: string, args: Record<string, unknown>) => {
             const { page } = await browserManager.getPage(
               sessionId,
@@ -5919,6 +5981,17 @@ export async function createFridayHub(
           classifyExecution: classifyFridayExecution,
           capabilitySnapshotGetter: getAgentCapabilitySnapshot as unknown as CreateFridayEngineTurnPreparerDeps["capabilitySnapshotGetter"],
           taskStatusSnapshotGetter: getAgentTaskStatusSnapshot as unknown as CreateFridayEngineTurnPreparerDeps["taskStatusSnapshotGetter"],
+          persistCompactionEvidence: agentCompactionMemorySink
+            ? async (input) => {
+              await agentCompactionMemorySink.persist({
+                sessionKey: input.sessionKey,
+                runId: input.runId,
+                summary: input.summary,
+                blocks: input.blocks,
+                compactedAt: nowIso(),
+              });
+            }
+            : undefined,
         },
         runExecutorDeps: {
           agentRuntime,
@@ -6289,11 +6362,19 @@ export async function createFridayHub(
       // ─── Startup diagnostics ───
       {
         const providerCount = (await providerService.listProviders()).length;
-        const channelCount = channelRegistry.list().length;
+        const connectedChannelCount = getEnabledChannelKinds().length;
+        const configuredChannelCount = channelRegistry.list().length;
         const skillCount = registry.list().length;
         console.log("[friday] ✓ Friday is running");
-        console.log(`[friday]   Providers: ${String(providerCount)}${providerCount === 0 ? " — set ANTHROPIC_API_KEY or visit /setup to add one" : ""}`);
-        console.log(`[friday]   Channels:  ${String(channelCount)}${channelCount === 0 ? " — no messaging channels configured" : ""}`);
+        console.log(`[friday]   Providers: ${String(providerCount)}${providerCount === 0 ? " — set FRIDAY_ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY) or visit /setup to add one" : ""}`);
+        console.log(
+          `[friday]   Channels:  ${String(connectedChannelCount)}` +
+            (configuredChannelCount === 0
+              ? " — no messaging channels configured"
+              : connectedChannelCount === configuredChannelCount
+                ? ""
+                : ` connected / ${String(configuredChannelCount)} configured`),
+        );
         console.log(`[friday]   Skills:    ${String(skillCount)}`);
       }
     },
@@ -6359,6 +6440,7 @@ export async function createFridayHub(
     converterService,
     workflowGenerator,
     workflowRuntime,
+    selfHealing: selfHealingApiService,
     apiRuntime,
     channelRegistry,
     satelliteRuntime,

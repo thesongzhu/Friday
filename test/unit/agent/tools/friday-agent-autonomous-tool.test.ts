@@ -40,6 +40,15 @@ function createMockEngine(overrides?: Partial<FridayAutonomousEngine>): FridayAu
       usageInput: 500,
       usageOutput: 200,
     }),
+    resumeGoal: vi.fn().mockResolvedValue({
+      goalId: "goal-001",
+      status: "completed",
+      summary: "Goal resumed successfully",
+      iterationCount: 2,
+      durationMs: 2500,
+      usageInput: 250,
+      usageOutput: 120,
+    }),
     cancelGoal: vi.fn(),
     getGoal: vi.fn().mockReturnValue({
       id: "goal-001",
@@ -157,6 +166,41 @@ describe("FridayAgentAutonomousTool", () => {
 
       expect(result.isError).toBeFalsy();
       expect(engine.cancelGoal).toHaveBeenCalledWith("goal-001");
+    });
+  });
+
+  describe("resume_goal", () => {
+    it("should resume a goal", async () => {
+      const engine = createMockEngine();
+      const tool = createFridayAgentAutonomousTool({ autonomousEngine: engine });
+
+      const result = await tool.execute(
+        { action: "resume_goal", goalId: "goal-001" },
+        signalWithContext("America/Los_Angeles", {
+          principalId: "user-ctx-1",
+          tenantContext: {
+            hubId: "tenant-a",
+            userId: "user-ctx-1",
+            channelKind: "agent",
+          },
+        }),
+      );
+
+      expect(result.isError).toBeFalsy();
+      expect(engine.resumeGoal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          goalId: "goal-001",
+          timezone: "America/Los_Angeles",
+          principalId: "user-ctx-1",
+          tenantContext: {
+            hubId: "tenant-a",
+            userId: "user-ctx-1",
+            channelKind: "agent",
+          },
+        }),
+      );
+      const parsed = JSON.parse(result.content);
+      expect(parsed.status).toBe("completed");
     });
   });
 

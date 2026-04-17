@@ -4,6 +4,7 @@ import type { FridayAgentToolDefinition } from "../model/friday-agent.types.js";
 import {
   errorResult,
   jsonResult,
+  normalizeAgentRequestedModel,
   readStringParam,
 } from "./friday-agent-tool-helpers.js";
 
@@ -85,7 +86,7 @@ export function createFridayAgentWorkflowGeneratorTool(
         switch (action) {
           case "start": {
             const goal = readStringParam(args, "goal", { required: true });
-            const model = readStringParam(args, "model");
+            const model = normalizeAgentRequestedModel(readStringParam(args, "model"));
             const userId = readStringParam(args, "userId") ?? defaultUserId;
             const channel = readStringParam(args, "channel") ?? "agent";
 
@@ -107,7 +108,7 @@ export function createFridayAgentWorkflowGeneratorTool(
           case "turn": {
             const sessionId = readStringParam(args, "sessionId", { required: true });
             const message = readStringParam(args, "message", { required: true });
-            const model = readStringParam(args, "model");
+            const model = normalizeAgentRequestedModel(readStringParam(args, "model"));
 
             const result = await generatorService.submitTurn(sessionId, {
               message,
@@ -124,7 +125,7 @@ export function createFridayAgentWorkflowGeneratorTool(
 
           case "generate": {
             const sessionId = readStringParam(args, "sessionId", { required: true });
-            const model = readStringParam(args, "model");
+            const model = normalizeAgentRequestedModel(readStringParam(args, "model"));
 
             const draft = await generatorService.generateDraft(sessionId, model ?? undefined);
 

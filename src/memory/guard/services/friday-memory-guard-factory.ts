@@ -37,10 +37,16 @@ function defaultResolveContext(principal: FridayAuthPrincipal | null): FridayMem
   }
 
   // For user/satellite principals — tenant access
+  const hubId = typeof principal.tenantId === "string" && principal.tenantId.trim().length > 0
+    ? principal.tenantId.trim()
+    : "default";
+  const userId = typeof principal.userId === "string" && principal.userId.trim().length > 0
+    ? principal.userId.trim()
+    : principal.principalId;
   return {
     subject: {
-      hubId: "default",
-      userId: principal.userId ?? principal.principalId,
+      hubId,
+      userId,
       accessLevel: "tenant",
     },
     principalId: principal.principalId,

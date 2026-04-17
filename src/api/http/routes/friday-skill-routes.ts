@@ -8,13 +8,14 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
-import type { FridaySkillLifecycleService, FridaySkillRegistry } from "#skills";
+import type { FridaySkillExecutor, FridaySkillLifecycleService, FridaySkillRegistry } from "#skills";
 import { FridayDomainError } from "#errors";
 import { resolveSafeInstallDir } from "#utilities";
 
 export interface FridaySkillRoutesDeps {
   skillRegistry?: FridaySkillRegistry;
   lifecycle?: FridaySkillLifecycleService;
+  skillExecutor?: FridaySkillExecutor;
   managedSkillsDir?: string;
 }
 
@@ -341,23 +342,56 @@ export function createFridaySkillRoutes(
       }
       const body = asRecord(ctx.body);
       const input = (body.input ?? {}) as Record<string, string>;
+      const timeoutMs = asOptionalPositiveInteger(body.timeoutMs, "timeoutMs");
+      const sessionId = asOptionalString(body.sessionId, "sessionId");
+      const channel = asOptionalString(body.channel, "channel") ?? "api";
+      const principalId = ctx.principal?.principalId ?? "skill-operator";
+      const principalRecord = (ctx.principal ?? null) as { tenantId?: unknown } | null;
+      const tenantId = typeof principalRecord?.tenantId === "string" && principalRecord.tenantId.trim().length > 0
+        ? principalRecord.tenantId.trim()
+        : principalId;
 
-      // Resolve the skill from registry or lifecycle to validate it exists
+      // Resolve the skill from registry or lifecycle to validate it exists.
+      // `ai-inference` is a built-in executor path even when it is not listed
+      // in the registry inventory.
       const skill = deps.lifecycle?.getSkill(skillId)
         ?? (deps.skillRegistry?.get(skillId) ? { skillId } : null);
-      if (!skill) {
+      if (!skill && skillId !== "ai-inference") {
         throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${skillId}" not found`, {
           httpStatus: 404,
         });
       }
+      if (!deps.skillExecutor) {
+        throw new FridayDomainError("SKILL_EXECUTOR_UNAVAILABLE", "Skill executor is unavailable in this runtime", {
+          httpStatus: 503,
+        });
+      }
+
+      const handle = deps.skillExecutor.execute({
+        skillId,
+        input,
+        sessionId: sessionId ?? `api-skill-run:${skillId}`,
+        userId: principalId,
+        channel,
+        tenantContext: {
+          hubId: tenantId,
+          userId: principalId,
+          channelKind: channel,
+        },
+        timeoutMs,
+      });
+      const result = await handle.result;
 
       return {
-        ok: true,
-        data: {
-          skillId,
-          status: "dispatched",
-          input,
-        },
+        skillId,
+        runId: result.runId,
+        status: result.status,
+        completionDepth: result.status === "completed" ? "executed" : "dispatch-only",
+        durationMs: result.durationMs,
+        output: result.output,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        input,
       };
     },
   });

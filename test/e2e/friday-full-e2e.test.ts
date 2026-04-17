@@ -19,14 +19,11 @@ import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
 import { createFridayHttpServer } from "#api";
 import type { FridayHttpServer } from "#api";
-import Database from "better-sqlite3";
 import {
-  createFridayOAuthCredentialStore,
-  FRIDAY_ANTHROPIC_OAUTH_CLIENT_ID,
-  FRIDAY_ANTHROPIC_OAUTH_TOKEN_URL,
-} from "#providers";
-import type { FridayOAuthTokenSet } from "#providers";
-import type { FridaySqliteLayer } from "#state";
+  hasLiveAnthropicApiKey,
+  LIVE_ANTHROPIC_MODEL as MODEL,
+  resolveLiveAnthropicApiKeyEnvRef,
+} from "./_helpers/live-anthropic.js";
 
 // ─── Env guard ───
 
@@ -35,9 +32,9 @@ const CORE_E2E_ENABLED =
   !!process.env.FRIDAY_LLM_E2E;
 const LIVE_PROVIDER_VALIDATE_ENABLED =
   process.env.FRIDAY_E2E_LIVE_PROVIDER_VALIDATE === "1";
-const ACCESS_TOKEN_DIRECT = process.env.FRIDAY_ANTHROPIC_OAUTH_ACCESS_TOKEN ?? "";
-const REFRESH_TOKEN = process.env.FRIDAY_ANTHROPIC_OAUTH_REFRESH_TOKEN ?? "";
-const MODEL = "claude-sonnet-4-20250514";
+const HAS_LIVE_ANTHROPIC_API_KEY = hasLiveAnthropicApiKey();
+const LIVE_ANTHROPIC_API_KEY_ENV_REF =
+  resolveLiveAnthropicApiKeyEnvRef() ?? "$FRIDAY_ANTHROPIC_API_KEY";
 
 // ─── Helpers ───
 
@@ -131,16 +128,17 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
     accessToken = loginJson.data.accessToken;
     refreshToken = loginJson.data.refreshToken;
 
-    // 5. Create Anthropic provider (OAuth mode, skip validation)
+    // 5. Create Anthropic provider (API key mode, skip validation)
     const createProviderRes = await fetch(`${baseUrl}/v1/providers`, {
       method: "POST",
       headers: authHeaders(accessToken),
       body: JSON.stringify({
         kind: "anthropic",
-        name: "Anthropic OAuth (E2E)",
+        name: "Anthropic API Key (E2E)",
         baseUrl: "https://api.anthropic.com",
-        authMode: "oauth",
+        authMode: "api-key",
         api: "anthropic-messages",
+        apiKey: LIVE_ANTHROPIC_API_KEY_ENV_REF,
         supportedModels: [MODEL],
         defaultModel: MODEL,
         enabled: true,
@@ -169,82 +167,6 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       throw new Error(`Routing config failed: ${String(routingRes.status)}`);
     }
 
-    // 7. Seed OAuth credentials (same pattern as friday-llm-e2e.test.ts)
-    if (ACCESS_TOKEN_DIRECT || REFRESH_TOKEN) {
-      const dbPath = path.join(stateDir, "friday.db");
-      const seedDb = new Database(dbPath);
-      try {
-        let tokenSet: FridayOAuthTokenSet;
-        if (ACCESS_TOKEN_DIRECT) {
-          tokenSet = {
-            accessToken: ACCESS_TOKEN_DIRECT,
-            refreshToken: REFRESH_TOKEN || "unused",
-            expiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
-            tokenType: "Bearer",
-            scope: "org:create_api_key user:profile user:inference",
-          };
-        } else {
-          const tokenResponse = await fetch(FRIDAY_ANTHROPIC_OAUTH_TOKEN_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              grant_type: "refresh_token",
-              client_id: FRIDAY_ANTHROPIC_OAUTH_CLIENT_ID,
-              refresh_token: REFRESH_TOKEN,
-            }),
-          });
-          if (!tokenResponse.ok) {
-            throw new Error(`OAuth refresh failed: ${String(tokenResponse.status)}`);
-          }
-          const tokenData = (await tokenResponse.json()) as {
-            access_token: string;
-            refresh_token: string;
-            expires_in: number;
-            token_type: string;
-            scope?: string;
-          };
-          tokenSet = {
-            accessToken: tokenData.access_token,
-            refreshToken: tokenData.refresh_token,
-            expiresAt: new Date(Date.now() + tokenData.expires_in * 1000 - 5 * 60 * 1000).toISOString(),
-            tokenType: tokenData.token_type,
-            scope: tokenData.scope ?? "org:create_api_key user:profile user:inference",
-          };
-        }
-
-        const seedDbLayer: FridaySqliteLayer = {
-          dbPath,
-          writer: seedDb,
-          reads: {
-            size: 1,
-            withReadConnection<T>(fn: (d: Database.Database) => T): T { return fn(seedDb); },
-            close() {},
-          },
-          withWriteTransaction<T>(fn: (writerDb: Database.Database) => T): T {
-            return seedDb.transaction(() => fn(seedDb))();
-          },
-          withReadConnection<T>(fn: (d: Database.Database) => T): T { return fn(seedDb); },
-          checkpoint() {},
-          optimize() {},
-          close() { seedDb.close(); },
-        };
-
-        let idCounter = 0;
-        const credentialStore = createFridayOAuthCredentialStore({
-          db: seedDbLayer,
-          idGenerator: () => `seed-cred-${String(++idCounter)}`,
-          nowIso: () => new Date().toISOString(),
-        });
-        credentialStore.upsert({
-          providerProfileId: providerId,
-          oauthProvider: "anthropic",
-          tokenSet,
-        });
-        seedDb.pragma("wal_checkpoint(FULL)");
-      } finally {
-        seedDb.close();
-      }
-    }
   }, 60_000);
 
   afterAll(async () => {
@@ -409,7 +331,7 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       expect(json.ok).toBe(true);
       expect(json.data.provider.id).toBe(providerId);
       expect(json.data.provider.kind).toBe("anthropic");
-      expect(json.data.provider.name).toBe("Anthropic OAuth (E2E)");
+      expect(json.data.provider.name).toBe("Anthropic API Key (E2E)");
     });
 
     it("C3: Update provider name", async () => {
@@ -454,7 +376,7 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       expect(json.ok).toBe(true);
     });
 
-    it.runIf(LIVE_PROVIDER_VALIDATE_ENABLED)("C6: Validate provider (real API call — LLM)", async () => {
+    it.runIf(LIVE_PROVIDER_VALIDATE_ENABLED && HAS_LIVE_ANTHROPIC_API_KEY)("C6: Validate provider (real API call — LLM)", async () => {
       const res = await fetch(`${baseUrl}/v1/providers/${providerId}/validate`, {
         method: "POST",
         headers: authHeaders(accessToken),

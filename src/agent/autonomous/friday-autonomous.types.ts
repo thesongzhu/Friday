@@ -30,7 +30,9 @@ export type ISODateTime = string;
  * ```
  * pending → planning → executing → verifying ─┬→ completed
  *                  ↑              │             ├→ failed
- *                  └──────────────┘ (retry)     └→ cancelled
+ *                  └──────────────┘ (retry)     ├→ interrupted_recoverable → resumed → planning
+ *                                               ├→ interrupted_nonrecoverable
+ *                                               └→ cancelled
  * ```
  */
 export type FridayAutonomousGoalStatus =
@@ -38,6 +40,9 @@ export type FridayAutonomousGoalStatus =
   | "planning"
   | "executing"
   | "verifying"
+  | "interrupted_recoverable"
+  | "interrupted_nonrecoverable"
+  | "resumed"
   | "completed"
   | "failed"
   | "cancelled";
@@ -99,6 +104,9 @@ export type FridayAutonomousStepStatus =
   | "pending"
   | "executing"
   | "verifying"
+  | "interrupted_recoverable"
+  | "interrupted_nonrecoverable"
+  | "resumed"
   | "completed"
   | "failed"
   | "skipped";
@@ -292,6 +300,10 @@ export interface FridayAutonomousActionResult {
   readonly errorMessage?: string;
   /** Screenshot taken after the action (for visual verification). */
   readonly screenshotAfter?: string;
+  /** Browser title captured immediately after a browser action. */
+  readonly browserTitle?: string;
+  /** Browser URL captured immediately after a browser action. */
+  readonly browserUrl?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -379,8 +391,14 @@ export interface FridayAutonomousEngine {
    * 1. Plan: decompose the goal into steps
    * 2. For each step: observe → reason → act → verify
    * 3. Return the final result
-   */
+  */
   executeGoal(params: FridayAutonomousGoalParams): Promise<FridayAutonomousGoalResult>;
+
+  /**
+   * Resume an existing goal from durable state when the interruption is known
+   * to be safe to replay.
+   */
+  resumeGoal(params: FridayAutonomousResumeGoalParams): Promise<FridayAutonomousGoalResult>;
 
   /** Cancel a running goal by ID. */
   cancelGoal(goalId: UUID): void;
@@ -417,10 +435,34 @@ export interface FridayAutonomousGoalParams {
   readonly principalId?: string;
   /** Optional tenant routing context for provider resolution. */
   readonly tenantContext?: FridayProviderTenantContext;
+  /** Optional provider pin inherited from the parent agent run. */
+  readonly providerId?: string;
+  /** Optional model pin inherited from the parent agent run. */
+  readonly model?: string;
   /** Optional parent goal ID for sub-goal decomposition. */
   readonly parentGoalId?: UUID;
   /** Optional context from a setup recipe. */
   readonly recipeContext?: FridayAutonomousRecipeContext;
+}
+
+/**
+ * Parameters for resuming an existing autonomous goal.
+ */
+export interface FridayAutonomousResumeGoalParams {
+  /** Goal ID to resume. */
+  readonly goalId: UUID;
+  /** Optional abort signal. */
+  readonly signal?: AbortSignal;
+  /** Optional timezone for time-sensitive internal runs. */
+  readonly timezone?: string;
+  /** Optional principal for policy, memory, and tenant scoping. */
+  readonly principalId?: string;
+  /** Optional tenant routing context for provider resolution. */
+  readonly tenantContext?: FridayProviderTenantContext;
+  /** Optional provider pin inherited from the parent agent run. */
+  readonly providerId?: string;
+  /** Optional model pin inherited from the parent agent run. */
+  readonly model?: string;
 }
 
 /**
@@ -483,9 +525,18 @@ export interface CreateFridayAutonomousEngineDeps {
       images?: string[];
       sessionKey?: string;
       runId?: string;
+      providerId?: string;
+      model?: string;
       timezone?: string;
       principalId?: string;
       tenantContext?: FridayProviderTenantContext;
+      executionContext?: {
+        surface?: string;
+      };
+      constraints?: {
+        readOnly?: boolean;
+        operationalMode?: "plan" | "execute" | "restricted";
+      };
       timeoutMs?: number;
       signal?: AbortSignal;
     }): Promise<{ runId: string; status: string; response: string; usageInput: number; usageOutput: number }>;
@@ -496,6 +547,7 @@ export interface CreateFridayAutonomousEngineDeps {
     request: {
       prompt: string;
       images: readonly { type: "base64" | "url"; data?: string; url?: string; mimeType?: string }[];
+      providerId?: string;
       model?: string;
       detail: "low" | "high" | "auto";
       maxTokens?: number;
@@ -521,8 +573,12 @@ export interface CreateFridayAutonomousEngineDeps {
 
   /** Browser manager for web perception/actions. */
   readonly browserManager?: {
+    launch?(sessionId: string): Promise<void>;
+    close?(sessionId: string): Promise<void>;
     screenshot(sessionId: string): Promise<{ base64: string }>;
     snapshot(sessionId: string): Promise<{ content: string }>;
+    title?(sessionId: string): Promise<{ title: string }>;
+    url?(sessionId: string): Promise<{ url: string }>;
     act(sessionId: string, action: string, args: Record<string, unknown>): Promise<unknown>;
     navigate(sessionId: string, url: string): Promise<void>;
   };

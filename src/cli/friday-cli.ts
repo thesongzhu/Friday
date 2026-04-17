@@ -2205,7 +2205,7 @@ async function cmdSetup(): Promise<void> {
   const envLines: string[] = [];
 
   if (apiKey) {
-    const envVarName = providerId === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
+    const envVarName = providerId === "openai" ? "OPENAI_API_KEY" : "FRIDAY_ANTHROPIC_API_KEY";
     envLines.push(`${envVarName}=${apiKey}`);
   }
   if (baseUrl) {

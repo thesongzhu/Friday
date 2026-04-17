@@ -29,6 +29,56 @@ interface RecoveryPattern {
 }
 
 const RECOVERABLE_PATTERNS: RecoveryPattern[] = [
+  {
+    tools: ["skill_run"],
+    pattern: /missing required input\(s\):/i,
+    strategy: (ctx) => {
+      const skillId = typeof ctx.args.skillId === "string" ? ctx.args.skillId : "";
+      return [
+        `Skill "${skillId}" was called without the required input fields.`,
+        "You MUST recover before reporting failure:",
+        "1. Read the missing field names from the error message.",
+        "2. Re-run skill_run with a non-empty input object that fills those fields.",
+        "3. If the original user task includes an explicit example like key=\"value\", copy that concrete value into the input instead of leaving placeholders.",
+        "4. Only report success after skill_run returns completed output for the required input.",
+      ].join("\n");
+    },
+  },
+  {
+    tools: ["skill_run"],
+    pattern: /not found in registry|must use tool 'skill_generate'|skill generation requests must use/i,
+    strategy: (ctx) => {
+      const skillId = typeof ctx.args.skillId === "string" ? ctx.args.skillId : "";
+      if (!/(^|[-_\s])(skill[-_\s]?generator|generate[-_\s]?skill|skill[-_\s]?generate)([-_\s]|$)/i.test(skillId)) {
+        return [
+          `Skill "${skillId}" was not runnable through skill_run.`,
+          "You MUST call skills_list again to verify the installed skill ID before reporting failure.",
+          "If the user is asking to create or update a skill rather than run an existing one, switch to the skill_generate toolchain instead of skill_run.",
+        ].join("\n");
+      }
+      return [
+        `You attempted to use skill_run with "${skillId}", but skill authoring must go through the dedicated skill_generate toolchain.`,
+        "You MUST recover by doing this next:",
+        "1. Call skill_generate with action=\"start\" and restate the user's requested skill goal.",
+        "2. If the generator asks follow-up questions, continue with skill_generate action=\"turn\".",
+        "3. After the session is ready, call skill_generate action=\"generate\" and then action=\"approve\".",
+        "4. Only after approve succeeds may you call skills_list or skill_run on the newly created skill.",
+        "Do NOT tell the user the skill generator is unavailable unless skill_generate itself fails.",
+      ].join("\n");
+    },
+  },
+  {
+    tools: [],
+    pattern: /explicitly requires tool 'autonomous'|do not use '.*' as a direct bypass/i,
+    strategy: (ctx) => [
+      `The task must route through the "autonomous" tool, not "${ctx.toolName}".`,
+      "You MUST recover before responding to the user:",
+      "1. Call the autonomous tool next instead of browser/desktop/system/exec/file tools.",
+      "2. Use action=\"execute_goal\" for a new goal, or resume_goal/get_goal/list_goals/cancel_goal if the task is about an existing autonomous goal.",
+      "3. Restate the concrete user objective in the autonomous goal description.",
+      "4. Only report success after autonomous returns goal/result evidence that the task completed.",
+    ].join("\n"),
+  },
   // File not found → search with find
   {
     tools: ["read"],

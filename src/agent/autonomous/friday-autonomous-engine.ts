@@ -25,6 +25,7 @@ import type {
   FridayAutonomousGoalStatus,
   FridayAutonomousIteration,
   FridayAutonomousObservation,
+  FridayAutonomousResumeGoalParams,
   FridayAutonomousStep,
   FridayAutonomousStepStatus,
   FridayAutonomousVerificationCheck,
@@ -57,6 +58,9 @@ Current step: {step}
 Step {stepIndex} of {totalSteps}
 
 Your observations are attached as images and/or text below.
+Decide only from the provided observations and context.
+Do not execute tools yourself in this reasoning step.
+Return JSON only with no markdown fences and no prose.
 
 Respond with a JSON object with one of these formats:
 - {"kind": "act", "action": {"toolName": "...", "args": {...}, "rationale": "..."}} — execute a tool action
@@ -76,10 +80,158 @@ Step instruction: {instruction}
 Expected outcome: {expected}
 
 Look at the screenshot/observations and determine if the step succeeded.
+Return JSON only with no markdown fences and no prose.
 Respond with JSON: {"passed": true/false, "actual": "description of what you see"}
 
 Observations:
 `;
+
+type FridayAutonomousPlannedStepDraft = {
+  instruction?: string;
+  domain?: string;
+  verification?: string;
+};
+
+function buildAutonomousSessionKey(scope: "decision" | "action" | "plan", id: string): string {
+  return `autonomous:${scope}:${id}`;
+}
+
+function buildAutonomousBrowserSessionId(goalId: UUID): string {
+  return `autonomous-goal:${goalId}`;
+}
+
+function appendObservations(
+  existing: readonly FridayAutonomousObservation[],
+  incoming: readonly FridayAutonomousObservation[],
+): FridayAutonomousObservation[] {
+  if (incoming.length === 0) {
+    return [...existing];
+  }
+  return [...existing, ...incoming];
+}
+
+function extractFirstUrl(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  const match = text.match(/https?:\/\/[^\s)"'`]+/i);
+  return match?.[0];
+}
+
+function extractLastBrowserUrl(step: FridayAutonomousStep): string | undefined {
+  const plannedUrl = typeof step.plannedAction?.args?.url === "string"
+    ? step.plannedAction.args.url.trim()
+    : undefined;
+  if (plannedUrl) {
+    return plannedUrl;
+  }
+
+  for (let index = step.observations.length - 1; index >= 0; index -= 1) {
+    const obs = step.observations[index];
+    const text = obs.textContent?.trim();
+    if (!text) continue;
+    if (text.startsWith("PAGE_URL:")) {
+      const candidate = text.slice("PAGE_URL:".length).trim();
+      if (candidate) {
+        return candidate;
+      }
+    }
+    const embeddedUrl = extractFirstUrl(text);
+    if (embeddedUrl) {
+      return embeddedUrl;
+    }
+  }
+
+  return extractFirstUrl(step.instruction);
+}
+
+function fallbackNarrativeDecision(raw: string): FridayAutonomousDecision | null {
+  const normalized = raw.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const successSignal = /(?:\bcompleted\b|\bsuccessfully\b|\bverified\b|完成|成功|已验证|验证通过|任务完成)/i.test(normalized);
+  const evidenceSignalCount = [
+    /https?:\/\//i,
+    /\btitle\b/i,
+    /\burl\b/i,
+    /\bheading\b/i,
+    /页面标题|标题|网址|链接|页面/i,
+  ].reduce((count, pattern) => count + (pattern.test(normalized) ? 1 : 0), 0);
+
+  if (successSignal && evidenceSignalCount >= 2) {
+    return { kind: "complete", summary: normalized.slice(0, 1_200) };
+  }
+
+  return null;
+}
+
+export function buildDeterministicBrowserBootstrapDecision(
+  step: FridayAutonomousStep,
+  observations: readonly FridayAutonomousObservation[],
+): FridayAutonomousDecision | null {
+  if (step.domain !== "browser" || observations.length > 0) {
+    return null;
+  }
+
+  const plannedUrl = extractLastBrowserUrl(step);
+  if (plannedUrl) {
+    return {
+      kind: "act",
+      action: {
+        toolName: "browser",
+        args: {
+          action: "open",
+          url: plannedUrl,
+        },
+        rationale: "Open the target page first so browser observations become available.",
+      },
+    };
+  }
+
+  if (/\b(?:launch|start|open)\b[\s\S]{0,24}\bbrowser\b/i.test(step.instruction)) {
+    return {
+      kind: "act",
+      action: {
+        toolName: "browser",
+        args: {
+          action: "start",
+        },
+        rationale: "Start the browser session before collecting observations.",
+      },
+    };
+  }
+
+  return null;
+}
+
+export function trimImplicitEvidenceReportStep(
+  goalDescription: string,
+  plannedSteps: readonly FridayAutonomousPlannedStepDraft[],
+): FridayAutonomousPlannedStepDraft[] {
+  if (plannedSteps.length === 0) {
+    return [];
+  }
+
+  const goalText = goalDescription.trim().toLowerCase();
+  const userExplicitlyRequestedReport =
+    /\b(report|summary|document|write|save|export|artifact|markdown|json|file)\b/i.test(goalText);
+  if (userExplicitlyRequestedReport) {
+    return [...plannedSteps];
+  }
+
+  const lastStep = plannedSteps.at(-1);
+  const lastStepText = `${lastStep?.instruction ?? ""} ${lastStep?.verification ?? ""}`.trim().toLowerCase();
+  const looksLikeImplicitReportStep =
+    /\b(?:compile|summari[sz]e|create|assemble|prepare|generate)\b/i.test(lastStepText)
+    && /\b(?:report|summary)\b/i.test(lastStepText)
+    && /\b(?:title|url|screenshot|content|evidence)\b/i.test(lastStepText);
+
+  if (!looksLikeImplicitReportStep) {
+    return [...plannedSteps];
+  }
+
+  return plannedSteps.slice(0, -1);
+}
 
 // ─── Factory ───
 
@@ -108,7 +260,6 @@ export function createFridayAutonomousEngine(
   const steps = new Map<UUID, FridayAutonomousStep>();
   const iterations = new Map<UUID, FridayAutonomousIteration[]>();
   const abortControllers = new Map<UUID, AbortController>();
-  const restartInterruptionReason = "Interrupted by process restart";
   const restartInterruptedAt = nowIso();
 
   // ─── Startup recovery: load non-terminal goals from SQLite ───
@@ -118,45 +269,44 @@ export function createFridayAutonomousEngine(
         persistence.repository.listActiveGoals(db),
       );
       for (const goal of activeGoals) {
+        const goalSteps = persistence.sqlite.withReadConnection((db) =>
+          persistence.repository.getStepsByGoalId(db, goal.id),
+        );
+        const goalIters = persistence.sqlite.withReadConnection((db) =>
+          persistence.repository.getIterationsByGoalId(db, goal.id),
+        );
         if (goal.status === "executing" || goal.status === "planning" || goal.status === "verifying") {
-          // Goals interrupted by restart cannot resume (no AbortController, no LLM context).
-          const failedGoal: FridayAutonomousGoal = {
+          const recovery = classifyRestartRecovery(goal, goalSteps);
+          const interruptedGoal: FridayAutonomousGoal = {
             ...goal,
-            status: "failed",
-            failureReason: restartInterruptionReason,
-            completedAt: restartInterruptedAt,
+            status: recovery.goalStatus,
+            failureReason: recovery.reason,
+            completedAt: recovery.goalStatus === "interrupted_nonrecoverable" ? restartInterruptedAt : undefined,
           };
-          goals.set(goal.id, failedGoal);
+          goals.set(goal.id, interruptedGoal);
           persistence.sqlite.withWriteTransaction((db) =>
             persistence.repository.updateGoal(db, goal.id, {
-              status: "failed",
-              failureReason: restartInterruptionReason,
-              completedAt: failedGoal.completedAt,
+              status: recovery.goalStatus,
+              failureReason: recovery.reason,
+              completedAt: interruptedGoal.completedAt,
             }),
           );
-          const goalSteps = persistence.sqlite.withReadConnection((db) =>
-            persistence.repository.getStepsByGoalId(db, goal.id),
-          );
           for (const step of goalSteps) {
-            if (step.status === "completed" || step.status === "failed" || step.status === "skipped") continue;
+            const patch = classifyRestartedStep(step, recovery.goalStatus, recovery.reason, restartInterruptedAt);
+            if (!patch) {
+              steps.set(step.id, step);
+              continue;
+            }
+            steps.set(step.id, { ...step, ...patch });
             persistence.sqlite.withWriteTransaction((db) =>
-              persistence.repository.updateStep(db, step.id, {
-                status: step.status === "pending" ? "skipped" : "failed",
-                failureReason: restartInterruptionReason,
-                completedAt: restartInterruptedAt,
-              }),
+              persistence.repository.updateStep(db, step.id, patch),
             );
           }
+          if (goalIters.length > 0) iterations.set(goal.id, goalIters);
         } else {
           // Pending goals: rehydrate into cache for potential re-execution
           goals.set(goal.id, goal);
-          const goalSteps = persistence.sqlite.withReadConnection((db) =>
-            persistence.repository.getStepsByGoalId(db, goal.id),
-          );
           for (const step of goalSteps) steps.set(step.id, step);
-          const goalIters = persistence.sqlite.withReadConnection((db) =>
-            persistence.repository.getIterationsByGoalId(db, goal.id),
-          );
           if (goalIters.length > 0) iterations.set(goal.id, goalIters);
         }
       }
@@ -206,6 +356,129 @@ export function createFridayAutonomousEngine(
     }
   }
 
+  async function captureBrowserTitle(sessionId: string, signal: AbortSignal): Promise<string | null> {
+    if (!browserManager?.title) return null;
+    try {
+      const result = await browserManager.title(sessionId);
+      const title = result.title.trim();
+      return title.length > 0 ? title : null;
+    } catch (err) {
+      console.warn("[friday][autonomous-engine] browser title failed:", err instanceof Error ? err.message : String(err));
+      return null;
+    }
+  }
+
+  async function captureBrowserUrl(
+    sessionId: string,
+    signal: AbortSignal,
+    options?: { suppressMissingSessionWarning?: boolean },
+  ): Promise<string | null> {
+    if (!browserManager?.url) return null;
+    try {
+      const result = await browserManager.url(sessionId);
+      const url = result.url.trim();
+      return url.length > 0 ? url : null;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const expectedMissingSession =
+        options?.suppressMissingSessionWarning === true
+        && /session\b[\s\S]{0,24}\bnot found/i.test(message);
+      if (!expectedMissingSession) {
+        console.warn("[friday][autonomous-engine] browser url failed:", message);
+      }
+      return null;
+    }
+  }
+
+  async function ensureBrowserSessionForStep(
+    step: FridayAutonomousStep,
+    browserSessionId: string,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    if (step.domain !== "browser") {
+      return false;
+    }
+
+    const existingUrl = await captureBrowserUrl(browserSessionId, signal, {
+      suppressMissingSessionWarning: true,
+    });
+    if (existingUrl) {
+      return true;
+    }
+
+    if (!browserManager?.launch) {
+      return false;
+    }
+
+    const resumeUrl = extractLastBrowserUrl(step);
+    if (!resumeUrl) {
+      return false;
+    }
+
+    try {
+      await browserManager.launch(browserSessionId);
+      await browserManager.navigate(browserSessionId, resumeUrl);
+      return true;
+    } catch (err) {
+      console.warn("[friday][autonomous-engine] browser session recovery failed:", err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  }
+
+  async function collectBrowserCheckpointObservations(
+    stepId: UUID,
+    browserSessionId: string,
+    signal: AbortSignal,
+  ): Promise<FridayAutonomousObservation[]> {
+    const checkpoint: FridayAutonomousObservation[] = [];
+
+    const screenshot = await captureBrowserScreenshot(browserSessionId, signal);
+    if (screenshot) {
+      checkpoint.push({
+        id: idGenerator(),
+        stepId,
+        source: "screenshot",
+        timestamp: nowIso(),
+        screenshotBase64: screenshot,
+      });
+    }
+
+    const snapshot = await captureBrowserSnapshot(browserSessionId, signal);
+    if (snapshot) {
+      checkpoint.push({
+        id: idGenerator(),
+        stepId,
+        source: "dom_snapshot",
+        timestamp: nowIso(),
+        structuredData: snapshot,
+      });
+    }
+
+    const title = await captureBrowserTitle(browserSessionId, signal);
+    if (title) {
+      checkpoint.push({
+        id: idGenerator(),
+        stepId,
+        source: "tool_result",
+        timestamp: nowIso(),
+        textContent: `PAGE_TITLE: ${title}`,
+      });
+    }
+
+    const url = await captureBrowserUrl(browserSessionId, signal);
+    if (url) {
+      checkpoint.push({
+        id: idGenerator(),
+        stepId,
+        source: "tool_result",
+        timestamp: nowIso(),
+        textContent: `PAGE_URL: ${url}`,
+      });
+    }
+
+    return checkpoint;
+  }
+
   async function captureDesktopElements(query: string, signal: AbortSignal): Promise<string | null> {
     if (!desktopSessionManager?.isConnected()) return null;
     try {
@@ -221,11 +494,21 @@ export function createFridayAutonomousEngine(
    * Gather observations about the current environment state.
    */
   async function gatherObservations(
-    stepId: UUID,
-    domain: string,
+    step: FridayAutonomousStep,
+    browserSessionId: string,
     signal: AbortSignal,
   ): Promise<FridayAutonomousObservation[]> {
+    const { id: stepId, domain } = step;
     const obs: FridayAutonomousObservation[] = [];
+    let browserReady = false;
+
+    if (domain === "browser") {
+      browserReady = await ensureBrowserSessionForStep(step, browserSessionId, signal);
+    } else if (domain === "composite") {
+      browserReady = (await captureBrowserUrl(browserSessionId, signal, {
+        suppressMissingSessionWarning: true,
+      })) !== null;
+    }
 
     if (config.screenshotBeforeDecision) {
       if (domain === "desktop" || domain === "composite") {
@@ -240,8 +523,8 @@ export function createFridayAutonomousEngine(
           });
         }
       }
-      if (domain === "browser" || domain === "composite") {
-        const screenshot = await captureBrowserScreenshot("default", signal);
+      if ((domain === "browser" || domain === "composite") && browserReady) {
+        const screenshot = await captureBrowserScreenshot(browserSessionId, signal);
         if (screenshot) {
           obs.push({
             id: idGenerator(),
@@ -255,8 +538,8 @@ export function createFridayAutonomousEngine(
     }
 
     if (config.structuredSnapshotBeforeDecision) {
-      if (domain === "browser" || domain === "composite") {
-        const snapshot = await captureBrowserSnapshot("default", signal);
+      if ((domain === "browser" || domain === "composite") && browserReady) {
+        const snapshot = await captureBrowserSnapshot(browserSessionId, signal);
         if (snapshot) {
           obs.push({
             id: idGenerator(),
@@ -264,6 +547,26 @@ export function createFridayAutonomousEngine(
             source: "dom_snapshot",
             timestamp: nowIso(),
             structuredData: snapshot,
+          });
+        }
+        const title = await captureBrowserTitle(browserSessionId, signal);
+        if (title) {
+          obs.push({
+            id: idGenerator(),
+            stepId,
+            source: "tool_result",
+            timestamp: nowIso(),
+            textContent: `PAGE_TITLE: ${title}`,
+          });
+        }
+        const url = await captureBrowserUrl(browserSessionId, signal);
+        if (url) {
+          obs.push({
+            id: idGenerator(),
+            stepId,
+            source: "tool_result",
+            timestamp: nowIso(),
+            textContent: `PAGE_URL: ${url}`,
           });
         }
       }
@@ -282,6 +585,8 @@ export function createFridayAutonomousEngine(
     timezone: string | undefined,
     principalId: string | undefined,
     tenantContext: FridayAutonomousGoalParams["tenantContext"],
+    providerId: string | undefined,
+    model: string | undefined,
     signal: AbortSignal,
   ): Promise<{
     reasoning: string;
@@ -289,6 +594,16 @@ export function createFridayAutonomousEngine(
     usageInput: number;
     usageOutput: number;
   }> {
+    const bootstrapDecision = buildDeterministicBrowserBootstrapDecision(step, observations);
+    if (bootstrapDecision) {
+      return {
+        reasoning: "Deterministic browser bootstrap",
+        decision: bootstrapDecision,
+        usageInput: 0,
+        usageOutput: 0,
+      };
+    }
+
     // Build the prompt
     const goalSteps = goal.stepIds.map((id) => steps.get(id)).filter(Boolean);
     const prompt = DECISION_PROMPT_PREFIX
@@ -321,7 +636,8 @@ export function createFridayAutonomousEngine(
         {
           prompt: fullPrompt,
           images,
-          model: config.vlmModel,
+          providerId,
+          model: config.vlmModel ?? model,
           detail: "high",
           maxTokens: 2048,
         },
@@ -340,10 +656,19 @@ export function createFridayAutonomousEngine(
     // Text-only fallback via agent runtime
     const result = await agentRuntime.executeRun({
       task: fullPrompt,
-      sessionKey: `autonomous-${goal.id}`,
+      sessionKey: buildAutonomousSessionKey("decision", goal.id),
+      providerId,
+      model,
       timezone,
       principalId,
       tenantContext,
+      constraints: {
+        readOnly: true,
+        operationalMode: "plan",
+      },
+      executionContext: {
+        surface: "autonomous_internal_decision",
+      },
       timeoutMs: 30_000,
       signal,
     });
@@ -365,7 +690,8 @@ export function createFridayAutonomousEngine(
       // Extract JSON from the response (may be wrapped in markdown code blocks)
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        return { kind: "abort", reason: `Could not parse decision from LLM response: ${raw.slice(0, 200)}` };
+        return fallbackNarrativeDecision(raw)
+          ?? { kind: "abort", reason: `Could not parse decision from LLM response: ${raw.slice(0, 200)}` };
       }
       const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
 
@@ -410,7 +736,8 @@ export function createFridayAutonomousEngine(
           return { kind: "abort", reason: `Unknown decision kind: ${kind}` };
       }
     } catch (err) {
-      return { kind: "abort", reason: `Failed to parse decision: ${err instanceof Error ? err.message : String(err)}` };
+      return fallbackNarrativeDecision(raw)
+        ?? { kind: "abort", reason: `Failed to parse decision: ${err instanceof Error ? err.message : String(err)}` };
     }
   }
 
@@ -420,32 +747,50 @@ export function createFridayAutonomousEngine(
   async function executeAction(
     decision: Extract<FridayAutonomousDecision, { kind: "act" }>,
     domain: string,
+    browserSessionId: string,
     timezone: string | undefined,
     principalId: string | undefined,
     tenantContext: FridayAutonomousGoalParams["tenantContext"],
+    providerId: string | undefined,
+    model: string | undefined,
     signal: AbortSignal,
   ): Promise<FridayAutonomousActionResult> {
     const { action } = decision;
     const startedAt = Date.now();
+    const actionArgs = action.toolName === "browser"
+      ? {
+          ...action.args,
+          sessionId: browserSessionId,
+        }
+      : action.args;
 
     try {
       // Use agent runtime to execute the tool call
       const result = await agentRuntime.executeRun({
-        task: `Execute the following tool call and return the result:\nTool: ${action.toolName}\nArguments: ${JSON.stringify(action.args)}\n\nRationale: ${action.rationale ?? "N/A"}`,
-        sessionKey: `autonomous-action-${idGenerator()}`,
+        task: `Execute the following tool call and return the result:\nTool: ${action.toolName}\nArguments: ${JSON.stringify(actionArgs)}\n\nRationale: ${action.rationale ?? "N/A"}`,
+        sessionKey: buildAutonomousSessionKey("action", idGenerator()),
+        providerId,
+        model,
         timezone,
         principalId,
         tenantContext,
         timeoutMs: 60_000,
         signal,
+        executionContext: {
+          surface: "autonomous_internal_action",
+        },
       });
 
       // Capture post-action screenshot for verification
       let screenshotAfter: string | undefined;
+      let browserTitle: string | undefined;
+      let browserUrl: string | undefined;
       if (domain === "desktop" || domain === "composite") {
         screenshotAfter = (await captureDesktopScreenshot(signal)) ?? undefined;
       } else if (domain === "browser") {
-        screenshotAfter = (await captureBrowserScreenshot("default", signal)) ?? undefined;
+        screenshotAfter = (await captureBrowserScreenshot(browserSessionId, signal)) ?? undefined;
+        browserTitle = (await captureBrowserTitle(browserSessionId, signal)) ?? undefined;
+        browserUrl = (await captureBrowserUrl(browserSessionId, signal)) ?? undefined;
       }
 
       return {
@@ -453,6 +798,8 @@ export function createFridayAutonomousEngine(
         toolName: action.toolName,
         output: result.response,
         screenshotAfter,
+        browserTitle,
+        browserUrl,
       };
     } catch (err) {
       return {
@@ -473,11 +820,18 @@ export function createFridayAutonomousEngine(
     timezone: string | undefined,
     principalId: string | undefined,
     tenantContext: FridayAutonomousGoalParams["tenantContext"],
+    providerId: string | undefined,
+    model: string | undefined,
     signal: AbortSignal,
   ): Promise<{ passed: boolean; actual: string }> {
     if (!step.verification) {
       // No verification defined — assume success
       return { passed: true, actual: "No verification criteria defined" };
+    }
+
+    const deterministic = tryDeterministicBrowserVerification(step, observations);
+    if (deterministic) {
+      return deterministic;
     }
 
     const prompt = VERIFICATION_PROMPT_PREFIX
@@ -505,7 +859,8 @@ export function createFridayAutonomousEngine(
           {
             prompt: prompt + textContext,
             images,
-            model: config.vlmModel,
+            providerId,
+            model: config.vlmModel ?? model,
             detail: "high",
             maxTokens: 512,
           },
@@ -526,9 +881,14 @@ export function createFridayAutonomousEngine(
       // Text-only fallback
       const result = await agentRuntime.executeRun({
         task: prompt + textContext,
+        providerId,
+        model,
         timezone,
         principalId,
         tenantContext,
+        executionContext: {
+          surface: "autonomous_internal_verify",
+        },
         timeoutMs: 30_000,
         signal,
       });
@@ -548,6 +908,64 @@ export function createFridayAutonomousEngine(
     }
   }
 
+  async function runStepVerification(
+    goalId: UUID,
+    step: FridayAutonomousStep,
+    timezone: string | undefined,
+    principalId: string | undefined,
+    tenantContext: FridayAutonomousGoalParams["tenantContext"],
+    providerId: string | undefined,
+    model: string | undefined,
+    signal: AbortSignal,
+  ): Promise<{ step: FridayAutonomousStep; passed: boolean }> {
+    const browserSessionId = buildAutonomousBrowserSessionId(goalId);
+    updateGoal(goalId, { status: "verifying" });
+    const verifyingStep = updateStep(step.id, {
+      status: "verifying",
+      failureReason: undefined,
+    });
+
+    const verifyObs = await gatherObservations(verifyingStep, browserSessionId, signal);
+    const verifyResult = await verifyStep(
+      verifyingStep,
+      verifyObs,
+      timezone,
+      principalId,
+      tenantContext,
+      providerId,
+      model,
+      signal,
+    );
+
+    emit("autonomous.verification.completed", {
+      goalId,
+      stepId: step.id,
+      passed: verifyResult.passed,
+    });
+
+    updateGoal(goalId, { status: "executing" });
+
+    if (verifyResult.passed) {
+      return {
+        step: updateStep(step.id, {
+          status: "completed",
+          completedAt: nowIso(),
+          failureReason: undefined,
+        }),
+        passed: true,
+      };
+    }
+
+    return {
+      step: updateStep(step.id, {
+        status: "executing",
+        completedAt: undefined,
+        failureReason: verifyResult.actual || "Verification failed",
+      }),
+      passed: false,
+    };
+  }
+
   /**
    * Plan step decomposition for a goal.
    */
@@ -556,6 +974,8 @@ export function createFridayAutonomousEngine(
     timezone: string | undefined,
     principalId: string | undefined,
     tenantContext: FridayAutonomousGoalParams["tenantContext"],
+    providerId: string | undefined,
+    model: string | undefined,
     signal: AbortSignal,
   ): Promise<FridayAutonomousStep[]> {
     // If recipe context provides step hints, use those directly
@@ -565,36 +985,41 @@ export function createFridayAutonomousEngine(
 
     const planResult = await agentRuntime.executeRun({
       task: PLANNING_PROMPT_PREFIX + goal.description,
-      sessionKey: `autonomous-plan-${goal.id}`,
+      sessionKey: buildAutonomousSessionKey("plan", goal.id),
+      providerId,
+      model,
       timezone,
       principalId,
       tenantContext,
+      constraints: {
+        readOnly: true,
+        operationalMode: "plan",
+      },
+      executionContext: {
+        surface: "autonomous_internal_plan",
+      },
       timeoutMs: 60_000,
       signal,
     });
 
-    const plannedSteps = parsePlanResponse(planResult.response, goal.id);
+    const plannedSteps = parsePlanResponse(planResult.response, goal.id, goal.description);
     return plannedSteps;
   }
 
   /**
    * Parse the planning LLM response into steps.
    */
-  function parsePlanResponse(raw: string, goalId: UUID): FridayAutonomousStep[] {
+  function parsePlanResponse(raw: string, goalId: UUID, goalDescription: string): FridayAutonomousStep[] {
     try {
       const jsonMatch = raw.match(/\[[\s\S]*\]/);
       if (!jsonMatch) {
-        // Single-step fallback
-        return [createStep(goalId, 0, "Execute the goal directly", "composite")];
+        return [createFallbackStep(goalId, goalDescription)];
       }
 
-      const parsed = JSON.parse(jsonMatch[0]) as Array<{
-        instruction?: string;
-        domain?: string;
-        verification?: string;
-      }>;
+      const parsed = JSON.parse(jsonMatch[0]) as FridayAutonomousPlannedStepDraft[];
+      const normalized = trimImplicitEvidenceReportStep(goalDescription, parsed);
 
-      return parsed.map((item, index) =>
+      return normalized.map((item, index) =>
         createStep(
           goalId,
           index,
@@ -605,8 +1030,21 @@ export function createFridayAutonomousEngine(
       );
     } catch (err) {
       console.warn("[friday][autonomous-engine] plan decomposition failed:", err instanceof Error ? err.message : String(err));
-      return [createStep(goalId, 0, "Execute the goal directly", "composite")];
+      return [createFallbackStep(goalId, goalDescription)];
     }
+  }
+
+  function createFallbackStep(goalId: UUID, goalDescription: string): FridayAutonomousStep {
+    const normalizedGoal = goalDescription.trim();
+    const browserLikeGoal = /(https?:\/\/|www\.|浏览器|browser|navigate|open .*https?:\/\/)/i.test(normalizedGoal);
+    const verificationLikeGoal = /(verify|verification|title|heading|确认|验证|标题|heading)/i.test(normalizedGoal);
+    return createStep(
+      goalId,
+      0,
+      normalizedGoal.length > 0 ? normalizedGoal : "Execute the goal directly",
+      browserLikeGoal ? "browser" : "composite",
+      verificationLikeGoal ? normalizedGoal : undefined,
+    );
   }
 
   function createStep(
@@ -672,29 +1110,54 @@ export function createFridayAutonomousEngine(
     timezone: string | undefined,
     principalId: string | undefined,
     tenantContext: FridayAutonomousGoalParams["tenantContext"],
+    providerId: string | undefined,
+    model: string | undefined,
     signal: AbortSignal,
   ): Promise<FridayAutonomousGoalResult> {
     const startedAt = Date.now();
+    const browserSessionId = buildAutonomousBrowserSessionId(goal.id);
     let totalUsageInput = 0;
     let totalUsageOutput = 0;
     let currentGoal = goal;
     const goalIterations: FridayAutonomousIteration[] = [];
 
     try {
+      const resumeFromExistingPlan =
+        (goal.status === "interrupted_recoverable" || goal.status === "resumed")
+        && goal.stepIds.length > 0
+        && goal.stepIds.every((stepId) => steps.has(stepId));
+
+      if (goal.status === "interrupted_recoverable" || goal.status === "resumed") {
+        currentGoal = updateGoal(goal.id, {
+          status: "resumed",
+          completedAt: undefined,
+          failureReason: undefined,
+        });
+        emit("autonomous.goal.resumed", { goalId: goal.id, description: goal.description });
+      }
+
       // ─── Phase 1: Planning ───
-      currentGoal = updateGoal(goal.id, { status: "planning", startedAt: nowIso() });
+      currentGoal = updateGoal(goal.id, {
+        status: "planning",
+        startedAt: currentGoal.startedAt ?? nowIso(),
+        completedAt: undefined,
+        failureReason: undefined,
+      });
       emit("autonomous.goal.started", { goalId: goal.id, description: goal.description });
 
-      const plannedSteps = await planGoal(currentGoal, timezone, principalId, tenantContext, signal);
-      const stepIds = plannedSteps.map((s) => s.id);
+      const stepIds = resumeFromExistingPlan
+        ? [...currentGoal.stepIds]
+        : (await planGoal(currentGoal, timezone, principalId, tenantContext, providerId, model, signal))
+          .map((step) => step.id);
+      const startingStepIndex = resumeFromExistingPlan ? currentGoal.currentStepIndex : 0;
       currentGoal = updateGoal(goal.id, {
         status: "executing",
         stepIds,
-        currentStepIndex: 0,
+        currentStepIndex: startingStepIndex,
       });
 
       // ─── Phase 2: Step-by-step execution ───
-      for (let si = 0; si < stepIds.length; si++) {
+      for (let si = startingStepIndex; si < stepIds.length; si++) {
         if (signal.aborted) break;
 
         const stepId = stepIds[si];
@@ -734,7 +1197,10 @@ export function createFridayAutonomousEngine(
           }
 
           // ─── Observe ───
-          const observations = await gatherObservations(stepId, currentStep.domain, signal);
+          const observations = await gatherObservations(currentStep, browserSessionId, signal);
+          currentStep = updateStep(stepId, {
+            observations: appendObservations(currentStep.observations, observations),
+          });
           for (const obs of observations) {
             emit("autonomous.observation.captured", { goalId: goal.id, stepId, source: obs.source });
           }
@@ -750,6 +1216,8 @@ export function createFridayAutonomousEngine(
             timezone,
             principalId,
             tenantContext,
+            providerId,
+            model,
             signal,
           );
           totalUsageInput += usageInput;
@@ -762,7 +1230,18 @@ export function createFridayAutonomousEngine(
 
           switch (decision.kind) {
             case "act": {
-              actionResult = await executeAction(decision, currentStep.domain, timezone, principalId, tenantContext, signal);
+              currentStep = updateStep(stepId, {
+                plannedAction: decision.action,
+              });
+              actionResult = await executeAction(decision, currentStep.domain, browserSessionId, timezone, principalId, tenantContext, providerId, model, signal);
+              if (actionResult.success && currentStep.domain === "browser") {
+                const checkpointObservations = await collectBrowserCheckpointObservations(stepId, browserSessionId, signal);
+                if (checkpointObservations.length > 0) {
+                  currentStep = updateStep(stepId, {
+                    observations: appendObservations(currentStep.observations, checkpointObservations),
+                  });
+                }
+              }
               emit("autonomous.action.executed", {
                 goalId: goal.id,
                 stepId,
@@ -773,23 +1252,42 @@ export function createFridayAutonomousEngine(
               if (!actionResult.success) {
                 stepRetries++;
                 updateStep(stepId, { retryCount: stepRetries });
+              } else if (currentStep.verification) {
+                const verification = await runStepVerification(
+                  goal.id,
+                  currentStep,
+                  timezone,
+                  principalId,
+                  tenantContext,
+                  providerId,
+                  model,
+                  signal,
+                );
+                if (verification.passed) {
+                  stepCompleted = true;
+                  emit("autonomous.step.completed", { goalId: goal.id, stepId });
+                } else {
+                  stepRetries++;
+                  updateStep(stepId, { retryCount: stepRetries });
+                }
               }
               break;
             }
 
             case "verify": {
-              // Capture fresh observations for verification
-              const verifyObs = await gatherObservations(stepId, currentStep.domain, signal);
-              const verifyResult = await verifyStep(currentStep, verifyObs, timezone, principalId, tenantContext, signal);
-              emit("autonomous.verification.completed", {
-                goalId: goal.id,
-                stepId,
-                passed: verifyResult.passed,
-              });
+              const verification = await runStepVerification(
+                goal.id,
+                currentStep,
+                timezone,
+                principalId,
+                tenantContext,
+                providerId,
+                model,
+                signal,
+              );
 
-              if (verifyResult.passed) {
+              if (verification.passed) {
                 stepCompleted = true;
-                updateStep(stepId, { status: "completed", completedAt: nowIso() });
                 emit("autonomous.step.completed", { goalId: goal.id, stepId });
               } else {
                 stepRetries++;
@@ -799,6 +1297,23 @@ export function createFridayAutonomousEngine(
             }
 
             case "complete": {
+              if (currentStep.verification) {
+                const verification = await runStepVerification(
+                  goal.id,
+                  currentStep,
+                  timezone,
+                  principalId,
+                  tenantContext,
+                  providerId,
+                  model,
+                  signal,
+                );
+                if (!verification.passed) {
+                  stepRetries++;
+                  currentStep = updateStep(stepId, { retryCount: stepRetries });
+                  break;
+                }
+              }
               stepCompleted = true;
               updateStep(stepId, { status: "completed", completedAt: nowIso() });
               emit("autonomous.step.completed", { goalId: goal.id, stepId });
@@ -828,6 +1343,8 @@ export function createFridayAutonomousEngine(
                 timezone,
                 principalId,
                 tenantContext,
+                providerId,
+                model,
                 signal,
               );
               totalUsageInput += subResult.usageInput;
@@ -919,6 +1436,24 @@ export function createFridayAutonomousEngine(
 
         // If step wasn't completed after retries, check if we should continue
         currentStep = steps.get(stepId)!;
+        if (
+          !stepCompleted
+          && !signal.aborted
+          && currentStep.status !== "failed"
+          && stepRetries >= currentStep.maxRetries
+        ) {
+          currentStep = updateStep(stepId, {
+            status: "failed",
+            completedAt: nowIso(),
+            failureReason: currentStep.failureReason ?? "Step failed after retry budget was exhausted",
+          });
+          emit("autonomous.step.failed", {
+            goalId: goal.id,
+            stepId,
+            reason: currentStep.failureReason,
+          });
+        }
+
         if (currentStep.status === "failed") {
           // Step failed after all retries — fail the goal
           const durationMs = Date.now() - startedAt;
@@ -1030,6 +1565,13 @@ export function createFridayAutonomousEngine(
       // Store iterations for observability
       iterations.set(goal.id, goalIterations);
       abortControllers.delete(goal.id);
+      if (browserManager?.close) {
+        try {
+          await browserManager.close(browserSessionId);
+        } catch (err) {
+          console.warn("[friday][autonomous-engine] browser session cleanup failed:", err instanceof Error ? err.message : String(err));
+        }
+      }
     }
   }
 
@@ -1098,7 +1640,93 @@ export function createFridayAutonomousEngine(
       }
 
       try {
-        return await runGoal(goal, params.timezone, params.principalId, params.tenantContext, abortController.signal);
+        return await runGoal(
+          goal,
+          params.timezone,
+          params.principalId,
+          params.tenantContext,
+          params.providerId,
+          params.model,
+          abortController.signal,
+        );
+      } finally {
+        externalSignalCleanup?.();
+      }
+    },
+
+    async resumeGoal(params: FridayAutonomousResumeGoalParams): Promise<FridayAutonomousGoalResult> {
+      const storedGoal = goals.get(params.goalId)
+        ?? (persistence
+          ? persistence.sqlite.withReadConnection((db) => persistence.repository.getGoal(db, params.goalId))
+          : null);
+
+      if (!storedGoal) {
+        throw new Error(`Goal "${params.goalId}" not found.`);
+      }
+      if (storedGoal.status === "completed" || storedGoal.status === "failed" || storedGoal.status === "cancelled") {
+        throw new Error(`Goal "${params.goalId}" is already terminal (${storedGoal.status}).`);
+      }
+      if (storedGoal.status === "interrupted_nonrecoverable") {
+        throw new Error(
+          `Goal "${params.goalId}" cannot be resumed safely: ${storedGoal.failureReason ?? "missing resumable checkpoint"}`,
+        );
+      }
+
+      const resumableGoal =
+        storedGoal.status === "pending" || storedGoal.status === "interrupted_recoverable" || storedGoal.status === "resumed"
+          ? storedGoal
+          : { ...storedGoal, status: "interrupted_recoverable" as const };
+      goals.set(resumableGoal.id, resumableGoal);
+      if (persistence) {
+        try {
+          const persistedSteps = persistence.sqlite.withReadConnection((db) =>
+            persistence.repository.getStepsByGoalId(db, resumableGoal.id),
+          );
+          for (const persistedStep of persistedSteps) {
+            steps.set(persistedStep.id, persistedStep);
+          }
+
+          const persistedIterations = persistence.sqlite.withReadConnection((db) =>
+            persistence.repository.getIterationsByGoalId(db, resumableGoal.id),
+          );
+          if (persistedIterations.length > 0) {
+            iterations.set(resumableGoal.id, persistedIterations);
+          } else {
+            iterations.delete(resumableGoal.id);
+          }
+        } catch {
+          // Non-fatal: fall back to the in-memory view if persistence rehydration fails.
+        }
+      }
+
+      const abortController = new AbortController();
+      abortControllers.set(resumableGoal.id, abortController);
+
+      let externalSignalCleanup: (() => void) | undefined;
+      if (params.signal) {
+        if (params.signal.aborted) {
+          abortController.abort(params.signal.reason);
+        } else {
+          const handler = () => {
+            abortController.abort(params.signal!.reason);
+          };
+          params.signal.addEventListener("abort", handler, { once: true });
+          externalSignalCleanup = () => {
+            params.signal!.removeEventListener("abort", handler);
+          };
+        }
+      }
+
+      try {
+        return await runGoal(
+          resumableGoal,
+          params.timezone,
+          params.principalId,
+          params.tenantContext,
+          params.providerId,
+          params.model,
+          abortController.signal,
+        );
       } finally {
         externalSignalCleanup?.();
       }
@@ -1163,7 +1791,244 @@ export function createFridayAutonomousEngine(
 // ─── Helpers ───
 
 function isTerminal(status: FridayAutonomousGoalStatus): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
+  return status === "completed"
+    || status === "failed"
+    || status === "cancelled"
+    || status === "interrupted_nonrecoverable";
+}
+
+function classifyRestartRecovery(
+  goal: FridayAutonomousGoal,
+  goalSteps: readonly FridayAutonomousStep[],
+): { goalStatus: FridayAutonomousGoalStatus; reason: string } {
+  if (goal.status === "planning") {
+    return {
+      goalStatus: "interrupted_recoverable",
+      reason: "Interrupted by process restart before action execution; plan can be rebuilt safely.",
+    };
+  }
+
+  const hasActiveExecution = goalSteps.some((step) => step.status === "executing");
+  if (goal.status === "executing" && hasActiveExecution) {
+    return {
+      goalStatus: "interrupted_nonrecoverable",
+      reason: "Interrupted by process restart during active tool execution; safe resume checkpoint unavailable.",
+    };
+  }
+
+  return {
+    goalStatus: "interrupted_recoverable",
+    reason: "Interrupted by process restart after a resumable checkpoint; verification or planning can be replayed.",
+  };
+}
+
+function classifyRestartedStep(
+  step: FridayAutonomousStep,
+  goalStatus: FridayAutonomousGoalStatus,
+  reason: string,
+  interruptedAt: string,
+): Partial<FridayAutonomousStep> | null {
+  if (
+    step.status === "completed"
+    || step.status === "failed"
+    || step.status === "skipped"
+    || step.status === "interrupted_nonrecoverable"
+  ) {
+    return null;
+  }
+
+  if (goalStatus === "interrupted_nonrecoverable") {
+    return {
+      status: step.status === "pending" ? "skipped" : "interrupted_nonrecoverable",
+      failureReason: reason,
+      completedAt: interruptedAt,
+    };
+  }
+
+  if (goalStatus === "interrupted_recoverable" || goalStatus === "resumed") {
+    return {
+      status: "interrupted_recoverable",
+      failureReason: reason,
+      completedAt: undefined,
+    };
+  }
+
+  return null;
+}
+
+function tryDeterministicBrowserVerification(
+  step: FridayAutonomousStep,
+  observations: readonly FridayAutonomousObservation[],
+): { passed: boolean; actual: string } | null {
+  if ((step.domain !== "browser" && step.domain !== "composite") || !step.verification) {
+    return null;
+  }
+
+  const title = observations
+    .map((obs) => obs.textContent)
+    .find((value): value is string => typeof value === "string" && value.startsWith("PAGE_TITLE: "))
+    ?.slice("PAGE_TITLE: ".length)
+    .trim();
+  const url = observations
+    .map((obs) => obs.textContent)
+    .find((value): value is string => typeof value === "string" && value.startsWith("PAGE_URL: "))
+    ?.slice("PAGE_URL: ".length)
+    .trim();
+  const headings = observations.flatMap((obs) =>
+    typeof obs.structuredData === "string"
+      ? Array.from(obs.structuredData.matchAll(/heading "([^"]+)"/g), (match) => match[1]?.trim() ?? "").filter(Boolean)
+      : [],
+  );
+  const snapshotText = observations
+    .map((obs) => obs.structuredData ?? obs.textContent ?? "")
+    .filter((value) => value.length > 0)
+    .join("\n");
+
+  const verificationText = [
+    step.verification.expected,
+    step.verification.description,
+    step.instruction,
+  ]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ");
+
+  const checks: { label: string; passed: boolean; actual: string }[] = [];
+
+  const titleContains = extractVerificationNeedle(verificationText, /(?:page\s+)?title\s+(?:should\s+)?contain(?:s)?\s+/i);
+  if (titleContains && title && isExplicitVerificationNeedle(titleContains)) {
+    checks.push({
+      label: "title_contains",
+      passed: title.toLowerCase().includes(titleContains.toLowerCase()),
+      actual: `title=${title}`,
+    });
+  }
+
+  const titleEquals = extractVerificationNeedle(
+    verificationText,
+    /(?:page\s+)?title\s+(?:should\s+)?(?:be|is|equals?|exactly)\s+/i,
+  );
+  if (titleEquals && title && isExplicitVerificationNeedle(titleEquals)) {
+    checks.push({
+      label: "title_equals",
+      passed: title.toLowerCase() === titleEquals.toLowerCase(),
+      actual: `title=${title}`,
+    });
+  }
+
+  const urlContains = extractVerificationUrlNeedle(verificationText, /url\s+(?:should\s+)?contain(?:s)?\s+/i);
+  if (urlContains && url && isExplicitVerificationNeedle(urlContains)) {
+    const normalizedUrl = normalizeComparableUrl(url);
+    const normalizedNeedle = normalizeComparableUrl(urlContains);
+    checks.push({
+      label: "url_contains",
+      passed: normalizedUrl.toLowerCase().includes(normalizedNeedle.toLowerCase()),
+      actual: `url=${url}`,
+    });
+  }
+
+  const urlEquals = extractVerificationUrlNeedle(
+    verificationText,
+    /url\s+(?:should\s+)?(?:match(?:es)?|equal(?:s)?|be|is|exactly)\s+/i,
+  );
+  if (urlEquals && url && isExplicitVerificationNeedle(urlEquals)) {
+    checks.push({
+      label: "url_equals",
+      passed: normalizeComparableUrl(url).toLowerCase() === normalizeComparableUrl(urlEquals).toLowerCase(),
+      actual: `url=${url}`,
+    });
+  }
+
+  const headingContains = extractVerificationNeedle(verificationText, /heading\s+(?:should\s+)?contain(?:s)?\s+/i);
+  if (headingContains && isExplicitVerificationNeedle(headingContains)) {
+    const haystacks = headings.length > 0 ? headings : [snapshotText];
+    checks.push({
+      label: "heading_contains",
+      passed: haystacks.some((value) => value.toLowerCase().includes(headingContains.toLowerCase())),
+      actual: headings.length > 0 ? `headings=${headings.join(" | ")}` : snapshotText.slice(0, 200),
+    });
+  }
+
+  const headingEquals = extractVerificationNeedle(
+    verificationText,
+    /heading\s+(?:should\s+)?(?:be|is|equals?|exactly)\s+/i,
+  );
+  if (headingEquals && isExplicitVerificationNeedle(headingEquals)) {
+    checks.push({
+      label: "heading_equals",
+      passed: headings.some((value) => value.toLowerCase() === headingEquals.toLowerCase()),
+      actual: headings.length > 0 ? `headings=${headings.join(" | ")}` : "headings=<missing>",
+    });
+  }
+
+  if (/\bheading\b[\s\S]{0,24}\bvisible\b/i.test(verificationText)) {
+    checks.push({
+      label: "heading_visible",
+      passed: headings.length > 0,
+      actual: headings.length > 0 ? `headings=${headings.join(" | ")}` : "headings=<missing>",
+    });
+  }
+
+  if (checks.length === 0) {
+    return null;
+  }
+
+  return {
+    passed: checks.every((check) => check.passed),
+    actual: checks.map((check) => `${check.label}:${check.actual}`).join("; "),
+  };
+}
+
+function extractVerificationNeedle(text: string, pattern: RegExp): string | null {
+  const match = pattern.exec(text);
+  if (!match) {
+    return null;
+  }
+  const remainder = text.slice(match.index + match[0].length);
+  const cleaned = remainder
+    .split(/\b(?:before|after|while|then)\b/i, 1)[0]
+    .split(/[.,;\n]/, 1)[0]
+    .trim()
+    .replace(/^["'`“”]+|["'`“”]+$/g, "")
+    .replace(/\s+$/, "")
+    .replace(/\s+\band\b\s+(?=(?:the\s+)?(?:url|title|heading|page|link)\b)[\s\S]*$/i, "");
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function extractVerificationUrlNeedle(text: string, pattern: RegExp): string | null {
+  const match = pattern.exec(text);
+  if (!match) {
+    return null;
+  }
+  const remainder = text.slice(match.index + match[0].length).trim();
+  const explicitUrl = extractFirstUrl(remainder);
+  if (explicitUrl) {
+    return explicitUrl;
+  }
+  return extractVerificationNeedle(text, pattern);
+}
+
+function normalizeComparableUrl(raw: string): string {
+  const trimmed = raw.trim();
+  try {
+    const parsed = new URL(trimmed);
+    const isDefaultPort =
+      (parsed.protocol === "https:" && parsed.port === "443")
+      || (parsed.protocol === "http:" && parsed.port === "80");
+    const port = parsed.port.length > 0 && !isDefaultPort ? `:${parsed.port}` : "";
+    const pathname = parsed.pathname === "/" ? "" : parsed.pathname;
+    return `${parsed.protocol}//${parsed.hostname}${port}${pathname}${parsed.search}`;
+  } catch {
+    return trimmed.replace(/\/$/, "");
+  }
+}
+
+function isExplicitVerificationNeedle(needle: string): boolean {
+  const normalized = needle.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return false;
+  }
+
+  return !/^(?:extracted?|recorded|captured|retrieved|obtained|confirmed|available|loaded|visible)(?:\b|$)/i.test(normalized);
 }
 
 function delay(ms: number, signal: AbortSignal): Promise<void> {

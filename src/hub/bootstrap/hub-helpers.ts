@@ -37,6 +37,7 @@ import type {
   StepExecutor,
   StepVerifier,
 } from "#learning";
+import type { FridaySelfHealingApiService } from "#learning";
 import type { FridayHubConfigManagerService, FridaySkillRegistrySettings } from "../services/friday-hub-config-manager.types.js";
 import type { FridayDiscoveredSkillRecord, FridayHubMemoryStateService } from "../services/friday-hub-memory-state.types.js";
 import { appendFridayAuditLog } from "../services/friday-hub-audit-log-writer.js";
@@ -733,6 +734,32 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
     return typeof value === "number" && Number.isFinite(value) ? value : undefined;
   };
 
+  const readBoolean = (
+    payload: Record<string, unknown> | null,
+    key: string,
+  ): boolean | undefined => {
+    const value = payload?.[key];
+    return typeof value === "boolean" ? value : undefined;
+  };
+
+  const readStringArray = (
+    payload: Record<string, unknown> | null,
+    ...keys: string[]
+  ): string[] | undefined => {
+    for (const key of keys) {
+      const value = payload?.[key];
+      if (!Array.isArray(value)) {
+        continue;
+      }
+      const normalized = value
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+      return normalized;
+    }
+    return undefined;
+  };
+
   stepExecutors.disable_skill = async (step) => {
     if (!step.target) {
       return false;
@@ -840,6 +867,52 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
     stepExecutors.switch_model_fallback = async (step) => {
       const payload = readPayloadRecord(step.payload);
       const routing = await providerService.getRoutingConfig();
+      const normalizedRouting = normalizeFridayModelRoutingConfig(routing);
+      const revert = isRevertPayload(step.payload);
+      if (revert) {
+        const restoreProviderId = readString(
+          payload,
+          "restoreProviderId",
+          "_routeSwitchedFrom",
+          "actualProviderId",
+          "providerId",
+        );
+        const restoreModel = readString(
+          payload,
+          "restoreModel",
+          "actualModel",
+          "model",
+        ) ?? normalizedRouting.defaultModel;
+        if (!restoreProviderId) {
+          return false;
+        }
+        const restoreFallbackProviderIds = readStringArray(
+          payload,
+          "restoreFallbackProviderIds",
+          "fallbackProviderIds",
+        ) ?? normalizedRouting.fallbackProviderIds;
+        const restoreEnforceRequestedModel = readBoolean(
+          payload,
+          "restoreEnforceRequestedModel",
+        );
+        await providerService.setRoutingConfig({
+          defaultProviderId: restoreProviderId,
+          defaultModel: restoreModel,
+          fallbackProviderIds: restoreFallbackProviderIds,
+          ...(restoreEnforceRequestedModel !== undefined
+            ? { enforceRequestedModel: restoreEnforceRequestedModel }
+            : normalizedRouting.enforceRequestedModel !== undefined
+              ? { enforceRequestedModel: normalizedRouting.enforceRequestedModel }
+              : {}),
+        });
+        if (payload) {
+          payload._modelFallbackRequested = true;
+          payload._routeRolledBackTo = restoreProviderId;
+          payload._fallbackRollbackAt = deps.nowIso();
+        }
+        return true;
+      }
+
       const providers = await providerService.listProviders();
       const requestedModel = readString(payload, "model", "requestedModel");
       const preferredProviderId = readString(
@@ -848,7 +921,6 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
         "fallbackProviderId",
         "providerId",
       );
-      const normalizedRouting = normalizeFridayModelRoutingConfig(routing);
       const eligibleProviders = providers.filter((provider) =>
         provider.enabled &&
         provider.id !== normalizedRouting.defaultProviderId &&
@@ -889,6 +961,14 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
     stepVerifiers.switch_model_fallback = async (step) => {
       const payload = readPayloadRecord(step.payload);
       const route = await providerService.getRoutingConfig();
+      if (isRevertPayload(step.payload)) {
+        const rolledBackTo = readString(payload, "_routeRolledBackTo", "restoreProviderId");
+        const restoreModel = readString(payload, "restoreModel", "actualModel", "model");
+        return payload?._modelFallbackRequested === true &&
+          typeof rolledBackTo === "string" &&
+          route.defaultProviderId === rolledBackTo &&
+          (restoreModel == null || route.defaultModel === restoreModel);
+      }
       const switchedTo = readString(payload, "_routeSwitchedTo");
       return payload?._modelFallbackRequested === true &&
         typeof switchedTo === "string" &&
@@ -982,6 +1062,7 @@ export interface FridayHub {
   converterService: FridaySkillConverterService;
   workflowGenerator: FridayWorkflowGeneratorService;
   workflowRuntime: FridayWorkflowRuntime;
+  selfHealing: FridaySelfHealingApiService;
   apiRuntime: FridayApiRuntime;
   channelRegistry: FridayChannelRegistry;
   satelliteRuntime: FridaySatelliteRuntime;

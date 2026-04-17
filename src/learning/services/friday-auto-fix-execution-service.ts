@@ -60,6 +60,7 @@ export interface CreateAutoFixExecutionServiceDeps {
 export const AUTO_FIX_STEP_KINDS_REQUIRING_ROLLBACK_PLAN: ReadonlySet<FridayAutoFixStepKind> = new Set([
   "apply_config_patch",
   "grant_permission",
+  "switch_model_fallback",
 ]);
 
 /**

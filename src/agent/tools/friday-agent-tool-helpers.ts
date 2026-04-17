@@ -1,6 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import type { FridayProviderKind } from "../../providers/model/friday-provider.types.js";
+import { isFridayProviderKind } from "../../providers/model/friday-provider-catalog.js";
+import { getFridayProviderTemplate } from "../../providers/model/friday-provider-templates.js";
+
 import type {
   FridayAgentToolResult,
   FridayAgentToolResultContentBlock,
@@ -50,6 +54,53 @@ export function readStringParam(
     return undefined;
   }
   return value;
+}
+
+const MODEL_AUTO_SENTINELS = new Set(["auto", "default", "system"]);
+
+const MODEL_KIND_ALIASES: Readonly<Record<string, FridayProviderKind>> = {
+  claude: "anthropic",
+  gemini: "google",
+  googleai: "google",
+  "google-ai": "google",
+  "google-ai-studio": "google",
+  "anthropic-messages": "anthropic",
+  "openai-completions": "openai",
+  "openai-responses": "openai",
+};
+
+function resolveProviderKindAlias(value: string): FridayProviderKind | undefined {
+  if (isFridayProviderKind(value)) {
+    return value;
+  }
+  return MODEL_KIND_ALIASES[value];
+}
+
+export function normalizeAgentRequestedModel(value: string | undefined): string | undefined {
+  if (value == null) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  const normalized = trimmed.toLowerCase();
+  if (MODEL_AUTO_SENTINELS.has(normalized)) {
+    return undefined;
+  }
+
+  const providerKind = resolveProviderKindAlias(normalized);
+  if (providerKind == null) {
+    return trimmed;
+  }
+
+  const template = getFridayProviderTemplate(providerKind);
+  const recommended = template?.modelDefaults.recommended
+    ?? template?.modelDefaults.fallback
+    ?? template?.modelDefaults.examples[0];
+  return recommended ?? trimmed;
 }
 
 export function readNumberParam(

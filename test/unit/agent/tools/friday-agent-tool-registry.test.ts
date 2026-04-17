@@ -256,13 +256,24 @@ describe("partitionFridayAgentTools", () => {
   }
 
   it("places core tools in alwaysLoad", () => {
-    const tools = [mockTool("exec"), mockTool("read"), mockTool("write"), mockTool("web_fetch")];
+    const tools = [
+      mockTool("exec"),
+      mockTool("read"),
+      mockTool("write"),
+      mockTool("web_fetch"),
+      mockTool("autonomous"),
+      mockTool("skill_generate"),
+      mockTool("workflow_generate"),
+    ];
     const result = partitionFridayAgentTools(tools);
     const names = result.alwaysLoad.map((t) => t.name);
     expect(names).toContain("exec");
     expect(names).toContain("read");
     expect(names).toContain("write");
     expect(names).toContain("web_fetch");
+    expect(names).toContain("autonomous");
+    expect(names).toContain("skill_generate");
+    expect(names).toContain("workflow_generate");
     expect(result.deferred).toHaveLength(0);
   });
 
@@ -284,21 +295,28 @@ describe("partitionFridayAgentTools", () => {
   });
 
   it("skill_run and skills_list are always-load", () => {
-    const tools = [mockTool("skill_run"), mockTool("skills_list")];
+    const tools = [
+      mockTool("skill_run"),
+      mockTool("skills_list"),
+      mockTool("skill_generate"),
+      mockTool("workflow_generate"),
+    ];
     const result = partitionFridayAgentTools(tools);
     const names = result.alwaysLoad.map((t) => t.name);
     expect(names).toContain("skill_run");
     expect(names).toContain("skills_list");
+    expect(names).toContain("skill_generate");
+    expect(names).toContain("workflow_generate");
     expect(result.deferred).toHaveLength(0);
   });
 
   it("partitions mixed tools correctly", () => {
     const tools = [
-      mockTool("exec"), mockTool("read"), mockTool("desktop"),
+      mockTool("exec"), mockTool("read"), mockTool("autonomous"), mockTool("desktop"),
       mockTool("web_fetch"), mockTool("canvas"), mockTool("cron"),
     ];
     const result = partitionFridayAgentTools(tools);
-    expect(result.alwaysLoad.map((t) => t.name)).toEqual(["exec", "read", "web_fetch"]);
+    expect(result.alwaysLoad.map((t) => t.name)).toEqual(["exec", "read", "autonomous", "web_fetch"]);
     expect(result.deferred.map((t) => t.name)).toEqual(["desktop", "canvas", "cron"]);
   });
 });

@@ -9,9 +9,16 @@ import type { FridayProviderTenantContext } from "#providers";
 import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridaySkillRegistry } from "#skills";
 import type { FridaySkillUiSchemaV1 } from "#skills/generator";
-import { loadFridaySkillPackage, validateFridaySkillPackage } from "#skills";
+import {
+  createFridayNodeExecutor,
+  createFridayShellExecutor,
+  loadFridaySkillPackage,
+  validateFridaySkillPackage,
+  type SkillManifestV2,
+} from "#skills";
 import type { FridaySelfHealingApiService } from "#learning";
 import type { FridayObservabilityApiService } from "../../../observability/services/friday-observability-api-service.js";
+import { extractFridaySkillGenerationContract } from "../../../skills/generator/services/friday-skill-generator-contract.js";
 
 import type {
   FridayApproveResponse,
@@ -147,6 +154,161 @@ export interface FridaySkillGeneratorRoutesDeps {
 const GENERATED_SKILL_HUB_VERSION = "1.0.0";
 const GENERATED_SKILL_SUPPORTED_API_VERSIONS = ["1"];
 
+function parseSpecSummary(specSummary: string): Record<string, unknown> | null {
+  if (!specSummary.trim()) return null;
+  try {
+    const parsed = JSON.parse(specSummary) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function synthesizeStringInput(
+  field: SkillManifestV2["inputs"][number],
+  sessionGoal: string,
+  requiredMarkers: readonly string[],
+  expectedSkillId?: string,
+): string {
+  const signal = `${field.key} ${field.label} ${field.help ?? ""}`.toLowerCase();
+  if (/(task|prompt|query|message|instruction|text|request)/.test(signal)) {
+    return requiredMarkers[0]
+      ? `Return exact marker ${requiredMarkers[0]} and nothing else.`
+      : sessionGoal;
+  }
+  if (/(marker|expected|version)/.test(signal) && requiredMarkers[0]) {
+    return requiredMarkers[0];
+  }
+  if (/(name|title|label|id)/.test(signal) && expectedSkillId) {
+    return expectedSkillId;
+  }
+  return "test";
+}
+
+function buildDraftExecutionInput(
+  manifest: SkillManifestV2,
+  sessionGoal: string,
+  requiredMarkers: readonly string[],
+  expectedSkillId?: string,
+): { ok: true; input: Record<string, unknown> } | { ok: false; reason: string } {
+  const input: Record<string, unknown> = {};
+  const missingRequired: string[] = [];
+
+  for (const field of manifest.inputs) {
+    let value = field.defaultValue;
+    if (value === undefined) {
+      switch (field.type) {
+        case "string":
+          value = synthesizeStringInput(field, sessionGoal, requiredMarkers, expectedSkillId);
+          break;
+        case "number":
+          value = typeof field.validation?.min === "number" ? field.validation.min : 1;
+          break;
+        case "boolean":
+          value = false;
+          break;
+        case "object":
+          value = {};
+          break;
+        case "array":
+          value = [];
+          break;
+        case "file":
+        case "secret":
+          value = undefined;
+          break;
+      }
+    }
+
+    if (value === undefined) {
+      if (field.required) {
+        missingRequired.push(field.key);
+      }
+      continue;
+    }
+
+    input[field.key] = value;
+  }
+
+  if (missingRequired.length > 0) {
+    return {
+      ok: false,
+      reason: `Cannot synthesize required inputs for self-test: ${missingRequired.join(", ")}`,
+    };
+  }
+
+  return { ok: true, input };
+}
+
+async function executeDraftFromTempDir(
+  root: string,
+  manifest: SkillManifestV2,
+  input: Record<string, unknown>,
+): Promise<{
+  status: "completed" | "failed" | "timeout";
+  output: Record<string, unknown>;
+  stdout: string;
+  stderr: string;
+}> {
+  if (manifest.runtime.kind === "shell") {
+    const shellExecutor = createFridayShellExecutor();
+    const env: Record<string, string> = {};
+    for (const envKey of manifest.requirements.env) {
+      if (process.env[envKey] != null) {
+        env[envKey] = process.env[envKey]!;
+      }
+    }
+    const shellResult = await shellExecutor.run({
+      command: join(root, manifest.runtime.entrypoint),
+      cwd: root,
+      env,
+      timeoutMs: manifest.runtime.timeoutMsDefault,
+      stdin: JSON.stringify(input),
+    });
+    if (shellResult.timedOut) {
+      return { status: "timeout", output: {}, stdout: shellResult.stdout, stderr: shellResult.stderr };
+    }
+    if (shellResult.exitCode !== 0) {
+      return { status: "failed", output: {}, stdout: shellResult.stdout, stderr: shellResult.stderr };
+    }
+    try {
+      const parsed = JSON.parse(shellResult.stdout) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return { status: "completed", output: parsed as Record<string, unknown>, stdout: shellResult.stdout, stderr: shellResult.stderr };
+      }
+      return { status: "completed", output: { result: parsed }, stdout: shellResult.stdout, stderr: shellResult.stderr };
+    } catch {
+      return { status: "completed", output: { raw: shellResult.stdout }, stdout: shellResult.stdout, stderr: shellResult.stderr };
+    }
+  }
+
+  if (manifest.runtime.kind === "node") {
+    const nodeExecutor = createFridayNodeExecutor();
+    const nodeResult = await nodeExecutor.run({
+      entrypoint: manifest.runtime.entrypoint,
+      cwd: root,
+      input,
+      timeoutMs: manifest.runtime.timeoutMsDefault,
+    });
+    if (nodeResult.timedOut) {
+      return { status: "timeout", output: {}, stdout: "", stderr: nodeResult.error ?? "" };
+    }
+    if (nodeResult.error) {
+      return { status: "failed", output: {}, stdout: "", stderr: nodeResult.error };
+    }
+    return { status: "completed", output: nodeResult.output, stdout: "", stderr: "" };
+  }
+
+  return {
+    status: "failed",
+    output: {},
+    stdout: "",
+    stderr: `Unsupported runtime kind for self-test: ${manifest.runtime.kind}`,
+  };
+}
+
 // ─── Factory ───
 
 export function createFridaySkillGeneratorRoutes(
@@ -240,17 +402,75 @@ export function createFridaySkillGeneratorRoutes(
         supportedApiVersions: GENERATED_SKILL_SUPPORTED_API_VERSIONS,
       });
 
+      const spec = parseSpecSummary(result.session.specSummary);
+      const contract = extractFridaySkillGenerationContract({
+        goal: result.session.goal,
+        spec,
+        turns: result.turns,
+      });
+      const issues = validation.issues.map((issue) => ({
+        code: issue.code,
+        severity: issue.severity,
+        message: issue.message,
+        path: issue.path,
+      }));
+      const behavioralCheck: NonNullable<FridaySkillGeneratorTestResponse["test"]["behavioralCheck"]> = {
+        attempted: false,
+        satisfied: contract.requiredOutputMarkers.length === 0,
+        expectedMarkers: [...contract.requiredOutputMarkers],
+        matchedMarkers: [],
+      };
+
+      if (validation.ok && contract.requiredOutputMarkers.length > 0) {
+        const synthesized = buildDraftExecutionInput(
+          draft.manifest,
+          result.session.goal,
+          contract.requiredOutputMarkers,
+          contract.expectedSkillId,
+        );
+        if (!synthesized.ok) {
+          behavioralCheck.satisfied = false;
+          behavioralCheck.reason = synthesized.reason;
+          issues.push({
+            code: "BEHAVIOR_TEST_INPUT_UNAVAILABLE",
+            severity: "error",
+            message: synthesized.reason,
+            path: undefined,
+          });
+        } else {
+          behavioralCheck.attempted = true;
+          const execution = await executeDraftFromTempDir(root, loaded.value.manifest, synthesized.input);
+          behavioralCheck.runStatus = execution.status;
+          const combinedOutput = `${execution.stdout}\n${JSON.stringify(execution.output)}`;
+          behavioralCheck.matchedMarkers = contract.requiredOutputMarkers.filter((marker) =>
+            combinedOutput.includes(marker),
+          );
+          behavioralCheck.satisfied =
+            execution.status === "completed" &&
+            behavioralCheck.matchedMarkers.length === contract.requiredOutputMarkers.length;
+          if (!behavioralCheck.satisfied) {
+            behavioralCheck.reason = execution.status !== "completed"
+              ? `Draft execution finished with status ${execution.status}`
+              : `Runtime output missed required marker(s): ${contract.requiredOutputMarkers.filter((marker) => !behavioralCheck.matchedMarkers.includes(marker)).join(", ")}`;
+            issues.push({
+              code: execution.status !== "completed"
+                ? "BEHAVIOR_TEST_EXECUTION_FAILED"
+                : "BEHAVIOR_TEST_MARKER_MISMATCH",
+              severity: "error",
+              message: behavioralCheck.reason,
+              path: undefined,
+            });
+          }
+        }
+      }
+
       return {
-        ok: validation.ok,
-        executable: validation.ok,
-        issues: validation.issues.map((issue) => ({
-          code: issue.code,
-          severity: issue.severity,
-          message: issue.message,
-          path: issue.path,
-        })),
+        ok: validation.ok && issues.every((issue) => issue.severity !== "error"),
+        executable: validation.ok && (behavioralCheck.attempted ? behavioralCheck.satisfied : true),
+        issues,
         durationMs: Date.now() - startedAt,
         testedAt: new Date().toISOString(),
+        behavioralCheck,
       };
     } finally {
       rmSync(root, { force: true, recursive: true });
@@ -273,6 +493,9 @@ export function createFridaySkillGeneratorRoutes(
     const test = result.session.explicitTest ?? null;
     const qaVerdict = await deps.skillGenerator.getQaVerdict(sessionId);
     const harness = await deps.skillGenerator.getHarnessSummary(sessionId);
+    const savedOrApproved =
+      result.session.status === "approved" ||
+      result.session.status === "saved";
     const approvalReadiness = qaVerdict
       ? {
         ready: qaVerdict.verdict === "pass",
@@ -290,6 +513,13 @@ export function createFridaySkillGeneratorRoutes(
               : "Draft still needs to pass explicit self-test"
             : "Draft has validation issues that must be fixed before approval",
         }
+        : savedOrApproved
+          ? {
+            ready: true,
+            reason: result.session.status === "saved"
+              ? "Generated skill saved."
+              : "Generated skill approved and ready to save.",
+          }
         : {
           ready: false,
           reason: "No draft has been generated yet",
@@ -298,7 +528,7 @@ export function createFridaySkillGeneratorRoutes(
     return {
       sessionId,
       validationSummary: {
-        ok: draft?.validation.ok ?? false,
+        ok: draft?.validation.ok ?? savedOrApproved,
         repaired: draft?.validation.repaired ?? false,
         repairAttempts: draft?.validation.repairAttempts ?? 0,
         issueCount: draft?.validation.issues.length ?? 0,

@@ -13,7 +13,7 @@ interface CommandItem {
   sectionZh: string;
 }
 
-const COMMANDS: CommandItem[] = [
+export const COMMANDS: CommandItem[] = [
   { id: "home", label: "Home", labelZh: "首页", path: "/home", section: "Navigation", sectionZh: "导航" },
   { id: "chat", label: "Chat", labelZh: "聊天", path: "/chat", section: "Navigation", sectionZh: "导航" },
   { id: "packs", label: "Industry & Tasks", labelZh: "行业与任务", path: "/packs", section: "Navigation", sectionZh: "导航" },
@@ -29,11 +29,12 @@ const COMMANDS: CommandItem[] = [
   { id: "fleet", label: "Fleet", labelZh: "设备集群", path: "/fleet", section: "Advanced", sectionZh: "高级" },
   { id: "marketplace", label: "Marketplace", labelZh: "市场", path: "/marketplace", section: "Advanced", sectionZh: "高级" },
   { id: "settings", label: "Settings", labelZh: "设置", path: "/settings", section: "Advanced", sectionZh: "高级" },
+  { id: "command-center", label: "Operator Console", labelZh: "操作控制台", path: "/command-center", section: "Tools", sectionZh: "工具" },
   { id: "skill-generator", label: "Skill Generator", labelZh: "技能生成器", path: "/skills/generator", section: "Tools", sectionZh: "工具" },
   { id: "workflow-builder", label: "Workflow Builder", labelZh: "工作流编辑器", path: "/workflows/builder", section: "Tools", sectionZh: "工具" },
 ];
 
-const AVAILABLE_COMMANDS = HIDE_MARKETPLACE_UI
+export const AVAILABLE_COMMANDS = HIDE_MARKETPLACE_UI
   ? COMMANDS.filter((command) => command.path !== "/marketplace")
   : COMMANDS;
 
