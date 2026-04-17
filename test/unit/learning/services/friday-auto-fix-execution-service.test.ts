@@ -126,7 +126,7 @@ describe("FridayAutoFixExecutionService", () => {
       kind: "switch_model_fallback" as const,
       target: "llm-route",
       payload: {},
-      riskTier: 0,
+      riskTier: 1,
       marker: "_modelFallbackRequested",
       timestampMarker: "_fallbackAt",
     },
@@ -217,7 +217,7 @@ describe("FridayAutoFixExecutionService", () => {
             verify: { method: "error_absent", timeoutMs: 5_000 },
           },
         ],
-        rollbackPlan: riskTier >= 1
+        rollbackPlan: riskTier >= 1 || kind === "switch_model_fallback"
           ? {
               summary: `Rollback ${kind}`,
               steps: [
@@ -225,7 +225,13 @@ describe("FridayAutoFixExecutionService", () => {
                   stepId: `rollback-${kind}`,
                   kind,
                   target,
-                  payload: { revert: true },
+                  payload: kind === "switch_model_fallback"
+                    ? {
+                        revert: true,
+                        restoreProviderId: "provider-primary",
+                        restoreModel: "model-primary",
+                      }
+                    : { revert: true },
                 },
               ],
             }

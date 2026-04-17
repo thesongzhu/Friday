@@ -91,6 +91,26 @@ const DANGEROUS_NODE_IMPORTS: ReadonlyArray<{
   },
 ];
 
+const UNSUPPORTED_RUNTIME_HELPER_IMPORTS: ReadonlyArray<{
+  pattern: RegExp;
+  description: string;
+}> = [
+  {
+    pattern: /\b(?:require\s*\(\s*['"]friday-runtime-context['"]|import\b.*['"]friday-runtime-context['"])/,
+    description: "Node skills must not import the non-existent friday-runtime-context package. Use ctx.ai.infer(...) from the injected runtime context instead.",
+  },
+];
+
+const UNSUPPORTED_RUNTIME_HELPER_CALLS: ReadonlyArray<{
+  pattern: RegExp;
+  description: string;
+}> = [
+  {
+    pattern: /\bctx\.ai\.complete\s*\(/,
+    description: "Node skills must use ctx.ai.infer(prompt, optionalModel) instead of ctx.ai.complete(...).",
+  },
+];
+
 // ─── Dangerous shell patterns ───
 
 const DANGEROUS_SHELL_PATTERNS: ReadonlyArray<{
@@ -225,6 +245,28 @@ export function validateGeneratedCode(
       runtimeKind === "node" &&
       (detectedLang === "javascript" || detectedLang === "typescript")
     ) {
+      for (const check of UNSUPPORTED_RUNTIME_HELPER_IMPORTS) {
+        if (check.pattern.test(file.content)) {
+          issues.push({
+            code: "UNSUPPORTED_RUNTIME_HELPER_IMPORT",
+            severity: "error",
+            message: `File ${file.path}: ${check.description}`,
+            path: file.path,
+          });
+        }
+      }
+
+      for (const check of UNSUPPORTED_RUNTIME_HELPER_CALLS) {
+        if (check.pattern.test(file.content)) {
+          issues.push({
+            code: "UNSUPPORTED_RUNTIME_HELPER_CALL",
+            severity: "error",
+            message: `File ${file.path}: ${check.description}`,
+            path: file.path,
+          });
+        }
+      }
+
       for (const check of DANGEROUS_NODE_IMPORTS) {
         if (check.pattern.test(file.content)) {
           if (!hasGrant(manifest, check.requiredResource, check.requiredAction)) {

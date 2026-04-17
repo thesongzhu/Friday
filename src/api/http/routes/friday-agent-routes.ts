@@ -132,21 +132,24 @@ export function createFridayAgentRoutes(
       return undefined;
     }
     const record = principal as {
+      userId?: unknown;
       principalId?: unknown;
       tenantId?: unknown;
     };
-    const principalId = typeof record.principalId === "string" && record.principalId.trim().length > 0
-      ? record.principalId.trim()
-      : undefined;
-    if (!principalId) {
+    const userId = typeof record.userId === "string" && record.userId.trim().length > 0
+      ? record.userId.trim()
+      : typeof record.principalId === "string" && record.principalId.trim().length > 0
+        ? record.principalId.trim()
+        : undefined;
+    if (!userId) {
       return undefined;
     }
     const tenantId = typeof record.tenantId === "string" && record.tenantId.trim().length > 0
       ? record.tenantId.trim()
-      : principalId;
+      : userId;
     return {
       hubId: tenantId,
-      userId: principalId,
+      userId,
     };
   }
 

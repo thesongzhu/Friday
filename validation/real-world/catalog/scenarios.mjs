@@ -890,10 +890,11 @@ export const REAL_WORLD_SCENARIOS = [
       "generator session can start",
       "draft generation, self-test, and evidence all complete",
       "validation issues are captured as evidence instead of being hidden",
+      "approved skill is saved and can run after installation",
     ],
     execution: {
       kind: "skill_generator_loop",
-      approve: false,
+      approve: true,
       timeoutMs: 180_000,
     },
     severityOnFailure: "P1",

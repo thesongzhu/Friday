@@ -227,6 +227,58 @@ describe("FridayAgentSkillTool", () => {
     });
   });
 
+  it("returns a clear error when required skill inputs are missing", async () => {
+    const executor = mockExecutor(makeResult());
+    const tool = createFridayAgentSkillTool({
+      skillExecutor: executor,
+      skillRegistry: {
+        ...mockRegistry(),
+        get: vi.fn((skillId: string) => {
+          if (skillId !== "needs-topic") {
+            return null;
+          }
+          const manifest = makeManifest({
+            id: "needs-topic",
+            inputs: [{ key: "topic", type: "string", required: true, label: "Topic" }],
+          });
+          return {
+            manifest,
+            skillDir: "/tmp/needs-topic",
+            source: "bundled",
+            origin: "bundled",
+            status: "installed",
+            loaded: {
+              skillDir: "/tmp/needs-topic",
+              manifest,
+              loadMode: "manifest-v2",
+              declaredFiles: [],
+            },
+            validation: { ok: true, issues: [] },
+            trust: {
+              trustTier: "bundled",
+              executionMode: "trusted",
+              sandboxPolicy: {
+                trustTier: "bundled",
+                defaultExecutionMode: "trusted",
+                allowedExecutionModes: ["trusted", "restricted"],
+              },
+            },
+          };
+        }),
+      } as unknown as FridaySkillRegistry,
+    });
+
+    const result = await tool.execute(
+      { skillId: "needs-topic", input: {} },
+      signal(),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("missing required input(s): topic");
+    expect(result.content).toContain('{"topic":"<topic>"}');
+    expect(executor.execute).not.toHaveBeenCalled();
+  });
+
   // ─── Missing required param ───
 
   it("throws on missing skillId", async () => {

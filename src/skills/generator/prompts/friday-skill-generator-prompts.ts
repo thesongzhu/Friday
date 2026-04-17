@@ -1,6 +1,7 @@
 import type { SkillDesignPattern, SkillManifestV2, SkillRuntimeKind } from "#skills";
 
 import type { FridaySkillGenerationTurn } from "../model/friday-skill-generator.types.js";
+import type { FridaySkillGenerationContract } from "../services/friday-skill-generator-contract.js";
 
 // ─── Prompt output shape ───
 
@@ -148,7 +149,8 @@ Rules:
 4. Prefer deterministic automation over open-ended agent behavior.
 5. If all required fields are resolved, set state to "ready_for_generation".
 6. If critical information is missing, set state to "needs_clarification".
-7. Detect which design pattern best fits the skill (tool-wrapper, generator, reviewer, inversion, pipeline) and include it in the spec.${patternBlock}
+7. Detect which design pattern best fits the skill (tool-wrapper, generator, reviewer, inversion, pipeline) and include it in the spec.
+8. If the user names an exact manifest id, exact version, or exact output marker/text, preserve that in successTests and constraints so later stages can enforce it.${patternBlock}
 
 Response format (JSON only):
 {
@@ -157,6 +159,8 @@ Response format (JSON only):
   "spec": {
     "goal": "string",
     "designPattern": "tool-wrapper" | "generator" | "reviewer" | "inversion" | "pipeline" | null,
+    "successTests": ["string"],
+    "constraints": ["string"],
     "inputs": [{ "key": "string", "type": "string", "required": true, "label": "string" }],
     "outputs": [{ "key": "string", "type": "string", "description": "string" }],
     "triggers": { "intents": [], "phrases": [] },
@@ -175,7 +179,18 @@ Response format (JSON only):
 
 export function buildManifestPrompt(
   spec: Record<string, unknown>,
+  contract?: FridaySkillGenerationContract,
 ): FridaySkillGeneratorPrompt {
+  const contractLines = [
+    contract?.expectedSkillId ? `- manifest.id must be exactly "${contract.expectedSkillId}"` : null,
+    contract?.expectedVersion ? `- manifest.version must be exactly "${contract.expectedVersion}"` : null,
+    contract?.preserveExistingSkillId
+      ? "- This is an in-place update. Preserve the existing skill id and do not invent a replacement id."
+      : null,
+  ].filter((line): line is string => Boolean(line));
+  const contractSection = contractLines.length > 0
+    ? `\n\nHard contract:\n<contract>\n${contractLines.join("\n")}\n</contract>`
+    : "";
   const system = `You are a manifest generator for the Friday automation platform.
 
 You generate valid SkillManifestV2 JSON for a skill based on the provided specification.
@@ -193,14 +208,15 @@ Rules:
 10. Do NOT add any keys not in the schema. All objects use strict validation — extra keys will cause rejection.
 11. Minimize permissions (principle of least privilege).
 12. Defaults will be applied for omitted optional fields, so only provide fields you are confident about.
-13. If the spec includes a designPattern, set "designPatterns": ["<pattern>"] in the manifest. Valid values: "tool-wrapper", "generator", "reviewer", "inversion", "pipeline". A skill may combine multiple patterns.`;
+13. If the spec includes a designPattern, set "designPatterns": ["<pattern>"] in the manifest. Valid values: "tool-wrapper", "generator", "reviewer", "inversion", "pipeline". A skill may combine multiple patterns.
+14. When a <contract> block is present, every contract line is mandatory and must be satisfied exactly.`;
 
   // Extract repair context if present so it doesn't pollute the spec JSON
   const { _repairContext, ...cleanSpec } = spec as Record<string, unknown> & {
     _repairContext?: { errors: string; attempt: number };
   };
 
-  let userContent = `Generate a SkillManifestV2 for this specification:\n${JSON.stringify(cleanSpec, null, 2)}`;
+  let userContent = `Generate a SkillManifestV2 for this specification:\n${JSON.stringify(cleanSpec, null, 2)}${contractSection}`;
 
   if (_repairContext) {
     userContent += `\n\nPrevious errors (attempt ${String(_repairContext.attempt)}):\n${_repairContext.errors}\n\nFix these errors. Output only valid JSON.`;
@@ -214,6 +230,7 @@ Rules:
 export function buildCodePrompt(
   manifest: SkillManifestV2,
   runtimeKind: SkillRuntimeKind,
+  contract?: FridaySkillGenerationContract,
 ): FridaySkillGeneratorPrompt {
   // Build design-pattern-specific file guidance
   const patterns = manifest.designPatterns ?? [];
@@ -240,6 +257,19 @@ export function buildCodePrompt(
   const patternSection = patternFileHints
     ? `\n\nDesign pattern files to generate:\n${patternFileHints}`
     : "";
+  const contractLines = [
+    contract?.expectedSkillId ? `- Keep manifest.id exactly "${contract.expectedSkillId}"` : null,
+    contract?.expectedVersion ? `- Keep manifest.version exactly "${contract.expectedVersion}"` : null,
+    contract?.preserveExistingSkillId
+      ? "- This is an update to an existing skill. Do not rename the skill id."
+      : null,
+    ...(contract?.requiredOutputMarkers ?? []).map((marker) =>
+      `- At runtime, the skill must emit the exact marker "${marker}" with identical spelling and punctuation.`,
+    ),
+  ].filter((line): line is string => Boolean(line));
+  const contractSection = contractLines.length > 0
+    ? `\n\nExecution contract:\n<contract>\n${contractLines.join("\n")}\n</contract>`
+    : "";
 
   const system = `You are a code generator for the Friday automation platform.
 
@@ -252,18 +282,22 @@ Rules:
    - Node: export an async function execute(input, ctx?) that returns an object matching manifest outputs.
    - Shell: read JSON from stdin, write JSON to stdout.
 4. No privileged actions without matching manifest permissions.
-5. If AI is needed inside runtime, use the provided runtime context helper (backed by BYOK provider service).
+5. If AI is needed inside runtime, use the provided runtime context helper via ctx.ai.infer(prompt, optionalModel).
+   - Do NOT import any runtime helper packages.
+   - Do NOT reference packages like "friday-runtime-context".
+   - Do NOT call invented helpers like ctx.ai.complete(...).
 6. Favor small, readable code and explicit error handling.
 7. Do not use TypeScript in generated files — output JavaScript (.mjs) or Bash (.sh) only.
 8. For Node runtime, the entrypoint must be "index.mjs".
 9. For Shell runtime, the entrypoint must be "run.sh" with proper shebang (#!/usr/bin/env bash).
-10. Generate a SKILL.md file that follows the skill's design pattern structure.${patternSection}
+10. Generate a SKILL.md file that follows the skill's design pattern structure.
+11. When a <contract> block is present, treat it as mandatory. Exact markers must appear exactly in the runtime output, not approximations or paraphrases.${patternSection}
 
 Language values: "javascript", "bash", "json", "markdown".
 
 Response: JSON array of file objects only.`;
 
-  const user = `Generate code files for this manifest (runtime: ${runtimeKind}):\n${JSON.stringify(manifest, null, 2)}`;
+  const user = `Generate code files for this manifest (runtime: ${runtimeKind}):\n${JSON.stringify(manifest, null, 2)}${contractSection}`;
 
   return { system, user };
 }

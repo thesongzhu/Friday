@@ -407,6 +407,147 @@ describe("FridaySkillGeneratorService", () => {
       }
     });
 
+    it("auto-resolves simple topic-bullet clarification loops into generation", async () => {
+      const analyzerResponse = {
+        state: "needs_clarification",
+        questions: [
+          "What specific information should the markdown bullets include about the topic?",
+          "Are there any external APIs or data sources required to gather information about the topic?",
+          "What should be the exact output format or structure for the markdown bullets?",
+        ],
+        spec: {
+          goal: "Create a skill that generates concise markdown bullets about a given topic.",
+          inputs: [{ key: "topic", type: "string", required: true, label: "Topic" }],
+          outputs: [{ key: "markdownBullets", type: "string", description: "Bullets" }],
+          runtimeKind: "node",
+          triggers: { intents: [], phrases: [] },
+          externalDependencies: [],
+          securityNotes: [],
+          successTests: [],
+          constraints: [],
+        },
+      };
+      const manifest = makeManifest({
+        id: "topic-bullet-skill",
+        inputs: [{ key: "topic", type: "string", required: true, label: "Topic" }],
+        outputs: [{ key: "markdownBullets", type: "string", description: "Bullets" }],
+      });
+      const files: FridayGeneratedSkillFile[] = [
+        {
+          path: "index.mjs",
+          language: "javascript",
+          content: 'export async function execute(input) { return { markdownBullets: `- ${input.topic}\\n- fact\\n- summary` }; }',
+        },
+      ];
+      const uiSchema: FridaySkillUiSchemaV1 = {
+        schemaVersion: "1.0",
+        title: "Topic Bullet Skill",
+        sections: [{ id: "main", label: "Main", fieldIds: ["topic-field"] }],
+        fields: [
+          { id: "topic-field", inputKey: "topic", kind: "text", label: "Topic", required: true },
+        ],
+        outputs: [{ id: "markdown-output", outputKey: "markdownBullets", label: "Markdown", widget: "text" }],
+        actions: [
+          { id: "run", label: "Run", style: "primary" },
+          { id: "reset", label: "Reset", style: "secondary" },
+        ],
+      };
+
+      mockFetchForLlm([analyzerResponse, manifest, files, uiSchema]);
+
+      try {
+        const result = await service.startSession({
+          goal: "Create a new Friday skill that takes a topic input and returns concise markdown bullets about it.",
+          userId: "user-1",
+          channel: "discord",
+        });
+
+        expect(result.mode).toBe("preview_ready");
+        expect(result.questions).toBeUndefined();
+        expect(result.session.status).toBe("ready_for_review");
+        const parsedSpec = JSON.parse(result.session.specSummary) as {
+          constraints: string[];
+          successTests: string[];
+          outputs: Array<{ description: string }>;
+        };
+        expect(parsedSpec.constraints).toContain(
+          "No external APIs or data sources are required.",
+        );
+        expect(parsedSpec.constraints).toContain(
+          "Output must be a markdown string with exactly three concise bullet points.",
+        );
+        expect(parsedSpec.successTests).toContain(
+          "Return exactly three concise markdown bullet points about the requested topic.",
+        );
+        expect(parsedSpec.outputs[0]?.description).toContain("exactly three concise bullet points");
+      } finally {
+        restoreFetch();
+      }
+    });
+
+    it("auto-resolves newer source/reference clarification wording for simple topic-bullet skills", async () => {
+      const analyzerResponse = {
+        state: "needs_clarification",
+        questions: [
+          "What specific information should the markdown bullets include about the topic?",
+          "Are there any specific sources or references that should be used for generating the markdown bullets?",
+          "What should be the exact output format or structure for the markdown bullets?",
+        ],
+        spec: {
+          goal: "Create a skill that generates concise markdown bullets about a given topic.",
+          inputs: [{ key: "topic", type: "string", required: true, label: "Topic" }],
+          outputs: [{ key: "markdownBullets", type: "string", description: "Bullets" }],
+          runtimeKind: "node",
+          triggers: { intents: [], phrases: [] },
+          externalDependencies: [],
+          securityNotes: [],
+          successTests: [],
+          constraints: [],
+        },
+      };
+      const manifest = makeManifest({
+        id: "topic-bullet-skill-v2",
+        inputs: [{ key: "topic", type: "string", required: true, label: "Topic" }],
+        outputs: [{ key: "markdownBullets", type: "string", description: "Bullets" }],
+      });
+      const files: FridayGeneratedSkillFile[] = [
+        {
+          path: "index.mjs",
+          language: "javascript",
+          content: 'export async function execute(input) { return { markdownBullets: `- ${input.topic}\\n- fact\\n- summary` }; }',
+        },
+      ];
+      const uiSchema: FridaySkillUiSchemaV1 = {
+        schemaVersion: "1.0",
+        title: "Topic Bullet Skill",
+        sections: [{ id: "main", label: "Main", fieldIds: ["topic-field"] }],
+        fields: [
+          { id: "topic-field", inputKey: "topic", kind: "text", label: "Topic", required: true },
+        ],
+        outputs: [{ id: "markdown-output", outputKey: "markdownBullets", label: "Markdown", widget: "text" }],
+        actions: [
+          { id: "run", label: "Run", style: "primary" },
+          { id: "reset", label: "Reset", style: "secondary" },
+        ],
+      };
+
+      mockFetchForLlm([analyzerResponse, manifest, files, uiSchema]);
+
+      try {
+        const result = await service.startSession({
+          goal: "Create a new Friday skill that takes a topic input and returns concise markdown bullets about it.",
+          userId: "user-1",
+          channel: "discord",
+        });
+
+        expect(result.mode).toBe("preview_ready");
+        expect(result.questions).toBeUndefined();
+        expect(result.session.status).toBe("ready_for_review");
+      } finally {
+        restoreFetch();
+      }
+    });
+
     it("accepts object-wrapped generated code bundles", async () => {
       const analyzerResponse = {
         state: "ready_for_generation",

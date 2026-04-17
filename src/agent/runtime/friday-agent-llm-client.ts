@@ -875,7 +875,8 @@ async function* parseOpenAIResponsesSSEStream(
 ): AsyncIterable<FridayAgentLlmStreamEvent> {
   const decoder = new TextDecoder();
   let buffer = "";
-  const toolCalls = new Map<string, { id: string; name: string; args: string; emitted: boolean }>();
+  const toolCalls = new Map<string, { id: string; itemId?: string; callId?: string; name: string; args: string; emitted: boolean }>();
+  const toolCallKeyByCallId = new Map<string, string>();
   let inputTokens = 0;
   let outputTokens = 0;
   let messageEnded = false;
@@ -926,27 +927,40 @@ async function* parseOpenAIResponsesSSEStream(
       if (type === "response.output_item.added" || type === "response.output_item.done") {
         const item = event.item as Record<string, unknown> | undefined;
         if (item?.type === "function_call") {
-          const itemId = typeof item.call_id === "string"
-            ? item.call_id
-            : typeof item.id === "string"
-              ? item.id
-              : "";
-          if (itemId) {
-            const existing = toolCalls.get(itemId) ?? {
-              id: itemId,
+          const itemId = typeof item.id === "string" ? item.id : "";
+          const callId = typeof item.call_id === "string" ? item.call_id : "";
+          const toolKey = itemId
+            || (callId ? toolCallKeyByCallId.get(callId) ?? callId : "");
+          if (toolKey) {
+            if (callId && itemId) {
+              toolCallKeyByCallId.set(callId, toolKey);
+            }
+            const existing = toolCalls.get(toolKey) ?? {
+              id: callId || itemId,
+              itemId: itemId || undefined,
+              callId: callId || undefined,
               name: "",
               args: "",
               emitted: false,
             };
+            if (itemId) {
+              existing.itemId = itemId;
+            }
+            if (callId) {
+              existing.callId = callId;
+              existing.id = callId;
+            } else if (itemId && existing.id.trim().length === 0) {
+              existing.id = itemId;
+            }
             if (typeof item.name === "string" && item.name) {
               existing.name = item.name;
             }
             if (typeof item.arguments === "string") {
               existing.args = item.arguments;
             }
-            toolCalls.set(itemId, existing);
+            toolCalls.set(toolKey, existing);
 
-            if (type === "response.output_item.done" && !existing.emitted) {
+            if (type === "response.output_item.done" && !existing.emitted && existing.name.trim().length > 0) {
               const input = parseOpenAIToolCallArgs(existing.args);
               yield {
                 type: "tool_use",
@@ -967,6 +981,8 @@ async function* parseOpenAIResponsesSSEStream(
         if (!itemId || !delta) continue;
         const existing = toolCalls.get(itemId) ?? {
           id: itemId,
+          itemId,
+          callId: undefined,
           name: "",
           args: "",
           emitted: false,
@@ -1012,11 +1028,17 @@ function parseOpenAIToolCallArgs(args: string): Record<string, unknown> {
 }
 
 async function* emitOpenAIResponsesToolCalls(
-  toolCalls: Map<string, { id: string; name: string; args: string; emitted: boolean }>,
+  toolCalls: Map<string, { id: string; itemId?: string; callId?: string; name: string; args: string; emitted: boolean }>,
 ): AsyncGenerator<FridayAgentLlmStreamEvent, void, void> {
 
   for (const [, toolCall] of toolCalls) {
     if (toolCall.emitted) {
+      continue;
+    }
+    if (toolCall.name.trim().length === 0) {
+      console.warn("[friday][agent-llm-client] dropping OpenAI Responses tool call without a name", {
+        toolCallId: toolCall.id,
+      });
       continue;
     }
 

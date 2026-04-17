@@ -67,3 +67,11 @@ export type {
   FridaySkillGeneratorService,
   CreateFridaySkillGeneratorServiceDeps,
 } from "./services/friday-skill-generator-service.types.js";
+
+export {
+  extractFridaySkillGenerationContract,
+} from "./services/friday-skill-generator-contract.js";
+
+export type {
+  FridaySkillGenerationContract,
+} from "./services/friday-skill-generator-contract.js";

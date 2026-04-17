@@ -229,12 +229,16 @@ function parseJsonFromText(rawText: string): unknown {
   const trimmed = rawText.trim();
   try {
     return JSON.parse(trimmed);
-  } catch (err) {
-    console.warn("[friday][session-memory-extraction-llm-client] JSON parse failed:", err instanceof Error ? err.message : String(err));
+  } catch {}
+
+  try {
     const fenceMatch = /```(?:json)?\s*\n?([\s\S]*?)\n?```/.exec(trimmed);
     if (fenceMatch?.[1]) {
       return JSON.parse(fenceMatch[1].trim());
     }
+  } catch {}
+
+  try {
     const startBrace = trimmed.indexOf("{");
     if (startBrace !== -1) {
       const end = trimmed.lastIndexOf("}");
@@ -242,12 +246,14 @@ function parseJsonFromText(rawText: string): unknown {
         return JSON.parse(trimmed.slice(startBrace, end + 1));
       }
     }
-    throw new FridayDomainError(
-      FRIDAY_SESSION_MEMORY_EXTRACTION_ERROR_CODES.PARSE_ERROR,
-      `Failed to parse JSON from model output: ${trimmed.slice(0, 200)}`,
-      { httpStatus: 422 },
-    );
-  }
+  } catch {}
+
+  console.warn("[friday][session-memory-extraction-llm-client] JSON parse failed:", trimmed.slice(0, 200));
+  throw new FridayDomainError(
+    FRIDAY_SESSION_MEMORY_EXTRACTION_ERROR_CODES.PARSE_ERROR,
+    `Failed to parse JSON from model output: ${trimmed.slice(0, 200)}`,
+    { httpStatus: 422 },
+  );
 }
 
 // ─── Validation ───

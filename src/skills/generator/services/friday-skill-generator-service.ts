@@ -51,6 +51,10 @@ import {
   buildRequirementsPrompt,
   buildUiPrompt,
 } from "../prompts/friday-skill-generator-prompts.js";
+import {
+  extractFridaySkillGenerationContract,
+  type FridaySkillGenerationContract,
+} from "./friday-skill-generator-contract.js";
 
 import { createFridayProviderInferenceClient } from "../llm/friday-provider-inference-client.js";
 
@@ -401,6 +405,148 @@ interface RequirementsAnalyzerResponse {
   spec: Record<string, unknown>;
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeStringArrayField(
+  value: unknown,
+): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function normalizeOutputArray(
+  value: unknown,
+): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(isPlainRecord).map((item) => ({ ...item }));
+}
+
+function autoResolveSkillGeneratorClarifications(input: {
+  goal: string;
+  analyzerResult: RequirementsAnalyzerResponse;
+}): RequirementsAnalyzerResponse {
+  const { analyzerResult } = input;
+  if (
+    analyzerResult.state !== "needs_clarification"
+    || analyzerResult.questions.length === 0
+    || !isPlainRecord(analyzerResult.spec)
+  ) {
+    return analyzerResult;
+  }
+
+  const goal = input.goal.toLowerCase();
+  const spec = { ...analyzerResult.spec };
+  const outputs = normalizeOutputArray(spec["outputs"]);
+  const successTests = normalizeStringArrayField(spec["successTests"]);
+  const constraints = normalizeStringArrayField(spec["constraints"]);
+  const externalDependencies = normalizeStringArrayField(spec["externalDependencies"]);
+  const securityNotes = normalizeStringArrayField(spec["securityNotes"]);
+  const triggerRecord = isPlainRecord(spec["triggers"]) ? { ...spec["triggers"] } : {};
+  const triggerIntents = normalizeStringArrayField(triggerRecord["intents"]);
+
+  const looksLikeSimpleTopicBulletSkill =
+    /\btopic input\b/.test(goal)
+    && /\bmarkdown bullets?\b/.test(goal);
+
+  const remainingQuestions: string[] = [];
+  for (const question of analyzerResult.questions) {
+    const normalized = question.trim().toLowerCase();
+    let handled = false;
+
+    if (
+      looksLikeSimpleTopicBulletSkill
+      && /specific information.*include/.test(normalized)
+    ) {
+      if (outputs.length > 0) {
+        outputs[0] = {
+          ...outputs[0],
+          description:
+            "A markdown string containing exactly three concise bullet points covering notable facts, traits, or context about the requested topic.",
+        };
+      }
+      if (!successTests.some((item) => /exactly three concise bullet points/i.test(item))) {
+        successTests.push(
+          "Return exactly three concise markdown bullet points about the requested topic.",
+        );
+      }
+      handled = true;
+    }
+
+    if (/external apis?|data sources?|source of information|specific sources?|references?/.test(normalized)) {
+      if (!constraints.some((item) => /no external api/i.test(item))) {
+        constraints.push("No external APIs or data sources are required.");
+      }
+      handled = true;
+    }
+
+    if (
+      looksLikeSimpleTopicBulletSkill
+      && /exact output format|output format|structure/.test(normalized)
+    ) {
+      if (!constraints.some((item) => /three concise markdown bullet points/i.test(item))) {
+        constraints.push("Output must be a markdown string with exactly three concise bullet points.");
+      }
+      if (outputs.length > 0) {
+        outputs[0] = {
+          ...outputs[0],
+          type: "string",
+          description:
+            "Markdown output with exactly three concise bullet points about the topic.",
+        };
+      }
+      handled = true;
+    }
+
+    if (/security-sensitive/.test(normalized)) {
+      if (!securityNotes.some((item) => /no security-sensitive actions/i.test(item))) {
+        securityNotes.push("No security-sensitive actions are involved.");
+      }
+      handled = true;
+    }
+
+    if (/trigger/.test(normalized) && looksLikeSimpleTopicBulletSkill) {
+      if (!triggerIntents.includes("summarize_topic_to_markdown_bullets")) {
+        triggerIntents.push("summarize_topic_to_markdown_bullets");
+      }
+      handled = true;
+    }
+
+    if (!handled) {
+      remainingQuestions.push(question);
+    }
+  }
+
+  if (remainingQuestions.length > 0) {
+    return analyzerResult;
+  }
+
+  spec["outputs"] = outputs;
+  spec["successTests"] = successTests;
+  spec["constraints"] = constraints;
+  spec["externalDependencies"] = externalDependencies;
+  spec["securityNotes"] = securityNotes;
+  spec["triggers"] = {
+    ...triggerRecord,
+    intents: triggerIntents,
+    phrases: normalizeStringArrayField(triggerRecord["phrases"]),
+  };
+
+  return {
+    state: "ready_for_generation",
+    questions: [],
+    spec,
+  };
+}
+
 // ─── Factory ───
 
 export function createFridaySkillGeneratorService(
@@ -532,6 +678,32 @@ export function createFridaySkillGeneratorService(
     return false;
   }
 
+  function buildGenerationContract(
+    session: FridaySkillGenerationSession,
+    spec: Record<string, unknown> | null,
+    turns?: FridaySkillGenerationTurn[],
+  ): FridaySkillGenerationContract {
+    return extractFridaySkillGenerationContract({
+      goal: session.goal,
+      spec,
+      turns,
+    });
+  }
+
+  function buildContractSuccessTests(contract: FridaySkillGenerationContract): string[] {
+    const tests: string[] = [];
+    if (contract.expectedSkillId) {
+      tests.push(`Manifest id stays exactly "${contract.expectedSkillId}".`);
+    }
+    if (contract.expectedVersion) {
+      tests.push(`Manifest version stays exactly "${contract.expectedVersion}".`);
+    }
+    for (const marker of contract.requiredOutputMarkers) {
+      tests.push(`Runtime output includes exact marker "${marker}".`);
+    }
+    return tests;
+  }
+
   function buildHarnessSummaryFromSession(
     session: FridaySkillGenerationSession,
     qaVerdict?: FridayHarnessQaVerdictV1 | null,
@@ -550,6 +722,7 @@ export function createFridaySkillGeneratorService(
   function buildSkillPlanningSpecArtifact(
     session: FridaySkillGenerationSession,
     spec: Record<string, unknown> | null,
+    contract: FridaySkillGenerationContract,
   ): FridayHarnessPlanningSpecV1 {
     const summary =
       (spec ? extractString(spec, "summary") ?? extractString(spec, "description") ?? extractString(spec, "name") : undefined)
@@ -565,7 +738,10 @@ export function createFridaySkillGeneratorService(
       unknowns: [...session.openQuestions],
       outOfScope: spec ? extractStringArray(spec, "outOfScope") : [],
       constraints: spec ? extractStringArray(spec, "constraints") : [],
-      successTests: spec ? extractStringArray(spec, "successTests") : [],
+      successTests: [
+        ...(spec ? extractStringArray(spec, "successTests") : []),
+        ...buildContractSuccessTests(contract),
+      ],
       openQuestions: [...session.openQuestions],
       createdAt: deps.nowIso(),
       updatedAt: deps.nowIso(),
@@ -576,6 +752,7 @@ export function createFridaySkillGeneratorService(
     session: FridaySkillGenerationSession,
     planningSpec: FridayHarnessPlanningSpecV1,
     spec: Record<string, unknown> | null,
+    contract: FridaySkillGenerationContract,
   ): FridayHarnessDeliveryContractV1 {
     const evidenceRequirements: FridayHarnessDeliveryContractV1["evidenceRequirements"] = [
       "generator_validation",
@@ -607,6 +784,9 @@ export function createFridaySkillGeneratorService(
         "validation.ok must be true",
         "explicit self-test must pass",
         "staged verification must pass",
+        ...(contract.expectedSkillId ? [`manifest.id must remain exactly "${contract.expectedSkillId}"`] : []),
+        ...(contract.expectedVersion ? [`manifest.version must remain exactly "${contract.expectedVersion}"`] : []),
+        ...contract.requiredOutputMarkers.map((marker) => `runtime output must include exact marker "${marker}"`),
         ...(evidenceRequirements.includes("browser_qa")
           ? ["browser QA evidence must be present"]
           : []),
@@ -745,23 +925,24 @@ export function createFridaySkillGeneratorService(
     }
 
     const spec = parseCurrentSpec(session);
+    const generationContract = buildGenerationContract(session, spec);
     const planningSpec = harness.createOrUpdatePlanningSpec(
-      buildSkillPlanningSpecArtifact(session, spec),
+      buildSkillPlanningSpecArtifact(session, spec, generationContract),
     );
 
-    const contract = session.status === "needs_clarification" && session.openQuestions.length > 0
+    const deliveryContract = session.status === "needs_clarification" && session.openQuestions.length > 0
       ? null
       : harness.createOrUpdateDeliveryContract(
-        buildSkillDeliveryContractArtifact(session, planningSpec, spec),
+        buildSkillDeliveryContractArtifact(session, planningSpec, spec, generationContract),
       );
 
     let qaVerdict: FridayHarnessQaVerdictV1 | null = null;
-    if (draft && contract) {
+    if (draft && deliveryContract) {
       const missingEvidenceReasons: string[] = [];
-      if (contract.evidenceRequirements.includes("skill_self_test") && !session.explicitTest) {
+      if (deliveryContract.evidenceRequirements.includes("skill_self_test") && !session.explicitTest) {
         missingEvidenceReasons.push("Explicit self-test has not been run yet.");
       }
-      if (contract.evidenceRequirements.includes("browser_qa")) {
+      if (deliveryContract.evidenceRequirements.includes("browser_qa")) {
         missingEvidenceReasons.push("Required browser QA evidence has not been attached.");
       }
 
@@ -774,7 +955,7 @@ export function createFridaySkillGeneratorService(
         existingQaVerdictId: session.qaVerdictId,
         scopeKind: "skill_generator",
         scopeId: session.sessionId,
-        deliveryContract: contract,
+        deliveryContract,
         missingEvidenceReasons,
         evidenceRefs: [
           `skill-generator-session:${session.sessionId}`,
@@ -887,7 +1068,7 @@ export function createFridaySkillGeneratorService(
             : "Skill generator state recorded."),
       completedWork: [
         planningSpec.artifactId ? "Planning spec recorded." : "",
-        contract?.artifactId ? "Delivery contract recorded." : "",
+        deliveryContract?.artifactId ? "Delivery contract recorded." : "",
         draft ? "Draft generated." : "",
       ].filter(Boolean),
       remainingWork: buildSkillNextActions({ session, qaVerdict: effectiveQaVerdict }),
@@ -898,7 +1079,7 @@ export function createFridaySkillGeneratorService(
       nextActions: buildSkillNextActions({ session, qaVerdict: effectiveQaVerdict }),
       artifactRefs: [
         planningSpec.artifactId,
-        contract?.artifactId,
+        deliveryContract?.artifactId,
         effectiveQaVerdict?.artifactId,
       ].filter((value): value is string => typeof value === "string"),
       createdAt: deps.nowIso(),
@@ -910,7 +1091,7 @@ export function createFridaySkillGeneratorService(
       harnessStage: stage,
       planningSpecId: planningSpec.artifactId,
       deliveryContractId:
-        contract?.artifactId
+        deliveryContract?.artifactId
         ?? (session.status === "approved" || session.status === "saved" ? session.deliveryContractId : undefined),
       qaVerdictId: effectiveQaVerdict?.artifactId,
       handoffArtifactId: handoff.artifactId,
@@ -1023,9 +1204,10 @@ export function createFridaySkillGeneratorService(
   async function generateManifest(
     session: FridaySkillGenerationSession,
     spec: Record<string, unknown>,
+    contract: FridaySkillGenerationContract,
     requestedModel?: string,
   ): Promise<SkillManifestV2> {
-    const prompt = buildManifestPrompt(spec);
+    const prompt = buildManifestPrompt(spec, contract);
     let parsed: unknown;
     try {
       const result = await llm.infer<unknown>({
@@ -1072,9 +1254,10 @@ export function createFridaySkillGeneratorService(
     session: FridaySkillGenerationSession,
     manifest: SkillManifestV2,
     runtimeKind: "shell" | "node",
+    contract: FridaySkillGenerationContract,
     requestedModel?: string,
   ): Promise<FridayGeneratedSkillFile[]> {
-    const prompt = buildCodePrompt(manifest, runtimeKind);
+    const prompt = buildCodePrompt(manifest, runtimeKind, contract);
     let parsed: unknown;
     try {
       const result = await llm.infer<unknown>({
@@ -1162,15 +1345,52 @@ export function createFridaySkillGeneratorService(
     }));
   }
 
+  function validateGenerationContract(
+    manifest: SkillManifestV2,
+    files: FridayGeneratedSkillFile[],
+    contract: FridaySkillGenerationContract,
+  ): FridayGeneratedSkillValidationIssue[] {
+    const issues: FridayGeneratedSkillValidationIssue[] = [];
+    if (contract.expectedSkillId && manifest.id !== contract.expectedSkillId) {
+      issues.push({
+        code: "CONTRACT_SKILL_ID_MISMATCH",
+        severity: "error",
+        message: `Manifest id must remain "${contract.expectedSkillId}" but generated "${manifest.id}"`,
+        path: "manifest.id",
+      });
+    }
+    if (contract.expectedVersion && manifest.version !== contract.expectedVersion) {
+      issues.push({
+        code: "CONTRACT_SKILL_VERSION_MISMATCH",
+        severity: "error",
+        message: `Manifest version must remain "${contract.expectedVersion}" but generated "${manifest.version}"`,
+        path: "manifest.version",
+      });
+    }
+    for (const marker of contract.requiredOutputMarkers) {
+      const found = files.some((file) => file.content.includes(marker));
+      if (!found) {
+        issues.push({
+          code: "CONTRACT_OUTPUT_MARKER_MISSING",
+          severity: "error",
+          message: `Generated bundle does not contain required exact output marker "${marker}"`,
+        });
+      }
+    }
+    return issues;
+  }
+
   function collectAllIssues(
     manifest: SkillManifestV2,
     files: FridayGeneratedSkillFile[],
     uiSchema: FridaySkillUiSchemaV1,
+    contract: FridaySkillGenerationContract,
   ): FridayGeneratedSkillValidationIssue[] {
     const issues: FridayGeneratedSkillValidationIssue[] = [];
     issues.push(...validateManifest(manifest));
     issues.push(...validateGeneratedCode(files, manifest));
     issues.push(...validateUiSchema(uiSchema, manifest));
+    issues.push(...validateGenerationContract(manifest, files, contract));
     return issues;
   }
 
@@ -1179,6 +1399,7 @@ export function createFridaySkillGeneratorService(
     spec: Record<string, unknown>,
     requestedModel?: string,
   ): Promise<FridayGeneratedSkillDraft> {
+    const contract = buildGenerationContract(session, spec);
     let repairedManifest: SkillManifestV2 | undefined;
     let repairedFiles: FridayGeneratedSkillFile[] | undefined;
     let repairedUiSchema: FridaySkillUiSchemaV1 | undefined;
@@ -1205,20 +1426,20 @@ export function createFridaySkillGeneratorService(
 
       try {
         // Step 1: Generate manifest
-        repairedManifest = await generateManifest(session, currentSpec, requestedModel);
+        repairedManifest = await generateManifest(session, currentSpec, contract, requestedModel);
 
         // Determine runtime kind
         const runtimeKind: "shell" | "node" =
           repairedManifest.runtime.kind === "shell" ? "shell" : "node";
 
         // Step 2: Generate code files
-        repairedFiles = await generateCode(session, repairedManifest, runtimeKind, requestedModel);
+        repairedFiles = await generateCode(session, repairedManifest, runtimeKind, contract, requestedModel);
 
         // Step 3: Generate UI schema
         repairedUiSchema = await generateUi(session, repairedManifest, requestedModel);
 
         // Step 4: Validate all artifacts
-        allIssues = collectAllIssues(repairedManifest, repairedFiles, repairedUiSchema);
+        allIssues = collectAllIssues(repairedManifest, repairedFiles, repairedUiSchema, contract);
       } catch (err) {
         // Convert generation/parse/schema errors into validation issues
         // so the repair loop can retry.
@@ -1321,18 +1542,22 @@ export function createFridaySkillGeneratorService(
         [userTurn],
         input.requestedModel,
       );
+      const effectiveAnalyzerResult = autoResolveSkillGeneratorClarifications({
+        goal: input.goal,
+        analyzerResult,
+      });
 
       // Update session based on analyzer result
       const updatedSession: FridaySkillGenerationSession = {
         ...session,
         status:
-          analyzerResult.state === "needs_clarification"
+          effectiveAnalyzerResult.state === "needs_clarification"
             ? "needs_clarification"
             : "generating",
-        specSummary: analyzerResult.spec
-          ? JSON.stringify(analyzerResult.spec)
+        specSummary: effectiveAnalyzerResult.spec
+          ? JSON.stringify(effectiveAnalyzerResult.spec)
           : session.specSummary,
-        openQuestions: analyzerResult.questions ?? [],
+        openQuestions: effectiveAnalyzerResult.questions ?? [],
         updatedAt: deps.nowIso(),
       };
 
@@ -1341,8 +1566,8 @@ export function createFridaySkillGeneratorService(
 
       // Add assistant turn with questions or spec
       const assistantContent =
-        analyzerResult.state === "needs_clarification"
-          ? analyzerResult.questions.join("\n")
+        effectiveAnalyzerResult.state === "needs_clarification"
+          ? effectiveAnalyzerResult.questions.join("\n")
           : "Requirements complete. Generating skill...";
 
       const assistantTurn: FridaySkillGenerationTurn = {
@@ -1355,11 +1580,11 @@ export function createFridaySkillGeneratorService(
       repo.addTurn(assistantTurn);
 
       // If ready for generation, run the pipeline
-      if (analyzerResult.state === "ready_for_generation") {
+      if (effectiveAnalyzerResult.state === "ready_for_generation") {
         try {
           const draft = await runGenerationPipeline(
             syncedUpdated.session,
-            analyzerResult.spec,
+            effectiveAnalyzerResult.spec,
             input.requestedModel,
           );
 
@@ -1373,7 +1598,7 @@ export function createFridaySkillGeneratorService(
           const syncedFinal = await syncSkillHarness(finalSession, draft);
           persistSession(syncedFinal.session);
 
-          return buildTurnResponse(syncedFinal.session, analyzerResult, draft);
+          return buildTurnResponse(syncedFinal.session, effectiveAnalyzerResult, draft);
         } catch (err) {
           const failedSession: FridaySkillGenerationSession = {
             ...syncedUpdated.session,
@@ -1398,7 +1623,7 @@ export function createFridaySkillGeneratorService(
         }
       }
 
-      return buildTurnResponse(syncedUpdated.session, analyzerResult);
+      return buildTurnResponse(syncedUpdated.session, effectiveAnalyzerResult);
     },
 
     async submitTurn(
@@ -1441,21 +1666,25 @@ export function createFridaySkillGeneratorService(
         allTurns,
         input.requestedModel,
       );
+      const effectiveAnalyzerResult = autoResolveSkillGeneratorClarifications({
+        goal: session.goal,
+        analyzerResult,
+      });
 
       // Update session
       const updatedSession: FridaySkillGenerationSession = {
         ...session,
         status:
-          analyzerResult.state === "needs_clarification"
+          effectiveAnalyzerResult.state === "needs_clarification"
             ? "needs_clarification"
             : "generating",
-        specSummary: analyzerResult.spec
-          ? JSON.stringify(analyzerResult.spec)
+        specSummary: effectiveAnalyzerResult.spec
+          ? JSON.stringify(effectiveAnalyzerResult.spec)
           : session.specSummary,
-        openQuestions: analyzerResult.questions ?? [],
+        openQuestions: effectiveAnalyzerResult.questions ?? [],
         decisions: [
           ...session.decisions,
-          ...(analyzerResult.spec
+          ...(effectiveAnalyzerResult.spec
             ? [`User provided: ${input.message}`]
             : []),
         ],
@@ -1469,8 +1698,8 @@ export function createFridaySkillGeneratorService(
 
       // Add assistant turn
       const assistantContent =
-        analyzerResult.state === "needs_clarification"
-          ? analyzerResult.questions.join("\n")
+        effectiveAnalyzerResult.state === "needs_clarification"
+          ? effectiveAnalyzerResult.questions.join("\n")
           : "Requirements complete. Generating skill...";
 
       const assistantTurn: FridaySkillGenerationTurn = {
@@ -1483,11 +1712,11 @@ export function createFridaySkillGeneratorService(
       repo.addTurn(assistantTurn);
 
       // If ready, generate
-      if (analyzerResult.state === "ready_for_generation") {
+      if (effectiveAnalyzerResult.state === "ready_for_generation") {
         try {
           const draft = await runGenerationPipeline(
             syncedUpdated.session,
-            analyzerResult.spec,
+            effectiveAnalyzerResult.spec,
             input.requestedModel,
           );
 
@@ -1501,7 +1730,7 @@ export function createFridaySkillGeneratorService(
           const syncedFinal = await syncSkillHarness(finalSession, draft);
           persistSession(syncedFinal.session);
 
-          return buildTurnResponse(syncedFinal.session, analyzerResult, draft);
+          return buildTurnResponse(syncedFinal.session, effectiveAnalyzerResult, draft);
         } catch (err) {
           const failedSession: FridaySkillGenerationSession = {
             ...syncedUpdated.session,
@@ -1526,7 +1755,7 @@ export function createFridaySkillGeneratorService(
         }
       }
 
-      return buildTurnResponse(syncedUpdated.session, analyzerResult);
+      return buildTurnResponse(syncedUpdated.session, effectiveAnalyzerResult);
     },
 
     async getSession(sessionId: string) {

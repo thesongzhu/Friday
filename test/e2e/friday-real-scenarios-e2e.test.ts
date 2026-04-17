@@ -28,14 +28,12 @@ import type { FridayHub } from "#hub";
 import { createFridayHttpServer } from "#api";
 import type { FridayHttpServer } from "#api";
 import { parseArgs } from "../../src/cli/friday-cli.js";
-import Database from "better-sqlite3";
 import {
-  createFridayOAuthCredentialStore,
-  FRIDAY_ANTHROPIC_OAUTH_CLIENT_ID,
-  FRIDAY_ANTHROPIC_OAUTH_TOKEN_URL,
-} from "#providers";
-import type { FridayOAuthTokenSet } from "#providers";
-import type { FridaySqliteLayer } from "#state";
+  hasLiveAnthropicApiKey,
+  liveAnthropicCredentialMessage,
+  LIVE_ANTHROPIC_MODEL as MODEL,
+  resolveLiveAnthropicApiKeyEnvRef,
+} from "./_helpers/live-anthropic.js";
 
 // ─── Env guard ───
 
@@ -45,10 +43,8 @@ const CORE_E2E_ENABLED =
 const ANTHROPIC_E2E_ENABLED =
   process.env.FRIDAY_E2E_LIVE_ANTHROPIC === "1" ||
   !!process.env.FRIDAY_LLM_E2E;
-const ACCESS_TOKEN_DIRECT = process.env.FRIDAY_ANTHROPIC_OAUTH_ACCESS_TOKEN ?? "";
-const REFRESH_TOKEN = process.env.FRIDAY_ANTHROPIC_OAUTH_REFRESH_TOKEN ?? "";
-const HAS_LLM_CREDENTIAL = !!(ACCESS_TOKEN_DIRECT || REFRESH_TOKEN);
-const MODEL = "claude-sonnet-4-20250514";
+const HAS_LLM_CREDENTIAL = hasLiveAnthropicApiKey();
+const LIVE_ANTHROPIC_API_KEY_ENV_REF = resolveLiveAnthropicApiKeyEnvRef();
 
 // ─── Helpers ───
 
@@ -1575,117 +1571,9 @@ echo '{"greeting": "hello from converted skill"}'
 // ════════════════════════════════════════════════════════════════════════════════
 // LLM-DEPENDENT SCENARIOS (1, 2, 3, 4, 11)
 //
-// These require a real Anthropic OAuth credential to run. Skipped when
-// FRIDAY_ANTHROPIC_OAUTH_ACCESS_TOKEN (or refresh token) is not set.
+// These require a real Anthropic API key to run. Skipped when
+// FRIDAY_ANTHROPIC_API_KEY (or legacy ANTHROPIC_API_KEY) is not set.
 // ════════════════════════════════════════════════════════════════════════════════
-
-/**
- * Seed Anthropic OAuth credentials into the hub's SQLite database so the
- * provider service can authenticate against the real Anthropic API.
- */
-async function seedOAuthCredentials(
-  stateDir: string,
-  providerId: string,
-): Promise<void> {
-  const dbPath = path.join(stateDir, "friday.db");
-  const seedDb = new Database(dbPath);
-
-  try {
-    let tokenSet: FridayOAuthTokenSet;
-
-    if (ACCESS_TOKEN_DIRECT) {
-      tokenSet = {
-        accessToken: ACCESS_TOKEN_DIRECT,
-        refreshToken: REFRESH_TOKEN || "unused",
-        expiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
-        tokenType: "Bearer",
-        scope: "org:create_api_key user:profile user:inference",
-      };
-    } else if (REFRESH_TOKEN) {
-      const tokenResponse = await fetch(FRIDAY_ANTHROPIC_OAUTH_TOKEN_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          grant_type: "refresh_token",
-          client_id: FRIDAY_ANTHROPIC_OAUTH_CLIENT_ID,
-          refresh_token: REFRESH_TOKEN,
-        }),
-      });
-
-      if (!tokenResponse.ok) {
-        const errText = await tokenResponse.text();
-        throw new Error(
-          `OAuth token refresh failed (HTTP ${String(tokenResponse.status)}): ${errText}`,
-        );
-      }
-
-      const tokenData = (await tokenResponse.json()) as {
-        access_token: string;
-        refresh_token: string;
-        expires_in: number;
-        token_type: string;
-        scope?: string;
-      };
-
-      // Use minimum 1 hour expiry to prevent token expiring mid-test
-      const minExpiryMs = Math.max(
-        tokenData.expires_in * 1000 - 5 * 60 * 1000,
-        60 * 60 * 1000,
-      );
-      tokenSet = {
-        accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token,
-        expiresAt: new Date(Date.now() + minExpiryMs).toISOString(),
-        tokenType: tokenData.token_type,
-        scope:
-          tokenData.scope ??
-          "org:create_api_key user:profile user:inference",
-      };
-    } else {
-      throw new Error("No OAuth credential available");
-    }
-
-    const seedDbLayer: FridaySqliteLayer = {
-      dbPath,
-      writer: seedDb,
-      reads: {
-        size: 1,
-        withReadConnection<T>(fn: (d: Database.Database) => T): T {
-          return fn(seedDb);
-        },
-        close() {},
-      },
-      withWriteTransaction<T>(fn: (writerDb: Database.Database) => T): T {
-        return seedDb.transaction(() => fn(seedDb))();
-      },
-      withReadConnection<T>(fn: (d: Database.Database) => T): T {
-        return fn(seedDb);
-      },
-      checkpoint() {},
-      optimize() {},
-      close() {
-        seedDb.close();
-      },
-    };
-
-    let idCounter = 0;
-    const credentialStore = createFridayOAuthCredentialStore({
-      db: seedDbLayer,
-      idGenerator: () => `seed-cred-${String(++idCounter)}`,
-      nowIso: () => new Date().toISOString(),
-    });
-
-    credentialStore.upsert({
-      providerProfileId: providerId,
-      oauthProvider: "anthropic",
-      tokenSet,
-    });
-
-    seedDb.pragma("wal_checkpoint(FULL)");
-  } finally {
-    seedDb.close();
-  }
-}
 
 describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
   "Friday Real Scenarios E2E (LLM)",
@@ -1735,16 +1623,21 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
       }
       accessToken = loginJson.data.accessToken;
 
-      // Create Anthropic provider (OAuth mode)
+      if (!LIVE_ANTHROPIC_API_KEY_ENV_REF) {
+        throw new Error(liveAnthropicCredentialMessage());
+      }
+
+      // Create Anthropic provider (API key mode)
       const createProviderRes = await fetch(`${baseUrl}/v1/providers`, {
         method: "POST",
         headers: authHeaders(accessToken),
         body: JSON.stringify({
           kind: "anthropic",
-          name: "Anthropic OAuth (Scenario E2E)",
+          name: "Anthropic API Key (Scenario E2E)",
           baseUrl: "https://api.anthropic.com",
-          authMode: "oauth",
+          authMode: "api-key",
           api: "anthropic-messages",
+          apiKey: LIVE_ANTHROPIC_API_KEY_ENV_REF,
           supportedModels: [MODEL],
           defaultModel: MODEL,
           enabled: true,
@@ -1772,9 +1665,6 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
       if (!routingRes.ok) {
         throw new Error(`Routing config failed: ${String(routingRes.status)}`);
       }
-
-      // Seed OAuth credentials
-      await seedOAuthCredentials(stateDir, providerId);
     }, 60_000);
 
     afterAll(async () => {
@@ -2605,6 +2495,8 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
     describe("Scenario 11: Multi-turn Conversation Gen", () => {
       let sessionId: string;
       let generationSucceeded = false;
+      let latestMode: string | null = null;
+      let existingDraft = false;
 
       it(
         "11.1: Start with vague goal",
@@ -2633,6 +2525,8 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
           };
           expect(json.ok).toBe(true);
           sessionId = json.data.session.sessionId;
+          latestMode = json.data.mode;
+          existingDraft = false;
           // Vague goal should trigger clarification
           expect(json.data.mode).toBe("clarification_required");
           expect(json.data.questions).toBeTruthy();
@@ -2663,9 +2557,15 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
               session: { sessionId: string };
               mode: string;
               questions?: string[];
+              draft?: {
+                manifest: Record<string, unknown>;
+                files: Array<{ path: string; content: string }>;
+              };
             };
           };
           expect(json.ok).toBe(true);
+          latestMode = json.data.mode;
+          existingDraft = !!json.data.draft;
           // Mode depends on LLM judgment — any valid mode is acceptable
           expect([
             "clarification_required",
@@ -2673,12 +2573,15 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
             "generation_failed",
           ]).toContain(json.data.mode);
         },
-        60_000,
+        120_000,
       );
 
       it(
         "11.3: Provide remaining details",
         async () => {
+          if (latestMode !== "clarification_required") {
+            return;
+          }
           const res = await fetch(
             `${baseUrl}/v1/skills/generator/sessions/${sessionId}/messages`,
             {
@@ -2692,10 +2595,21 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
             },
           );
           expect(res.status).toBe(200);
-          const json = (await res.json()) as { ok: boolean };
+          const json = (await res.json()) as {
+            ok: boolean;
+            data?: {
+              mode?: string;
+              draft?: {
+                manifest: Record<string, unknown>;
+                files: Array<{ path: string; content: string }>;
+              };
+            };
+          };
           expect(json.ok).toBe(true);
+          latestMode = typeof json.data?.mode === "string" ? json.data.mode : latestMode;
+          existingDraft = !!json.data?.draft;
         },
-        30_000,
+        120_000,
       );
 
       it(
@@ -2723,6 +2637,11 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
       it(
         "11.5: Generate draft",
         async () => {
+          if (existingDraft || latestMode === "preview_ready") {
+            generationSucceeded = true;
+            return;
+          }
+
           const res = await fetch(
             `${baseUrl}/v1/skills/generator/sessions/${sessionId}/generate`,
             {

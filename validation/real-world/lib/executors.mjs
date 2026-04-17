@@ -859,9 +859,18 @@ async function executeSkillGeneratorLoop({ artifact, client, scenario }) {
   const testResult = await client.api("POST", `/v1/skills/generator/sessions/${encodeURIComponent(sessionId)}/test`, {});
   const evidence = await client.api("GET", `/v1/skills/generator/sessions/${encodeURIComponent(sessionId)}/evidence`);
   let approve = null;
+  let savedSkill = null;
+  let runResult = null;
   const approvalReady = evidence.data.evidence?.approvalReadiness?.ready === true;
   if (scenario.execution.approve === true && approvalReady) {
     approve = await client.api("POST", `/v1/skills/generator/sessions/${encodeURIComponent(sessionId)}/approve`, {});
+    const skillId = approve.data.skillId;
+    savedSkill = await client.api("GET", `/v1/skills/${encodeURIComponent(skillId)}`);
+    runResult = await client.api("POST", `/v1/skills/${encodeURIComponent(skillId)}/run`, {
+      input: {
+        task: "Return the generated proof output.",
+      },
+    });
   } else if (scenario.execution.approve === true && !approvalReady) {
     artifact.notes = [...(artifact.notes ?? []), "approval skipped because evidence.approvalReadiness.ready is false"];
   }
@@ -870,6 +879,8 @@ async function executeSkillGeneratorLoop({ artifact, client, scenario }) {
     `draft validation ${generate.data.draft?.validation?.ok === true ? "ok" : "failed"}`,
     `self-test ${testResult.data.test?.ok === true ? "ok" : "failed"}`,
     `approval readiness ${evidence.data.evidence?.approvalReadiness?.ready === true ? "ready" : "not-ready"}`,
+    ...(approve ? [`approved skill ${approve.data.skillId}`] : []),
+    ...(runResult ? [`saved skill run ${runResult.data?.status === "completed" ? "completed" : "failed"}`] : []),
   );
   artifact.metrics = {
     ...(artifact.metrics ?? {}),
@@ -884,8 +895,14 @@ async function executeSkillGeneratorLoop({ artifact, client, scenario }) {
     test: testResult.data.test,
     evidence: evidence.data.evidence,
     approve: approve?.data ?? null,
+    savedSkill: savedSkill?.data ?? null,
+    runResult: runResult?.data ?? null,
   };
-  artifact.result = testResult.data.test?.ok === true ? "passed" : "failed";
+  artifact.result =
+    testResult.data.test?.ok === true &&
+    (scenario.execution.approve !== true || runResult?.data?.status === "completed")
+      ? "passed"
+      : "failed";
   artifact.failureClass = artifact.result === "passed" ? undefined : "generator";
   return artifact;
 }

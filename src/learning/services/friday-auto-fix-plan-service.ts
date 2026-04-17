@@ -34,6 +34,12 @@ export function createFridayAutoFixPlanService(
     buildPlans(input) {
       const { incident, diagnosis, matchedLessons, recurrenceCount } = input;
       const plans: FridayAutoFixPlan[] = [];
+      const fallbackProviderIds = Array.isArray(incident.context.fallbackProviderIds)
+        ? incident.context.fallbackProviderIds.filter(
+            (providerId): providerId is string => typeof providerId === "string" && providerId.trim().length > 0,
+          )
+        : [];
+      const preferredFallbackProviderId = fallbackProviderIds[0];
       const basePayload: JsonObject = {
         incidentId: incident.incidentId,
         category: incident.category,
@@ -44,6 +50,16 @@ export function createFridayAutoFixPlanService(
         ...(typeof incident.context.actualProviderId === "string" ? { actualProviderId: incident.context.actualProviderId } : {}),
         ...(typeof incident.context.model === "string" ? { model: incident.context.model } : {}),
         ...(typeof incident.context.actualModel === "string" ? { actualModel: incident.context.actualModel } : {}),
+        ...(fallbackProviderIds.length > 0
+          ? {
+              fallbackProviderIds,
+              fallbackProviderId: preferredFallbackProviderId,
+              nextProviderId: preferredFallbackProviderId,
+            }
+          : {}),
+        ...(typeof incident.context.enforceRequestedModel === "boolean"
+          ? { enforceRequestedModel: incident.context.enforceRequestedModel }
+          : {}),
       };
 
       if (matchedLessons.length === 0) {
@@ -75,7 +91,11 @@ export function createFridayAutoFixPlanService(
         };
 
         // Tier 1 steps MUST include rollback plans
-        if (stepKind === "apply_config_patch" || stepKind === "grant_permission") {
+        if (
+          stepKind === "apply_config_patch" ||
+          stepKind === "grant_permission" ||
+          stepKind === "switch_model_fallback"
+        ) {
           plan.rollbackPlan = {
             summary: `Revert ${stepKind} for ${incident.category}`,
             steps: [
@@ -85,6 +105,33 @@ export function createFridayAutoFixPlanService(
                   target: incident.runId ?? incident.nodeId ?? incident.category,
                   payload: {
                     revert: true,
+                    ...(stepKind === "switch_model_fallback"
+                      ? {
+                          restoreProviderId:
+                            (typeof incident.context.actualProviderId === "string"
+                              ? incident.context.actualProviderId
+                              : typeof incident.context.providerId === "string"
+                                ? incident.context.providerId
+                                : undefined),
+                          restoreModel:
+                            (typeof incident.context.actualModel === "string"
+                              ? incident.context.actualModel
+                              : typeof incident.context.model === "string"
+                                ? incident.context.model
+                                : undefined),
+                          ...(Array.isArray(incident.context.fallbackProviderIds)
+                            ? {
+                                restoreFallbackProviderIds: incident.context.fallbackProviderIds.filter(
+                                  (providerId): providerId is string =>
+                                    typeof providerId === "string" && providerId.trim().length > 0,
+                                ),
+                              }
+                            : {}),
+                          ...(typeof incident.context.enforceRequestedModel === "boolean"
+                            ? { restoreEnforceRequestedModel: incident.context.enforceRequestedModel }
+                            : {}),
+                        }
+                      : {}),
                     ...basePayload,
                   },
                 },
@@ -127,7 +174,11 @@ export function createFridayAutoFixPlanService(
         };
 
         // Add rollback plan for config patches
-        if (stepKind === "apply_config_patch" || stepKind === "grant_permission") {
+        if (
+          stepKind === "apply_config_patch" ||
+          stepKind === "grant_permission" ||
+          stepKind === "switch_model_fallback"
+        ) {
           plan.rollbackPlan = {
             summary: `Revert config change for ${lesson.title}`,
             steps: [
@@ -137,6 +188,33 @@ export function createFridayAutoFixPlanService(
                   target: incident.runId ?? incident.nodeId ?? incident.category,
                   payload: {
                     revert: true,
+                    ...(stepKind === "switch_model_fallback"
+                      ? {
+                          restoreProviderId:
+                            (typeof incident.context.actualProviderId === "string"
+                              ? incident.context.actualProviderId
+                              : typeof incident.context.providerId === "string"
+                                ? incident.context.providerId
+                                : undefined),
+                          restoreModel:
+                            (typeof incident.context.actualModel === "string"
+                              ? incident.context.actualModel
+                              : typeof incident.context.model === "string"
+                                ? incident.context.model
+                                : undefined),
+                          ...(Array.isArray(incident.context.fallbackProviderIds)
+                            ? {
+                                restoreFallbackProviderIds: incident.context.fallbackProviderIds.filter(
+                                  (providerId): providerId is string =>
+                                    typeof providerId === "string" && providerId.trim().length > 0,
+                                ),
+                              }
+                            : {}),
+                          ...(typeof incident.context.enforceRequestedModel === "boolean"
+                            ? { restoreEnforceRequestedModel: incident.context.enforceRequestedModel }
+                            : {}),
+                        }
+                      : {}),
                     ...basePayload,
                     lessonId: lesson.id,
                   },

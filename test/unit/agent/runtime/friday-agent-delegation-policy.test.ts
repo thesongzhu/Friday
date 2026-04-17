@@ -28,6 +28,26 @@ describe("shouldDelegateFridayAgentTask", () => {
     })).toBe(false);
   });
 
+  it("keeps lightweight follow-up memory tasks on the main agent even when they mention session facts", () => {
+    expect(shouldDelegateFridayAgentTask({
+      task: "Acknowledge the new fact in one short sentence and keep earlier session facts available for later recall.",
+      conversationContext: { turnKind: "follow_up" },
+    })).toBe(false);
+  });
+
+  it("does not auto-delegate continue-active-task turns without an explicit action", () => {
+    expect(shouldDelegateFridayAgentTask({
+      task: "Keep the earlier facts available for later recall.",
+      conversationContext: { turnKind: "continue_active_task" },
+    })).toBe(false);
+  });
+
+  it("keeps explicit autonomous tool requests on the main agent", () => {
+    expect(shouldDelegateFridayAgentTask({
+      task: "Mandatory: call autonomous tool exactly once to open example.com and capture the page title.",
+    })).toBe(false);
+  });
+
   it("delegates operational or multi-step work", () => {
     expect(shouldDelegateFridayAgentTask({
       task: "Open Facebook in the browser and tell me what is on the page.",
