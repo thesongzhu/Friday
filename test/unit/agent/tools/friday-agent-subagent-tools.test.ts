@@ -249,6 +249,25 @@ describe("FridayAgentSubagentTools", () => {
       }));
     });
 
+    it("does not leak the parent taskPrompt into the child task input", async () => {
+      const registry = mockRegistry();
+      const tools = createFridayAgentSubagentTools({
+        registry,
+        subagentContext: makeContext(),
+      });
+
+      const spawnTool = tools.find((t) => t.name === "spawn_subagent")!;
+      await spawnTool.execute(
+        { task: "Child-only task" },
+        signalWithContext({ taskPrompt: "Parent task prompt that must stay in the parent run" }),
+      );
+
+      const spawnInput = vi.mocked(registry.spawnDetached).mock.calls[0]?.[0];
+      expect(spawnInput).toBeDefined();
+      expect(spawnInput?.task).toBe("Child-only task");
+      expect(spawnInput?.taskPrompt).toBeUndefined();
+    });
+
     it("passes principal and tenant context into the spawned subagent input", async () => {
       const registry = mockRegistry();
       const tools = createFridayAgentSubagentTools({
@@ -488,7 +507,6 @@ describe("FridayAgentSubagentTools", () => {
 
       expect(spawnDetachedFn).toHaveBeenCalledWith(
         expect.objectContaining({
-          taskPrompt: "The user is following up on a specifically referenced earlier exchange.",
           conversationContext: expect.objectContaining({
             replyToMessageId: "discord-assistant-2",
           }),

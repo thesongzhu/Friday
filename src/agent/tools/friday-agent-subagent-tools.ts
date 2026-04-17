@@ -136,7 +136,6 @@ function createSpawnSubagentTool(
       try {
         const spawnInput = {
           task,
-          taskPrompt: toolExecutionContext?.taskPrompt,
           label,
           model,
           profile,

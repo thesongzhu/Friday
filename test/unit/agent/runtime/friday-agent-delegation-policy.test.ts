@@ -48,6 +48,12 @@ describe("shouldDelegateFridayAgentTask", () => {
     })).toBe(false);
   });
 
+  it("keeps explicit subagent tool orchestration requests on the main agent", () => {
+    expect(shouldDelegateFridayAgentTask({
+      task: "Use spawn_subagent exactly once with wait=true, then poll get_subagent until the child completes.",
+    })).toBe(false);
+  });
+
   it("delegates operational or multi-step work", () => {
     expect(shouldDelegateFridayAgentTask({
       task: "Open Facebook in the browser and tell me what is on the page.",
