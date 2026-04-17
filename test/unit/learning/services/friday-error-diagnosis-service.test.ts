@@ -278,6 +278,40 @@ describe("FridayErrorDiagnosisService", () => {
     expect(result.autoFixEligible).toBe(true);
   });
 
+  it("builds disable_skill candidate plans for skills_lifecycle verification failures", () => {
+    const lessonRepo = createFridayLearnedLessonRepository();
+    lessonRepo.upsertByFingerprint(db.writer, {
+      id: "lesson-skill-001",
+      fingerprint: "sig-skill-verify",
+      title: "Disable incompatible skill",
+      cause: "Verification failed after contract drift",
+      fix: "Disable the broken skill until repaired",
+      nowIso: NOW,
+    });
+
+    const skillLifecycleIncident: FridayErrorIncidentEntity = {
+      ...baseIncident,
+      incidentId: "inc-skill-lifecycle",
+      category: "workflow",
+      severity: "medium",
+      signature: "sig-skill-verify",
+      context: {
+        source: "skills_lifecycle",
+        skillId: "extract-action-items",
+        stage: "verify",
+      },
+    };
+    const incidentRepo = createFridayErrorIncidentRepository();
+    incidentRepo.insert(db.writer, skillLifecycleIncident);
+
+    const result = service.diagnose({ incident: skillLifecycleIncident, nowIso: NOW });
+
+    expect(result.autoFixEligible).toBe(true);
+    expect(result.candidatePlans).toHaveLength(1);
+    expect(result.candidatePlans[0]!.steps[0]!.kind).toBe("disable_skill");
+    expect(result.candidatePlans[0]!.steps[0]!.target).toBe("extract-action-items");
+  });
+
   it("preserves workflow run context in lesson-backed retry plans", () => {
     db.writer.prepare(
       `INSERT INTO workflows (

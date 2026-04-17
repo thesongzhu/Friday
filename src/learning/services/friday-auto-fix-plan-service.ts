@@ -27,6 +27,36 @@ const CATEGORY_STEP_MAP: Record<FridayErrorIncidentEntity["category"], FridayAut
   workflow: "retry_node",
 };
 
+function deriveAutoFixStepKind(
+  incident: FridayErrorIncidentEntity,
+): FridayAutoFixStepKind {
+  const source = typeof incident.context.source === "string"
+    ? incident.context.source
+    : undefined;
+  const skillId = typeof incident.context.skillId === "string"
+    ? incident.context.skillId.trim()
+    : "";
+  if (source === "skills_lifecycle" && skillId.length > 0) {
+    return "disable_skill";
+  }
+  return CATEGORY_STEP_MAP[incident.category];
+}
+
+function deriveAutoFixTarget(
+  incident: FridayErrorIncidentEntity,
+  stepKind: FridayAutoFixStepKind,
+): string {
+  if (stepKind === "disable_skill") {
+    const skillId = typeof incident.context.skillId === "string"
+      ? incident.context.skillId.trim()
+      : "";
+    if (skillId.length > 0) {
+      return skillId;
+    }
+  }
+  return incident.runId ?? incident.nodeId ?? incident.category;
+}
+
 export function createFridayAutoFixPlanService(
   deps: CreateAutoFixPlanServiceDeps,
 ): FridayAutoFixPlanService {
@@ -34,6 +64,8 @@ export function createFridayAutoFixPlanService(
     buildPlans(input) {
       const { incident, diagnosis, matchedLessons, recurrenceCount } = input;
       const plans: FridayAutoFixPlan[] = [];
+      const stepKind = deriveAutoFixStepKind(incident);
+      const target = deriveAutoFixTarget(incident, stepKind);
       const fallbackProviderIds = Array.isArray(incident.context.fallbackProviderIds)
         ? incident.context.fallbackProviderIds.filter(
             (providerId): providerId is string => typeof providerId === "string" && providerId.trim().length > 0,
@@ -64,7 +96,6 @@ export function createFridayAutoFixPlanService(
 
       if (matchedLessons.length === 0) {
         // No lessons: generate a single retry-based plan
-        const stepKind = CATEGORY_STEP_MAP[incident.category];
         const plan: FridayAutoFixPlan = {
           title: `Auto-fix: retry ${incident.category}`,
           summary: `Retry the failed ${incident.category} operation`,
@@ -72,7 +103,7 @@ export function createFridayAutoFixPlanService(
             {
               stepId: deps.idGenerator(),
               kind: stepKind,
-              target: incident.runId ?? incident.nodeId ?? incident.category,
+              target,
               payload: {
                 ...basePayload,
               },
@@ -102,7 +133,7 @@ export function createFridayAutoFixPlanService(
                 {
                   stepId: deps.idGenerator(),
                   kind: stepKind,
-                  target: incident.runId ?? incident.nodeId ?? incident.category,
+                  target,
                   payload: {
                     revert: true,
                     ...(stepKind === "switch_model_fallback"
@@ -144,7 +175,6 @@ export function createFridayAutoFixPlanService(
       }
 
       for (const lesson of matchedLessons) {
-        const stepKind = CATEGORY_STEP_MAP[incident.category];
         const plan: FridayAutoFixPlan = {
           title: `Auto-fix: ${lesson.title}`,
           summary: lesson.fix,
@@ -152,7 +182,7 @@ export function createFridayAutoFixPlanService(
             {
               stepId: deps.idGenerator(),
               kind: stepKind,
-              target: incident.runId ?? incident.nodeId ?? incident.category,
+              target,
               payload: {
                 ...basePayload,
                 lessonId: lesson.id,
@@ -185,7 +215,7 @@ export function createFridayAutoFixPlanService(
                 {
                   stepId: deps.idGenerator(),
                   kind: stepKind,
-                  target: incident.runId ?? incident.nodeId ?? incident.category,
+                  target,
                   payload: {
                     revert: true,
                     ...(stepKind === "switch_model_fallback"

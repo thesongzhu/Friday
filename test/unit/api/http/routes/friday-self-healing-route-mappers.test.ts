@@ -146,8 +146,9 @@ describe("friday-self-healing-route-mappers", () => {
       expect(summary.matchedLessonIds).toEqual([]);
     });
 
-    it("extracts matchedLessonIds from lesson when diagnosis has none", () => {
+    it("extracts matchedLessonIds from lesson only when diagnosis is absent", () => {
       const details = makeIncidentDetails({
+        diagnosis: null,
         lesson: {
           id: "lesson-001",
           fingerprint: "sig-abc",
@@ -162,6 +163,37 @@ describe("friday-self-healing-route-mappers", () => {
       });
       const summary = toFridayDiagnosisSummary(details);
       expect(summary.matchedLessonIds).toEqual(["lesson-001"]);
+    });
+
+    it("does not reintroduce lesson ids when diagnosis explicitly matched none", () => {
+      const details = makeIncidentDetails({
+        diagnosis: {
+          id: "diag-004",
+          incidentId: "inc-001",
+          errorFingerprint: "sig-abc",
+          confidence: 0.5,
+          diagnosis: {
+            summary: "Lesson was disabled",
+            matchedLessonIds: [],
+          },
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        lesson: {
+          id: "lesson-001",
+          fingerprint: "sig-abc",
+          title: "Lesson learned",
+          cause: "timeout",
+          fix: "increase timeout",
+          mitigation: {},
+          sourceIncidentId: "inc-001",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      });
+
+      const summary = toFridayDiagnosisSummary(details);
+      expect(summary.matchedLessonIds).toEqual([]);
     });
   });
 

@@ -2,6 +2,7 @@ import { FridayDomainError } from "#errors";
 import {
   FRIDAY_SESSION_ERROR_CODES,
   FRIDAY_SESSION_MEMORY_EXTRACTION_ERROR_CODES,
+  FRIDAY_SESSION_DEFAULT_ACCOUNT_ID,
 } from "#sessions";
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
@@ -147,9 +148,29 @@ async function alignSessionWithPrincipalContext(
   if (!tenantContext) {
     return;
   }
+  const existingSession = await sessionService.getSession(sessionKey).catch(() => null);
+  const normalizedExistingAccountId =
+    typeof existingSession?.accountId === "string" && existingSession.accountId.trim().length > 0
+      ? existingSession.accountId.trim()
+      : undefined;
+  const normalizedExistingUserId =
+    typeof existingSession?.userId === "string" && existingSession.userId.trim().length > 0
+      ? existingSession.userId.trim()
+      : undefined;
+
+  const nextAccountId =
+    !normalizedExistingAccountId || normalizedExistingAccountId === FRIDAY_SESSION_DEFAULT_ACCOUNT_ID
+      ? tenantContext.hubId
+      : undefined;
+  const nextUserId = normalizedExistingUserId ? undefined : tenantContext.userId;
+
+  if (!nextAccountId && !nextUserId) {
+    return;
+  }
+
   await sessionService.alignSessionContext(sessionKey, {
-    accountId: tenantContext.hubId,
-    userId: tenantContext.userId,
+    ...(nextAccountId ? { accountId: nextAccountId } : {}),
+    ...(nextUserId ? { userId: nextUserId } : {}),
   });
 }
 
@@ -766,6 +787,22 @@ export function createFridaySessionRoutes(
           );
         }
 
+        const existingSession = await deps.sessionService.getOrCreateSession(key).catch(() => null);
+        const principalTenantContext = ctx.principal ? buildTenantContext(ctx.principal) : undefined;
+        const tenantContext: FridayProviderTenantContext | undefined = existingSession
+          ? (() => {
+            const hubId = existingSession.accountId?.trim() || principalTenantContext?.hubId?.trim();
+            if (!hubId) {
+              return undefined;
+            }
+            const userId = existingSession.userId?.trim() || principalTenantContext?.userId?.trim();
+            return {
+              hubId,
+              ...(userId ? { userId } : {}),
+            };
+          })()
+          : principalTenantContext;
+
         const run = await deps.runSession({
           sessionKey: key,
           task,
@@ -780,7 +817,7 @@ export function createFridaySessionRoutes(
             ? {
               principalId: ctx.principal.principalId,
               scopes: ctx.principal.scopes,
-              tenantContext: buildTenantContext(ctx.principal),
+              tenantContext,
             }
             : {}),
         });
