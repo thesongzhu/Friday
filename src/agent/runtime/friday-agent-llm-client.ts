@@ -327,9 +327,7 @@ async function* handleOllamaStream(
     { role: "system", content: params.systemPrompt },
     ...params.messages.map((m) => ({
       role: m.role,
-      content: api === "openai-responses"
-        ? mapContentBlocksForOpenAIResponses(m.role, m.content)
-        : (typeof m.content === "string" ? m.content : mapContentBlocksForOpenAI(m.content)),
+      content: typeof m.content === "string" ? m.content : mapContentBlocksForOpenAI(m.content),
     })),
   ];
 
