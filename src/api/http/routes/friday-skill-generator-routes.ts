@@ -13,8 +13,8 @@ import {
   createFridayNodeExecutor,
   createFridayShellExecutor,
   loadFridaySkillPackage,
-  validateFridaySkillPackage,
   type SkillManifestV2,
+  validateFridaySkillPackage,
 } from "#skills";
 import type { FridaySelfHealingApiService } from "#learning";
 import type { FridayObservabilityApiService } from "../../../observability/services/friday-observability-api-service.js";

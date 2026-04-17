@@ -91,12 +91,12 @@ import { createFridayPackagingRoutes } from "../http/routes/friday-packaging-rou
 import {
   buildFridayAgentRunContextSummarySnapshot,
   buildFridayAgentRunHealthSnapshot,
-  createFridayCompactionMemorySink,
   createFridayAgentAutomationRepository,
   createFridayAgentAutomationService,
   createFridayAgentPlanningGateService,
   createFridayAgentRunEventRepository,
   createFridayAgentRunRepository,
+  createFridayCompactionMemorySink,
 } from "#agent";
 import type {
   FridayAgentAutomationService,

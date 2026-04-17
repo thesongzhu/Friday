@@ -13,8 +13,8 @@ import type {
 } from "../../model/friday-api-self-healing.types.js";
 import {
   toFridayDiagnosisIncidentRecord,
-  toFridayNormalizedDiagnosisRecord,
   toFridayDiagnosisSummary,
+  toFridayNormalizedDiagnosisRecord,
 } from "./friday-self-healing-route-mappers.js";
 
 export interface FridayDiagnosisRoutesDeps {
