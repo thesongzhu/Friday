@@ -47,18 +47,26 @@
 
 - Phase 0 substrate: completed on branch `codex/deep-closure-bac8ef2`.
 - Bucket 1 autonomous restart matrix:
-  - Clean rebuild in progress.
+  - Clean rebuild completed and regression-hardened.
   - Code/status:
     - Anthropic-only deep-proof helper landed.
     - direct `toolExecutor` path landed for autonomous actions.
     - deterministic file-state observation/verification landed for autonomous file proofs.
     - Anthropic-only live restart suite landed in `test/e2e/live/friday-autonomous-restart.e2e.test.ts`.
+    - hub surface now exposes `autonomousEngine` for real proof harnesses.
+    - closed SQLite read-pool access now fails explicitly instead of dereferencing an empty connection slot.
+    - shutdown-time compaction-context and new-file realpath noise were reduced so proof logs reflect real failures instead of expected teardown gaps.
+    - browser checkpoint/session readback now suppresses long missing-session false alarms during restart recovery.
   - Verification:
     - targeted unit tests: passed
     - TypeScript/typecheck: passed
-    - real Anthropic proof: blocked in current session because neither `FRIDAY_ANTHROPIC_API_KEY` nor `ANTHROPIC_API_KEY` is present in the environment
-  - Next unblock action:
-    - export `FRIDAY_E2E_LIVE_ANTHROPIC=1`
-    - provide `FRIDAY_ANTHROPIC_API_KEY` (or `ANTHROPIC_API_KEY` alias)
-    - rerun `test/e2e/live/friday-autonomous-restart.e2e.test.ts`
-  - Exit is not satisfied until the live suite produces SQLite/readback-backed evidence.
+    - real Anthropic proof: passed on 2026-04-17 via `FRIDAY_E2E_LIVE_ANTHROPIC=1` + Anthropic API-key lane
+    - live evidence:
+      - planning interruption resumes to verified completion with SQLite/readback-backed file artifact
+      - active execution interruption is classified `interrupted_nonrecoverable` and `resumeGoal` is rejected
+      - verifying interruption resumes same step and avoids duplicate step rows
+    - residual:
+      - verifying live case still needed `retry x1` in the most recent full-suite run, so the matrix is verified but not yet fully de-flaked
+  - Exit:
+    - satisfied for Phase 1 advancement
+    - residual flake remains tracked and must be watched during later phase regressions and final audit

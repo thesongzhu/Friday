@@ -133,12 +133,14 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Ant
       if (resumeResult.status !== "completed") {
         const failureGoal = readAutonomousGoal(env.stateDir!, goalId);
         const failureSteps = listAutonomousSteps(env.stateDir!, goalId);
+        const failureIterations = env.hub!.autonomousEngine.getIterations(goalId);
         throw new Error(
           `Planning resume failed: ${JSON.stringify({
             stateDir: env.stateDir,
             resumeResult,
             failureGoal,
             failureSteps,
+            failureIterations,
           })}`,
         );
       }

@@ -1386,7 +1386,10 @@ export function createFridayAgentRuntime(
               effectiveSystemPrompt += `\n\n${fragment.trim()}`;
             }
           } catch (err) {
-            console.warn("[friday][agent-runtime] compaction-context:", err instanceof Error ? err.message : String(err));
+            const message = err instanceof Error ? err.message : String(err);
+            if (!/sqlite read pool is closed/i.test(message)) {
+              console.warn("[friday][agent-runtime] compaction-context:", message);
+            }
           }
         }
         if (communicationPromptBuilder && principalId) {

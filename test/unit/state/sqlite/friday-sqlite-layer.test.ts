@@ -85,6 +85,7 @@ describe("friday-sqlite-layer", () => {
 
     // Writer should be closed - operations should throw
     expect(() => layer.writer.exec("SELECT 1")).toThrow();
+    expect(() => layer.withReadConnection((db) => db.prepare("SELECT 1").get())).toThrow("SQLite read pool is closed");
   });
 
   it("checkpoint runs without error", () => {

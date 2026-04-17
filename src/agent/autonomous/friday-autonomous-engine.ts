@@ -388,7 +388,7 @@ export function createFridayAutonomousEngine(
       const message = err instanceof Error ? err.message : String(err);
       const expectedMissingSession =
         options?.suppressMissingSessionWarning === true
-        && /session\b[\s\S]{0,24}\bnot found/i.test(message);
+        && /session\b[\s\S]{0,256}\bnot found/i.test(message);
       if (!expectedMissingSession) {
         console.warn("[friday][autonomous-engine] browser url failed:", message);
       }
@@ -432,11 +432,24 @@ export function createFridayAutonomousEngine(
   }
 
   async function collectBrowserCheckpointObservations(
+    step: FridayAutonomousStep,
     stepId: UUID,
     browserSessionId: string,
     signal: AbortSignal,
   ): Promise<FridayAutonomousObservation[]> {
     const checkpoint: FridayAutonomousObservation[] = [];
+    const browserUrl = await captureBrowserUrl(browserSessionId, signal, {
+      suppressMissingSessionWarning: true,
+    });
+    if (!browserUrl) {
+      await ensureBrowserSessionForStep(step, browserSessionId, signal);
+    }
+    const activeUrl = browserUrl ?? await captureBrowserUrl(browserSessionId, signal, {
+      suppressMissingSessionWarning: true,
+    });
+    if (!activeUrl) {
+      return checkpoint;
+    }
 
     const screenshot = await captureBrowserScreenshot(browserSessionId, signal);
     if (screenshot) {
@@ -471,16 +484,13 @@ export function createFridayAutonomousEngine(
       });
     }
 
-    const url = await captureBrowserUrl(browserSessionId, signal);
-    if (url) {
-      checkpoint.push({
-        id: idGenerator(),
-        stepId,
-        source: "tool_result",
-        timestamp: nowIso(),
-        textContent: `PAGE_URL: ${url}`,
-      });
-    }
+    checkpoint.push({
+      id: idGenerator(),
+      stepId,
+      source: "tool_result",
+      timestamp: nowIso(),
+      textContent: `PAGE_URL: ${activeUrl}`,
+    });
 
     return checkpoint;
   }
@@ -1025,7 +1035,9 @@ export function createFridayAutonomousEngine(
             textContent: `PAGE_TITLE: ${title}`,
           });
         }
-        const url = await captureBrowserUrl(browserSessionId, signal);
+        const url = await captureBrowserUrl(browserSessionId, signal, {
+          suppressMissingSessionWarning: true,
+        });
         if (url) {
           obs.push({
             id: idGenerator(),
@@ -1283,9 +1295,14 @@ export function createFridayAutonomousEngine(
       if (domain === "desktop" || domain === "composite") {
         screenshotAfter = (await captureDesktopScreenshot(signal)) ?? undefined;
       } else if (domain === "browser") {
-        screenshotAfter = (await captureBrowserScreenshot(browserSessionId, signal)) ?? undefined;
-        browserTitle = (await captureBrowserTitle(browserSessionId, signal)) ?? undefined;
-        browserUrl = (await captureBrowserUrl(browserSessionId, signal)) ?? undefined;
+        const activeUrl = await captureBrowserUrl(browserSessionId, signal, {
+          suppressMissingSessionWarning: true,
+        });
+        if (activeUrl) {
+          screenshotAfter = (await captureBrowserScreenshot(browserSessionId, signal)) ?? undefined;
+          browserTitle = (await captureBrowserTitle(browserSessionId, signal)) ?? undefined;
+          browserUrl = activeUrl;
+        }
       }
 
       return {
@@ -1735,7 +1752,7 @@ export function createFridayAutonomousEngine(
               });
               actionResult = await executeAction(decision, currentStep.domain, browserSessionId, timezone, principalId, tenantContext, providerId, model, signal);
               if (actionResult.success && currentStep.domain === "browser") {
-                const checkpointObservations = await collectBrowserCheckpointObservations(stepId, browserSessionId, signal);
+                const checkpointObservations = await collectBrowserCheckpointObservations(currentStep, stepId, browserSessionId, signal);
                 if (checkpointObservations.length > 0) {
                   currentStep = updateStep(stepId, {
                     observations: appendObservations(currentStep.observations, checkpointObservations),
