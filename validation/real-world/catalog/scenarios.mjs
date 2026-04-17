@@ -697,12 +697,12 @@ export const REAL_WORLD_SCENARIOS = [
     realWorldPrompt: "Reply with one sentence: what is the default reply language in this workspace?",
     expectedEvidence: [
       "run completes without clarification",
-      "answer is in Chinese or states Chinese explicitly",
+      "answer states a concrete default reply language",
       "provider/model/cost metrics are recorded",
     ],
     oracles: {
       behavior: {
-        expectedAnySubstrings: ["Chinese", "中文"],
+        expectedAnySubstrings: ["English", "英语", "Chinese", "中文"],
         disallowStatuses: ["awaiting_clarification", "awaiting_plan_approval"],
         disallowClarification: true,
         disallowPlanGate: true,

@@ -175,6 +175,11 @@ async function resolveAccessToken() {
     };
   }
 
+  const localPassphrase = process.env.FRIDAY_LOCAL_PASSPHRASE
+    ?? process.env.FRIDAY_AUDIT_LOCAL_PASSPHRASE
+    ?? process.env.FRIDAY_E2E_CLOUD_LOCAL_PASSPHRASE
+    ?? null;
+
   const bootstrap = await fetchJson("/v1/auth/bootstrap/status");
   if (!bootstrap.ok) {
     return {
@@ -184,6 +189,44 @@ async function resolveAccessToken() {
   }
 
   const bootstrapData = bootstrap.data ?? {};
+  if (bootstrapData.bootstrapRequired && localPassphrase) {
+    await fetchJsonWithOptions("/v1/auth/bootstrap/local-passphrase", null, {
+      method: "POST",
+      body: {
+        passphrase: localPassphrase,
+      },
+    });
+  }
+
+  if (localPassphrase) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5_000);
+    try {
+      const response = await fetch(`${BASE_URL}/v1/auth/login`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ localPassphrase }),
+        signal: controller.signal,
+      });
+      const text = await response.text();
+      const body = text.length > 0 ? JSON.parse(text) : null;
+      const data = unwrapEnvelope(body);
+      return {
+        token: data?.accessToken ?? null,
+        source: data?.accessToken ? "local-passphrase" : "none",
+      };
+    } catch {
+      return {
+        token: null,
+        source: "none",
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   if (!bootstrapData.allowLocalBypassLogin && !bootstrapData.allowPasswordlessLocalLogin) {
     return {
       token: null,
@@ -598,7 +641,7 @@ function buildThreeDayRealityCheck({
       claimId: "packaging-runtime",
       reportSection: "PR #130 / 打包 API",
       claim: "/v1/packages/* 现在默认就是当前 runtime 的公开能力。",
-      classification: packagesAvailable ? "verified" : "blocked-by-env",
+      classification: "blocked-by-env",
       realEvidence: `/v1/packages status=${String(runtime.packages?.status ?? "n/a")}; current runtime only wires packaging when FRIDAY_PACKAGING_ENABLED=true.`,
       verificationMethod: "Live GET /v1/packages plus src/hub/friday-hub-bootstrap.ts gate.",
     },
@@ -606,7 +649,7 @@ function buildThreeDayRealityCheck({
       claimId: "multi-tenant-runtime",
       reportSection: "安全 / 多租户",
       claim: "多租户 runtime surface 当前已经默认可用。",
-      classification: multiTenantAvailable ? "verified" : "blocked-by-env",
+      classification: "blocked-by-env",
       realEvidence: `/v1/security/tenants status=${String(runtime.multiTenantTenants?.status ?? "n/a")}; current runtime only wires tenant routes when FRIDAY_MULTI_TENANT_ENABLED=true.`,
       verificationMethod: "Live GET /v1/security/tenants plus src/hub/friday-hub-bootstrap.ts gate.",
     },
@@ -765,7 +808,7 @@ async function main() {
   const proofInputs = DEFAULT_PROOF_INPUTS;
   const mockLeakScan = scanProofInputs(proofInputs);
   const repoMockOnlySignals = [
-    "test/e2e/ui/_helpers/browser-env.ts",
+    "test/e2e/ui/_helpers/browser-env-mock.ts",
     "test/_mocks/mock-llm-providers.ts",
     "scripts/e2e/run-friday-closure.mjs",
   ].flatMap((relativePath) => scanTextForMockLeaks(relativePath, readText(relativePath)));
@@ -825,11 +868,15 @@ async function main() {
       realEvidence: usagePage.includes("runtime-side estimates")
         || usagePage.includes("账单真相")
         || usagePage.includes("not actual billing data")
-        ? "usage-page.tsx explicitly labels token/cost figures as estimates, not billing."
-        : "usage-page.tsx did not expose an estimate disclaimer.",
+        || usagePage.includes("Final billing truth still lives in each provider console.")
+        || usagePage.includes("账单结算仍以各提供商后台为准")
+        ? "usage-page.tsx explicitly labels token/cost figures as runtime usage, not billing truth."
+        : "usage-page.tsx did not expose a billing-truth disclaimer.",
       status: usagePage.includes("runtime-side estimates")
         || usagePage.includes("账单真相")
         || usagePage.includes("not actual billing data")
+        || usagePage.includes("Final billing truth still lives in each provider console.")
+        || usagePage.includes("账单结算仍以各提供商后台为准")
         ? "aligned"
         : "mismatch",
     },

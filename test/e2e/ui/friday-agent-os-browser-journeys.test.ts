@@ -2,10 +2,10 @@ import * as fs from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  createFridayBrowserE2eEnv,
-  type FridayBrowserE2eEnv,
+  createFridayMockBrowserE2eEnv,
+  type FridayMockBrowserE2eEnv,
   type FridayBrowserPageHandle,
-} from "./_helpers/browser-env.js";
+} from "./_helpers/browser-env-mock.js";
 
 const CHROMIUM_AVAILABLE = (() => {
   try {
@@ -209,7 +209,7 @@ async function waitForChat(pageHandle: FridayBrowserPageHandle): Promise<void> {
 }
 
 async function createScheduledAutomation(
-  env: FridayBrowserE2eEnv,
+  env: FridayMockBrowserE2eEnv,
   task: string,
   cron: string,
 ): Promise<string> {
@@ -232,8 +232,8 @@ async function createScheduledAutomation(
   return result.json.data.automation.id;
 }
 
-describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys", () => {
-  let env: FridayBrowserE2eEnv | null = null;
+describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys (mock hub browser E2E)", () => {
+  let env: FridayMockBrowserE2eEnv | null = null;
   let pageHandle: FridayBrowserPageHandle | null = null;
 
   afterEach(async () => {
@@ -248,7 +248,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
   });
 
   it("chat keeps the primary composer interactive on the task-first surface", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
-    env = await createFridayBrowserE2eEnv();
+    env = await createFridayMockBrowserE2eEnv();
     pageHandle = await env.newPage();
     await waitForChat(pageHandle);
 
@@ -281,7 +281,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
   });
 
   it("assistant inbox no longer behaves like the old start page and defers new tasks to chat", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
-    env = await createFridayBrowserE2eEnv();
+    env = await createFridayMockBrowserE2eEnv();
     pageHandle = await env.newPage();
     await waitForAssistantInbox(pageHandle);
 
@@ -291,7 +291,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
   });
 
   it("assistant renders a structured pack handoff when a vertical pack is selected", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
-    env = await createFridayBrowserE2eEnv();
+    env = await createFridayMockBrowserE2eEnv();
     pageHandle = await env.newPage();
     await pageHandle.page.goto("/assistant?packId=industry-creator-media");
     await waitForTestId(pageHandle, "pack-assistant-receipt-industry-creator-media");
@@ -299,7 +299,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
   });
 
   it("packs open through a quick sheet and let the user adjust before starting", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
-    env = await createFridayBrowserE2eEnv();
+    env = await createFridayMockBrowserE2eEnv();
     pageHandle = await env.newPage();
     await pageHandle.page.goto("/packs");
     await waitForTestId(pageHandle, "pack-card-industry-creator-media");
@@ -332,7 +332,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
   });
 
   it("desktop rail stays flush-left and primary nav does not trigger a full reload", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
-    env = await createFridayBrowserE2eEnv();
+    env = await createFridayMockBrowserE2eEnv();
     pageHandle = await env.newPage();
     await pageHandle.page.setViewportSize({ width: 1440, height: 980 });
     await pageHandle.page.goto("/packs");
@@ -356,7 +356,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
   });
 
   it("main surfaces survive repeated navigation and quick-sheet cycles without white-screening", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
-    env = await createFridayBrowserE2eEnv();
+    env = await createFridayMockBrowserE2eEnv();
     pageHandle = await env.newPage();
     await pageHandle.page.goto("/packs");
     await waitForTestId(pageHandle, "pack-card-industry-creator-media");
@@ -402,7 +402,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
   });
 
   it("smart default routes to home when an automation is scheduled soon", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
-    env = await createFridayBrowserE2eEnv();
+    env = await createFridayMockBrowserE2eEnv();
     await createScheduledAutomation(env, "Prepare the hourly status recap", "*/5 * * * *");
 
     pageHandle = await env.newPage();

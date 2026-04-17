@@ -4,10 +4,10 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  createFridayBrowserE2eEnv,
-  type FridayBrowserE2eEnv,
+  createFridayMockBrowserE2eEnv,
+  type FridayMockBrowserE2eEnv,
   type FridayBrowserPageHandle,
-} from "./_helpers/browser-env.js";
+} from "./_helpers/browser-env-mock.js";
 
 const CHROMIUM_AVAILABLE = (() => {
   try {
@@ -41,7 +41,7 @@ function initRepo(root: string): void {
 }
 
 async function executeTemplate<T>(
-  env: FridayBrowserE2eEnv,
+  env: FridayMockBrowserE2eEnv,
   templateId: string,
   parameters: Record<string, unknown>,
 ): Promise<{ status: number; json: ApiEnvelope<T> }> {
@@ -52,8 +52,8 @@ async function executeTemplate<T>(
   );
 }
 
-describe.skipIf(!CHROMIUM_AVAILABLE)("Friday starter skills closeout", () => {
-  let env: FridayBrowserE2eEnv | null = null;
+describe.skipIf(!CHROMIUM_AVAILABLE)("Friday starter skills closeout (mock hub browser E2E)", () => {
+  let env: FridayMockBrowserE2eEnv | null = null;
   let pageHandle: FridayBrowserPageHandle | null = null;
 
   afterEach(async () => {
@@ -68,7 +68,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday starter skills closeout", () => {
   });
 
   it("keeps starter templates discoverable while the new task-first entry surfaces render", { timeout: CLOSEOUT_TIMEOUT_MS }, async () => {
-    env = await createFridayBrowserE2eEnv();
+    env = await createFridayMockBrowserE2eEnv();
 
     const templates = await env.apiFetch<{
       templates: Array<{ id: string }>;
@@ -165,7 +165,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday starter skills closeout", () => {
   });
 
   it("executes representative starter templates end-to-end through the UIX API", { timeout: CLOSEOUT_TIMEOUT_MS }, async () => {
-    env = await createFridayBrowserE2eEnv();
+    env = await createFridayMockBrowserE2eEnv();
     const repoRoot = path.join(env.hubEnv.stateDir, "closeout-repo");
     const liveUrl = `${env.baseUrl}/assistant`;
     fs.mkdirSync(repoRoot, { recursive: true });

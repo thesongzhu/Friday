@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-17T08:02:57.182Z",
+  "generatedAt": "2026-04-17T19:24:52.861Z",
   "sourceReport": {
     "path": "/Users/jarvis/Desktop/Friday-3天变更报告-2026-04-12至15.md",
     "present": true,
@@ -67,7 +67,7 @@
       "reportSection": "技能 / 市场",
       "claim": "技能目录、source、marketplace assets 已达到可公开浏览状态。",
       "classification": "partially verified",
-      "realEvidence": "/v1/skills=54, /v1/skills/catalog=0, /v1/marketplace/sources=0, /v1/marketplace/assets=0.",
+      "realEvidence": "/v1/skills=70, /v1/skills/catalog=0, /v1/marketplace/sources=0, /v1/marketplace/assets=0.",
       "verificationMethod": "Live runtime inventory and marketplace probes."
     },
     {
@@ -90,7 +90,7 @@
       "claimId": "packaging-runtime",
       "reportSection": "PR #130 / 打包 API",
       "claim": "/v1/packages/* 现在默认就是当前 runtime 的公开能力。",
-      "classification": "verified",
+      "classification": "blocked-by-env",
       "realEvidence": "/v1/packages status=200; current runtime only wires packaging when FRIDAY_PACKAGING_ENABLED=true.",
       "verificationMethod": "Live GET /v1/packages plus src/hub/friday-hub-bootstrap.ts gate."
     },
@@ -98,7 +98,7 @@
       "claimId": "multi-tenant-runtime",
       "reportSection": "安全 / 多租户",
       "claim": "多租户 runtime surface 当前已经默认可用。",
-      "classification": "verified",
+      "classification": "blocked-by-env",
       "realEvidence": "/v1/security/tenants status=200; current runtime only wires tenant routes when FRIDAY_MULTI_TENANT_ENABLED=true.",
       "verificationMethod": "Live GET /v1/security/tenants plus src/hub/friday-hub-bootstrap.ts gate."
     },

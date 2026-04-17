@@ -1,13 +1,14 @@
-import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
+import * as fs from "node:fs";
 
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
-
 import {
-  createMockHubEnv,
-  type MockHubEnv,
-} from "../../mock/_helpers/mock-env.js";
-import type { FridayProviderKind } from "../../../../src/providers/model/friday-provider.types.js";
+  authHeaders,
+  createRealHubEnvFromStateDir,
+  shutdownRealHubEnv,
+  type RealHubEnv,
+} from "../../live/_helpers/real-env.js";
 
 interface ApiEnvelope<T> {
   ok: boolean;
@@ -24,11 +25,14 @@ export interface FridayBrowserPageHandle {
   close(): Promise<void>;
 }
 
-export interface FridayBrowserE2eEnv {
-  hubEnv: MockHubEnv;
+export interface FridayRealBrowserE2eEnv {
+  hub: NonNullable<RealHubEnv["hub"]>;
+  httpServer: NonNullable<RealHubEnv["httpServer"]>;
   browser: Browser;
   baseUrl: string;
+  stateDir: string;
   accessToken: string;
+  refreshToken?: string;
   apiFetch<T>(method: string, urlPath: string, body?: unknown): Promise<{ status: number; json: ApiEnvelope<T> }>;
   newPage(): Promise<FridayBrowserPageHandle>;
   cleanup(): Promise<void>;
@@ -45,56 +49,36 @@ function resolveUiStaticDir(): string {
   return uiStaticDir;
 }
 
-function authHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
-}
-
-async function completeSetup(hubEnv: MockHubEnv): Promise<void> {
-  const response = await fetch(`${hubEnv.baseUrl}/v1/setup/complete`, {
-    method: "POST",
-    headers: authHeaders(hubEnv.accessToken),
-    body: JSON.stringify({
-      completedSteps: [
-        "welcome",
-        "security",
-        "communication",
-        "provider",
-        "network",
-        "channels",
-        "skills",
-        "done",
-      ],
-      skippedSteps: [],
-    }),
-  });
-  const json = (await response.json()) as ApiEnvelope<{ setupCompletedAt: string }>;
-  if (!response.ok || !json.ok) {
-    throw new Error(`Failed to complete setup for browser E2E: ${JSON.stringify(json)}`);
+export async function createFridayRealBrowserE2eEnv(): Promise<FridayRealBrowserE2eEnv> {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-real-browser-e2e-"));
+  let runtime: RealHubEnv;
+  try {
+    runtime = await createRealHubEnvFromStateDir(stateDir, {
+      uiStaticDir: resolveUiStaticDir(),
+    });
+  } catch (error) {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    throw error;
   }
-}
+  if (!runtime.hub || !runtime.httpServer || !runtime.stateDir) {
+    await shutdownRealHubEnv(runtime, { removeStateDir: true });
+    throw new Error("createFridayRealBrowserE2eEnv requires a local runtime with hub/httpServer/stateDir");
+  }
 
-export async function createFridayBrowserE2eEnv(input?: {
-  providerKinds?: FridayProviderKind[];
-}): Promise<FridayBrowserE2eEnv> {
-  const hubEnv = await createMockHubEnv({
-    providerKinds: input?.providerKinds ?? ["ollama"],
-    uiStaticDir: resolveUiStaticDir(),
-  });
-  await completeSetup(hubEnv);
   const browser = await chromium.launch({ headless: true });
 
   return {
-    hubEnv,
+    hub: runtime.hub,
+    httpServer: runtime.httpServer,
     browser,
-    baseUrl: hubEnv.baseUrl,
-    accessToken: hubEnv.accessToken,
+    baseUrl: runtime.baseUrl,
+    stateDir: runtime.stateDir,
+    accessToken: runtime.accessToken,
+    refreshToken: runtime.refreshToken,
     async apiFetch<T>(method: string, urlPath: string, body?: unknown) {
-      const response = await fetch(`${hubEnv.baseUrl}${urlPath}`, {
+      const response = await fetch(`${runtime.baseUrl}${urlPath}`, {
         method,
-        headers: authHeaders(hubEnv.accessToken),
+        headers: authHeaders(runtime.accessToken),
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
       return {
@@ -103,30 +87,9 @@ export async function createFridayBrowserE2eEnv(input?: {
       };
     },
     async newPage() {
-      const onboardedProfile = {
-        profileType: "developer",
-        onboardedAt: new Date().toISOString(),
-      };
-      const seededUser = {
-        id: "browser-e2e-user",
-        email: "browser-e2e@friday.dev",
-        displayName: "Browser E2E",
-        role: "admin",
-      };
       const context = await browser.newContext({
-        baseURL: hubEnv.baseUrl,
+        baseURL: runtime.baseUrl,
         timezoneId: "America/Los_Angeles",
-      });
-
-      // Seed the user profile in localStorage so the onboarding gate is skipped
-      // even before the API call resolves in the browser.
-      await context.addInitScript({
-        content: `
-          window.localStorage.setItem("friday.uix.user-profile", ${JSON.stringify(JSON.stringify(onboardedProfile))});
-          window.localStorage.setItem("friday.auth.accessToken", ${JSON.stringify(hubEnv.accessToken)});
-          window.localStorage.setItem("friday.auth.refreshToken", ${JSON.stringify(hubEnv.accessToken)});
-          window.localStorage.setItem("friday.auth.user", ${JSON.stringify(JSON.stringify(seededUser))});
-        `,
       });
       const page = await context.newPage();
 
@@ -140,7 +103,7 @@ export async function createFridayBrowserE2eEnv(input?: {
     },
     async cleanup() {
       await browser.close();
-      await hubEnv.cleanup();
+      await shutdownRealHubEnv(runtime, { removeStateDir: true });
     },
   };
 }

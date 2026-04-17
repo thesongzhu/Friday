@@ -47,6 +47,9 @@ export const DEFAULT_PROOF_INPUTS = [
   "package.json",
   "scripts/ops/run-real-green-gate.mjs",
   "validation/real-world/lib",
+  "test/e2e/live",
+  "test/e2e/ui/_helpers/browser-env.ts",
+  "test/e2e/ui/friday-real-browser-onboarding.e2e.test.ts",
 ];
 
 export const MOCK_CONTAMINATION_PATTERNS = [
