@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-17T09:22:34.122Z",
+  "generatedAt": "2026-04-17T19:24:52.861Z",
   "sourceReport": {
     "path": "/Users/jarvis/Desktop/Friday-3天变更报告-2026-04-12至15.md",
     "present": true,
@@ -67,15 +67,15 @@
       "reportSection": "技能 / 市场",
       "claim": "技能目录、source、marketplace assets 已达到可公开浏览状态。",
       "classification": "partially verified",
-      "realEvidence": "/v1/skills=54, /v1/skills/catalog=0, /v1/marketplace/sources=0, /v1/marketplace/assets=0.",
+      "realEvidence": "/v1/skills=70, /v1/skills/catalog=0, /v1/marketplace/sources=0, /v1/marketplace/assets=0.",
       "verificationMethod": "Live runtime inventory and marketplace probes."
     },
     {
       "claimId": "skill-run-route",
       "reportSection": "技能执行",
       "claim": "/v1/skills/:skillId/run 已真实打通。",
-      "classification": "not proven",
-      "realEvidence": "skillId=ai-inference, probeKind=built-in, status=404, returnedStatus=n/a, completionDepth=n/a.",
+      "classification": "verified",
+      "realEvidence": "skillId=ai-inference, probeKind=built-in, status=200, returnedStatus=completed, completionDepth=executed.",
       "verificationMethod": "Live POST /v1/skills/ai-inference/run against a real provider-backed runtime. Route must return completed + executed, not dispatch-only acceptance."
     },
     {
@@ -91,7 +91,7 @@
       "reportSection": "PR #130 / 打包 API",
       "claim": "/v1/packages/* 现在默认就是当前 runtime 的公开能力。",
       "classification": "blocked-by-env",
-      "realEvidence": "/v1/packages status=404; current runtime only wires packaging when FRIDAY_PACKAGING_ENABLED=true.",
+      "realEvidence": "/v1/packages status=200; current runtime only wires packaging when FRIDAY_PACKAGING_ENABLED=true.",
       "verificationMethod": "Live GET /v1/packages plus src/hub/friday-hub-bootstrap.ts gate."
     },
     {
@@ -99,7 +99,7 @@
       "reportSection": "安全 / 多租户",
       "claim": "多租户 runtime surface 当前已经默认可用。",
       "classification": "blocked-by-env",
-      "realEvidence": "/v1/security/tenants status=404; current runtime only wires tenant routes when FRIDAY_MULTI_TENANT_ENABLED=true.",
+      "realEvidence": "/v1/security/tenants status=200; current runtime only wires tenant routes when FRIDAY_MULTI_TENANT_ENABLED=true.",
       "verificationMethod": "Live GET /v1/security/tenants plus src/hub/friday-hub-bootstrap.ts gate."
     },
     {
@@ -115,7 +115,7 @@
       "reportSection": "桌面适配器 / 桌面路由",
       "claim": "桌面能力现在已经达到默认可发布的 ready 状态。",
       "classification": "blocked-by-env",
-      "realEvidence": "/v1/health system.healthStatus=safe_mode, companionReadiness=degraded.",
+      "realEvidence": "/v1/health system.healthStatus=degraded, companionReadiness=degraded.",
       "verificationMethod": "Live /v1/health capability snapshot."
     },
     {
@@ -123,7 +123,7 @@
       "reportSection": "搜索",
       "claim": "当前 runtime 的 search freshness 已经被真实验证。",
       "classification": "verified",
-      "realEvidence": "/v1/health capabilities.search.latestness=unverified; docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-16.md also contains a live MCP dated-query proof with time-bounded results.",
+      "realEvidence": "/v1/health capabilities.search.latestness=provider_backed; docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-16.md also contains a live MCP dated-query proof with time-bounded results.",
       "verificationMethod": "Live /v1/health capability snapshot plus latest final proof-pack MCP dated-query evidence."
     },
     {
