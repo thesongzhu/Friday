@@ -264,6 +264,44 @@ describe("FridayGeneratedWorkflowValidator", () => {
     expect(graphErrors[0].code).toBe("WORKFLOW_CYCLE_DETECTED");
   });
 
+  it("rejects generated data nodes that have neither mapping nor transform", () => {
+    createValidator();
+    const mockComp = mockCompiler as { compile: ReturnType<typeof vi.fn> };
+    mockComp.compile.mockReturnValue({
+      schemaVersion: "2.0" as const,
+      workflowId: "test-wf",
+      workflowVersionId: "v-1",
+      sourceSpecSchemaVersion: "1.0" as const,
+      graph: {
+        nodes: [
+          { id: "__trigger__", type: "trigger" as const, label: "Trigger", config: {} },
+          { id: "output_step", type: "data" as const, label: "output_step", config: {} },
+        ],
+        edges: [
+          { id: "e-1", sourceNodeId: "__trigger__", targetNodeId: "output_step" },
+        ],
+      },
+      failurePolicy: { onFailure: "fail_fast" as const, notifyUser: false },
+      tests: [],
+      checksum: "graph-empty-data",
+    });
+    const result = validator.validate({
+      spec: makeSpec({
+        startStepId: "output_step",
+        steps: [{ id: "output_step", type: "transform", args: {} }],
+        outputs: [{ key: "result", fromStep: "output_step", path: "message" }],
+      }),
+      visual: makeVisual({
+        nodes: [
+          { nodeId: "__trigger__", x: 100, y: 100 },
+          { nodeId: "output_step", x: 350, y: 100 },
+        ],
+      }),
+      tests: makeTests(),
+    });
+    expect(result.issues.some((i) => i.code === "GRAPH_DATA_NODE_MISSING_MAPPING")).toBe(true);
+  });
+
   it("spec with missing startStepId produces error", () => {
     createValidator();
     const spec = makeSpec({ startStepId: "nonexistent" });

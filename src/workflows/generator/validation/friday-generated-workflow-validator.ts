@@ -303,6 +303,22 @@ export function createFridayGeneratedWorkflowValidator(
       // ─── Graph validation (if compiled) ───
 
       if (compiledGraph) {
+        for (const node of compiledGraph.graph.nodes) {
+          if (node.type !== "data") {
+            continue;
+          }
+          const config = (node.config ?? {}) as Record<string, unknown>;
+          if (config.mapping === undefined && config.transform === undefined) {
+            issues.push({
+              code: "GRAPH_DATA_NODE_MISSING_MAPPING",
+              stage: "graph",
+              severity: "error",
+              message: `Data node "${node.id}" must define config.mapping or config.transform`,
+              stepId: node.id,
+            });
+          }
+        }
+
         const graphValidation = deps.workflowValidator.validate(compiledGraph);
         if (!graphValidation.valid) {
           for (const graphError of graphValidation.errors) {
