@@ -2,17 +2,13 @@
  * Live User Journey E2E Tests — 10 scenarios with real LLM calls.
  *
  * Canonical gate: FRIDAY_E2E_LIVE_ANTHROPIC=1
- * Optional gates: FRIDAY_E2E_LIVE_OLLAMA=1 or FRIDAY_E2E_LIVE_OPENAI=1
  * Target: FRIDAY_E2E_TARGET=local (cloud uses friday-cloud-journeys.e2e.test.ts)
  * Backward compatibility: E2E_LIVE=1
  *
  * Env vars:
  *   E2E_ANTHROPIC_BASE_URL — default https://api.anthropic.com
- *   E2E_OLLAMA_BASE_URL   — default http://127.0.0.1:11434
- *   E2E_OPENAI_BASE_URL   — default https://api.openai.com
- *   E2E_OPENAI_API_KEY_ENV — default OPENAI_API_KEY
- *   E2E_FAST_MODEL        — provider-specific default
- *   E2E_CODE_MODEL        — provider-specific default
+ *   E2E_FAST_MODEL        — Anthropic fast model default
+ *   E2E_CODE_MODEL        — Anthropic code model default
  */
 
 import * as fs from "node:fs";
@@ -24,12 +20,7 @@ import {
   ANTHROPIC_BASE_URL,
   CODE_MODEL,
   FAST_MODEL,
-  LIVE_PROVIDER_KIND,
   LIVE_TARGET,
-  OLLAMA_BASE_URL,
-  OPENAI_API_KEY_ENV,
-  OPENAI_BASE_URL,
-  authHeaders,
   cleanupRealHubEnv,
   createRealHubEnv,
   type RealHubEnv,
@@ -37,12 +28,8 @@ import {
 import {
   apiFetch,
   createAnthropicProvider,
-  createOpenAiProvider,
   ensureAnthropicProviders,
-  ensureOllamaProviders,
-  ensureOpenAiProviders,
   setModelRouting,
-  createOllamaProvider,
 } from "./_helpers/api.js";
 import { pollUntil } from "./_helpers/poll.js";
 import {
@@ -59,10 +46,10 @@ import { liveAnthropicCredentialMessage } from "../_helpers/live-anthropic.js";
 
 // ─── Suite ───
 
-const LOCAL_LIVE_GATED = E2E_GATED && LIVE_TARGET === "local";
+const LOCAL_LIVE_GATED = E2E_GATED && LIVE_TARGET === "local" && Boolean(ANTHROPIC_API_KEY_ENV_REF);
 
 describe.skipIf(!LOCAL_LIVE_GATED)(
-  `Friday Real Journeys E2E (${LIVE_PROVIDER_KIND === "anthropic" ? "Anthropic" : LIVE_PROVIDER_KIND === "openai" ? "OpenAI" : "Ollama"})`,
+  "Friday Real Journeys E2E (Anthropic API key)",
   () => {
     let env: RealHubEnv;
     let fastProviderId: string;
@@ -74,32 +61,14 @@ describe.skipIf(!LOCAL_LIVE_GATED)(
       env = await createRealHubEnv();
 
       // 2. Create providers and set routing
-      const providers =
-        LIVE_PROVIDER_KIND === "anthropic"
-          ? await ensureAnthropicProviders(
-              env.baseUrl,
-              env.accessToken,
-              ANTHROPIC_BASE_URL,
-              FAST_MODEL,
-              CODE_MODEL,
-              ANTHROPIC_API_KEY_ENV_REF ?? (() => { throw new Error(liveAnthropicCredentialMessage()); })(),
-            )
-          : LIVE_PROVIDER_KIND === "openai"
-          ? await ensureOpenAiProviders(
-              env.baseUrl,
-              env.accessToken,
-              OPENAI_BASE_URL,
-              FAST_MODEL,
-              CODE_MODEL,
-              `$${OPENAI_API_KEY_ENV}`,
-            )
-          : await ensureOllamaProviders(
-              env.baseUrl,
-              env.accessToken,
-              OLLAMA_BASE_URL,
-              FAST_MODEL,
-              CODE_MODEL,
-            );
+      const providers = await ensureAnthropicProviders(
+        env.baseUrl,
+        env.accessToken,
+        ANTHROPIC_BASE_URL,
+        FAST_MODEL,
+        CODE_MODEL,
+        ANTHROPIC_API_KEY_ENV_REF ?? (() => { throw new Error(liveAnthropicCredentialMessage()); })(),
+      );
       fastProviderId = providers.fastProviderId;
       codeProviderId = providers.codeProviderId;
     }, 60_000);
@@ -119,7 +88,7 @@ describe.skipIf(!LOCAL_LIVE_GATED)(
 
   // ══════════════════════════════════════════════════════════════════════
   // Scenario 1: First-Time User Journey (45s)
-  // Setup wizard → provider detect → network → channels → complete → verify
+  // Setup wizard → provider detect → network → complete → verify
   // ══════════════════════════════════════════════════════════════════════
 
   it(
@@ -147,23 +116,14 @@ describe.skipIf(!LOCAL_LIVE_GATED)(
         env.accessToken,
         "POST",
         "/v1/providers/detect",
-        LIVE_PROVIDER_KIND === "anthropic"
-          ? {
-              kind: "anthropic",
-              apiKey: process.env.FRIDAY_ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY,
-            }
-          : LIVE_PROVIDER_KIND === "openai"
-          ? {
-              kind: "openai",
-              apiKey: process.env[OPENAI_API_KEY_ENV],
-            }
-          : {
-              kind: "ollama",
-            },
+        {
+          kind: "anthropic",
+          apiKey: process.env.FRIDAY_ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY,
+        },
       );
       expect(detectRes.status).toBe(200);
       expect(detectRes.json.ok).toBe(true);
-      expect(detectRes.json.data.kind).toBe(LIVE_PROVIDER_KIND);
+      expect(detectRes.json.data.kind).toBe("anthropic");
       expect(detectRes.json.data.validated).toBe(true);
       expect(detectRes.json.data.availableModels.length).toBeGreaterThanOrEqual(1);
 
@@ -179,20 +139,7 @@ describe.skipIf(!LOCAL_LIVE_GATED)(
       expect(networkRes.json.ok).toBe(true);
       expect(networkRes.json.data.mode).toBe("local");
 
-      // 4. Save channels config
-      const channelsRes = await apiFetch<{
-        ok: boolean;
-        data: { savedKinds: string[] };
-      }>(env.baseUrl, env.accessToken, "POST", "/v1/setup/channels", {
-        channels: [
-          { kind: "discord", enabled: true, config: { token: "fake-e2e-token" } },
-        ],
-      });
-      expect(channelsRes.status).toBe(200);
-      expect(channelsRes.json.ok).toBe(true);
-      expect(channelsRes.json.data.savedKinds).toContain("discord");
-
-      // 5. Complete setup
+      // 4. Complete setup without fake external channel config.
       const completeRes = await apiFetch<{
         ok: boolean;
         data: { setupCompletedAt: string };
@@ -202,17 +149,15 @@ describe.skipIf(!LOCAL_LIVE_GATED)(
           "security",
           "provider",
           "network",
-          "channels",
-          "skills",
           "done",
         ],
-        skippedSteps: [],
+        skippedSteps: ["channels", "skills"],
       });
       expect(completeRes.status).toBe(200);
       expect(completeRes.json.ok).toBe(true);
       expect(typeof completeRes.json.data.setupCompletedAt).toBe("string");
 
-      // 6. Verify needsSetup = false
+      // 5. Verify needsSetup = false
       const finalStatusRes = await apiFetch<{
         ok: boolean;
         data: { needsSetup: boolean; setupCompletedAt: string | null };
@@ -355,6 +300,26 @@ describe.skipIf(!LOCAL_LIVE_GATED)(
           `Scenario 2 generation did not converge after retries. Last failure: ${lastGenerationFailure ?? "unknown"}`,
         );
       }
+
+      const testRes = await apiFetch<{
+        ok: boolean;
+        data: {
+          test: {
+            ok: boolean;
+            behavioralCheck?: { attempted: boolean; satisfied: boolean };
+          };
+        };
+      }>(
+        env.baseUrl,
+        env.accessToken,
+        "POST",
+        `/v1/skills/generator/sessions/${sessionId}/test`,
+        undefined,
+        { timeoutMs: 180_000 },
+      );
+      expect(testRes.status).toBe(200);
+      expect(testRes.json.ok).toBe(true);
+      expect(testRes.json.data.test.ok).toBe(true);
 
       // 4. Approve
       const approveRes = await apiFetch<{
@@ -1071,29 +1036,13 @@ describe.skipIf(!LOCAL_LIVE_GATED)(
     "Scenario 8: Provider failover",
     async () => {
       // 1. Create a bad provider (pointing to a non-existent URL)
-      const badProviderId =
-        LIVE_PROVIDER_KIND === "anthropic"
-          ? await createAnthropicProvider(env.baseUrl, env.accessToken, {
-              name: "Bad Anthropic (E2E Failover)",
-              anthropicBaseUrl: "http://127.0.0.1:19999",
-              models: [FAST_MODEL],
-              defaultModel: FAST_MODEL,
-              apiKeyEnvRef: ANTHROPIC_API_KEY_ENV_REF ?? undefined,
-            })
-          : LIVE_PROVIDER_KIND === "openai"
-          ? await createOpenAiProvider(env.baseUrl, env.accessToken, {
-              name: "Bad OpenAI (E2E Failover)",
-              openAiBaseUrl: "http://127.0.0.1:19999",
-              models: [FAST_MODEL],
-              defaultModel: FAST_MODEL,
-              apiKeyEnvRef: `$${OPENAI_API_KEY_ENV}`,
-            })
-          : await createOllamaProvider(env.baseUrl, env.accessToken, {
-              name: "Bad Ollama (E2E Failover)",
-              ollamaBaseUrl: "http://127.0.0.1:19999",
-              models: [FAST_MODEL],
-              defaultModel: FAST_MODEL,
-            });
+      const badProviderId = await createAnthropicProvider(env.baseUrl, env.accessToken, {
+        name: "Bad Anthropic (E2E Failover)",
+        anthropicBaseUrl: "http://127.0.0.1:19999",
+        models: [FAST_MODEL],
+        defaultModel: FAST_MODEL,
+        apiKeyEnvRef: ANTHROPIC_API_KEY_ENV_REF ?? undefined,
+      });
 
       try {
 

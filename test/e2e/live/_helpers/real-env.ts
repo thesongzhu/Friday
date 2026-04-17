@@ -91,6 +91,74 @@ export interface RealHubEnv {
   stateDir?: string;
 }
 
+interface StartLocalRealHubEnvOptions {
+  uiStaticDir?: string;
+}
+
+function providerEnvKeysToSanitize(): string[] {
+  switch (LIVE_PROVIDER_KIND) {
+    case "anthropic":
+      return [
+        "OPENAI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENROUTER_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "XAI_API_KEY",
+        "OLLAMA_BASE_URL",
+      ];
+    case "openai":
+      return [
+        "FRIDAY_ANTHROPIC_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENROUTER_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "XAI_API_KEY",
+        "OLLAMA_BASE_URL",
+      ];
+    case "ollama":
+      return [
+        "FRIDAY_ANTHROPIC_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENROUTER_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "XAI_API_KEY",
+      ];
+    default:
+      return [];
+  }
+}
+
+async function withSanitizedProviderEnv<T>(operation: () => Promise<T>): Promise<T> {
+  const keys = providerEnvKeysToSanitize();
+  if (keys.length === 0) {
+    return operation();
+  }
+
+  const originalEntries = new Map<string, string | undefined>();
+  for (const key of keys) {
+    originalEntries.set(key, process.env[key]);
+    delete process.env[key];
+  }
+
+  try {
+    return await operation();
+  } finally {
+    for (const [key, value] of originalEntries.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
 async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
@@ -186,6 +254,60 @@ export async function ensureAnthropicReady(): Promise<void> {
 
 // ─── Hub Environment Factory ───
 
+async function startLocalRealHubEnv(
+  stateDir: string,
+  opts?: StartLocalRealHubEnvOptions,
+): Promise<RealHubEnv> {
+  const hub = await withSanitizedProviderEnv(async () => {
+    const createdHub = await createFridayHub({
+      stateDir,
+      skillDirs: [],
+      port: 0,
+      logRequests: false,
+    });
+    await createdHub.start();
+    return createdHub;
+  });
+
+  const port = await findFreePort();
+  const httpServer = createFridayHttpServer({
+    routes: hub.apiRuntime.routes,
+    wsGateway: hub.apiRuntime.wsGateway,
+    middleware: hub.apiRuntime.middleware,
+    port,
+    host: "127.0.0.1",
+    logRequests: false,
+    uiStaticDir: opts?.uiStaticDir,
+  });
+  await httpServer.listen();
+  const baseUrl = `http://127.0.0.1:${String(port)}`;
+
+  const loginRes = await fetch(`${baseUrl}/v1/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ local: true }),
+  });
+  const loginJson = (await loginRes.json()) as {
+    ok: boolean;
+    data: { accessToken: string; refreshToken: string };
+  };
+  if (!loginJson.ok) {
+    throw new Error(
+      `Admin login failed: ${JSON.stringify(loginJson)}`,
+    );
+  }
+
+  return {
+    target: "local",
+    hub,
+    httpServer,
+    baseUrl,
+    stateDir,
+    accessToken: loginJson.data.accessToken,
+    refreshToken: loginJson.data.refreshToken,
+  };
+}
+
 export async function createRealHubEnv(opts?: { uiStaticDir?: string }): Promise<RealHubEnv> {
   if (LIVE_PROVIDER_KIND === "anthropic") {
     await ensureAnthropicReady();
@@ -216,74 +338,67 @@ export async function createRealHubEnv(opts?: { uiStaticDir?: string }): Promise
   const stateDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "friday-real-e2e-"),
   );
+  return startLocalRealHubEnv(stateDir, opts);
+}
 
-  // 2. Create hub
-  const hub = await createFridayHub({
-    stateDir,
-    skillDirs: [],
-    port: 0,
-    logRequests: false,
-  });
-  await hub.start();
-
-  // 3. Spin up HTTP server
-  const port = await findFreePort();
-  const httpServer = createFridayHttpServer({
-    routes: hub.apiRuntime.routes,
-    wsGateway: hub.apiRuntime.wsGateway,
-    middleware: hub.apiRuntime.middleware,
-    port,
-    host: "127.0.0.1",
-    logRequests: false,
-    uiStaticDir: opts?.uiStaticDir,
-  });
-  await httpServer.listen();
-  const baseUrl = `http://127.0.0.1:${String(port)}`;
-
-  // 4. Login as admin → get JWT token
-  const loginRes = await fetch(`${baseUrl}/v1/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ local: true }),
-  });
-  const loginJson = (await loginRes.json()) as {
-    ok: boolean;
-    data: { accessToken: string; refreshToken: string };
-  };
-  if (!loginJson.ok) {
-    throw new Error(
-      `Admin login failed: ${JSON.stringify(loginJson)}`,
-    );
+export async function createRealHubEnvFromStateDir(
+  stateDir: string,
+  opts?: StartLocalRealHubEnvOptions,
+): Promise<RealHubEnv> {
+  if (LIVE_TARGET !== "local") {
+    throw new Error("createRealHubEnvFromStateDir only supports local runtime targets");
   }
-  const accessToken = loginJson.data.accessToken;
-
-  return {
-    target: "local",
-    hub,
-    httpServer,
-    baseUrl,
-    stateDir,
-    accessToken,
-    refreshToken: loginJson.data.refreshToken,
-  };
+  if (!fs.existsSync(stateDir)) {
+    throw new Error(`State dir does not exist: ${stateDir}`);
+  }
+  return startLocalRealHubEnv(stateDir, opts);
 }
 
 // ─── Cleanup ───
 
-export async function cleanupRealHubEnv(env: RealHubEnv): Promise<void> {
+export async function shutdownRealHubEnv(
+  env: RealHubEnv,
+  opts: { removeStateDir?: boolean } = {},
+): Promise<void> {
   if (env.target !== "local") {
     return;
   }
 
-  const closeTimeout = setTimeout(() => {
-    console.warn("[Real E2E] Cleanup timeout — forcing exit");
-    process.exit(0);
-  }, 10_000);
-  try {
-    if (env.httpServer) await env.httpServer.close();
-    if (env.hub) await env.hub.stop();
-    if (env.stateDir) fs.rmSync(env.stateDir, { recursive: true, force: true });
-  } finally {
-    clearTimeout(closeTimeout);
+  const runWithTimeout = async (
+    label: string,
+    operation: () => Promise<void>,
+    timeoutMs = 30_000,
+  ): Promise<boolean> => {
+    const completed = await Promise.race([
+      operation().then(() => true),
+      new Promise<false>((resolve) => {
+        setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+    if (!completed) {
+      console.warn(`[Real E2E] Cleanup timeout — ${label} did not finish within ${String(timeoutMs)}ms`);
+    }
+    return completed;
+  };
+
+  if (env.httpServer) {
+    await runWithTimeout("httpServer.close()", () => env.httpServer!.close());
   }
+  if (env.hub) {
+    await runWithTimeout("hub.stop()", () => env.hub!.stop());
+  }
+  if (opts.removeStateDir && env.stateDir) {
+    try {
+      fs.rmSync(env.stateDir, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(
+        "[Real E2E] Cleanup warning — failed to remove stateDir:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+}
+
+export async function cleanupRealHubEnv(env: RealHubEnv): Promise<void> {
+  await shutdownRealHubEnv(env, { removeStateDir: true });
 }
