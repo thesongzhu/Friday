@@ -111,17 +111,23 @@ function buildFridayAgentRunMetadata(params: {
   executionContext?: FridayAgentExecutionContext;
   updatedAt: string;
 }): FridayAgentRunMetadata | undefined {
+  const surface = params.executionContext?.surface?.trim();
   const packId = params.executionContext?.packId?.trim();
-  if (!packId) {
+  if (!surface && !packId) {
     return undefined;
   }
 
   return {
-    packContext: {
-      packId,
-      ...(params.executionContext?.surface ? { surface: params.executionContext.surface } : {}),
-      updatedAt: params.updatedAt,
-    },
+    ...(!packId && surface ? { surface } : {}),
+    ...(packId
+      ? {
+        packContext: {
+          packId,
+          ...(surface ? { surface } : {}),
+          updatedAt: params.updatedAt,
+        },
+      }
+      : {}),
   };
 }
 
