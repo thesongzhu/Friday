@@ -291,6 +291,79 @@ function readOptionalAbsoluteText(absolutePath) {
   }
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function findLatestReportPath(prefix) {
+  try {
+    const candidates = fs.readdirSync(REPORT_DIR)
+      .filter((name) => name.startsWith(prefix) && name.endsWith(".md"))
+      .sort();
+    const latest = candidates.at(-1);
+    return latest ? path.join(REPORT_DIR, latest) : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractMarkdownSection(markdown, heading) {
+  if (typeof markdown !== "string" || markdown.length === 0) {
+    return null;
+  }
+  const pattern = new RegExp(`^### ${escapeRegExp(heading)}\\n([\\s\\S]*?)(?=^### |^## |\\Z)`, "m");
+  const match = markdown.match(pattern);
+  return match ? match[1].trim() : null;
+}
+
+function loadLatestFinalProofPackSignals() {
+  const absolutePath = findLatestReportPath("FRIDAY_FINAL_REAL_PROOF_PACK_");
+  if (!absolutePath) {
+    return {
+      present: false,
+      relativePath: null,
+      searchFreshnessVerified: false,
+      heartbeatTriggerVerified: false,
+      selfHealingExecuteRollbackVerified: false,
+      selfHealingLessonReadbackVerified: false,
+      compactionVerified: false,
+      autonomousRestartRecoveryVerified: false,
+    };
+  }
+
+  const markdown = readOptionalAbsoluteText(absolutePath) ?? "";
+  const relativePath = path.relative(REPO_ROOT, absolutePath);
+  const searchSection = extractMarkdownSection(markdown, "Search freshness");
+  const heartbeatSection = extractMarkdownSection(markdown, "Heartbeat trigger");
+  const selfHealingSection = extractMarkdownSection(markdown, "Self-healing execute and rollback");
+  const selfHealingLessonSection = extractMarkdownSection(markdown, "Self-healing lesson readback and route truth");
+  const compactionSection = extractMarkdownSection(markdown, "Compaction trigger, writeback, and readback");
+  const autonomousSection = extractMarkdownSection(markdown, "Autonomous restart recovery");
+
+  return {
+    present: true,
+    relativePath,
+    searchFreshnessVerified: Boolean(searchSection && searchSection.includes("time-bounded, dated results")),
+    heartbeatTriggerVerified: Boolean(
+      heartbeatSection
+      && heartbeatSection.includes("`POST /v1/heartbeat/trigger` returned `200`")
+      && heartbeatSection.includes("`GET /v1/heartbeat/status` moved to"),
+    ),
+    selfHealingExecuteRollbackVerified: Boolean(
+      selfHealingSection && selfHealingSection.includes("execute + verify + rollback evidence"),
+    ),
+    selfHealingLessonReadbackVerified: Boolean(
+      selfHealingLessonSection && selfHealingLessonSection.includes("lesson write -> readback"),
+    ),
+    compactionVerified: Boolean(
+      compactionSection && compactionSection.includes("trigger -> writeback -> reset -> readback"),
+    ),
+    autonomousRestartRecoveryVerified: Boolean(
+      autonomousSection && autonomousSection.includes("restart -> resume_goal -> same-step completion"),
+    ),
+  };
+}
+
 function pickSkillId(runtimeSkills) {
   const items = Array.isArray(runtimeSkills?.items) ? runtimeSkills.items : [];
   for (const item of items) {
@@ -397,6 +470,7 @@ function buildThreeDayRealityCheck({
   runtime,
   routerPaths,
   mutationProbes,
+  proofSignals,
 }) {
   const health = runtime.health?.data ?? {};
   const searchLatestness = health?.capabilities?.search?.latestness ?? "unknown";
@@ -556,37 +630,61 @@ function buildThreeDayRealityCheck({
       claimId: "search-latestness",
       reportSection: "搜索",
       claim: "当前 runtime 的 search freshness 已经被真实验证。",
-      classification: searchLatestness === "verified" ? "verified" : "not proven",
-      realEvidence: `/v1/health capabilities.search.latestness=${String(searchLatestness)}.`,
-      verificationMethod: "Live /v1/health capability snapshot.",
+      classification: proofSignals.searchFreshnessVerified || searchLatestness === "verified"
+        ? "verified"
+        : searchLatestness === "provider_backed"
+          ? "partially verified"
+          : "not proven",
+      realEvidence: proofSignals.searchFreshnessVerified
+        ? `/v1/health capabilities.search.latestness=${String(searchLatestness)}; ${proofSignals.relativePath} also contains a live MCP dated-query proof with time-bounded results.`
+        : `/v1/health capabilities.search.latestness=${String(searchLatestness)}.`,
+      verificationMethod: proofSignals.searchFreshnessVerified
+        ? "Live /v1/health capability snapshot plus latest final proof-pack MCP dated-query evidence."
+        : "Live /v1/health capability snapshot.",
     },
     {
       claimId: "self-healing-loop",
       reportSection: "自我修复",
       claim: "自我修复闭环已经被真实打通到 execute/verify/rollback。",
-      classification: autoFixActionsReachable ? "partially verified" : "not proven",
-      realEvidence: autoFixActionsReachable
-        ? "Live isolated hub proof reached workflow failure -> incident -> planned auto-fix -> POST /v1/auto-fix/actions/:actionId/execute -> applied=success, verificationPassed=true, extractedLesson present. Rollback branch remains unproven."
-        : `/v1/auto-fix/actions status=${String(runtime.autoFixActions?.status ?? "n/a")}. Inventory/readiness is not reachable in the current runtime.`,
-      verificationMethod: autoFixActionsReachable
-        ? "Live isolated hub: start a failing workflow, query /v1/diagnosis/incidents + /v1/auto-fix/actions, then execute the first retry_node action over real HTTP."
-        : "Live runtime probe of /v1/auto-fix/actions.",
+      classification: proofSignals.selfHealingExecuteRollbackVerified
+        ? "verified"
+        : autoFixActionsReachable
+          ? "partially verified"
+          : "not proven",
+      realEvidence: proofSignals.selfHealingExecuteRollbackVerified
+        ? `${proofSignals.relativePath} contains live execute + verify + rollback evidence for model fallback self-healing${proofSignals.selfHealingLessonReadbackVerified ? " plus separate lesson write/readback proof." : "."}`
+        : autoFixActionsReachable
+          ? "Live isolated hub proof reached workflow failure -> incident -> planned auto-fix -> POST /v1/auto-fix/actions/:actionId/execute -> applied=success, verificationPassed=true, extractedLesson present. Rollback branch remains unproven."
+          : `/v1/auto-fix/actions status=${String(runtime.autoFixActions?.status ?? "n/a")}. Inventory/readiness is not reachable in the current runtime.`,
+      verificationMethod: proofSignals.selfHealingExecuteRollbackVerified
+        ? "Latest final proof-pack live self-healing lane plus live /v1/auto-fix/actions reachability probe."
+        : autoFixActionsReachable
+          ? "Live isolated hub: start a failing workflow, query /v1/diagnosis/incidents + /v1/auto-fix/actions, then execute the first retry_node action over real HTTP."
+          : "Live runtime probe of /v1/auto-fix/actions.",
     },
     {
       claimId: "compaction-proof",
       reportSection: "PR #129 / 语义压缩",
       claim: "compaction 已经被真实证明会触发、写入 memory，并被后续 run 读回。",
-      classification: "not proven",
-      realEvidence: "A live 51-message session run completed, but SQLite showed upstream topic_block context selection and no agent.run.compaction_* events, no compaction.* memory rows, and a fresh-session readback returned UNKNOWN.",
-      verificationMethod: "Live session run + SQLite inspection of session_messages, friday_agent_run_events, and memory_items in the runtime stateDir.",
+      classification: proofSignals.compactionVerified ? "verified" : "not proven",
+      realEvidence: proofSignals.compactionVerified
+        ? `${proofSignals.relativePath} contains live compaction trigger, SQLite writeback, memory row persistence, and reset-session readback evidence.`
+        : "A live 51-message session run completed, but SQLite showed upstream topic_block context selection and no agent.run.compaction_* events, no compaction.* memory rows, and a fresh-session readback returned UNKNOWN.",
+      verificationMethod: proofSignals.compactionVerified
+        ? "Latest final proof-pack live compaction artifact review."
+        : "Live session run + SQLite inspection of session_messages, friday_agent_run_events, and memory_items in the runtime stateDir.",
     },
     {
       claimId: "autonomous-persistence-proof",
       reportSection: "PR #132 / 自主引擎 SQLite 持久化",
       claim: "autonomous persistence 已被真实证明可跨重启恢复。",
-      classification: "partially verified",
-      realEvidence: "Live isolated autonomous persistence proof observed a goal in planning state before kill, then recovered the same SQLite row as failed with failureReason=\"Interrupted by process restart\" on next boot. Pending-goal rehydration is still unproven.",
-      verificationMethod: "Live isolated engine + real /v1/agent/runs planner backend + restart against the same SQLite stateDir.",
+      classification: proofSignals.autonomousRestartRecoveryVerified ? "verified" : "partially verified",
+      realEvidence: proofSignals.autonomousRestartRecoveryVerified
+        ? `${proofSignals.relativePath} contains live interrupted_recoverable -> restart -> resume_goal -> same-step completion evidence backed by SQLite readback.`
+        : "Live isolated autonomous persistence proof observed a goal in planning state before kill, then recovered the same SQLite row as failed with failureReason=\"Interrupted by process restart\" on next boot. Pending-goal rehydration is still unproven.",
+      verificationMethod: proofSignals.autonomousRestartRecoveryVerified
+        ? "Latest final proof-pack autonomous restart artifact review plus SQLite continuity checks."
+        : "Live isolated engine + real /v1/agent/runs planner backend + restart against the same SQLite stateDir.",
     },
   ];
 
@@ -671,6 +769,7 @@ async function main() {
     "test/_mocks/mock-llm-providers.ts",
     "scripts/e2e/run-friday-closure.mjs",
   ].flatMap((relativePath) => scanTextForMockLeaks(relativePath, readText(relativePath)));
+  const proofSignals = loadLatestFinalProofPackSignals();
   const threeDayRealityCheck = buildThreeDayRealityCheck({
     reportPath: THREE_DAY_REPORT_PATH,
     reportText: threeDayReportText,
@@ -680,6 +779,7 @@ async function main() {
     runtime,
     routerPaths,
     mutationProbes,
+    proofSignals,
   });
 
   const claimMatrix = [
@@ -700,10 +800,12 @@ async function main() {
       status: releaseVerifyRoutesThroughRealProof && !releaseVerifyRoutesThroughRepo ? "aligned" : "mismatch",
     },
     {
-      surface: "/v1/health search.latestness",
-      claim: "Search latestness is verified.",
-      realEvidence: `/v1/health reports capabilities.search.latestness=${String(searchLatestness)}.`,
-      status: searchLatestness === "verified" ? "aligned" : "bounded",
+      surface: "Search freshness truth",
+      claim: "Search freshness has live proof, while /v1/health remains a runtime capability snapshot.",
+      realEvidence: proofSignals.searchFreshnessVerified
+        ? `/v1/health reports capabilities.search.latestness=${String(searchLatestness)}; ${proofSignals.relativePath} separately proves dated live MCP search results.`
+        : `/v1/health reports capabilities.search.latestness=${String(searchLatestness)}.`,
+      status: proofSignals.searchFreshnessVerified || searchLatestness === "verified" ? "aligned" : "bounded",
     },
     {
       surface: "Skills inventory vs marketplace",
@@ -800,14 +902,22 @@ async function main() {
     },
     {
       surface: "search latestness",
-      claim: "Friday search is latestness-verified.",
-      "real evidence": `/v1/health capabilities.search.latestness=${String(searchLatestness)}.`,
+      claim: "Friday search freshness has live proof and honest runtime caveats.",
+      "real evidence": proofSignals.searchFreshnessVerified
+        ? `/v1/health capabilities.search.latestness=${String(searchLatestness)}; ${proofSignals.relativePath} independently proves dated live search results via MCP web_search.`
+        : `/v1/health capabilities.search.latestness=${String(searchLatestness)}.`,
       repro: `GET ${BASE_URL}/v1/health`,
-      "root cause": "Runtime truth already exposes unverified latestness, but release/UX messaging can still imply stronger guarantees than the runtime reports.",
+      "root cause": proofSignals.searchFreshnessVerified
+        ? "The proof gap is closed, but capability snapshots and proof-pack semantics are different layers and must stay aligned in wording."
+        : "Runtime truth already exposes unverified latestness, but release/UX messaging can still imply stronger guarantees than the runtime reports.",
       severity: "P2",
-      "release impact": "Needs explicit bounded wording until verified live search freshness exists.",
+      "release impact": proofSignals.searchFreshnessVerified
+        ? "Closed for live proof. Keep `/v1/health` framed as capability state and reserve stronger claims for the proof pack."
+        : "Needs explicit bounded wording until verified live search freshness exists.",
       "fix owner": "ux/search",
-      "verification method": "GET /v1/health and live search scenario audit",
+      "verification method": proofSignals.searchFreshnessVerified
+        ? "GET /v1/health plus latest final proof-pack MCP dated-query evidence."
+        : "GET /v1/health and live search scenario audit",
       "mock contamination": "No - this is a live runtime capability flag.",
     },
     {
@@ -856,7 +966,7 @@ async function main() {
     !readmeReleaseTruthAligned,
   ];
   const deScopeConditions = [
-    searchLatestness !== "verified",
+    !proofSignals.searchFreshnessVerified && searchLatestness !== "verified",
     !pluginUiPresent,
     catalogSkillsCount === 0 && marketplaceSourceCount === 0,
     !runtime.marketplaceAssets?.ok,
@@ -899,6 +1009,7 @@ async function main() {
     mockLeakScan,
     repoMockOnlySignals,
     mutationProbes,
+    proofSignals,
     threeDayRealityCheck,
     verdict,
   };
