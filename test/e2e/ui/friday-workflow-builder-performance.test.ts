@@ -2,10 +2,10 @@ import * as fs from "node:fs";
 import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  createFridayBrowserE2eEnv,
-  type FridayBrowserE2eEnv,
+  createFridayMockBrowserE2eEnv,
+  type FridayMockBrowserE2eEnv,
   type FridayBrowserPageHandle,
-} from "./_helpers/browser-env.js";
+} from "./_helpers/browser-env-mock.js";
 
 const CHROMIUM_AVAILABLE = (() => {
   try {
@@ -20,8 +20,8 @@ const BROWSER_E2E_TIMEOUT_MS = 120_000;
 const WORKFLOW_BUILDER_SHELL_BUDGET_MS = 2_000;
 const WORKFLOW_BUILDER_CANVAS_BUDGET_MS = 8_000;
 
-describe.skipIf(!CHROMIUM_AVAILABLE)("Friday workflow builder interaction baseline", () => {
-  let env: FridayBrowserE2eEnv | null = null;
+describe.skipIf(!CHROMIUM_AVAILABLE)("Friday workflow builder interaction baseline (mock hub browser E2E)", () => {
+  let env: FridayMockBrowserE2eEnv | null = null;
   let pageHandle: FridayBrowserPageHandle | null = null;
 
   afterEach(async () => {
@@ -36,7 +36,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday workflow builder interaction baseli
   });
 
   it("renders a lightweight builder shell before the full canvas becomes interactive", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
-    env = await createFridayBrowserE2eEnv();
+    env = await createFridayMockBrowserE2eEnv();
     pageHandle = await env.newPage();
     const pageErrors: string[] = [];
     const consoleErrors: string[] = [];

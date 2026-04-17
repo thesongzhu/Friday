@@ -39,7 +39,7 @@
     "surface": "search latestness",
     "claim": "Friday search freshness has live proof and honest runtime caveats.",
     "real evidence": "/v1/health capabilities.search.latestness=provider_backed; docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-16.md independently proves dated live search results via MCP web_search.",
-    "repro": "GET http://127.0.0.1:33241/v1/health",
+    "repro": "GET http://127.0.0.1:3141/v1/health",
     "root cause": "The proof gap is closed, but capability snapshots and proof-pack semantics are different layers and must stay aligned in wording.",
     "severity": "P2",
     "release impact": "Closed for live proof. Keep `/v1/health` framed as capability state and reserve stronger claims for the proof pack.",

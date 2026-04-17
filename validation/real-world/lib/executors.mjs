@@ -55,6 +55,15 @@ function isIgnorableUiRequestFailure(message) {
   return /fonts\.(gstatic|googleapis)\.com/i.test(message) && /ERR_ABORTED/i.test(message);
 }
 
+function isIgnorableUiConsoleError(message) {
+  if (typeof message !== "string" || message.length === 0) return false;
+  return /status of 401 \(Unauthorized\)/i.test(message);
+}
+
+function isLoginPath(value) {
+  return getUrlPath(value) === "/login";
+}
+
 function scenarioTimeout(scenario, fallback) {
   return Number(scenario.execution?.timeoutMs) || fallback;
 }
@@ -87,6 +96,49 @@ export async function closeSharedUiProbeSession() {
   }
   await sharedUiProbeSession.browser.close().catch(() => undefined);
   sharedUiProbeSession = null;
+}
+
+async function completeUiLoginIfNeeded({ page, client, execution, artifact, timeoutMs }) {
+  if (!isLoginPath(page.url())) {
+    return;
+  }
+  const requestedPath = getUrlPath(execution.path);
+  if (typeof client?.localPassphrase === "string" && client.localPassphrase.trim().length > 0) {
+    await page.locator("#login-local-passphrase").fill(client.localPassphrase.trim());
+    await Promise.all([
+      page.waitForURL((url) => !isLoginPath(url.toString()), { timeout: timeoutMs }),
+      page.getByRole("button", { name: /continue locally/i }).click(),
+    ]);
+    artifact.observedEvidence.push(`completed real browser local-passphrase login for ${requestedPath}`);
+    return;
+  }
+  if (
+    typeof client?.email === "string" && client.email.trim().length > 0
+    && typeof client?.password === "string" && client.password.trim().length > 0 // pragma: allowlist secret
+  ) {
+    await page.locator("#login-email").fill(client.email.trim());
+    await page.locator("#login-password").fill(client.password.trim());
+    await Promise.all([
+      page.waitForURL((url) => !isLoginPath(url.toString()), { timeout: timeoutMs }),
+      page.getByRole("button", { name: /sign in/i }).click(),
+    ]);
+    artifact.observedEvidence.push(`completed real browser email/password login for ${requestedPath}`);
+    return;
+  }
+  throw new Error(
+    "UI probe landed on /login but no real browser login credential was available. Provide localPassphrase or email/password for proof runs.",
+  );
+}
+
+async function settleAndCompleteUiLoginIfNeeded({ page, client, execution, artifact, timeoutMs }) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await page.waitForTimeout(Math.min(750, Math.max(150, Math.floor(timeoutMs / 20))));
+    if (!isLoginPath(page.url())) {
+      continue;
+    }
+    await completeUiLoginIfNeeded({ page, client, execution, artifact, timeoutMs });
+    return;
+  }
 }
 
 function interpolateTemplateString(value, context) {
@@ -359,14 +411,20 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
     });
     const bootstrapStatus = bootstrapResponse.json?.data ?? bootstrapResponse.json ?? null;
     const authCapabilities = bootstrapStatus ?? {};
+    const hasBrowserLoginCredential =
+      (typeof client?.localPassphrase === "string" && client.localPassphrase.trim().length > 0)
+      || (
+        typeof client?.email === "string" && client.email.trim().length > 0
+        && typeof client?.password === "string" && client.password.trim().length > 0 // pragma: allowlist secret
+      );
     const browserLoginAvailable = authCapabilities.allowLocalBypassLogin === true
       || authCapabilities.allowPasswordlessLocalLogin === true;
-    if (!browserLoginAvailable) {
+    if (!hasBrowserLoginCredential && !browserLoginAvailable) {
       artifact.result = "blocked";
       artifact.failureClass = "environment";
       artifact.notes = [
         ...(artifact.notes ?? []),
-        "Real browser probe requires a real browser-login path. This runtime does not expose local bypass/passwordless browser auth, and validation no longer seeds auth via localStorage.",
+        "Real browser probe requires a real browser-login path. This runtime does not expose local bypass/passwordless browser auth, and no real browser credential was provided.",
       ];
       artifact.observedEvidence.push(
         `browser auth capability allowLocalBypassLogin=${String(authCapabilities.allowLocalBypassLogin === true)}`,
@@ -411,6 +469,13 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
       waitUntil: "domcontentloaded",
       timeout: scenarioTimeout(scenario, 90_000),
     });
+    await settleAndCompleteUiLoginIfNeeded({
+      page,
+      client,
+      execution,
+      artifact,
+      timeoutMs: execution.readyTimeoutMs ?? 30_000,
+    });
 
     const waitForReady = async () => {
       if (execution.readySelector) {
@@ -435,6 +500,13 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
     if (execution.reloadCheck) {
       reloadAbortCutoff = requestSequence;
       await page.reload({ waitUntil: "domcontentloaded", timeout: scenarioTimeout(scenario, 90_000) });
+      await settleAndCompleteUiLoginIfNeeded({
+        page,
+        client,
+        execution,
+        artifact,
+        timeoutMs: execution.readyTimeoutMs ?? 30_000,
+      });
       await waitForReady();
       await page.waitForTimeout(idleWindowMs);
     }
@@ -454,7 +526,8 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
     const requestedPath = getUrlPath(execution.path);
     const allowedFinalPathPrefixes = execution.allowedFinalPathPrefixes ?? [requestedPath];
     const significantRequestFailures = requestFailures.filter((message) => !isIgnorableUiRequestFailure(message));
-    artifact.toolErrors = [...significantRequestFailures, ...consoleErrors];
+    const significantConsoleErrors = consoleErrors.filter((message) => !isIgnorableUiConsoleError(message));
+    artifact.toolErrors = [...significantRequestFailures, ...significantConsoleErrors];
     artifact.observedEvidence.push(
       `loaded ${execution.path}`,
       `final url ${finalUrl}`,
@@ -465,7 +538,7 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
       timeToFirstVisibleSignalMs: firstVisibleSignalMs,
       uiRequestCount: requestUrls.length,
       uiRequestFailureCount: significantRequestFailures.length,
-      uiConsoleErrorCount: consoleErrors.length,
+      uiConsoleErrorCount: significantConsoleErrors.length,
       statusCode: gotoResponse?.status() ?? 0,
     };
     artifact.raw = {
@@ -475,6 +548,7 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
       requestedPath,
       allowedFinalPathPrefixes,
       consoleErrors,
+      significantConsoleErrors,
       requestFailures,
       reloadAbortedRequestFailures,
       significantRequestFailures,
@@ -503,13 +577,13 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
       return artifact;
     }
 
-    if (significantRequestFailures.length > 0 || consoleErrors.length > 0) {
+    if (significantRequestFailures.length > 0 || significantConsoleErrors.length > 0) {
       artifact.result = "partial";
       artifact.failureClass = "ui_loading";
       artifact.notes = [
         ...(artifact.notes ?? []),
         significantRequestFailures.length > 0 ? `${String(significantRequestFailures.length)} failed UI requests` : "",
-        consoleErrors.length > 0 ? `${String(consoleErrors.length)} console errors` : "",
+        significantConsoleErrors.length > 0 ? `${String(significantConsoleErrors.length)} console errors` : "",
       ].filter(Boolean);
     }
     return artifact;

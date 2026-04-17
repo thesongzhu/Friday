@@ -3,6 +3,7 @@
  */
 
 import { authHeaders } from "./real-env.js";
+import { liveAnthropicCredentialMessage } from "../../_helpers/live-anthropic.js";
 import {
   E2E_TARGET,
   getCloudE2eConfig,
@@ -207,6 +208,41 @@ export async function createOpenAiProvider(
   return json.data.provider.id;
 }
 
+export async function createAnthropicProvider(
+  baseUrl: string,
+  token: string,
+  opts: {
+    name: string;
+    anthropicBaseUrl: string;
+    models: string[];
+    defaultModel: string;
+    apiKeyEnvRef?: string;
+  },
+): Promise<string> {
+  if (typeof opts.apiKeyEnvRef !== "string" || opts.apiKeyEnvRef.trim().length === 0) { // pragma: allowlist secret
+    throw new Error(liveAnthropicCredentialMessage());
+  }
+  const { status, json } = await apiFetch<{
+    ok: boolean;
+    data: { provider: { id: string } };
+  }>(baseUrl, token, "POST", "/v1/providers", {
+    kind: "anthropic",
+    name: opts.name,
+    baseUrl: opts.anthropicBaseUrl,
+    authMode: "api-key",
+    api: "anthropic-messages",
+    apiKey: opts.apiKeyEnvRef,
+    supportedModels: opts.models,
+    defaultModel: opts.defaultModel,
+    enabled: true,
+    validateOnSave: false,
+  });
+  if (status !== 200 || !json.ok) {
+    throw new Error(`Failed to create Anthropic provider: ${JSON.stringify(json)}`);
+  }
+  return json.data.provider.id;
+}
+
 export async function setModelRouting(
   baseUrl: string,
   token: string,
@@ -296,6 +332,48 @@ export async function ensureOpenAiProviders(
   const codeProviderId = await createOpenAiProvider(baseUrl, token, {
     name: codeName,
     openAiBaseUrl,
+    models: [codeModel],
+    defaultModel: codeModel,
+    apiKeyEnvRef,
+  });
+
+  await setModelRouting(baseUrl, token, fastProviderId, [codeProviderId]);
+
+  return { fastProviderId, codeProviderId };
+}
+
+/**
+ * Create Anthropic fast + code providers and set routing to fast as default.
+ * Returns { fastProviderId, codeProviderId }.
+ */
+export async function ensureAnthropicProviders(
+  baseUrl: string,
+  token: string,
+  anthropicBaseUrl: string,
+  fastModel: string,
+  codeModel: string,
+  apiKeyEnvRef: string,
+  opts: { namePrefix?: string } = {},
+): Promise<{ fastProviderId: string; codeProviderId: string }> {
+  const normalizedPrefix = opts.namePrefix?.trim();
+  const fastName = normalizedPrefix
+    ? `${normalizedPrefix} Anthropic Fast (E2E)`
+    : "Anthropic Fast (E2E)";
+  const codeName = normalizedPrefix
+    ? `${normalizedPrefix} Anthropic Code (E2E)`
+    : "Anthropic Code (E2E)";
+
+  const fastProviderId = await createAnthropicProvider(baseUrl, token, {
+    name: fastName,
+    anthropicBaseUrl,
+    models: [fastModel],
+    defaultModel: fastModel,
+    apiKeyEnvRef,
+  });
+
+  const codeProviderId = await createAnthropicProvider(baseUrl, token, {
+    name: codeName,
+    anthropicBaseUrl,
     models: [codeModel],
     defaultModel: codeModel,
     apiKeyEnvRef,

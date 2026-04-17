@@ -20,7 +20,7 @@
   {
     "surface": "Skills inventory vs marketplace",
     "claim": "Skills catalog and marketplace sources are currently populated and ready for public browsing.",
-    "realEvidence": "/v1/skills=54, /v1/skills/catalog=0, /v1/marketplace/sources=0, /v1/marketplace/assets=0.",
+    "realEvidence": "/v1/skills=70, /v1/skills/catalog=0, /v1/marketplace/sources=0, /v1/marketplace/assets=0.",
     "status": "bounded"
   },
   {
@@ -32,8 +32,8 @@
   {
     "surface": "Usage page",
     "claim": "Usage reflects provider billing truth.",
-    "realEvidence": "usage-page.tsx did not expose an estimate disclaimer.",
-    "status": "mismatch"
+    "realEvidence": "usage-page.tsx explicitly labels token/cost figures as runtime usage, not billing truth.",
+    "status": "aligned"
   },
   {
     "surface": "MCP page",
