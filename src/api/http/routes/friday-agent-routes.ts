@@ -48,6 +48,35 @@ const AGENT_READ_SCOPES = ["agent.read", "workflow.run"] as const;
 const AGENT_RUN_SCOPES = ["agent.run", "workflow.run"] as const;
 const AGENT_WRITE_SCOPES = ["agent.write", "workflow.run"] as const;
 
+function getRunSurface(run: FridayAgentRunRecord): string | undefined {
+  const directSurface = run.metadata?.surface?.trim();
+  if (directSurface) {
+    return directSurface;
+  }
+  const packSurface = run.metadata?.packContext?.surface?.trim();
+  return packSurface && packSurface.length > 0 ? packSurface : undefined;
+}
+
+function unwrapSubagentSessionKey(sessionKey: string): string {
+  let normalized = sessionKey;
+  while (normalized.startsWith("subagent:")) {
+    normalized = normalized.slice("subagent:".length);
+  }
+  return normalized;
+}
+
+function isInternalAutonomousRun(run: FridayAgentRunRecord): boolean {
+  const surface = getRunSurface(run);
+  if (surface?.startsWith("autonomous_internal_")) {
+    return true;
+  }
+  return unwrapSubagentSessionKey(run.sessionKey).startsWith("autonomous:");
+}
+
+function filterVisibleAgentRuns(runs: FridayAgentRunRecord[]): FridayAgentRunRecord[] {
+  return runs.filter((run) => !isInternalAutonomousRun(run));
+}
+
 // ─── Deps ───
 
 export interface FridayAgentRoutesDeps {
@@ -382,7 +411,7 @@ export function createFridayAgentRoutes(
           ? rawStatus as FridayAgentRunStatus
           : undefined;
 
-        const items = deps.listRuns({ status, limit, cursor: query.cursor });
+        const items = filterVisibleAgentRuns(deps.listRuns({ status, limit, cursor: query.cursor }));
         const response: FridayListAgentRunsResponse = { items };
         return response;
       },
@@ -396,7 +425,7 @@ export function createFridayAgentRoutes(
       auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
       async handler(ctx) {
         const query = ctx.query as { since?: string };
-        const allRuns = deps.listRuns({ limit: 100 });
+        const allRuns = filterVisibleAgentRuns(deps.listRuns({ limit: 100 }));
         const since = query.since ? new Date(query.since).getTime() : 0;
         const recentRuns = since > 0
           ? allRuns.filter((r) => new Date(r.createdAt).getTime() >= since)
@@ -516,7 +545,9 @@ export function createFridayAgentRoutes(
           "agent.run.cancelled",
         ]);
         const allEvents = deps.listRunEvents(runId);
-        const auditEvents = allEvents.filter((e) => AUDIT_EVENT_NAMES.has(e.eventName));
+        const auditEvents = allEvents.filter((e) =>
+          AUDIT_EVENT_NAMES.has(e.eventName) || e.eventName.startsWith("autonomous."),
+        );
         return {
           runId,
           events: auditEvents.map((e) => ({

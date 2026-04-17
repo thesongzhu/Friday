@@ -132,6 +132,59 @@ describe("FridayAgentRoutes", () => {
     expect(route!.auth).toEqual({ public: false, anyOfScopes: ["agent.read", "workflow.run"] });
   });
 
+  it("GET /v1/agent/runs/:runId/audit includes autonomous events in the audit surface", async () => {
+    stubDeps.listRunEvents = vi.fn().mockReturnValue([
+      {
+        seq: 1,
+        eventName: "agent.run.started",
+        emittedAt: "2026-01-01T00:00:00.000Z",
+        payload: { runId: "run-1" },
+      },
+      {
+        seq: 2,
+        eventName: "autonomous.goal.completed",
+        emittedAt: "2026-01-01T00:00:01.000Z",
+        payload: { goalId: "goal-1", runId: "run-1" },
+      },
+      {
+        seq: 3,
+        eventName: "custom.debug",
+        emittedAt: "2026-01-01T00:00:02.000Z",
+        payload: { ignored: true },
+      },
+    ]);
+
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.audit")!;
+    const result = await route.handler({
+      body: null,
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal: null,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(result).toEqual({
+      runId: "run-1",
+      events: [
+        {
+          seq: 1,
+          type: "agent.run.started",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          payload: { runId: "run-1" },
+        },
+        {
+          seq: 2,
+          type: "autonomous.goal.completed",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          payload: { goalId: "goal-1", runId: "run-1" },
+        },
+      ],
+    });
+  });
+
   // ─── Handler tests ───
 
   describe("POST /v1/agent/runs handler", () => {
@@ -508,6 +561,34 @@ describe("FridayAgentRoutes", () => {
       expect(result.items).toEqual(runs);
     });
 
+    it("filters autonomous internal runs from the default list surface", async () => {
+      const visibleRun = createStubRun({ id: "run-visible", sessionKey: "agent:run:run-visible" });
+      const internalBySurface = createStubRun({
+        id: "run-internal-surface",
+        sessionKey: "agent:run:run-internal-surface",
+        metadata: { surface: "autonomous_internal_verify" },
+      });
+      const internalBySessionKey = createStubRun({
+        id: "run-internal-session",
+        sessionKey: "subagent:autonomous:plan:goal-1:child-run-1",
+      });
+      stubDeps.listRuns = vi.fn().mockReturnValue([visibleRun, internalBySurface, internalBySessionKey]);
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.list")!;
+      const ctx = {
+        body: null,
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      const result = await route.handler(ctx) as { items: FridayAgentRunRecord[] };
+      expect(result.items).toEqual([visibleRun]);
+    });
+
     it("validates limit is a positive integer", async () => {
       const routes = createFridayAgentRoutes(stubDeps);
       const route = routes.find((r) => r.operationId === "agent.runs.list")!;
@@ -523,6 +604,61 @@ describe("FridayAgentRoutes", () => {
       await expect(route.handler(ctx)).rejects.toThrow("limit must be a positive integer");
     });
 
+  });
+
+  describe("GET /v1/agent/runs/summary handler", () => {
+    it("excludes autonomous internal runs from user-facing summary counts", async () => {
+      stubDeps.listRuns = vi.fn().mockReturnValue([
+        createStubRun({
+          id: "run-internal",
+          status: "completed",
+          sessionKey: "subagent:autonomous:action:goal-1:child-run-1",
+          costUsd: 0.99,
+          createdAt: "2026-01-01T00:12:00.000Z",
+        }),
+        createStubRun({
+          id: "run-visible-failed",
+          status: "failed",
+          costUsd: 0.03,
+          createdAt: "2026-01-01T00:11:00.000Z",
+        }),
+        createStubRun({
+          id: "run-visible-completed",
+          status: "completed",
+          costUsd: 0.12,
+          createdAt: "2026-01-01T00:10:00.000Z",
+        }),
+      ]);
+
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.summary")!;
+      const ctx = {
+        body: null,
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      const result = await route.handler(ctx) as {
+        totalRuns: number;
+        completedCount: number;
+        failedCount: number;
+        totalCostUsd: number;
+        runs: Array<{ id: string }>;
+      };
+
+      expect(result.totalRuns).toBe(2);
+      expect(result.completedCount).toBe(1);
+      expect(result.failedCount).toBe(1);
+      expect(result.totalCostUsd).toBe(0.15);
+      expect(result.runs.map((run) => run.id)).toEqual([
+        "run-visible-failed",
+        "run-visible-completed",
+      ]);
+    });
   });
 
   describe("GET /v1/agent/runs/:runId handler", () => {
