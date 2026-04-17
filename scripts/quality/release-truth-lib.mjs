@@ -95,7 +95,7 @@ export function classifyEvidenceTarget(input) {
   const browserLiveTarget = /real-browser|live-browser|playwright.*127\.0\.0\.1|playwright.*localhost/i.test(text);
   const cloudTarget = filePath.includes("/test/e2e/live/")
     || /cloud-live|FRIDAY_E2E_TARGET=cloud|check-friday-cloud-contract/i.test(text);
-  const liveProviderTarget = /FRIDAY_E2E_LIVE_|FRIDAY_ANTHROPIC_OAUTH_ACCESS_TOKEN|real-scenarios|llm-e2e|run-real-world-validation/i.test(text);
+  const liveProviderTarget = /FRIDAY_E2E_LIVE_|FRIDAY_ANTHROPIC_API_KEY|ANTHROPIC_API_KEY|FRIDAY_ANTHROPIC_OAUTH_ACCESS_TOKEN|real-scenarios|llm-e2e|run-real-world-validation/i.test(text);
   const liveRuntimeTarget = /run-real-green-gate|real-green-gate|release:proof:real|local-runtime-doctor|ops:doctor:runtime|\/v1\/health|\/v1\/setup\/status/i.test(text);
   const manualExternalTarget = /reddit|manual external|openclaw parity|external walkthrough/i.test(text);
   const mockHubTarget = /createMockHubEnv|mock-hub|mock env/i.test(text);

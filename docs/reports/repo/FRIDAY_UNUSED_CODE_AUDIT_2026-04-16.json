@@ -2,7 +2,7 @@
   {
     "category": "bounded-empty",
     "surface": "marketplace catalog",
-    "evidence": "installedSkills=54, catalogSkills=0, sources=0, marketplaceAssets=0."
+    "evidence": "installedSkills=0, catalogSkills=0, sources=0, marketplaceAssets=0."
   },
   {
     "category": "unused-ui-file",

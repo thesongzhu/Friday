@@ -2,7 +2,8 @@
 
 ## Baseline
 
-- Base runtime: `http://127.0.0.1:33141`
+- Primary current runtime: `http://127.0.0.1:33152`
+- Additional isolated temp runtimes were used for the rollback-backed self-healing E2E and the skill generator live E2E.
 - Trust sources used in this pack:
   - current code
   - live HTTP/MCP/runtime behavior
@@ -109,6 +110,112 @@
 - Conclusion:
   - satellite pairing/runtime routes form a real protocol chain
 
+### Skill generator full closure
+
+- Real Anthropic API-key E2E completed the full generator chain in an isolated temp runtime:
+  - create session
+  - generate draft
+  - explicit self-test
+  - evidence
+  - approve/save
+  - registry refresh
+  - installed skill readback
+  - `/v1/skills/:skillId/run` completed with `completionDepth="executed"`
+- Conclusion:
+  - skill generation is no longer just draft-level or dispatch-only proof
+
+### Skill generator upgrade in place
+
+- Real Anthropic API-key E2E regenerated the same saved skill id in place:
+  - first save/install completed
+  - second generator session kept the same skill id
+  - installed version advanced to `2.0.0`
+  - pre-approve draft self-test executed the temp draft for real and passed the behavioral marker check
+  - post-upgrade `/v1/skills/:skillId/run` output changed from the previous run and contained the exact required `VERSION_TWO:<skillId>` marker
+- Bound:
+  - this proves explicit regenerate -> approve -> save can upgrade an installed skill in place
+  - it does not prove a background autonomous version-tracking or self-upgrade loop
+- Hardening added in this pass:
+  - generator contract extraction now preserves requested manifest id/version and exact output markers
+  - generated bundle validation now fails if required markers are missing from generated files
+  - explicit self-test now runs the draft from a temp directory and blocks approval when exact runtime markers are missing
+- Conclusion:
+  - explicit upgrade-in-place is now live-proven with exact output-marker evidence
+  - background autonomous version-tracking/self-upgrade is still not proven
+
+### Self-healing execute and rollback
+
+- Real Anthropic API-key E2E completed a rollback-backed self-healing lane in an isolated temp runtime:
+  - created primary + secondary providers
+  - set routing primary -> fallback
+  - disabled low-risk auto-apply so the action stayed `planned`
+  - reported a real model incident through `selfHealing.reportStructuredFailure(...)`
+  - verified `/v1/auto-fix/actions` returned a planned action with rollback available
+  - executed `/v1/auto-fix/actions/:actionId/execute`
+  - verified routing switched to the configured fallback provider
+  - rolled back `/v1/auto-fix/actions/:actionId/rollback`
+  - verified routing returned to the original provider/model
+- Conclusion:
+  - self-healing now has live execute + verify + rollback evidence for model fallback, not just readiness or execute-only proof
+
+### Self-healing auto-repair
+
+- Real Anthropic API-key E2E also proved the user-path automatic lane:
+  - low-risk auto-apply enabled
+  - model incident reported with a configured fallback provider
+  - action auto-applied without a manual `/execute`
+  - `/v1/agent-loop/runs` reached final status `verified`
+  - routing switched to the configured fallback provider
+  - lesson extraction persisted on the resolved incident/action record
+- Conclusion:
+  - low-risk self-healing is not only manually executable; the automatic agent-loop path is also live-proven
+
+### Self-healing lesson readback and route truth
+
+- Current isolated runtime workflow-failure proof completed a second, separate self-healing chain:
+  - repeated `/v1/uix/templates/deploy-workflow/execute` without `sessionId` to create the same failure fingerprint
+  - approved the planned action, which auto-executed and failed
+  - verified `extractedLesson` persisted into learning overview
+  - re-triggered the same failure fingerprint
+  - verified the next incident returned the learned lesson id in both `summary.matchedLessonIds` and `diagnosis.diagnosis.matchedLessonIds`
+- Hardening added in this pass:
+  - normalized diagnosis route output so the public incident summary and raw diagnosis record no longer disagree about matched lessons
+- Conclusion:
+  - self-healing is now live-proven not just for execute/rollback, but also for failed-fix lesson write -> readback on the next matching incident
+
+### Compaction trigger, writeback, and readback
+
+- Current live runtime compaction proof completed end to end:
+  - one run read three large (~73 KB) files in the same session
+  - SQLite recorded `agent.run.compaction_attempted`
+  - SQLite recorded `agent.run.compaction_result` with:
+    - `compacted=true`
+    - `summaryPresent=true`
+    - `estimatedTokensBefore=26921`
+    - `estimatedTokensAfter=3401`
+  - compaction memory rows persisted:
+    - `compaction.summary`
+    - `compaction.decisions`
+    - `compaction.todos`
+    - `compaction.files`
+  - after `POST /v1/sessions/:sessionKey/reset`, a zero-tool follow-up run correctly recalled the compacted fact that the primary pilot channel was `Discord`
+- Conclusion:
+  - compaction is now live-proven for trigger -> writeback -> reset -> readback
+  - the nuance is that compaction fired on the internal agent/subagent run that carried the large reads, not on the outer parent run envelope
+
+### Autonomous restart recovery
+
+- Current live isolated autonomous proof now completed full restart recovery:
+  - a goal reached `verifying`
+  - runtime was killed and restarted on the same SQLite stateDir
+  - the same goal recovered as `interrupted_recoverable`
+  - the same original step id recovered as `interrupted_recoverable`
+  - a real `resume_goal` HTTP run completed the exact same goal and exact same step successfully
+  - final SQLite state preserved the original step id in `step_ids_json`
+  - final SQLite state kept exactly one step row for the goal
+- Conclusion:
+  - autonomous persistence is now live-proven for interrupted_recoverable -> restart -> resume_goal -> same-step completion
+
 ## Fixed Real Defects In This Pass
 
 1. Missing heartbeat trigger route
@@ -140,11 +247,10 @@
   - `/v1/packages = 200` with empty list
   - `/v1/security/tenants = 200` with empty list
 - Non-IRC external channels remain unproven because credentials/platform wiring are absent in the current environment
-- Compaction is still not proven end-to-end with a fresh trigger/writeback/readback artifact
-- Autonomous persistence is still not proven end-to-end with a restart/recovery artifact
+- Autonomous persistence same-step continuity is now verified on the live isolated runtime
 
 ## Verdict
 
 - Current truth after this pass:
-  - core runtime + auth + providers + routing + chat/assistant + MCP + satellite + IRC + heartbeat trigger + search freshness have live evidence
-  - desktop, marketplace, non-IRC channels, compaction, and autonomous persistence still need separate live proof or remain blocked
+  - core runtime + auth + providers + routing + chat/assistant + MCP + satellite + IRC + heartbeat trigger + search freshness + compaction + skill upgrade-in-place + self-healing rollback + self-healing lesson readback have live evidence
+  - desktop, marketplace, and non-IRC channels still remain blocked or partially proven
