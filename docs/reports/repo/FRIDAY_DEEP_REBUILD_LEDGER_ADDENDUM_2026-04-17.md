@@ -42,3 +42,23 @@
 
 - Commit `117eb62` stays excluded by default.
 - Only reapply its secrets-baseline allowlist logic if this branch reproduces the exact same false positive under CI.
+
+## Current Rebuild Status
+
+- Phase 0 substrate: completed on branch `codex/deep-closure-bac8ef2`.
+- Bucket 1 autonomous restart matrix:
+  - Clean rebuild in progress.
+  - Code/status:
+    - Anthropic-only deep-proof helper landed.
+    - direct `toolExecutor` path landed for autonomous actions.
+    - deterministic file-state observation/verification landed for autonomous file proofs.
+    - Anthropic-only live restart suite landed in `test/e2e/live/friday-autonomous-restart.e2e.test.ts`.
+  - Verification:
+    - targeted unit tests: passed
+    - TypeScript/typecheck: passed
+    - real Anthropic proof: blocked in current session because neither `FRIDAY_ANTHROPIC_API_KEY` nor `ANTHROPIC_API_KEY` is present in the environment
+  - Next unblock action:
+    - export `FRIDAY_E2E_LIVE_ANTHROPIC=1`
+    - provide `FRIDAY_ANTHROPIC_API_KEY` (or `ANTHROPIC_API_KEY` alias)
+    - rerun `test/e2e/live/friday-autonomous-restart.e2e.test.ts`
+  - Exit is not satisfied until the live suite produces SQLite/readback-backed evidence.

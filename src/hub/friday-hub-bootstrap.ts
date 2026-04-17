@@ -5726,6 +5726,13 @@ export async function createFridayHub(
             disabledToolNames: ["autonomous", "setup", "setup_assistant"],
           }),
       },
+      toolExecutor: async (toolName, args, signal) => {
+        const tool = [...agentTools].reverse().find((candidate) => candidate.name === toolName);
+        if (!tool) {
+          throw new FridayDomainError("NOT_FOUND", `Autonomous tool "${toolName}" is not registered.`, { httpStatus: 404 });
+        }
+        return tool.execute(args, signal);
+      },
       analyzeImages: autonomousAnalyzeImages,
       desktopSessionManager: autonomousDesktopManager,
       browserManager: autonomousBrowserManager,

@@ -3,6 +3,7 @@ import {
   cleanupRealHubEnv,
   createRealHubEnv,
   createRealHubEnvFromStateDir,
+  shutdownRealHubEnv,
   type RealHubEnv,
 } from "./real-env.js";
 import { liveAnthropicCredentialMessage } from "../../_helpers/live-anthropic.js";
@@ -104,5 +105,6 @@ export async function createFridayDeepProofHubEnvFromStateDir(
 
 export {
   cleanupRealHubEnv as cleanupFridayDeepProofHubEnv,
+  shutdownRealHubEnv as shutdownFridayDeepProofHubEnv,
   ANTHROPIC_API_KEY_ENV_REF as FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF,
 };

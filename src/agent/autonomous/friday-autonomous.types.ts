@@ -542,6 +542,17 @@ export interface CreateFridayAutonomousEngineDeps {
     }): Promise<{ runId: string; status: string; response: string; usageInput: number; usageOutput: number }>;
   };
 
+  /** Optional direct tool executor that bypasses an extra agent run for known tool calls. */
+  readonly toolExecutor?: (
+    toolName: string,
+    args: Record<string, unknown>,
+    signal: AbortSignal,
+  ) => Promise<{
+    content: string;
+    isError?: boolean;
+    metadata?: Record<string, unknown>;
+  }>;
+
   /** Image analysis function for VLM perception. */
   readonly analyzeImages: (
     request: {
