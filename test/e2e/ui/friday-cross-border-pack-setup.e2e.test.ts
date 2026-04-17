@@ -2,10 +2,10 @@ import * as fs from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  createFridayBrowserE2eEnv,
-  type FridayBrowserE2eEnv,
+  createFridayMockBrowserE2eEnv,
+  type FridayMockBrowserE2eEnv,
   type FridayBrowserPageHandle,
-} from "./_helpers/browser-env.js";
+} from "./_helpers/browser-env-mock.js";
 
 const CHROMIUM_AVAILABLE = (() => {
   try {
@@ -18,8 +18,8 @@ const CHROMIUM_AVAILABLE = (() => {
 
 const BROWSER_E2E_TIMEOUT_MS = 180_000;
 
-describe.skipIf(!CHROMIUM_AVAILABLE)("Friday cross-border pack setup", () => {
-  let env: FridayBrowserE2eEnv | null = null;
+describe.skipIf(!CHROMIUM_AVAILABLE)("Friday cross-border pack setup (mock hub browser E2E)", () => {
+  let env: FridayMockBrowserE2eEnv | null = null;
   let pageHandle: FridayBrowserPageHandle | null = null;
 
   afterEach(async () => {
@@ -34,7 +34,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday cross-border pack setup", () => {
   });
 
   it("saves a cross-border operating profile and shows the assistant handoff", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
-    env = await createFridayBrowserE2eEnv();
+    env = await createFridayMockBrowserE2eEnv();
     pageHandle = await env.newPage();
 
     await pageHandle.page.goto("/packs/cross-border/setup?packId=industry-cross-border-ecommerce");
