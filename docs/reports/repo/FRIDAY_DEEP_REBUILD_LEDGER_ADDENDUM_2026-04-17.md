@@ -88,3 +88,25 @@
       - skill verification drift raises a `disable_skill` remediation that verifies and leaves the skill disabled
   - Exit:
     - satisfied for Phase 2 advancement
+- Bucket 3 learning / compaction behavior changed:
+  - Clean rebuild completed in the clean tree with a new Anthropic-only live suite instead of porting the dirty proof verbatim.
+  - Code/status:
+    - clean Anthropic-only learning suite landed in `test/e2e/live/friday-learning-live.e2e.test.ts`.
+    - session-memory write/readback proof is rebuilt around real seeded session history plus a control session.
+    - compaction proof now uses a canonical evidence token instead of a filesystem-looking path so the model is not diverted into file-tool validation noise.
+    - compaction trigger wording was narrowed to a stable recap prompt that both replays enough history to trigger semantic compaction and still returns a validated text answer.
+    - world-model recent-interactions proof is rebuilt around fresh-session readback for the same authenticated user across isolated runtimes.
+  - Verification:
+    - targeted runtime compaction tests: passed
+    - TypeScript/typecheck: passed
+    - real Anthropic proof: passed on 2026-04-17 via `FRIDAY_E2E_LIVE_ANTHROPIC=1` + Anthropic API-key lane
+    - previous-phase regression: self-healing live matrix passed again after Phase 3 changes
+    - live evidence:
+      - session memory write -> same-session readback changes behavior relative to a clean control session
+      - semantic compaction triggers on oversized session replay, writes `compaction.*` memory, resets the session, and a later run reads the persisted summary back to recover the exact evidence token while a clean control session cannot
+      - world-model recent interactions write -> fresh-session readback changes behavior for the same user across isolated runtimes
+    - root-cause notes:
+      - the first rebuild attempt used a token-only priming prompt and intermittently failed the runtime validation gate with an empty response
+      - the stable proof prompt is now `Summarize the prior retention proof discussion in one short sentence, including the exact canonical evidence token.`
+  - Exit:
+    - satisfied for Phase 3 advancement
