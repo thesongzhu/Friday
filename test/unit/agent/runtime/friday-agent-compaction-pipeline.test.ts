@@ -549,10 +549,10 @@ describe("Compaction Pipeline Integration", () => {
         get: vi.fn(),
         list: vi.fn(async () => [
           {
-            id: "pref-1", namespace: "compaction.decisions", key: "d1",
+            id: "pref-1", namespace: "learning.preferences", key: "d1",
             content: "Prefer deploying to AWS ECS",
-            source: "compaction:s1:r1",
-            tags: ["compaction", "auto"],
+            source: "learning:user-1:event-1",
+            tags: ["learning", "auto", "preference", "user-1"],
             metadata: { confidence: 0.7 },
             createdAt: NOW, updatedAt: NOW,
           } as FridayMemoryItem,
@@ -610,10 +610,10 @@ describe("Compaction Pipeline Integration", () => {
         get: vi.fn(),
         list: vi.fn(async () => [
           {
-            id: "pref-dup", namespace: "compaction.decisions", key: "d1",
+            id: "pref-dup", namespace: "learning.preferences", key: "d1",
             content: "TypeScript strict mode preferred",
-            source: "compaction:s1:r1",
-            tags: ["compaction", "auto"],
+            source: "learning:user-1:event-1",
+            tags: ["learning", "auto", "preference", "user-1"],
             metadata: { confidence: 0.9 },
             createdAt: NOW, updatedAt: NOW,
           } as FridayMemoryItem,
@@ -638,6 +638,37 @@ describe("Compaction Pipeline Integration", () => {
       // "TypeScript strict mode preferred" vs "typescript_mode: strict mode preferred"
       // They share high overlap, so one should be removed
       expect(result.itemCount).toBeLessThanOrEqual(2);
+    });
+
+    it("ignores compaction memory so session summaries do not leak into preferences", async () => {
+      const mockMemoryService = {
+        store: vi.fn(),
+        search: vi.fn(),
+        get: vi.fn(),
+        list: vi.fn(async () => [
+          {
+            id: "compaction-1", namespace: "compaction.summary", key: "summary-1",
+            content: "Canonical evidence path /tmp/leak.txt",
+            source: "compaction:session-1:run-1",
+            tags: ["compaction", "auto", "session-1"],
+            metadata: { confidence: 0.9 },
+            createdAt: NOW, updatedAt: NOW,
+          } as FridayMemoryItem,
+        ]),
+        delete: vi.fn(),
+        prune: vi.fn(),
+      };
+
+      const injector = createFridayPreferenceInjector({
+        memoryService: mockMemoryService as any,
+        nowIso: testNowIso,
+      });
+
+      const result = await injector.loadPreferences("user-1");
+
+      expect(result.fragment).toBe("");
+      expect(result.itemCount).toBe(0);
+      expect(result.sources).toEqual([]);
     });
   });
 
@@ -749,7 +780,7 @@ describe("Compaction Pipeline Integration", () => {
         expect(verification.entityRecall).toBeLessThanOrEqual(1);
       }
 
-      // ── Step 7: Verify preference injector can read the stored items ──
+      // ── Step 7: Verify preference injector does NOT treat compaction items as preferences ──
       const injector = createFridayPreferenceInjector({
         memoryService: mockMemoryService as any,
         nowIso: testNowIso,
@@ -757,13 +788,8 @@ describe("Compaction Pipeline Integration", () => {
 
       const prefResult = await injector.loadPreferences("user-e2e");
 
-      // The injector should find and format the compaction items
-      // (it queries compaction.decisions and compaction.todos namespaces)
-      // Since our mock returns all storedItems, it should find some
-      if (storedItems.some((i) => i.namespace === "compaction.decisions" || i.namespace === "compaction.todos")) {
-        expect(prefResult.itemCount).toBeGreaterThan(0);
-        expect(prefResult.fragment).toContain("[Learned Preferences]");
-      }
+      expect(prefResult.itemCount).toBe(0);
+      expect(prefResult.fragment).toBe("");
     });
   });
 

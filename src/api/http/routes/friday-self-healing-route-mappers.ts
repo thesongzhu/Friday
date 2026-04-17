@@ -24,7 +24,7 @@ function readMatchedLessonIds(details: FridayIncidentDiagnosisDetails): string[]
   if (matchedLessonIds.length > 0) {
     return matchedLessonIds;
   }
-  return details.lesson ? [details.lesson.id] : [];
+  return details.diagnosis == null && details.lesson ? [details.lesson.id] : [];
 }
 
 export function toFridayDiagnosisSummary(

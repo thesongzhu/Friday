@@ -69,6 +69,36 @@ function isStructuredInternalRuntimeFailure(
     && typeof incident.nodeId === "string" && incident.nodeId.trim().length > 0;
 }
 
+function derivePlanStepKind(
+  incident: FridayErrorIncidentEntity,
+): FridayAutoFixPlan["steps"][number]["kind"] {
+  const source = typeof incident.context.source === "string"
+    ? incident.context.source
+    : undefined;
+  const skillId = typeof incident.context.skillId === "string"
+    ? incident.context.skillId.trim()
+    : "";
+  if (source === "skills_lifecycle" && skillId.length > 0) {
+    return "disable_skill";
+  }
+  return mapCategoryToStepKind(incident.category);
+}
+
+function derivePlanTarget(
+  incident: FridayErrorIncidentEntity,
+  stepKind: FridayAutoFixPlan["steps"][number]["kind"],
+): string {
+  if (stepKind === "disable_skill") {
+    const skillId = typeof incident.context.skillId === "string"
+      ? incident.context.skillId.trim()
+      : "";
+    if (skillId.length > 0) {
+      return skillId;
+    }
+  }
+  return incident.runId ?? incident.nodeId ?? incident.category;
+}
+
 export function createFridayErrorDiagnosisService(
   deps: CreateErrorDiagnosisServiceDeps,
 ): FridayErrorDiagnosisService {
@@ -198,8 +228,8 @@ export function createFridayErrorDiagnosisService(
       const TIER_1_KINDS = new Set(["apply_config_patch", "grant_permission"]);
 
       for (const l of matchedLessons) {
-        const planStepKind = mapCategoryToStepKind(incident.category);
-        const target = incident.nodeId ?? incident.category;
+        const planStepKind = derivePlanStepKind(incident);
+        const target = derivePlanTarget(incident, planStepKind);
         const plan: FridayAutoFixPlan = {
           title: `Auto-fix: ${l.title}`,
           summary: l.fix,

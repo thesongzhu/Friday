@@ -61,7 +61,7 @@ function createMockService(): FridaySessionService {
   return {
     createSession: vi.fn(),
     listSessions: vi.fn(),
-    getSession: vi.fn(),
+    getSession: vi.fn().mockResolvedValue(null),
     getOrCreateSession: vi.fn().mockResolvedValue(makeMockSession()),
     alignSessionContext: vi.fn(),
     addMessage: vi.fn(),
@@ -951,11 +951,57 @@ describe("FridaySessionRoutes", () => {
       expect(runSession).toHaveBeenCalledWith(
         expect.objectContaining({
           tenantContext: {
-            hubId: "tenant-acme",
+            hubId: "default",
             userId: "user-1",
           },
         }),
       );
+    });
+
+    it("does not overwrite an explicit session user/account with authenticated principal context", async () => {
+      const svc = createMockService();
+      const existingSession = makeMockSession({
+        key: "web:tenant-custom:user-custom",
+        channel: "web",
+        accountId: "tenant-custom",
+        chatId: "seed-chat",
+        userId: "user-custom",
+      });
+      vi.mocked(svc.getOrCreateSession).mockResolvedValue(existingSession);
+      vi.mocked(svc.getSession).mockResolvedValue(existingSession);
+      vi.mocked(svc.addMessage).mockResolvedValue(makeMockMessage({
+        sessionKey: existingSession.key,
+        content: "hello",
+        contentText: "hello",
+      }));
+
+      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.messages.create")!;
+
+      await route.handler(
+        makeMockCtx({
+          params: { sessionKey: existingSession.key },
+          body: { role: "user", content: "hello" },
+          principal: {
+            principalType: "user",
+            principalId: "principal-1",
+            tenantId: "tenant-admin",
+            userId: "admin-001",
+            role: "owner",
+            scopes: ["session.write"],
+            tokenId: "token-1",
+            tokenKind: "access",
+            issuedAt: "2026-01-01T00:00:00.000Z",
+            expiresAt: "2026-01-01T01:00:00.000Z",
+          },
+        }) as never,
+      );
+
+      expect(svc.alignSessionContext).not.toHaveBeenCalled();
+      expect(svc.addMessage).toHaveBeenCalledWith(existingSession.key, {
+        role: "user",
+        content: "hello",
+      });
     });
 
     it("validates timeoutMs in run body", async () => {

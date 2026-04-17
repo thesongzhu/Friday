@@ -27,6 +27,7 @@ import type {
   FridayGeneratedWorkflowValidationIssue,
   FridayGeneratedWorkflowValidationReport,
   FridayStartWorkflowGenerationRequest,
+  FridayWorkflowGenerationMaintenanceTarget,
   FridayWorkflowGenerationRequirements,
   FridayWorkflowGenerationSession,
   FridayWorkflowGenerationTurn,
@@ -410,6 +411,41 @@ export function createFridayWorkflowGeneratorService(
       return null;
     }
     return null;
+  }
+
+  function loadMaintenanceTarget(
+    workflowId: string,
+  ): FridayWorkflowGenerationMaintenanceTarget {
+    const workflow = deps.workflowCrud.getWorkflow(workflowId);
+    if (!workflow) {
+      throw new FridayDomainError(
+        "WORKFLOW_NOT_FOUND",
+        `Workflow not found: ${workflowId}`,
+        { httpStatus: 404 },
+      );
+    }
+
+    const publishedVersion =
+      deps.workflowCrud.getPublishedVersion(workflowId)
+      ?? deps.workflowCrud.listVersions(workflowId, 1)[0]
+      ?? null;
+
+    const publishedSpec = publishedVersion
+      ? deps.db.withReadConnection((reader) =>
+        specVersionRepo.getByVersionId(reader, publishedVersion.id)?.spec ?? null,
+      )
+      : null;
+
+    return {
+      workflowId: workflow.id,
+      slug: workflow.slug,
+      currentSpecWorkflowId: publishedSpec?.workflowId,
+      currentName: workflow.name,
+      currentDescription: workflow.description,
+      publishedVersionId: publishedVersion?.id,
+      publishedVersionNumber: publishedVersion?.versionNumber,
+      publishedSpec: publishedSpec ?? undefined,
+    };
   }
 
   function extractStringArray(
@@ -858,6 +894,7 @@ export function createFridayWorkflowGeneratorService(
       session.openQuestions,
       availableSkills,
       recentTurns,
+      session.maintenanceTarget,
     );
     const result = await llm.infer<WorkflowRequirementsAnalyzerResponse>({
       prompt,
@@ -874,7 +911,12 @@ export function createFridayWorkflowGeneratorService(
     availableSkills: FridayWorkflowGeneratorSkillContext[],
     requestedModel?: string,
   ): Promise<FridayWorkflowSpecV1> {
-    const prompt = buildWorkflowSpecPrompt(requirements, availableSkills, requirements._repairContext);
+    const prompt = buildWorkflowSpecPrompt(
+      requirements,
+      availableSkills,
+      requirements._repairContext,
+      session.maintenanceTarget,
+    );
     const result = await llm.infer<FridayWorkflowSpecV1>({
       prompt,
       requestedModel,
@@ -1134,6 +1176,9 @@ export function createFridayWorkflowGeneratorService(
     ): Promise<FridayWorkflowGenerationTurnResponse> {
       const now = deps.nowIso();
       const sessionId = deps.idGenerator();
+      const maintenanceTarget = input.targetWorkflowId
+        ? loadMaintenanceTarget(input.targetWorkflowId)
+        : undefined;
 
       const session: FridayWorkflowGenerationSession = {
         sessionId,
@@ -1144,7 +1189,12 @@ export function createFridayWorkflowGeneratorService(
         goal: input.goal,
         requirementsSummary: "",
         openQuestions: [],
-        decisions: [],
+        decisions: maintenanceTarget
+          ? [`Updating existing workflow ${maintenanceTarget.slug} (${maintenanceTarget.workflowId})`]
+          : [],
+        workflowId: maintenanceTarget?.workflowId,
+        workflowVersionId: maintenanceTarget?.publishedVersionId,
+        maintenanceTarget,
         createdAt: now,
         updatedAt: now,
       };
@@ -1506,17 +1556,25 @@ export function createFridayWorkflowGeneratorService(
         );
       }
 
-      // Derive unique slug
-      const slug = makeUniqueSlug(draft.spec.name || draft.spec.workflowId);
+      const targetWorkflowId = syncedReview.session.maintenanceTarget?.workflowId ?? syncedReview.session.workflowId;
+      const existingWorkflow = targetWorkflowId
+        ? deps.workflowCrud.getWorkflow(targetWorkflowId)
+        : null;
 
-      // Create workflow
-      const workflow = deps.workflowCrud.createWorkflow({
-        slug,
-        name: draft.spec.name,
-        description: draft.spec.description,
-      });
+      const workflow = existingWorkflow
+        ? deps.workflowCrud.updateWorkflow({
+          workflowId: existingWorkflow.id,
+          expectedRevision: existingWorkflow.revision,
+          etag: existingWorkflow.etag,
+          name: draft.spec.name,
+          description: draft.spec.description,
+        })
+        : deps.workflowCrud.createWorkflow({
+          slug: makeUniqueSlug(draft.spec.name || draft.spec.workflowId),
+          name: draft.spec.name,
+          description: draft.spec.description,
+        });
 
-      // Create version
       const version = deps.workflowCrud.createVersion(
         workflow.id,
         draft.compiledGraph,

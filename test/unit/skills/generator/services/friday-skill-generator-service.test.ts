@@ -1055,6 +1055,55 @@ describe("FridaySkillGeneratorService", () => {
       }
     });
 
+    it("blocks approval when explicit self-test evidence is missing", async () => {
+      const analyzerResponse = {
+        state: "needs_clarification",
+        questions: ["What?"],
+        spec: {
+          goal: "Echo",
+          inputs: [{ key: "query", type: "string", required: true, label: "Query" }],
+          outputs: [{ key: "result", type: "string", description: "Result" }],
+          runtimeKind: "shell",
+        },
+      };
+      const manifest = makeManifest({
+        runtime: {
+          kind: "shell",
+          entrypoint: "run.sh",
+          minHubVersion: "0.1.0",
+          apiVersion: "1",
+          timeoutMsDefault: 30000,
+        },
+      });
+      const files: FridayGeneratedSkillFile[] = [
+        {
+          path: "run.sh",
+          language: "bash",
+          executable: true,
+          content: "#!/usr/bin/env bash\ncat <<'EOF'\n{\"result\":\"ok\"}\nEOF\n",
+        },
+      ];
+      const uiSchema = makeUiSchema();
+
+      mockFetchForLlm([analyzerResponse, manifest, files, uiSchema]);
+
+      try {
+        const startResult = await service.startSession({
+          goal: "Echo shell skill",
+          userId: "user-1",
+          channel: "discord",
+        });
+
+        await service.generateDraft(startResult.session.sessionId);
+
+        await expect(
+          service.approveAndSave(startResult.session.sessionId),
+        ).rejects.toThrow("Explicit self-test has not been run yet.");
+      } finally {
+        restoreFetch();
+      }
+    });
+
     it("promotes generated drafts to stabilized manifests with evidence", async () => {
       const analyzerResponse = {
         state: "needs_clarification",
@@ -1095,6 +1144,20 @@ describe("FridaySkillGeneratorService", () => {
         });
 
         await service.generateDraft(startResult.session.sessionId);
+        await service.recordExplicitTestResult(startResult.session.sessionId, {
+          ok: true,
+          executable: true,
+          issues: [],
+          durationMs: 25,
+          testedAt: NOW,
+          behavioralCheck: {
+            attempted: true,
+            satisfied: true,
+            expectedMarkers: ["ok"],
+            matchedMarkers: ["ok"],
+            runStatus: "completed",
+          },
+        });
         const result = await service.approveAndSave(startResult.session.sessionId);
 
         expect(result.promotionStage).toBe("stabilized");

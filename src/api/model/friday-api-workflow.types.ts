@@ -398,6 +398,7 @@ export interface FridayWorkflowGeneratorCreateSessionRequest {
   requestedModel?: string;
   userId: string;
   channel: string;
+  targetWorkflowId?: UUID;
 }
 
 export interface FridayWorkflowGeneratorSubmitMessageRequest {
