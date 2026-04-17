@@ -274,18 +274,19 @@ function extractRefusalFromResponse(
 // ─── Parse JSON from model output ───
 
 function parseJsonFromText<T>(rawText: string): T {
-  // Try direct parse first
   const trimmed = rawText.trim();
   try {
     return JSON.parse(trimmed) as T;
-  } catch (err) {
-    console.warn("[friday][provider-inference-client] operation failed:", err instanceof Error ? err.message : String(err));
-    // Try to extract JSON from code fences
+  } catch {}
+
+  try {
     const fenceMatch = /```(?:json)?\s*\n?([\s\S]*?)\n?```/.exec(trimmed);
     if (fenceMatch?.[1]) {
       return JSON.parse(fenceMatch[1].trim()) as T;
     }
-    // Try to find first { or [ and last } or ]
+  } catch {}
+
+  try {
     const startBrace = trimmed.indexOf("{");
     const startBracket = trimmed.indexOf("[");
     const start =
@@ -303,8 +304,10 @@ function parseJsonFromText<T>(rawText: string): T {
         return JSON.parse(trimmed.slice(start, end + 1)) as T;
       }
     }
-    throw new FridayDomainError("PARSE_ERROR", `Failed to parse JSON from model output: ${trimmed.slice(0, 200)}`, { httpStatus: 422 });
-  }
+  } catch {}
+
+  console.warn("[friday][provider-inference-client] operation failed:", trimmed.slice(0, 200));
+  throw new FridayDomainError("PARSE_ERROR", `Failed to parse JSON from model output: ${trimmed.slice(0, 200)}`, { httpStatus: 422 });
 }
 
 // ─── Factory ───

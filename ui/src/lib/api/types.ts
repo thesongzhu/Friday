@@ -533,6 +533,14 @@ export interface SkillGeneratorTestSummary {
   issues: GeneratedSkillValidationIssue[];
   durationMs: number;
   testedAt: string;
+  behavioralCheck?: {
+    attempted: boolean;
+    satisfied: boolean;
+    expectedMarkers: string[];
+    matchedMarkers: string[];
+    runStatus?: "completed" | "failed" | "cancelled" | "timeout";
+    reason?: string;
+  };
 }
 
 export interface SkillGenerationEvidence {

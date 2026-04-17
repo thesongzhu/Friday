@@ -124,7 +124,10 @@ describe("FridayMemoryGuardService — Namespace Isolation", () => {
     await guard.list();
     expect(core.list).toHaveBeenCalledWith(
       expect.objectContaining({
-        namespace: "tenant.default.user.user1",
+        namespace: expect.arrayContaining([
+          "tenant.default.user.user1",
+          "default",
+        ]),
       }),
     );
   });
@@ -148,7 +151,10 @@ describe("FridayMemoryGuardService — Namespace Isolation", () => {
     const callArgs = vi.mocked(core.search).mock.calls[0];
     expect(callArgs[1]).toEqual(
       expect.objectContaining({
-        namespace: "tenant.default.user.user1",
+        namespace: expect.arrayContaining([
+          "tenant.default.user.user1",
+          "default",
+        ]),
       }),
     );
   });
@@ -184,7 +190,10 @@ describe("FridayMemoryGuardService — Namespace Isolation", () => {
     await guard.prune();
     expect(core.prune).toHaveBeenCalledWith(
       expect.objectContaining({
-        namespace: "tenant.default.user.user1",
+        namespace: expect.arrayContaining([
+          "tenant.default.user.user1",
+          "default",
+        ]),
       }),
     );
   });

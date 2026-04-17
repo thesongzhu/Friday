@@ -3,6 +3,7 @@ import type {
   FridayDiagnosisSummary,
   FridayFixPlanRecord,
 } from "../../model/friday-api-self-healing.types.js";
+import type { FridayDiagnosisRecordEntity } from "../../../learning/model/friday-learning.types.js";
 import type {
   FridayIncidentDiagnosisDetails,
   FridaySelfHealingActionDetails,
@@ -47,6 +48,26 @@ export function toFridayDiagnosisSummary(
   };
 }
 
+export function toFridayNormalizedDiagnosisRecord(
+  details: FridayIncidentDiagnosisDetails,
+): FridayDiagnosisRecordEntity | null {
+  if (!details.diagnosis) {
+    return null;
+  }
+  const matchedLessonIds = readMatchedLessonIds(details);
+  if (matchedLessonIds.length === 0) {
+    return details.diagnosis;
+  }
+
+  return {
+    ...details.diagnosis,
+    diagnosis: {
+      ...details.diagnosis.diagnosis,
+      matchedLessonIds,
+    },
+  };
+}
+
 export function toFridayFixPlanRecord(
   details: FridaySelfHealingActionDetails,
   loopRunId?: string,
@@ -82,7 +103,7 @@ export function toFridayDiagnosisIncidentRecord(
 ): FridayDiagnosisIncidentRecord {
   return {
     incident: details.incident,
-    diagnosis: details.diagnosis,
+    diagnosis: toFridayNormalizedDiagnosisRecord(details),
     summary: toFridayDiagnosisSummary(details, input?.incidentLoopRunId),
     action: details.action ? toFridayFixPlanRecord(details.action, input?.actionLoopRunId) : null,
   };

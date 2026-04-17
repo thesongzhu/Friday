@@ -32,6 +32,7 @@ export interface FridayAgentToolDefinition {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  timeoutMs?: number | ((args: Record<string, unknown>) => number | undefined);
   execute: (
     args: Record<string, unknown>,
     signal: AbortSignal,

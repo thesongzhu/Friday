@@ -65,6 +65,39 @@ export function createFridayAgentSkillTool(
 
       const registeredSkill = deps.skillRegistry?.get(skillId);
       if (registeredSkill) {
+        const requiredInputs = (registeredSkill.manifest.inputs ?? [])
+          .filter((field) => field.required !== false && typeof field.key === "string" && field.key.trim().length > 0)
+          .map((field) => ({
+            key: field.key.trim(),
+            type: field.type,
+            label: field.label,
+          }));
+        const missingInputs = requiredInputs
+          .filter((field) => {
+            const value = input[field.key];
+            if (value == null) return true;
+            return typeof value === "string" && value.trim().length === 0;
+          });
+        if (missingInputs.length > 0) {
+          const exampleInput = Object.fromEntries(
+            requiredInputs.map((field) => [
+              field.key,
+              field.type === "number"
+                ? 0
+                : field.type === "boolean"
+                  ? true
+                  : field.type === "array"
+                    ? []
+                    : field.type === "object"
+                      ? {}
+                      : `<${field.key}>`,
+            ]),
+          );
+          return errorResult(
+            `Skill '${skillId}' missing required input(s): ${missingInputs.map((field) => field.key).join(", ")}. Provide input like ${JSON.stringify(exampleInput)}.`,
+          );
+        }
+
         const readiness = evaluateFridaySkillMcpReadiness({
           manifest: registeredSkill.manifest,
           servers: deps.listMcpServerReadiness?.() ?? [],

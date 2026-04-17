@@ -62,7 +62,8 @@ function createMockService(): FridaySessionService {
     createSession: vi.fn(),
     listSessions: vi.fn(),
     getSession: vi.fn(),
-    getOrCreateSession: vi.fn(),
+    getOrCreateSession: vi.fn().mockResolvedValue(makeMockSession()),
+    alignSessionContext: vi.fn(),
     addMessage: vi.fn(),
     updateMessageMetadataByIdempotency: vi.fn(),
     getMessages: vi.fn(),
@@ -78,6 +79,7 @@ function createMockService(): FridaySessionService {
     evaluateSendPolicy: vi.fn(),
     getConversationFocus: vi.fn(),
     setConversationFocus: vi.fn(),
+    mergeMetadata: vi.fn(),
   };
 }
 
@@ -406,6 +408,11 @@ describe("FridaySessionRoutes", () => {
     it("creates message on valid body", async () => {
       const svc = createMockService();
       const mockMsg = makeMockMessage();
+      vi.mocked(svc.alignSessionContext).mockResolvedValue(makeMockSession({
+        accountId: "admin-001",
+        userId: "admin-001",
+        memoryNamespace: "tenant.admin-001.channel.discord.user.admin-001.shared",
+      }));
       vi.mocked(svc.addMessage).mockResolvedValue(mockMsg);
 
       const routes = createFridaySessionRoutes({ sessionService: svc });
@@ -415,10 +422,24 @@ describe("FridaySessionRoutes", () => {
         makeMockCtx({
           params: { sessionKey: "discord:default:user1" },
           body: { role: "user", content: "hello" },
+          principal: {
+            principalType: "user",
+            principalId: "admin-001",
+            tenantId: "admin-001",
+            userId: "admin-001",
+            scopes: ["session.write"],
+            tokenId: "tok-1",
+            tokenKind: "access",
+            issuedAt: "2026-01-01T00:00:00.000Z",
+          },
         }) as never,
       );
 
       expect(result).toHaveProperty("message");
+      expect(svc.alignSessionContext).toHaveBeenCalledWith("discord:default:user1", {
+        accountId: "admin-001",
+        userId: "admin-001",
+      });
     });
   });
 
@@ -931,7 +952,7 @@ describe("FridaySessionRoutes", () => {
         expect.objectContaining({
           tenantContext: {
             hubId: "tenant-acme",
-            userId: "principal-1",
+            userId: "user-1",
           },
         }),
       );
@@ -1107,6 +1128,11 @@ describe("FridaySessionRoutes", () => {
     it("accepts valid extract body and calls service", async () => {
       const svc = createMockService();
       const extractSvc = createMockExtractionService();
+      vi.mocked(svc.alignSessionContext).mockResolvedValue(makeMockSession({
+        accountId: "admin-001",
+        userId: "admin-001",
+        memoryNamespace: "tenant.admin-001.channel.discord.user.admin-001.shared",
+      }));
       const routes = createFridaySessionRoutes({ sessionService: svc, extractionService: extractSvc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extract")!;
 
@@ -1114,10 +1140,24 @@ describe("FridaySessionRoutes", () => {
         makeMockCtx({
           params: { sessionKey: "discord:default:user1" },
           body: { trigger: "manual", mode: "inline", batchSize: 10, maxBatches: 2 },
+          principal: {
+            principalType: "user",
+            principalId: "admin-001",
+            tenantId: "admin-001",
+            userId: "admin-001",
+            scopes: ["session.write"],
+            tokenId: "tok-1",
+            tokenKind: "access",
+            issuedAt: "2026-01-01T00:00:00.000Z",
+          },
         }) as never,
       );
 
       expect(result).toHaveProperty("result");
+      expect(svc.alignSessionContext).toHaveBeenCalledWith("discord:default:user1", {
+        accountId: "admin-001",
+        userId: "admin-001",
+      });
       expect(extractSvc.extractFromSession).toHaveBeenCalledWith(
         "discord:default:user1",
         { trigger: "manual", mode: "inline", batchSize: 10, maxBatches: 2 },
@@ -1235,6 +1275,39 @@ describe("FridaySessionRoutes", () => {
         ),
         FRIDAY_SESSION_MEMORY_EXTRACTION_ERROR_CODES.PROVIDER_ERROR,
       );
+    });
+
+    it("aligns session context before remembering messages for an authenticated user", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.alignSessionContext).mockResolvedValue(makeMockSession({
+        accountId: "admin-001",
+        userId: "admin-001",
+      }));
+      const extractSvc = createMockExtractionService();
+      const routes = createFridaySessionRoutes({ sessionService: svc, extractionService: extractSvc });
+      const route = routes.find((r) => r.operationId === "sessions.memory.remember")!;
+
+      await route.handler(
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          body: { messageIds: ["msg-1"] },
+          principal: {
+            principalType: "user",
+            principalId: "admin-001",
+            tenantId: "admin-001",
+            userId: "admin-001",
+            scopes: ["session.write"],
+            tokenId: "tok-1",
+            tokenKind: "access",
+            issuedAt: "2026-01-01T00:00:00.000Z",
+          },
+        }) as never,
+      );
+
+      expect(svc.alignSessionContext).toHaveBeenCalledWith("discord:default:user1", {
+        accountId: "admin-001",
+        userId: "admin-001",
+      });
     });
   });
 

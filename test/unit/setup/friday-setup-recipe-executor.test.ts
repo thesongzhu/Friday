@@ -58,9 +58,18 @@ function createEngine(): FridayAutonomousEngine {
       durationMs: 10,
       extractedOutputs: { token: "abc123" },
     }),
+    resumeGoal: vi.fn().mockResolvedValue({
+      goalId: "goal-1",
+      status: "completed",
+      summary: "done",
+      iterationCount: 1,
+      durationMs: 10,
+      extractedOutputs: { token: "abc123" },
+    }),
     cancelGoal: vi.fn(),
     getGoal: vi.fn(),
     listGoals: vi.fn().mockReturnValue([]),
+    getIterations: vi.fn().mockReturnValue([]),
   };
 }
 

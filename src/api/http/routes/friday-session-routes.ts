@@ -117,22 +117,40 @@ function buildTenantContext(principal: unknown): FridayProviderTenantContext | u
     return undefined;
   }
   const record = principal as {
+    userId?: unknown;
     principalId?: unknown;
     tenantId?: unknown;
   };
-  const principalId = typeof record.principalId === "string" && record.principalId.trim().length > 0
-    ? record.principalId.trim()
-    : undefined;
-  if (!principalId) {
+  const userId = typeof record.userId === "string" && record.userId.trim().length > 0
+    ? record.userId.trim()
+    : typeof record.principalId === "string" && record.principalId.trim().length > 0
+      ? record.principalId.trim()
+      : undefined;
+  if (!userId) {
     return undefined;
   }
   const tenantId = typeof record.tenantId === "string" && record.tenantId.trim().length > 0
     ? record.tenantId.trim()
-    : principalId;
+    : userId;
   return {
     hubId: tenantId,
-    userId: principalId,
+    userId,
   };
+}
+
+async function alignSessionWithPrincipalContext(
+  sessionService: FridaySessionService,
+  sessionKey: string,
+  principal: unknown,
+): Promise<void> {
+  const tenantContext = buildTenantContext(principal);
+  if (!tenantContext) {
+    return;
+  }
+  await sessionService.alignSessionContext(sessionKey, {
+    accountId: tenantContext.hubId,
+    userId: tenantContext.userId,
+  });
 }
 
 // ─── Validation helpers ───
@@ -700,6 +718,8 @@ export function createFridaySessionRoutes(
         const key = decodeSessionKeyParam(sessionKey);
         validateCreateMessageBody(ctx.body);
         const body = ctx.body;
+        await deps.sessionService.getOrCreateSession(key).catch(() => undefined);
+        await alignSessionWithPrincipalContext(deps.sessionService, key, ctx.principal).catch(() => undefined);
         const message = await deps.sessionService.addMessage(key, body);
         return {
           message,
@@ -896,6 +916,7 @@ export function createFridaySessionRoutes(
         }
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
+        await alignSessionWithPrincipalContext(deps.sessionService, key, ctx.principal).catch(() => undefined);
         validateExtractBody(ctx.body);
         const body = (ctx.body ?? {}) as FridaySessionMemoryExtractRequest;
         const result = await deps.extractionService.extractFromSession(key, {
@@ -924,6 +945,7 @@ export function createFridaySessionRoutes(
         }
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
+        await alignSessionWithPrincipalContext(deps.sessionService, key, ctx.principal).catch(() => undefined);
         validateRememberBody(ctx.body);
         const body = ctx.body;
         const result = await deps.extractionService.extractSpecificMessages(

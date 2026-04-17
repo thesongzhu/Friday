@@ -257,7 +257,7 @@ export function createFridayAutonomousRepository(): FridayAutonomousRepository {
 
     listActiveGoals(db) {
       const rows = db.prepare(
-        "SELECT * FROM friday_autonomous_goals WHERE status NOT IN ('completed', 'failed', 'cancelled') ORDER BY created_at ASC",
+        "SELECT * FROM friday_autonomous_goals WHERE status NOT IN ('completed', 'failed', 'cancelled', 'interrupted_nonrecoverable') ORDER BY created_at ASC",
       ).all() as GoalRow[];
       return rows.map(goalRowToDomain);
     },

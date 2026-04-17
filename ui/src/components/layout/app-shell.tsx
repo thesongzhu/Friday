@@ -306,7 +306,7 @@ export function AppShell() {
 
           <main className="flex w-full flex-1 justify-start pt-2 lg:pt-1">
             <div className={cn("w-full", isOnChatPage ? "max-w-4xl" : "")}>
-              {!isOnChatPage && <QuickAccessBar items={AGENT_OS_NAV_ADVANCED} locale={locale} />}
+              {!isOnChatPage && <QuickAccessBar items={advancedNav} locale={locale} />}
               <Outlet />
             </div>
           </main>

@@ -24,6 +24,11 @@ export type { FridayAgentCompactionBridge, FridayAgentCompactionBridgeResult } f
 export { createFridayAgentCompactionBridge } from "./runtime/friday-agent-compaction-bridge.js";
 export type { FridayCompactionMemorySink } from "./runtime/friday-agent-compaction-memory-sink.js";
 export { createFridayCompactionMemorySink } from "./runtime/friday-agent-compaction-memory-sink.js";
+export type {
+  FridayCompactionContextLoader,
+  FridayCompactionContextLoadResult,
+} from "./runtime/friday-agent-compaction-context-loader.js";
+export { createFridayCompactionContextLoader } from "./runtime/friday-agent-compaction-context-loader.js";
 export { verifyCompactionSummary } from "./runtime/friday-agent-compaction-verifier.js";
 export { groupCompactionMemoryItems, formatCompactionContextForPrompt } from "./runtime/friday-agent-compaction-context-formatter.js";
 export type { FridayPreferenceInjector } from "./runtime/friday-agent-preference-injector.js";

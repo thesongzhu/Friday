@@ -7,7 +7,7 @@ import {
   FRIDAY_MEMORY_GUARD_QUOTA_MAX_ITEMS_PER_NAMESPACE,
   FRIDAY_MEMORY_GUARD_QUOTA_MAX_BYTES_PER_NAMESPACE,
 } from "#memory";
-import { createGuardTestSetup, createMockMemoryItem } from "./_helpers/create-guard-service.helper.js";
+import { createGuardTestSetup, createMockMemoryItem, createMockSearchResult } from "./_helpers/create-guard-service.helper.js";
 
 describe("FridayMemoryGuardService — CX Review Fixes", () => {
   // ─── Fix 1: Namespace bypass in prune / scopeNamespaceFilter ───
@@ -88,7 +88,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
       );
     });
 
-    it("falls back to scopePrefix when no descendants found", async () => {
+    it("keeps scopePrefix and default namespace available when no descendants found", async () => {
       const { guard, core, quotaRepo } = createGuardTestSetup();
       vi.mocked(quotaRepo.listNamespacesByPrefix).mockReturnValue([]);
 
@@ -96,7 +96,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.list).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: "tenant.default.user.user1",
+          namespace: ["tenant.default.user.user1", "default"],
         }),
       );
     });
@@ -115,6 +115,53 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
       expect(callArgs[1]).toEqual(
         expect.objectContaining({
           namespace: ["tenant.default.user.user1", ...descendants, "default"],
+        }),
+      );
+    });
+
+    it("search keeps channel-scoped session namespaces returned by expanded scope", async () => {
+      const { guard, core, quotaRepo } = createGuardTestSetup();
+      vi.mocked(quotaRepo.listNamespacesByPrefix).mockImplementation((_db, prefix) => {
+        if (prefix === "tenant.default.user.user1") {
+          return ["tenant.default.user.user1.notes"];
+        }
+        if (prefix === "tenant.default.channel") {
+          return ["tenant.default.channel.webchat.user.memextract-123.shared"];
+        }
+        return [];
+      });
+      vi.mocked(core.search).mockResolvedValue([
+        createMockSearchResult({
+          item: createMockMemoryItem({
+            namespace: "tenant.default.channel.webchat.user.memextract-123.shared",
+            content: "User prefers rg over grep",
+          }),
+        }),
+      ]);
+
+      const results = await guard.search("rg grep");
+
+      expect(results).toHaveLength(1);
+      expect(results[0]?.item.namespace).toBe("tenant.default.channel.webchat.user.memextract-123.shared");
+    });
+
+    it("list still includes channel-scoped session namespaces when direct user descendants are empty", async () => {
+      const { guard, core, quotaRepo } = createGuardTestSetup();
+      vi.mocked(quotaRepo.listNamespacesByPrefix).mockImplementation((_db, prefix) => {
+        if (prefix === "tenant.default.user.user1") {
+          return [];
+        }
+        if (prefix === "tenant.default.channel") {
+          return ["tenant.default.channel.webchat.user.user1.shared"];
+        }
+        return [];
+      });
+
+      await guard.list();
+
+      expect(core.list).toHaveBeenCalledWith(
+        expect.objectContaining({
+          namespace: ["tenant.default.user.user1", "tenant.default.channel.webchat.user.user1.shared", "default"],
         }),
       );
     });
@@ -177,6 +224,27 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
         "hello",
         expect.objectContaining({
           namespace: "tenant.default.channel.discord.user.user1.notes",
+        }),
+      );
+    });
+
+    it("accepts a fully qualified channel namespace for the same tenant/user even without channelKind on the context", async () => {
+      const { guard, core } = createGuardTestSetup({
+        subject: {
+          hubId: "default",
+          userId: "user1",
+          accessLevel: "tenant",
+        },
+      });
+
+      await guard.search("hello", {
+        namespace: "tenant.default.channel.webchat.user.user1.shared",
+      });
+
+      expect(core.search).toHaveBeenCalledWith(
+        "hello",
+        expect.objectContaining({
+          namespace: "tenant.default.channel.webchat.user.user1.shared",
         }),
       );
     });

@@ -124,6 +124,22 @@ describe("validateGeneratedCode", () => {
     expect(issues.some((i) => i.code === "DANGEROUS_IMPORT" && i.message.includes("child_process"))).toBe(true);
   });
 
+  it("blocks invented friday runtime helper imports", () => {
+    const issues = validateGeneratedCode(
+      [makeFile({ content: 'import { runtimeContext } from "friday-runtime-context";\nexport async function execute(input, ctx) { return {}; }' })],
+      makeManifest(),
+    );
+    expect(issues.some((i) => i.code === "UNSUPPORTED_RUNTIME_HELPER_IMPORT")).toBe(true);
+  });
+
+  it("blocks invented ctx.ai.complete helper calls", () => {
+    const issues = validateGeneratedCode(
+      [makeFile({ content: 'export async function execute(input, ctx) { return { result: await ctx.ai.complete({ prompt: input.query }) }; }' })],
+      makeManifest(),
+    );
+    expect(issues.some((i) => i.code === "UNSUPPORTED_RUNTIME_HELPER_CALL")).toBe(true);
+  });
+
   it("allows child_process with shell.execute grant", () => {
     const manifest = makeManifest({
       permissions: {

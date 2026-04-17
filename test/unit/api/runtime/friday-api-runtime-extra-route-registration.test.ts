@@ -156,6 +156,37 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(operationIds.some((id) => id.startsWith("uix."))).toBe(false);
   });
 
+  it("derives health enabled channel kinds from a live runtime getter", async () => {
+    const runtime = createFridayApiRuntime({
+      ...makeBaseDeps(),
+      supportedChannelKinds: ["webchat", "irc"],
+      enabledChannelKinds: () => ["webchat"],
+    });
+
+    const route = runtime.routes.getRoutes().find((entry) => entry.operationId === "health.check");
+    expect(route).toBeDefined();
+
+    const result = await route!.handler({
+      params: {},
+      query: {},
+      body: null,
+      headers: {},
+      principal: null,
+      requestId: "req-health-runtime-1",
+      receivedAt: NOW,
+    } as never) as {
+      capabilities: {
+        channels: {
+          supportedKinds: string[];
+          enabledKinds: string[];
+        };
+      };
+    };
+
+    expect(result.capabilities.channels.supportedKinds).toEqual(["webchat", "irc"]);
+    expect(result.capabilities.channels.enabledKinds).toEqual(["webchat"]);
+  });
+
   it("registers optional extended route families when deps are provided", () => {
     const runtime = createFridayApiRuntime({
       ...makeBaseDeps(),

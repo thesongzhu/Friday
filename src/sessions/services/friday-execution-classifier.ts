@@ -41,9 +41,9 @@ export interface ClassifyFridayExecutionInput {
 // ─── Hint patterns ───
 
 const CAPABILITY_QUERY =
-  /\b(capabilities?|what can\b|can (?:friday|you)\b.*\bdo\b|enabled|disabled|deployment|runtime facts?)\b/i;
+  /\b((?:what|which)\s+(?:capabilities?|features?)|show(?: me)? (?:the )?capabilities|what can\b|can (?:friday|you)\b.*\bdo\b|what(?:'s| is)? enabled|what(?:'s| is)? disabled|is [^?.!\n]{0,40}\b(?:enabled|disabled|available|connected)\b|deployment status|runtime facts?)\b/i;
 const CHINESE_CAPABILITY_QUERY =
-  /(能力|能做什么|启用|禁用|部署|运行时|是否可用|是否启用)/;
+  /(能力|能做什么|哪些功能|显示能力|当前启用|当前禁用|部署状态|运行时信息|是否可用|是否启用)/;
 
 const APPROVE_REJECT =
   /^\s*(approve|reject|yes,?\s*approve|no,?\s*reject|通过|拒绝|批准|否决)(?:\s+([A-Za-z0-9:_-]+))?\s*[.!?]?\s*$/i;
@@ -55,7 +55,7 @@ const DAEMON_STATUS =
   /\b(daemon status|daemon\b.*\brunning|is friday running|friday process|后台进程|守护进程状态)\b/i;
 
 const MCP_LIST =
-  /\b(list mcp|mcp servers?|show mcp|what mcp|哪些mcp|mcp列表|mcp服务)\b/i;
+  /\b((?:list|show|which|what|query|inspect|describe)(?:\s+\w+){0,2}\s+(?:mcp(?:\s+servers?)?|servers?\s+for\s+mcp|mcp\s+server\s+info)|mcp\s+(?:server\s+list|list|server\s+info|info)|info\s+about\s+mcp(?:\s+servers?)?)\b/i;
 
 const WORKFLOW_QUERY =
   /\b(list workflows?|workflow status|workflow runs?|show workflows?|工作流状态|工作流列表)\b/i;

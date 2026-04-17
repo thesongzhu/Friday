@@ -1710,6 +1710,70 @@ describe("FridayAgentRuntime", () => {
     expect(result.response).toContain("2026-02-19 (UTC)");
   });
 
+  it("retries when the model claims latestness is unverified despite verified dated search evidence", async () => {
+    let callCount = 0;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        callCount++;
+        if (callCount === 1) {
+          yield {
+            type: "tool_use",
+            id: "call-1",
+            name: "web_search",
+            input: { query: "OpenAI latest news", freshness: "day", numResults: 3 },
+          };
+          yield { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 };
+          return;
+        }
+        if (callCount === 2) {
+          yield {
+            type: "text_delta",
+            text: "I could not verify that these are the latest results as of 2026-02-19 (UTC).",
+          };
+          yield { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 7 };
+          return;
+        }
+        yield {
+          type: "text_delta",
+          text: "1. Headline A (2026-02-19) https://example.com/a\n2. Headline B (2026-02-18) https://example.com/b\n3. Headline C (2026-02-17) https://example.com/c",
+        };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 11, outputTokens: 9 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [
+        createSuccessfulWebSearchTool({
+          metadata: {
+            provider: "google_news_rss",
+            freshnessRequested: "day",
+            freshnessApplied: true,
+            hasDates: true,
+            warning: null,
+          },
+        }),
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Give me the latest OpenAI news",
+      timezone: "UTC",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(callCount).toBe(3);
+    expect(result.response).toContain("https://example.com/c");
+    expect(result.response).not.toContain("could not verify");
+  });
+
   it("does not treat current capability questions as time-sensitive news", async () => {
     let callCount = 0;
     const llmClient: FridayAgentLlmClient = {
@@ -3244,6 +3308,61 @@ describe("FridayAgentRuntime", () => {
     expect(result.toolCallCount).toBe(1);
   });
 
+  it("honors per-tool timeout overrides for long-running tools", async () => {
+    const slowTool: FridayAgentToolDefinition = {
+      name: "slow_tool",
+      description: "Blocks until the signal aborts",
+      parameters: { properties: {} },
+      timeoutMs: 10,
+      async execute(_args, signal) {
+        return await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            resolve({ content: "unexpected late success", isError: false });
+          }, 50);
+          signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason ?? "aborted")));
+          }, { once: true });
+        });
+      },
+    };
+
+    const llmClient = createMockLlmClient([
+      [
+        { type: "tool_use", id: "call-slow", name: "slow_tool", input: {} },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 5, outputTokens: 3 },
+      ],
+      [
+        { type: "text_delta", text: "Tool timeout handled." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 10, outputTokens: 5 },
+      ],
+    ]);
+
+    const emitter = createFridayAgentEventEmitter();
+    const toolEndEvents: Array<Record<string, unknown>> = [];
+    emitter.on("agent.run.tool_end", (payload) => {
+      toolEndEvents.push(payload as Record<string, unknown>);
+    });
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [slowTool],
+      eventEmitter: emitter,
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({ task: "Use the slow tool once." });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(1);
+    expect(String(toolEndEvents[0]?.summary ?? "")).toContain("Tool call timed out");
+  });
+
   // ─── OC-007: Tool result size capping ───
 
   it("caps oversized tool result content", async () => {
@@ -4123,6 +4242,41 @@ describe("FridayAgentRuntime", () => {
     expect(result.status).toBe("failed");
   });
 
+  it("preserves the last non-empty assistant text when a follow-up tool turn ends without new text", async () => {
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "Acknowledged: the project codename is Atlas." },
+        { type: "tool_use", id: "call-1", name: "echo", input: { message: "store atlas" } },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 5, outputTokens: 3 },
+      ],
+      [
+        { type: "message_end", stopReason: "end_turn", inputTokens: 4, outputTokens: 2 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [createEchoTool()],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      selfTestService: {
+        async runTests() {
+          return [{ strategy: "llm_eval", passed: true, errors: [], durationMs: 0 }];
+        },
+      },
+    });
+
+    const result = await runtime.executeRun({ task: "Remember the Atlas codename" });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toBe("Acknowledged: the project codename is Atlas.");
+  });
+
   it("surfaces downstream workflow generator clarification as awaiting_clarification instead of failing", async () => {
     const llmClient = createMockLlmClient([
       [
@@ -4248,6 +4402,787 @@ describe("FridayAgentRuntime", () => {
 
     expect(result.status).toBe("completed");
     expect(result.response).toContain("browser runtime is healthy");
+  });
+
+  it("auto-corrects misrouted skill generation calls into the skill_generate toolchain", async () => {
+    const skillRunSpy = vi.fn(async () => ({
+      content: "skill_run should not execute for skill generation aliases",
+      isError: true,
+    }));
+    const skillGenerateSpy = vi.fn(async (args: Record<string, unknown>) => {
+      const action = typeof args.action === "string" ? args.action : "";
+      if (action === "start") {
+        return {
+          content: JSON.stringify({
+            sessionId: "skill-session-1",
+            status: "preview_ready",
+            mode: "preview_ready",
+            questions: [],
+          }),
+        };
+      }
+      if (action === "generate") {
+        return {
+          content: JSON.stringify({
+            sessionId: "skill-session-1",
+            validation: { ok: true, issues: [] },
+            fileCount: 2,
+          }),
+        };
+      }
+      if (action === "approve") {
+        return {
+          content: JSON.stringify({
+            approved: true,
+            skillId: "generated-skill-1",
+            registryRefreshed: true,
+          }),
+        };
+      }
+      return { content: `unexpected action: ${action}`, isError: true };
+    });
+
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-skill-run",
+          name: "skill_run",
+          input: { skillId: "skill_generate", input: {}, timeoutMs: 0 },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-skill-generate",
+          name: "skill_generate",
+          input: { action: "generate", sessionId: "skill-session-1" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-skill-approve",
+          name: "skill_generate",
+          input: { action: "approve", sessionId: "skill-session-1" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "Skill created and approved." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 5 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [
+        {
+          name: "skill_run",
+          description: "Run an installed skill",
+          parameters: { properties: { skillId: { type: "string" } }, required: ["skillId"] },
+          execute: skillRunSpy,
+        },
+        {
+          name: "skill_generate",
+          description: "Generate a skill",
+          parameters: { properties: { action: { type: "string" } }, required: ["action"] },
+          execute: skillGenerateSpy,
+        },
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      selfTestService: {
+        async runTests() {
+          return [{ strategy: "llm_eval", passed: true, errors: [], durationMs: 0 }];
+        },
+      },
+    });
+
+    const result = await runtime.executeRun({
+      task: "Create a new Friday skill that formats a topic into markdown bullets.",
+      reviewRequired: true,
+      skipPlanningReview: true,
+      planReviewOverride: {
+        plan: {
+          task: "Create a new Friday skill that formats a topic into markdown bullets.",
+          stepCount: 3,
+          description: "Approved skill generation plan",
+        },
+        decision: {
+          approved: true,
+          mode: "manual-approve",
+          reviewedAt: NOW,
+        },
+        gate: {
+          kind: "generate_skill",
+          state: "approved",
+          planMarkdown: "# Proposed skill plan",
+          planSummary: "Approved skill plan",
+        },
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("Skill created and approved.");
+    expect(skillRunSpy).not.toHaveBeenCalled();
+    expect(skillGenerateSpy).toHaveBeenCalledTimes(3);
+    expect(skillGenerateSpy).toHaveBeenNthCalledWith(
+      1,
+      {
+        action: "start",
+        goal: "Create a new Friday skill that formats a topic into markdown bullets.",
+      },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("blocks direct browser bypass when a task explicitly requires autonomous", async () => {
+    const browserSpy = vi.fn(async () => ({
+      content: "browser should not execute before autonomous",
+      isError: true,
+    }));
+    const autonomousSpy = vi.fn(async (args: Record<string, unknown>) => ({
+      content: JSON.stringify({
+        goalId: "goal-1",
+        status: "completed",
+        summary: `Autonomous action ${String(args.action ?? "")} completed`,
+      }),
+    }));
+
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-browser",
+          name: "browser",
+          input: { action: "open", url: "https://example.com" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-autonomous",
+          name: "autonomous",
+          input: {
+            action: "execute_goal",
+            description: "Open example.com and capture the page title.",
+          },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "Autonomous goal started and completed." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 5 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [
+        {
+          name: "browser",
+          description: "Mock browser tool",
+          parameters: { properties: { action: { type: "string" } }, required: ["action"] },
+          execute: browserSpy,
+        },
+        {
+          name: "autonomous",
+          description: "Mock autonomous tool",
+          parameters: { properties: { action: { type: "string" } }, required: ["action"] },
+          execute: autonomousSpy,
+        },
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      selfTestService: {
+        async runTests() {
+          return [{ strategy: "llm_eval", passed: true, errors: [], durationMs: 0 }];
+        },
+      },
+    });
+
+    const result = await runtime.executeRun({
+      task: "Mandatory: call autonomous tool exactly once to open example.com and capture the page title.",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("Autonomous goal started and completed.");
+    expect(browserSpy).not.toHaveBeenCalled();
+    expect(autonomousSpy).toHaveBeenCalledTimes(1);
+    expect(autonomousSpy).toHaveBeenCalledWith(
+      {
+        action: "execute_goal",
+        description: "Open example.com and capture the page title.",
+      },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("does not treat internal autonomous planning prompts as explicit autonomous user tasks", async () => {
+    const browserSpy = vi.fn(async () => ({
+      content: "browser should stay blocked in plan mode",
+      isError: false,
+    }));
+    const autonomousSpy = vi.fn(async () => ({
+      content: "autonomous should not be invoked from planning prompt",
+      isError: false,
+    }));
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-browser-plan",
+          name: "browser",
+          input: { action: "open", url: "https://example.com" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "Planning stayed in analysis mode." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 5 },
+      ],
+    ]);
+
+    const emitter = createFridayAgentEventEmitter();
+    const toolEndEvents: Array<Record<string, unknown>> = [];
+    emitter.on("agent.run.tool_end", (payload) => {
+      toolEndEvents.push(payload as Record<string, unknown>);
+    });
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [
+        {
+          name: "browser",
+          description: "Mock browser tool",
+          parameters: { properties: { action: { type: "string" } }, required: ["action"] },
+          execute: browserSpy,
+        },
+        {
+          name: "autonomous",
+          description: "Mock autonomous tool",
+          parameters: { properties: { action: { type: "string" } }, required: ["action"] },
+          execute: autonomousSpy,
+        },
+      ],
+      eventEmitter: emitter,
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "You are an autonomous agent that can control a computer. You must decompose this goal into concrete steps. Goal: Open example.com and verify the title.",
+      constraints: {
+        readOnly: true,
+        operationalMode: "plan",
+      },
+    });
+
+    expect(result.toolCallCount).toBe(1);
+    expect(browserSpy).not.toHaveBeenCalled();
+    expect(autonomousSpy).not.toHaveBeenCalled();
+    expect(toolEndEvents[0]?.toolName).toBe("browser");
+    expect(String(toolEndEvents[0]?.summary ?? "")).toContain("not available in plan mode");
+    expect(String(toolEndEvents[0]?.summary ?? "")).not.toContain("explicitly requires tool 'autonomous'");
+  });
+
+  it("hides tool declarations from autonomous internal planning surfaces", async () => {
+    let capturedToolNames: string[] = [];
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedToolNames = params.tools.map((tool) => tool.name);
+        yield {
+          type: "text_delta",
+          text: "[{\"instruction\":\"Open https://example.com\",\"domain\":\"browser\",\"verification\":\"URL contains example.com\"}]",
+        };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 5 };
+      },
+    };
+
+    const browserSpy = vi.fn(async () => ({ content: "browser should not be invoked during planning" }));
+    const autonomousSpy = vi.fn(async () => ({ content: "autonomous should not be invoked during planning" }));
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [
+        {
+          name: "browser",
+          description: "Mock browser tool",
+          parameters: { properties: { action: { type: "string" } }, required: ["action"] },
+          execute: browserSpy,
+        },
+        {
+          name: "autonomous",
+          description: "Mock autonomous tool",
+          parameters: { properties: { action: { type: "string" } }, required: ["action"] },
+          execute: autonomousSpy,
+        },
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "You are an autonomous agent that can control a computer. You must decompose this goal into concrete steps. Goal: Open example.com and verify the title.",
+      constraints: {
+        readOnly: true,
+        operationalMode: "plan",
+      },
+      executionContext: {
+        surface: "autonomous_internal_plan",
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).not.toContain("AGENT_OUTPUT_CLOSURE_ERROR");
+    expect(result.toolCallCount).toBe(0);
+    expect(capturedToolNames).toEqual([]);
+    expect(browserSpy).not.toHaveBeenCalled();
+    expect(autonomousSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not route autonomous internal action surfaces back through the autonomous tool gate", async () => {
+    let callCount = 0;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        callCount++;
+        if (callCount === 1) {
+          yield {
+            type: "tool_use",
+            id: "call-browser-start",
+            name: "browser",
+            input: { action: "start", sessionId: "autonomous-goal:test-goal" },
+          };
+          yield { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 };
+          return;
+        }
+
+        yield { type: "text_delta", text: "Browser session started." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 4 };
+      },
+    };
+
+    const browserSpy = vi.fn(async () => ({ content: "started" }));
+    const autonomousSpy = vi.fn(async () => ({ content: "autonomous should not be invoked for internal action runs" }));
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [
+        {
+          name: "browser",
+          description: "Mock browser tool",
+          parameters: { properties: { action: { type: "string" } }, required: ["action"] },
+          execute: browserSpy,
+        },
+        {
+          name: "autonomous",
+          description: "Mock autonomous tool",
+          parameters: { properties: { action: { type: "string" } }, required: ["action"] },
+          execute: autonomousSpy,
+        },
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Execute the following tool call and return the result:\nTool: browser\nArguments: {\"action\":\"start\",\"sessionId\":\"autonomous-goal:test-goal\"}\n\nRationale: Need to start the browser first before I can navigate to https://example.com and complete the autonomous goal.",
+      executionContext: {
+        surface: "autonomous_internal_action",
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("Browser session started");
+    expect(browserSpy).toHaveBeenCalledTimes(1);
+    expect(autonomousSpy).not.toHaveBeenCalled();
+  });
+
+  it("auto-starts skill_generate after a skills_list-only iteration on skill-generation tasks", async () => {
+    const skillsListSpy = vi.fn(async () => ({
+      content: JSON.stringify({
+        items: [{ skillId: "existing-skill", title: "Existing skill" }],
+        count: 1,
+      }),
+    }));
+    const skillGenerateSpy = vi.fn(async (args: Record<string, unknown>) => {
+      const action = typeof args.action === "string" ? args.action : "";
+      if (action === "start") {
+        return {
+          content: JSON.stringify({
+            sessionId: "skill-session-auto-start-1",
+            status: "preview_ready",
+            mode: "preview_ready",
+            questions: [],
+          }),
+        };
+      }
+      if (action === "generate") {
+        return {
+          content: JSON.stringify({
+            sessionId: "skill-session-auto-start-1",
+            validation: { ok: true, issues: [] },
+            fileCount: 2,
+          }),
+        };
+      }
+      if (action === "approve") {
+        return {
+          content: JSON.stringify({
+            approved: true,
+            skillId: "generated-skill-auto-start-1",
+            registryRefreshed: true,
+          }),
+        };
+      }
+      return { content: `unexpected action: ${action}`, isError: true };
+    });
+
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-skills-list",
+          name: "skills_list",
+          input: {},
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-skill-generate",
+          name: "skill_generate",
+          input: { action: "generate", sessionId: "skill-session-auto-start-1" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-skill-approve",
+          name: "skill_generate",
+          input: { action: "approve", sessionId: "skill-session-auto-start-1" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "Skill created after inventory check." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 5 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [
+        {
+          name: "skills_list",
+          description: "List installed skills",
+          parameters: { properties: {}, required: [] },
+          execute: skillsListSpy,
+        },
+        {
+          name: "skill_generate",
+          description: "Generate a skill",
+          parameters: { properties: { action: { type: "string" } }, required: ["action"] },
+          execute: skillGenerateSpy,
+        },
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      selfTestService: {
+        async runTests() {
+          return [{ strategy: "llm_eval", passed: true, errors: [], durationMs: 0 }];
+        },
+      },
+    });
+
+    const result = await runtime.executeRun({
+      task: "Create a new Friday skill that converts a topic into markdown bullets.",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("Skill created after inventory check.");
+    expect(skillsListSpy).toHaveBeenCalledTimes(1);
+    expect(skillGenerateSpy).toHaveBeenNthCalledWith(
+      1,
+      {
+        action: "start",
+        goal: "Create a new Friday skill that converts a topic into markdown bullets.",
+      },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("blocks manual managed-skill writes on skill-generation tasks and auto-starts skill_generate instead", async () => {
+    const writeSpy = vi.fn(async () => ({ content: "write should not execute" }));
+    const skillGenerateSpy = vi.fn(async (args: Record<string, unknown>) => {
+      const action = typeof args.action === "string" ? args.action : "";
+      if (action === "start") {
+        return {
+          content: JSON.stringify({
+            sessionId: "skill-session-write-1",
+            status: "preview_ready",
+            mode: "preview_ready",
+            questions: [],
+          }),
+        };
+      }
+      if (action === "generate") {
+        return {
+          content: JSON.stringify({
+            sessionId: "skill-session-write-1",
+            validation: { ok: true, issues: [] },
+            fileCount: 2,
+          }),
+        };
+      }
+      if (action === "approve") {
+        return {
+          content: JSON.stringify({
+            approved: true,
+            skillId: "generated-skill-write-1",
+            registryRefreshed: true,
+          }),
+        };
+      }
+      return { content: `unexpected action: ${action}`, isError: true };
+    });
+
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-write-skill",
+          name: "write",
+          input: {
+            path: "managed-skills/generated-skill-write-1/skill.manifest.json",
+            content: "{}",
+          },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-skill-generate-after-write",
+          name: "skill_generate",
+          input: { action: "generate", sessionId: "skill-session-write-1" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-skill-approve-after-write",
+          name: "skill_generate",
+          input: { action: "approve", sessionId: "skill-session-write-1" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "Skill created via generator." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 5 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [
+        {
+          name: "write",
+          description: "Write a file",
+          parameters: { properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] },
+          execute: writeSpy,
+        },
+        {
+          name: "skill_generate",
+          description: "Generate a skill",
+          parameters: { properties: { action: { type: "string" } }, required: ["action"] },
+          execute: skillGenerateSpy,
+        },
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      selfTestService: {
+        async runTests() {
+          return [{ strategy: "llm_eval", passed: true, errors: [], durationMs: 0 }];
+        },
+      },
+    });
+
+    const result = await runtime.executeRun({
+      task: "Create a new Friday skill that returns markdown bullets for a topic.",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("Skill created via generator.");
+    expect(writeSpy).not.toHaveBeenCalled();
+    expect(skillGenerateSpy).toHaveBeenNthCalledWith(
+      1,
+      {
+        action: "start",
+        goal: "Create a new Friday skill that returns markdown bullets for a topic.",
+      },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("blocks manual top-level skills directory writes on skill-generation tasks and auto-starts skill_generate instead", async () => {
+    const writeSpy = vi.fn(async () => ({ content: "write should not execute" }));
+    const skillGenerateSpy = vi.fn(async (args: Record<string, unknown>) => {
+      const action = typeof args.action === "string" ? args.action : "";
+      if (action === "start") {
+        return {
+          content: JSON.stringify({
+            sessionId: "skill-session-skills-dir-1",
+            status: "preview_ready",
+            mode: "preview_ready",
+            questions: [],
+          }),
+        };
+      }
+      if (action === "generate") {
+        return {
+          content: JSON.stringify({
+            sessionId: "skill-session-skills-dir-1",
+            validation: { ok: true, issues: [] },
+            fileCount: 2,
+          }),
+        };
+      }
+      if (action === "approve") {
+        return {
+          content: JSON.stringify({
+            approved: true,
+            skillId: "generated-skill-skills-dir-1",
+            registryRefreshed: true,
+          }),
+        };
+      }
+      return { content: `unexpected action: ${action}`, isError: true };
+    });
+
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-write-skill-dir",
+          name: "write",
+          input: {
+            path: "skills/generated-skill-skills-dir-1/manifest.json",
+            content: "{}",
+          },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-skill-generate-after-skill-dir-write",
+          name: "skill_generate",
+          input: { action: "generate", sessionId: "skill-session-skills-dir-1" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-skill-approve-after-skill-dir-write",
+          name: "skill_generate",
+          input: { action: "approve", sessionId: "skill-session-skills-dir-1" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "Skill created via generator after blocking top-level write." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 5 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [
+        {
+          name: "write",
+          description: "Write a file",
+          parameters: { properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] },
+          execute: writeSpy,
+        },
+        {
+          name: "skill_generate",
+          description: "Generate a skill",
+          parameters: { properties: { action: { type: "string" } }, required: ["action"] },
+          execute: skillGenerateSpy,
+        },
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      selfTestService: {
+        async runTests() {
+          return [{ strategy: "llm_eval", passed: true, errors: [], durationMs: 0 }];
+        },
+      },
+    });
+
+    const result = await runtime.executeRun({
+      task: "Create a new Friday skill that returns markdown bullets for a topic.",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("Skill created via generator after blocking top-level write.");
+    expect(writeSpy).not.toHaveBeenCalled();
+    expect(skillGenerateSpy).toHaveBeenNthCalledWith(
+      1,
+      {
+        action: "start",
+        goal: "Create a new Friday skill that returns markdown bullets for a topic.",
+      },
+      expect.any(AbortSignal),
+    );
   });
 
   // ─── IMPL-5: Passing self-test emits completed with real testsPassed ───
@@ -4869,6 +5804,45 @@ describe("FridayAgentRuntime", () => {
     expect(communicationPromptBuilder).toHaveBeenCalledWith({ userId: "user-123", nowIso: NOW });
     expect(capturedSystemPrompt).toContain("[Learned Preferences]");
     expect(capturedSystemPrompt).toContain("COMPACTION_CANARY");
+  });
+
+  it("injects persisted compaction context for the current session before the run", async () => {
+    let capturedSystemPrompt = "";
+
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedSystemPrompt = params.systemPrompt;
+        yield { type: "text_delta", text: "ok" };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 2 };
+      },
+    };
+
+    const compactionContextBuilder = vi
+      .fn()
+      .mockResolvedValue("[Previous Session Context]\nSummary: Discord channel wiring already validated.");
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      compactionContextBuilder,
+    });
+
+    await runtime.executeRun({ task: "Continue the task", principalId: "user-123", sessionKey: "session-ctx-1" });
+
+    expect(compactionContextBuilder).toHaveBeenCalledWith({
+      userId: "user-123",
+      sessionKey: "session-ctx-1",
+      nowIso: NOW,
+    });
+    expect(capturedSystemPrompt).toContain("[Previous Session Context]");
+    expect(capturedSystemPrompt).toContain("Discord channel wiring already validated");
   });
 
   it("uses learned timezone preference when no explicit timezone is provided", async () => {

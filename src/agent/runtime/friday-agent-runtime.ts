@@ -734,6 +734,7 @@ export function createFridayAgentRuntime(
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
       let responseText = "";
+      let latestNonEmptyAssistantText = "";
       const actualTurns: FridayAgentActualTurn[] = [];
       let latestTestResults: FridayAgentTestResult[] = [];
       let latestArtifacts: FridayAgentArtifact[] = [];
@@ -1368,6 +1369,20 @@ export function createFridayAgentRuntime(
             prefLines.join("\n") +
             "\n</user-preferences>";
         }
+        if (deps.compactionContextBuilder && params.sessionKey) {
+          try {
+            const fragment = await deps.compactionContextBuilder({
+              userId: principalId,
+              sessionKey: params.sessionKey,
+              nowIso: nowIso(),
+            });
+            if (fragment && fragment.trim().length > 0) {
+              effectiveSystemPrompt += `\n\n${fragment.trim()}`;
+            }
+          } catch (err) {
+            console.warn("[friday][agent-runtime] compaction-context:", err instanceof Error ? err.message : String(err));
+          }
+        }
         if (communicationPromptBuilder && principalId) {
           try {
             const fragment = await communicationPromptBuilder({ userId: principalId, nowIso: nowIso() });
@@ -1641,9 +1656,14 @@ export function createFridayAgentRuntime(
             repairOrphanedToolUseBlocks(messages);
 
             // Filter tools based on operational mode so the LLM only sees allowed tools
-            const llmTools = runOperationalMode && runOperationalMode !== "execute"
-              ? filterToolsByMode(tools, runOperationalMode)
-              : tools;
+            const llmTools = shouldHideToolsFromLlm({
+              executionContext,
+              operationalMode: runOperationalMode,
+            })
+              ? []
+              : runOperationalMode && runOperationalMode !== "execute"
+                ? filterToolsByMode(tools, runOperationalMode)
+                : tools;
 
             try {
               streamResult = await streamLlmResponse({
@@ -1720,6 +1740,9 @@ export function createFridayAgentRuntime(
             }
           }
           const { assistantText, toolUseBlocks, inputTokens, outputTokens, turnMeta } = streamResult;
+          if (assistantText.trim().length > 0) {
+            latestNonEmptyAssistantText = assistantText;
+          }
 
           totalInputTokens += inputTokens;
           totalOutputTokens += outputTokens;
@@ -1855,8 +1878,11 @@ export function createFridayAgentRuntime(
               continue;
             }
 
+            const baseAssistantResponse = assistantText.trim().length > 0
+              ? assistantText
+              : latestNonEmptyAssistantText;
             let candidateResponse = enforceToolEvidenceForCompletionClaim(
-              assistantText,
+              baseAssistantResponse,
               allToolCalls,
             );
             candidateResponse = enforceFeedbackPersistenceEvidence(
@@ -1873,6 +1899,7 @@ export function createFridayAgentRuntime(
                 toolMap,
                 toolCalls: allToolCalls,
                 disabledToolNames,
+                executionSurface: params.executionContext?.surface,
               })
             ) {
               evidenceEnforcementRetries++;
@@ -1993,7 +2020,9 @@ export function createFridayAgentRuntime(
               continue;
             }
 
-            responseText = alignedResponse;
+            responseText = alignedResponse.trim().length > 0
+              ? alignedResponse
+              : latestNonEmptyAssistantText;
             break;
           }
 
@@ -2001,6 +2030,25 @@ export function createFridayAgentRuntime(
           const toolResultBlocks: FridayAgentToolResultBlock[] = [];
           const toolCallRecordsByIndex = new Map<number, FridayAgentToolCallRecord>();
           const executableToolUses: Array<{ index: number; toolUse: FridayAgentToolUseBlock }> = [];
+          let autoStartedSkillGenerationThisTurn = false;
+          const hasSkillGenerateTool = activeToolValues.some((tool) => tool.name === "skill_generate");
+          const skillGenerationTask = isSkillGenerationTask(params.task);
+          const explicitAutonomousTask = shouldEnforceExplicitAutonomousTaskRouting(
+            params.task,
+            runOperationalMode,
+            params.executionContext,
+          );
+          if (skillGenerationTask && process.env.FRIDAY_DEBUG_SKILL_GENERATION === "true") {
+            console.warn("[friday][agent-runtime] skill-generation-toolset", {
+              runId,
+              hasSkillGenerateTool,
+              activeSkillTools: activeToolValues
+                .map((tool) => tool.name)
+                .filter((name) => name.includes("skill")),
+              disabledToolNames: [...disabledToolNames].filter((name) => name.includes("skill")),
+              operationalMode: runOperationalMode ?? "execute",
+            });
+          }
 
           for (let toolIndex = 0; toolIndex < toolUseBlocks.length; toolIndex += 1) {
             const toolUse = toolUseBlocks[toolIndex]!;
@@ -2017,6 +2065,79 @@ export function createFridayAgentRuntime(
                 routeId: "agent.execute.tool.guard",
                 correlationId: runId,
                 message: `Tool '${toolUse.name}' is disabled for this run.`,
+              }));
+              continue;
+            }
+
+            if (explicitAutonomousTask && isAutonomousTaskBypassTool(toolUse.name)) {
+              toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                toolUse,
+                runId,
+                nowIso,
+                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                routeId: "agent.execute.tool.guard",
+                correlationId: runId,
+                errorCode: "WRONG_TOOL_FOR_TASK",
+                message: buildAutonomousWrongToolMessage(toolUse.name, params.task),
+              }));
+              continue;
+            }
+
+            const misroutedSkillGenerationAlias =
+              toolUse.name === "skill_run" && isSkillGenerationAlias(toolUse.input?.skillId);
+            const manualSkillAuthoringAttempt =
+              (toolUse.name === "write" || toolUse.name === "edit")
+              && isRuntimeSkillAuthoringPath(toolUse.input);
+
+            if (
+              hasSkillGenerateTool
+              && skillGenerationTask
+              && !autoStartedSkillGenerationThisTurn
+              && (misroutedSkillGenerationAlias || manualSkillAuthoringAttempt)
+            ) {
+                autoStartedSkillGenerationThisTurn = true;
+                executableToolUses.push({
+                  index: toolIndex,
+                  toolUse: {
+                    ...toolUse,
+                    name: "skill_generate",
+                    input: {
+                      action: "start",
+                      goal: params.task,
+                    },
+                  },
+                });
+                continue;
+            }
+
+            if (misroutedSkillGenerationAlias) {
+              const requestedSkillId = typeof toolUse.input?.skillId === "string"
+                ? toolUse.input.skillId
+                : "unknown";
+              toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                toolUse,
+                runId,
+                nowIso,
+                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                routeId: "agent.execute.tool.guard",
+                correlationId: runId,
+                errorCode: "WRONG_TOOL_FOR_TASK",
+                message: `Skill generation requests must use tool 'skill_generate', not skill_run on '${requestedSkillId}'. Start skill_generate with action=\"start\" and continue with generate/approve before attempting to run the created skill.`,
+              }));
+              continue;
+            }
+
+            if (manualSkillAuthoringAttempt && hasSkillGenerateTool && skillGenerationTask) {
+              const targetPath = resolveToolPathArg(toolUse.input) ?? "managed-skills";
+              toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                toolUse,
+                runId,
+                nowIso,
+                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                routeId: "agent.execute.tool.guard",
+                correlationId: runId,
+                errorCode: "WRONG_TOOL_FOR_TASK",
+                message: `Skill authoring requests must use tool 'skill_generate', not manual ${toolUse.name} calls against '${targetPath}'. Continue through skill_generate generate/approve instead.`,
               }));
               continue;
             }
@@ -2236,6 +2357,8 @@ export function createFridayAgentRuntime(
                   conversationContext,
                   principalId,
                   tenantContext: params.tenantContext,
+                  requestedProviderId,
+                  requestedModel: resolvedTaskProfile.model ?? requestedModel,
                   executionContext,
                   fileVersionTracker,
                   nowIso,
@@ -2289,6 +2412,52 @@ export function createFridayAgentRuntime(
                 tool_use_id: missingUse.id,
                 content: synthesized.content,
                 is_error: true,
+              });
+            }
+          }
+
+          if (hasSkillGenerateTool && skillGenerationTask) {
+            const iterationRecords = [...toolCallRecordsByIndex.values()];
+            const executedSkillGenerateThisIteration = iterationRecords.some((record) =>
+              record.toolName === "skill_generate" && !record.result.isError);
+            const onlySkillsListThisIteration = iterationRecords.length > 0
+              && iterationRecords.every((record) => record.toolName === "skills_list");
+            if (!executedSkillGenerateThisIteration && onlySkillsListThisIteration) {
+              const autoSkillGenerateUse: FridayAgentToolUseBlock = {
+                type: "tool_use",
+                id: `auto-skill-generate-start-${idGenerator()}`,
+                name: "skill_generate",
+                input: {
+                  action: "start",
+                  goal: params.task,
+                },
+              };
+              const autoSkillGenerateRecord = await executeToolCall({
+                toolUse: autoSkillGenerateUse,
+                toolMap,
+                signal: runAbortController.signal,
+                runId,
+                sessionKey,
+                readOnly: isReadOnly,
+                operationalMode: runOperationalMode,
+                timezone: runTimeContext.timezone,
+                taskPrompt: llmTask,
+                conversationContext,
+                principalId,
+                tenantContext: params.tenantContext,
+                requestedProviderId,
+                requestedModel: resolvedTaskProfile.model ?? requestedModel,
+                executionContext,
+                fileVersionTracker,
+                nowIso,
+                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+              });
+              allToolCalls.push(autoSkillGenerateRecord);
+              toolResultBlocks.push({
+                type: "tool_result",
+                tool_use_id: autoSkillGenerateUse.id,
+                content: autoSkillGenerateRecord.result.content,
+                is_error: autoSkillGenerateRecord.result.isError,
               });
             }
           }
@@ -2547,6 +2716,7 @@ export function createFridayAgentRuntime(
           toolCalls: allToolCalls,
           toolMap,
           disabledToolNames,
+          executionSurface: params.executionContext?.surface,
         }) ?? detectArtifactTruthGap({
           task: params.task,
           responseText,
@@ -2832,6 +3002,109 @@ function normalizeToolNameSet(toolNames: string[] | undefined): ReadonlySet<stri
   return new Set<string>(normalized);
 }
 
+function isSkillGenerationAlias(skillId: unknown): skillId is string {
+  return typeof skillId === "string"
+    && /(^|[-_\s])(skill[-_\s]?generator|generate[-_\s]?skill|skill[-_\s]?generate)([-_\s]|$)/i.test(skillId.trim());
+}
+
+function isSkillGenerationTask(task: string): boolean {
+  return /\b(?:generate|create|build)\s+(?:a\s+)?(?:new\s+)?(?:friday\s+)?skill\b|\bskill generator\b/i.test(task);
+}
+
+function isExplicitAutonomousExecutionTask(task: string): boolean {
+  const normalized = task.trim();
+  return /\b(?:must|mandatory|required|explicitly|use|call|invoke|run|start|trigger|launch|resume|continue)\b[\s\S]{0,64}\bautonomous\b/i.test(normalized)
+    || /\bautonomous\b[\s\S]{0,64}\b(?:tool|goal|execute_goal|resume_goal|get_goal|list_goals|cancel_goal)\b/i.test(normalized)
+    || /(?:必须|务必|强制|调用|使用|运行|启动|恢复).{0,24}autonomous/i.test(normalized)
+    || /autonomous.{0,24}(?:工具|目标|goal|execute_goal|resume_goal|get_goal|list_goals|cancel_goal)/i.test(normalized);
+}
+
+function isAutonomousInternalReasoningSurface(surface: string | undefined): boolean {
+  return typeof surface === "string" && surface.startsWith("autonomous_internal_");
+}
+
+function shouldEnforceExplicitAutonomousTaskRouting(
+  task: string,
+  operationalMode: FridayOperationalMode | undefined,
+  executionContext?: FridayAgentExecutionContext,
+): boolean {
+  // Internal autonomous planning/decision prompts run in plan mode and mention
+  // "autonomous" and "goal" as instructions to the model, not as a user
+  // request to invoke the autonomous tool directly.
+  if (operationalMode === "plan" || isAutonomousInternalReasoningSurface(executionContext?.surface)) {
+    return false;
+  }
+  return isExplicitAutonomousExecutionTask(task);
+}
+
+function shouldHideToolsFromLlm(params: {
+  executionContext?: FridayAgentExecutionContext;
+  operationalMode: FridayOperationalMode | undefined;
+}): boolean {
+  return params.operationalMode === "plan"
+    && isAutonomousInternalReasoningSurface(params.executionContext?.surface);
+}
+
+const AUTONOMOUS_ALLOWED_AUX_TOOLS: ReadonlySet<string> = new Set([
+  "autonomous",
+  "feedback",
+  "memory_get",
+  "memory_query",
+  "memory_search",
+  "memory_store",
+  "task_status",
+  "capabilities",
+]);
+
+function isAutonomousTaskBypassTool(toolName: string): boolean {
+  return !AUTONOMOUS_ALLOWED_AUX_TOOLS.has(toolName);
+}
+
+function inferAutonomousActionHint(task: string): string {
+  if (/\bresume_goal\b|\bresume\b[\s\S]{0,24}\bgoal\b/i.test(task)) {
+    return "resume_goal";
+  }
+  if (/\bcancel_goal\b|\b(cancel|stop)\b[\s\S]{0,24}\bgoal\b/i.test(task)) {
+    return "cancel_goal";
+  }
+  if (/\bget_goal\b|\b(check|get|inspect|show)\b[\s\S]{0,24}\bgoal\b/i.test(task)) {
+    return "get_goal";
+  }
+  if (/\blist_goals\b|\b(list|show)\b[\s\S]{0,24}\bgoals\b/i.test(task)) {
+    return "list_goals";
+  }
+  return "execute_goal";
+}
+
+function buildAutonomousWrongToolMessage(toolName: string, task: string): string {
+  const suggestedAction = inferAutonomousActionHint(task);
+  return `This task explicitly requires tool 'autonomous'. Do not use '${toolName}' as a direct bypass. Call autonomous with action="${suggestedAction}" first, then rely on autonomous goal status/result instead of direct browser/desktop/exec/file/system tools.`;
+}
+
+function resolveToolPathArg(input: Record<string, unknown> | undefined): string | undefined {
+  if (!input) return undefined;
+  const pathArg = typeof input.path === "string"
+    ? input.path
+    : typeof input.file_path === "string"
+      ? input.file_path
+      : undefined;
+  return pathArg?.trim().length ? pathArg.trim() : undefined;
+}
+
+function isRuntimeSkillAuthoringPath(input: Record<string, unknown> | undefined): boolean {
+  const pathArg = resolveToolPathArg(input);
+  if (!pathArg) return false;
+  const normalizedPath = pathArg.replace(/\\/g, "/").replace(/^\.\//, "");
+  return normalizedPath.startsWith("managed-skills/")
+    || normalizedPath.startsWith("skills/")
+    || normalizedPath.includes("/managed-skills/")
+    || normalizedPath.includes("/skills/")
+    || pathArg.endsWith("skill.manifest.json")
+    || pathArg.endsWith("manifest.json")
+    || pathArg.endsWith("/SKILL.md")
+    || pathArg.endsWith("/run.sh");
+}
+
 function withRulesEvaluateScope(scopes: string[] | undefined): string[] {
   const set = new Set<string>(scopes ?? []);
   set.add(RULES_EVALUATE_SCOPE);
@@ -3108,7 +3381,11 @@ function detectEvidenceClosureGap(params: {
   toolCalls: FridayAgentToolCallRecord[];
   toolMap: Map<string, FridayAgentToolDefinition>;
   disabledToolNames?: ReadonlySet<string>;
+  executionSurface?: string;
 }): OutputClosureGap | null {
+  if (isAutonomousInternalReasoningSurface(params.executionSurface)) {
+    return null;
+  }
   const normalizedTask = params.task.trim();
   if (normalizedTask.length === 0) return null;
 
@@ -3593,8 +3870,19 @@ function shouldEnforceToolEvidenceForTask(params: {
   toolMap: Map<string, FridayAgentToolDefinition>;
   toolCalls: FridayAgentToolCallRecord[];
   disabledToolNames?: ReadonlySet<string>;
+  executionSurface?: string;
 }): boolean {
-  const { task, responseText, toolMap, toolCalls, disabledToolNames } = params;
+  const {
+    task,
+    responseText,
+    toolMap,
+    toolCalls,
+    disabledToolNames,
+    executionSurface,
+  } = params;
+  if (isAutonomousInternalReasoningSurface(executionSurface)) {
+    return false;
+  }
   if (hasSuccessfulToolEvidence(toolCalls)) return false;
 
   const normalizedTask = task.trim();
@@ -4127,6 +4415,14 @@ function evaluateTimeSensitiveResponse(params: {
   }
 
   if (explicitCaveat) {
+    if (evidence.latestnessVerified) {
+      return {
+        responseText: params.responseText,
+        retryPrompt:
+          "System verification: your tools already produced date-backed, freshness-applied evidence for this time-sensitive request. " +
+          "Do not say latestness is unverified. Use the verified tool evidence and answer with absolute publication dates and direct source URLs for each item.",
+      };
+    }
     return { responseText: params.responseText };
   }
 
@@ -4701,10 +4997,36 @@ function deriveArtifactsFromToolCalls(
   for (const call of toolCalls) {
     if (call.result.isError) continue;
 
+    let parsedResultContent: Record<string, unknown> | null = null;
+    if (typeof call.result.content === "string" && call.result.content.trim().startsWith("{")) {
+      try {
+        parsedResultContent = JSON.parse(call.result.content) as Record<string, unknown>;
+      } catch {
+        parsedResultContent = null;
+      }
+    }
+
     if (call.toolName === "write" || call.toolName === "edit") {
       const filePath = typeof call.args.path === "string" ? call.args.path : undefined;
       if (filePath) add({ type: "file", path: filePath });
       continue;
+    }
+
+    if (call.toolName === "skill_generate" && call.args.action === "approve") {
+      const skillId = typeof parsedResultContent?.skillId === "string"
+        ? parsedResultContent.skillId
+        : undefined;
+      const skillDir = typeof parsedResultContent?.skillDir === "string"
+        ? parsedResultContent.skillDir
+        : undefined;
+      if (skillId && skillDir) {
+        add({
+          type: "skill",
+          skillId,
+          path: join(skillDir, "skill.manifest.json"),
+        });
+        continue;
+      }
     }
 
     if (call.toolName === "skill_run") {
@@ -4829,6 +5151,8 @@ interface ExecuteToolCallParams {
   conversationContext?: FridayAgentConversationContext;
   principalId?: string;
   tenantContext?: FridayAgentLlmStreamParams["tenantContext"];
+  requestedProviderId?: string;
+  requestedModel?: string;
   executionContext?: FridayAgentExecutionContext;
   fileVersionTracker?: ReturnType<typeof createFridayFileVersionTracker>;
   nowIso: () => string;
@@ -4863,6 +5187,23 @@ function augmentToolArgsForRuntime(params: {
     };
   }
   return params.input;
+}
+
+function resolveToolExecutionTimeoutMs(
+  tool: FridayAgentToolDefinition | undefined,
+  args: Record<string, unknown>,
+): number {
+  if (!tool?.timeoutMs) {
+    return FRIDAY_AGENT_TOOL_TIMEOUT_MS;
+  }
+
+  const candidate = typeof tool.timeoutMs === "function"
+    ? tool.timeoutMs(args)
+    : tool.timeoutMs;
+  if (candidate == null || !Number.isFinite(candidate) || candidate <= 0) {
+    return FRIDAY_AGENT_TOOL_TIMEOUT_MS;
+  }
+  return Math.trunc(candidate);
 }
 
 function readBrowserPresentationPayload(
@@ -5106,9 +5447,10 @@ async function executeToolCall(
 
   // Create a timeout signal for the tool call
   const toolAbortController = new AbortController();
+  const resolvedToolTimeoutMs = resolveToolExecutionTimeoutMs(tool, toolArgs);
   const toolTimer = setTimeout(() => {
     toolAbortController.abort(new Error("Tool call timed out"));
-  }, FRIDAY_AGENT_TOOL_TIMEOUT_MS);
+  }, resolvedToolTimeoutMs);
 
   // Wire run signal to tool signal
   const onRunAbort = () => {
@@ -5131,6 +5473,8 @@ async function executeToolCall(
       conversationContext: params.conversationContext,
       principalId: params.principalId,
       tenantContext: params.tenantContext,
+      requestedProviderId: params.requestedProviderId,
+      requestedModel: params.requestedModel,
     });
     const rawResult = await tool.execute(toolArgs, toolSignal);
     const durationMs = Date.now() - startedAt;

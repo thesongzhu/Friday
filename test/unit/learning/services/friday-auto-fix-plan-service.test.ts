@@ -80,7 +80,17 @@ describe("FridayAutoFixPlanService", () => {
   });
 
   it("maps model category to switch_model_fallback", () => {
-    const modelIncident = { ...baseIncident, category: "model" as const };
+    const modelIncident = {
+      ...baseIncident,
+      category: "model" as const,
+      context: {
+        providerId: "provider-primary",
+        actualProviderId: "provider-primary",
+        model: "claude-sonnet-4-5",
+        actualModel: "claude-sonnet-4-5",
+        fallbackProviderIds: ["provider-secondary", "provider-tertiary"],
+      },
+    };
     const plans = service.buildPlans({
       incident: modelIncident,
       diagnosis: baseDiagnosis,
@@ -89,6 +99,17 @@ describe("FridayAutoFixPlanService", () => {
     });
 
     expect(plans[0]!.steps[0]!.kind).toBe("switch_model_fallback");
+    expect(plans[0]!.steps[0]!.payload).toMatchObject({
+      fallbackProviderIds: ["provider-secondary", "provider-tertiary"],
+      fallbackProviderId: "provider-secondary",
+      nextProviderId: "provider-secondary",
+    });
+    expect(plans[0]!.rollbackPlan).toBeDefined();
+    expect(plans[0]!.rollbackPlan!.steps[0]!.payload).toMatchObject({
+      restoreProviderId: "provider-primary",
+      restoreModel: "claude-sonnet-4-5",
+      restoreFallbackProviderIds: ["provider-secondary", "provider-tertiary"],
+    });
   });
 
   it("maps config category to apply_config_patch with rollback", () => {

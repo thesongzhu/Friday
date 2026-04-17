@@ -46,7 +46,7 @@ type SetupProviderRecommendation = {
   operatorNote: string;
 };
 
-function getProviderBootstrapRecommendation(kind: ProviderKind): SetupProviderRecommendation {
+export function getProviderBootstrapRecommendation(kind: ProviderKind): SetupProviderRecommendation {
   switch (kind) {
     case "openai":
       return {
@@ -66,11 +66,11 @@ function getProviderBootstrapRecommendation(kind: ProviderKind): SetupProviderRe
       };
     case "google":
       return {
-        backend: "HTTP first, Gemini CLI only if explicitly installed",
+        backend: "HTTP only",
         auth: "API key",
         why: "Google HTTP is the stable route for tool-capable work and routing explainability.",
-        boundary: "Gemini CLI is optional and environment-dependent; setup does not assume it exists.",
-        operatorNote: "If Gemini CLI is installed later, attach it as an external-session backend from Settings.",
+        boundary: "The current setup flow does not promise or require a Google CLI backend.",
+        operatorNote: "Use Settings later for routing, fallback, and budget policy. Google stays on the HTTP path in the current setup flow.",
       };
     case "ollama":
       return {
@@ -170,10 +170,12 @@ export function SetupPage() {
   const [discoveredPrograms, setDiscoveredPrograms] = useState<DiscoveredProgram[]>([]);
   const [discoveryRecommendations, setDiscoveryRecommendations] = useState<IntegrationRecommendation[]>([]);
   const [discoveryProgramCount, setDiscoveryProgramCount] = useState(0);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   // ── Skill scan state ──
   const [skillScanItems, setSkillScanItems] = useState<LocalSkillScanItem[]>([]);
   const [skillScanDone, setSkillScanDone] = useState(false);
   const [skillScanLoading, setSkillScanLoading] = useState(false);
+  const [skillScanError, setSkillScanError] = useState<string | null>(null);
   const [selectedSkillPaths, setSelectedSkillPaths] = useState<Set<string>>(new Set());
   const [skillImporting, setSkillImporting] = useState(false);
   // ── Existing queries ──
@@ -433,10 +435,15 @@ export function SetupPage() {
 
   async function handleStep3Load() {
     const timeout = setTimeout(() => {
+      setDiscoveryScanning(false);
       setSkillScanLoading(false);
+      setDiscoveryError((current) => current ?? localize(locale, "程序扫描超时，请稍后在设置中重试。", "Program discovery timed out. Retry later from Settings."));
+      setSkillScanError((current) => current ?? localize(locale, "本地 AI 配置扫描超时，请稍后在设置中重试。", "Local AI config scan timed out. Retry later from Settings."));
       setSkillScanDone(true);
     }, 30000);
 
+    setDiscoveryError(null);
+    setSkillScanError(null);
     setDiscoveryScanning(true);
     setSkillScanLoading(true);
 
@@ -457,8 +464,13 @@ export function SetupPage() {
           // recommendations are optional
         }
         setDiscoveryScanned(true);
-      } catch {
-        // Discovery not enabled or failed — silently skip
+      } catch (error) {
+        setDiscoveryScanned(false);
+        setDiscoveryError(
+          error instanceof Error
+            ? error.message
+            : localize(locale, "程序扫描当前不可用。", "Program discovery is unavailable right now."),
+        );
       } finally {
         setDiscoveryScanning(false);
       }
@@ -472,8 +484,15 @@ export function SetupPage() {
         // Pre-select all convertible items
         setSelectedSkillPaths(new Set(sorted.slice(0, 10).filter((i) => i.convertible).map((i) => i.sourcePath)));
         setSkillScanDone(true);
-      } catch {
-        setSkillScanDone(true); // mark done even on failure so UI shows empty state
+      } catch (error) {
+        setSkillScanItems([]);
+        setSelectedSkillPaths(new Set());
+        setSkillScanError(
+          error instanceof Error
+            ? error.message
+            : localize(locale, "无法扫描本地 AI 配置。", "Could not scan local AI configs."),
+        );
+        setSkillScanDone(true);
       } finally {
         setSkillScanLoading(false);
       }
@@ -917,20 +936,31 @@ export function SetupPage() {
 
         <div className="mt-8 w-full max-w-xl space-y-10 text-left">
           {/* ── Sub-section A: Program Discovery ── */}
-          {discoveryScanned && (
+          {(discoveryScanned || discoveryError) && (
             <div>
               <h2 className="text-lg font-semibold text-[color:var(--color-text-primary)]">
                 {localize(locale, "发现你电脑上的工具", "Discover Your Tools")}
               </h2>
-              <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
-                {localize(
-                  locale,
-                  `Friday 发现了你安装的 ${discoveryProgramCount} 个程序，以下是可以帮你自动化的功能。`,
-                  `Friday found ${discoveryProgramCount} programs on your computer. Here's what it can automate for you.`,
-                )}
-              </p>
+              {discoveryError ? (
+                <div className="mt-4 rounded-2xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] px-4 py-3">
+                  <p className="text-sm font-medium text-[color:var(--color-text-primary)]">
+                    {localize(locale, "程序扫描这次没有完成", "Program discovery did not complete this time")}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                    {discoveryError}
+                  </p>
+                </div>
+              ) : (
+                <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
+                  {localize(
+                    locale,
+                    `Friday 发现了你安装的 ${discoveryProgramCount} 个程序，以下是可以帮你自动化的功能。`,
+                    `Friday found ${discoveryProgramCount} programs on your computer. Here's what it can automate for you.`,
+                  )}
+                </p>
+              )}
               <div className="mt-4 space-y-2">
-                {discoveryRecommendations.length > 0
+                {!discoveryError && discoveryRecommendations.length > 0
                   ? discoveryRecommendations.slice(0, 5).map((rec) => {
                       const friendlyDesc = getIntegrationDescription(rec.programName, locale);
                       return (
@@ -952,7 +982,7 @@ export function SetupPage() {
                         </div>
                       );
                     })
-                  : hasDiscoveryCards
+                  : !discoveryError && hasDiscoveryCards
                     ? discoveredPrograms.slice(0, 5).map((prog) => (
                         <div
                           key={prog.id}
@@ -975,8 +1005,12 @@ export function SetupPage() {
                         <p className="text-sm text-[color:var(--color-text-tertiary)]">
                           {localize(
                             locale,
-                            "这次没有拿到可展示的程序推荐，但你仍然可以继续导入已有的 AI 配置。",
-                            "No program recommendations were available this time, but you can still import existing AI configs.",
+                            discoveryError
+                              ? "程序扫描没有成功返回结果，但你仍然可以继续导入已有的 AI 配置。"
+                              : "这次没有拿到可展示的程序推荐，但你仍然可以继续导入已有的 AI 配置。",
+                            discoveryError
+                              ? "Program discovery did not return usable results, but you can still import existing AI configs."
+                              : "No program recommendations were available this time, but you can still import existing AI configs.",
                           )}
                         </p>
                       )}
@@ -1041,6 +1075,15 @@ export function SetupPage() {
                     </div>
                   )}
                 </>
+              ) : skillScanError ? (
+                <div className="mt-4 rounded-2xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] px-4 py-3">
+                  <p className="text-sm font-medium text-[color:var(--color-text-primary)]">
+                    {localize(locale, "本地 AI 配置扫描失败", "Local AI config scan failed")}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                    {skillScanError}
+                  </p>
+                </div>
               ) : (
                 <p className="mt-2 text-sm text-[color:var(--color-text-tertiary)]">
                   {localize(locale, "未找到本地 AI 配置", "No local AI configs found")}

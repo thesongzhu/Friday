@@ -82,6 +82,19 @@ function toneForCredentialStatus(value: "unknown" | "configured" | "missing" | "
   return "neutral";
 }
 
+function resolveMacPermissionSettingsUrl(permission: string): string {
+  switch (permission) {
+    case "screen_recording":
+      return "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+    case "input_monitoring":
+      return "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent";
+    case "automation":
+      return "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation";
+    default:
+      return "x-apple.systempreferences:com.apple.preference.security";
+  }
+}
+
 function applyDraftToPreferencePayload(draft: {
   mbti: FridayCommunicationPersona["mbti"] | "";
   settings: FridayCommunicationPersonaSettings;
@@ -336,6 +349,25 @@ export function SettingsPage() {
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : localize(locale, "无法切换专家模式。", "Could not toggle expert mode."));
+    },
+  });
+
+  const openPermissionSettingsMutation = useMutation({
+    mutationFn: (permission: string) =>
+      systemApi.executeIntent({
+        action: "open_url",
+        actorId: "settings-page",
+        actorKind: "api",
+        reason: `Open macOS settings for ${permission}`,
+        url: resolveMacPermissionSettingsUrl(permission),
+      }),
+    onSuccess: (result) => {
+      toast.success(result.message);
+      void queryClient.invalidateQueries({ queryKey: systemKeys.state() });
+      void queryClient.invalidateQueries({ queryKey: systemKeys.session() });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法打开系统设置。", "Could not open System Settings."));
     },
   });
 
@@ -725,6 +757,17 @@ export function SettingsPage() {
                       </div>
                       <StatusPill tone={toneForStatus(permission.status)}>{permission.status}</StatusPill>
                     </div>
+                    {systemSession.companion.platform === "darwin" && permission.status !== "granted" ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <ActionButton
+                          tone="secondary"
+                          disabled={openPermissionSettingsMutation.isPending}
+                          onClick={() => openPermissionSettingsMutation.mutate(permission.permission)}
+                        >
+                          {localize(locale, "打开系统设置", "Open System Settings")}
+                        </ActionButton>
+                      </div>
+                    ) : null}
                   </div>
                 ))}
                 {systemState.permissions.length === 0 ? (

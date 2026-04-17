@@ -30,6 +30,7 @@ export interface CreateFridayAgentImageAnalysisToolOptions {
 export interface FridayImageAnalysisRequest {
   prompt: string;
   images: FridayImageAnalysisInput[];
+  providerId?: string;
   model?: string;
   detail: ImageDetail;
   maxTokens?: number;

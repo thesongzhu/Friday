@@ -461,6 +461,154 @@ describe("FridayAgentLlmClient", () => {
     ]);
   });
 
+  it("waits for a non-empty tool name before emitting OpenAI Responses tool calls", async () => {
+    const rawLines = [
+      "data: " + JSON.stringify({
+        type: "response.output_item.done",
+        item: {
+          type: "function_call",
+          call_id: "call_late_name",
+          arguments: "{\"action\":\"start\"}",
+        },
+      }) + "\n\n",
+      "data: " + JSON.stringify({
+        type: "response.output_item.added",
+        item: {
+          type: "function_call",
+          call_id: "call_late_name",
+          name: "skill_generate",
+        },
+      }) + "\n\n",
+      "data: " + JSON.stringify({
+        type: "response.completed",
+        response: {
+          usage: {
+            input_tokens: 11,
+            output_tokens: 4,
+          },
+        },
+      }) + "\n\n",
+    ];
+    const fetchImpl = createMockFetch(200, createRawSSEStream(rawLines));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.openai.com",
+      apiKey: "test-key",
+      api: "openai-responses",
+      fetchImpl,
+    });
+
+    const events: FridayAgentLlmStreamEvent[] = [];
+    for await (const event of client.stream({
+      model: "gpt-4.1-mini",
+      systemPrompt: "Test",
+      messages: [{ role: "user", content: "Generate a skill" }],
+      tools: [{
+        name: "skill_generate",
+        description: "Generate a Friday skill",
+        parameters: {
+          properties: {
+            action: { type: "string" },
+          },
+        },
+        async execute() { return { content: "" }; },
+      }],
+      signal: new AbortController().signal,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: "tool_use",
+        id: "call_late_name",
+        name: "skill_generate",
+        input: { action: "start" },
+      },
+      {
+        type: "message_end",
+        stopReason: "tool_use",
+        inputTokens: 11,
+        outputTokens: 4,
+      },
+    ]);
+  });
+
+  it("merges OpenAI Responses item ids with call ids for function-call deltas", async () => {
+    const rawLines = [
+      "data: " + JSON.stringify({
+        type: "response.output_item.added",
+        item: {
+          id: "fc_real_1",
+          type: "function_call",
+          status: "in_progress",
+          call_id: "call_real_1",
+          name: "skill_generate",
+          arguments: "",
+        },
+      }) + "\n\n",
+      "data: " + JSON.stringify({
+        type: "response.function_call_arguments.delta",
+        item_id: "fc_real_1",
+        delta: "{\"action\":\"start\",\"goal\":\"Create an otter skill\"}",
+      }) + "\n\n",
+      "data: " + JSON.stringify({
+        type: "response.completed",
+        response: {
+          usage: {
+            input_tokens: 12,
+            output_tokens: 6,
+          },
+        },
+      }) + "\n\n",
+    ];
+    const fetchImpl = createMockFetch(200, createRawSSEStream(rawLines));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.openai.com",
+      apiKey: "test-key",
+      api: "openai-responses",
+      fetchImpl,
+    });
+
+    const events: FridayAgentLlmStreamEvent[] = [];
+    for await (const event of client.stream({
+      model: "gpt-4.1-mini",
+      systemPrompt: "Test",
+      messages: [{ role: "user", content: "Generate a skill" }],
+      tools: [{
+        name: "skill_generate",
+        description: "Generate a Friday skill",
+        parameters: {
+          properties: {
+            action: { type: "string" },
+            goal: { type: "string" },
+          },
+        },
+        async execute() { return { content: "" }; },
+      }],
+      signal: new AbortController().signal,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: "tool_use",
+        id: "call_real_1",
+        name: "skill_generate",
+        input: {
+          action: "start",
+          goal: "Create an otter skill",
+        },
+      },
+      {
+        type: "message_end",
+        stopReason: "tool_use",
+        inputTokens: 12,
+        outputTokens: 6,
+      },
+    ]);
+  });
+
   it("formats OpenAI Chat Completions tools with nested function field", async () => {
     const sseEvents = [JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } })];
     const fetchImpl = createMockFetch(200, createSSEStream([...sseEvents, "[DONE]"]));

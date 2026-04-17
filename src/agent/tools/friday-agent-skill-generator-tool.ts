@@ -4,6 +4,7 @@ import type { FridayAgentToolDefinition } from "../model/friday-agent.types.js";
 import {
   errorResult,
   jsonResult,
+  normalizeAgentRequestedModel,
   readStringParam,
 } from "./friday-agent-tool-helpers.js";
 
@@ -20,6 +21,25 @@ export interface CreateFridayAgentSkillGeneratorToolDeps {
 type SkillGenAction = "start" | "turn" | "generate" | "approve" | "cancel" | "status";
 
 const VALID_ACTIONS = new Set<SkillGenAction>(["start", "turn", "generate", "approve", "cancel", "status"]);
+
+function buildExampleRunInput(
+  inputs: Array<{ key: string; type?: string }>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    inputs.map((field) => [
+      field.key,
+      field.type === "number"
+        ? 0
+        : field.type === "boolean"
+          ? true
+          : field.type === "array"
+            ? []
+            : field.type === "object"
+              ? {}
+              : `<${field.key}>`,
+    ]),
+  );
+}
 
 // ─── Factory ───
 
@@ -85,7 +105,7 @@ export function createFridayAgentSkillGeneratorTool(
         switch (action) {
           case "start": {
             const goal = readStringParam(args, "goal", { required: true });
-            const model = readStringParam(args, "model");
+            const model = normalizeAgentRequestedModel(readStringParam(args, "model"));
             const userId = readStringParam(args, "userId") ?? defaultUserId;
             const channel = readStringParam(args, "channel") ?? "agent";
 
@@ -108,7 +128,7 @@ export function createFridayAgentSkillGeneratorTool(
           case "turn": {
             const sessionId = readStringParam(args, "sessionId", { required: true });
             const message = readStringParam(args, "message", { required: true });
-            const model = readStringParam(args, "model");
+            const model = normalizeAgentRequestedModel(readStringParam(args, "model"));
 
             const result = await generatorService.submitTurn(sessionId, {
               message,
@@ -126,7 +146,7 @@ export function createFridayAgentSkillGeneratorTool(
 
           case "generate": {
             const sessionId = readStringParam(args, "sessionId", { required: true });
-            const model = readStringParam(args, "model");
+            const model = normalizeAgentRequestedModel(readStringParam(args, "model"));
 
             const draft = await generatorService.generateDraft(sessionId, model ?? undefined);
 
@@ -146,6 +166,15 @@ export function createFridayAgentSkillGeneratorTool(
 
           case "approve": {
             const sessionId = readStringParam(args, "sessionId", { required: true });
+            const sessionData = await generatorService.getSession(sessionId);
+            const requiredInputs = (sessionData?.draft?.manifest.inputs ?? [])
+              .filter((field) => field.required !== false && typeof field.key === "string" && field.key.trim().length > 0)
+              .map((field) => ({
+                key: field.key.trim(),
+                type: field.type,
+                label: field.label,
+              }));
+            const exampleRunInput = buildExampleRunInput(requiredInputs);
 
             const result = await generatorService.approveAndSave(sessionId);
 
@@ -158,6 +187,13 @@ export function createFridayAgentSkillGeneratorTool(
               promotionStage: result.promotionStage,
               promotedManifestTags: result.promotedManifestTags,
               evidence: result.evidence,
+              requiredInputs,
+              exampleRunInput,
+              nextRecommendedAction: {
+                tool: "skill_run",
+                skillId: result.skillId,
+                input: exampleRunInput,
+              },
             });
           }
 
