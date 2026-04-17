@@ -219,7 +219,7 @@ export async function createAnthropicProvider(
     apiKeyEnvRef?: string;
   },
 ): Promise<string> {
-  if (typeof opts.apiKeyEnvRef !== "string" || opts.apiKeyEnvRef.trim().length === 0) {
+  if (typeof opts.apiKeyEnvRef !== "string" || opts.apiKeyEnvRef.trim().length === 0) { // pragma: allowlist secret
     throw new Error(liveAnthropicCredentialMessage());
   }
   const { status, json } = await apiFetch<{

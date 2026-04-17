@@ -114,7 +114,7 @@ async function completeUiLoginIfNeeded({ page, client, execution, artifact, time
   }
   if (
     typeof client?.email === "string" && client.email.trim().length > 0
-    && typeof client?.password === "string" && client.password.trim().length > 0
+    && typeof client?.password === "string" && client.password.trim().length > 0 // pragma: allowlist secret
   ) {
     await page.locator("#login-email").fill(client.email.trim());
     await page.locator("#login-password").fill(client.password.trim());
@@ -415,7 +415,7 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
       (typeof client?.localPassphrase === "string" && client.localPassphrase.trim().length > 0)
       || (
         typeof client?.email === "string" && client.email.trim().length > 0
-        && typeof client?.password === "string" && client.password.trim().length > 0
+        && typeof client?.password === "string" && client.password.trim().length > 0 // pragma: allowlist secret
       );
     const browserLoginAvailable = authCapabilities.allowLocalBypassLogin === true
       || authCapabilities.allowPasswordlessLocalLogin === true;
