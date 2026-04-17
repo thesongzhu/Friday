@@ -192,6 +192,7 @@ export interface FridayAgentPackContextMetadata {
 }
 
 export interface FridayAgentRunMetadata {
+  surface?: string;
   packContext?: FridayAgentPackContextMetadata;
 }
 
