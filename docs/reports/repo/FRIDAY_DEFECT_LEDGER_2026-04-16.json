@@ -39,7 +39,7 @@
     "surface": "search latestness",
     "claim": "Friday search is latestness-verified.",
     "real evidence": "/v1/health capabilities.search.latestness=provider_backed.",
-    "repro": "GET http://127.0.0.1:33141/v1/health",
+    "repro": "GET http://127.0.0.1:33161/v1/health",
     "root cause": "Runtime truth already exposes unverified latestness, but release/UX messaging can still imply stronger guarantees than the runtime reports.",
     "severity": "P2",
     "release impact": "Needs explicit bounded wording until verified live search freshness exists.",
@@ -50,7 +50,7 @@
   {
     "surface": "plugin distribution",
     "claim": "Plugin lifecycle is fully surfaced in the main user UI.",
-    "real evidence": "/v1/plugins status=200, router /plugins=true.",
+    "real evidence": "/v1/plugins status=401, router /plugins=true.",
     "repro": "Hit /v1/plugins and compare with ui/src/router.tsx route census.",
     "root cause": "The routed UI surface now exists. Remaining risk is operator-first UX drift if install and marketplace boundaries are not labeled clearly.",
     "severity": "P2",
