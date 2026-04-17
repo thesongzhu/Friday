@@ -1,11 +1,13 @@
 /**
  * Live User Journey E2E Tests — 10 scenarios with real LLM calls.
  *
- * Gated by: FRIDAY_E2E_LIVE_OLLAMA=1 or FRIDAY_E2E_LIVE_OPENAI=1
+ * Canonical gate: FRIDAY_E2E_LIVE_ANTHROPIC=1
+ * Optional gates: FRIDAY_E2E_LIVE_OLLAMA=1 or FRIDAY_E2E_LIVE_OPENAI=1
  * Target: FRIDAY_E2E_TARGET=local (cloud uses friday-cloud-journeys.e2e.test.ts)
  * Backward compatibility: E2E_LIVE=1
  *
  * Env vars:
+ *   E2E_ANTHROPIC_BASE_URL — default https://api.anthropic.com
  *   E2E_OLLAMA_BASE_URL   — default http://127.0.0.1:11434
  *   E2E_OPENAI_BASE_URL   — default https://api.openai.com
  *   E2E_OPENAI_API_KEY_ENV — default OPENAI_API_KEY
@@ -18,6 +20,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import {
   E2E_GATED,
+  ANTHROPIC_API_KEY_ENV_REF,
+  ANTHROPIC_BASE_URL,
   CODE_MODEL,
   FAST_MODEL,
   LIVE_PROVIDER_KIND,
@@ -32,7 +36,9 @@ import {
 } from "./_helpers/real-env.js";
 import {
   apiFetch,
+  createAnthropicProvider,
   createOpenAiProvider,
+  ensureAnthropicProviders,
   ensureOllamaProviders,
   ensureOpenAiProviders,
   setModelRouting,
@@ -49,13 +55,14 @@ import {
   startSkillGenAndApprove,
   createTempSkillMd,
 } from "./_helpers/skill.js";
+import { liveAnthropicCredentialMessage } from "../_helpers/live-anthropic.js";
 
 // ─── Suite ───
 
 const LOCAL_LIVE_GATED = E2E_GATED && LIVE_TARGET === "local";
 
 describe.skipIf(!LOCAL_LIVE_GATED)(
-  `Friday Real Journeys E2E (${LIVE_PROVIDER_KIND === "openai" ? "OpenAI" : "Ollama"})`,
+  `Friday Real Journeys E2E (${LIVE_PROVIDER_KIND === "anthropic" ? "Anthropic" : LIVE_PROVIDER_KIND === "openai" ? "OpenAI" : "Ollama"})`,
   () => {
     let env: RealHubEnv;
     let fastProviderId: string;
@@ -68,7 +75,16 @@ describe.skipIf(!LOCAL_LIVE_GATED)(
 
       // 2. Create providers and set routing
       const providers =
-        LIVE_PROVIDER_KIND === "openai"
+        LIVE_PROVIDER_KIND === "anthropic"
+          ? await ensureAnthropicProviders(
+              env.baseUrl,
+              env.accessToken,
+              ANTHROPIC_BASE_URL,
+              FAST_MODEL,
+              CODE_MODEL,
+              ANTHROPIC_API_KEY_ENV_REF ?? (() => { throw new Error(liveAnthropicCredentialMessage()); })(),
+            )
+          : LIVE_PROVIDER_KIND === "openai"
           ? await ensureOpenAiProviders(
               env.baseUrl,
               env.accessToken,
@@ -131,7 +147,12 @@ describe.skipIf(!LOCAL_LIVE_GATED)(
         env.accessToken,
         "POST",
         "/v1/providers/detect",
-        LIVE_PROVIDER_KIND === "openai"
+        LIVE_PROVIDER_KIND === "anthropic"
+          ? {
+              kind: "anthropic",
+              apiKey: process.env.FRIDAY_ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY,
+            }
+          : LIVE_PROVIDER_KIND === "openai"
           ? {
               kind: "openai",
               apiKey: process.env[OPENAI_API_KEY_ENV],
@@ -1051,7 +1072,15 @@ describe.skipIf(!LOCAL_LIVE_GATED)(
     async () => {
       // 1. Create a bad provider (pointing to a non-existent URL)
       const badProviderId =
-        LIVE_PROVIDER_KIND === "openai"
+        LIVE_PROVIDER_KIND === "anthropic"
+          ? await createAnthropicProvider(env.baseUrl, env.accessToken, {
+              name: "Bad Anthropic (E2E Failover)",
+              anthropicBaseUrl: "http://127.0.0.1:19999",
+              models: [FAST_MODEL],
+              defaultModel: FAST_MODEL,
+              apiKeyEnvRef: ANTHROPIC_API_KEY_ENV_REF ?? undefined,
+            })
+          : LIVE_PROVIDER_KIND === "openai"
           ? await createOpenAiProvider(env.baseUrl, env.accessToken, {
               name: "Bad OpenAI (E2E Failover)",
               openAiBaseUrl: "http://127.0.0.1:19999",
