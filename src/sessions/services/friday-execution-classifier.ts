@@ -55,7 +55,7 @@ const DAEMON_STATUS =
   /\b(daemon status|daemon\b.*\brunning|is friday running|friday process|后台进程|守护进程状态)\b/i;
 
 const MCP_LIST =
-  /\b((?:list|show|which|what)\s+(?:mcp(?:\s+servers?)?|servers?\s+for\s+mcp)|mcp\s+server\s+list|mcp\s+list)\b/i;
+  /\b((?:list|show|which|what|query|inspect|describe)(?:\s+\w+){0,2}\s+(?:mcp(?:\s+servers?)?|servers?\s+for\s+mcp|mcp\s+server\s+info)|mcp\s+(?:server\s+list|list|server\s+info|info)|info\s+about\s+mcp(?:\s+servers?)?)\b/i;
 
 const WORKFLOW_QUERY =
   /\b(list workflows?|workflow status|workflow runs?|show workflows?|工作流状态|工作流列表)\b/i;
