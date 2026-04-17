@@ -70,3 +70,21 @@
   - Exit:
     - satisfied for Phase 1 advancement
     - residual flake remains tracked and must be watched during later phase regressions and final audit
+- Bucket 2 self-healing full matrix:
+  - Clean rebuild completed in the clean tree without porting the dirty live suite wholesale.
+  - Code/status:
+    - `matchedLessonIds` route-mapper semantics are now diagnosis-only; manual resolve lesson writeback no longer backfills that field.
+    - clean Anthropic-only self-healing live suite landed in `test/e2e/live/friday-self-healing-live.e2e.test.ts`.
+    - provider fallback, rollback, lesson readback, anti-learning, workflow retry, and skill-drift disable paths now share one deep-proof harness with API and SQLite readback.
+  - Verification:
+    - targeted unit and API tests: passed
+    - real Anthropic proof: passed on 2026-04-17 via `FRIDAY_E2E_LIVE_ANTHROPIC=1` + Anthropic API-key lane
+    - previous-phase regression: autonomous restart matrix passed again after Phase 2 changes
+    - live evidence:
+      - low-risk model fallback auto-applies, extracts a lesson, and the next matching incident reads that lesson back and changes the planned action
+      - manual execute + rollback over `/v1/auto-fix/actions/:actionId/{execute,rollback}` restores routing and is confirmed in SQLite
+      - disabled lesson suppresses future diagnosis/action lesson matches for the same fingerprint
+      - failed workflow run is recovered by restoring the missing skill and replaying the failed node to completion
+      - skill verification drift raises a `disable_skill` remediation that verifies and leaves the skill disabled
+  - Exit:
+    - satisfied for Phase 2 advancement
