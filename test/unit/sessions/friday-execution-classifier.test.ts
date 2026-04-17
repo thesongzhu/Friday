@@ -72,6 +72,15 @@ describe("classifyFridayExecution", () => {
       expect(result.category).toBe("sync_immediate");
       expect(result.handler).toBe("capabilities");
     });
+
+    it("does not treat plain deployment facts as capability queries", () => {
+      const result = classifyFridayExecution({
+        task: "Turn 3 fact: the deployment region is us-west-2.",
+        turnKind: "follow_up",
+        focusState: null,
+      });
+      expect(result.category).toBe("agent_exception_path");
+    });
   });
 
   describe("approval commands", () => {
@@ -156,6 +165,35 @@ describe("classifyFridayExecution", () => {
       });
       expect(result.category).toBe("sync_immediate");
       expect(result.handler).toBe("mcp_list");
+    });
+
+    it("classifies 'list available mcp servers' as mcp_list", () => {
+      const result = classifyFridayExecution({
+        task: "List available MCP servers",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("mcp_list");
+    });
+
+    it("classifies 'query mcp server info' as mcp_list", () => {
+      const result = classifyFridayExecution({
+        task: "Query MCP server info",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("mcp_list");
+    });
+
+    it("does not treat a plain MCP fact as an MCP list query", () => {
+      const result = classifyFridayExecution({
+        task: "Turn 8 fact: the MCP server nickname is oak-bridge.",
+        turnKind: "follow_up",
+        focusState: null,
+      });
+      expect(result.category).toBe("agent_exception_path");
     });
   });
 

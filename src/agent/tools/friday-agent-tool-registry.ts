@@ -329,9 +329,12 @@ const ALWAYS_LOAD_TOOLS = new Set([
   "web_fetch",
   "web_search",
   "skill_run",
+  "skill_generate",
   "skills_list",
+  "workflow_generate",
   "memory_search",
   "memory_store",
+  "autonomous",
   "capabilities",
   "task_status",
 ]);

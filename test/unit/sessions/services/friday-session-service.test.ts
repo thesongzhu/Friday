@@ -227,6 +227,38 @@ describe("FridaySessionService", () => {
     });
   });
 
+  describe("alignSessionContext", () => {
+    it("updates accountId, userId, and memory namespace for an existing session", async () => {
+      await service.getOrCreateSession("chat:default:chat-123");
+
+      const updated = await service.alignSessionContext("chat:default:chat-123", {
+        accountId: "admin-001",
+        userId: "admin-001",
+      });
+
+      expect(updated.accountId).toBe("admin-001");
+      expect(updated.userId).toBe("admin-001");
+      expect(updated.memoryNamespace).toBe("tenant.admin-001.channel.chat.user.admin-001.shared");
+    });
+
+    it("keeps session unchanged when the requested context already matches", async () => {
+      await service.createSession({
+        channel: "chat",
+        chatId: "chat-456",
+        accountId: "admin-001",
+        userId: "admin-001",
+      });
+
+      const updated = await service.alignSessionContext("chat:admin-001:chat-456", {
+        accountId: "admin-001",
+        userId: "admin-001",
+      });
+
+      expect(updated.accountId).toBe("admin-001");
+      expect(updated.userId).toBe("admin-001");
+    });
+  });
+
   // ─── addMessage ───
 
   describe("addMessage", () => {

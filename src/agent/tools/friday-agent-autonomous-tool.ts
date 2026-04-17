@@ -1,7 +1,7 @@
 /**
  * Agent Autonomous Tool — Exposes goal-driven autonomous execution to the agent runtime.
  *
- * Actions: execute_goal, cancel_goal, get_goal, list_goals.
+ * Actions: execute_goal, resume_goal, cancel_goal, get_goal, list_goals.
  *
  * This tool enables the agent to autonomously complete complex tasks by
  * controlling the desktop and browser with a perception-action loop.
@@ -37,10 +37,11 @@ export interface CreateFridayAgentAutonomousToolOptions {
   goalRunIdMap?: AutonomousGoalRunIdMap;
 }
 
-type AutonomousAction = "execute_goal" | "cancel_goal" | "get_goal" | "list_goals";
+type AutonomousAction = "execute_goal" | "resume_goal" | "cancel_goal" | "get_goal" | "list_goals";
 
 const VALID_ACTIONS = new Set<AutonomousAction>([
   "execute_goal",
+  "resume_goal",
   "cancel_goal",
   "get_goal",
   "list_goals",
@@ -58,6 +59,7 @@ export function createFridayAgentAutonomousTool(
     description:
       "Goal-driven autonomous computer control. " +
       "Actions: execute_goal (autonomously complete a task using desktop/browser control with perception-action loop), " +
+      "resume_goal (resume a recoverable interrupted autonomous goal from persisted state), " +
       "cancel_goal (cancel a running autonomous goal), " +
       "get_goal (check status of an autonomous goal), " +
       "list_goals (list recent autonomous goals). " +
@@ -67,7 +69,7 @@ export function createFridayAgentAutonomousTool(
       properties: {
         action: {
           type: "string",
-          enum: ["execute_goal", "cancel_goal", "get_goal", "list_goals"],
+          enum: ["execute_goal", "resume_goal", "cancel_goal", "get_goal", "list_goals"],
           description: "Autonomous action to perform.",
         },
         // ─── execute_goal params ───
@@ -88,15 +90,26 @@ export function createFridayAgentAutonomousTool(
           type: "number",
           description: "Maximum time in milliseconds (default: 300000 = 5 minutes).",
         },
-        // ─── cancel_goal / get_goal params ───
+        // ─── resume_goal / cancel_goal / get_goal params ───
         goalId: {
           type: "string",
-          description: "Goal ID (for cancel_goal, get_goal).",
+          description: "Goal ID (for resume_goal, cancel_goal, get_goal).",
         },
         // ─── list_goals params ───
         status: {
           type: "string",
-          enum: ["pending", "planning", "executing", "verifying", "completed", "failed", "cancelled"],
+          enum: [
+            "pending",
+            "planning",
+            "executing",
+            "verifying",
+            "interrupted_recoverable",
+            "interrupted_nonrecoverable",
+            "resumed",
+            "completed",
+            "failed",
+            "cancelled",
+          ],
           description: "Filter by status (for list_goals).",
         },
         limit: {
@@ -106,6 +119,7 @@ export function createFridayAgentAutonomousTool(
       },
       required: ["action"],
     },
+    timeoutMs: (args) => readNumberParam(args, "timeoutMs", { integer: true }) ?? 300_000,
 
     async execute(
       args: Record<string, unknown>,
@@ -123,6 +137,8 @@ export function createFridayAgentAutonomousTool(
         switch (action) {
           case "execute_goal":
             return await handleExecuteGoal(args, signal);
+          case "resume_goal":
+            return await handleResumeGoal(args, signal);
           case "cancel_goal":
             return handleCancelGoal(args);
           case "get_goal":
@@ -177,6 +193,8 @@ export function createFridayAgentAutonomousTool(
         timezone: executionContext?.timezone,
         principalId: executionContext?.principalId,
         tenantContext: executionContext?.tenantContext,
+        providerId: executionContext?.requestedProviderId,
+        model: executionContext?.requestedModel,
         signal,
       });
     } finally {
@@ -203,6 +221,33 @@ export function createFridayAgentAutonomousTool(
     const goalId = readStringParam(args, "goalId", { required: true });
     autonomousEngine.cancelGoal(goalId);
     return jsonResult({ goalId, cancelled: true });
+  }
+
+  async function handleResumeGoal(
+    args: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<FridayAgentToolResult> {
+    const goalId = readStringParam(args, "goalId", { required: true });
+    const executionContext = getFridayAgentToolExecutionContext(signal);
+    const result = await autonomousEngine.resumeGoal({
+      goalId,
+      signal,
+      timezone: executionContext?.timezone,
+      principalId: executionContext?.principalId,
+      tenantContext: executionContext?.tenantContext,
+      providerId: executionContext?.requestedProviderId,
+      model: executionContext?.requestedModel,
+    });
+
+    return jsonResult({
+      goalId: result.goalId,
+      status: result.status,
+      summary: result.summary,
+      failureReason: result.failureReason,
+      iterationCount: result.iterationCount,
+      durationMs: result.durationMs,
+      extractedOutputs: result.extractedOutputs,
+    });
   }
 
   function handleGetGoal(args: Record<string, unknown>): FridayAgentToolResult {

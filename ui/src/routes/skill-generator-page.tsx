@@ -392,12 +392,37 @@ export function SkillGeneratorPage() {
         >
           <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
             {testSummary ? (
-              <div className="grid gap-3 sm:grid-cols-4">
-                <GeneratorMetric label="Executable" value={testSummary.executable ? "yes" : "no"} />
-                <GeneratorMetric label="Result" value={testSummary.ok ? "passed" : "issues"} />
-                <GeneratorMetric label="Duration" value={`${testSummary.durationMs} ms`} />
-                <GeneratorMetric label="Issues" value={String(testSummary.issues.length)} />
-              </div>
+              <>
+                <div className="grid gap-3 sm:grid-cols-4">
+                  <GeneratorMetric label="Executable" value={testSummary.executable ? "yes" : "no"} />
+                  <GeneratorMetric label="Result" value={testSummary.ok ? "passed" : "issues"} />
+                  <GeneratorMetric label="Duration" value={`${testSummary.durationMs} ms`} />
+                  <GeneratorMetric label="Issues" value={String(testSummary.issues.length)} />
+                </div>
+                {testSummary.behavioralCheck ? (
+                  <div className="agent-subcard p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Behavior contract</p>
+                      <StatusPill tone={testSummary.behavioralCheck.satisfied ? "success" : "warning"}>
+                        {testSummary.behavioralCheck.satisfied ? "matched" : "mismatch"}
+                      </StatusPill>
+                    </div>
+                    <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
+                      Attempted: {testSummary.behavioralCheck.attempted ? "yes" : "no"}
+                      {testSummary.behavioralCheck.runStatus ? ` · Run status: ${testSummary.behavioralCheck.runStatus}` : ""}
+                    </p>
+                    <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
+                      Expected markers: {testSummary.behavioralCheck.expectedMarkers.length > 0 ? testSummary.behavioralCheck.expectedMarkers.join(", ") : "none"}
+                    </p>
+                    <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
+                      Matched markers: {testSummary.behavioralCheck.matchedMarkers.length > 0 ? testSummary.behavioralCheck.matchedMarkers.join(", ") : "none"}
+                    </p>
+                    {testSummary.behavioralCheck.reason ? (
+                      <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">{testSummary.behavioralCheck.reason}</p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
             ) : (
               <p>No test has been run yet for this session.</p>
             )}

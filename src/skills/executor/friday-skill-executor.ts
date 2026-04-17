@@ -18,6 +18,180 @@ import { createFridayNodeExecutor } from "./friday-node-executor.js";
 import { createFridaySkillReadonlyRuntimeContext } from "./friday-skill-runtime-bridge.js";
 import { resolve } from "node:path";
 
+function defaultTenantContext(request: FridaySkillExecuteRequest) {
+  return request.tenantContext ?? {
+    hubId: "default",
+    userId: request.userId,
+    channelKind: request.channel,
+  };
+}
+
+async function runProviderInference(params: {
+  providerService: NonNullable<CreateFridaySkillExecutorDeps["providerService"]>;
+  tenantContext: ReturnType<typeof defaultTenantContext>;
+  prompt: string;
+  requestedModel?: string;
+}): Promise<{
+  text: string;
+  provider: string;
+  model: string;
+  api: string;
+  baseUrl: string;
+  attempts: number;
+}> {
+  const { result, route, attempts } = await params.providerService.runWithFallback({
+    requestedModel: params.requestedModel,
+    tenantContext: params.tenantContext,
+    run: async (resolvedRoute, credential) => {
+      const api = resolvedRoute.provider.config.api;
+      const model = resolvedRoute.model;
+      const baseUrl = resolvedRoute.provider.baseUrl.replace(/\/+$/, "");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      let url: string;
+      let body: Record<string, unknown>;
+
+      if (credential) {
+        switch (api) {
+          case "anthropic-messages":
+            if (isFridayAnthropicBearerAuthMode(resolvedRoute.provider.config.authMode)) {
+              headers["Authorization"] = `Bearer ${credential}`;
+              Object.assign(headers, FRIDAY_ANTHROPIC_OAUTH_HEADERS);
+            } else {
+              headers["x-api-key"] = credential;
+            }
+            headers["anthropic-version"] = "2023-06-01";
+            break;
+          case "google-generative-ai":
+            headers["x-goog-api-key"] = credential;
+            break;
+          default:
+            headers["Authorization"] = `Bearer ${credential}`;
+            break;
+        }
+      }
+
+      switch (api) {
+        case "openai-completions":
+          url = `${baseUrl}/v1/chat/completions`;
+          body = {
+            model,
+            messages: [{ role: "user", content: params.prompt }],
+          };
+          break;
+        case "openai-responses":
+          url = `${baseUrl}/v1/responses`;
+          body = {
+            model,
+            input: [{ role: "user", content: params.prompt }],
+          };
+          break;
+        case "anthropic-messages":
+          url = `${baseUrl}/v1/messages`;
+          body = {
+            model,
+            ...(isFridayAnthropicBearerAuthMode(resolvedRoute.provider.config.authMode)
+              ? { system: FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX }
+              : {}),
+            messages: [{ role: "user", content: params.prompt }],
+            max_tokens: 4096,
+          };
+          break;
+        case "google-generative-ai":
+          url = `${baseUrl}/v1beta/models/${model}:generateContent`;
+          body = {
+            contents: [{ role: "user", parts: [{ text: params.prompt }] }],
+          };
+          break;
+        case "ollama":
+          url = `${baseUrl}/api/chat`;
+          body = {
+            model,
+            messages: [{ role: "user", content: params.prompt }],
+            stream: false,
+          };
+          break;
+        default:
+          url = `${baseUrl}/v1/chat/completions`;
+          body = {
+            model,
+            messages: [{ role: "user", content: params.prompt }],
+          };
+          break;
+      }
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        throw new FridayDomainError("EXECUTOR_PROVIDER_ERROR", `Provider returned ${res.status}`, {
+          httpStatus: 502,
+          retryable: res.status >= 500,
+        });
+      }
+      const resBody = await res.json() as Record<string, unknown>;
+      let text = "";
+
+      switch (api) {
+        case "openai-completions": {
+          const choices = resBody["choices"] as Array<{ message?: { content?: string } }> | undefined;
+          text = choices?.[0]?.message?.content ?? "";
+          break;
+        }
+        case "openai-responses": {
+          const output = resBody["output"] as
+            | Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>
+            | undefined;
+          const msgItem = output?.find((item) => item.type === "message");
+          const textPart = msgItem?.content?.find((item) => item.type === "output_text");
+          text = textPart?.text ?? "";
+          break;
+        }
+        case "anthropic-messages": {
+          const content = resBody["content"] as Array<{ type: string; text?: string }> | undefined;
+          text = content?.find((block) => block.type === "text")?.text ?? "";
+          break;
+        }
+        case "google-generative-ai": {
+          const candidates = resBody["candidates"] as
+            | Array<{ content?: { parts?: Array<{ text?: string }> } }>
+            | undefined;
+          text = candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+          break;
+        }
+        case "ollama": {
+          const message = resBody["message"] as { content?: string } | undefined;
+          text = message?.content ?? "";
+          break;
+        }
+        default: {
+          const choices = resBody["choices"] as Array<{ message?: { content?: string } }> | undefined;
+          text = choices?.[0]?.message?.content ?? "";
+          break;
+        }
+      }
+
+      return {
+        text,
+        provider: resolvedRoute.provider.kind,
+        model,
+        api,
+        baseUrl: resolvedRoute.provider.baseUrl,
+      };
+    },
+  });
+
+  return {
+    text: result.text,
+    provider: route.provider.kind,
+    model: route.model,
+    api: result.api,
+    baseUrl: result.baseUrl,
+    attempts: attempts.length,
+  };
+}
+
 /**
  * Creates the main skill executor that routes to the correct runtime executor
  * (shell / node) based on the manifest's `runtime.kind`, and tracks run state
@@ -29,12 +203,6 @@ export function createFridaySkillExecutor(
   const shellExecutor = createFridayShellExecutor();
   const nodeExecutor = createFridayNodeExecutor();
   const activeRuns = new Map<string, { cancelled: boolean; controller: AbortController }>();
-  const resolveTenantContext = (request: FridaySkillExecuteRequest) =>
-    request.tenantContext ?? {
-      hubId: "default",
-      userId: request.userId,
-      channelKind: request.channel,
-    };
 
   return {
     execute(
@@ -45,7 +213,7 @@ export function createFridaySkillExecutor(
       // ─── ai-inference shortcut: route through provider service ───
       if (request.skillId === "ai-inference" && deps.providerService) {
         const providerService = deps.providerService;
-        const tenantContext = resolveTenantContext(request);
+        const tenantContext = defaultTenantContext(request);
         const result = (async (): Promise<FridaySkillExecuteResult> => {
           const start = Date.now();
           try {
@@ -61,27 +229,24 @@ export function createFridaySkillExecutor(
                 durationMs: Date.now() - start,
               };
             }
-            const { result: aiResult, route, attempts } = await providerService.runWithFallback({
-              requestedModel: modelHint,
+            const inference = await runProviderInference({
+              providerService,
               tenantContext,
-              run: async (r, credential) => {
-                // Return the resolved route info for the caller to use
-                return { route: r, credential, prompt };
-              },
+              prompt,
+              requestedModel: modelHint,
             });
             return {
               runId,
               status: "completed",
               output: {
-                provider: route.provider.kind,
-                model: route.model,
-                prompt: aiResult.prompt,
-                credential: aiResult.credential ? "[REDACTED]" : null,
-                baseUrl: aiResult.route.provider.baseUrl,
-                api: aiResult.route.provider.config.api,
-                attempts: attempts.length,
+                text: inference.text,
+                result: inference.text,
+                provider: inference.provider,
+                model: inference.model,
+                api: inference.api,
+                attempts: inference.attempts,
               },
-              stdout: "",
+              stdout: inference.text,
               stderr: "",
               durationMs: Date.now() - start,
             };
@@ -239,152 +404,16 @@ export function createFridaySkillExecutor(
               let aiHelper: FridaySkillAiHelperContext | undefined;
               if (deps.providerService) {
                 const ps = deps.providerService;
-                const tenantContext = resolveTenantContext(request);
+                const tenantContext = defaultTenantContext(request);
                 aiHelper = {
                   async infer(prompt: string, requestedModel?: string): Promise<string> {
-                    const { result } = await ps.runWithFallback({
-                      requestedModel,
+                    const inference = await runProviderInference({
+                      providerService: ps,
                       tenantContext,
-                      run: async (route, credential) => {
-                        const api = route.provider.config.api;
-                        const model = route.model;
-                        const baseUrl = route.provider.baseUrl.replace(/\/+$/, "");
-
-                        let url: string;
-                        const headers: Record<string, string> = { "Content-Type": "application/json" };
-                        let body: Record<string, unknown>;
-
-                        // ── Auth headers per provider ──
-                        if (credential) {
-                          switch (api) {
-                            case "anthropic-messages": {
-                              if (isFridayAnthropicBearerAuthMode(route.provider.config.authMode)) {
-                                headers["Authorization"] = `Bearer ${credential}`;
-                                Object.assign(headers, FRIDAY_ANTHROPIC_OAUTH_HEADERS);
-                              } else {
-                                headers["x-api-key"] = credential;
-                              }
-                              headers["anthropic-version"] = "2023-06-01";
-                              break;
-                            }
-                            case "google-generative-ai":
-                              headers["x-goog-api-key"] = credential;
-                              break;
-                            default:
-                              headers["Authorization"] = `Bearer ${credential}`;
-                              break;
-                          }
-                        }
-
-                        // ── Build URL + body per API format ──
-                        switch (api) {
-                          case "openai-completions":
-                            url = `${baseUrl}/v1/chat/completions`;
-                            body = {
-                              model,
-                              messages: [{ role: "user", content: prompt }],
-                            };
-                            break;
-
-                          case "openai-responses":
-                            url = `${baseUrl}/v1/responses`;
-                            body = {
-                              model,
-                              input: [{ role: "user", content: prompt }],
-                            };
-                            break;
-
-                          case "anthropic-messages":
-                            url = `${baseUrl}/v1/messages`;
-                            body = {
-                              model,
-                              ...(isFridayAnthropicBearerAuthMode(route.provider.config.authMode)
-                                ? { system: FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX }
-                                : {}),
-                              messages: [{ role: "user", content: prompt }],
-                              max_tokens: 4096,
-                            };
-                            break;
-
-                          case "google-generative-ai":
-                            url = `${baseUrl}/v1beta/models/${model}:generateContent`;
-                            body = {
-                              contents: [
-                                { role: "user", parts: [{ text: prompt }] },
-                              ],
-                            };
-                            break;
-
-                          case "ollama":
-                            url = `${baseUrl}/api/chat`;
-                            body = {
-                              model,
-                              messages: [{ role: "user", content: prompt }],
-                              stream: false,
-                            };
-                            break;
-
-                          default:
-                            // Fallback to openai-completions format
-                            url = `${baseUrl}/v1/chat/completions`;
-                            body = {
-                              model,
-                              messages: [{ role: "user", content: prompt }],
-                            };
-                            break;
-                        }
-
-                        const res = await fetch(url, {
-                          method: "POST",
-                          headers,
-                          body: JSON.stringify(body),
-                        });
-                        if (!res.ok) {
-                          throw new FridayDomainError("EXECUTOR_PROVIDER_ERROR", `Provider returned ${res.status}`, { httpStatus: 502, retryable: res.status >= 500 });
-                        }
-                        const resBody = await res.json() as Record<string, unknown>;
-
-                        // ── Extract text from response per API format ──
-                        switch (api) {
-                          case "openai-completions": {
-                            const choices = resBody["choices"] as Array<{ message?: { content?: string } }> | undefined;
-                            return choices?.[0]?.message?.content ?? "";
-                          }
-
-                          case "openai-responses": {
-                            const output = resBody["output"] as
-                              | Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>
-                              | undefined;
-                            const msgItem = output?.find((o) => o.type === "message");
-                            const textPart = msgItem?.content?.find((c) => c.type === "output_text");
-                            return textPart?.text ?? "";
-                          }
-
-                          case "anthropic-messages": {
-                            const content = resBody["content"] as Array<{ type: string; text?: string }> | undefined;
-                            return content?.find((b) => b.type === "text")?.text ?? "";
-                          }
-
-                          case "google-generative-ai": {
-                            const candidates = resBody["candidates"] as
-                              | Array<{ content?: { parts?: Array<{ text?: string }> } }>
-                              | undefined;
-                            return candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-                          }
-
-                          case "ollama": {
-                            const message = resBody["message"] as { content?: string } | undefined;
-                            return message?.content ?? "";
-                          }
-
-                          default: {
-                            const choices = resBody["choices"] as Array<{ message?: { content?: string } }> | undefined;
-                            return choices?.[0]?.message?.content ?? "";
-                          }
-                        }
-                      },
+                      prompt,
+                      requestedModel,
                     });
-                    return result;
+                    return inference.text;
                   },
                 };
               }

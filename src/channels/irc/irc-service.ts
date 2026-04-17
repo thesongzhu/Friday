@@ -133,10 +133,39 @@ export function createIrcConnectionService(): IrcConnectionService {
           return;
         }
 
+        stopped = false;
         // Track whether we have resolved the initial connect promise
         let settled = false;
         const pendingChannels = new Set(options.channels.map((c) => c.toLowerCase()));
         channels = [];
+
+        const settleTransportFailure = (message: string): void => {
+          connected = false;
+          if (socket && !socket.destroyed) {
+            socket.destroy();
+          }
+          if (!settled) {
+            settled = true;
+            reject(new Error(message));
+            return;
+          }
+          console.warn("[friday][irc-service] operation failed:", message);
+        };
+
+        const sendRawSafely = (
+          command: string,
+          failureMessage: string,
+        ): boolean => {
+          try {
+            sendRaw(command);
+            return true;
+          } catch (err) {
+            settleTransportFailure(
+              `${failureMessage}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            return false;
+          }
+        };
 
         // Create socket
         if (options.tls) {
@@ -155,11 +184,16 @@ export function createIrcConnectionService(): IrcConnectionService {
 
         function sendRegistration(): void {
           if (options.password) {
-            sendRaw(`PASS ${options.password}`);
+            if (!sendRawSafely(`PASS ${options.password}`, "Failed to send IRC password")) {
+              return;
+            }
           }
-          sendRaw(`NICK ${options.nick}`);
-          sendRaw(
+          if (!sendRawSafely(`NICK ${options.nick}`, "Failed to send IRC nickname")) {
+            return;
+          }
+          sendRawSafely(
             `USER ${options.username ?? options.nick} 0 * :${options.nick}`,
+            "Failed to send IRC user registration",
           );
         }
 
@@ -201,7 +235,7 @@ export function createIrcConnectionService(): IrcConnectionService {
           // PING/PONG keepalive — must respond immediately
           if (line.startsWith("PING")) {
             const token = line.slice(5); // after "PING "
-            sendRaw(`PONG ${token}`);
+            sendRawSafely(`PONG ${token}`, "Failed to respond to IRC ping");
             return;
           }
 
@@ -223,7 +257,9 @@ export function createIrcConnectionService(): IrcConnectionService {
           if (command === "001") {
             connected = true;
             for (const chan of options.channels) {
-              sendRaw(`JOIN ${chan}`);
+              if (!sendRawSafely(`JOIN ${chan}`, `Failed to join IRC channel ${chan}`)) {
+                return;
+              }
             }
             // If there are no channels to join, resolve immediately
             if (pendingChannels.size === 0 && !settled) {

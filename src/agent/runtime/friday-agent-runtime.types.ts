@@ -327,6 +327,12 @@ export interface CreateFridayAgentRuntimeDeps {
   evaluateRules?: (context: FridayEvaluationContext, signal?: AbortSignal) => Promise<FridayEvaluationResult>;
   /** Optional callback that returns learned user preferences to inject into the system prompt. */
   learningContextBuilder?: (input: { userId: string; nowIso: string }) => { preferences: Record<string, unknown> };
+  /** Optional callback that returns persisted compaction context for the current session. */
+  compactionContextBuilder?: (input: {
+    userId?: string;
+    sessionKey?: string;
+    nowIso: string;
+  }) => string | null | Promise<string | null>;
   /** Optional callback that returns a communication persona prompt fragment for the current user. */
   communicationPromptBuilder?: (input: { userId: string; nowIso: string }) => string | null | Promise<string | null>;
   /** Optional deterministic delegation hook for top-level coordinator runs. */

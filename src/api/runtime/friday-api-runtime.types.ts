@@ -18,7 +18,7 @@ import type { FridayWorkflowBuilderDraftService, FridayWorkflowCrudService, Frid
 import type { FridayProviderService } from "#providers";
 import type { FridayMemoryGuardServiceFactory, FridayMemoryService } from "#memory";
 import type { FridaySessionMemoryExtractionService, FridaySessionService } from "#sessions";
-import type { FridaySkillGeneratorService, FridaySkillLifecycleService, FridaySkillRegistry } from "#skills";
+import type { FridaySkillExecutor, FridaySkillGeneratorService, FridaySkillLifecycleService, FridaySkillRegistry } from "#skills";
 import type { FridaySkillConverterService } from "#skills/converter";
 import type { FridayPluginManifestLoader, FridayPluginService } from "#plugins";
 import type { FridayWorkflowGeneratorService } from "#workflows";
@@ -107,6 +107,7 @@ export interface CreateFridayApiRuntimeDeps {
   converterService?: FridaySkillConverterService;
   workflowGenerator?: FridayWorkflowGeneratorService;
   skillRegistry?: FridaySkillRegistry;
+  skillExecutor?: FridaySkillExecutor;
   tokenSecret: string;
   accessTokenTtlSec?: number;
   refreshTokenTtlSec?: number;
@@ -129,8 +130,8 @@ export interface CreateFridayApiRuntimeDeps {
   pluginMarketplaceAvailable?: boolean;
   /** Supported channel kinds (from backend schema). */
   supportedChannelKinds?: string[];
-  /** Channel kinds currently enabled in runtime config. */
-  enabledChannelKinds?: string[];
+  /** Channel kinds currently enabled in runtime config or currently running in runtime state. */
+  enabledChannelKinds?: string[] | (() => string[]);
   serverVersion?: string;
   /** The host the HTTP server is bound to, used to detect if a restart is needed. */
   serverHost?: string;

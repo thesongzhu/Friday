@@ -133,6 +133,23 @@ function makeLifecycle() {
   };
 }
 
+function makeExecutor() {
+  return {
+    execute: vi.fn(() => ({
+      runId: "run-1",
+      result: Promise.resolve({
+        runId: "run-1",
+        status: "completed",
+        output: { result: "ok" },
+        stdout: "{\"result\":\"ok\"}",
+        stderr: "",
+        durationMs: 12,
+      }),
+    })),
+    cancel: vi.fn(),
+  };
+}
+
 describe("createFridaySkillRoutes", () => {
   it("keeps GET /v1/skills backward compatible without lifecycle wiring", async () => {
     const routes = createFridaySkillRoutes({
@@ -231,5 +248,35 @@ describe("createFridaySkillRoutes", () => {
     await expect(
       routes.find((item) => item.operationId === "skills.manifest.validate")!.handler(makeCtx({ body: {} })),
     ).rejects.toThrow(FridayDomainError);
+  });
+
+  it("executes a skill through the runtime executor instead of returning a dispatch-only placeholder", async () => {
+    const lifecycle = makeLifecycle();
+    const executor = makeExecutor();
+    const routes = createFridaySkillRoutes({
+      skillRegistry: { list: () => [] } as never,
+      lifecycle: lifecycle as never,
+      skillExecutor: executor as never,
+    });
+
+    const result = await routes.find((item) => item.operationId === "skills.run")!.handler(makeCtx({
+      params: { skillId: "skill.alpha" },
+      body: {
+        input: { name: "world" },
+        channel: "api",
+        timeoutMs: 1000,
+      },
+    }));
+
+    expect(executor.execute).toHaveBeenCalledWith(expect.objectContaining({
+      skillId: "skill.alpha",
+      input: { name: "world" },
+      userId: "user-1",
+      channel: "api",
+      timeoutMs: 1000,
+    }));
+    expect(result).toHaveProperty("status", "completed");
+    expect(result).toHaveProperty("completionDepth", "executed");
+    expect(result).toHaveProperty("output.result", "ok");
   });
 });

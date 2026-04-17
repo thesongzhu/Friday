@@ -20,13 +20,13 @@
   {
     "surface": "Skills inventory vs marketplace",
     "claim": "Skills catalog and marketplace sources are currently populated and ready for public browsing.",
-    "realEvidence": "/v1/skills=54, /v1/skills/catalog=0, /v1/marketplace/sources=0, /v1/marketplace/assets=0.",
+    "realEvidence": "/v1/skills=0, /v1/skills/catalog=0, /v1/marketplace/sources=0, /v1/marketplace/assets=0.",
     "status": "bounded"
   },
   {
     "surface": "Plugin distribution",
     "claim": "Plugin lifecycle is a first-class user-facing UI surface.",
-    "realEvidence": "/v1/plugins status=200; router has /plugins=true.",
+    "realEvidence": "/v1/plugins status=401; router has /plugins=true.",
     "status": "aligned"
   },
   {

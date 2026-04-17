@@ -8,7 +8,7 @@ import {
   finalizeFridayConversationFocus,
   prepareFridayConversationTurn,
 } from "#sessions";
-import type { FridayConversationBlock, FridaySessionMessageRecord } from "#sessions";
+import type { FridayConversationBlock, FridaySessionMessageRecord, FridaySessionRecord } from "#sessions";
 import {
   createFridayStableWorkflowDraftBundle,
   createFridayWorkflowBuilderRuntime,
@@ -96,6 +96,7 @@ import {
   createFridayAgentPlanningGateService,
   createFridayAgentRunEventRepository,
   createFridayAgentRunRepository,
+  createFridayCompactionMemorySink,
 } from "#agent";
 import type {
   FridayAgentAutomationService,
@@ -587,6 +588,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       const systemHealth = typeof deps.systemHealth === "function"
         ? await Promise.resolve(deps.systemHealth())
         : deps.systemHealth;
+      const enabledChannelKinds = typeof deps.enabledChannelKinds === "function"
+        ? await Promise.resolve(deps.enabledChannelKinds())
+        : deps.enabledChannelKinds;
 
       return {
         schemaVersion: "1.0" as const,
@@ -605,7 +609,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         },
         channels: {
           supportedKinds: deps.supportedChannelKinds ?? [],
-          enabledKinds: deps.enabledChannelKinds ?? [],
+          enabledKinds: enabledChannelKinds ?? [],
         },
         search: searchHealth ?? {
           provider: "duckduckgo_html",
@@ -1636,6 +1640,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     for (const route of createFridaySkillRoutes({
       skillRegistry: deps.skillRegistry,
       lifecycle: deps.skillLifecycle,
+      skillExecutor: deps.skillExecutor,
       managedSkillsDir: deps.managedSkillsDir,
     })) {
       routes.register(route);
@@ -1803,6 +1808,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       nowIso: deps.nowIso,
     })
     : undefined;
+  const engineCompactionMemorySink = deps.memoryService
+    ? createFridayCompactionMemorySink({
+      memoryService: deps.memoryService,
+      idGenerator: deps.idGenerator,
+      nowIso: deps.nowIso,
+    })
+    : undefined;
 
   const orchestrationEngine = deps.agentRuntime
     ? createFridayOrchestrationEngine({
@@ -1815,6 +1827,17 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         classifyExecution: classifyFridayExecution,
         capabilitySnapshotGetter: deps.capabilitySnapshotGetter as CreateFridayEngineTurnPreparerDeps["capabilitySnapshotGetter"],
         taskStatusSnapshotGetter: deps.taskStatusSnapshotGetter as CreateFridayEngineTurnPreparerDeps["taskStatusSnapshotGetter"],
+        persistCompactionEvidence: engineCompactionMemorySink
+          ? async (input) => {
+            await engineCompactionMemorySink.persist({
+              sessionKey: input.sessionKey,
+              runId: input.runId,
+              summary: input.summary,
+              blocks: input.blocks,
+              compactedAt: deps.nowIso(),
+            });
+          }
+          : undefined,
       },
       runExecutorDeps: {
         agentRuntime: deps.agentRuntime!,
@@ -1889,11 +1912,15 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       idempotencyPrefix: "api-agent-run" | "api-session-run";
     }) => {
       const packId = input.executionContext?.packId?.trim();
-      let sessionRecord = null;
+      let sessionRecord: FridaySessionRecord | null = null;
       if (input.sessionKey) {
-        sessionRecord = packId
-          ? await sessionService.getOrCreateSession(input.sessionKey)
-          : await sessionService.getSession(input.sessionKey).catch(() => null);
+        sessionRecord = await sessionService.getOrCreateSession(input.sessionKey).catch(() => null);
+      }
+      if (sessionRecord && input.tenantContext && (input.tenantContext.hubId || input.tenantContext.userId)) {
+        sessionRecord = await sessionService.alignSessionContext(sessionRecord.key, {
+          ...(input.tenantContext.hubId ? { accountId: input.tenantContext.hubId } : {}),
+          ...(input.tenantContext.userId ? { userId: input.tenantContext.userId } : {}),
+        }).catch(() => sessionRecord);
       }
       if (packId && sessionRecord) {
         sessionRecord = await sessionService.mergeMetadata(sessionRecord.key, {

@@ -133,6 +133,17 @@ export interface FridaySessionRepository {
     db: Database.Database,
     input: { key: string; metadata: Record<string, unknown>; nowIso: string },
   ): FridaySessionRecord | null;
+
+  updateContext(
+    db: Database.Database,
+    input: {
+      key: string;
+      nowIso: string;
+      accountId?: string;
+      userId?: string;
+      memoryNamespace?: string;
+    },
+  ): FridaySessionRecord | null;
 }
 
 // ─── Factory ───
@@ -444,6 +455,36 @@ export function createFridaySessionRepository(): FridaySessionRepository {
       const result = db.prepare(
         `UPDATE sessions SET metadata_json = ?, updated_at = ? WHERE session_key = ?`,
       ).run(JSON.stringify(input.metadata), input.nowIso, input.key);
+
+      if (result.changes === 0) {
+        return null;
+      }
+
+      return this.getByKey(db, input.key);
+    },
+
+    updateContext(db, input) {
+      const updates: string[] = ["updated_at = ?"];
+      const params: unknown[] = [input.nowIso];
+
+      if (input.accountId !== undefined) {
+        updates.push("account_id = ?");
+        params.push(input.accountId);
+      }
+      if (input.userId !== undefined) {
+        updates.push("user_id = ?");
+        params.push(input.userId);
+      }
+      if (input.memoryNamespace !== undefined) {
+        updates.push("memory_namespace = ?");
+        params.push(input.memoryNamespace);
+      }
+
+      params.push(input.key);
+
+      const result = db.prepare(
+        `UPDATE sessions SET ${updates.join(", ")} WHERE session_key = ?`,
+      ).run(...params);
 
       if (result.changes === 0) {
         return null;

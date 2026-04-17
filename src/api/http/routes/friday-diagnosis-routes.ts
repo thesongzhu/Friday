@@ -14,6 +14,7 @@ import type {
 import {
   toFridayDiagnosisIncidentRecord,
   toFridayDiagnosisSummary,
+  toFridayNormalizedDiagnosisRecord,
 } from "./friday-self-healing-route-mappers.js";
 
 export interface FridayDiagnosisRoutesDeps {
@@ -130,7 +131,7 @@ export function createFridayDiagnosisRoutes(
         }
         return {
           incident: details.incident,
-          diagnosis: details.diagnosis,
+          diagnosis: toFridayNormalizedDiagnosisRecord(details),
           summary: toDiagnosisSummary(deps, details),
           action: details.action
             ? {

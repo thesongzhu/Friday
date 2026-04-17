@@ -71,7 +71,7 @@ export interface CreateFridayAgentPlanningGateServiceDeps {
 
 const APPROVE_COMMAND = /^(approve|approved|go ahead|proceed with the plan|proceed with plan|yes,? approve|yes approve|同意|批准|通过这个计划|按这个计划继续)$/i;
 const REJECT_COMMAND = /^(reject|rejected|decline|cancel plan|stop|do not proceed|don't proceed|不同意|拒绝|驳回|取消这个计划)$/i;
-const GENERATE_SKILL_HINTS = /\b(generate (a )?skill|create (a )?skill|build (a )?skill|skill generator)\b/i;
+const GENERATE_SKILL_HINTS = /\b(?:generate|create|build)\s+(?:a\s+)?(?:new\s+)?(?:friday\s+)?skill\b|\bskill generator\b/i;
 const GENERATE_WORKFLOW_HINTS = /\b((?:generate|create|build|set up|make) (?:a )?(?:new )?(?:workflow|automation|pipeline))\b/i;
 const DEPLOY_WORKFLOW_HINTS = /\b(deploy workflow|publish workflow|ship workflow|roll out workflow)\b/i;
 const EXPORT_WORKFLOW_HINTS = /\b(export workflow|workflow bundle|package workflow)\b/i;
@@ -234,11 +234,24 @@ function buildExecutionTaskPrompt(input: {
     entry.question
       ? `- ${entry.question} ${entry.answer}`
       : `- ${entry.answer}`) ?? [];
+  const toolchainInstruction = (() => {
+    switch (input.planReview.gate?.kind) {
+      case "generate_skill":
+        return "CRITICAL execution rule: use the dedicated skill_generate toolchain to start, clarify, generate, and approve the skill. Do not create skill files manually with write/edit/exec unless skill_generate is unavailable or returns a concrete blocker you report truthfully.";
+      case "generate_workflow":
+      case "deploy_workflow":
+      case "export_workflow_bundle":
+        return "CRITICAL execution rule: use the workflow_generate / workflow toolchain for generation, deployment, or export. Do not hand-author workflow files with write/edit/exec unless the workflow toolchain is unavailable or returns a concrete blocker you report truthfully.";
+      default:
+        return undefined;
+    }
+  })();
   return [
     "The user already approved this plan. Execute the task now instead of asking for a new plan, unless a new hard blocker appears.",
     `Original task: ${input.task}`,
     input.planReview.gate?.planMarkdown ? `Approved plan:\n${input.planReview.gate.planMarkdown}` : undefined,
     answerLines.length > 0 ? `Confirmed details:\n${answerLines.join("\n")}` : undefined,
+    toolchainInstruction,
     "Carry out the approved task truthfully, use tools when needed, and report what really happened.",
   ].filter((part): part is string => typeof part === "string" && part.trim().length > 0).join("\n\n");
 }

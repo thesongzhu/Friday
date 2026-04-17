@@ -52,6 +52,14 @@ export interface FridaySessionService {
   ): Promise<FridaySessionRecord>;
   /** Merge top-level metadata keys into the persisted session metadata document. */
   mergeMetadata(key: string, metadataPatch: Record<string, unknown>): Promise<FridaySessionRecord>;
+  /** Align persisted tenant/user context for an existing session and recalculate memory namespace. */
+  alignSessionContext(
+    key: string,
+    input: {
+      accountId?: string;
+      userId?: string;
+    },
+  ): Promise<FridaySessionRecord>;
 }
 
 export interface FridaySessionSweepResult {

@@ -26,6 +26,11 @@ import type {
   FridaySessionConversationFocusState,
   FridaySessionMessageRecord,
 } from "../sessions/model/friday-session.types.js";
+import type {
+  FridayContextCompactionBlockKind,
+  FridayContextCompactionBlockSummary,
+  FridayContextCompactionSummary,
+} from "../providers/model/friday-provider-context.types.js";
 import type { FridayEngineRunInput } from "./friday-orchestration-engine.types.js";
 
 // ─── Dependency interfaces (narrow — only what the preparer needs) ───
@@ -148,6 +153,13 @@ export interface CreateFridayEngineTurnPreparerDeps {
     sessionKey?: string;
     readOnly: boolean;
   }) => Promise<Record<string, unknown> | undefined> | Record<string, unknown> | undefined;
+  persistCompactionEvidence?: (input: {
+    sessionKey: string;
+    runId: string;
+    turnKind: FridayConversationTurnKind;
+    summary: FridayContextCompactionSummary;
+    blocks: FridayContextCompactionBlockSummary[];
+  }) => Promise<void> | void;
 }
 
 // ─── Prepare input (subset of engine run input + persistence flag) ───
@@ -175,12 +187,124 @@ export function createFridayEngineTurnPreparer(deps: CreateFridayEngineTurnPrepa
     classifyExecution,
     capabilitySnapshotGetter,
     taskStatusSnapshotGetter,
+    persistCompactionEvidence,
   } = deps;
 
   async function loadHistory(sessionKey: string): Promise<FridaySessionMessageRecord[]> {
     return sessionDeps
       .getMessages(sessionKey, historyLimit * 2)
       .catch(() => [] as FridaySessionMessageRecord[]);
+  }
+
+  function mapBlockSourceToCompactionKind(
+    source: FridayConversationBlock["source"],
+  ): FridayContextCompactionBlockKind {
+    switch (source) {
+      case "plan_block":
+        return "plan_block";
+      case "task_status_block":
+      case "active_run":
+      case "pending_plan":
+      case "run_event_block":
+      case "status_anchor":
+        return "task_status_block";
+      case "tool_failure_block":
+        return "tool_failure_block";
+      case "delegated_task_block":
+        return "delegated_task_block";
+      case "topic_block":
+      case "focus_topic":
+      case "assistant_anchor":
+      case "recent_user":
+      case "reply_anchor":
+        return "topic_block";
+      default:
+        return "conversation_block";
+    }
+  }
+
+  function parseDelimitedValues(segment: string, prefix: string): string[] {
+    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = segment.match(
+      new RegExp(
+        `${escapedPrefix}(.+?)(?= \\| (?:decisions|todos|openQuestions|toolFailures|fileOperations)=|$)`,
+        "u",
+      ),
+    );
+    if (!match?.[1]) {
+      return [];
+    }
+    return match[1]
+      .split(" | ")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+  }
+
+  function toCompactionBlockSummary(
+    block: FridayConversationBlock,
+  ): FridayContextCompactionBlockSummary {
+    const segments = block.summary
+      .split(" | ")
+      .map((segment) => segment.trim())
+      .filter((segment) => segment.length > 0);
+    const firstSegment = segments[0] ?? block.summary.trim();
+    const knownKindMatch = firstSegment.match(
+      /^(topic_block|plan_block|task_status_block|tool_failure_block|delegated_task_block|conversation_block):\s*(.*)$/u,
+    );
+    const kind = knownKindMatch
+      ? knownKindMatch[1] as FridayContextCompactionBlockKind
+      : mapBlockSourceToCompactionKind(block.source);
+    const summaryText = knownKindMatch
+      ? knownKindMatch[2]!.trim()
+      : firstSegment;
+
+    return {
+      id: block.id,
+      kind,
+      summaryText,
+      decisions: parseDelimitedValues(block.summary, "decisions="),
+      todos: parseDelimitedValues(block.summary, "todos="),
+      openQuestions: parseDelimitedValues(block.summary, "openQuestions="),
+      toolFailures: parseDelimitedValues(block.summary, "toolFailures="),
+      fileOperations: parseDelimitedValues(block.summary, "fileOperations="),
+      messageIds: block.messageIds ?? [],
+    };
+  }
+
+  function buildSelectedBlockCompactionEvidence(
+    selectedBlocks: readonly FridayConversationBlock[],
+  ): { summary: FridayContextCompactionSummary; blocks: FridayContextCompactionBlockSummary[] } | null {
+    const candidateBlocks = selectedBlocks.filter((block) => {
+      if (
+        block.source === "focus_topic"
+        || block.source === "topic_block"
+        || block.source === "plan_block"
+        || block.source === "task_status_block"
+        || block.source === "tool_failure_block"
+        || block.source === "delegated_task_block"
+        || block.source === "conversation_block"
+      ) {
+        return true;
+      }
+      return /\bcompacted\b|\bsummary block\b/u.test(block.reason);
+    });
+
+    if (candidateBlocks.length === 0) {
+      return null;
+    }
+
+    const blocks = candidateBlocks.map(toCompactionBlockSummary);
+    return {
+      summary: {
+        summaryText: blocks.map((block) => `[${block.kind}] ${block.summaryText}`).join("\n"),
+        decisions: blocks.flatMap((block) => block.decisions),
+        todos: blocks.flatMap((block) => block.todos),
+        openQuestions: blocks.flatMap((block) => block.openQuestions),
+        toolFailures: blocks.flatMap((block) => block.toolFailures),
+        fileOperations: blocks.flatMap((block) => block.fileOperations),
+      },
+      blocks,
+    };
   }
 
   async function prepare(input: FridayTurnPreparerInput): Promise<FridayPreparedEngineContext> {
@@ -301,6 +425,20 @@ export function createFridayEngineTurnPreparer(deps: CreateFridayEngineTurnPrepa
         selectionReasons: preparedTurn.selectionReasons,
         replyToMessageId: input.replyToMessageId,
       };
+      if (input.sessionKey && persistCompactionEvidence) {
+        const compactionEvidence = buildSelectedBlockCompactionEvidence(preparedTurn.selectedBlocks);
+        if (compactionEvidence) {
+          await Promise.resolve(
+            persistCompactionEvidence({
+              sessionKey: input.sessionKey,
+              runId: input.runId,
+              turnKind: preparedTurn.turnKind,
+              summary: compactionEvidence.summary,
+              blocks: compactionEvidence.blocks,
+            }),
+          ).catch(() => undefined);
+        }
+      }
       replyAnchorMessageId = preparedTurn.replyAnchorMessageId;
       replyAnchorSequence = preparedTurn.replyAnchorSequence;
     } else if (capabilitySnapshotGetter) {

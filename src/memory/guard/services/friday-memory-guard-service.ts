@@ -75,6 +75,39 @@ function buildScopePrefix(context: FridayMemoryGuardContext): string {
   return parts.join(".");
 }
 
+function isExpandedChannelUserNamespaceInScope(
+  namespace: string,
+  context: FridayMemoryGuardContext,
+): boolean {
+  if (context.subject.accessLevel === "system") {
+    return true;
+  }
+  if (!context.subject.userId) {
+    return false;
+  }
+
+  const channelPrefix = [
+    FRIDAY_MEMORY_GUARD_TENANT_PREFIX,
+    context.subject.hubId,
+    FRIDAY_MEMORY_GUARD_CHANNEL_SEGMENT,
+  ].join(".");
+  const userSegment = `.${FRIDAY_MEMORY_GUARD_USER_SEGMENT}.${context.subject.userId}`;
+
+  return namespace.startsWith(`${channelPrefix}.`)
+    && (namespace.includes(`${userSegment}.`) || namespace.endsWith(userSegment));
+}
+
+function isNamespaceAccessibleInContext(
+  namespace: string,
+  context: FridayMemoryGuardContext,
+  scopePrefix: string,
+): boolean {
+  if (!scopePrefix) {
+    return true;
+  }
+  return isNamespaceInScope(namespace, scopePrefix) || isExpandedChannelUserNamespaceInScope(namespace, context);
+}
+
 function resolveNamespace(
   requestedNamespace: string,
   context: FridayMemoryGuardContext,
@@ -89,7 +122,7 @@ function resolveNamespace(
     };
   }
 
-  if (scopePrefix && isNamespaceInScope(requestedNamespace, scopePrefix)) {
+  if (scopePrefix && isNamespaceAccessibleInContext(requestedNamespace, context, scopePrefix)) {
     return {
       requestedNamespace,
       effectiveNamespace: requestedNamespace,
@@ -233,7 +266,7 @@ function enforceScopeCheck(
   context: FridayMemoryGuardContext,
 ): void {
   if (context.subject.accessLevel === "system") return;
-  if (!isNamespaceInScope(namespace, scopePrefix)) {
+  if (!isNamespaceAccessibleInContext(namespace, context, scopePrefix)) {
     throw new FridayDomainError(
       FRIDAY_MEMORY_GUARD_ERROR_CODES.SCOPE_VIOLATION,
       "access denied: namespace is outside your scope",
@@ -269,10 +302,13 @@ function scopeNamespaceFilter(
     const descendants = db.withReadConnection((readDb) =>
       quotaRepo.listNamespacesByPrefix(readDb, scopePrefix, FRIDAY_MEMORY_GUARD_SCOPE_PREFIX_MAX_NAMESPACES),
     );
-    if (descendants.length === 0) return scopePrefix;
     // Ensure the prefix namespace itself is always included (listNamespacesByPrefix
     // already returns it when items exist, but we guarantee it here for safety)
-    const result = descendants.includes(scopePrefix) ? descendants : [scopePrefix, ...descendants];
+    const result = descendants.length === 0
+      ? [scopePrefix]
+      : descendants.includes(scopePrefix)
+        ? descendants
+        : [scopePrefix, ...descendants];
 
     // Also include channel-scoped namespaces and "default" for the current user.
     // Without this, items from session memory extraction (tenant.X.channel.Y.user.Z)
@@ -289,7 +325,7 @@ function scopeNamespaceFilter(
       return expanded;
     }
 
-    return result;
+    return result.length === 1 ? result[0] : result;
   }
 
   if (typeof ns === "string") {
@@ -414,7 +450,7 @@ export function createFridayMemoryGuardService(
   }
 
   function verifyItemScope(item: FridayMemoryItem): void {
-    if (!isNamespaceInScope(item.namespace, scopePrefix)) {
+    if (!isNamespaceAccessibleInContext(item.namespace, context, scopePrefix)) {
       throw new FridayDomainError(
         FRIDAY_MEMORY_GUARD_ERROR_CODES.ITEM_ACCESS_DENIED,
         "access denied: item is outside your scope",
@@ -550,9 +586,15 @@ export function createFridayMemoryGuardService(
         });
 
         // 7. Filter scope + output
+        const allowedNamespaces = Array.isArray(scopedNamespace)
+          ? new Set(scopedNamespace as string[])
+          : scopedNamespace ? new Set([scopedNamespace as string]) : undefined;
         const scopeFiltered = context.subject.accessLevel === "system"
           ? results
-          : results.filter((r) => isNamespaceInScope(r.item.namespace, scopePrefix));
+          : results.filter((result) =>
+              isNamespaceAccessibleInContext(result.item.namespace, context, scopePrefix)
+              || (allowedNamespaces?.has(result.item.namespace) ?? false)
+            );
 
         return outputFilter.filterSearchResults(scopeFiltered);
       });
@@ -597,7 +639,7 @@ export function createFridayMemoryGuardService(
         const scopeFiltered = context.subject.accessLevel === "system"
           ? items
           : items.filter((item) =>
-              isNamespaceInScope(item.namespace, scopePrefix)
+              isNamespaceAccessibleInContext(item.namespace, context, scopePrefix)
               || (allowedNamespaces?.has(item.namespace) ?? false)
             );
 
