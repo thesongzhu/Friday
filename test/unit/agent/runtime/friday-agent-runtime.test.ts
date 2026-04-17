@@ -6159,4 +6159,40 @@ describe("FridayAgentRuntime", () => {
     });
   });
 
+  it("persists top-level surface metadata for non-pack runs", async () => {
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "Hello!" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 6, outputTokens: 3 },
+      ],
+    ]);
+    const runRepo = createFridayAgentRunRepository();
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Open the settings surface",
+      sessionKey: "settings:default:surface",
+      executionContext: {
+        surface: "settings",
+        interactive: true,
+      },
+    });
+
+    const run = db.withReadConnection((reader) => runRepo.getById(reader, result.runId));
+    expect(run?.metadata).toEqual({
+      surface: "settings",
+    });
+  });
+
 });

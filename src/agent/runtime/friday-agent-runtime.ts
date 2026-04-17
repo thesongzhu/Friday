@@ -118,7 +118,7 @@ function buildFridayAgentRunMetadata(params: {
   }
 
   return {
-    ...(surface ? { surface } : {}),
+    ...(!packId && surface ? { surface } : {}),
     ...(packId
       ? {
         packContext: {
