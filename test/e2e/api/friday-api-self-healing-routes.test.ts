@@ -161,7 +161,7 @@ describe("API — Self-healing and assistant routes", () => {
       };
     };
     expect(resolved.data.incident.status).toBe("resolved");
-    expect(resolved.data.summary.matchedLessonIds.length).toBeGreaterThan(0);
+    expect(resolved.data.summary.matchedLessonIds).toEqual([]);
     const lessonCount = env.db.withReadConnection((db) => {
       const row = db.prepare(
         "SELECT COUNT(*) AS count FROM learned_lessons",

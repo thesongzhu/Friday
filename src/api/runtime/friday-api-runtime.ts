@@ -248,9 +248,9 @@ function resolveRunTenantContext(input: {
     return undefined;
   }
 
+  const sessionUserId = input.session?.userId?.trim() ?? undefined;
   const explicitUserId = input.tenantContext?.userId?.trim();
   const principalId = input.principalId?.trim();
-  const sessionUserId = input.session?.userId?.trim() ?? undefined;
   const explicitChannelKind = input.tenantContext?.channelKind?.trim();
   const sessionChannelKind = input.session?.channel?.trim();
 
@@ -259,8 +259,8 @@ function resolveRunTenantContext(input: {
     ...(explicitChannelKind || sessionChannelKind
       ? { channelKind: explicitChannelKind ?? sessionChannelKind }
       : {}),
-    ...(explicitUserId || principalId || sessionUserId
-      ? { userId: explicitUserId ?? principalId ?? sessionUserId }
+    ...(sessionUserId || explicitUserId || principalId
+      ? { userId: sessionUserId ?? explicitUserId ?? principalId }
       : {}),
   };
 }
@@ -1917,9 +1917,19 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         sessionRecord = await sessionService.getOrCreateSession(input.sessionKey).catch(() => null);
       }
       if (sessionRecord && input.tenantContext && (input.tenantContext.hubId || input.tenantContext.userId)) {
+        const sessionUserId =
+          typeof sessionRecord.userId === "string" && sessionRecord.userId.trim().length > 0
+            ? sessionRecord.userId.trim()
+            : undefined;
+        const nextUserId =
+          sessionUserId === undefined
+            && typeof input.tenantContext.userId === "string"
+            && input.tenantContext.userId.trim().length > 0
+              ? input.tenantContext.userId.trim()
+              : undefined;
         sessionRecord = await sessionService.alignSessionContext(sessionRecord.key, {
           ...(input.tenantContext.hubId ? { accountId: input.tenantContext.hubId } : {}),
-          ...(input.tenantContext.userId ? { userId: input.tenantContext.userId } : {}),
+          ...(nextUserId ? { userId: nextUserId } : {}),
         }).catch(() => sessionRecord);
       }
       if (packId && sessionRecord) {

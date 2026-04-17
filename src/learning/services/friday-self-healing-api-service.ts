@@ -454,6 +454,31 @@ function countRowsIfTableExists(
 export function createFridaySelfHealingApiService(
   deps: CreateFridaySelfHealingApiServiceDeps,
 ): FridaySelfHealingApiService {
+  const isLessonDisabledForUser = (
+    db: Database.Database,
+    userId: string,
+    lessonId: string,
+  ): boolean => {
+    if (!deps.factRepo) {
+      return false;
+    }
+    const disabledFact = deps.factRepo.getByUserAndKey(db, userId, `lesson_disabled:${lessonId}`);
+    const factValue = readObject(disabledFact?.value);
+    return disabledFact != null && isTruthyFlag(factValue?.disabled ?? true);
+  };
+
+  const getActiveLessonForFingerprint = (
+    db: Database.Database,
+    userId: string,
+    fingerprint: string,
+  ): FridayLearnedLessonEntity | null => {
+    const lesson = deps.lessonRepo.getByFingerprint(db, fingerprint);
+    if (!lesson) {
+      return null;
+    }
+    return isLessonDisabledForUser(db, userId, lesson.id) ? null : lesson;
+  };
+
   const buildActionDetails = (
     action: FridayAutoFixActionEntity,
   ): FridaySelfHealingActionDetails => {
@@ -466,9 +491,13 @@ export function createFridaySelfHealingApiService(
     const approval = deps.db.withReadConnection((db) =>
       deps.approvalRepo.getByActionId(db, action.actionId),
     );
-    const lesson = deps.db.withReadConnection((db) =>
-      deps.lessonRepo.getByFingerprint(db, action.plan.evidence.fingerprint),
-    );
+    const lesson = incident
+      ? deps.db.withReadConnection((db) =>
+        getActiveLessonForFingerprint(db, incident.userId, action.plan.evidence.fingerprint),
+      )
+      : deps.db.withReadConnection((db) =>
+        deps.lessonRepo.getByFingerprint(db, action.plan.evidence.fingerprint),
+      );
     const risk = incident
       ? deps.riskService.assess({
         incident,
@@ -553,7 +582,7 @@ export function createFridaySelfHealingApiService(
       deps.diagnosisRepo.getLatestByIncidentId(db, incident.incidentId),
     );
     const lesson = deps.db.withReadConnection((db) =>
-      deps.lessonRepo.getByFingerprint(db, incident.signature),
+      getActiveLessonForFingerprint(db, incident.userId, incident.signature),
     );
     const recurrenceCount = deps.db.withReadConnection((db) =>
       deps.incidentRepo.findRecentBySignature(db, incident.userId, incident.signature, 50).length,

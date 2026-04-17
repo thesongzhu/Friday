@@ -44,7 +44,7 @@ function buildTenantContext(principal: unknown, fallbackUserId: string, fallback
 
 function validateCreateSessionBody(
   body: unknown,
-): asserts body is { goal: string; requestedModel?: string; userId: string; channel: string } {
+): asserts body is { goal: string; requestedModel?: string; userId: string; channel: string; targetWorkflowId?: string } {
   if (body == null || typeof body !== "object") {
     throw new FridayDomainError(
       "VALIDATION_ERROR",
@@ -66,6 +66,9 @@ function validateCreateSessionBody(
   }
   if (b.requestedModel !== undefined && typeof b.requestedModel !== "string") {
     errors.push("requestedModel must be a string when provided");
+  }
+  if (b.targetWorkflowId !== undefined && typeof b.targetWorkflowId !== "string") {
+    errors.push("targetWorkflowId must be a string when provided");
   }
 
   if (errors.length > 0) {
@@ -209,6 +212,7 @@ export function createFridayWorkflowGeneratorRoutes(
           requestedModel: body.requestedModel,
           userId: body.userId,
           channel: body.channel,
+          targetWorkflowId: body.targetWorkflowId,
           tenantContext: buildTenantContext(ctx.principal, body.userId, body.channel),
         });
         if (isFailureMode(result.mode)) {

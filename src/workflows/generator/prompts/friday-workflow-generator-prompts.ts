@@ -1,5 +1,6 @@
 import type { FridayWorkflowSpecTestCase, FridayWorkflowSpecV1 } from "#workflows";
 import type {
+  FridayWorkflowGenerationMaintenanceTarget,
   FridayWorkflowGenerationRequirements,
   FridayWorkflowGenerationTurn,
   FridayWorkflowGeneratorSkillContext,
@@ -20,6 +21,7 @@ export function buildWorkflowRequirementsPrompt(
   openQuestions: string[],
   availableSkills: FridayWorkflowGeneratorSkillContext[],
   recentTurns: FridayWorkflowGenerationTurn[],
+  maintenanceTarget?: FridayWorkflowGenerationMaintenanceTarget,
 ): FridayWorkflowGeneratorPrompt {
   const turnBlock = recentTurns
     .map((t) => `[${t.role}]: ${t.content}`)
@@ -31,6 +33,18 @@ export function buildWorkflowRequirementsPrompt(
       : "(none)";
 
   const summaryBlock = requirementsSummary || "(empty)";
+  const maintenanceBlock = maintenanceTarget
+    ? `\n\nExisting workflow maintenance target:
+- This is an in-place update to an existing workflow record.
+- Existing workflow db id: ${maintenanceTarget.workflowId}
+- Existing workflow slug: ${maintenanceTarget.slug}
+- Existing workflow name: ${maintenanceTarget.currentName}
+- Existing published version: ${maintenanceTarget.publishedVersionNumber ?? "(unknown)"}
+- Existing workflow spec id: ${maintenanceTarget.currentSpecWorkflowId ?? "(unknown)"}
+- Existing workflow description: ${maintenanceTarget.currentDescription ?? "(none)"}
+- Existing published spec snapshot:
+${maintenanceTarget.publishedSpec ? JSON.stringify(maintenanceTarget.publishedSpec, null, 2) : "(unavailable)"}`
+    : "";
 
   const skillsJson = JSON.stringify(
     availableSkills.map((s) => ({
@@ -54,7 +68,8 @@ Rules:
 2. Do not invent skill IDs; use only provided available skills.
 3. If information is complete, set state="ready_for_generation".
 4. If critical data is missing, set state="needs_clarification".
-5. Return strict JSON only.
+5. When an existing workflow maintenance target is provided, treat the current workflow as the base state and focus on the requested change rather than rebuilding requirements from scratch.
+6. Return strict JSON only.
 
 Response JSON:
 {
@@ -91,7 +106,7 @@ Available skills (id, name, description, IO):
 ${skillsJson}
 
 Recent conversation:
-${turnBlock}`;
+${turnBlock}${maintenanceBlock}`;
 
   return { system, user };
 }
@@ -102,6 +117,7 @@ export function buildWorkflowSpecPrompt(
   requirements: FridayWorkflowGenerationRequirements,
   availableSkills: FridayWorkflowGeneratorSkillContext[],
   repairContext?: { errors: string; attempt: number },
+  maintenanceTarget?: FridayWorkflowGenerationMaintenanceTarget,
 ): FridayWorkflowGeneratorPrompt {
   const requirementsJson = JSON.stringify(requirements, null, 2);
 
@@ -119,6 +135,21 @@ export function buildWorkflowSpecPrompt(
 
   const repairBlock = repairContext
     ? `\n\nPrevious attempt (${repairContext.attempt}) had errors:\n${repairContext.errors}\nFix these issues.`
+    : "";
+  const maintenanceRuleBlock = maintenanceTarget
+    ? `\n13. This is an in-place update to workflow db id "${maintenanceTarget.workflowId}".\n14. Preserve workflowId exactly as "${maintenanceTarget.currentSpecWorkflowId ?? maintenanceTarget.slug}".\n15. Use the existing workflow snapshot as the baseline and only adapt it to satisfy the updated request.`
+    : "";
+  const maintenanceUserBlock = maintenanceTarget
+    ? `\n\nExisting workflow target:
+${JSON.stringify({
+  workflowId: maintenanceTarget.workflowId,
+  slug: maintenanceTarget.slug,
+  currentName: maintenanceTarget.currentName,
+  currentDescription: maintenanceTarget.currentDescription,
+  publishedVersionNumber: maintenanceTarget.publishedVersionNumber,
+  currentSpecWorkflowId: maintenanceTarget.currentSpecWorkflowId,
+  publishedSpec: maintenanceTarget.publishedSpec,
+}, null, 2)}`
     : "";
 
   const system = `You generate a valid FridayWorkflowSpecV1 JSON object.
@@ -138,7 +169,7 @@ Rules:
 9. outputs[].fromStep must reference an existing step.
 10. tests must be [] (generated separately in next stage).
 11. Keep graph acyclic and connected from startStepId.
-12. Return a complete FridayWorkflowSpecV1 object only.
+12. Return a complete FridayWorkflowSpecV1 object only.${maintenanceRuleBlock}
 
 Target shape:
 {
@@ -176,7 +207,7 @@ Example output (simple action workflow):
 ${requirementsJson}
 
 Available skills:
-${skillsJson}${repairBlock}`;
+${skillsJson}${maintenanceUserBlock}${repairBlock}`;
 
   return { system, user };
 }

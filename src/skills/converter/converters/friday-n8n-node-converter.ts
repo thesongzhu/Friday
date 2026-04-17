@@ -9,7 +9,7 @@
  *   - Complex n8n credential UX mapped to env/input secrets.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { FridayDomainError } from "#errors";
 
@@ -238,10 +238,12 @@ function tryReadAsFile(filePath: string): string | null {
     if (!existsSync(filePath)) {
       return null;
     }
-    const stat = readFileSync(filePath, "utf-8");
-    return stat;
+    if (!statSync(filePath).isFile()) {
+      return null;
+    }
+    return readFileSync(filePath, "utf-8");
   } catch (err) {
-      console.warn("[friday][n8n-node-converter] operation failed:", err instanceof Error ? err.message : String(err));
+    console.warn("[friday][n8n-node-converter] operation failed:", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

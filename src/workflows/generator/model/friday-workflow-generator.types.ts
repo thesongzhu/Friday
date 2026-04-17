@@ -7,6 +7,7 @@ import type {
   FridayWorkflowSpecTrigger,
   FridayWorkflowSpecV1,
   FridayWorkflowVisualGraphV1,
+  UUID,
   WorkflowFailurePolicyV2,
 } from "#workflows";
 import type {
@@ -30,6 +31,17 @@ export type FridayWorkflowGeneratorSessionStatus =
   | "terminal_failed"
   | "cancelled";
 
+export interface FridayWorkflowGenerationMaintenanceTarget {
+  workflowId: UUID;
+  slug: string;
+  currentSpecWorkflowId?: string;
+  currentName: string;
+  currentDescription?: string;
+  publishedVersionId?: UUID;
+  publishedVersionNumber?: number;
+  publishedSpec?: FridayWorkflowSpecV1;
+}
+
 // ─── Session entity ───
 
 export interface FridayWorkflowGenerationSession {
@@ -45,6 +57,7 @@ export interface FridayWorkflowGenerationSession {
   draftWorkflowId?: string;
   workflowId?: string;
   workflowVersionId?: string;
+  maintenanceTarget?: FridayWorkflowGenerationMaintenanceTarget;
   harnessStage?: FridayTemplateHarnessStage;
   planningSpecId?: string;
   deliveryContractId?: string;
@@ -72,6 +85,7 @@ export interface FridayStartWorkflowGenerationRequest {
   userId: string;
   channel: string;
   tenantContext?: FridayProviderTenantContext;
+  targetWorkflowId?: UUID;
 }
 
 export interface FridayWorkflowGenerationTurnRequest {

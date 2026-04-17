@@ -138,6 +138,29 @@ describe("FridayAutoFixPlanService", () => {
     expect(plans[0]!.steps[0]!.kind).toBe("trim_payload");
   });
 
+  it("maps skills_lifecycle failures to disable_skill using the skill id as target", () => {
+    const skillIncident = {
+      ...baseIncident,
+      category: "workflow" as const,
+      context: {
+        source: "skills_lifecycle",
+        skillId: "extract-action-items",
+        stage: "verify",
+      },
+    };
+
+    const plans = service.buildPlans({
+      incident: skillIncident,
+      diagnosis: baseDiagnosis,
+      matchedLessons: [],
+      recurrenceCount: 1,
+    });
+
+    expect(plans).toHaveLength(1);
+    expect(plans[0]!.steps[0]!.kind).toBe("disable_skill");
+    expect(plans[0]!.steps[0]!.target).toBe("extract-action-items");
+  });
+
   it("includes evidence metadata in plans", () => {
     const plans = service.buildPlans({
       incident: baseIncident,
