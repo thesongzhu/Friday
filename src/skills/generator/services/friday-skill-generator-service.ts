@@ -754,14 +754,7 @@ export function createFridaySkillGeneratorService(
     spec: Record<string, unknown> | null,
     contract: FridaySkillGenerationContract,
   ): FridayHarnessDeliveryContractV1 {
-    const evidenceRequirements: FridayHarnessDeliveryContractV1["evidenceRequirements"] = [
-      "generator_validation",
-      "skill_self_test",
-      "skill_verification",
-    ];
-    if (spec && skillSpecRequiresBrowserQa(spec)) {
-      evidenceRequirements.push("browser_qa");
-    }
+    const evidenceRequirements = buildSkillEvidenceRequirements(spec);
     return {
       artifactId: session.deliveryContractId ?? deps.idGenerator(),
       version: 1,
@@ -796,6 +789,52 @@ export function createFridaySkillGeneratorService(
       blockedBy: [...session.openQuestions],
       createdAt: deps.nowIso(),
       updatedAt: deps.nowIso(),
+    };
+  }
+
+  function buildSkillEvidenceRequirements(
+    spec: Record<string, unknown> | null,
+  ): FridayHarnessDeliveryContractV1["evidenceRequirements"] {
+    const evidenceRequirements: FridayHarnessDeliveryContractV1["evidenceRequirements"] = [
+      "generator_validation",
+      "skill_self_test",
+      "skill_verification",
+    ];
+    if (spec && skillSpecRequiresBrowserQa(spec)) {
+      evidenceRequirements.push("browser_qa");
+    }
+    return evidenceRequirements;
+  }
+
+  async function collectDraftEvidenceStatus(input: {
+    session: FridaySkillGenerationSession;
+    draft: FridayGeneratedSkillDraft;
+    evidenceRequirements: FridayHarnessDeliveryContractV1["evidenceRequirements"];
+  }): Promise<{
+    missingEvidenceReasons: string[];
+    stagedVerification: { packageLoaded: boolean; packageValidated: boolean; error?: string };
+  }> {
+    const missingEvidenceReasons: string[] = [];
+    if (input.evidenceRequirements.includes("skill_self_test") && !input.session.explicitTest) {
+      missingEvidenceReasons.push("Explicit self-test has not been run yet.");
+    }
+    if (input.evidenceRequirements.includes("browser_qa")) {
+      missingEvidenceReasons.push("Required browser QA evidence has not been attached.");
+    }
+
+    const stagedVerification = await runStagedDraftVerification(input.session.sessionId, input.draft);
+    if (!stagedVerification.packageLoaded && !stagedVerification.error) {
+      missingEvidenceReasons.push("Staged verification could not produce a package load result.");
+    }
+    if (!stagedVerification.packageValidated) {
+      missingEvidenceReasons.push(
+        stagedVerification.error ?? "Staged verification did not validate the draft package.",
+      );
+    }
+
+    return {
+      missingEvidenceReasons,
+      stagedVerification,
     };
   }
 
@@ -938,18 +977,11 @@ export function createFridaySkillGeneratorService(
 
     let qaVerdict: FridayHarnessQaVerdictV1 | null = null;
     if (draft && deliveryContract) {
-      const missingEvidenceReasons: string[] = [];
-      if (deliveryContract.evidenceRequirements.includes("skill_self_test") && !session.explicitTest) {
-        missingEvidenceReasons.push("Explicit self-test has not been run yet.");
-      }
-      if (deliveryContract.evidenceRequirements.includes("browser_qa")) {
-        missingEvidenceReasons.push("Required browser QA evidence has not been attached.");
-      }
-
-      const stagedVerification = await runStagedDraftVerification(session.sessionId, draft);
-      if (!stagedVerification.packageLoaded && !stagedVerification.error) {
-        missingEvidenceReasons.push("Staged verification could not produce a package load result.");
-      }
+      const { missingEvidenceReasons, stagedVerification } = await collectDraftEvidenceStatus({
+        session,
+        draft,
+        evidenceRequirements: deliveryContract.evidenceRequirements,
+      });
 
       qaVerdict = await harness.evaluateQaVerdict({
         existingQaVerdictId: session.qaVerdictId,
@@ -1917,6 +1949,20 @@ export function createFridaySkillGeneratorService(
 
       const syncedReview = await syncSkillHarness(session, draft);
       persistSession(syncedReview.session);
+
+      const spec = parseCurrentSpec(session);
+      const { missingEvidenceReasons } = await collectDraftEvidenceStatus({
+        session,
+        draft,
+        evidenceRequirements: buildSkillEvidenceRequirements(spec),
+      });
+      if (missingEvidenceReasons.length > 0) {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          missingEvidenceReasons.join("; "),
+          { httpStatus: 422 },
+        );
+      }
 
       if (harness.enabled && syncedReview.qaVerdict?.verdict !== "pass") {
         throw new FridayDomainError(

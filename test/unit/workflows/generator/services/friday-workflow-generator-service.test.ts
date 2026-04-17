@@ -186,8 +186,23 @@ function makeMockWorkflowCrud(): FridayWorkflowCrudService {
     getWorkflow: vi.fn(() => null),
     getWorkflowBySlug: vi.fn(() => null),
     listWorkflows: vi.fn(() => []),
-    updateWorkflow: vi.fn(() => ({} as never)),
+    updateWorkflow: vi.fn((input) => ({
+      id: input.workflowId,
+      slug: "existing-workflow",
+      name: input.name ?? "Existing Workflow",
+      description: input.description,
+      tags: ["existing"],
+      latestVersionNumber: 1,
+      publishedVersionNumber: 1,
+      isArchived: false,
+      revision: input.expectedRevision + 1,
+      etag: "etag-updated",
+      createdAt: NOW,
+      updatedAt: NOW,
+    })),
+    updateWorkflowWithGraph: vi.fn(() => ({} as never)),
     archiveWorkflow: vi.fn(),
+    createWorkflowWithVersion: vi.fn(() => ({} as never)),
     createVersion: vi.fn(() => ({
       id: "wv-1",
       workflowId: "wf-1",
@@ -597,6 +612,104 @@ describe("FridayWorkflowGeneratorService", () => {
       await expect(
         service.approveAndSave(startResult.session.sessionId),
       ).rejects.toThrow("Cannot approve session");
+    });
+
+    it("updates an existing workflow in place when targetWorkflowId is provided", async () => {
+      const existingSpec = {
+        ...makeSpecResponse(),
+        workflowId: "existing-workflow-spec",
+        name: "Existing Workflow",
+      };
+      const existingVersion = {
+        id: "wv-existing-1",
+        workflowId: "wf-existing",
+        versionNumber: 1,
+        checksum: "checksum-existing-1",
+        graphJson: {},
+        isPublished: true,
+        createdAt: NOW,
+        updatedAt: NOW,
+      };
+
+      vi.mocked(deps.workflowCrud.getWorkflow).mockImplementation((workflowId: string) => {
+        if (workflowId !== "wf-existing") {
+          return null;
+        }
+        return {
+          id: "wf-existing",
+          slug: "existing-workflow",
+          name: "Existing Workflow",
+          description: "Original description",
+          tags: ["existing"],
+          latestVersionNumber: 1,
+          publishedVersionNumber: 1,
+          isArchived: false,
+          revision: 7,
+          etag: "etag-existing",
+          createdAt: NOW,
+          updatedAt: NOW,
+        };
+      });
+      vi.mocked(deps.workflowCrud.getPublishedVersion).mockReturnValue(existingVersion);
+      vi.mocked(deps.workflowCrud.createVersion).mockReturnValue({
+        id: "wv-existing-2",
+        workflowId: "wf-existing",
+        versionNumber: 2,
+        checksum: "checksum-existing-2",
+        graphJson: {},
+        isPublished: false,
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+      vi.mocked(deps.workflowCrud.publishVersion).mockReturnValue({
+        id: "wv-existing-2",
+        workflowId: "wf-existing",
+        versionNumber: 2,
+        checksum: "checksum-existing-2",
+        graphJson: {},
+        isPublished: true,
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+
+      mockFetchForLlm([
+        makeRequirementsResponse("ready_for_generation"),
+        {
+          ...existingSpec,
+          description: "Updated description",
+          tests: [],
+        },
+        makeVisualResponse(),
+        makeTestsResponse(),
+      ]);
+
+      const startResult = await service.startSession({
+        goal: "Update the existing workflow to improve the description.",
+        userId: "u-1",
+        channel: "test",
+        targetWorkflowId: "wf-existing",
+      });
+
+      expect(startResult.session.workflowId).toBe("wf-existing");
+      expect(startResult.session.workflowVersionId).toBe("wv-existing-1");
+      expect(startResult.session.maintenanceTarget?.publishedVersionNumber).toBe(1);
+
+      const approveResult = await service.approveAndSave(startResult.session.sessionId);
+
+      expect(approveResult.workflowId).toBe("wf-existing");
+      expect(approveResult.workflowVersionId).toBe("wv-existing-2");
+      expect(approveResult.versionNumber).toBe(2);
+
+      expect(deps.workflowCrud.createWorkflow).not.toHaveBeenCalled();
+      expect(deps.workflowCrud.updateWorkflow).toHaveBeenCalledWith({
+        workflowId: "wf-existing",
+        expectedRevision: 7,
+        etag: "etag-existing",
+        name: "Existing Workflow",
+        description: "Updated description",
+      });
+      expect(deps.workflowCrud.createVersion).toHaveBeenCalled();
+      expect(deps.workflowCrud.publishVersion).toHaveBeenCalledWith("wf-existing", 2);
     });
   });
 
