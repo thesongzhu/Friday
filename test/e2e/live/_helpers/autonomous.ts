@@ -20,6 +20,10 @@ export interface AutonomousStepSnapshot {
   domain: string;
   instruction: string;
   plannedAction?: { toolName?: string; args?: Record<string, unknown> };
+  verification?: { type?: string; description?: string; expected?: string; passed?: boolean; actual?: string };
+  verificationMethod?: string;
+  verificationActual?: string;
+  verificationPatternFamily?: string;
   failureReason?: string;
 }
 
@@ -114,7 +118,8 @@ export function listAutonomousSteps(
 ): AutonomousStepSnapshot[] {
   return withReadonlyDb(stateDir, (db) => {
     const rows = db.prepare(
-      `SELECT id, goal_id, idx, status, domain, instruction, planned_action_json, failure_reason
+      `SELECT id, goal_id, idx, status, domain, instruction, planned_action_json, verification_json,
+              verification_method, verification_actual, verification_pattern_family, failure_reason
          FROM friday_autonomous_steps
         WHERE goal_id = ?
         ORDER BY idx ASC`,
@@ -126,6 +131,10 @@ export function listAutonomousSteps(
       domain: string;
       instruction: string;
       planned_action_json: string | null;
+      verification_json: string | null;
+      verification_method: string | null;
+      verification_actual: string | null;
+      verification_pattern_family: string | null;
       failure_reason: string | null;
     }>;
     return rows.map((row) => ({
@@ -138,6 +147,12 @@ export function listAutonomousSteps(
       plannedAction: row.planned_action_json
         ? JSON.parse(row.planned_action_json) as { toolName?: string; args?: Record<string, unknown> }
         : undefined,
+      verification: row.verification_json
+        ? JSON.parse(row.verification_json) as { type?: string; description?: string; expected?: string; passed?: boolean; actual?: string }
+        : undefined,
+      verificationMethod: row.verification_method ?? undefined,
+      verificationActual: row.verification_actual ?? undefined,
+      verificationPatternFamily: row.verification_pattern_family ?? undefined,
       failureReason: row.failure_reason ?? undefined,
     }));
   });

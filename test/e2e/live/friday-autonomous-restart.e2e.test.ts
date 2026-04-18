@@ -88,7 +88,98 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Ant
   });
 
   it(
-    "marks planning interruption as recoverable and resumes to verified completion",
+    "proves planning interruption resume can keep exact content wording and deterministic file verification",
+    { timeout: 240_000, retry: 1 },
+    async () => {
+      let env = await createFridayDeepProofHubEnv();
+      envsToCleanup.push(env);
+      const providerId = await ensureAnthropicProvider(env);
+      const marker = `planning-content-${Date.now()}`;
+      const outputPath = buildWorkspaceProofPath(env.stateDir!, `${marker}-planning-content-proof.txt`);
+      const expected = `planning-content-restart-${marker}`;
+      fs.rmSync(outputPath, { force: true });
+      const goalDescription = `Marker ${marker}. Use only the write tool to create the file '${outputPath}' with the exact content '${expected}'. After that, verify the file '${outputPath}' exists and contains the exact content '${expected}'.`;
+      const executePromise = env.hub!.autonomousEngine.executeGoal({
+        description: goalDescription,
+        providerId,
+        model: LIVE_ANTHROPIC_MODEL,
+      });
+
+      const goal = await waitForAutonomousGoalByDescriptionMarker(env.stateDir!, marker, { intervalMs: 100, maxMs: 20_000 });
+      const goalId = goal.id;
+      await waitForAutonomousSnapshot(
+        env.stateDir!,
+        goalId,
+        ({ goal: currentGoal }) => currentGoal?.status === "planning",
+        { intervalMs: 100, maxMs: 20_000 },
+      );
+
+      await shutdownFridayDeepProofHubEnv(env, { removeStateDir: false });
+      envsToCleanup = envsToCleanup.filter((candidate) => candidate !== env);
+      await executePromise.catch(() => null);
+
+      env = await createFridayDeepProofHubEnvFromStateDir(env.stateDir!);
+      envsToCleanup.push(env);
+
+      const interruptedGoal = readAutonomousGoal(env.stateDir!, goalId);
+      expect(interruptedGoal?.status).toBe("interrupted_recoverable");
+      expect(interruptedGoal?.failureReason).toContain("plan can be rebuilt safely");
+
+      const resumeResult = await env.hub!.autonomousEngine.resumeGoal({
+        goalId,
+        providerId,
+        model: LIVE_ANTHROPIC_MODEL,
+      });
+      if (resumeResult.status !== "completed") {
+        const failureGoal = readAutonomousGoal(env.stateDir!, goalId);
+        const failureSteps = listAutonomousSteps(env.stateDir!, goalId);
+        const failureIterations = env.hub!.autonomousEngine.getIterations(goalId);
+        throw new Error(
+          `Planning exact-content resume failed: ${JSON.stringify({
+            stateDir: env.stateDir,
+            resumeResult,
+            failureGoal,
+            failureSteps,
+            failureIterations,
+          })}`,
+        );
+      }
+
+      const finalGoal = await waitForAutonomousSnapshot(
+        env.stateDir!,
+        goalId,
+        ({ goal: currentGoal, steps }) =>
+          currentGoal?.status === "completed"
+          && steps.some((step) => step.status === "completed" && step.verificationMethod === "deterministic_file"),
+        { intervalMs: 200, maxMs: 30_000 },
+      );
+      expect(finalGoal.goal.status).toBe("completed");
+      expect(fs.readFileSync(outputPath, "utf8")).toBe(expected);
+      const deterministicFileStep = finalGoal.steps.find((step) => step.verificationMethod === "deterministic_file");
+      expect(deterministicFileStep).toEqual(expect.objectContaining({
+        verificationMethod: "deterministic_file",
+      }));
+      expect([
+        "with_content",
+        "contains_content",
+        "exact_content",
+        "content_is",
+        "contents_are",
+        "content_colon",
+        "contents_colon",
+      ]).toContain(deterministicFileStep?.verificationPatternFamily);
+      const wording = [
+        deterministicFileStep?.instruction ?? "",
+        deterministicFileStep?.verification?.description ?? "",
+        deterministicFileStep?.verification?.expected ?? "",
+      ].join(" ").toLowerCase();
+      expect(wording).toContain("content");
+      expect(wording).not.toContain("exact text");
+    },
+  );
+
+  it(
+    "marks planning interruption with exact text phrasing as recoverable and resumes to verified completion",
     { timeout: 240_000, retry: 1 },
     async () => {
       let env = await createFridayDeepProofHubEnv();
@@ -258,7 +349,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Ant
 
         const interruptedGoal = readAutonomousGoal(env.stateDir!, goalId);
         expect(interruptedGoal?.status).toBe("interrupted_recoverable");
-        expect(interruptedGoal?.failureReason).toContain("verification or planning can be replayed");
+        expect(interruptedGoal?.failureReason).toContain("verification can be rerun and planning can be rebuilt safely");
 
         const stepsAfterRestart = listAutonomousSteps(env.stateDir!, goalId);
         expect(stepsAfterRestart.map((step) => step.id)).toEqual(stepIdsBeforeRestart);

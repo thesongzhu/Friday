@@ -57,6 +57,83 @@ function createMockDeps(overrides?: Partial<CreateFridayAutonomousEngineDeps>): 
   };
 }
 
+function createInMemoryAutonomousPersistence() {
+  const goals = new Map<string, FridayAutonomousGoal>();
+  const steps = new Map<string, FridayAutonomousStep>();
+  const stepsByGoal = new Map<string, FridayAutonomousStep[]>();
+  const iterationsByGoal = new Map<string, FridayAutonomousIteration[]>();
+
+  return {
+    goals,
+    steps,
+    stepsByGoal,
+    iterationsByGoal,
+    persistence: {
+      sqlite: {
+        withWriteTransaction<T>(fn: (db: object) => T): T {
+          return fn({});
+        },
+        withReadConnection<T>(fn: (db: object) => T): T {
+          return fn({});
+        },
+      },
+      repository: {
+        createGoal(_db: object, goal: FridayAutonomousGoal): void {
+          goals.set(goal.id, goal);
+        },
+        updateGoal(_db: object, goalId: string, patch: Partial<FridayAutonomousGoal>): void {
+          const current = goals.get(goalId);
+          if (current) {
+            goals.set(goalId, { ...current, ...patch });
+          }
+        },
+        getGoal(_db: object, goalId: string): FridayAutonomousGoal | null {
+          return goals.get(goalId) ?? null;
+        },
+        listGoals(): FridayAutonomousGoal[] {
+          return Array.from(goals.values());
+        },
+        listActiveGoals(): FridayAutonomousGoal[] {
+          return Array.from(goals.values()).filter((goal) =>
+            !["completed", "failed", "cancelled", "interrupted_nonrecoverable"].includes(goal.status),
+          );
+        },
+        createStep(_db: object, step: FridayAutonomousStep): void {
+          steps.set(step.id, step);
+          const existing = stepsByGoal.get(step.goalId) ?? [];
+          stepsByGoal.set(step.goalId, [...existing, step].sort((left, right) => left.index - right.index));
+        },
+        updateStep(_db: object, stepId: string, patch: Partial<FridayAutonomousStep>): void {
+          const current = steps.get(stepId);
+          if (!current) {
+            return;
+          }
+          const updated = { ...current, ...patch };
+          steps.set(stepId, updated);
+          const goalSteps = stepsByGoal.get(current.goalId) ?? [];
+          stepsByGoal.set(
+            current.goalId,
+            goalSteps.map((step) => (step.id === stepId ? updated : step)),
+          );
+        },
+        getStep(_db: object, stepId: string): FridayAutonomousStep | null {
+          return steps.get(stepId) ?? null;
+        },
+        getStepsByGoalId(_db: object, goalId: string): FridayAutonomousStep[] {
+          return [...(stepsByGoal.get(goalId) ?? [])];
+        },
+        appendIteration(_db: object, iteration: FridayAutonomousIteration): void {
+          const existing = iterationsByGoal.get(iteration.goalId) ?? [];
+          iterationsByGoal.set(iteration.goalId, [...existing, iteration]);
+        },
+        getIterationsByGoalId(_db: object, goalId: string): FridayAutonomousIteration[] {
+          return [...(iterationsByGoal.get(goalId) ?? [])];
+        },
+      },
+    } satisfies NonNullable<CreateFridayAutonomousEngineDeps["persistence"]>,
+  };
+}
+
 describe("FridayAutonomousEngine", () => {
   let engine: FridayAutonomousEngine;
   let deps: CreateFridayAutonomousEngineDeps;
@@ -333,7 +410,7 @@ describe("FridayAutonomousEngine", () => {
         activeGoal.id,
         expect.objectContaining({
           status: "interrupted_recoverable",
-          failureReason: "Interrupted by process restart after a resumable checkpoint; verification or planning can be replayed.",
+          failureReason: "Interrupted by process restart after a resumable checkpoint; verification can be rerun and planning can be rebuilt safely.",
           completedAt: undefined,
         }),
       );
@@ -342,7 +419,7 @@ describe("FridayAutonomousEngine", () => {
         "step-verifying",
         expect.objectContaining({
           status: "interrupted_recoverable",
-          failureReason: "Interrupted by process restart after a resumable checkpoint; verification or planning can be replayed.",
+          failureReason: "Interrupted by process restart after a resumable checkpoint; verification can be rerun and planning can be rebuilt safely.",
           completedAt: undefined,
         }),
       );
@@ -494,7 +571,7 @@ describe("FridayAutonomousEngine", () => {
         currentStepIndex: 0,
         createdAt: "2026-03-11T09:59:00Z",
         startedAt: "2026-03-11T09:59:10Z",
-        failureReason: "Interrupted by process restart after a resumable checkpoint; verification or planning can be replayed.",
+        failureReason: "Interrupted by process restart after a resumable checkpoint; verification can be rerun and planning can be rebuilt safely.",
       };
       const existingStep: FridayAutonomousStep = {
         id: "step-resume-existing",
@@ -1041,19 +1118,32 @@ describe("FridayAutonomousEngine", () => {
       expect(analyzeImages).not.toHaveBeenCalled();
     });
 
-    it("uses toolExecutor plus deterministic file-state verification for file writes", async () => {
+    async function runDeterministicFileVerificationCase(input: {
+      instruction: string;
+      verification: string;
+      expected: string;
+      goalDescription: string;
+    }): Promise<{
+      result: Awaited<ReturnType<FridayAutonomousEngine["executeGoal"]>>;
+      runtime: { executeRun: ReturnType<typeof vi.fn> };
+      toolExecutor: ReturnType<typeof vi.fn>;
+      analyzeImages: ReturnType<typeof vi.fn>;
+      persistedSteps: FridayAutonomousStep[];
+      outputPath: string;
+      workspaceDir: string;
+    }> {
       const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-autonomous-file-"));
       const outputPath = path.join(workspaceDir, "proof.txt");
-      const expected = "deterministic autonomous proof";
+      const persistenceHarness = createInMemoryAutonomousPersistence();
       const runtime = {
         executeRun: vi.fn().mockResolvedValue({
           runId: "run-plan",
           status: "completed",
           response: JSON.stringify([
             {
-              instruction: `Create the file '${outputPath}' with the exact text '${expected}'`,
+              instruction: input.instruction.replaceAll("{outputPath}", outputPath),
               domain: "file",
-              verification: `Verify the file '${outputPath}' exists and contains the exact text '${expected}'`,
+              verification: input.verification.replaceAll("{outputPath}", outputPath),
             },
           ]),
           usageInput: 20,
@@ -1069,64 +1159,267 @@ describe("FridayAutonomousEngine", () => {
         fs.writeFileSync(filePath, content, "utf8");
         return { content: "write complete" };
       });
+      const analyzeImages = vi.fn();
+
+      engine = createFridayAutonomousEngine({
+        ...deps,
+        agentRuntime: runtime,
+        toolExecutor,
+        analyzeImages,
+        persistence: persistenceHarness.persistence,
+        config: { iterationDelayMs: 0 },
+      });
+
+      const result = await engine.executeGoal({
+        description: input.goalDescription,
+        signal: signal(),
+      });
+
+      return {
+        result,
+        runtime,
+        toolExecutor,
+        analyzeImages,
+        persistedSteps: Array.from(persistenceHarness.steps.values()),
+        outputPath,
+        workspaceDir,
+      };
+    }
+
+    it.each([
+      {
+        name: "exact text with straight quotes",
+        instruction: "Create the file '{outputPath}' with the exact text \"VALUE\"",
+        verification: "Verify the file '{outputPath}' exists and contains the exact text \"VALUE\"",
+        expected: "VALUE",
+        family: "contains_text",
+      },
+      {
+        name: "with content",
+        instruction: "Create the file '{outputPath}' with content \"VALUE\"",
+        verification: "Verify the file '{outputPath}' exists",
+        expected: "VALUE",
+        family: "with_content",
+      },
+      {
+        name: "with the content",
+        instruction: "Create the file '{outputPath}' with the content 'VALUE'",
+        verification: "Verify the file '{outputPath}' exists",
+        expected: "VALUE",
+        family: "with_content",
+      },
+      {
+        name: "with exact content using backticks",
+        instruction: "Create the file '{outputPath}' with exact content `VALUE`",
+        verification: "Verify the file '{outputPath}' exists",
+        expected: "VALUE",
+        family: "with_content",
+      },
+      {
+        name: "with the exact content using smart double quotes",
+        instruction: "Create the file '{outputPath}' with the exact content \u201cVALUE\u201d",
+        verification: "Verify the file '{outputPath}' exists",
+        expected: "VALUE",
+        family: "with_content",
+      },
+      {
+        name: "contains content",
+        instruction: "Create the file '{outputPath}' for the proof payload",
+        verification: "Verify the file '{outputPath}' exists and contains content \"VALUE\"",
+        expected: "VALUE",
+        family: "contains_content",
+      },
+      {
+        name: "contains the content",
+        instruction: "Create the file '{outputPath}' for the proof payload",
+        verification: "Verify the file '{outputPath}' exists and contains the content 'VALUE'",
+        expected: "VALUE",
+        family: "contains_content",
+      },
+      {
+        name: "contains exact content using backticks",
+        instruction: "Create the file '{outputPath}' for the proof payload",
+        verification: "Verify the file '{outputPath}' exists and contains exact content `VALUE`",
+        expected: "VALUE",
+        family: "contains_content",
+      },
+      {
+        name: "contains the exact content using smart single quotes",
+        instruction: "Create the file '{outputPath}' for the proof payload",
+        verification: "Verify the file '{outputPath}' exists and contains the exact content \u2018VALUE\u2019",
+        expected: "VALUE",
+        family: "contains_content",
+      },
+      {
+        name: "exact content",
+        instruction: "Create the file '{outputPath}' using the deterministic proof payload",
+        verification: "Verify the file '{outputPath}' exists and exact content \"VALUE\" is present",
+        expected: "VALUE",
+        family: "exact_content",
+      },
+      {
+        name: "content is",
+        instruction: "Create the file '{outputPath}' using the deterministic proof payload",
+        verification: "Verify the file '{outputPath}' exists and content is \"VALUE\"",
+        expected: "VALUE",
+        family: "content_is",
+      },
+      {
+        name: "contents are",
+        instruction: "Create the file '{outputPath}' using the deterministic proof payload",
+        verification: "Verify the file '{outputPath}' exists and contents are \"VALUE\"",
+        expected: "VALUE",
+        family: "contents_are",
+      },
+      {
+        name: "content colon",
+        instruction: "Create the file '{outputPath}' using the deterministic proof payload",
+        verification: "Verify the file '{outputPath}' exists and content: \"VALUE\"",
+        expected: "VALUE",
+        family: "content_colon",
+      },
+      {
+        name: "contents colon",
+        instruction: "Create the file '{outputPath}' using the deterministic proof payload",
+        verification: "Verify the file '{outputPath}' exists and contents: \"VALUE\"",
+        expected: "VALUE",
+        family: "contents_colon",
+      },
+    ])("deterministically verifies supported file phrase families: $name", async ({ instruction, verification, expected, family }) => {
+      const run = await runDeterministicFileVerificationCase({
+        instruction,
+        verification,
+        expected,
+        goalDescription: "Create a proof file and verify its deterministic content",
+      });
 
       try {
-        engine = createFridayAutonomousEngine({
-          ...deps,
-          agentRuntime: runtime,
-          toolExecutor,
-          analyzeImages: vi.fn(),
-          config: { iterationDelayMs: 0 },
-        });
-
-        const result = await engine.executeGoal({
-          description: "Create a proof file and verify it",
-          signal: signal(),
-        });
-
-        expect(result.status).toBe("completed");
-        expect(runtime.executeRun).toHaveBeenCalledTimes(1);
-        expect(toolExecutor).toHaveBeenCalledTimes(1);
-        expect(toolExecutor).toHaveBeenCalledWith(
+        expect(run.result.status).toBe("completed");
+        expect(run.runtime.executeRun).toHaveBeenCalledTimes(1);
+        expect(run.analyzeImages).not.toHaveBeenCalled();
+        expect(run.toolExecutor).toHaveBeenCalledTimes(1);
+        expect(run.toolExecutor).toHaveBeenCalledWith(
           "write",
           {
-            path: outputPath,
+            path: run.outputPath,
             content: expected,
           },
           expect.any(AbortSignal),
         );
-        expect(fs.readFileSync(outputPath, "utf8")).toBe(expected);
+        expect(fs.readFileSync(run.outputPath, "utf8")).toBe(expected);
+        expect(run.persistedSteps).toHaveLength(1);
+        expect(run.persistedSteps[0]).toEqual(expect.objectContaining({
+          verificationMethod: "deterministic_file",
+          verificationPatternFamily: family,
+        }));
+        expect(run.persistedSteps[0]?.verificationActual).toContain("expected content literal");
       } finally {
-        fs.rmSync(workspaceDir, { recursive: true, force: true });
+        fs.rmSync(run.workspaceDir, { recursive: true, force: true });
       }
     });
 
-    it("uses deterministic file-state verification for file writes phrased with exact content", async () => {
-      const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-autonomous-file-content-"));
+    it("locks precedence to the more specific content family instead of a looser fallback family", async () => {
+      const preferred = "preferred-content";
+      const ignored = "fallback-content";
+      const run = await runDeterministicFileVerificationCase({
+        instruction: "Create the file '{outputPath}' using the verification literal",
+        verification:
+          `Verify the file '{outputPath}' exists and contains the exact content "${preferred}" before checking that contents are "${ignored}"`,
+        expected: preferred,
+        goalDescription: "Create a proof file and verify deterministic precedence",
+      });
+
+      try {
+        expect(run.result.status).toBe("completed");
+        expect(fs.readFileSync(run.outputPath, "utf8")).toBe(preferred);
+        expect(run.persistedSteps[0]).toEqual(expect.objectContaining({
+          verificationMethod: "deterministic_file",
+          verificationPatternFamily: "contains_content",
+        }));
+      } finally {
+        fs.rmSync(run.workspaceDir, { recursive: true, force: true });
+      }
+    });
+
+    it.each([
+      {
+        name: "content assignment syntax",
+        verification: "Verify the file '{outputPath}' exists and content = \"VALUE\"",
+      },
+      {
+        name: "unclosed quote",
+        verification: "Verify the file '{outputPath}' exists and content: \"VALUE",
+      },
+      {
+        name: "unquoted literal",
+        verification: "Verify the file '{outputPath}' exists and content is VALUE",
+      },
+      {
+        name: "code-like payload",
+        verification: "Verify the file '{outputPath}' exists and content = `const value = 1;`",
+      },
+    ])("falls back to LLM verification for unsupported phrasing: $name", async ({ verification }) => {
+      const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-autonomous-file-fallback-"));
       const outputPath = path.join(workspaceDir, "proof.txt");
-      const expected = "deterministic autonomous content proof";
+      const expected = "fallback-proof";
+      const persistenceHarness = createInMemoryAutonomousPersistence();
       const runtime = {
-        executeRun: vi.fn().mockResolvedValue({
-          runId: "run-plan",
-          status: "completed",
-          response: JSON.stringify([
-            {
-              instruction: `Create the file '${outputPath}' with the exact content '${expected}'`,
-              domain: "file",
-              verification: `Verify the file '${outputPath}' exists and contains the exact content '${expected}'`,
-            },
-          ]),
-          usageInput: 20,
-          usageOutput: 10,
+        executeRun: vi.fn().mockImplementation(async (params: { executionContext?: { surface?: string } }) => {
+          switch (params.executionContext?.surface) {
+            case "autonomous_internal_plan":
+              return {
+                runId: "run-plan",
+                status: "completed",
+                response: JSON.stringify([
+                  {
+                    instruction: `Create the file '${outputPath}' for this proof task`,
+                    domain: "file",
+                    verification: verification.replaceAll("{outputPath}", outputPath).replaceAll("VALUE", expected),
+                  },
+                ]),
+                usageInput: 20,
+                usageOutput: 10,
+              };
+            case "autonomous_internal_decision":
+              return {
+                runId: "run-decision",
+                status: "completed",
+                response: JSON.stringify({
+                  kind: "act",
+                  action: {
+                    toolName: "write",
+                    args: {
+                      path: outputPath,
+                      content: expected,
+                    },
+                    rationale: "Write the required proof payload.",
+                  },
+                }),
+                usageInput: 14,
+                usageOutput: 9,
+              };
+            case "autonomous_internal_verify":
+              return {
+                runId: "run-verify",
+                status: "completed",
+                response: JSON.stringify({
+                  passed: true,
+                  actual: "LLM fallback verified the unsupported phrasing correctly.",
+                }),
+                usageInput: 12,
+                usageOutput: 8,
+              };
+            default:
+              throw new Error(`Unexpected autonomous runtime surface: ${params.executionContext?.surface ?? "<missing>"}`);
+          }
         }),
       };
+      const analyzeImages = vi.fn();
       const toolExecutor = vi.fn().mockImplementation(async (toolName: string, args: Record<string, unknown>) => {
         if (toolName !== "write") {
           return { content: `unexpected tool ${toolName}`, isError: true };
         }
-        const filePath = String(args.path);
-        const content = String(args.content);
-        fs.writeFileSync(filePath, content, "utf8");
+        fs.writeFileSync(String(args.path), String(args.content), "utf8");
         return { content: "write complete" };
       });
 
@@ -1134,28 +1427,44 @@ describe("FridayAutonomousEngine", () => {
         engine = createFridayAutonomousEngine({
           ...deps,
           agentRuntime: runtime,
+          analyzeImages,
           toolExecutor,
-          analyzeImages: vi.fn(),
+          persistence: persistenceHarness.persistence,
           config: { iterationDelayMs: 0 },
         });
 
         const result = await engine.executeGoal({
-          description: "Create a proof file with exact content wording and verify it",
+          description: "Create a proof file and use fallback verification for unsupported phrasing",
           signal: signal(),
         });
 
         expect(result.status).toBe("completed");
-        expect(runtime.executeRun).toHaveBeenCalledTimes(1);
-        expect(toolExecutor).toHaveBeenCalledTimes(1);
-        expect(toolExecutor).toHaveBeenCalledWith(
-          "write",
-          {
-            path: outputPath,
-            content: expected,
-          },
-          expect.any(AbortSignal),
+        expect(runtime.executeRun).toHaveBeenCalledTimes(3);
+        expect(runtime.executeRun).toHaveBeenNthCalledWith(
+          2,
+          expect.objectContaining({
+            executionContext: {
+              surface: "autonomous_internal_decision",
+            },
+          }),
         );
+        expect(runtime.executeRun).toHaveBeenNthCalledWith(
+          3,
+          expect.objectContaining({
+            executionContext: {
+              surface: "autonomous_internal_verify",
+            },
+          }),
+        );
+        expect(analyzeImages).not.toHaveBeenCalled();
         expect(fs.readFileSync(outputPath, "utf8")).toBe(expected);
+        const persistedSteps = Array.from(persistenceHarness.steps.values());
+        expect(persistedSteps).toHaveLength(1);
+        expect(persistedSteps[0]).toEqual(expect.objectContaining({
+          verificationMethod: "llm_text",
+          verificationPatternFamily: undefined,
+        }));
+        expect(persistedSteps[0]?.verificationActual).toContain("LLM fallback verified");
       } finally {
         fs.rmSync(workspaceDir, { recursive: true, force: true });
       }
