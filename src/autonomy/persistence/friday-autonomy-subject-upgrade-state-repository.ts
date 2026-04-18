@@ -2,10 +2,10 @@ import type Database from "better-sqlite3";
 
 import {
   defaultFridayAutonomyUpgradeFields,
-  mergeFridayAutonomyUpgradeFields,
   type FridayAutonomyCanaryStats,
   type FridayAutonomyUpgradeFields,
   type FridayAutonomyUpgradePatch,
+  mergeFridayAutonomyUpgradeFields,
 } from "../model/friday-autonomy-upgrade.types.js";
 import type { FridayAutonomySubjectKind } from "../model/friday-autonomy-subject.types.js";
 import { safeJsonParse } from "#utilities";
