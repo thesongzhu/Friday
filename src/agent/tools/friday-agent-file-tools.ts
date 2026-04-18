@@ -95,7 +95,9 @@ function validateFilePath(filePath: string, workspaceRoot: string): string | nul
     resolved = fsSync.realpathSync(filePath);
   } catch (err) {
     // Path doesn't exist — walk up to the nearest existing ancestor and resolve from there
-    console.warn("[friday][file-tools] realpath-target:", err instanceof Error ? err.message : String(err));
+    if ((err as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
+      console.warn("[friday][file-tools] realpath-target:", err instanceof Error ? err.message : String(err));
+    }
     const absolute = path.resolve(filePath);
     let ancestor = path.dirname(absolute);
     let tail = path.basename(absolute);
@@ -107,7 +109,9 @@ function validateFilePath(filePath: string, workspaceRoot: string): string | nul
         resolved = path.join(resolvedAncestor, tail);
         break;
       } catch (err) {
-        console.warn("[friday][file-tools] realpath-ancestor:", err instanceof Error ? err.message : String(err));
+        if ((err as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
+          console.warn("[friday][file-tools] realpath-ancestor:", err instanceof Error ? err.message : String(err));
+        }
         tail = path.join(path.basename(ancestor), tail);
         const parent = path.dirname(ancestor);
         if (parent === ancestor) {

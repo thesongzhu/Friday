@@ -16,6 +16,7 @@ import * as path from "node:path";
 import { FRIDAY_VERSION } from "../lib/version.js";
 import { createFridayAutonomousEngine } from "../agent/autonomous/friday-autonomous-engine.js";
 import { createFridayAutonomousRepository } from "../agent/autonomous/friday-autonomous-repository.js";
+import type { FridayAutonomousEngine } from "../agent/autonomous/friday-autonomous.types.js";
 import { createFridayAgentAutonomousTool } from "../agent/tools/friday-agent-autonomous-tool.js";
 import { createFridayAgentSetupAssistantTool } from "../agent/tools/friday-agent-setup-assistant-tool.js";
 import { createFridayAgentSetupTool } from "../agent/tools/friday-agent-setup-tool.js";
@@ -5617,6 +5618,7 @@ export async function createFridayHub(
     agentRuntime.registerTool(imageAnalysisTool);
   }
 
+  let autonomousEngine!: FridayAutonomousEngine;
   // 3. autonomous + setup — late-bind after runtime construction to avoid
   // circular dependency on agentRuntime during initial tool registry creation.
   {
@@ -5718,13 +5720,20 @@ export async function createFridayHub(
     const autonomousGoalRunIdMap: Map<string, string> = new Map();
 
     const autonomousRepo = createFridayAutonomousRepository();
-    const autonomousEngine = createFridayAutonomousEngine({
+    autonomousEngine = createFridayAutonomousEngine({
       agentRuntime: {
         executeRun: (params) =>
           agentRuntime.executeRun({
             ...params,
             disabledToolNames: ["autonomous", "setup", "setup_assistant"],
           }),
+      },
+      toolExecutor: async (toolName, args, signal) => {
+        const tool = [...agentTools].reverse().find((candidate) => candidate.name === toolName);
+        if (!tool) {
+          throw new FridayDomainError("NOT_FOUND", `Autonomous tool "${toolName}" is not registered.`, { httpStatus: 404 });
+        }
+        return tool.execute(args, signal);
       },
       analyzeImages: autonomousAnalyzeImages,
       desktopSessionManager: autonomousDesktopManager,
@@ -6440,6 +6449,7 @@ export async function createFridayHub(
     converterService,
     workflowGenerator,
     workflowRuntime,
+    autonomousEngine,
     selfHealing: selfHealingApiService,
     apiRuntime,
     channelRegistry,

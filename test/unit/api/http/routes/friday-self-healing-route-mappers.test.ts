@@ -146,7 +146,7 @@ describe("friday-self-healing-route-mappers", () => {
       expect(summary.matchedLessonIds).toEqual([]);
     });
 
-    it("extracts matchedLessonIds from lesson only when diagnosis is absent", () => {
+    it("keeps matchedLessonIds diagnosis-only when a manual-resolve lesson exists", () => {
       const details = makeIncidentDetails({
         diagnosis: null,
         lesson: {
@@ -162,7 +162,7 @@ describe("friday-self-healing-route-mappers", () => {
         },
       });
       const summary = toFridayDiagnosisSummary(details);
-      expect(summary.matchedLessonIds).toEqual(["lesson-001"]);
+      expect(summary.matchedLessonIds).toEqual([]);
     });
 
     it("does not reintroduce lesson ids when diagnosis explicitly matched none", () => {

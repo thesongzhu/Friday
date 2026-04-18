@@ -280,7 +280,8 @@ Rules:
 2. Each file object: { "path": "string", "content": "string", "language": "string", "executable": boolean }.
 3. Conform to Friday executor contracts:
    - Node: export an async function execute(input, ctx?) that returns an object matching manifest outputs.
-   - Shell: read JSON from stdin, write JSON to stdout.
+   - Shell: read the full JSON payload from stdin with a robust pattern like INPUT_JSON="$(cat)" and write JSON to stdout.
+   - Shell scripts must NOT use bare "read" or "read -r" as the primary stdin reader because Friday passes stdin without a trailing newline.
 4. No privileged actions without matching manifest permissions.
 5. If AI is needed inside runtime, use the provided runtime context helper via ctx.ai.infer(prompt, optionalModel).
    - Do NOT import any runtime helper packages.

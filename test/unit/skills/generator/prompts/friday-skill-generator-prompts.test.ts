@@ -155,6 +155,8 @@ describe("buildCodePrompt", () => {
     const result = buildCodePrompt(STUB_MANIFEST, "shell");
     expect(result.system).toContain("stdin");
     expect(result.system).toContain("stdout");
+    expect(result.system).toContain('INPUT_JSON="$(cat)"');
+    expect(result.system).toContain('must NOT use bare "read"');
   });
 
   it("user prompt includes runtime kind", () => {

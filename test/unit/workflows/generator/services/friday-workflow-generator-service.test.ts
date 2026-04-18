@@ -289,6 +289,40 @@ function makeTestsResponse() {
   ];
 }
 
+function makeTransformSpecResponseWithTopLevelTransform() {
+  return {
+    schemaVersion: "1.0",
+    workflowId: "send-emails",
+    name: "Send Emails",
+    description: "Sends emails",
+    startStepId: "output_version_two",
+    trigger: { type: "manual" },
+    inputs: [],
+    steps: [{ id: "output_version_two", type: "transform", transform: { message: "version two" } }],
+    edges: [],
+    outputs: [{ key: "message", fromStep: "output_version_two", path: "message" }],
+    errorPolicy: { onFailure: "fail_fast", notifyUser: false },
+    tests: [],
+  };
+}
+
+function makeTransformSpecResponseWithTopLevelExpression() {
+  return {
+    schemaVersion: "1.0",
+    workflowId: "send-emails",
+    name: "Send Emails",
+    description: "Sends emails",
+    startStepId: "output_version_two",
+    trigger: { type: "manual" },
+    inputs: [],
+    steps: [{ id: "output_version_two", type: "transform", expression: '{"message":"version two"}' }],
+    edges: [],
+    outputs: [{ key: "message", fromStep: "output_version_two", path: "message" }],
+    errorPolicy: { onFailure: "fail_fast", notifyUser: false },
+    tests: [],
+  };
+}
+
 // ─── Fetch mock ───
 
 function mockFetchForLlm(responses: unknown[]): void {
@@ -407,6 +441,85 @@ describe("FridayWorkflowGeneratorService", () => {
       expect(Array.isArray(result.draft!.tests)).toBe(true);
       expect(result.draft!.tests.length).toBeGreaterThanOrEqual(1);
       expect(result.draft!.tests[0]!.assertions.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("normalizes top-level transform fields into step.args before compilation", async () => {
+      mockFetchForLlm([
+        makeRequirementsResponse("ready_for_generation"),
+        makeTransformSpecResponseWithTopLevelTransform(),
+        {
+          schemaVersion: "1.0",
+          workflowId: "send-emails",
+          viewport: { x: 0, y: 0, zoom: 1 },
+          panelLayout: { leftOpen: true, rightOpen: false, bottomOpen: false },
+          nodes: [
+            { nodeId: "__trigger__", x: 100, y: 100 },
+            { nodeId: "output_version_two", x: 350, y: 100 },
+          ],
+          edges: [],
+        },
+        [
+          {
+            name: "version two path",
+            inputs: {},
+            assertions: [{ path: "outputs.message", operator: "==", expected: "version two" }],
+          },
+        ],
+      ]);
+
+      const result = await service.startSession({
+        goal: "Update the workflow to return version two",
+        userId: "u-1",
+        channel: "test",
+      });
+
+      expect(result.mode).toBe("preview_ready");
+      expect(result.draft).toBeDefined();
+      expect(result.draft!.spec.steps[0]?.args).toEqual({ mapping: { message: "version two" } });
+      const compiledNode = result.draft!.compiledGraph.graph.nodes.find((node) => node.id === "output_version_two");
+      expect(compiledNode?.type).toBe("data");
+      expect(compiledNode?.config).toEqual({ mapping: { message: "version two" } });
+    });
+
+    it("normalizes top-level expression fields into step.args.transform before compilation", async () => {
+      mockFetchForLlm([
+        makeRequirementsResponse("ready_for_generation"),
+        makeTransformSpecResponseWithTopLevelExpression(),
+        {
+          schemaVersion: "1.0",
+          workflowId: "send-emails",
+          viewport: { x: 0, y: 0, zoom: 1 },
+          panelLayout: { leftOpen: true, rightOpen: false, bottomOpen: false },
+          nodes: [
+            { nodeId: "__trigger__", x: 100, y: 100 },
+            { nodeId: "output_version_two", x: 350, y: 100 },
+          ],
+          edges: [],
+        },
+        [
+          {
+            name: "version two path",
+            inputs: {},
+            assertions: [{ path: "outputs.message", operator: "==", expected: "version two" }],
+          },
+        ],
+      ]);
+
+      const result = await service.startSession({
+        goal: "Update the workflow to return version two",
+        userId: "u-1",
+        channel: "test",
+      });
+
+      expect(result.mode).toBe("preview_ready");
+      expect(result.draft).toBeDefined();
+      expect(result.draft!.spec.steps[0]).toEqual({
+        id: "output_version_two",
+        type: "transform",
+        args: { transform: '{"message":"version two"}' },
+      });
+      const compiledNode = result.draft!.compiledGraph.graph.nodes.find((node) => node.id === "output_version_two");
+      expect(compiledNode?.config).toEqual({ transform: '{"message":"version two"}' });
     });
 
     it("falls back to deterministic visual and tests when auxiliary LLM calls fail", async () => {

@@ -126,6 +126,10 @@ const DANGEROUS_SHELL_PATTERNS: ReadonlyArray<{
   { pattern: /\$\(.*\bcat\b.*\/etc\/(?:passwd|shadow)\b/, description: "Credential file access" },
   { pattern: /\bcurl\b.*\|\s*(?:bash|sh|zsh)/, description: "Pipe remote script to shell" },
   { pattern: /\bwget\b.*\|\s*(?:bash|sh|zsh)/, description: "Pipe remote download to shell" },
+  {
+    pattern: /(^|\n)\s*read(?:\s+-[^\n]*)?\s+[A-Za-z_][A-Za-z0-9_]*\s*(?:\n|$)/,
+    description: "Bare shell read from stdin is not allowed for generated skills because Friday passes JSON without a trailing newline; use INPUT_JSON=\"$(cat)\" instead",
+  },
 ];
 
 // ─── Path traversal check ───

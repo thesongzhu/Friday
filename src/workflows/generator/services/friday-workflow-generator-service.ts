@@ -13,7 +13,11 @@ import {
 } from "#harness";
 import { createFridayWorkflowCompiler } from "../../compiler/friday-workflow-compiler.js";
 import { createFridayWorkflowValidator } from "../../compiler/friday-workflow-validator.js";
-import type { FridayWorkflowSpecTestCase, FridayWorkflowSpecV1 } from "../../model/friday-workflow-spec.types.js";
+import type {
+  FridayWorkflowSpecStep,
+  FridayWorkflowSpecTestCase,
+  FridayWorkflowSpecV1,
+} from "../../model/friday-workflow-spec.types.js";
 import type { FridayWorkflowVisualGraphV1 } from "../../builder/model/friday-workflow-builder-canvas.types.js";
 import { createFridayWorkflowBuilderSpecVersionRepository } from "../../builder/persistence/friday-workflow-builder-spec-version-repository.js";
 
@@ -295,6 +299,56 @@ function normalizeGeneratedTests(
   }
 
   return normalized.length > 0 ? normalized : buildFallbackTests(spec);
+}
+
+function normalizeGeneratedSpecStep(
+  step: FridayWorkflowSpecStep,
+): FridayWorkflowSpecStep {
+  if (step.type !== "transform") {
+    return step;
+  }
+
+  const raw = step as FridayWorkflowSpecStep & Record<string, unknown>;
+  const normalizedArgs =
+    step.args && typeof step.args === "object" && !Array.isArray(step.args)
+      ? { ...step.args }
+      : {};
+
+  if (raw.transform !== undefined) {
+    if (
+      raw.transform != null &&
+      typeof raw.transform === "object" &&
+      !Array.isArray(raw.transform) &&
+      normalizedArgs.mapping === undefined
+    ) {
+      normalizedArgs.mapping = raw.transform;
+    } else if (normalizedArgs.transform === undefined) {
+      normalizedArgs.transform = raw.transform;
+    }
+  }
+  if (raw.mapping !== undefined && normalizedArgs.mapping === undefined) {
+    normalizedArgs.mapping = raw.mapping;
+  }
+  if (raw.expression !== undefined && normalizedArgs.transform === undefined) {
+    normalizedArgs.transform = raw.expression;
+  }
+
+  return {
+    id: step.id,
+    type: step.type,
+    ref: step.ref,
+    condition: step.condition,
+    timeoutSec: step.timeoutSec,
+    retry: step.retry,
+    args: Object.keys(normalizedArgs).length > 0 ? normalizedArgs : step.args,
+  };
+}
+
+function normalizeGeneratedSpec(spec: FridayWorkflowSpecV1): FridayWorkflowSpecV1 {
+  return {
+    ...spec,
+    steps: spec.steps.map((step) => normalizeGeneratedSpecStep(step)),
+  };
 }
 
 // ─── Factory ───
@@ -923,7 +977,7 @@ export function createFridayWorkflowGeneratorService(
       taskProfile: "deterministic",
       tenantContext: resolveTenantContext(session),
     });
-    return result.parsed;
+    return normalizeGeneratedSpec(result.parsed);
   }
 
   async function generateVisual(

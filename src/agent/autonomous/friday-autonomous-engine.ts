@@ -10,6 +10,8 @@
  * @module agent/autonomous
  */
 
+import * as fs from "node:fs";
+
 import { FridayDomainError } from "#errors";
 
 import type {
@@ -85,6 +87,9 @@ Respond with JSON: {"passed": true/false, "actual": "description of what you see
 
 Observations:
 `;
+
+const FILE_STATE_OBSERVATION_PREFIX = "FILE_STATE: ";
+const FILE_OBSERVATION_MAX_BYTES = 16_384;
 
 type FridayAutonomousPlannedStepDraft = {
   instruction?: string;
@@ -240,6 +245,7 @@ export function createFridayAutonomousEngine(
 ): FridayAutonomousEngine {
   const {
     agentRuntime,
+    toolExecutor,
     analyzeImages,
     desktopSessionManager,
     browserManager,
@@ -382,7 +388,7 @@ export function createFridayAutonomousEngine(
       const message = err instanceof Error ? err.message : String(err);
       const expectedMissingSession =
         options?.suppressMissingSessionWarning === true
-        && /session\b[\s\S]{0,24}\bnot found/i.test(message);
+        && /session\b[\s\S]{0,256}\bnot found/i.test(message);
       if (!expectedMissingSession) {
         console.warn("[friday][autonomous-engine] browser url failed:", message);
       }
@@ -426,11 +432,24 @@ export function createFridayAutonomousEngine(
   }
 
   async function collectBrowserCheckpointObservations(
+    step: FridayAutonomousStep,
     stepId: UUID,
     browserSessionId: string,
     signal: AbortSignal,
   ): Promise<FridayAutonomousObservation[]> {
     const checkpoint: FridayAutonomousObservation[] = [];
+    const browserUrl = await captureBrowserUrl(browserSessionId, signal, {
+      suppressMissingSessionWarning: true,
+    });
+    if (!browserUrl) {
+      await ensureBrowserSessionForStep(step, browserSessionId, signal);
+    }
+    const activeUrl = browserUrl ?? await captureBrowserUrl(browserSessionId, signal, {
+      suppressMissingSessionWarning: true,
+    });
+    if (!activeUrl) {
+      return checkpoint;
+    }
 
     const screenshot = await captureBrowserScreenshot(browserSessionId, signal);
     if (screenshot) {
@@ -465,16 +484,13 @@ export function createFridayAutonomousEngine(
       });
     }
 
-    const url = await captureBrowserUrl(browserSessionId, signal);
-    if (url) {
-      checkpoint.push({
-        id: idGenerator(),
-        stepId,
-        source: "tool_result",
-        timestamp: nowIso(),
-        textContent: `PAGE_URL: ${url}`,
-      });
-    }
+    checkpoint.push({
+      id: idGenerator(),
+      stepId,
+      source: "tool_result",
+      timestamp: nowIso(),
+      textContent: `PAGE_URL: ${activeUrl}`,
+    });
 
     return checkpoint;
   }
@@ -488,6 +504,466 @@ export function createFridayAutonomousEngine(
       console.warn("[friday][autonomous-engine] desktop element search failed:", err instanceof Error ? err.message : String(err));
       return null;
     }
+  }
+
+  function extractAbsolutePathsFromText(text: string | undefined): string[] {
+    if (typeof text !== "string" || text.trim().length === 0) {
+      return [];
+    }
+
+    const matches = new Set<string>();
+    const quotedPattern = /["'](\/[^"'\\]*(?:\\.[^"'\\]*)*)["']/g;
+    let quotedMatch: RegExpExecArray | null;
+    while ((quotedMatch = quotedPattern.exec(text)) !== null) {
+      matches.add(quotedMatch[1]);
+    }
+
+    const barePattern = /(^|\s)(\/[^\s"'`<>]+)/g;
+    let bareMatch: RegExpExecArray | null;
+    while ((bareMatch = barePattern.exec(text)) !== null) {
+      matches.add(bareMatch[2].replace(/[),.;:!?]+$/, ""));
+    }
+
+    return [...matches];
+  }
+
+  function collectReferencedFilePaths(step: FridayAutonomousStep): string[] {
+    const strings: string[] = [
+      step.instruction,
+      step.verification?.description ?? "",
+      step.verification?.expected ?? "",
+    ];
+
+    for (const value of Object.values(step.plannedAction?.args ?? {})) {
+      if (typeof value === "string") {
+        strings.push(value);
+      }
+    }
+
+    const paths = new Set<string>();
+    for (const value of strings) {
+      for (const filePath of extractAbsolutePathsFromText(value)) {
+        paths.add(filePath);
+      }
+    }
+    return [...paths];
+  }
+
+  function normalizeAutonomousActionArgs(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Record<string, unknown> {
+    if (toolName === "write" || toolName === "read" || toolName === "edit") {
+      const normalizedArgs: Record<string, unknown> = { ...args };
+      if (typeof normalizedArgs.path !== "string") {
+        if (typeof normalizedArgs.filePath === "string") {
+          normalizedArgs.path = normalizedArgs.filePath;
+        } else if (typeof normalizedArgs.file_path === "string") {
+          normalizedArgs.path = normalizedArgs.file_path;
+        }
+      }
+      if (
+        toolName === "write"
+        && typeof normalizedArgs.content !== "string"
+        && typeof normalizedArgs.text === "string"
+      ) {
+        normalizedArgs.content = normalizedArgs.text;
+      }
+      return normalizedArgs;
+    }
+
+    if (toolName === "browser") {
+      const normalizedArgs: Record<string, unknown> = { ...args };
+      if (typeof normalizedArgs.action !== "string" || normalizedArgs.action.trim().length === 0) {
+        if (typeof normalizedArgs.url === "string" && normalizedArgs.url.trim().length > 0) {
+          normalizedArgs.action = "open";
+        } else if (
+          typeof normalizedArgs.act === "string"
+          || typeof normalizedArgs.selector === "string"
+          || typeof normalizedArgs.elementId === "string"
+        ) {
+          normalizedArgs.action = "act";
+        }
+      }
+      return normalizedArgs;
+    }
+
+    return args;
+  }
+
+  function parseFileStateObservations(
+    observations: readonly FridayAutonomousObservation[],
+  ): Array<{
+    path: string;
+    exists: boolean;
+    isFile: boolean;
+    isDirectory: boolean;
+    size: number;
+    content?: string;
+    error?: string;
+  }> {
+    const states: Array<{
+      path: string;
+      exists: boolean;
+      isFile: boolean;
+      isDirectory: boolean;
+      size: number;
+      content?: string;
+      error?: string;
+    }> = [];
+
+    for (const observation of observations) {
+      const text = observation.textContent;
+      if (typeof text !== "string" || !text.startsWith(FILE_STATE_OBSERVATION_PREFIX)) {
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(text.slice(FILE_STATE_OBSERVATION_PREFIX.length)) as {
+          path?: string;
+          exists?: boolean;
+          isFile?: boolean;
+          isDirectory?: boolean;
+          size?: number;
+          content?: string;
+          error?: string;
+        };
+        if (typeof parsed.path !== "string" || parsed.path.length === 0) {
+          continue;
+        }
+        states.push({
+          path: parsed.path,
+          exists: parsed.exists === true,
+          isFile: parsed.isFile === true,
+          isDirectory: parsed.isDirectory === true,
+          size: typeof parsed.size === "number" ? parsed.size : 0,
+          content: typeof parsed.content === "string" ? parsed.content : undefined,
+          error: typeof parsed.error === "string" ? parsed.error : undefined,
+        });
+      } catch {
+        continue;
+      }
+    }
+
+    return states;
+  }
+
+  function collectInspectionFilePaths(step: FridayAutonomousStep): string[] {
+    const directPaths = collectReferencedFilePaths(step);
+    if (directPaths.length > 0) {
+      return directPaths;
+    }
+
+    if (step.domain !== "file" && step.domain !== "exec" && step.domain !== "composite") {
+      return directPaths;
+    }
+
+    const goal = goals.get(step.goalId);
+    if (!goal) {
+      return directPaths;
+    }
+
+    const inferredPaths = new Set<string>();
+    for (let index = step.index - 1; index >= 0; index -= 1) {
+      const priorStepId = goal.stepIds[index];
+      if (!priorStepId) {
+        continue;
+      }
+
+      const priorStep = steps.get(priorStepId);
+      if (!priorStep) {
+        continue;
+      }
+
+      for (const filePath of collectReferencedFilePaths(priorStep)) {
+        inferredPaths.add(filePath);
+      }
+
+      const normalizedActionArgs = priorStep.plannedAction
+        ? normalizeAutonomousActionArgs(priorStep.plannedAction.toolName, priorStep.plannedAction.args)
+        : null;
+      if (normalizedActionArgs && typeof normalizedActionArgs.path === "string") {
+        inferredPaths.add(normalizedActionArgs.path);
+      }
+
+      for (const state of parseFileStateObservations(priorStep.observations)) {
+        inferredPaths.add(state.path);
+      }
+
+      if (inferredPaths.size > 0) {
+        break;
+      }
+    }
+
+    return [...inferredPaths];
+  }
+
+  function shouldInspectFileState(step: FridayAutonomousStep): boolean {
+    if (step.domain === "file" || step.domain === "exec") {
+      return true;
+    }
+    if (step.domain !== "composite") {
+      return false;
+    }
+    if (step.plannedAction?.toolName === "exec" || step.plannedAction?.toolName === "file") {
+      return true;
+    }
+    return collectInspectionFilePaths(step).length > 0;
+  }
+
+  function captureFileStateObservations(step: FridayAutonomousStep): FridayAutonomousObservation[] {
+    const observations: FridayAutonomousObservation[] = [];
+
+    for (const filePath of collectInspectionFilePaths(step)) {
+      let exists = false;
+      let isFile = false;
+      let isDirectory = false;
+      let size = 0;
+      let content: string | undefined;
+      let errorMessage: string | undefined;
+
+      try {
+        const stat = fs.statSync(filePath);
+        exists = true;
+        isFile = stat.isFile();
+        isDirectory = stat.isDirectory();
+        size = stat.size;
+        if (isFile && stat.size <= FILE_OBSERVATION_MAX_BYTES) {
+          content = fs.readFileSync(filePath, "utf8");
+        }
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
+          errorMessage = err instanceof Error ? err.message : String(err);
+        }
+      }
+
+      observations.push({
+        id: idGenerator(),
+        stepId: step.id,
+        source: errorMessage ? "error" : "tool_result",
+        timestamp: nowIso(),
+        textContent: `${FILE_STATE_OBSERVATION_PREFIX}${JSON.stringify({
+          path: filePath,
+          exists,
+          isFile,
+          isDirectory,
+          size,
+          content,
+          error: errorMessage,
+        })}`,
+      });
+    }
+
+    return observations;
+  }
+
+  function extractExpectedFileContent(step: FridayAutonomousStep): string | undefined {
+    const texts = [
+      step.verification?.expected,
+      step.verification?.description,
+      step.instruction,
+    ];
+    const patterns = [
+      /exact text ["']([^"']+)["']/i,
+      /contains(?: the)?(?: exact)? text ["']([^"']+)["']/i,
+      /content(?:s)? (?:is|are) ["']([^"']+)["']/i,
+    ];
+    for (const text of texts) {
+      if (typeof text !== "string") {
+        continue;
+      }
+      for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match?.[1]) {
+          return match[1];
+        }
+      }
+    }
+    return undefined;
+  }
+
+  function tryDeterministicFileVerification(
+    step: FridayAutonomousStep,
+    observations: readonly FridayAutonomousObservation[],
+  ): { passed: boolean; actual: string } | null {
+    const states = parseFileStateObservations(observations);
+    if (states.length === 0) {
+      return null;
+    }
+
+    const referencedPaths = collectInspectionFilePaths(step);
+    const relevantStates = referencedPaths.length > 0
+      ? states.filter((state) => referencedPaths.includes(state.path))
+      : states;
+    if (relevantStates.length === 0) {
+      return null;
+    }
+
+    const expectedContent = extractExpectedFileContent(step);
+    if (typeof expectedContent === "string") {
+      const matchingState = relevantStates.find((state) => state.exists && state.isFile && state.content === expectedContent);
+      if (matchingState) {
+        return {
+          passed: true,
+          actual: `Verified file ${matchingState.path} contains expected text.`,
+        };
+      }
+      return {
+        passed: false,
+        actual: `Expected file content ${JSON.stringify(expectedContent)} not observed in ${JSON.stringify(relevantStates)}`,
+      };
+    }
+
+    const existingState = relevantStates.find((state) => state.exists);
+    if (existingState) {
+      return {
+        passed: true,
+        actual: `Verified file path ${existingState.path} exists.`,
+      };
+    }
+
+    return {
+      passed: false,
+      actual: `Expected referenced file to exist, but observed ${JSON.stringify(relevantStates)}`,
+    };
+  }
+
+  function buildDeterministicFileDecision(
+    step: FridayAutonomousStep,
+    observations: readonly FridayAutonomousObservation[],
+  ): FridayAutonomousDecision | null {
+    if (observations.length === 0 || (step.domain !== "file" && step.domain !== "composite")) {
+      return null;
+    }
+
+    const deterministicVerification = tryDeterministicFileVerification(step, observations);
+    if (!deterministicVerification) {
+      return null;
+    }
+
+    if (deterministicVerification.passed) {
+      return {
+        kind: "verify",
+        checks: [
+          {
+            type: "file_exists",
+            description: step.verification?.description ?? deterministicVerification.actual,
+            expected: step.verification?.expected,
+            passed: true,
+            actual: deterministicVerification.actual,
+          },
+        ],
+      };
+    }
+
+    if (step.plannedAction?.toolName === "write") {
+      const normalizedArgs = normalizeAutonomousActionArgs("write", step.plannedAction.args);
+      if (typeof normalizedArgs.path === "string" && typeof normalizedArgs.content === "string") {
+        return {
+          kind: "act",
+          action: {
+            toolName: "write",
+            args: normalizedArgs,
+            rationale:
+              step.plannedAction.rationale
+              ?? "Retry the planned file write because the observed file state does not match the expected verification state.",
+          },
+        };
+      }
+    }
+
+    const referencedPaths = collectInspectionFilePaths(step);
+    const expectedContent = extractExpectedFileContent(step);
+    const filePath = referencedPaths.length === 1 ? referencedPaths[0] : undefined;
+    const instructionText = [
+      step.instruction,
+      step.verification?.description ?? "",
+      step.verification?.expected ?? "",
+    ].join("\n");
+    if (
+      filePath
+      && typeof expectedContent === "string"
+      && /\b(create|write|save)\b/i.test(instructionText)
+    ) {
+      return {
+        kind: "act",
+        action: {
+          toolName: "write",
+          args: {
+            path: filePath,
+            content: expectedContent,
+          },
+          rationale: "Retry the deterministic file write because the expected file state is still missing.",
+        },
+      };
+    }
+
+    if (step.verification) {
+      return {
+        kind: "verify",
+        checks: [
+          {
+            type: "file_exists",
+            description: step.verification.description,
+            expected: step.verification.expected,
+            passed: false,
+            actual: deterministicVerification.actual,
+          },
+        ],
+      };
+    }
+
+    return null;
+  }
+
+  function buildDeterministicFileBootstrapDecision(
+    step: FridayAutonomousStep,
+    observations: readonly FridayAutonomousObservation[],
+  ): FridayAutonomousDecision | null {
+    if (observations.length > 0 || (step.domain !== "file" && step.domain !== "composite")) {
+      return null;
+    }
+
+    if (step.plannedAction?.toolName === "write") {
+      const normalizedArgs = normalizeAutonomousActionArgs("write", step.plannedAction.args);
+      if (typeof normalizedArgs.path === "string" && typeof normalizedArgs.content === "string") {
+        return {
+          kind: "act",
+          action: {
+            toolName: "write",
+            args: normalizedArgs,
+            rationale: step.plannedAction.rationale ?? "Replay the previously planned file write action.",
+          },
+        };
+      }
+    }
+
+    const referencedPaths = collectInspectionFilePaths(step);
+    const expectedContent = extractExpectedFileContent(step);
+    const filePath = referencedPaths.length === 1 ? referencedPaths[0] : undefined;
+    if (!filePath || typeof expectedContent !== "string") {
+      return null;
+    }
+
+    const instructionText = [
+      step.instruction,
+      step.verification?.description ?? "",
+      step.verification?.expected ?? "",
+    ].join("\n");
+    if (!/\b(create|write|save)\b/i.test(instructionText)) {
+      return null;
+    }
+
+    return {
+      kind: "act",
+      action: {
+        toolName: "write",
+        args: {
+          path: filePath,
+          content: expectedContent,
+        },
+        rationale: "Bootstrap the deterministic file write action before requesting another model decision.",
+      },
+    };
   }
 
   /**
@@ -559,7 +1035,9 @@ export function createFridayAutonomousEngine(
             textContent: `PAGE_TITLE: ${title}`,
           });
         }
-        const url = await captureBrowserUrl(browserSessionId, signal);
+        const url = await captureBrowserUrl(browserSessionId, signal, {
+          suppressMissingSessionWarning: true,
+        });
         if (url) {
           obs.push({
             id: idGenerator(),
@@ -570,6 +1048,10 @@ export function createFridayAutonomousEngine(
           });
         }
       }
+    }
+
+    if (shouldInspectFileState(step)) {
+      obs.push(...captureFileStateObservations(step));
     }
 
     return obs;
@@ -594,11 +1076,31 @@ export function createFridayAutonomousEngine(
     usageInput: number;
     usageOutput: number;
   }> {
+    const deterministicFileDecision = buildDeterministicFileDecision(step, observations);
+    if (deterministicFileDecision) {
+      return {
+        reasoning: "Deterministic file decision",
+        decision: deterministicFileDecision,
+        usageInput: 0,
+        usageOutput: 0,
+      };
+    }
+
     const bootstrapDecision = buildDeterministicBrowserBootstrapDecision(step, observations);
     if (bootstrapDecision) {
       return {
         reasoning: "Deterministic browser bootstrap",
         decision: bootstrapDecision,
+        usageInput: 0,
+        usageOutput: 0,
+      };
+    }
+
+    const fileBootstrapDecision = buildDeterministicFileBootstrapDecision(step, observations);
+    if (fileBootstrapDecision) {
+      return {
+        reasoning: "Deterministic file bootstrap",
+        decision: fileBootstrapDecision,
         usageInput: 0,
         usageOutput: 0,
       };
@@ -757,29 +1259,34 @@ export function createFridayAutonomousEngine(
   ): Promise<FridayAutonomousActionResult> {
     const { action } = decision;
     const startedAt = Date.now();
+    const normalizedArgs = normalizeAutonomousActionArgs(action.toolName, action.args);
     const actionArgs = action.toolName === "browser"
       ? {
-          ...action.args,
+          ...normalizedArgs,
           sessionId: browserSessionId,
         }
-      : action.args;
+      : normalizedArgs;
 
     try {
-      // Use agent runtime to execute the tool call
-      const result = await agentRuntime.executeRun({
-        task: `Execute the following tool call and return the result:\nTool: ${action.toolName}\nArguments: ${JSON.stringify(actionArgs)}\n\nRationale: ${action.rationale ?? "N/A"}`,
-        sessionKey: buildAutonomousSessionKey("action", idGenerator()),
-        providerId,
-        model,
-        timezone,
-        principalId,
-        tenantContext,
-        timeoutMs: 60_000,
-        signal,
-        executionContext: {
-          surface: "autonomous_internal_action",
-        },
-      });
+      const directToolResult = toolExecutor
+        ? await toolExecutor(action.toolName, actionArgs, signal)
+        : null;
+      const result = directToolResult
+        ? null
+        : await agentRuntime.executeRun({
+            task: `Execute the following tool call and return the result:\nTool: ${action.toolName}\nArguments: ${JSON.stringify(actionArgs)}\n\nRationale: ${action.rationale ?? "N/A"}`,
+            sessionKey: buildAutonomousSessionKey("action", idGenerator()),
+            providerId,
+            model,
+            timezone,
+            principalId,
+            tenantContext,
+            timeoutMs: 60_000,
+            signal,
+            executionContext: {
+              surface: "autonomous_internal_action",
+            },
+          });
 
       // Capture post-action screenshot for verification
       let screenshotAfter: string | undefined;
@@ -788,15 +1295,20 @@ export function createFridayAutonomousEngine(
       if (domain === "desktop" || domain === "composite") {
         screenshotAfter = (await captureDesktopScreenshot(signal)) ?? undefined;
       } else if (domain === "browser") {
-        screenshotAfter = (await captureBrowserScreenshot(browserSessionId, signal)) ?? undefined;
-        browserTitle = (await captureBrowserTitle(browserSessionId, signal)) ?? undefined;
-        browserUrl = (await captureBrowserUrl(browserSessionId, signal)) ?? undefined;
+        const activeUrl = await captureBrowserUrl(browserSessionId, signal, {
+          suppressMissingSessionWarning: true,
+        });
+        if (activeUrl) {
+          screenshotAfter = (await captureBrowserScreenshot(browserSessionId, signal)) ?? undefined;
+          browserTitle = (await captureBrowserTitle(browserSessionId, signal)) ?? undefined;
+          browserUrl = activeUrl;
+        }
       }
 
       return {
-        success: result.status === "completed",
+        success: directToolResult ? directToolResult.isError !== true : result!.status === "completed",
         toolName: action.toolName,
-        output: result.response,
+        output: directToolResult ? directToolResult.content : result!.response,
         screenshotAfter,
         browserTitle,
         browserUrl,
@@ -827,6 +1339,11 @@ export function createFridayAutonomousEngine(
     if (!step.verification) {
       // No verification defined — assume success
       return { passed: true, actual: "No verification criteria defined" };
+    }
+
+    const deterministicFile = tryDeterministicFileVerification(step, observations);
+    if (deterministicFile) {
+      return deterministicFile;
     }
 
     const deterministic = tryDeterministicBrowserVerification(step, observations);
@@ -1235,7 +1752,7 @@ export function createFridayAutonomousEngine(
               });
               actionResult = await executeAction(decision, currentStep.domain, browserSessionId, timezone, principalId, tenantContext, providerId, model, signal);
               if (actionResult.success && currentStep.domain === "browser") {
-                const checkpointObservations = await collectBrowserCheckpointObservations(stepId, browserSessionId, signal);
+                const checkpointObservations = await collectBrowserCheckpointObservations(currentStep, stepId, browserSessionId, signal);
                 if (checkpointObservations.length > 0) {
                   currentStep = updateStep(stepId, {
                     observations: appendObservations(currentStep.observations, checkpointObservations),

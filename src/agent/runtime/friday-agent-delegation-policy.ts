@@ -6,6 +6,8 @@ const DIRECT_CAPABILITY_HINTS =
   /\b(what can you do|which capabilities|capabilities|what's enabled|is mcp enabled|is discord enabled|read.?only)\b/i;
 const DIRECT_AUTONOMOUS_HINTS =
   /\b(autonomous|execute_goal|resume_goal|get_goal|list_goals|cancel_goal)\b/i;
+const DIRECT_SUBAGENT_TOOL_HINTS =
+  /\b(spawn_subagent|get_subagent|list_subagents|wait=true|wait=false)\b/i;
 const ACTION_HINTS =
   /\b(open|run|check|inspect|review|analyze|diagnose|debug|fix|search|look up|browse|navigate|read|write|edit|update|create|generate|deploy|export|build|test|lint|typecheck|configure|switch|set|use|send|install|triage|summarize|investigate)\b/i;
 const SYNTHESIS_HINTS =
@@ -37,6 +39,7 @@ export function shouldDelegateFridayAgentTask(
     DIRECT_STATUS_HINTS.test(task)
     || DIRECT_CAPABILITY_HINTS.test(task)
     || DIRECT_AUTONOMOUS_HINTS.test(task)
+    || DIRECT_SUBAGENT_TOOL_HINTS.test(task)
   ) {
     return false;
   }

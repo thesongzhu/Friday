@@ -54,4 +54,12 @@ describe("extractFridaySkillGenerationContract", () => {
 
     expect(contract.requiredOutputMarkers).toEqual(["MARKER_A", "MARKER_B"]);
   });
+
+  it("extracts exact markers from include-the-exact-marker phrasing", () => {
+    const contract = extractFridaySkillGenerationContract({
+      goal: 'When the skill runs, it must include the exact marker "LIVE_MARKER_V2" in the result payload.',
+    });
+
+    expect(contract.requiredOutputMarkers).toEqual(["LIVE_MARKER_V2"]);
+  });
 });

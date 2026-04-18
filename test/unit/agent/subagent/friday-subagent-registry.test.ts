@@ -405,6 +405,71 @@ describe("FridaySubagentRegistry", () => {
       }));
     });
 
+    it("loads inherited session messages and passes them to child executeRun in fork mode", async () => {
+      const executeRun = vi.fn().mockResolvedValue(makeResult());
+      const createChildRuntime = vi.fn().mockReturnValue({ executeRun });
+      const sessionService: FridaySessionService = {
+        forkSession: vi.fn().mockResolvedValue({
+          forkSession: { key: "agent:run:forked-child-ctx" },
+          inheritedMessageCount: 2,
+          forkedFromMessageId: "msg-parent-2",
+        }),
+        getMessages: vi.fn().mockResolvedValue([
+          {
+            id: "msg-1",
+            sessionId: "session-1",
+            sessionKey: "agent:run:forked-child-ctx",
+            sequence: 1,
+            role: "user",
+            content: "SECRET_CONTEXT_123",
+            contentText: "SECRET_CONTEXT_123",
+            tokenCount: 3,
+            metadata: {},
+            memoryExtractStatus: "pending",
+            occurredAt: NOW,
+            createdAt: NOW,
+            updatedAt: NOW,
+            inherited: true,
+            inheritedFromSessionKey: "agent:run:parent-run-1",
+            inheritedFromMessageId: "msg-parent-1",
+          },
+          {
+            id: "msg-2",
+            sessionId: "session-1",
+            sessionKey: "agent:run:forked-child-ctx",
+            sequence: 2,
+            role: "assistant",
+            content: "ACKNOWLEDGED_CONTEXT",
+            contentText: "ACKNOWLEDGED_CONTEXT",
+            tokenCount: 2,
+            metadata: {},
+            memoryExtractStatus: "pending",
+            occurredAt: NOW,
+            createdAt: NOW,
+            updatedAt: NOW,
+            inherited: true,
+            inheritedFromSessionKey: "agent:run:parent-run-1",
+            inheritedFromMessageId: "msg-parent-2",
+          },
+        ]),
+      } as unknown as FridaySessionService;
+
+      const registry = createRegistry({ createChildRuntime, sessionService });
+      await registry.spawn(spawnInput({
+        mode: "fork",
+        inheritMessageCount: 2,
+      }));
+
+      expect(sessionService.getMessages).toHaveBeenCalledWith("agent:run:forked-child-ctx", 48);
+      expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+        sessionKey: "agent:run:forked-child-ctx",
+        historyMessages: [
+          { role: "user", content: "SECRET_CONTEXT_123" },
+          { role: "assistant", content: "ACKNOWLEDGED_CONTEXT" },
+        ],
+      }));
+    });
+
     it("rejects fork mode when session forking is unavailable", async () => {
       const registry = createRegistry();
 
