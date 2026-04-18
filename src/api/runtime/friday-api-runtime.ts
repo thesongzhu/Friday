@@ -116,6 +116,7 @@ import { createFridayHealthRoutes } from "../http/routes/friday-health-routes.js
 import { createFridayApiTokenRepository } from "../persistence/friday-api-token-repository.js";
 import { createFridayProviderProfileRepository } from "#providers";
 import { createFridaySkillRepository } from "#skills";
+import { createFridayPluginRepository } from "#plugins";
 import { createFridayWorkflowRepository } from "#workflows";
 import { createFridayAutonomySubjectInventoryService } from "../../autonomy/services/friday-autonomy-subject-inventory-service.js";
 import { createFridayAutonomyImpactCensusService } from "../../autonomy/services/friday-autonomy-impact-census-service.js";
@@ -123,6 +124,8 @@ import { createFridayAutonomyUpgradePlannerService } from "../../autonomy/servic
 import { createFridayAutonomyUpgradeStatusService } from "../../autonomy/services/friday-autonomy-upgrade-status-service.js";
 import { createFridayWorkflowUpgradeLifecycleService } from "../../autonomy/services/friday-workflow-upgrade-lifecycle-service.js";
 import { createFridaySkillUpgradeLifecycleService } from "../../autonomy/services/friday-skill-upgrade-lifecycle-service.js";
+import { createFridayProviderProfileUpgradeLifecycleService } from "../../autonomy/services/friday-provider-profile-upgrade-lifecycle-service.js";
+import { createFridayPluginUpgradeLifecycleService } from "../../autonomy/services/friday-plugin-upgrade-lifecycle-service.js";
 import type { FridayAuthPrincipal } from "../model/friday-api-common.types.js";
 import type {
   FridayGetRunEvidenceQuery,
@@ -582,6 +585,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const skillRepo = createFridaySkillRepository();
   const workflowRepo = createFridayWorkflowRepository({ db: deps.db });
   const providerProfileRepo = createFridayProviderProfileRepository();
+  const pluginRepo = createFridayPluginRepository();
   const autonomyInventory = createFridayAutonomySubjectInventoryService({
     sqlite: deps.db,
     skillRepo,
@@ -612,6 +616,16 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const skillUpgradeLifecycle = createFridaySkillUpgradeLifecycleService({
     db: deps.db,
     skillRepo,
+    nowIso: deps.nowIso,
+  });
+  const providerProfileUpgradeLifecycle = createFridayProviderProfileUpgradeLifecycleService({
+    db: deps.db,
+    providerProfileRepo,
+    nowIso: deps.nowIso,
+  });
+  const pluginUpgradeLifecycle = createFridayPluginUpgradeLifecycleService({
+    db: deps.db,
+    pluginRepo,
     nowIso: deps.nowIso,
   });
 
@@ -815,6 +829,66 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           return detail;
         },
         getStatus: (skillId) => autonomyUpgradeStatus.get("skill", skillId),
+      }
+      : undefined,
+    pluginActions: deps.pluginService
+      ? {
+        registerShadow: (input) =>
+          pluginUpgradeLifecycle.registerShadowVersion({
+            pluginId: input.pluginId,
+            shadowVersionId: input.shadowVersionId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        recordCanary: (input) =>
+          pluginUpgradeLifecycle.recordCanaryResult({
+            pluginId: input.pluginId,
+            success: input.success,
+            evaluatedAt: input.evaluatedAt,
+          }),
+        promote: (input) =>
+          pluginUpgradeLifecycle.promote({
+            pluginId: input.pluginId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        rollback: (input) =>
+          pluginUpgradeLifecycle.rollback({
+            pluginId: input.pluginId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        getStatus: (pluginId) => autonomyUpgradeStatus.get("plugin", pluginId),
+      }
+      : undefined,
+    providerProfileActions: deps.providerService
+      ? {
+        registerShadow: (input) =>
+          providerProfileUpgradeLifecycle.registerShadowVersion({
+            providerId: input.providerId,
+            shadowVersionId: input.shadowVersionId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        recordCanary: (input) =>
+          providerProfileUpgradeLifecycle.recordCanaryResult({
+            providerId: input.providerId,
+            success: input.success,
+            evaluatedAt: input.evaluatedAt,
+          }),
+        promote: (input) =>
+          providerProfileUpgradeLifecycle.promote({
+            providerId: input.providerId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        rollback: (input) =>
+          providerProfileUpgradeLifecycle.rollback({
+            providerId: input.providerId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        getStatus: (providerId) => autonomyUpgradeStatus.get("provider_profile", providerId),
       }
       : undefined,
   })) {
