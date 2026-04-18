@@ -1101,6 +1101,66 @@ describe("FridayAutonomousEngine", () => {
       }
     });
 
+    it("uses deterministic file-state verification for file writes phrased with exact content", async () => {
+      const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-autonomous-file-content-"));
+      const outputPath = path.join(workspaceDir, "proof.txt");
+      const expected = "deterministic autonomous content proof";
+      const runtime = {
+        executeRun: vi.fn().mockResolvedValue({
+          runId: "run-plan",
+          status: "completed",
+          response: JSON.stringify([
+            {
+              instruction: `Create the file '${outputPath}' with the exact content '${expected}'`,
+              domain: "file",
+              verification: `Verify the file '${outputPath}' exists and contains the exact content '${expected}'`,
+            },
+          ]),
+          usageInput: 20,
+          usageOutput: 10,
+        }),
+      };
+      const toolExecutor = vi.fn().mockImplementation(async (toolName: string, args: Record<string, unknown>) => {
+        if (toolName !== "write") {
+          return { content: `unexpected tool ${toolName}`, isError: true };
+        }
+        const filePath = String(args.path);
+        const content = String(args.content);
+        fs.writeFileSync(filePath, content, "utf8");
+        return { content: "write complete" };
+      });
+
+      try {
+        engine = createFridayAutonomousEngine({
+          ...deps,
+          agentRuntime: runtime,
+          toolExecutor,
+          analyzeImages: vi.fn(),
+          config: { iterationDelayMs: 0 },
+        });
+
+        const result = await engine.executeGoal({
+          description: "Create a proof file with exact content wording and verify it",
+          signal: signal(),
+        });
+
+        expect(result.status).toBe("completed");
+        expect(runtime.executeRun).toHaveBeenCalledTimes(1);
+        expect(toolExecutor).toHaveBeenCalledTimes(1);
+        expect(toolExecutor).toHaveBeenCalledWith(
+          "write",
+          {
+            path: outputPath,
+            content: expected,
+          },
+          expect.any(AbortSignal),
+        );
+        expect(fs.readFileSync(outputPath, "utf8")).toBe(expected);
+      } finally {
+        fs.rmSync(workspaceDir, { recursive: true, force: true });
+      }
+    });
+
     it("should handle aborted goals", async () => {
       const controller = new AbortController();
       controller.abort(new Error("User cancelled"));
