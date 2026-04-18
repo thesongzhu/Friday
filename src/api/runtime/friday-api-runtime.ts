@@ -39,6 +39,7 @@ import { createFridayWorkflowConflictService } from "../conflicts/friday-workflo
 import { createFridayHttpRouteRegistry } from "../http/friday-http-route-registry.js";
 import { createFridayAuthRoutes } from "../http/routes/friday-auth-routes.js";
 import { createFridayRuntimeAdminRoutes } from "../http/routes/friday-runtime-admin-routes.js";
+import { createFridayAutonomyRoutes } from "../http/routes/friday-autonomy-routes.js";
 import { createFridaySecretRoutes } from "../http/routes/friday-secret-routes.js";
 import { createFridayWorkflowRoutes } from "../http/routes/friday-workflow-routes.js";
 import {
@@ -113,6 +114,14 @@ import type { CreateFridayEngineTurnPreparerDeps } from "#engine";
 import type { CreateFridayEngineRunExecutorDeps } from "#engine";
 import { createFridayHealthRoutes } from "../http/routes/friday-health-routes.js";
 import { createFridayApiTokenRepository } from "../persistence/friday-api-token-repository.js";
+import { createFridayProviderProfileRepository } from "#providers";
+import { createFridaySkillRepository } from "#skills";
+import { createFridayWorkflowRepository } from "#workflows";
+import { createFridayAutonomySubjectInventoryService } from "../../autonomy/services/friday-autonomy-subject-inventory-service.js";
+import { createFridayAutonomyImpactCensusService } from "../../autonomy/services/friday-autonomy-impact-census-service.js";
+import { createFridayAutonomyUpgradePlannerService } from "../../autonomy/services/friday-autonomy-upgrade-planner-service.js";
+import { createFridayAutonomyUpgradeStatusService } from "../../autonomy/services/friday-autonomy-upgrade-status-service.js";
+import { createFridayWorkflowUpgradeLifecycleService } from "../../autonomy/services/friday-workflow-upgrade-lifecycle-service.js";
 import type { FridayAuthPrincipal } from "../model/friday-api-common.types.js";
 import type {
   FridayGetRunEvidenceQuery,
@@ -569,6 +578,36 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     idGenerator: deps.idGenerator,
     nowIso: deps.nowIso,
   });
+  const skillRepo = createFridaySkillRepository();
+  const workflowRepo = createFridayWorkflowRepository({ db: deps.db });
+  const providerProfileRepo = createFridayProviderProfileRepository();
+  const autonomyInventory = createFridayAutonomySubjectInventoryService({
+    sqlite: deps.db,
+    skillRepo,
+    workflowRepo,
+    providerProfileRepo,
+    pluginRegistry: {
+      list: () => deps.pluginService?.listPlugins() ?? [],
+    },
+  });
+  const autonomyCensus = createFridayAutonomyImpactCensusService({
+    inventory: autonomyInventory,
+    hubVersion: serverVersion,
+    supportedApiVersions: ["v1", "1.0"],
+  });
+  const autonomyPlanner = createFridayAutonomyUpgradePlannerService({
+    census: autonomyCensus,
+  });
+  const autonomyUpgradeStatus = createFridayAutonomyUpgradeStatusService({
+    census: autonomyCensus,
+    planner: autonomyPlanner,
+  });
+  const workflowUpgradeLifecycle = createFridayWorkflowUpgradeLifecycleService({
+    db: deps.db,
+    workflowRepo,
+    workflowCrud: workflowRuntime.crud,
+    nowIso: deps.nowIso,
+  });
 
   // Route registry
   const routes = createFridayHttpRouteRegistry();
@@ -672,6 +711,44 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         list: (query) => deps.observability!.audit.search(query),
       }
       : undefined,
+  })) {
+    routes.register(route);
+  }
+
+  for (const route of createFridayAutonomyRoutes({
+    listUpgradeStatus: (query) => ({
+      items: autonomyUpgradeStatus.list(query),
+    }),
+    workflowActions: {
+      registerShadow: (input) =>
+        workflowUpgradeLifecycle.registerShadowVersion({
+          workflowId: input.workflowId,
+          workflowVersionId: input.workflowVersionId,
+          runtimeVersion: input.runtimeVersion,
+          providerModel: input.providerModel,
+        }),
+      recordCanary: (input) =>
+        workflowUpgradeLifecycle.recordCanaryResult({
+          workflowId: input.workflowId,
+          success: input.success,
+          evaluatedAt: input.evaluatedAt,
+        }),
+      promote: (input) =>
+        workflowUpgradeLifecycle.promote({
+          workflowId: input.workflowId,
+          versionNumber: input.versionNumber,
+          runtimeVersion: input.runtimeVersion,
+          providerModel: input.providerModel,
+        }),
+      rollback: (input) =>
+        workflowUpgradeLifecycle.rollback({
+          workflowId: input.workflowId,
+          targetVersionNumber: input.targetVersionNumber,
+          runtimeVersion: input.runtimeVersion,
+          providerModel: input.providerModel,
+        }),
+      getStatus: (workflowId) => autonomyUpgradeStatus.get("workflow", workflowId),
+    },
   })) {
     routes.register(route);
   }
