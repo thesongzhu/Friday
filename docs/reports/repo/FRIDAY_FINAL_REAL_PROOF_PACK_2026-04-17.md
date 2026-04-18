@@ -135,8 +135,11 @@
   - nonrecoverable execution interruption reappeared as `interrupted_nonrecoverable`
   - real `resume_goal` HTTP runs completed the exact same goal / step when resumable
   - final SQLite state preserved same-step continuity and avoided duplicate step rows
+  - a dedicated planning-interruption `exact content` lane now separately proves that when the live planner preserves a supported `content` phrase family, the resumed run finishes with `verificationMethod=deterministic_file`, a persisted `verificationPatternFamily` in the `content*` family, and a final file artifact that exactly matches the expected literal
+  - this lane is `re-plan` / plan rebuild proof, not replay of a previously executed file write
 - Conclusion:
   - autonomous persistence is now live-proven for restart -> resume_goal -> same-step completion, plus honest nonrecoverable stop behavior
+  - the `exact content` deterministic file-verification sub-claim is only considered verified because the live restart lane, SQLite/helper readback, and final artifact now all agree on the deterministic file branch and a `content` phrase family
 
 ### Workflow self-upgrade
 

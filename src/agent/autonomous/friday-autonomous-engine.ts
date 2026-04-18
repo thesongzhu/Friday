@@ -31,6 +31,8 @@ import type {
   FridayAutonomousStep,
   FridayAutonomousStepStatus,
   FridayAutonomousVerificationCheck,
+  FridayAutonomousVerificationMethod,
+  FridayAutonomousVerificationPatternFamily,
   ISODateTime,
   UUID,
 } from "./friday-autonomous.types.js";
@@ -50,8 +52,7 @@ Return a JSON array of steps. Example:
   { "instruction": "Open Chrome browser", "domain": "desktop", "verification": "Chrome window is visible" },
   { "instruction": "Navigate to discord.com/developers", "domain": "browser", "verification": "URL contains discord.com/developers" }
 ]
-
-Goal: `;
+`;
 
 const DECISION_PROMPT_PREFIX = `You are an autonomous agent controlling a computer. Based on your observations, decide what to do next.
 
@@ -91,6 +92,18 @@ Observations:
 const FILE_STATE_OBSERVATION_PREFIX = "FILE_STATE: ";
 const FILE_OBSERVATION_MAX_BYTES = 16_384;
 
+type FridayDeterministicFileMatch = {
+  readonly expectedContent: string;
+  readonly patternFamily: FridayAutonomousVerificationPatternFamily;
+};
+
+type FridayAutonomousStepVerificationResult = {
+  readonly passed: boolean;
+  readonly actual: string;
+  readonly method?: FridayAutonomousVerificationMethod;
+  readonly patternFamily?: FridayAutonomousVerificationPatternFamily;
+};
+
 type FridayAutonomousPlannedStepDraft = {
   instruction?: string;
   domain?: string;
@@ -105,6 +118,29 @@ function buildAutonomousBrowserSessionId(goalId: UUID): string {
   return `autonomous-goal:${goalId}`;
 }
 
+const FILE_CONTENT_PATTERN_PRECEDENCE: ReadonlyArray<{
+  readonly family: FridayAutonomousVerificationPatternFamily;
+  readonly prefix: RegExp;
+}> = [
+  { family: "contains_text", prefix: /\bcontains(?: the)?(?: exact)? text\b/i },
+  { family: "with_content", prefix: /\bwith(?: the)?(?: exact)? content\b/i },
+  { family: "contains_content", prefix: /\bcontains(?: the)?(?: exact)? content\b/i },
+  { family: "exact_text", prefix: /\bexact text\b/i },
+  { family: "exact_content", prefix: /\bexact content\b/i },
+  { family: "content_is", prefix: /\bcontent is\b/i },
+  { family: "contents_are", prefix: /\bcontents are\b/i },
+  { family: "content_colon", prefix: /\bcontent\s*:/i },
+  { family: "contents_colon", prefix: /\bcontents\s*:/i },
+];
+
+const QUOTED_LITERAL_WRAPPERS = [
+  { open: "\"", close: "\"" },
+  { open: "'", close: "'" },
+  { open: "`", close: "`" },
+  { open: "“", close: "”" },
+  { open: "‘", close: "’" },
+] as const;
+
 function appendObservations(
   existing: readonly FridayAutonomousObservation[],
   incoming: readonly FridayAutonomousObservation[],
@@ -113,6 +149,18 @@ function appendObservations(
     return [...existing];
   }
   return [...existing, ...incoming];
+}
+
+function goalRequiresContentWordingPreservation(goalDescription: string): boolean {
+  return /\b(?:exact\s+content|content(?:s)?(?:\s*:|\s+(?:is|are))?)\b/i.test(goalDescription)
+    && /\b(?:file|write|save|create|contains?)\b/i.test(goalDescription);
+}
+
+function buildPlanningPrompt(goalDescription: string): string {
+  const contentWordingGuard = goalRequiresContentWordingPreservation(goalDescription)
+    ? "\nIf the goal explicitly uses file-content wording such as \"exact content\", \"content:\", or \"contents are\", preserve that content wording in the planned instruction and verification. Do not rewrite it to \"text\" phrasing.\n"
+    : "\n";
+  return `${PLANNING_PROMPT_PREFIX}${contentWordingGuard}\nGoal: ${goalDescription}`;
 }
 
 function extractFirstUrl(text: string | undefined): string | undefined {
@@ -757,28 +805,56 @@ export function createFridayAutonomousEngine(
   }
 
   function extractExpectedFileContent(step: FridayAutonomousStep): string | undefined {
-    const texts = [
-      step.verification?.expected,
-      step.verification?.description,
-      step.instruction,
-    ];
-    const patterns = [
-      /exact text ["']([^"']+)["']/i,
-      /contains(?: the)?(?: exact)? text ["']([^"']+)["']/i,
-      /(?:with|contains)(?: the)?(?: exact)? content ["']([^"']+)["']/i,
-      /exact content ["']([^"']+)["']/i,
-      /content(?:s)? (?:is|are) ["']([^"']+)["']/i,
-    ];
+    return extractExpectedFileContentMatch(step)?.expectedContent;
+  }
+
+  function extractExpectedFileContentMatch(step: FridayAutonomousStep): FridayDeterministicFileMatch | null {
+    const texts = [step.verification?.expected, step.verification?.description, step.instruction];
     for (const text of texts) {
       if (typeof text !== "string") {
         continue;
       }
-      for (const pattern of patterns) {
-        const match = text.match(pattern);
-        if (match?.[1]) {
-          return match[1];
+      for (const candidate of FILE_CONTENT_PATTERN_PRECEDENCE) {
+        const match = candidate.prefix.exec(text);
+        if (!match) {
+          continue;
+        }
+        const expectedContent = extractQuotedLiteral(text, match.index + match[0].length);
+        if (expectedContent) {
+          return {
+            expectedContent,
+            patternFamily: candidate.family,
+          };
         }
       }
+    }
+    return null;
+  }
+
+  function requiresQuotedFileContentFallback(step: FridayAutonomousStep): boolean {
+    const texts = [step.verification?.expected, step.verification?.description, step.instruction];
+    return texts.some((text) =>
+      typeof text === "string"
+      && /\b(?:exact text|exact content|contains(?: the)?(?: exact)? (?:text|content)|with(?: the)?(?: exact)? content|content(?:s)?\s*(?::|=)|content is|contents are)/i.test(text),
+    );
+  }
+
+  function extractQuotedLiteral(text: string, startIndex: number): string | undefined {
+    let cursor = startIndex;
+    while (cursor < text.length && /\s/.test(text[cursor] ?? "")) {
+      cursor += 1;
+    }
+    for (const quote of QUOTED_LITERAL_WRAPPERS) {
+      if (!text.startsWith(quote.open, cursor)) {
+        continue;
+      }
+      const literalStart = cursor + quote.open.length;
+      const literalEnd = text.indexOf(quote.close, literalStart);
+      if (literalEnd === -1) {
+        return undefined;
+      }
+      const literal = text.slice(literalStart, literalEnd);
+      return literal.length > 0 ? literal : undefined;
     }
     return undefined;
   }
@@ -786,7 +862,7 @@ export function createFridayAutonomousEngine(
   function tryDeterministicFileVerification(
     step: FridayAutonomousStep,
     observations: readonly FridayAutonomousObservation[],
-  ): { passed: boolean; actual: string } | null {
+  ): FridayAutonomousStepVerificationResult | null {
     const states = parseFileStateObservations(observations);
     if (states.length === 0) {
       return null;
@@ -800,19 +876,28 @@ export function createFridayAutonomousEngine(
       return null;
     }
 
-    const expectedContent = extractExpectedFileContent(step);
-    if (typeof expectedContent === "string") {
+    const expectedContentMatch = extractExpectedFileContentMatch(step);
+    if (expectedContentMatch) {
+      const { expectedContent, patternFamily } = expectedContentMatch;
       const matchingState = relevantStates.find((state) => state.exists && state.isFile && state.content === expectedContent);
       if (matchingState) {
         return {
           passed: true,
-          actual: `Verified file ${matchingState.path} contains expected text.`,
+          actual: `Verified file ${matchingState.path} contains the expected content literal.`,
+          method: "deterministic_file",
+          patternFamily,
         };
       }
       return {
         passed: false,
         actual: `Expected file content ${JSON.stringify(expectedContent)} not observed in ${JSON.stringify(relevantStates)}`,
+        method: "deterministic_file",
+        patternFamily,
       };
+    }
+
+    if (requiresQuotedFileContentFallback(step)) {
+      return null;
     }
 
     const existingState = relevantStates.find((state) => state.exists);
@@ -820,12 +905,14 @@ export function createFridayAutonomousEngine(
       return {
         passed: true,
         actual: `Verified file path ${existingState.path} exists.`,
+        method: "deterministic_file",
       };
     }
 
     return {
       passed: false,
       actual: `Expected referenced file to exist, but observed ${JSON.stringify(relevantStates)}`,
+      method: "deterministic_file",
     };
   }
 
@@ -933,7 +1020,7 @@ export function createFridayAutonomousEngine(
           action: {
             toolName: "write",
             args: normalizedArgs,
-            rationale: step.plannedAction.rationale ?? "Replay the previously planned file write action.",
+            rationale: step.plannedAction.rationale ?? "Reuse the previously planned file write action.",
           },
         };
       }
@@ -1337,7 +1424,7 @@ export function createFridayAutonomousEngine(
     providerId: string | undefined,
     model: string | undefined,
     signal: AbortSignal,
-  ): Promise<{ passed: boolean; actual: string }> {
+  ): Promise<FridayAutonomousStepVerificationResult> {
     if (!step.verification) {
       // No verification defined — assume success
       return { passed: true, actual: "No verification criteria defined" };
@@ -1350,7 +1437,10 @@ export function createFridayAutonomousEngine(
 
     const deterministic = tryDeterministicBrowserVerification(step, observations);
     if (deterministic) {
-      return deterministic;
+      return {
+        ...deterministic,
+        method: "deterministic_browser",
+      };
     }
 
     const prompt = VERIFICATION_PROMPT_PREFIX
@@ -1392,9 +1482,10 @@ export function createFridayAutonomousEngine(
           return {
             passed: parsed.passed === true,
             actual: parsed.actual ?? result.text,
+            method: "llm_vision",
           };
         }
-        return { passed: false, actual: result.text };
+        return { passed: false, actual: result.text, method: "llm_vision" };
       }
 
       // Text-only fallback
@@ -1418,12 +1509,17 @@ export function createFridayAutonomousEngine(
         return {
           passed: parsed.passed === true,
           actual: parsed.actual ?? result.response,
+          method: "llm_text",
         };
       }
-      return { passed: false, actual: result.response };
+      return { passed: false, actual: result.response, method: "llm_text" };
     } catch (err) {
       console.warn("[friday][autonomous-engine] verification failed:", err instanceof Error ? err.message : String(err));
-      return { passed: false, actual: "Verification failed due to error" };
+      return {
+        passed: false,
+        actual: "Verification failed due to error",
+        method: images.length > 0 ? "llm_vision" : "llm_text",
+      };
     }
   }
 
@@ -1442,6 +1538,9 @@ export function createFridayAutonomousEngine(
     const verifyingStep = updateStep(step.id, {
       status: "verifying",
       failureReason: undefined,
+      verificationMethod: undefined,
+      verificationActual: undefined,
+      verificationPatternFamily: undefined,
     });
 
     const verifyObs = await gatherObservations(verifyingStep, browserSessionId, signal);
@@ -1470,6 +1569,9 @@ export function createFridayAutonomousEngine(
           status: "completed",
           completedAt: nowIso(),
           failureReason: undefined,
+          verificationMethod: verifyResult.method,
+          verificationActual: verifyResult.actual,
+          verificationPatternFamily: verifyResult.patternFamily,
         }),
         passed: true,
       };
@@ -1480,6 +1582,9 @@ export function createFridayAutonomousEngine(
         status: "executing",
         completedAt: undefined,
         failureReason: verifyResult.actual || "Verification failed",
+        verificationMethod: verifyResult.method,
+        verificationActual: verifyResult.actual,
+        verificationPatternFamily: verifyResult.patternFamily,
       }),
       passed: false,
     };
@@ -1503,7 +1608,7 @@ export function createFridayAutonomousEngine(
     }
 
     const planResult = await agentRuntime.executeRun({
-      task: PLANNING_PROMPT_PREFIX + goal.description,
+      task: buildPlanningPrompt(goal.description),
       sessionKey: buildAutonomousSessionKey("plan", goal.id),
       providerId,
       model,
@@ -2337,7 +2442,7 @@ function classifyRestartRecovery(
 
   return {
     goalStatus: "interrupted_recoverable",
-    reason: "Interrupted by process restart after a resumable checkpoint; verification or planning can be replayed.",
+    reason: "Interrupted by process restart after a resumable checkpoint; verification can be rerun and planning can be rebuilt safely.",
   };
 }
 

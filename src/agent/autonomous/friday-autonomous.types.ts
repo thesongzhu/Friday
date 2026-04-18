@@ -124,6 +124,25 @@ export type FridayAutonomousStepDomain =
   | "file"
   | "composite";
 
+/** Which verification path ultimately produced the current step verdict. */
+export type FridayAutonomousVerificationMethod =
+  | "deterministic_file"
+  | "deterministic_browser"
+  | "llm_text"
+  | "llm_vision";
+
+/** Which deterministic file-phrase family matched, when applicable. */
+export type FridayAutonomousVerificationPatternFamily =
+  | "exact_text"
+  | "contains_text"
+  | "with_content"
+  | "contains_content"
+  | "exact_content"
+  | "content_is"
+  | "contents_are"
+  | "content_colon"
+  | "contents_colon";
+
 /**
  * A single actionable step within an autonomous goal.
  *
@@ -145,6 +164,15 @@ export interface FridayAutonomousStep {
 
   /** How to verify this step succeeded. */
   readonly verification?: FridayAutonomousVerificationCheck;
+
+  /** Which verification path produced the latest verdict for this step. */
+  readonly verificationMethod?: FridayAutonomousVerificationMethod;
+
+  /** Latest verification readback captured for the step. */
+  readonly verificationActual?: string;
+
+  /** Which deterministic phrase family matched, when applicable. */
+  readonly verificationPatternFamily?: FridayAutonomousVerificationPatternFamily;
 
   /** Number of retry attempts allowed for this step. */
   readonly maxRetries: number;
@@ -396,7 +424,7 @@ export interface FridayAutonomousEngine {
 
   /**
    * Resume an existing goal from durable state when the interruption is known
-   * to be safe to replay.
+   * to be safe to resume from a checkpoint or to rebuild the plan safely.
    */
   resumeGoal(params: FridayAutonomousResumeGoalParams): Promise<FridayAutonomousGoalResult>;
 

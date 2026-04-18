@@ -47,6 +47,9 @@ interface StepRow {
   instruction: string;
   planned_action_json: string | null;
   verification_json: string | null;
+  verification_method: string | null;
+  verification_actual: string | null;
+  verification_pattern_family: string | null;
   max_retries: number;
   retry_count: number;
   observations_json: string;
@@ -109,6 +112,9 @@ function stepRowToDomain(row: StepRow): FridayAutonomousStep {
     verification: row.verification_json
       ? safeJsonParse<FridayAutonomousStep["verification"]>(row.verification_json) ?? undefined
       : undefined,
+    verificationMethod: row.verification_method as FridayAutonomousStep["verificationMethod"] ?? undefined,
+    verificationActual: row.verification_actual ?? undefined,
+    verificationPatternFamily: row.verification_pattern_family as FridayAutonomousStep["verificationPatternFamily"] ?? undefined,
     maxRetries: row.max_retries,
     retryCount: row.retry_count,
     observations: safeJsonParse<readonly unknown[]>(row.observations_json) ?? [],
@@ -182,6 +188,9 @@ const STEP_FIELD_MAP: Record<string, string> = {
   instruction: "instruction",
   plannedAction: "planned_action_json",
   verification: "verification_json",
+  verificationMethod: "verification_method",
+  verificationActual: "verification_actual",
+  verificationPatternFamily: "verification_pattern_family",
   maxRetries: "max_retries",
   retryCount: "retry_count",
   observations: "observations_json",
@@ -266,9 +275,10 @@ export function createFridayAutonomousRepository(): FridayAutonomousRepository {
       db.prepare(
         `INSERT INTO friday_autonomous_steps (
           id, goal_id, idx, status, domain, instruction, planned_action_json,
-          verification_json, max_retries, retry_count, observations_json,
-          started_at, completed_at, failure_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          verification_json, verification_method, verification_actual,
+          verification_pattern_family, max_retries, retry_count,
+          observations_json, started_at, completed_at, failure_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         step.id,
         step.goalId,
@@ -278,6 +288,9 @@ export function createFridayAutonomousRepository(): FridayAutonomousRepository {
         step.instruction,
         step.plannedAction ? JSON.stringify(step.plannedAction) : null,
         step.verification ? JSON.stringify(step.verification) : null,
+        step.verificationMethod ?? null,
+        step.verificationActual ?? null,
+        step.verificationPatternFamily ?? null,
         step.maxRetries,
         step.retryCount,
         JSON.stringify(step.observations),
