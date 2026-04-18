@@ -86,7 +86,7 @@
 | 当前 runtime 的 search freshness 已经被真实验证。 | verified | /v1/health capabilities.search.latestness=provider_backed; docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-17.md also contains a live MCP dated-query proof with time-bounded results. |
 | 自我修复闭环已经被真实打通到 execute/verify/rollback。 | verified | docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-17.md contains live execute + verify + rollback evidence for model fallback self-healing plus separate lesson write/readback proof. |
 | compaction 已经被真实证明会触发、写入 memory，并被后续 run 读回。 | verified | docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-17.md contains live compaction trigger, SQLite writeback, memory row persistence, and reset-session readback evidence. |
-| autonomous persistence 已被真实证明可跨重启恢复。 | verified | docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-17.md contains live interrupted_recoverable -> restart -> resume_goal -> same-step completion evidence backed by SQLite readback. |
+| autonomous persistence 已被真实证明可跨重启恢复；`exact content` deterministic file verification 只在独立 live restart 子链、SQLite/helper provenance、最终文件产物三者一致时计入 verified。 | verified | docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-17.md contains live interrupted_recoverable -> restart -> resume_goal -> same-step completion evidence backed by SQLite readback, plus a dedicated planning-interruption `exact content` lane with `verificationMethod=deterministic_file` and a persisted `content*` pattern family. |
 
 ## Artifacts
 
