@@ -5,10 +5,10 @@
 import type Database from "better-sqlite3";
 import {
   defaultFridayAutonomyUpgradeFields,
-  mergeFridayAutonomyUpgradeFields,
   type FridayAutonomyCanaryStats,
   type FridayAutonomyUpgradeFields,
   type FridayAutonomyUpgradePatch,
+  mergeFridayAutonomyUpgradeFields,
 } from "../../autonomy/model/friday-autonomy-upgrade.types.js";
 
 import { FridayDomainError } from "#errors";

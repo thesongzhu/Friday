@@ -2,8 +2,8 @@ import {
   defaultFridayAutonomyUpgradeFields,
   type FridayAutonomyCanaryStats,
   type FridayAutonomyCompatibilityStatus,
-  type FridayAutonomyUpgradeFields,
   type FridayAutonomyPromotionChannel,
+  type FridayAutonomyUpgradeFields,
 } from "../model/friday-autonomy-upgrade.types.js";
 import type { FridayAutonomySubjectRecord } from "../model/friday-autonomy-subject.types.js";
 import type { FridaySqliteLayer } from "#state";
