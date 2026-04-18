@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { V068_AUTONOMOUS_ENGINE_PERSISTENCE_SQL } from "../../../../src/state/sqlite/migrations/v068-autonomous-engine-persistence.js";
+import { V071_AUTONOMOUS_STEP_VERIFICATION_PROVENANCE_SQL } from "../../../../src/state/sqlite/migrations/v071-autonomous-step-verification-provenance.js";
 
 /**
  * Unit tests for the autonomous engine SQLite repository.
@@ -19,6 +20,7 @@ function createTestDb(): Database.Database {
   const db = new Database(":memory:");
   db.pragma("journal_mode = WAL");
   db.exec(V068_AUTONOMOUS_ENGINE_PERSISTENCE_SQL);
+  db.exec(V071_AUTONOMOUS_STEP_VERIFICATION_PROVENANCE_SQL);
   return db;
 }
 
@@ -133,13 +135,20 @@ describe("FridayAutonomousRepository", () => {
 
   describe("steps", () => {
     it("creates and retrieves a step", () => {
-      const step = makeStep();
+      const step = makeStep({
+        verificationMethod: "deterministic_file",
+        verificationActual: "hello world",
+        verificationPatternFamily: "exact_content_with",
+      });
       repo.createStep(db, step as never);
       const retrieved = repo.getStep(db, "step-001");
       expect(retrieved).not.toBeNull();
       expect(retrieved!.id).toBe("step-001");
       expect(retrieved!.goalId).toBe("goal-001");
       expect(retrieved!.domain).toBe("exec");
+      expect(retrieved!.verificationMethod).toBe("deterministic_file");
+      expect(retrieved!.verificationActual).toBe("hello world");
+      expect(retrieved!.verificationPatternFamily).toBe("exact_content_with");
     });
 
     it("updates step status and retryCount", () => {
