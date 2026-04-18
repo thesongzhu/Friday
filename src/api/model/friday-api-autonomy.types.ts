@@ -67,6 +67,48 @@ export interface FridayRecordSkillCanaryRequest {
   evaluatedAt?: string;
 }
 
+export interface FridayRegisterPluginShadowRequest {
+  shadowVersionId: string;
+  runtimeVersion: string;
+  providerModel?: string;
+}
+
+export interface FridayRecordPluginCanaryRequest {
+  success: boolean;
+  evaluatedAt?: string;
+}
+
+export interface FridayPromotePluginUpgradeRequest {
+  runtimeVersion: string;
+  providerModel?: string;
+}
+
+export interface FridayRollbackPluginUpgradeRequest {
+  runtimeVersion: string;
+  providerModel?: string;
+}
+
+export interface FridayRegisterProviderProfileShadowRequest {
+  shadowVersionId: string;
+  runtimeVersion: string;
+  providerModel?: string;
+}
+
+export interface FridayRecordProviderProfileCanaryRequest {
+  success: boolean;
+  evaluatedAt?: string;
+}
+
+export interface FridayPromoteProviderProfileUpgradeRequest {
+  runtimeVersion: string;
+  providerModel?: string;
+}
+
+export interface FridayRollbackProviderProfileUpgradeRequest {
+  runtimeVersion: string;
+  providerModel?: string;
+}
+
 export interface FridayPromoteSkillUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
@@ -104,6 +146,36 @@ export interface FridaySkillUpgradeActionResponse {
     compatibilityStatus?: string;
     shadowVersionId?: string;
     canaryStats?: FridayAutonomyCanaryStats;
+  };
+  status: FridayAutonomyUpgradeStatusItem | null;
+}
+
+export interface FridayPluginUpgradeActionResponse {
+  plugin: {
+    id: string;
+    version: string;
+    status: string;
+    enabled: boolean;
+    promotionChannel?: string;
+    compatibilityStatus?: string;
+    shadowVersionId?: string | null;
+    canaryStats?: FridayAutonomyCanaryStats;
+  };
+  status: FridayAutonomyUpgradeStatusItem | null;
+}
+
+export interface FridayProviderProfileUpgradeActionResponse {
+  provider: {
+    id: string;
+    kind: string;
+    name: string;
+    defaultModel?: string;
+    enabled: boolean;
+    promotionChannel?: string;
+    compatibilityStatus?: string;
+    shadowVersionId?: string;
+    canaryStats?: FridayAutonomyCanaryStats;
+    validationStatus?: string;
   };
   status: FridayAutonomyUpgradeStatusItem | null;
 }
