@@ -1,4 +1,11 @@
 import type Database from "better-sqlite3";
+import {
+  defaultFridayAutonomyUpgradeFields,
+  type FridayAutonomyCanaryStats,
+  type FridayAutonomyUpgradeFields,
+  type FridayAutonomyUpgradePatch,
+  mergeFridayAutonomyUpgradeFields,
+} from "../../autonomy/model/friday-autonomy-upgrade.types.js";
 import { safeJsonParse } from "#utilities";
 
 import type {
@@ -16,6 +23,7 @@ export interface FridayProviderProfileRepository {
   getById(db: Database.Database, id: string): FridayProviderProfile | null;
   insert(db: Database.Database, profile: FridayProviderProfile): void;
   update(db: Database.Database, profile: FridayProviderProfile): void;
+  setUpgradeMetadata(db: Database.Database, id: string, patch: FridayAutonomyUpgradePatch, nowIso: string): FridayProviderProfile | null;
   deleteById(db: Database.Database, id: string): boolean;
 }
 
@@ -43,6 +51,8 @@ function rowToProfile(row: FridayProviderProfileRow): FridayProviderProfile {
     keySource: config.keySource ?? { kind: "none" },
     supportedModels: normalizeFridayProviderSupportedModels(config.supportedModels),
   };
+  const canaryStats = safeJsonParse<FridayAutonomyCanaryStats>(row.canary_stats_json);
+  const upgradeDefaults = defaultFridayAutonomyUpgradeFields();
 
   return {
     id: row.id,
@@ -52,6 +62,15 @@ function rowToProfile(row: FridayProviderProfileRow): FridayProviderProfile {
     enabled: row.enabled === 1,
     defaultModel: row.default_model ?? undefined,
     config: normalizedConfig,
+    lastVerifiedAt: row.last_verified_at ?? undefined,
+    lastVerifiedRuntimeVersion: row.last_verified_runtime_version ?? undefined,
+    lastVerifiedProviderModel: row.last_verified_provider_model ?? undefined,
+    compatibilityStatus: (row.compatibility_status as FridayAutonomyUpgradeFields["compatibilityStatus"] | undefined)
+      ?? upgradeDefaults.compatibilityStatus,
+    promotionChannel: (row.promotion_channel as FridayAutonomyUpgradeFields["promotionChannel"] | undefined)
+      ?? upgradeDefaults.promotionChannel,
+    shadowVersionId: row.shadow_version_id ?? undefined,
+    canaryStats: canaryStats && Object.keys(canaryStats).length > 0 ? canaryStats : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -76,10 +95,14 @@ export function createFridayProviderProfileRepository(): FridayProviderProfileRe
     },
 
     insert(db, profile) {
+      const upgrade = mergeFridayAutonomyUpgradeFields(profile, {});
       db.prepare(
         `INSERT INTO provider_profiles
-         (id, kind, display_name, endpoint_url, enabled, default_model, config_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, kind, display_name, endpoint_url, enabled, default_model, config_json,
+          last_verified_at, last_verified_runtime_version, last_verified_provider_model,
+          compatibility_status, promotion_channel, shadow_version_id, canary_stats_json,
+          created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         profile.id,
         profile.kind,
@@ -88,16 +111,27 @@ export function createFridayProviderProfileRepository(): FridayProviderProfileRe
         profile.enabled ? 1 : 0,
         profile.defaultModel ?? null,
         JSON.stringify(profile.config),
+        upgrade.lastVerifiedAt ?? null,
+        upgrade.lastVerifiedRuntimeVersion ?? null,
+        upgrade.lastVerifiedProviderModel ?? null,
+        upgrade.compatibilityStatus,
+        upgrade.promotionChannel,
+        upgrade.shadowVersionId ?? null,
+        JSON.stringify(upgrade.canaryStats ?? {}),
         profile.createdAt,
         profile.updatedAt,
       );
     },
 
     update(db, profile) {
+      const upgrade = mergeFridayAutonomyUpgradeFields(profile, {});
       db.prepare(
         `UPDATE provider_profiles
          SET kind = ?, display_name = ?, endpoint_url = ?, enabled = ?,
-             default_model = ?, config_json = ?, updated_at = ?
+             default_model = ?, config_json = ?, last_verified_at = ?,
+             last_verified_runtime_version = ?, last_verified_provider_model = ?,
+             compatibility_status = ?, promotion_channel = ?, shadow_version_id = ?,
+             canary_stats_json = ?, updated_at = ?
          WHERE id = ?`,
       ).run(
         profile.kind,
@@ -106,9 +140,47 @@ export function createFridayProviderProfileRepository(): FridayProviderProfileRe
         profile.enabled ? 1 : 0,
         profile.defaultModel ?? null,
         JSON.stringify(profile.config),
+        upgrade.lastVerifiedAt ?? null,
+        upgrade.lastVerifiedRuntimeVersion ?? null,
+        upgrade.lastVerifiedProviderModel ?? null,
+        upgrade.compatibilityStatus,
+        upgrade.promotionChannel,
+        upgrade.shadowVersionId ?? null,
+        JSON.stringify(upgrade.canaryStats ?? {}),
         profile.updatedAt,
         profile.id,
       );
+    },
+
+    setUpgradeMetadata(db, id, patch, nowIso) {
+      const existing = this.getById(db, id);
+      if (!existing) {
+        return null;
+      }
+      const merged = mergeFridayAutonomyUpgradeFields(existing, patch);
+      db.prepare(
+        `UPDATE provider_profiles
+         SET last_verified_at = ?,
+             last_verified_runtime_version = ?,
+             last_verified_provider_model = ?,
+             compatibility_status = ?,
+             promotion_channel = ?,
+             shadow_version_id = ?,
+             canary_stats_json = ?,
+             updated_at = ?
+         WHERE id = ?`,
+      ).run(
+        merged.lastVerifiedAt ?? null,
+        merged.lastVerifiedRuntimeVersion ?? null,
+        merged.lastVerifiedProviderModel ?? null,
+        merged.compatibilityStatus,
+        merged.promotionChannel,
+        merged.shadowVersionId ?? null,
+        JSON.stringify(merged.canaryStats ?? {}),
+        nowIso,
+        id,
+      );
+      return this.getById(db, id);
     },
 
     deleteById(db, id) {

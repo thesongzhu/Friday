@@ -1,4 +1,11 @@
 import type Database from "better-sqlite3";
+import {
+  defaultFridayAutonomyUpgradeFields,
+  type FridayAutonomyCanaryStats,
+  type FridayAutonomyUpgradeFields,
+  type FridayAutonomyUpgradePatch,
+  mergeFridayAutonomyUpgradeFields,
+} from "../../autonomy/model/friday-autonomy-upgrade.types.js";
 import type { FridaySqliteLayer } from "#state";
 import { FridayDomainError } from "#errors";
 import { safeJsonParse } from "#utilities";
@@ -34,6 +41,13 @@ export interface FridayWorkflowRepository {
     db: Database.Database,
     slug: string,
   ): FridayWorkflowEntity | null;
+
+  setUpgradeMetadata(
+    db: Database.Database,
+    workflowId: UUID,
+    patch: FridayAutonomyUpgradePatch,
+    nowIso: string,
+  ): FridayWorkflowEntity;
 
   listWorkflows(
     db: Database.Database,
@@ -111,6 +125,8 @@ export interface FridayWorkflowRepository {
 // ─── Row mappers ───
 
 function mapWorkflowRow(row: FridayWorkflowRow): FridayWorkflowEntity {
+  const canaryStats = safeJsonParse<FridayAutonomyCanaryStats>(row.canary_stats_json);
+  const upgradeDefaults = defaultFridayAutonomyUpgradeFields();
   return {
     id: row.id,
     slug: row.slug,
@@ -123,6 +139,15 @@ function mapWorkflowRow(row: FridayWorkflowRow): FridayWorkflowEntity {
     isArchived: row.is_archived === 1,
     revision: row.revision,
     etag: row.etag,
+    lastVerifiedAt: row.last_verified_at ?? undefined,
+    lastVerifiedRuntimeVersion: row.last_verified_runtime_version ?? undefined,
+    lastVerifiedProviderModel: row.last_verified_provider_model ?? undefined,
+    compatibilityStatus: (row.compatibility_status as FridayAutonomyUpgradeFields["compatibilityStatus"] | undefined)
+      ?? upgradeDefaults.compatibilityStatus,
+    promotionChannel: (row.promotion_channel as FridayAutonomyUpgradeFields["promotionChannel"] | undefined)
+      ?? upgradeDefaults.promotionChannel,
+    shadowVersionId: row.shadow_version_id ?? undefined,
+    canaryStats: canaryStats && Object.keys(canaryStats).length > 0 ? canaryStats : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at ?? undefined,
@@ -206,6 +231,37 @@ export function createFridayWorkflowRepository(
         .prepare("SELECT * FROM workflows WHERE slug = ? AND deleted_at IS NULL")
         .get(slug) as FridayWorkflowRow | undefined;
       return row ? mapWorkflowRow(row) : null;
+    },
+
+    setUpgradeMetadata(db, workflowId, patch, nowIso) {
+      const existing = this.getWorkflowById(db, workflowId);
+      if (!existing) {
+        throw new FridayDomainError("WORKFLOW_NOT_FOUND", `Workflow ${workflowId} not found`, { httpStatus: 404 });
+      }
+      const merged = mergeFridayAutonomyUpgradeFields(existing, patch);
+      db.prepare(
+        `UPDATE workflows SET
+           last_verified_at = ?,
+           last_verified_runtime_version = ?,
+           last_verified_provider_model = ?,
+           compatibility_status = ?,
+           promotion_channel = ?,
+           shadow_version_id = ?,
+           canary_stats_json = ?,
+           updated_at = ?
+         WHERE id = ? AND deleted_at IS NULL`,
+      ).run(
+        merged.lastVerifiedAt ?? null,
+        merged.lastVerifiedRuntimeVersion ?? null,
+        merged.lastVerifiedProviderModel ?? null,
+        merged.compatibilityStatus,
+        merged.promotionChannel,
+        merged.shadowVersionId ?? null,
+        JSON.stringify(merged.canaryStats ?? {}),
+        nowIso,
+        workflowId,
+      );
+      return this.getWorkflowById(db, workflowId)!;
     },
 
     listWorkflows(db, input) {

@@ -1,6 +1,11 @@
 /**
  * Core plugin system types, constants, and interfaces.
  */
+import type {
+  FridayAutonomyCanaryStats,
+  FridayAutonomyCompatibilityStatus,
+  FridayAutonomyPromotionChannel,
+} from "../../autonomy/model/friday-autonomy-upgrade.types.js";
 
 // ─── Constants ───
 
@@ -263,6 +268,12 @@ export interface FridayPluginEntity {
   signatureVerified: boolean;
   trustedFingerprintSha256: string | null;
   lastVerifiedAt: string | null;
+  lastVerifiedRuntimeVersion?: string | null;
+  lastVerifiedProviderModel?: string | null;
+  compatibilityStatus?: FridayAutonomyCompatibilityStatus;
+  promotionChannel?: FridayAutonomyPromotionChannel;
+  shadowVersionId?: string | null;
+  canaryStats?: FridayAutonomyCanaryStats;
   installedAt: string;
   updatedAt: string;
   lastErrorCode: string | null;
@@ -301,6 +312,12 @@ export interface FridayUpsertPluginInput {
   signatureVerified?: boolean;
   trustedFingerprintSha256?: string;
   lastVerifiedAt?: string;
+  lastVerifiedRuntimeVersion?: string;
+  lastVerifiedProviderModel?: string;
+  compatibilityStatus?: FridayAutonomyCompatibilityStatus;
+  promotionChannel?: FridayAutonomyPromotionChannel;
+  shadowVersionId?: string;
+  canaryStats?: FridayAutonomyCanaryStats;
   nowIso: string;
 }
 

@@ -37,6 +37,26 @@
     - proof pack section `Autonomous restart recovery`
     - same-step `resume_goal` and SQLite continuity are now reflected in the generated audit
 
+- `background autonomous self-upgrade`
+  - Before:
+    - this file still said background autonomous self-upgrade was not proven
+    - the proof pack only covered explicit upgrade-in-place for generated skills
+  - Now:
+    - `workflow`, `skill`, `plugin`, `provider_profile`, `mcp_server`, and `channel_adapter` each have a real self-upgrade chain
+  - Evidence:
+    - proof pack sections:
+      - `Workflow self-upgrade`
+      - `Skill self-upgrade`
+      - `Plugin self-upgrade`
+      - `Provider profile self-upgrade`
+      - `MCP server self-upgrade`
+      - `Channel adapter self-upgrade`
+    - `/v1/autonomy/upgrade-status`
+    - SQLite metadata / `autonomy_subject_upgrade_state` readback
+  - Decision:
+    - retire the old “background self-upgrade not proven” wording for the six in-scope subjects in this tranche
+    - keep external channels and env-gated surfaces out of scope instead of silently over-claiming them
+
 - `autonomous run truth surface`
   - Before:
     - a real autonomous user task surfaced internal `plan/action/verify` child runs in the same default `/v1/agent/runs` list as the top-level user run
@@ -91,10 +111,6 @@
   - Still not live-proven in this environment.
   - Discord remains the next real external wiring target once credentials are available.
 
-- `background autonomous self-upgrade`
-  - Still not proven by this pass.
-  - The proof pack only proves explicit, supervised upgrade-in-place for generated skills.
-
 - `autonomous audit visibility`
   - Before:
     - `GET /v1/agent/runs/:runId/audit` only surfaced `agent.run.*`
@@ -128,3 +144,4 @@
   - [FRIDAY_3DAY_CHANGE_REALITY_CHECK_2026-04-17.md](/Users/jarvis/Projects/Friday/docs/reports/repo/FRIDAY_3DAY_CHANGE_REALITY_CHECK_2026-04-17.md)
   - [FRIDAY_CLAIM_MATRIX_2026-04-17.json](/Users/jarvis/Projects/Friday/docs/reports/repo/FRIDAY_CLAIM_MATRIX_2026-04-17.json)
   - [FRIDAY_DEFECT_LEDGER_2026-04-17.json](/Users/jarvis/Projects/Friday/docs/reports/repo/FRIDAY_DEFECT_LEDGER_2026-04-17.json)
+  - [FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-17.md](/Users/jarvis/Projects/Friday/docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-17.md)

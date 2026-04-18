@@ -4653,6 +4653,7 @@ export async function createFridayHub(
     listMcpServers: mcpAdapter
       ? () => mcpAdapter.listServers().map((server) => ({ id: server.id, transport: server.transport }))
       : undefined,
+    mcpAdapter,
     serverVersion: config.serverVersion ?? FRIDAY_HUB_DEFAULT_SERVER_VERSION,
     serverHost: config.host ?? "127.0.0.1",
     serverPort: config.port ?? 3141,
@@ -6454,6 +6455,7 @@ export async function createFridayHub(
     apiRuntime,
     channelRegistry,
     satelliteRuntime,
+    mcpAdapter,
     webchatWsService,
   };
 

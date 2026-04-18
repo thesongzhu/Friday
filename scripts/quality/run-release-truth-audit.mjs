@@ -612,18 +612,18 @@ function buildThreeDayRealityCheck({
     {
       claimId: "skill-run-route",
       reportSection: "技能执行",
-      claim: "/v1/skills/:skillId/run 已真实打通。",
+      claim: "/v1/skills/:skillId/run 已真实连通到 executed 深度，但这不等于独立验证过的最终产物。",
       classification: mutationProbes.skillRunDispatch.response?.ok
         && mutationProbes.skillRunDispatch.response?.data?.status === "completed"
         && mutationProbes.skillRunDispatch.response?.data?.completionDepth === "executed"
-        ? "verified"
+        ? "partially verified"
         : mutationProbes.skillRunDispatch.response?.ok
           ? "partially verified"
           : "not proven",
       realEvidence: mutationProbes.skillRunDispatch.skillId
         ? `skillId=${mutationProbes.skillRunDispatch.skillId}, probeKind=${String(mutationProbes.skillRunDispatch.probeKind ?? "n/a")}, status=${String(mutationProbes.skillRunDispatch.response?.status ?? "n/a")}, returnedStatus=${String(mutationProbes.skillRunDispatch.response?.data?.status ?? "n/a")}, completionDepth=${String(mutationProbes.skillRunDispatch.response?.data?.completionDepth ?? "n/a")}.`
         : "No skill id was available for a live execution probe.",
-      verificationMethod: "Live POST /v1/skills/ai-inference/run against a real provider-backed runtime. Route must return completed + executed, not dispatch-only acceptance.",
+      verificationMethod: "Live POST /v1/skills/ai-inference/run against a real provider-backed runtime. This verifies executed-depth route truth, not independently checked final artifact truth.",
     },
     {
       claimId: "memory-create-route",

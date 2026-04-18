@@ -209,4 +209,36 @@ describe("FridayPluginRepository", () => {
     expect(entity.trustedFingerprintSha256).toBe("abc123");
     expect(entity.lastVerifiedAt).toBe("2026-01-01T12:00:00.000Z");
   });
+
+  it("stores autonomy upgrade metadata", () => {
+    db.withWriteTransaction((d) => repo.upsertPlugin(d, makeInput()));
+    const entity = db.withWriteTransaction((d) =>
+      repo.setUpgradeMetadata(
+        d,
+        "friday.test.plugin",
+        {
+          lastVerifiedAt: "2026-04-17T20:00:00.000Z",
+          lastVerifiedRuntimeVersion: "f27377c",
+          lastVerifiedProviderModel: "claude-sonnet-4-20250514",
+          compatibilityStatus: "adaptation_required",
+          promotionChannel: "canary",
+          shadowVersionId: "friday.test.plugin@shadow",
+          canaryStats: {
+            sampleSize: 10,
+            successCount: 9,
+            failureCount: 1,
+            rollbackCount: 0,
+            lastEvaluatedAt: "2026-04-17T20:04:00.000Z",
+          },
+        },
+        "2026-04-17T20:04:00.000Z",
+      ),
+    );
+
+    expect(entity.lastVerifiedRuntimeVersion).toBe("f27377c");
+    expect(entity.compatibilityStatus).toBe("adaptation_required");
+    expect(entity.promotionChannel).toBe("canary");
+    expect(entity.shadowVersionId).toBe("friday.test.plugin@shadow");
+    expect(entity.canaryStats?.successCount).toBe(9);
+  });
 });
