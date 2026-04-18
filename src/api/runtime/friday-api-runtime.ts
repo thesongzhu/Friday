@@ -39,6 +39,7 @@ import { createFridayWorkflowConflictService } from "../conflicts/friday-workflo
 import { createFridayHttpRouteRegistry } from "../http/friday-http-route-registry.js";
 import { createFridayAuthRoutes } from "../http/routes/friday-auth-routes.js";
 import { createFridayRuntimeAdminRoutes } from "../http/routes/friday-runtime-admin-routes.js";
+import { createFridayAutonomyRoutes } from "../http/routes/friday-autonomy-routes.js";
 import { createFridaySecretRoutes } from "../http/routes/friday-secret-routes.js";
 import { createFridayWorkflowRoutes } from "../http/routes/friday-workflow-routes.js";
 import {
@@ -113,6 +114,21 @@ import type { CreateFridayEngineTurnPreparerDeps } from "#engine";
 import type { CreateFridayEngineRunExecutorDeps } from "#engine";
 import { createFridayHealthRoutes } from "../http/routes/friday-health-routes.js";
 import { createFridayApiTokenRepository } from "../persistence/friday-api-token-repository.js";
+import { createFridayProviderProfileRepository } from "#providers";
+import { createFridaySkillRepository } from "#skills";
+import { createFridayPluginRepository } from "#plugins";
+import { createFridayWorkflowRepository } from "#workflows";
+import { createFridayAutonomySubjectInventoryService } from "../../autonomy/services/friday-autonomy-subject-inventory-service.js";
+import { createFridayAutonomyImpactCensusService } from "../../autonomy/services/friday-autonomy-impact-census-service.js";
+import { createFridayAutonomyUpgradePlannerService } from "../../autonomy/services/friday-autonomy-upgrade-planner-service.js";
+import { createFridayAutonomyUpgradeStatusService } from "../../autonomy/services/friday-autonomy-upgrade-status-service.js";
+import { createFridayWorkflowUpgradeLifecycleService } from "../../autonomy/services/friday-workflow-upgrade-lifecycle-service.js";
+import { createFridaySkillUpgradeLifecycleService } from "../../autonomy/services/friday-skill-upgrade-lifecycle-service.js";
+import { createFridayProviderProfileUpgradeLifecycleService } from "../../autonomy/services/friday-provider-profile-upgrade-lifecycle-service.js";
+import { createFridayPluginUpgradeLifecycleService } from "../../autonomy/services/friday-plugin-upgrade-lifecycle-service.js";
+import { createFridayAutonomySubjectUpgradeStateRepository } from "../../autonomy/persistence/friday-autonomy-subject-upgrade-state-repository.js";
+import { createFridayMcpServerUpgradeLifecycleService } from "../../autonomy/services/friday-mcp-server-upgrade-lifecycle-service.js";
+import { createFridayChannelAdapterUpgradeLifecycleService } from "../../autonomy/services/friday-channel-adapter-upgrade-lifecycle-service.js";
 import type { FridayAuthPrincipal } from "../model/friday-api-common.types.js";
 import type {
   FridayGetRunEvidenceQuery,
@@ -569,6 +585,72 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     idGenerator: deps.idGenerator,
     nowIso: deps.nowIso,
   });
+  const skillRepo = createFridaySkillRepository();
+  const workflowRepo = createFridayWorkflowRepository({ db: deps.db });
+  const providerProfileRepo = createFridayProviderProfileRepository();
+  const pluginRepo = createFridayPluginRepository();
+  const subjectUpgradeStateRepo = createFridayAutonomySubjectUpgradeStateRepository();
+  const autonomyInventory = createFridayAutonomySubjectInventoryService({
+    sqlite: deps.db,
+    skillRepo,
+    workflowRepo,
+    providerProfileRepo,
+    pluginRegistry: {
+      list: () => deps.pluginService?.listPlugins() ?? [],
+    },
+    subjectUpgradeStateRepo,
+    mcpAdapter: deps.mcpAdapter,
+    channelRegistry: deps.channels?.registry,
+  });
+  const autonomyCensus = createFridayAutonomyImpactCensusService({
+    inventory: autonomyInventory,
+    hubVersion: serverVersion,
+    supportedApiVersions: ["1", "1.0", "v1"],
+  });
+  const autonomyPlanner = createFridayAutonomyUpgradePlannerService({
+    census: autonomyCensus,
+  });
+  const autonomyUpgradeStatus = createFridayAutonomyUpgradeStatusService({
+    census: autonomyCensus,
+    planner: autonomyPlanner,
+  });
+  const workflowUpgradeLifecycle = createFridayWorkflowUpgradeLifecycleService({
+    db: deps.db,
+    workflowRepo,
+    workflowCrud: workflowRuntime.crud,
+    nowIso: deps.nowIso,
+  });
+  const skillUpgradeLifecycle = createFridaySkillUpgradeLifecycleService({
+    db: deps.db,
+    skillRepo,
+    nowIso: deps.nowIso,
+  });
+  const providerProfileUpgradeLifecycle = createFridayProviderProfileUpgradeLifecycleService({
+    db: deps.db,
+    providerProfileRepo,
+    nowIso: deps.nowIso,
+  });
+  const pluginUpgradeLifecycle = createFridayPluginUpgradeLifecycleService({
+    db: deps.db,
+    pluginRepo,
+    nowIso: deps.nowIso,
+  });
+  const mcpServerUpgradeLifecycle = deps.mcpAdapter
+    ? createFridayMcpServerUpgradeLifecycleService({
+        db: deps.db,
+        stateRepo: subjectUpgradeStateRepo,
+        mcpAdapter: deps.mcpAdapter,
+        nowIso: deps.nowIso,
+      })
+    : undefined;
+  const channelAdapterUpgradeLifecycle = deps.channels?.registry
+    ? createFridayChannelAdapterUpgradeLifecycleService({
+        db: deps.db,
+        stateRepo: subjectUpgradeStateRepo,
+        channelRegistry: deps.channels.registry,
+        nowIso: deps.nowIso,
+      })
+    : undefined;
 
   // Route registry
   const routes = createFridayHttpRouteRegistry();
@@ -670,6 +752,226 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     auditLogs: deps.observability
       ? {
         list: (query) => deps.observability!.audit.search(query),
+      }
+      : undefined,
+  })) {
+    routes.register(route);
+  }
+
+  for (const route of createFridayAutonomyRoutes({
+    listUpgradeStatus: (query) => ({
+      items: autonomyUpgradeStatus.list(query),
+    }),
+    workflowActions: {
+      registerShadow: (input) =>
+        workflowUpgradeLifecycle.registerShadowVersion({
+          workflowId: input.workflowId,
+          workflowVersionId: input.workflowVersionId,
+          runtimeVersion: input.runtimeVersion,
+          providerModel: input.providerModel,
+        }),
+      recordCanary: (input) =>
+        workflowUpgradeLifecycle.recordCanaryResult({
+          workflowId: input.workflowId,
+          success: input.success,
+          evaluatedAt: input.evaluatedAt,
+        }),
+      promote: (input) =>
+        workflowUpgradeLifecycle.promote({
+          workflowId: input.workflowId,
+          versionNumber: input.versionNumber,
+          runtimeVersion: input.runtimeVersion,
+          providerModel: input.providerModel,
+        }),
+      rollback: (input) =>
+        workflowUpgradeLifecycle.rollback({
+          workflowId: input.workflowId,
+          targetVersionNumber: input.targetVersionNumber,
+          runtimeVersion: input.runtimeVersion,
+          providerModel: input.providerModel,
+        }),
+      getStatus: (workflowId) => autonomyUpgradeStatus.get("workflow", workflowId),
+    },
+    skillActions: deps.skillLifecycle
+      ? {
+        registerShadow: (input) => {
+          skillUpgradeLifecycle.registerShadowVersion({
+            skillId: input.skillId,
+            shadowVersionId: input.shadowVersionId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          });
+          const detail = deps.skillLifecycle!.getSkill(input.skillId);
+          if (!detail) {
+            throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
+              httpStatus: 404,
+            });
+          }
+          return detail;
+        },
+        recordCanary: (input) => {
+          skillUpgradeLifecycle.recordCanaryResult({
+            skillId: input.skillId,
+            success: input.success,
+            evaluatedAt: input.evaluatedAt,
+          });
+          const detail = deps.skillLifecycle!.getSkill(input.skillId);
+          if (!detail) {
+            throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
+              httpStatus: 404,
+            });
+          }
+          return detail;
+        },
+        promote: (input) => {
+          skillUpgradeLifecycle.promote({
+            skillId: input.skillId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          });
+          const detail = deps.skillLifecycle!.getSkill(input.skillId);
+          if (!detail) {
+            throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
+              httpStatus: 404,
+            });
+          }
+          return detail;
+        },
+        rollback: (input) => {
+          skillUpgradeLifecycle.rollback({
+            skillId: input.skillId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          });
+          const detail = deps.skillLifecycle!.getSkill(input.skillId);
+          if (!detail) {
+            throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
+              httpStatus: 404,
+            });
+          }
+          return detail;
+        },
+        getStatus: (skillId) => autonomyUpgradeStatus.get("skill", skillId),
+      }
+      : undefined,
+    pluginActions: deps.pluginService
+      ? {
+        registerShadow: (input) =>
+          pluginUpgradeLifecycle.registerShadowVersion({
+            pluginId: input.pluginId,
+            shadowVersionId: input.shadowVersionId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        recordCanary: (input) =>
+          pluginUpgradeLifecycle.recordCanaryResult({
+            pluginId: input.pluginId,
+            success: input.success,
+            evaluatedAt: input.evaluatedAt,
+          }),
+        promote: (input) =>
+          pluginUpgradeLifecycle.promote({
+            pluginId: input.pluginId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        rollback: (input) =>
+          pluginUpgradeLifecycle.rollback({
+            pluginId: input.pluginId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        getStatus: (pluginId) => autonomyUpgradeStatus.get("plugin", pluginId),
+      }
+      : undefined,
+    providerProfileActions: deps.providerService
+      ? {
+        registerShadow: (input) =>
+          providerProfileUpgradeLifecycle.registerShadowVersion({
+            providerId: input.providerId,
+            shadowVersionId: input.shadowVersionId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        recordCanary: (input) =>
+          providerProfileUpgradeLifecycle.recordCanaryResult({
+            providerId: input.providerId,
+            success: input.success,
+            evaluatedAt: input.evaluatedAt,
+          }),
+        promote: (input) =>
+          providerProfileUpgradeLifecycle.promote({
+            providerId: input.providerId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        rollback: (input) =>
+          providerProfileUpgradeLifecycle.rollback({
+            providerId: input.providerId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        getStatus: (providerId) => autonomyUpgradeStatus.get("provider_profile", providerId),
+      }
+      : undefined,
+    mcpServerActions: mcpServerUpgradeLifecycle
+      ? {
+        registerShadow: (input) =>
+          mcpServerUpgradeLifecycle.registerShadowVersion({
+            serverId: input.serverId,
+            shadowVersionId: input.shadowVersionId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        recordCanary: (input) =>
+          mcpServerUpgradeLifecycle.recordCanaryResult({
+            serverId: input.serverId,
+            success: input.success,
+            evaluatedAt: input.evaluatedAt,
+          }),
+        promote: (input) =>
+          mcpServerUpgradeLifecycle.promote({
+            serverId: input.serverId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        rollback: (input) =>
+          mcpServerUpgradeLifecycle.rollback({
+            serverId: input.serverId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        getStatus: (serverId) => autonomyUpgradeStatus.get("mcp_server", serverId),
+      }
+      : undefined,
+    channelAdapterActions: channelAdapterUpgradeLifecycle
+      ? {
+        registerShadow: (input) =>
+          channelAdapterUpgradeLifecycle.registerShadowVersion({
+            channelKind: input.channelKind,
+            shadowVersionId: input.shadowVersionId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        recordCanary: (input) =>
+          channelAdapterUpgradeLifecycle.recordCanaryResult({
+            channelKind: input.channelKind,
+            success: input.success,
+            evaluatedAt: input.evaluatedAt,
+          }),
+        promote: (input) =>
+          channelAdapterUpgradeLifecycle.promote({
+            channelKind: input.channelKind,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        rollback: (input) =>
+          channelAdapterUpgradeLifecycle.rollback({
+            channelKind: input.channelKind,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        getStatus: (channelKind) => autonomyUpgradeStatus.get("channel_adapter", channelKind),
       }
       : undefined,
   })) {

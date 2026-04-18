@@ -118,6 +118,42 @@ describe("FridayWorkflowRepository", () => {
     expect(fetched).toBeNull();
   });
 
+  it("stores autonomy upgrade metadata", () => {
+    const repo = createRepo();
+    db.withWriteTransaction((conn) => {
+      repo.insertWorkflow(conn, "wf-1", { slug: "upgradeable", name: "Upgradeable Workflow" }, "e1", NOW);
+    });
+
+    const updated = db.withWriteTransaction((conn) =>
+      repo.setUpgradeMetadata(
+        conn,
+        "wf-1",
+        {
+          lastVerifiedAt: "2026-04-17T20:00:00.000Z",
+          lastVerifiedRuntimeVersion: "f27377c",
+          lastVerifiedProviderModel: "claude-sonnet-4-20250514",
+          compatibilityStatus: "adaptation_required",
+          promotionChannel: "shadow",
+          shadowVersionId: "wf-1-vshadow",
+          canaryStats: {
+            sampleSize: 6,
+            successCount: 5,
+            failureCount: 1,
+            rollbackCount: 0,
+            lastEvaluatedAt: "2026-04-17T20:03:00.000Z",
+          },
+        },
+        "2026-04-17T20:03:00.000Z",
+      ),
+    );
+
+    expect(updated.lastVerifiedRuntimeVersion).toBe("f27377c");
+    expect(updated.compatibilityStatus).toBe("adaptation_required");
+    expect(updated.promotionChannel).toBe("shadow");
+    expect(updated.shadowVersionId).toBe("wf-1-vshadow");
+    expect(updated.canaryStats?.sampleSize).toBe(6);
+  });
+
   it("frees archived slug for reuse", () => {
     const repo = createRepo();
     db.withWriteTransaction((conn) => {

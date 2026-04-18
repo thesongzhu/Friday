@@ -67,6 +67,7 @@ import { validateUiSchema } from "../validation/friday-generated-skill-ui-valida
 import { safeParseFridaySkillManifestV2 } from "../../manifest/friday-skill-manifest.schema.js";
 import { loadFridaySkillPackage } from "../../manifest/friday-skill-package-loader.js";
 import { validateFridaySkillPackage } from "../../validation/friday-skill-validation-pipeline.js";
+import { createFridaySkillRepository } from "../../persistence/friday-skill-repository.js";
 
 // ─── Constants ───
 
@@ -552,6 +553,7 @@ function autoResolveSkillGeneratorClarifications(input: {
 export function createFridaySkillGeneratorService(
   deps: CreateFridaySkillGeneratorServiceDeps,
 ): FridaySkillGeneratorService {
+  const skillRepo = createFridaySkillRepository();
   const repo: FridaySkillGenerationSessionRepository =
     createFridaySkillGenerationSessionRepository({
       db: deps.db,
@@ -2123,6 +2125,26 @@ export function createFridaySkillGeneratorService(
       console.warn("[friday][skill-generator-service] operation failed:", err instanceof Error ? err.message : String(err));
         // Non-fatal — skill is saved but registry didn't refresh
       }
+
+      deps.db.withWriteTransaction((conn) => {
+        skillRepo.upsertSkillFromMarketplace(conn, {
+          id: skillId,
+          name: promotedManifest.name,
+          source: "marketplace",
+          origin: "managed",
+          latestVersion: promotedManifest.version,
+          status: "installed",
+          currentManifest: promotedManifest,
+          nowIso: deps.nowIso(),
+        });
+        skillRepo.setInstalledVersion(
+          conn,
+          skillId,
+          promotedManifest.version,
+          promotedManifest,
+          deps.nowIso(),
+        );
+      });
 
       // Clean up persisted draft
       deleteDraft(sessionId);

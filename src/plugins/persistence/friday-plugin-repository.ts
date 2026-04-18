@@ -3,6 +3,13 @@
  */
 
 import type Database from "better-sqlite3";
+import {
+  defaultFridayAutonomyUpgradeFields,
+  type FridayAutonomyCanaryStats,
+  type FridayAutonomyUpgradeFields,
+  type FridayAutonomyUpgradePatch,
+  mergeFridayAutonomyUpgradeFields,
+} from "../../autonomy/model/friday-autonomy-upgrade.types.js";
 
 import { FridayDomainError } from "#errors";
 import { safeJsonParse } from "#utilities";
@@ -24,6 +31,7 @@ export interface FridayPluginRepository {
   upsertPlugin(db: Database.Database, input: FridayUpsertPluginInput): FridayPluginEntity;
   getById(db: Database.Database, pluginId: string): FridayPluginEntity | null;
   list(db: Database.Database, query?: FridayPluginListQuery): FridayPluginEntity[];
+  setUpgradeMetadata(db: Database.Database, pluginId: string, patch: FridayAutonomyUpgradePatch, nowIso: string): FridayPluginEntity;
   setStatus(db: Database.Database, pluginId: string, status: FridayPluginStatus, nowIso: string): void;
   setEnabled(db: Database.Database, pluginId: string, enabled: boolean, nowIso: string): void;
   setError(db: Database.Database, pluginId: string, errorCode: string, errorMessage: string, nowIso: string): void;
@@ -51,6 +59,12 @@ interface FridayPluginRow {
   signature_verified: number;
   trusted_fingerprint_sha256: string | null;
   last_verified_at: string | null;
+  last_verified_runtime_version: string | null;
+  last_verified_provider_model: string | null;
+  compatibility_status: string;
+  promotion_channel: string;
+  shadow_version_id: string | null;
+  canary_stats_json: string;
   installed_at: string;
   updated_at: string;
   last_error_code: string | null;
@@ -58,6 +72,8 @@ interface FridayPluginRow {
 }
 
 function rowToEntity(row: FridayPluginRow): FridayPluginEntity {
+  const canaryStats = safeJsonParse<FridayAutonomyCanaryStats>(row.canary_stats_json);
+  const upgradeDefaults = defaultFridayAutonomyUpgradeFields();
   return {
     id: row.id,
     name: row.name,
@@ -77,6 +93,14 @@ function rowToEntity(row: FridayPluginRow): FridayPluginEntity {
     signatureVerified: row.signature_verified === 1,
     trustedFingerprintSha256: row.trusted_fingerprint_sha256,
     lastVerifiedAt: row.last_verified_at,
+    lastVerifiedRuntimeVersion: row.last_verified_runtime_version,
+    lastVerifiedProviderModel: row.last_verified_provider_model,
+    compatibilityStatus: (row.compatibility_status as FridayAutonomyUpgradeFields["compatibilityStatus"] | undefined)
+      ?? upgradeDefaults.compatibilityStatus,
+    promotionChannel: (row.promotion_channel as FridayAutonomyUpgradeFields["promotionChannel"] | undefined)
+      ?? upgradeDefaults.promotionChannel,
+    shadowVersionId: row.shadow_version_id,
+    canaryStats: canaryStats && Object.keys(canaryStats).length > 0 ? canaryStats : undefined,
     installedAt: row.installed_at,
     updatedAt: row.updated_at,
     lastErrorCode: row.last_error_code,
@@ -94,13 +118,17 @@ export function createFridayPluginRepository(): FridayPluginRepository {
           id, name, description, version, source, status, enabled,
           trust_mode, install_path, kinds_json, manifest_json, config_json,
           signature_algorithm, signature_key_id, signature_value, signature_verified,
-          trusted_fingerprint_sha256, last_verified_at,
+          trusted_fingerprint_sha256, last_verified_at, last_verified_runtime_version,
+          last_verified_provider_model, compatibility_status, promotion_channel,
+          shadow_version_id, canary_stats_json,
           installed_at, updated_at
         ) VALUES (
           @id, @name, @description, @version, @source, @status, @enabled,
           @trust_mode, @install_path, @kinds_json, @manifest_json, @config_json,
           @signature_algorithm, @signature_key_id, @signature_value, @signature_verified,
-          @trusted_fingerprint_sha256, @last_verified_at,
+          @trusted_fingerprint_sha256, @last_verified_at, @last_verified_runtime_version,
+          @last_verified_provider_model, @compatibility_status, @promotion_channel,
+          @shadow_version_id, @canary_stats_json,
           @installed_at, @updated_at
         )
         ON CONFLICT(id) DO UPDATE SET
@@ -121,6 +149,12 @@ export function createFridayPluginRepository(): FridayPluginRepository {
           signature_verified = excluded.signature_verified,
           trusted_fingerprint_sha256 = excluded.trusted_fingerprint_sha256,
           last_verified_at = excluded.last_verified_at,
+          last_verified_runtime_version = excluded.last_verified_runtime_version,
+          last_verified_provider_model = excluded.last_verified_provider_model,
+          compatibility_status = excluded.compatibility_status,
+          promotion_channel = excluded.promotion_channel,
+          shadow_version_id = excluded.shadow_version_id,
+          canary_stats_json = excluded.canary_stats_json,
           updated_at = excluded.updated_at
       `);
 
@@ -143,6 +177,12 @@ export function createFridayPluginRepository(): FridayPluginRepository {
         signature_verified: input.signatureVerified ? 1 : 0,
         trusted_fingerprint_sha256: input.trustedFingerprintSha256 ?? null,
         last_verified_at: input.lastVerifiedAt ?? null,
+        last_verified_runtime_version: input.lastVerifiedRuntimeVersion ?? null,
+        last_verified_provider_model: input.lastVerifiedProviderModel ?? null,
+        compatibility_status: input.compatibilityStatus ?? "unknown",
+        promotion_channel: input.promotionChannel ?? "none",
+        shadow_version_id: input.shadowVersionId ?? null,
+        canary_stats_json: JSON.stringify(input.canaryStats ?? {}),
         installed_at: input.nowIso,
         updated_at: input.nowIso,
       });
@@ -156,6 +196,41 @@ export function createFridayPluginRepository(): FridayPluginRepository {
         );
       }
       return entity;
+    },
+
+    setUpgradeMetadata(db, pluginId, patch, nowIso) {
+      const existing = this.getById(db, pluginId);
+      if (!existing) {
+        throw new FridayDomainError(
+          FRIDAY_PLUGIN_ERROR_CODES.NOT_FOUND,
+          `Plugin ${pluginId} not found`,
+          { httpStatus: 404 },
+        );
+      }
+      const merged = mergeFridayAutonomyUpgradeFields(existing, patch);
+      db.prepare(
+        `UPDATE plugins SET
+           last_verified_at = ?,
+           last_verified_runtime_version = ?,
+           last_verified_provider_model = ?,
+           compatibility_status = ?,
+           promotion_channel = ?,
+           shadow_version_id = ?,
+           canary_stats_json = ?,
+           updated_at = ?
+         WHERE id = ?`,
+      ).run(
+        merged.lastVerifiedAt ?? null,
+        merged.lastVerifiedRuntimeVersion ?? null,
+        merged.lastVerifiedProviderModel ?? null,
+        merged.compatibilityStatus,
+        merged.promotionChannel,
+        merged.shadowVersionId ?? null,
+        JSON.stringify(merged.canaryStats ?? {}),
+        nowIso,
+        pluginId,
+      );
+      return this.getById(db, pluginId)!;
     },
 
     getById(db: Database.Database, pluginId: string): FridayPluginEntity | null {
