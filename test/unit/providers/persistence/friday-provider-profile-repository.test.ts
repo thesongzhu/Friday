@@ -177,4 +177,40 @@ describe("FridayProviderProfileRepository", () => {
       refKey: "provider:prov-secret:apiKey",
     });
   });
+
+  it("stores autonomy upgrade metadata", () => {
+    const repo = createRepo();
+    db.withWriteTransaction((d) => repo.insert(d, sampleProfile));
+
+    const updated = db.withWriteTransaction((d) =>
+      repo.setUpgradeMetadata(
+        d,
+        "prov-001",
+        {
+          lastVerifiedAt: "2026-04-17T20:00:00.000Z",
+          lastVerifiedRuntimeVersion: "f27377c",
+          lastVerifiedProviderModel: "claude-sonnet-4-20250514",
+          compatibilityStatus: "compatible",
+          promotionChannel: "active",
+          shadowVersionId: "prov-001-shadow",
+          canaryStats: {
+            sampleSize: 8,
+            successCount: 8,
+            failureCount: 0,
+            rollbackCount: 0,
+            lastEvaluatedAt: "2026-04-17T20:02:00.000Z",
+          },
+        },
+        "2026-04-17T20:02:00.000Z",
+      ),
+    );
+
+    expect(updated).not.toBeNull();
+    expect(updated!.lastVerifiedRuntimeVersion).toBe("f27377c");
+    expect(updated!.lastVerifiedProviderModel).toBe("claude-sonnet-4-20250514");
+    expect(updated!.compatibilityStatus).toBe("compatible");
+    expect(updated!.promotionChannel).toBe("active");
+    expect(updated!.shadowVersionId).toBe("prov-001-shadow");
+    expect(updated!.canaryStats?.sampleSize).toBe(8);
+  });
 });

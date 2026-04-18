@@ -1,4 +1,11 @@
 import type Database from "better-sqlite3";
+import {
+  defaultFridayAutonomyUpgradeFields,
+  mergeFridayAutonomyUpgradeFields,
+  type FridayAutonomyCanaryStats,
+  type FridayAutonomyUpgradeFields,
+  type FridayAutonomyUpgradePatch,
+} from "../../autonomy/model/friday-autonomy-upgrade.types.js";
 import { safeJsonParse } from "#utilities";
 import type { SkillManifestV2 } from "../model/friday-skill-manifest-v2.types.js";
 import type { SkillLifecycleStatus } from "../model/friday-skill-lifecycle.types.js";
@@ -53,6 +60,13 @@ export interface FridaySkillRepository {
     skillId: string,
   ): FridaySkillEntity | null;
 
+  setUpgradeMetadata(
+    db: Database.Database,
+    skillId: string,
+    patch: FridayAutonomyUpgradePatch,
+    nowIso: string,
+  ): FridaySkillEntity | null;
+
   listAll(db: Database.Database): FridaySkillEntity[];
 
   listInstalled(db: Database.Database): FridaySkillEntity[];
@@ -68,6 +82,8 @@ export interface FridaySkillRepository {
 // ─── Row Mapper ───
 
 function mapRow(row: FridaySkillRow): FridaySkillEntity {
+  const canaryStats = safeJsonParse<FridayAutonomyCanaryStats>(row.canary_stats_json);
+  const upgradeDefaults = defaultFridayAutonomyUpgradeFields();
   return {
     id: row.id,
     name: row.name,
@@ -78,6 +94,15 @@ function mapRow(row: FridaySkillRow): FridaySkillEntity {
     installedVersion: row.installed_version ?? undefined,
     status: row.status as SkillLifecycleStatus,
     currentManifest: safeJsonParse<SkillManifestV2>(row.current_manifest_json),
+    lastVerifiedAt: row.last_verified_at ?? undefined,
+    lastVerifiedRuntimeVersion: row.last_verified_runtime_version ?? undefined,
+    lastVerifiedProviderModel: row.last_verified_provider_model ?? undefined,
+    compatibilityStatus: (row.compatibility_status as FridayAutonomyUpgradeFields["compatibilityStatus"] | undefined)
+      ?? upgradeDefaults.compatibilityStatus,
+    promotionChannel: (row.promotion_channel as FridayAutonomyUpgradeFields["promotionChannel"] | undefined)
+      ?? upgradeDefaults.promotionChannel,
+    shadowVersionId: row.shadow_version_id ?? undefined,
+    canaryStats: canaryStats && Object.keys(canaryStats).length > 0 ? canaryStats : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at ?? undefined,
@@ -151,6 +176,37 @@ export function createFridaySkillRepository(): FridaySkillRepository {
         .prepare("SELECT * FROM skills WHERE id = ? AND deleted_at IS NULL")
         .get(skillId) as FridaySkillRow | undefined;
       return row ? mapRow(row) : null;
+    },
+
+    setUpgradeMetadata(db, skillId, patch, nowIso) {
+      const existing = this.getSkillById(db, skillId);
+      if (!existing) {
+        return null;
+      }
+      const merged = mergeFridayAutonomyUpgradeFields(existing, patch);
+      db.prepare(
+        `UPDATE skills SET
+         last_verified_at = ?,
+         last_verified_runtime_version = ?,
+         last_verified_provider_model = ?,
+         compatibility_status = ?,
+         promotion_channel = ?,
+         shadow_version_id = ?,
+         canary_stats_json = ?,
+         updated_at = ?
+         WHERE id = ?`,
+      ).run(
+        merged.lastVerifiedAt ?? null,
+        merged.lastVerifiedRuntimeVersion ?? null,
+        merged.lastVerifiedProviderModel ?? null,
+        merged.compatibilityStatus,
+        merged.promotionChannel,
+        merged.shadowVersionId ?? null,
+        JSON.stringify(merged.canaryStats ?? {}),
+        nowIso,
+        skillId,
+      );
+      return this.getSkillById(db, skillId);
     },
 
     listAll(db) {
