@@ -28,9 +28,9 @@ export function getFridayDeepProofEnvStatus(
   const legacyLane = readFlag(env.E2E_LIVE);
   const supplementalLane = readFlag(env.FRIDAY_E2E_LIVE_OPENAI) || readFlag(env.FRIDAY_E2E_LIVE_OLLAMA);
   const credentialEnvRef =
-    typeof env.FRIDAY_ANTHROPIC_API_KEY === "string" && env.FRIDAY_ANTHROPIC_API_KEY.trim().length > 0
+    typeof env.FRIDAY_ANTHROPIC_API_KEY === "string" && env.FRIDAY_ANTHROPIC_API_KEY.trim().length > 0 // pragma: allowlist secret
       ? "$FRIDAY_ANTHROPIC_API_KEY"
-      : typeof env.ANTHROPIC_API_KEY === "string" && env.ANTHROPIC_API_KEY.trim().length > 0
+      : typeof env.ANTHROPIC_API_KEY === "string" && env.ANTHROPIC_API_KEY.trim().length > 0 // pragma: allowlist secret
         ? "$ANTHROPIC_API_KEY"
         : null;
 

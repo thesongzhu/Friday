@@ -16,7 +16,7 @@ describe("friday deep proof env", () => {
   it("accepts the Anthropic API-key lane when no legacy or supplemental lanes are enabled", () => {
     const status = getFridayDeepProofEnvStatus({
       FRIDAY_E2E_LIVE_ANTHROPIC: "1",
-      FRIDAY_ANTHROPIC_API_KEY: "test-key",
+      FRIDAY_ANTHROPIC_API_KEY: "test-key", // pragma: allowlist secret
     });
 
     expect(status.gated).toBe(true);
@@ -28,7 +28,7 @@ describe("friday deep proof env", () => {
   it("uses the legacy ANTHROPIC_API_KEY alias when the canonical env var is absent", () => {
     const envRef = assertFridayDeepProofAnthropicLane({
       FRIDAY_E2E_LIVE_ANTHROPIC: "1",
-      ANTHROPIC_API_KEY: "legacy-key",
+      ANTHROPIC_API_KEY: "legacy-key", // pragma: allowlist secret
     });
 
     expect(envRef).toBe("$ANTHROPIC_API_KEY");
@@ -37,7 +37,7 @@ describe("friday deep proof env", () => {
   it("blocks deep proof runs when the legacy live lane is enabled", () => {
     const status = getFridayDeepProofEnvStatus({
       FRIDAY_E2E_LIVE_ANTHROPIC: "1",
-      FRIDAY_ANTHROPIC_API_KEY: "test-key",
+      FRIDAY_ANTHROPIC_API_KEY: "test-key", // pragma: allowlist secret
       E2E_LIVE: "1",
     });
 
@@ -48,7 +48,7 @@ describe("friday deep proof env", () => {
   it("blocks deep proof runs when OpenAI or Ollama supplemental lanes are enabled", () => {
     const status = getFridayDeepProofEnvStatus({
       FRIDAY_E2E_LIVE_ANTHROPIC: "1",
-      FRIDAY_ANTHROPIC_API_KEY: "test-key",
+      FRIDAY_ANTHROPIC_API_KEY: "test-key", // pragma: allowlist secret
       FRIDAY_E2E_LIVE_OPENAI: "1",
     });
 
