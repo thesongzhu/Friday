@@ -110,6 +110,13 @@ function mapRow(row: FridaySkillRow): FridaySkillEntity {
   };
 }
 
+function requireSkillRow(row: FridaySkillRow | undefined, skillId: string): FridaySkillRow {
+  if (!row) {
+    throw new Error(`FridaySkillRepository invariant violated: skill row '${skillId}' missing after persistence`);
+  }
+  return row;
+}
+
 // ─── Factory ───
 
 export function createFridaySkillRepository(): FridaySkillRepository {
@@ -139,7 +146,10 @@ export function createFridaySkillRepository(): FridaySkillRepository {
       );
 
       return mapRow(
-        db.prepare("SELECT * FROM skills WHERE id = ?").get(input.id) as FridaySkillRow,
+        requireSkillRow(
+          db.prepare("SELECT * FROM skills WHERE id = ?").get(input.id) as FridaySkillRow | undefined,
+          input.id,
+        ),
       );
     },
 
