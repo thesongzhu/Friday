@@ -765,6 +765,8 @@ export function createFridayAutonomousEngine(
     const patterns = [
       /exact text ["']([^"']+)["']/i,
       /contains(?: the)?(?: exact)? text ["']([^"']+)["']/i,
+      /(?:with|contains)(?: the)?(?: exact)? content ["']([^"']+)["']/i,
+      /exact content ["']([^"']+)["']/i,
       /content(?:s)? (?:is|are) ["']([^"']+)["']/i,
     ];
     for (const text of texts) {
