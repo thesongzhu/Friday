@@ -30,9 +30,9 @@ import type {
   FridayAutonomousResumeGoalParams,
   FridayAutonomousStep,
   FridayAutonomousStepStatus,
+  FridayAutonomousVerificationCheck,
   FridayAutonomousVerificationMethod,
   FridayAutonomousVerificationPatternFamily,
-  FridayAutonomousVerificationCheck,
   ISODateTime,
   UUID,
 } from "./friday-autonomous.types.js";
