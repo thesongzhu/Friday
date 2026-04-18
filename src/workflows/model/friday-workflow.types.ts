@@ -1,4 +1,9 @@
 // ─── Foundational value types (local definitions; not coupled to SQLite layer) ───
+import type {
+  FridayAutonomyCanaryStats,
+  FridayAutonomyCompatibilityStatus,
+  FridayAutonomyPromotionChannel,
+} from "../../autonomy/model/friday-autonomy-upgrade.types.js";
 
 export type UUID = string;
 export type ISODateTime = string;
@@ -71,6 +76,13 @@ export interface FridayWorkflowRow {
   is_archived: number;
   revision: number;
   etag: string;
+  last_verified_at: string | null;
+  last_verified_runtime_version: string | null;
+  last_verified_provider_model: string | null;
+  compatibility_status: string;
+  promotion_channel: string;
+  shadow_version_id: string | null;
+  canary_stats_json: string;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -91,6 +103,13 @@ export interface FridayWorkflowEntity {
   isArchived: boolean;
   revision: number;
   etag: string;
+  lastVerifiedAt?: ISODateTime;
+  lastVerifiedRuntimeVersion?: string;
+  lastVerifiedProviderModel?: string;
+  compatibilityStatus?: FridayAutonomyCompatibilityStatus;
+  promotionChannel?: FridayAutonomyPromotionChannel;
+  shadowVersionId?: string;
+  canaryStats?: FridayAutonomyCanaryStats;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
   deletedAt?: ISODateTime;

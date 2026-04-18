@@ -1,4 +1,9 @@
 // ─── Provider kinds & API protocols ───
+import type {
+  FridayAutonomyCanaryStats,
+  FridayAutonomyCompatibilityStatus,
+  FridayAutonomyPromotionChannel,
+} from "../../autonomy/model/friday-autonomy-upgrade.types.js";
 
 /**
  * Provider kinds supported by Friday.
@@ -279,6 +284,13 @@ export interface FridayProviderProfile {
   enabled: boolean;
   defaultModel?: string;
   config: FridayProviderConfigJson;
+  lastVerifiedAt?: string;
+  lastVerifiedRuntimeVersion?: string;
+  lastVerifiedProviderModel?: string;
+  compatibilityStatus?: FridayAutonomyCompatibilityStatus;
+  promotionChannel?: FridayAutonomyPromotionChannel;
+  shadowVersionId?: string;
+  canaryStats?: FridayAutonomyCanaryStats;
   createdAt: string;
   updatedAt: string;
 }
@@ -544,6 +556,13 @@ export interface FridayProviderProfileRow {
   enabled: number;
   default_model: string | null;
   config_json: string | null;
+  last_verified_at: string | null;
+  last_verified_runtime_version: string | null;
+  last_verified_provider_model: string | null;
+  compatibility_status: string;
+  promotion_channel: string;
+  shadow_version_id: string | null;
+  canary_stats_json: string;
   created_at: string;
   updated_at: string;
 }

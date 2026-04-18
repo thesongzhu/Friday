@@ -2,6 +2,11 @@ import type { SkillManifestV2 } from "./friday-skill-manifest-v2.types.js";
 import type { SkillLifecycleStatus } from "./friday-skill-lifecycle.types.js";
 import type { SkillOrigin, SkillSource } from "./friday-skill-source.types.js";
 import type { SkillTrustTier } from "./friday-skill-trust.types.js";
+import type {
+  FridayAutonomyCanaryStats,
+  FridayAutonomyCompatibilityStatus,
+  FridayAutonomyPromotionChannel,
+} from "../../autonomy/model/friday-autonomy-upgrade.types.js";
 
 // ─── Re-export foundational value types ───
 
@@ -60,6 +65,13 @@ export interface FridaySkillRow {
   installed_version: string | null;
   status: string;
   current_manifest_json: string | null;
+  last_verified_at: string | null;
+  last_verified_runtime_version: string | null;
+  last_verified_provider_model: string | null;
+  compatibility_status: string;
+  promotion_channel: string;
+  shadow_version_id: string | null;
+  canary_stats_json: string;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -156,6 +168,13 @@ export interface FridaySkillEntity {
   installedVersion?: string;
   status: SkillLifecycleStatus;
   currentManifest?: SkillManifestV2;
+  lastVerifiedAt?: ISODateTime;
+  lastVerifiedRuntimeVersion?: string;
+  lastVerifiedProviderModel?: string;
+  compatibilityStatus?: FridayAutonomyCompatibilityStatus;
+  promotionChannel?: FridayAutonomyPromotionChannel;
+  shadowVersionId?: string;
+  canaryStats?: FridayAutonomyCanaryStats;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
   deletedAt?: ISODateTime;
