@@ -122,6 +122,7 @@ import { createFridayAutonomyImpactCensusService } from "../../autonomy/services
 import { createFridayAutonomyUpgradePlannerService } from "../../autonomy/services/friday-autonomy-upgrade-planner-service.js";
 import { createFridayAutonomyUpgradeStatusService } from "../../autonomy/services/friday-autonomy-upgrade-status-service.js";
 import { createFridayWorkflowUpgradeLifecycleService } from "../../autonomy/services/friday-workflow-upgrade-lifecycle-service.js";
+import { createFridaySkillUpgradeLifecycleService } from "../../autonomy/services/friday-skill-upgrade-lifecycle-service.js";
 import type { FridayAuthPrincipal } from "../model/friday-api-common.types.js";
 import type {
   FridayGetRunEvidenceQuery,
@@ -593,7 +594,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const autonomyCensus = createFridayAutonomyImpactCensusService({
     inventory: autonomyInventory,
     hubVersion: serverVersion,
-    supportedApiVersions: ["v1", "1.0"],
+    supportedApiVersions: ["1", "1.0", "v1"],
   });
   const autonomyPlanner = createFridayAutonomyUpgradePlannerService({
     census: autonomyCensus,
@@ -606,6 +607,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     db: deps.db,
     workflowRepo,
     workflowCrud: workflowRuntime.crud,
+    nowIso: deps.nowIso,
+  });
+  const skillUpgradeLifecycle = createFridaySkillUpgradeLifecycleService({
+    db: deps.db,
+    skillRepo,
     nowIso: deps.nowIso,
   });
 
@@ -749,6 +755,68 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         }),
       getStatus: (workflowId) => autonomyUpgradeStatus.get("workflow", workflowId),
     },
+    skillActions: deps.skillLifecycle
+      ? {
+        registerShadow: (input) => {
+          skillUpgradeLifecycle.registerShadowVersion({
+            skillId: input.skillId,
+            shadowVersionId: input.shadowVersionId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          });
+          const detail = deps.skillLifecycle!.getSkill(input.skillId);
+          if (!detail) {
+            throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
+              httpStatus: 404,
+            });
+          }
+          return detail;
+        },
+        recordCanary: (input) => {
+          skillUpgradeLifecycle.recordCanaryResult({
+            skillId: input.skillId,
+            success: input.success,
+            evaluatedAt: input.evaluatedAt,
+          });
+          const detail = deps.skillLifecycle!.getSkill(input.skillId);
+          if (!detail) {
+            throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
+              httpStatus: 404,
+            });
+          }
+          return detail;
+        },
+        promote: (input) => {
+          skillUpgradeLifecycle.promote({
+            skillId: input.skillId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          });
+          const detail = deps.skillLifecycle!.getSkill(input.skillId);
+          if (!detail) {
+            throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
+              httpStatus: 404,
+            });
+          }
+          return detail;
+        },
+        rollback: (input) => {
+          skillUpgradeLifecycle.rollback({
+            skillId: input.skillId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          });
+          const detail = deps.skillLifecycle!.getSkill(input.skillId);
+          if (!detail) {
+            throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
+              httpStatus: 404,
+            });
+          }
+          return detail;
+        },
+        getStatus: (skillId) => autonomyUpgradeStatus.get("skill", skillId),
+      }
+      : undefined,
   })) {
     routes.register(route);
   }

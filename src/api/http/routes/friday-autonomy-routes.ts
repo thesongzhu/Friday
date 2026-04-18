@@ -4,14 +4,20 @@ import type { FridayRouteDefinition } from "../../model/friday-api-common.types.
 import type {
   FridayGetAutonomyUpgradeStatusQuery,
   FridayGetAutonomyUpgradeStatusResponse,
+  FridayRecordSkillCanaryRequest,
   FridayRecordWorkflowCanaryRequest,
+  FridayRegisterSkillShadowRequest,
   FridayRegisterWorkflowShadowRequest,
+  FridayPromoteSkillUpgradeRequest,
   FridayPromoteWorkflowUpgradeRequest,
+  FridayRollbackSkillUpgradeRequest,
   FridayRollbackWorkflowUpgradeRequest,
+  FridaySkillUpgradeActionResponse,
   FridayWorkflowUpgradeActionResponse,
 } from "../../model/friday-api-autonomy.types.js";
 import type { FridayAutonomySubjectKind } from "../../../autonomy/model/friday-autonomy-subject.types.js";
 import type { FridayWorkflowEntity } from "../../model/friday-api-workflow.types.js";
+import type { FridaySkillLifecycleDetail } from "#skills";
 
 const AUTONOMY_SUBJECT_KINDS: ReadonlySet<FridayAutonomySubjectKind> = new Set([
   "skill",
@@ -40,6 +46,37 @@ export interface FridayAutonomyRoutesDeps {
       input: { workflowId: string } & FridayRollbackWorkflowUpgradeRequest,
     ) => FridayWorkflowEntity | Promise<FridayWorkflowEntity>;
     getStatus: (workflowId: string) => FridayWorkflowUpgradeActionResponse["status"];
+  };
+  skillActions?: {
+    registerShadow: (
+      input: { skillId: string } & FridayRegisterSkillShadowRequest,
+    ) => FridaySkillLifecycleDetail | Promise<FridaySkillLifecycleDetail>;
+    recordCanary: (
+      input: { skillId: string } & FridayRecordSkillCanaryRequest,
+    ) => FridaySkillLifecycleDetail | Promise<FridaySkillLifecycleDetail>;
+    promote: (
+      input: { skillId: string } & FridayPromoteSkillUpgradeRequest,
+    ) => FridaySkillLifecycleDetail | Promise<FridaySkillLifecycleDetail>;
+    rollback: (
+      input: { skillId: string } & FridayRollbackSkillUpgradeRequest,
+    ) => FridaySkillLifecycleDetail | Promise<FridaySkillLifecycleDetail>;
+    getStatus: (skillId: string) => FridaySkillUpgradeActionResponse["status"];
+  };
+}
+
+function buildSkillUpgradeActionPayload(
+  skill: FridaySkillLifecycleDetail,
+  status: FridaySkillUpgradeActionResponse["status"],
+): FridaySkillUpgradeActionResponse["skill"] {
+  return {
+    skillId: skill.skillId,
+    installedVersion: skill.installedVersion,
+    latestVersion: skill.latestVersion,
+    status: skill.status,
+    promotionChannel: status?.promotionChannel,
+    compatibilityStatus: status?.recordedCompatibilityStatus,
+    shadowVersionId: status?.shadowVersionId,
+    canaryStats: status?.canaryStats,
   };
 }
 
@@ -166,6 +203,85 @@ export function createFridayAutonomyRoutes(
             providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
           });
           return { workflow, status: deps.workflowActions!.getStatus(workflowId) };
+        },
+      },
+    );
+  }
+
+  if (deps.skillActions) {
+    routes.push(
+      {
+        operationId: "autonomy.skills.shadow",
+        method: "POST",
+        path: "/v1/autonomy/skills/:skillId/shadow",
+        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        async handler(ctx) {
+          const { skillId } = ctx.params as { skillId: string };
+          const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const skill = await deps.skillActions!.registerShadow({
+            skillId,
+            shadowVersionId: requireNonEmptyString(body.shadowVersionId, "shadowVersionId"),
+            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
+            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+          });
+          const status = deps.skillActions!.getStatus(skillId);
+          return { skill: buildSkillUpgradeActionPayload(skill, status), status };
+        },
+      },
+      {
+        operationId: "autonomy.skills.canary",
+        method: "POST",
+        path: "/v1/autonomy/skills/:skillId/canary",
+        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        async handler(ctx) {
+          const { skillId } = ctx.params as { skillId: string };
+          const body = (ctx.body ?? {}) as Record<string, unknown>;
+          if (typeof body.success !== "boolean") {
+            throw new FridayDomainError("VALIDATION_ERROR", "success must be a boolean", {
+              httpStatus: 400,
+            });
+          }
+          const skill = await deps.skillActions!.recordCanary({
+            skillId,
+            success: body.success,
+            evaluatedAt: typeof body.evaluatedAt === "string" ? body.evaluatedAt : undefined,
+          });
+          const status = deps.skillActions!.getStatus(skillId);
+          return { skill: buildSkillUpgradeActionPayload(skill, status), status };
+        },
+      },
+      {
+        operationId: "autonomy.skills.promote",
+        method: "POST",
+        path: "/v1/autonomy/skills/:skillId/promote",
+        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        async handler(ctx) {
+          const { skillId } = ctx.params as { skillId: string };
+          const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const skill = await deps.skillActions!.promote({
+            skillId,
+            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
+            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+          });
+          const status = deps.skillActions!.getStatus(skillId);
+          return { skill: buildSkillUpgradeActionPayload(skill, status), status };
+        },
+      },
+      {
+        operationId: "autonomy.skills.rollback",
+        method: "POST",
+        path: "/v1/autonomy/skills/:skillId/rollback",
+        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        async handler(ctx) {
+          const { skillId } = ctx.params as { skillId: string };
+          const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const skill = await deps.skillActions!.rollback({
+            skillId,
+            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
+            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+          });
+          const status = deps.skillActions!.getStatus(skillId);
+          return { skill: buildSkillUpgradeActionPayload(skill, status), status };
         },
       },
     );

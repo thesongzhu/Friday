@@ -56,6 +56,27 @@ export interface FridayRecordWorkflowCanaryRequest {
   evaluatedAt?: string;
 }
 
+export interface FridayRegisterSkillShadowRequest {
+  shadowVersionId: string;
+  runtimeVersion: string;
+  providerModel?: string;
+}
+
+export interface FridayRecordSkillCanaryRequest {
+  success: boolean;
+  evaluatedAt?: string;
+}
+
+export interface FridayPromoteSkillUpgradeRequest {
+  runtimeVersion: string;
+  providerModel?: string;
+}
+
+export interface FridayRollbackSkillUpgradeRequest {
+  runtimeVersion: string;
+  providerModel?: string;
+}
+
 export interface FridayPromoteWorkflowUpgradeRequest {
   versionNumber: number;
   runtimeVersion: string;
@@ -70,5 +91,19 @@ export interface FridayRollbackWorkflowUpgradeRequest {
 
 export interface FridayWorkflowUpgradeActionResponse {
   workflow: FridayWorkflowEntity;
+  status: FridayAutonomyUpgradeStatusItem | null;
+}
+
+export interface FridaySkillUpgradeActionResponse {
+  skill: {
+    skillId: string;
+    installedVersion?: string;
+    latestVersion?: string;
+    status: string;
+    promotionChannel?: string;
+    compatibilityStatus?: string;
+    shadowVersionId?: string;
+    canaryStats?: FridayAutonomyCanaryStats;
+  };
   status: FridayAutonomyUpgradeStatusItem | null;
 }
