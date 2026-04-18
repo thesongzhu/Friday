@@ -1961,10 +1961,26 @@ export function createFridayDeterministicPipelineRuntime(
         if (decision.decision === "promote") {
           const promotedCandidate = playbookStore.getCandidate(candidateId);
           if (promotedCandidate) {
-            const created = versionManager.createFromCandidate(promotedCandidate);
-            playbook = created.playbook;
-            version = created.version;
-            await scoreCalculator.recalculate(created.playbook.id);
+            const existingPlaybook = promotedCandidate.promotedPlaybookId
+              ? playbookStore.getPlaybook(promotedCandidate.promotedPlaybookId) ?? null
+              : playbookStore.getPlaybooksByWorkflowType(promotedCandidate.workflowType, "active")[0] ?? null;
+
+            if (existingPlaybook) {
+              version = versionManager.evolve(
+                existingPlaybook.id,
+                promotedCandidate,
+                `Promoted candidate ${candidateId} for workflow type ${promotedCandidate.workflowType}.`,
+              );
+              playbook = playbookStore.getPlaybook(existingPlaybook.id) ?? existingPlaybook;
+            }
+
+            if (!playbook || !version) {
+              const created = versionManager.createFromCandidate(promotedCandidate);
+              playbook = created.playbook;
+              version = created.version;
+            }
+
+            await scoreCalculator.recalculate(playbook.id);
           }
         }
         return { decision, playbook, version };

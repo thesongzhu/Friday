@@ -28,11 +28,15 @@ export function createFridaySqliteReadPool(
   }
 
   let index = 0;
+  let closed = false;
 
   return {
     size,
 
     withReadConnection<T>(fn: (db: Database.Database) => T): T {
+      if (closed || connections.length === 0) {
+        throw new FridayDomainError("NOT_INITIALIZED", "SQLite read pool is closed", { httpStatus: 503 });
+      }
       const conn = connections[index % connections.length];
       index = (index + 1) % connections.length;
       // P2-11: Error handling and slow-query diagnostics.
@@ -52,6 +56,8 @@ export function createFridaySqliteReadPool(
     },
 
     close(): void {
+      if (closed) return;
+      closed = true;
       for (const conn of connections) {
         conn.close();
       }

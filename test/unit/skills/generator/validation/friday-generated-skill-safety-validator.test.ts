@@ -278,6 +278,48 @@ describe("validateGeneratedCode", () => {
     expect(issues.some((i) => i.code === "DANGEROUS_SHELL_PATTERN")).toBe(false);
   });
 
+  it("rejects bare read-based stdin handling in shell skills", () => {
+    const manifest = makeManifest({
+      runtime: {
+        kind: "shell",
+        entrypoint: "run.sh",
+        minHubVersion: "0.1.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30000,
+      },
+    });
+    const issues = validateGeneratedCode(
+      [makeFile({
+        path: "run.sh",
+        language: "bash",
+        content: '#!/usr/bin/env bash\nset -euo pipefail\nread -r input\necho "{\\"ok\\":true}"',
+      })],
+      manifest,
+    );
+    expect(issues.some((i) => i.code === "DANGEROUS_SHELL_PATTERN" && i.message.includes("stdin"))).toBe(true);
+  });
+
+  it("allows cat-based stdin handling in shell skills", () => {
+    const manifest = makeManifest({
+      runtime: {
+        kind: "shell",
+        entrypoint: "run.sh",
+        minHubVersion: "0.1.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30000,
+      },
+    });
+    const issues = validateGeneratedCode(
+      [makeFile({
+        path: "run.sh",
+        language: "bash",
+        content: '#!/usr/bin/env bash\nset -euo pipefail\nINPUT_JSON="$(cat)"\nprintf \'{"raw":%s}\\n\' "$(printf %s "$INPUT_JSON" | jq -Rsa .)"',
+      })],
+      manifest,
+    );
+    expect(issues.some((i) => i.code === "DANGEROUS_SHELL_PATTERN")).toBe(false);
+  });
+
   it("does not flag shell patterns in node runtime", () => {
     const issues = validateGeneratedCode(
       [makeFile({ path: "data.sh", language: "bash", content: "sudo echo hi" })],

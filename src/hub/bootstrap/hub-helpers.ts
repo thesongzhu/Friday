@@ -56,6 +56,7 @@ import type { FridayApiRuntime } from "#api";
 import type { FridayChannelRegistry, WebchatWsService } from "#channels";
 import type { FridaySatelliteRuntime } from "#satellites";
 import type { FridayBrowserPresentationMode } from "#browser";
+import type { FridayAutonomousEngine } from "../../agent/autonomous/friday-autonomous.types.js";
 import { parseFridaySecretInput } from "../../security/friday-secret-ref.js";
 
 // ─── Constants ───
@@ -1062,6 +1063,7 @@ export interface FridayHub {
   converterService: FridaySkillConverterService;
   workflowGenerator: FridayWorkflowGeneratorService;
   workflowRuntime: FridayWorkflowRuntime;
+  autonomousEngine: FridayAutonomousEngine;
   selfHealing: FridaySelfHealingApiService;
   apiRuntime: FridayApiRuntime;
   channelRegistry: FridayChannelRegistry;

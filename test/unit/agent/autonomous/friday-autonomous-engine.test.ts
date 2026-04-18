@@ -1,3 +1,7 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   buildDeterministicBrowserBootstrapDecision,
@@ -1035,6 +1039,66 @@ describe("FridayAutonomousEngine", () => {
         }),
       );
       expect(analyzeImages).not.toHaveBeenCalled();
+    });
+
+    it("uses toolExecutor plus deterministic file-state verification for file writes", async () => {
+      const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-autonomous-file-"));
+      const outputPath = path.join(workspaceDir, "proof.txt");
+      const expected = "deterministic autonomous proof";
+      const runtime = {
+        executeRun: vi.fn().mockResolvedValue({
+          runId: "run-plan",
+          status: "completed",
+          response: JSON.stringify([
+            {
+              instruction: `Create the file '${outputPath}' with the exact text '${expected}'`,
+              domain: "file",
+              verification: `Verify the file '${outputPath}' exists and contains the exact text '${expected}'`,
+            },
+          ]),
+          usageInput: 20,
+          usageOutput: 10,
+        }),
+      };
+      const toolExecutor = vi.fn().mockImplementation(async (toolName: string, args: Record<string, unknown>) => {
+        if (toolName !== "write") {
+          return { content: `unexpected tool ${toolName}`, isError: true };
+        }
+        const filePath = String(args.path);
+        const content = String(args.content);
+        fs.writeFileSync(filePath, content, "utf8");
+        return { content: "write complete" };
+      });
+
+      try {
+        engine = createFridayAutonomousEngine({
+          ...deps,
+          agentRuntime: runtime,
+          toolExecutor,
+          analyzeImages: vi.fn(),
+          config: { iterationDelayMs: 0 },
+        });
+
+        const result = await engine.executeGoal({
+          description: "Create a proof file and verify it",
+          signal: signal(),
+        });
+
+        expect(result.status).toBe("completed");
+        expect(runtime.executeRun).toHaveBeenCalledTimes(1);
+        expect(toolExecutor).toHaveBeenCalledTimes(1);
+        expect(toolExecutor).toHaveBeenCalledWith(
+          "write",
+          {
+            path: outputPath,
+            content: expected,
+          },
+          expect.any(AbortSignal),
+        );
+        expect(fs.readFileSync(outputPath, "utf8")).toBe(expected);
+      } finally {
+        fs.rmSync(workspaceDir, { recursive: true, force: true });
+      }
     });
 
     it("should handle aborted goals", async () => {

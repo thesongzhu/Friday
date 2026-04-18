@@ -144,6 +144,103 @@ describe("Friday deterministic pipeline runtime wiring", () => {
     db.close();
   });
 
+  it("evolves an existing playbook when a promoted candidate matches the active workflow type", async () => {
+    const db = createTestDb();
+    clearRulesState(db);
+    const idGenerator = createTestIdGenerator();
+    const runtime = createFridayDeterministicPipelineRuntime({
+      db,
+      idGenerator,
+      nowIso: () => "2026-02-27T00:00:00.000Z",
+      invokeSkill: async () => ({ ok: true }),
+    });
+
+    async function executeEvidenceRun(runId: string, inputData: Record<string, unknown>) {
+      return runtime.nodeRunner.executeNode({
+        runId,
+        workflowId: `wf-${runId}`,
+        nodeId: `node-${runId}`,
+        nodeType: "data",
+        nodeConfig: {
+          mapping: {
+            stage: "upgrade-proof",
+          },
+        },
+        inputData,
+        workflowType: "upgrade-proof-workflow",
+        tags: ["upgrade-proof"],
+      });
+    }
+
+    for (let index = 0; index < 5; index += 1) {
+      await executeEvidenceRun(`v1-${index}`, { alpha: index, beta: true });
+    }
+
+    const initialCandidates = runtime.playbook.listCandidates({
+      workflowType: "upgrade-proof-workflow",
+    }) as {
+      items: Array<{ id: string; fingerprint: string; evidenceCount: number }>;
+    };
+    expect(initialCandidates.items).toHaveLength(1);
+    const firstCandidate = initialCandidates.items[0]!;
+
+    db.withWriteTransaction((conn) => {
+      conn.prepare(
+        `UPDATE playbook_candidates
+            SET first_observed_at = ?, updated_at = ?
+          WHERE id = ?`,
+      ).run("2026-02-25T00:00:00.000Z", "2026-02-27T00:00:00.000Z", firstCandidate.id);
+    });
+
+    const firstPromotion = await runtime.playbook.promoteCandidate(firstCandidate.id, {}) as {
+      decision: { decision: string };
+      playbook: { id: string; activeVersionNumber: number };
+      version: { versionNumber: number };
+    };
+    expect(firstPromotion.decision.decision).toBe("promote");
+    expect(firstPromotion.playbook.id).toBeTruthy();
+    expect(firstPromotion.version.versionNumber).toBe(1);
+
+    for (let index = 0; index < 5; index += 1) {
+      await executeEvidenceRun(`v2-${index}`, { alpha: index, beta: true, gamma: "upgrade" });
+    }
+
+    const nextCandidates = runtime.playbook.listCandidates({
+      workflowType: "upgrade-proof-workflow",
+    }) as {
+      items: Array<{ id: string; fingerprint: string; evidenceCount: number }>;
+    };
+    const secondCandidate = nextCandidates.items.find((item) => item.id !== firstCandidate.id);
+    expect(secondCandidate).toBeDefined();
+    expect(secondCandidate?.fingerprint).not.toBe(firstCandidate.fingerprint);
+
+    db.withWriteTransaction((conn) => {
+      conn.prepare(
+        `UPDATE playbook_candidates
+            SET first_observed_at = ?, updated_at = ?
+          WHERE id = ?`,
+      ).run("2026-02-25T00:00:00.000Z", "2026-02-27T00:00:00.000Z", secondCandidate!.id);
+    });
+
+    const secondPromotion = await runtime.playbook.promoteCandidate(secondCandidate!.id, {}) as {
+      decision: { decision: string };
+      playbook: { id: string; activeVersionNumber: number };
+      version: { versionNumber: number };
+    };
+
+    expect(secondPromotion.decision.decision).toBe("promote");
+    expect(secondPromotion.playbook.id).toBe(firstPromotion.playbook.id);
+    expect(secondPromotion.version.versionNumber).toBe(2);
+    expect(secondPromotion.playbook.activeVersionNumber).toBe(2);
+
+    const playbookDetails = runtime.playbook.getPlaybook(firstPromotion.playbook.id) as {
+      playbook: { activeVersionNumber: number };
+    };
+    expect(playbookDetails.playbook.activeVersionNumber).toBe(2);
+
+    db.close();
+  });
+
   it("runs acceptance checks and supports result query", async () => {
     const db = createTestDb();
     const idGenerator = createTestIdGenerator();

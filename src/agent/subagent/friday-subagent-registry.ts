@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { FridayDomainError } from "#errors";
 import { buildFridaySubagentSessionKey } from "#sessions";
+import type { FridayAgentMessage } from "../model/friday-agent.types.js";
 
 import type {
   CreateFridaySubagentRegistryDeps,
@@ -55,6 +56,46 @@ export function createFridaySubagentRegistry(
         throw error;
       }
     }
+  }
+
+  function mapSessionMessageToAgentMessage(
+    message: {
+      role: string;
+      content: unknown;
+      contentText: string;
+    },
+  ): FridayAgentMessage | null {
+    if (message.role !== "user" && message.role !== "assistant") {
+      return null;
+    }
+
+    if (typeof message.content === "string") {
+      const content = message.content.trim();
+      if (content.length > 0) {
+        return { role: message.role, content };
+      }
+    }
+
+    const fallbackText = message.contentText.trim();
+    if (fallbackText.length > 0) {
+      return { role: message.role, content: fallbackText };
+    }
+
+    return null;
+  }
+
+  async function loadChildHistoryMessages(sessionKey: string): Promise<FridayAgentMessage[]> {
+    if (!deps.sessionService || typeof deps.sessionService.getMessages !== "function") {
+      return [];
+    }
+    return deps.sessionService
+      .getMessages(sessionKey, 48)
+      .then((records) =>
+        records
+          .map((message) => mapSessionMessageToAgentMessage(message))
+          .filter((message): message is FridayAgentMessage => message !== null),
+      )
+      .catch(() => [] as FridayAgentMessage[]);
   }
 
   /** Shared validation + record creation for both spawn() and spawnDetached(). */
@@ -214,8 +255,10 @@ export function createFridaySubagentRegistry(
     try {
       // Execute child run
       const timeoutMs = input.timeoutMs ?? FRIDAY_SUBAGENT_DEFAULT_TIMEOUT_MS;
+      const historyMessages = await loadChildHistoryMessages(childSessionKey);
       const result = await childRuntime.executeRun({
         task: input.task,
+        historyMessages,
         taskPrompt: input.taskPrompt,
         runId: childRunId,
         sessionKey: childSessionKey,

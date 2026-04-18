@@ -1,6 +1,7 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridayProviderTenantContext } from "#providers";
 import type { FridaySessionService } from "#sessions";
+import type { FridayAgentMessage } from "../model/friday-agent.types.js";
 import type {
   FridayAgentConversationContext,
   FridayAgentRuntimeResult,
@@ -179,6 +180,7 @@ export interface CreateFridaySubagentRegistryDeps {
   createChildRuntime: (params: CreateChildRuntimeParams) => {
     executeRun: (params: {
       task: string;
+      historyMessages?: FridayAgentMessage[];
       taskPrompt?: string;
       sessionKey: string;
       runId?: string;
