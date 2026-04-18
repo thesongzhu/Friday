@@ -117,10 +117,70 @@ interface SkillDetailEnvelope {
   };
 }
 
+interface UpgradeStatusEnvelope {
+  ok: boolean;
+  data: {
+    items: Array<{
+      kind: string;
+      id: string;
+      compatibilityStatus: string;
+      promotionChannel: string;
+      shadowVersionId?: string;
+      canaryStats?: {
+        sampleSize: number;
+        successCount: number;
+        failureCount: number;
+        rollbackCount: number;
+      };
+      recordedCompatibilityStatus: string;
+      derivedCompatibilityStatus: string;
+      strategy: string;
+      nextStage: string;
+      findings: Array<{ id: string; passed: boolean; severity: string }>;
+    }>;
+  };
+}
+
+interface SkillUpgradeActionEnvelope {
+  ok: boolean;
+  data: {
+    skill: {
+      skillId: string;
+      installedVersion?: string;
+      latestVersion?: string;
+      status: string;
+      promotionChannel?: string;
+      compatibilityStatus?: string;
+      shadowVersionId?: string;
+      canaryStats?: {
+        sampleSize: number;
+        successCount: number;
+        failureCount: number;
+        rollbackCount: number;
+      };
+    };
+    status: UpgradeStatusEnvelope["data"]["items"][number] | null;
+  };
+}
+
+interface RuntimeVersionEnvelope {
+  ok: boolean;
+  data: {
+    version: string;
+    apiVersion: string;
+  };
+}
+
 interface SkillRow {
   installedVersion: string | null;
   latestVersion: string | null;
   status: string;
+  compatibilityStatus: string;
+  promotionChannel: string;
+  shadowVersionId: string | null;
+  canaryStatsJson: string;
+  lastVerifiedRuntimeVersion: string | null;
+  lastVerifiedProviderModel: string | null;
 }
 
 function openStateDb(stateDir: string): Database.Database {
@@ -135,7 +195,13 @@ function readSkillRow(stateDir: string, skillId: string): SkillRow | null {
         .prepare(
           `SELECT installed_version AS installedVersion,
                   latest_version AS latestVersion,
-                  status
+                  status,
+                  compatibility_status AS compatibilityStatus,
+                  promotion_channel AS promotionChannel,
+                  shadow_version_id AS shadowVersionId,
+                  canary_stats_json AS canaryStatsJson,
+                  last_verified_runtime_version AS lastVerifiedRuntimeVersion,
+                  last_verified_provider_model AS lastVerifiedProviderModel
              FROM skills
             WHERE id = ?`,
         )
@@ -153,6 +219,10 @@ function readInstalledSkillManifestVersion(skillDir: string): string | null {
   }
   const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as { version?: unknown };
   return typeof parsed.version === "string" ? parsed.version : null;
+}
+
+function readInstalledSkillManifest(skillDir: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(path.join(skillDir, "skill.manifest.json"), "utf8")) as Record<string, unknown>;
 }
 
 function buildSkillRunInput(skillDir: string): Record<string, unknown> {
@@ -245,7 +315,11 @@ async function getSkillDraftState(
 async function createValidatedSkillDraft(
   env: RealHubEnv,
   goal: string,
-): Promise<{ sessionId: string; evidence: SkillGeneratorEvidenceEnvelope["data"]["evidence"] }> {
+): Promise<{
+  sessionId: string;
+  draft: SkillGeneratorSessionEnvelope["data"]["draft"] | undefined;
+  evidence: SkillGeneratorEvidenceEnvelope["data"]["evidence"];
+}> {
   const startRes = await apiFetch<SkillGeneratorSessionEnvelope>(
     env.baseUrl,
     env.accessToken,
@@ -297,6 +371,7 @@ async function createValidatedSkillDraft(
       expect(evidenceRes.json.ok).toBe(true);
       return {
         sessionId,
+        draft,
         evidence: evidenceRes.json.data.evidence,
       };
     }
@@ -325,6 +400,7 @@ async function createValidatedSkillDraft(
       expect(evidenceRes.json.ok).toBe(true);
       return {
         sessionId,
+        draft,
         evidence: evidenceRes.json.data.evidence,
       };
     }
@@ -352,42 +428,88 @@ async function createValidatedSkillDraft(
   throw new Error(`Skill generator draft never reached validation ok. Last issues: ${lastIssues}`);
 }
 
-async function testApproveAndRunSkill(
+async function testSkillDraft(
   env: RealHubEnv,
   sessionId: string,
 ): Promise<{
-  skillId: string;
-  skillDir: string;
-  approve: SkillGeneratorApproveEnvelope["data"];
-  run: SkillRunEnvelope["data"];
+  test: SkillGeneratorTestEnvelope["data"]["test"];
+  evidence: SkillGeneratorEvidenceEnvelope["data"]["evidence"];
 }> {
-  const testRes = await apiFetch<SkillGeneratorTestEnvelope>(
-    env.baseUrl,
-    env.accessToken,
-    "POST",
-    `/v1/skills/generator/sessions/${encodeURIComponent(sessionId)}/test`,
-    undefined,
-    { timeoutMs: 240_000 },
-  );
-  expect(testRes.status).toBe(200);
-  expect(testRes.json.ok).toBe(true);
-  expect(testRes.json.data.test.ok).toBe(true);
-  if (testRes.json.data.test.behavioralCheck) {
-    expect(testRes.json.data.test.behavioralCheck.satisfied).toBe(true);
+  let lastFailure = "";
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const testRes = await apiFetch<SkillGeneratorTestEnvelope>(
+      env.baseUrl,
+      env.accessToken,
+      "POST",
+      `/v1/skills/generator/sessions/${encodeURIComponent(sessionId)}/test`,
+      undefined,
+      { timeoutMs: 240_000 },
+    );
+    expect(testRes.status).toBe(200);
+    expect(testRes.json.ok).toBe(true);
+
+    const test = testRes.json.data.test;
+    const behavioralSatisfied = test.behavioralCheck ? test.behavioralCheck.satisfied : true;
+    if (test.ok && behavioralSatisfied) {
+      const evidenceRes = await apiFetch<SkillGeneratorEvidenceEnvelope>(
+        env.baseUrl,
+        env.accessToken,
+        "GET",
+        `/v1/skills/generator/sessions/${encodeURIComponent(sessionId)}/evidence`,
+      );
+      expect(evidenceRes.status).toBe(200);
+      expect(evidenceRes.json.ok).toBe(true);
+      expect(evidenceRes.json.data.evidence.validationSummary.ok).toBe(true);
+      expect(evidenceRes.json.data.evidence.approvalReadiness.ready).toBe(true);
+      expect(evidenceRes.json.data.evidence.executableTestSummary?.ok).toBe(true);
+
+      return {
+        test,
+        evidence: evidenceRes.json.data.evidence,
+      };
+    }
+
+    lastFailure = JSON.stringify(test).slice(0, 1600);
+    if (attempt >= 3) {
+      break;
+    }
+
+    const feedbackRes = await apiFetch<{ ok: boolean }>(
+      env.baseUrl,
+      env.accessToken,
+      "POST",
+      `/v1/skills/generator/sessions/${encodeURIComponent(sessionId)}/messages`,
+      {
+        message:
+          `The explicit self-test failed: ${lastFailure}. ` +
+          "Fix the draft so the self-test passes, preserve the exact skill id/version, and regenerate.",
+        requestedModel: LIVE_ANTHROPIC_MODEL,
+      },
+      { timeoutMs: 240_000 },
+    );
+    expect(feedbackRes.status).toBe(200);
+    expect(feedbackRes.json.ok).toBe(true);
+
+    const generateRes = await apiFetch<{ ok: boolean; data: { draft: SkillGeneratorSessionEnvelope["data"]["draft"] } }>(
+      env.baseUrl,
+      env.accessToken,
+      "POST",
+      `/v1/skills/generator/sessions/${encodeURIComponent(sessionId)}/generate`,
+      { requestedModel: LIVE_ANTHROPIC_MODEL },
+      { timeoutMs: 240_000 },
+    );
+    expect(generateRes.status).toBe(200);
+    expect(generateRes.json.ok).toBe(true);
   }
 
-  const evidenceRes = await apiFetch<SkillGeneratorEvidenceEnvelope>(
-    env.baseUrl,
-    env.accessToken,
-    "GET",
-    `/v1/skills/generator/sessions/${encodeURIComponent(sessionId)}/evidence`,
-  );
-  expect(evidenceRes.status).toBe(200);
-  expect(evidenceRes.json.ok).toBe(true);
-  expect(evidenceRes.json.data.evidence.validationSummary.ok).toBe(true);
-  expect(evidenceRes.json.data.evidence.approvalReadiness.ready).toBe(true);
-  expect(evidenceRes.json.data.evidence.executableTestSummary?.ok).toBe(true);
+  throw new Error(`Skill draft explicit self-test never passed. Last failure: ${lastFailure}`);
+}
 
+async function approveSkillDraft(
+  env: RealHubEnv,
+  sessionId: string,
+): Promise<SkillGeneratorApproveEnvelope["data"]> {
   const approveRes = await apiFetch<SkillGeneratorApproveEnvelope>(
     env.baseUrl,
     env.accessToken,
@@ -404,8 +526,15 @@ async function testApproveAndRunSkill(
   expect(approveRes.json.data.evidence.approvalReadiness.ready).toBe(true);
   expect(approveRes.json.data.evidence.executableTestSummary?.ok).toBe(true);
 
-  const skillId = approveRes.json.data.skillId;
-  const runInput = buildSkillRunInput(approveRes.json.data.skillDir);
+  return approveRes.json.data;
+}
+
+async function runInstalledSkill(
+  env: RealHubEnv,
+  skillId: string,
+  skillDir: string,
+): Promise<SkillRunEnvelope["data"]> {
+  const runInput = buildSkillRunInput(skillDir);
 
   const runRes = await apiFetch<SkillRunEnvelope>(
     env.baseUrl,
@@ -427,18 +556,62 @@ async function testApproveAndRunSkill(
         stdout: runRes.json.data.stdout,
         stderr: runRes.json.data.stderr,
         output: runRes.json.data.output,
-        manifestVersion: readInstalledSkillManifestVersion(approveRes.json.data.skillDir),
+        manifestVersion: readInstalledSkillManifestVersion(skillDir),
       })}`,
     );
   }
   expect(runRes.json.data.completionDepth).toBe("executed");
 
+  return runRes.json.data;
+}
+
+async function testApproveAndRunSkill(
+  env: RealHubEnv,
+  sessionId: string,
+): Promise<{
+  skillId: string;
+  skillDir: string;
+  approve: SkillGeneratorApproveEnvelope["data"];
+  run: SkillRunEnvelope["data"];
+}> {
+  await testSkillDraft(env, sessionId);
+  const approve = await approveSkillDraft(env, sessionId);
+  const run = await runInstalledSkill(env, approve.skillId, approve.skillDir);
+
   return {
-    skillId,
-    skillDir: approveRes.json.data.skillDir,
-    approve: approveRes.json.data,
-    run: runRes.json.data,
+    skillId: approve.skillId,
+    skillDir: approve.skillDir,
+    approve,
+    run,
   };
+}
+
+async function getRuntimeVersion(env: RealHubEnv): Promise<string> {
+  const response = await apiFetch<RuntimeVersionEnvelope>(
+    env.baseUrl,
+    env.accessToken,
+    "GET",
+    "/v1/version",
+  );
+  expect(response.status).toBe(200);
+  expect(response.json.ok).toBe(true);
+  return response.json.data.version;
+}
+
+async function getSkillUpgradeStatus(
+  env: RealHubEnv,
+  skillId: string,
+): Promise<UpgradeStatusEnvelope["data"]["items"][number]> {
+  const response = await apiFetch<UpgradeStatusEnvelope>(
+    env.baseUrl,
+    env.accessToken,
+    "GET",
+    `/v1/autonomy/upgrade-status?kind=skill&id=${encodeURIComponent(skillId)}`,
+  );
+  expect(response.status).toBe(200);
+  expect(response.json.ok).toBe(true);
+  expect(response.json.data.items).toHaveLength(1);
+  return response.json.data.items[0]!;
 }
 
 describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (Anthropic API key)", () => {
@@ -468,18 +641,20 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (An
   }, 30_000);
 
   it(
-    "creates a new skill, upgrades it in place, and blocks an unverified promotion from replacing the active skill",
+    "creates a new skill, upgrades it in place through shadow/canary/promote, and rolls back a blocked upgrade attempt",
     { timeout: 420_000, retry: 1 },
     async () => {
       const skillId = `live-maint-skill-${Date.now().toString(36)}`;
       const markerV1 = `${skillId} v1.0.0`;
       const markerV2 = `${skillId} v2.0.0`;
       const markerV3 = `${skillId} v3.0.0`;
+      const runtimeVersion = await getRuntimeVersion(env);
 
       const first = await createValidatedSkillDraft(
         env,
         [
           `Create a tiny Friday shell skill with manifest id "${skillId}" and manifest version "1.0.0".`,
+          'Set runtime.apiVersion to "1" and runtime.minHubVersion to "1.0.0".',
           `When the skill runs, it must include the exact marker "${markerV1}" in the result payload.`,
           "Keep the implementation deterministic, self-contained, and shell-based.",
         ].join(" "),
@@ -487,8 +662,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (An
       expect(first.evidence.validationSummary.ok).toBe(true);
       expect(first.evidence.approvalReadiness.ready).toBe(false);
 
-      const firstApproval = await testApproveAndRunSkill(env, first.sessionId, {
-      });
+      const firstApproval = await testApproveAndRunSkill(env, first.sessionId);
       generatedSkillDirs.add(firstApproval.skillDir);
       expect(firstApproval.skillId).toBe(skillId);
       const firstOutput = JSON.stringify(firstApproval.run.output);
@@ -507,21 +681,77 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (An
       expect(skillAfterV1.json.data.skill.installedVersion).toBe("1.0.0");
       expect(skillAfterV1.json.data.skill.latestVersion).toBe("1.0.0");
 
+      const baselineRow = readSkillRow(env.stateDir!, skillId);
+      expect(baselineRow).toMatchObject({
+        installedVersion: "1.0.0",
+        latestVersion: "1.0.0",
+        status: "installed",
+        compatibilityStatus: "unknown",
+        promotionChannel: "none",
+        shadowVersionId: null,
+      });
       expect(readInstalledSkillManifestVersion(firstApproval.skillDir)).toBe("1.0.0");
+      const firstManifest = readInstalledSkillManifest(firstApproval.skillDir);
+      expect((firstManifest.runtime as Record<string, unknown>).apiVersion).toBe("1");
+      expect((firstManifest.runtime as Record<string, unknown>).minHubVersion).toBe("1.0.0");
+
+      const baselineStatus = await getSkillUpgradeStatus(env, skillId);
+      expect(baselineStatus.kind).toBe("skill");
+      expect(baselineStatus.id).toBe(skillId);
+      expect(baselineStatus.recordedCompatibilityStatus).toBe("unknown");
+      expect(baselineStatus.derivedCompatibilityStatus).toBe("compatible");
+      expect(baselineStatus.promotionChannel).toBe("none");
+      expect(baselineStatus.nextStage).toBe("shadow");
+      expect(
+        baselineStatus.findings.some((finding) => finding.id === "skill_installed_version" && finding.passed),
+      ).toBe(true);
 
       const second = await createValidatedSkillDraft(
         env,
         [
           `Update the existing installed Friday shell skill with manifest id "${skillId}".`,
           `Keep the exact same manifest id "${skillId}" but change the manifest version to "2.0.0".`,
+          'Keep runtime.apiVersion at "1" and runtime.minHubVersion at "1.0.0".',
           `When the skill runs, it must include the exact marker "${markerV2}" in the result payload.`,
           "Do not create a new skill id or a replacement skill.",
         ].join(" "),
       );
       expect(second.evidence.validationSummary.ok).toBe(true);
+      expect(second.evidence.approvalReadiness.ready).toBe(false);
+      expect(second.draft?.manifest?.version).toBe("2.0.0");
 
-      const secondApproval = await testApproveAndRunSkill(env, second.sessionId, {
-      });
+      const replay = await testSkillDraft(env, second.sessionId);
+      expect(replay.test.ok).toBe(true);
+      expect(replay.evidence.approvalReadiness.ready).toBe(true);
+
+      const shadowV2Res = await apiFetch<SkillUpgradeActionEnvelope>(
+        env.baseUrl,
+        env.accessToken,
+        "POST",
+        `/v1/autonomy/skills/${encodeURIComponent(skillId)}/shadow`,
+        {
+          shadowVersionId: second.draft!.manifest!.version,
+          runtimeVersion,
+          providerModel: LIVE_ANTHROPIC_MODEL,
+        },
+      );
+      expect(shadowV2Res.status).toBe(200);
+      expect(shadowV2Res.json.ok).toBe(true);
+      expect(shadowV2Res.json.data.skill.skillId).toBe(skillId);
+      expect(shadowV2Res.json.data.skill.promotionChannel).toBe("shadow");
+      expect(shadowV2Res.json.data.skill.shadowVersionId).toBe("2.0.0");
+      expect(shadowV2Res.json.data.status?.promotionChannel).toBe("shadow");
+      expect(shadowV2Res.json.data.status?.recordedCompatibilityStatus).toBe("adaptation_required");
+      expect(shadowV2Res.json.data.status?.derivedCompatibilityStatus).toBe("compatible");
+
+      const secondApprove = await approveSkillDraft(env, second.sessionId);
+      const secondRun = await runInstalledSkill(env, secondApprove.skillId, secondApprove.skillDir);
+      const secondApproval = {
+        skillId: secondApprove.skillId,
+        skillDir: secondApprove.skillDir,
+        approve: secondApprove,
+        run: secondRun,
+      };
       generatedSkillDirs.add(secondApproval.skillDir);
       expect(secondApproval.skillId).toBe(skillId);
       const secondOutput = JSON.stringify(secondApproval.run.output);
@@ -540,6 +770,66 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (An
       expect(skillAfterV2.json.data.skill.installedVersion).toBe("2.0.0");
       expect(skillAfterV2.json.data.skill.latestVersion).toBe("2.0.0");
 
+      const canaryRes = await apiFetch<SkillUpgradeActionEnvelope>(
+        env.baseUrl,
+        env.accessToken,
+        "POST",
+        `/v1/autonomy/skills/${encodeURIComponent(skillId)}/canary`,
+        { success: true },
+      );
+      expect(canaryRes.status).toBe(200);
+      expect(canaryRes.json.ok).toBe(true);
+      expect(canaryRes.json.data.skill.promotionChannel).toBe("canary");
+      expect(canaryRes.json.data.skill.canaryStats).toMatchObject({
+        sampleSize: 1,
+        successCount: 1,
+        failureCount: 0,
+        rollbackCount: 0,
+      });
+      expect(canaryRes.json.data.status?.promotionChannel).toBe("canary");
+
+      const promoteRes = await apiFetch<SkillUpgradeActionEnvelope>(
+        env.baseUrl,
+        env.accessToken,
+        "POST",
+        `/v1/autonomy/skills/${encodeURIComponent(skillId)}/promote`,
+        {
+          runtimeVersion,
+          providerModel: LIVE_ANTHROPIC_MODEL,
+        },
+      );
+      expect(promoteRes.status).toBe(200);
+      expect(promoteRes.json.ok).toBe(true);
+      expect(promoteRes.json.data.skill.promotionChannel).toBe("active");
+      expect(promoteRes.json.data.skill.compatibilityStatus).toBe("compatible");
+      expect(promoteRes.json.data.status?.promotionChannel).toBe("active");
+      expect(promoteRes.json.data.status?.recordedCompatibilityStatus).toBe("compatible");
+      expect(promoteRes.json.data.status?.derivedCompatibilityStatus).toBe("compatible");
+
+      const promotedRow = readSkillRow(env.stateDir!, skillId);
+      expect(promotedRow).toMatchObject({
+        installedVersion: "2.0.0",
+        latestVersion: "2.0.0",
+        status: "installed",
+        compatibilityStatus: "compatible",
+        promotionChannel: "active",
+        shadowVersionId: "2.0.0",
+        lastVerifiedRuntimeVersion: runtimeVersion,
+        lastVerifiedProviderModel: LIVE_ANTHROPIC_MODEL,
+      });
+      expect(JSON.parse(promotedRow!.canaryStatsJson)).toMatchObject({
+        sampleSize: 1,
+        successCount: 1,
+        failureCount: 0,
+        rollbackCount: 0,
+      });
+
+      const promotedStatus = await getSkillUpgradeStatus(env, skillId);
+      expect(promotedStatus.promotionChannel).toBe("active");
+      expect(promotedStatus.recordedCompatibilityStatus).toBe("compatible");
+      expect(promotedStatus.derivedCompatibilityStatus).toBe("compatible");
+      expect(promotedStatus.shadowVersionId).toBe("2.0.0");
+
       expect(readInstalledSkillManifestVersion(secondApproval.skillDir)).toBe("2.0.0");
 
       const blockedPromotion = await createValidatedSkillDraft(
@@ -547,6 +837,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (An
         [
           `Update the existing installed Friday shell skill with manifest id "${skillId}".`,
           `Keep the exact same manifest id "${skillId}" but change the manifest version to "3.0.0".`,
+          'Keep runtime.apiVersion at "1" and runtime.minHubVersion at "1.0.0".',
           `When the skill runs, it must include the exact marker "${markerV3}" in the result payload.`,
           "Do not create a new skill id.",
         ].join(" "),
@@ -554,6 +845,23 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (An
       expect(blockedPromotion.evidence.validationSummary.ok).toBe(true);
       expect(blockedPromotion.evidence.approvalReadiness.ready).toBe(false);
       expect(blockedPromotion.evidence.approvalReadiness.reason).toMatch(/self-test|explicit self-test|QA/i);
+      expect(blockedPromotion.draft?.manifest?.version).toBe("3.0.0");
+
+      const shadowV3Res = await apiFetch<SkillUpgradeActionEnvelope>(
+        env.baseUrl,
+        env.accessToken,
+        "POST",
+        `/v1/autonomy/skills/${encodeURIComponent(skillId)}/shadow`,
+        {
+          shadowVersionId: blockedPromotion.draft!.manifest!.version,
+          runtimeVersion,
+          providerModel: LIVE_ANTHROPIC_MODEL,
+        },
+      );
+      expect(shadowV3Res.status).toBe(200);
+      expect(shadowV3Res.json.ok).toBe(true);
+      expect(shadowV3Res.json.data.skill.shadowVersionId).toBe("3.0.0");
+      expect(shadowV3Res.json.data.skill.promotionChannel).toBe("shadow");
 
       const blockedApproveRes = await apiFetch<SkillGeneratorApproveEnvelope>(
         env.baseUrl,
@@ -576,6 +884,55 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (An
       expect(skillAfterBlocked.json.ok).toBe(true);
       expect(skillAfterBlocked.json.data.skill.installedVersion).toBe("2.0.0");
       expect(skillAfterBlocked.json.data.skill.latestVersion).toBe("2.0.0");
+
+      const rollbackRes = await apiFetch<SkillUpgradeActionEnvelope>(
+        env.baseUrl,
+        env.accessToken,
+        "POST",
+        `/v1/autonomy/skills/${encodeURIComponent(skillId)}/rollback`,
+        {
+          runtimeVersion,
+          providerModel: LIVE_ANTHROPIC_MODEL,
+        },
+      );
+      expect(rollbackRes.status).toBe(200);
+      expect(rollbackRes.json.ok).toBe(true);
+      expect(rollbackRes.json.data.skill.promotionChannel).toBe("rolled_back");
+      expect(rollbackRes.json.data.skill.compatibilityStatus).toBe("adaptation_required");
+      expect(rollbackRes.json.data.skill.shadowVersionId).toBeUndefined();
+      expect(rollbackRes.json.data.skill.canaryStats).toMatchObject({
+        sampleSize: 1,
+        successCount: 1,
+        failureCount: 0,
+        rollbackCount: 1,
+      });
+      expect(rollbackRes.json.data.status?.promotionChannel).toBe("rolled_back");
+      expect(rollbackRes.json.data.status?.recordedCompatibilityStatus).toBe("adaptation_required");
+      expect(rollbackRes.json.data.status?.derivedCompatibilityStatus).toBe("compatible");
+
+      const rolledBackStatus = await getSkillUpgradeStatus(env, skillId);
+      expect(rolledBackStatus.promotionChannel).toBe("rolled_back");
+      expect(rolledBackStatus.recordedCompatibilityStatus).toBe("adaptation_required");
+      expect(rolledBackStatus.derivedCompatibilityStatus).toBe("compatible");
+      expect(rolledBackStatus.shadowVersionId).toBeUndefined();
+
+      const rolledBackRow = readSkillRow(env.stateDir!, skillId);
+      expect(rolledBackRow).toMatchObject({
+        installedVersion: "2.0.0",
+        latestVersion: "2.0.0",
+        status: "installed",
+        compatibilityStatus: "adaptation_required",
+        promotionChannel: "rolled_back",
+        shadowVersionId: null,
+        lastVerifiedRuntimeVersion: runtimeVersion,
+        lastVerifiedProviderModel: LIVE_ANTHROPIC_MODEL,
+      });
+      expect(JSON.parse(rolledBackRow!.canaryStatsJson)).toMatchObject({
+        sampleSize: 1,
+        successCount: 1,
+        failureCount: 0,
+        rollbackCount: 1,
+      });
 
       expect(readInstalledSkillManifestVersion(secondApproval.skillDir)).toBe("2.0.0");
 
