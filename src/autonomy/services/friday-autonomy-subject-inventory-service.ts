@@ -13,6 +13,7 @@ import type { FridayProviderProfileRepository } from "../../providers/persistenc
 import type { FridayPluginRegistryService } from "../../plugins/services/friday-plugin-registry-service.js";
 import type { FridayMcpAdapter } from "../../agent/mcp/friday-mcp-adapter.types.js";
 import type { FridayChannelRegistry } from "../../channels/friday-channel-registry.js";
+import type { FridayAutonomySubjectUpgradeStateRepository } from "../persistence/friday-autonomy-subject-upgrade-state-repository.js";
 
 export interface FridayAutonomySubjectInventoryService {
   list(): FridayAutonomySubjectRecord[];
@@ -24,6 +25,7 @@ export interface CreateFridayAutonomySubjectInventoryServiceDeps {
   workflowRepo: FridayWorkflowRepository;
   providerProfileRepo: FridayProviderProfileRepository;
   pluginRegistry: Pick<FridayPluginRegistryService, "list">;
+  subjectUpgradeStateRepo?: FridayAutonomySubjectUpgradeStateRepository;
   mcpAdapter?: Pick<FridayMcpAdapter, "listServers" | "listServerStates">;
   channelRegistry?: Pick<FridayChannelRegistry, "listViews">;
 }
@@ -62,6 +64,7 @@ export function createFridayAutonomySubjectInventoryService(
     workflowRepo,
     providerProfileRepo,
     pluginRegistry,
+    subjectUpgradeStateRepo,
     mcpAdapter,
     channelRegistry,
   } = deps;
@@ -69,6 +72,14 @@ export function createFridayAutonomySubjectInventoryService(
   return {
     list() {
       const subjects: FridayAutonomySubjectRecord[] = [];
+      const subjectUpgradeStateByKey = subjectUpgradeStateRepo
+        ? sqlite.withReadConnection((db) =>
+            new Map(
+              subjectUpgradeStateRepo
+                .list(db)
+                .map((state) => [`${state.subjectKind}:${state.subjectId}`, state] as const),
+            ))
+        : new Map<string, ReturnType<FridayAutonomySubjectUpgradeStateRepository["list"]>[number]>();
 
       sqlite.withReadConnection((db) => {
         for (const skill of skillRepo.listAll(db)) {
@@ -149,6 +160,7 @@ export function createFridayAutonomySubjectInventoryService(
         const stateById = new Map(mcpAdapter.listServerStates().map((state) => [state.serverId, state]));
         for (const server of mcpAdapter.listServers()) {
           const state = stateById.get(server.id);
+          const upgradeState = subjectUpgradeStateByKey.get(`mcp_server:${server.id}`);
           subjects.push({
             kind: "mcp_server",
             id: server.id,
@@ -160,13 +172,14 @@ export function createFridayAutonomySubjectInventoryService(
               toolCount: state?.toolCount,
               resourceCount: state?.resourceCount,
             },
-            ...defaultFridayAutonomyUpgradeFields(),
+            ...withUpgradeDefaults(upgradeState),
           });
         }
       }
 
       if (channelRegistry) {
         for (const channel of channelRegistry.listViews()) {
+          const upgradeState = subjectUpgradeStateByKey.get(`channel_adapter:${channel.kind}`);
           subjects.push({
             kind: "channel_adapter",
             id: channel.kind,
@@ -176,8 +189,9 @@ export function createFridayAutonomySubjectInventoryService(
               running: channel.running,
               credentialStatus: channel.health.credentialStatus,
               restartCount: channel.health.restartCount,
+              authMode: typeof channel.diagnostics?.authMode === "string" ? channel.diagnostics.authMode : undefined,
             },
-            ...defaultFridayAutonomyUpgradeFields(),
+            ...withUpgradeDefaults(upgradeState),
           });
         }
       }

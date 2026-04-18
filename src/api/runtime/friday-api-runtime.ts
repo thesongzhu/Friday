@@ -126,6 +126,9 @@ import { createFridayWorkflowUpgradeLifecycleService } from "../../autonomy/serv
 import { createFridaySkillUpgradeLifecycleService } from "../../autonomy/services/friday-skill-upgrade-lifecycle-service.js";
 import { createFridayProviderProfileUpgradeLifecycleService } from "../../autonomy/services/friday-provider-profile-upgrade-lifecycle-service.js";
 import { createFridayPluginUpgradeLifecycleService } from "../../autonomy/services/friday-plugin-upgrade-lifecycle-service.js";
+import { createFridayAutonomySubjectUpgradeStateRepository } from "../../autonomy/persistence/friday-autonomy-subject-upgrade-state-repository.js";
+import { createFridayMcpServerUpgradeLifecycleService } from "../../autonomy/services/friday-mcp-server-upgrade-lifecycle-service.js";
+import { createFridayChannelAdapterUpgradeLifecycleService } from "../../autonomy/services/friday-channel-adapter-upgrade-lifecycle-service.js";
 import type { FridayAuthPrincipal } from "../model/friday-api-common.types.js";
 import type {
   FridayGetRunEvidenceQuery,
@@ -586,6 +589,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const workflowRepo = createFridayWorkflowRepository({ db: deps.db });
   const providerProfileRepo = createFridayProviderProfileRepository();
   const pluginRepo = createFridayPluginRepository();
+  const subjectUpgradeStateRepo = createFridayAutonomySubjectUpgradeStateRepository();
   const autonomyInventory = createFridayAutonomySubjectInventoryService({
     sqlite: deps.db,
     skillRepo,
@@ -594,6 +598,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     pluginRegistry: {
       list: () => deps.pluginService?.listPlugins() ?? [],
     },
+    subjectUpgradeStateRepo,
+    mcpAdapter: deps.mcpAdapter,
+    channelRegistry: deps.channels?.registry,
   });
   const autonomyCensus = createFridayAutonomyImpactCensusService({
     inventory: autonomyInventory,
@@ -628,6 +635,22 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     pluginRepo,
     nowIso: deps.nowIso,
   });
+  const mcpServerUpgradeLifecycle = deps.mcpAdapter
+    ? createFridayMcpServerUpgradeLifecycleService({
+        db: deps.db,
+        stateRepo: subjectUpgradeStateRepo,
+        mcpAdapter: deps.mcpAdapter,
+        nowIso: deps.nowIso,
+      })
+    : undefined;
+  const channelAdapterUpgradeLifecycle = deps.channels?.registry
+    ? createFridayChannelAdapterUpgradeLifecycleService({
+        db: deps.db,
+        stateRepo: subjectUpgradeStateRepo,
+        channelRegistry: deps.channels.registry,
+        nowIso: deps.nowIso,
+      })
+    : undefined;
 
   // Route registry
   const routes = createFridayHttpRouteRegistry();
@@ -889,6 +912,66 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             providerModel: input.providerModel,
           }),
         getStatus: (providerId) => autonomyUpgradeStatus.get("provider_profile", providerId),
+      }
+      : undefined,
+    mcpServerActions: mcpServerUpgradeLifecycle
+      ? {
+        registerShadow: (input) =>
+          mcpServerUpgradeLifecycle.registerShadowVersion({
+            serverId: input.serverId,
+            shadowVersionId: input.shadowVersionId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        recordCanary: (input) =>
+          mcpServerUpgradeLifecycle.recordCanaryResult({
+            serverId: input.serverId,
+            success: input.success,
+            evaluatedAt: input.evaluatedAt,
+          }),
+        promote: (input) =>
+          mcpServerUpgradeLifecycle.promote({
+            serverId: input.serverId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        rollback: (input) =>
+          mcpServerUpgradeLifecycle.rollback({
+            serverId: input.serverId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        getStatus: (serverId) => autonomyUpgradeStatus.get("mcp_server", serverId),
+      }
+      : undefined,
+    channelAdapterActions: channelAdapterUpgradeLifecycle
+      ? {
+        registerShadow: (input) =>
+          channelAdapterUpgradeLifecycle.registerShadowVersion({
+            channelKind: input.channelKind,
+            shadowVersionId: input.shadowVersionId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        recordCanary: (input) =>
+          channelAdapterUpgradeLifecycle.recordCanaryResult({
+            channelKind: input.channelKind,
+            success: input.success,
+            evaluatedAt: input.evaluatedAt,
+          }),
+        promote: (input) =>
+          channelAdapterUpgradeLifecycle.promote({
+            channelKind: input.channelKind,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        rollback: (input) =>
+          channelAdapterUpgradeLifecycle.rollback({
+            channelKind: input.channelKind,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+          }),
+        getStatus: (channelKind) => autonomyUpgradeStatus.get("channel_adapter", channelKind),
       }
       : undefined,
   })) {

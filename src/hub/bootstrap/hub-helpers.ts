@@ -57,6 +57,7 @@ import type { FridayChannelRegistry, WebchatWsService } from "#channels";
 import type { FridaySatelliteRuntime } from "#satellites";
 import type { FridayBrowserPresentationMode } from "#browser";
 import type { FridayAutonomousEngine } from "../../agent/autonomous/friday-autonomous.types.js";
+import type { FridayMcpAdapter } from "../../agent/mcp/friday-mcp-adapter.types.js";
 import { parseFridaySecretInput } from "../../security/friday-secret-ref.js";
 
 // ─── Constants ───
@@ -1068,6 +1069,7 @@ export interface FridayHub {
   apiRuntime: FridayApiRuntime;
   channelRegistry: FridayChannelRegistry;
   satelliteRuntime: FridaySatelliteRuntime;
+  mcpAdapter?: FridayMcpAdapter;
   webchatWsService?: WebchatWsService;
 }
 

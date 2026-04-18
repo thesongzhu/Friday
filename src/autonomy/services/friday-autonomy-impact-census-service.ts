@@ -226,16 +226,20 @@ function evaluateMcpServer(subject: FridayAutonomySubjectRecord): FridayUpgradeI
 
 function evaluateChannelAdapter(subject: FridayAutonomySubjectRecord): FridayUpgradeImpactFinding[] {
   const credentialStatus = readString(subject, "credentialStatus");
+  const authMode = readString(subject, "authMode");
   const running = readBoolean(subject, "running");
   const connected = subject.status === "connected" || subject.status === "ready";
+  const requiresCredential = Boolean(authMode && authMode !== "none");
 
   return [
-    createFinding("channel_credentials", "blocking", credentialStatus === "configured", {
-      message: credentialStatus === "configured"
-        ? "Channel credentials are configured."
-        : `Channel credentials are ${credentialStatus ?? "missing"}.`,
-      actualValue: credentialStatus ?? null,
-      expectedValue: "configured",
+    createFinding("channel_credentials", "blocking", !requiresCredential || credentialStatus === "configured", {
+      message: !requiresCredential
+        ? `Channel auth mode ${authMode ?? "none"} does not require credentials.`
+        : credentialStatus === "configured"
+          ? "Channel credentials are configured."
+          : `Channel credentials are ${credentialStatus ?? "missing"}.`,
+      actualValue: credentialStatus ?? authMode ?? null,
+      expectedValue: !requiresCredential ? "no_credentials_required" : "configured",
     }),
     createFinding("channel_runtime_state", "warning", Boolean(running) && connected, {
       message: Boolean(running) && connected

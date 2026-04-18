@@ -85,6 +85,7 @@ export const FRIDAY_DEEP_PROOF_GATED = getFridayDeepProofEnvStatus().gated;
 
 export async function createFridayDeepProofHubEnv(opts?: {
   uiStaticDir?: string;
+  hubConfig?: Record<string, unknown>;
 }): Promise<RealHubEnv> {
   assertFridayDeepProofAnthropicLane();
   const env = await createRealHubEnv(opts);
@@ -97,7 +98,7 @@ export async function createFridayDeepProofHubEnv(opts?: {
 
 export async function createFridayDeepProofHubEnvFromStateDir(
   stateDir: string,
-  opts?: { uiStaticDir?: string },
+  opts?: { uiStaticDir?: string; hubConfig?: Record<string, unknown> },
 ): Promise<RealHubEnv> {
   assertFridayDeepProofAnthropicLane();
   return createRealHubEnvFromStateDir(stateDir, opts);

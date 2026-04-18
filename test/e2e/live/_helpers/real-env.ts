@@ -14,6 +14,7 @@ import * as net from "node:net";
 
 import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
+import type { FridayHubConfig } from "#hub";
 import { createFridayHttpServer } from "#api";
 import type { FridayHttpServer } from "#api";
 import {
@@ -93,6 +94,7 @@ export interface RealHubEnv {
 
 interface StartLocalRealHubEnvOptions {
   uiStaticDir?: string;
+  hubConfig?: Partial<FridayHubConfig>;
 }
 
 function providerEnvKeysToSanitize(): string[] {
@@ -264,6 +266,7 @@ async function startLocalRealHubEnv(
       skillDirs: [],
       port: 0,
       logRequests: false,
+      ...opts?.hubConfig,
     });
     await createdHub.start();
     return createdHub;
@@ -274,6 +277,7 @@ async function startLocalRealHubEnv(
     routes: hub.apiRuntime.routes,
     wsGateway: hub.apiRuntime.wsGateway,
     middleware: hub.apiRuntime.middleware,
+    webchatWsService: hub.webchatWsService,
     port,
     host: "127.0.0.1",
     logRequests: false,
@@ -308,7 +312,7 @@ async function startLocalRealHubEnv(
   };
 }
 
-export async function createRealHubEnv(opts?: { uiStaticDir?: string }): Promise<RealHubEnv> {
+export async function createRealHubEnv(opts?: StartLocalRealHubEnvOptions): Promise<RealHubEnv> {
   if (LIVE_PROVIDER_KIND === "anthropic") {
     await ensureAnthropicReady();
   } else if (LIVE_PROVIDER_KIND === "openai") {
