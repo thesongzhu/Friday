@@ -4,18 +4,28 @@ import type { FridayRouteDefinition } from "../../model/friday-api-common.types.
 import type {
   FridayGetAutonomyUpgradeStatusQuery,
   FridayGetAutonomyUpgradeStatusResponse,
+  FridayChannelAdapterUpgradeActionResponse,
+  FridayMcpServerUpgradeActionResponse,
   FridayPluginUpgradeActionResponse,
+  FridayPromoteChannelAdapterUpgradeRequest,
+  FridayPromoteMcpServerUpgradeRequest,
   FridayPromotePluginUpgradeRequest,
   FridayPromoteProviderProfileUpgradeRequest,
   FridayRecordSkillCanaryRequest,
+  FridayRecordChannelAdapterCanaryRequest,
+  FridayRecordMcpServerCanaryRequest,
   FridayRecordPluginCanaryRequest,
   FridayRecordProviderProfileCanaryRequest,
   FridayRecordWorkflowCanaryRequest,
+  FridayRegisterChannelAdapterShadowRequest,
+  FridayRegisterMcpServerShadowRequest,
   FridayRegisterSkillShadowRequest,
   FridayRegisterPluginShadowRequest,
   FridayRegisterProviderProfileShadowRequest,
   FridayRegisterWorkflowShadowRequest,
   FridayProviderProfileUpgradeActionResponse,
+  FridayRollbackChannelAdapterUpgradeRequest,
+  FridayRollbackMcpServerUpgradeRequest,
   FridayPromoteSkillUpgradeRequest,
   FridayPromoteWorkflowUpgradeRequest,
   FridayRollbackPluginUpgradeRequest,
@@ -104,6 +114,36 @@ export interface FridayAutonomyRoutesDeps {
     ) => FridayProviderProfile | Promise<FridayProviderProfile>;
     getStatus: (providerId: string) => FridayProviderProfileUpgradeActionResponse["status"];
   };
+  mcpServerActions?: {
+    registerShadow: (
+      input: { serverId: string } & FridayRegisterMcpServerShadowRequest,
+    ) => void | Promise<void>;
+    recordCanary: (
+      input: { serverId: string } & FridayRecordMcpServerCanaryRequest,
+    ) => void | Promise<void>;
+    promote: (
+      input: { serverId: string } & FridayPromoteMcpServerUpgradeRequest,
+    ) => void | Promise<void>;
+    rollback: (
+      input: { serverId: string } & FridayRollbackMcpServerUpgradeRequest,
+    ) => void | Promise<void>;
+    getStatus: (serverId: string) => FridayMcpServerUpgradeActionResponse["status"];
+  };
+  channelAdapterActions?: {
+    registerShadow: (
+      input: { channelKind: string } & FridayRegisterChannelAdapterShadowRequest,
+    ) => void | Promise<void>;
+    recordCanary: (
+      input: { channelKind: string } & FridayRecordChannelAdapterCanaryRequest,
+    ) => void | Promise<void>;
+    promote: (
+      input: { channelKind: string } & FridayPromoteChannelAdapterUpgradeRequest,
+    ) => void | Promise<void>;
+    rollback: (
+      input: { channelKind: string } & FridayRollbackChannelAdapterUpgradeRequest,
+    ) => void | Promise<void>;
+    getStatus: (channelKind: string) => FridayChannelAdapterUpgradeActionResponse["status"];
+  };
 }
 
 function buildSkillUpgradeActionPayload(
@@ -151,6 +191,40 @@ function buildProviderProfileUpgradeActionPayload(
     shadowVersionId: provider.shadowVersionId ?? undefined,
     canaryStats: provider.canaryStats,
     validationStatus: provider.config.validation?.status,
+  };
+}
+
+function buildMcpServerUpgradeActionPayload(
+  status: FridayMcpServerUpgradeActionResponse["status"],
+): FridayMcpServerUpgradeActionResponse["server"] {
+  return {
+    id: status?.id ?? "",
+    status: status?.status ?? "unknown",
+    transport: typeof status?.details?.transport === "string" ? status.details.transport : undefined,
+    toolCount: typeof status?.details?.toolCount === "number" ? status.details.toolCount : undefined,
+    resourceCount: typeof status?.details?.resourceCount === "number" ? status.details.resourceCount : undefined,
+    promotionChannel: status?.promotionChannel,
+    compatibilityStatus: status?.recordedCompatibilityStatus,
+    shadowVersionId: status?.shadowVersionId,
+    canaryStats: status?.canaryStats,
+  };
+}
+
+function buildChannelAdapterUpgradeActionPayload(
+  status: FridayChannelAdapterUpgradeActionResponse["status"],
+): FridayChannelAdapterUpgradeActionResponse["channel"] {
+  return {
+    kind: status?.id ?? "",
+    status: status?.status ?? "unknown",
+    running: typeof status?.details?.running === "boolean" ? status.details.running : undefined,
+    credentialStatus: typeof status?.details?.credentialStatus === "string"
+      ? status.details.credentialStatus
+      : undefined,
+    authMode: typeof status?.details?.authMode === "string" ? status.details.authMode : undefined,
+    promotionChannel: status?.promotionChannel,
+    compatibilityStatus: status?.recordedCompatibilityStatus,
+    shadowVersionId: status?.shadowVersionId,
+    canaryStats: status?.canaryStats,
   };
 }
 
@@ -514,6 +588,164 @@ export function createFridayAutonomyRoutes(
           });
           const status = deps.providerProfileActions!.getStatus(providerId);
           return { provider: buildProviderProfileUpgradeActionPayload(provider), status };
+        },
+      },
+    );
+  }
+
+  if (deps.mcpServerActions) {
+    routes.push(
+      {
+        operationId: "autonomy.mcp.servers.shadow",
+        method: "POST",
+        path: "/v1/autonomy/mcp-servers/:serverId/shadow",
+        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        async handler(ctx) {
+          const { serverId } = ctx.params as { serverId: string };
+          const body = (ctx.body ?? {}) as Record<string, unknown>;
+          await deps.mcpServerActions!.registerShadow({
+            serverId,
+            shadowVersionId: requireNonEmptyString(body.shadowVersionId, "shadowVersionId"),
+            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
+            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+          });
+          const status = deps.mcpServerActions!.getStatus(serverId);
+          return { server: buildMcpServerUpgradeActionPayload(status), status };
+        },
+      },
+      {
+        operationId: "autonomy.mcp.servers.canary",
+        method: "POST",
+        path: "/v1/autonomy/mcp-servers/:serverId/canary",
+        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        async handler(ctx) {
+          const { serverId } = ctx.params as { serverId: string };
+          const body = (ctx.body ?? {}) as Record<string, unknown>;
+          if (typeof body.success !== "boolean") {
+            throw new FridayDomainError("VALIDATION_ERROR", "success must be a boolean", {
+              httpStatus: 400,
+            });
+          }
+          await deps.mcpServerActions!.recordCanary({
+            serverId,
+            success: body.success,
+            evaluatedAt: typeof body.evaluatedAt === "string" ? body.evaluatedAt : undefined,
+          });
+          const status = deps.mcpServerActions!.getStatus(serverId);
+          return { server: buildMcpServerUpgradeActionPayload(status), status };
+        },
+      },
+      {
+        operationId: "autonomy.mcp.servers.promote",
+        method: "POST",
+        path: "/v1/autonomy/mcp-servers/:serverId/promote",
+        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        async handler(ctx) {
+          const { serverId } = ctx.params as { serverId: string };
+          const body = (ctx.body ?? {}) as Record<string, unknown>;
+          await deps.mcpServerActions!.promote({
+            serverId,
+            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
+            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+          });
+          const status = deps.mcpServerActions!.getStatus(serverId);
+          return { server: buildMcpServerUpgradeActionPayload(status), status };
+        },
+      },
+      {
+        operationId: "autonomy.mcp.servers.rollback",
+        method: "POST",
+        path: "/v1/autonomy/mcp-servers/:serverId/rollback",
+        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        async handler(ctx) {
+          const { serverId } = ctx.params as { serverId: string };
+          const body = (ctx.body ?? {}) as Record<string, unknown>;
+          await deps.mcpServerActions!.rollback({
+            serverId,
+            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
+            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+          });
+          const status = deps.mcpServerActions!.getStatus(serverId);
+          return { server: buildMcpServerUpgradeActionPayload(status), status };
+        },
+      },
+    );
+  }
+
+  if (deps.channelAdapterActions) {
+    routes.push(
+      {
+        operationId: "autonomy.channels.shadow",
+        method: "POST",
+        path: "/v1/autonomy/channels/:channelKind/shadow",
+        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        async handler(ctx) {
+          const { channelKind } = ctx.params as { channelKind: string };
+          const body = (ctx.body ?? {}) as Record<string, unknown>;
+          await deps.channelAdapterActions!.registerShadow({
+            channelKind,
+            shadowVersionId: requireNonEmptyString(body.shadowVersionId, "shadowVersionId"),
+            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
+            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+          });
+          const status = deps.channelAdapterActions!.getStatus(channelKind);
+          return { channel: buildChannelAdapterUpgradeActionPayload(status), status };
+        },
+      },
+      {
+        operationId: "autonomy.channels.canary",
+        method: "POST",
+        path: "/v1/autonomy/channels/:channelKind/canary",
+        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        async handler(ctx) {
+          const { channelKind } = ctx.params as { channelKind: string };
+          const body = (ctx.body ?? {}) as Record<string, unknown>;
+          if (typeof body.success !== "boolean") {
+            throw new FridayDomainError("VALIDATION_ERROR", "success must be a boolean", {
+              httpStatus: 400,
+            });
+          }
+          await deps.channelAdapterActions!.recordCanary({
+            channelKind,
+            success: body.success,
+            evaluatedAt: typeof body.evaluatedAt === "string" ? body.evaluatedAt : undefined,
+          });
+          const status = deps.channelAdapterActions!.getStatus(channelKind);
+          return { channel: buildChannelAdapterUpgradeActionPayload(status), status };
+        },
+      },
+      {
+        operationId: "autonomy.channels.promote",
+        method: "POST",
+        path: "/v1/autonomy/channels/:channelKind/promote",
+        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        async handler(ctx) {
+          const { channelKind } = ctx.params as { channelKind: string };
+          const body = (ctx.body ?? {}) as Record<string, unknown>;
+          await deps.channelAdapterActions!.promote({
+            channelKind,
+            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
+            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+          });
+          const status = deps.channelAdapterActions!.getStatus(channelKind);
+          return { channel: buildChannelAdapterUpgradeActionPayload(status), status };
+        },
+      },
+      {
+        operationId: "autonomy.channels.rollback",
+        method: "POST",
+        path: "/v1/autonomy/channels/:channelKind/rollback",
+        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        async handler(ctx) {
+          const { channelKind } = ctx.params as { channelKind: string };
+          const body = (ctx.body ?? {}) as Record<string, unknown>;
+          await deps.channelAdapterActions!.rollback({
+            channelKind,
+            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
+            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+          });
+          const status = deps.channelAdapterActions!.getStatus(channelKind);
+          return { channel: buildChannelAdapterUpgradeActionPayload(status), status };
         },
       },
     );

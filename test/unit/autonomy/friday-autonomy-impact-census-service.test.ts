@@ -74,14 +74,15 @@ describe("FridayAutonomyImpactCensusService", () => {
       },
       {
         kind: "channel_adapter",
-        id: "irc",
-        displayName: "IRC",
-        status: "disconnected",
+        id: "webchat",
+        displayName: "Webchat",
+        status: "connected",
         compatibilityStatus: "unknown",
         promotionChannel: "none",
         details: {
-          credentialStatus: "missing",
-          running: false,
+          credentialStatus: "unknown",
+          authMode: "none",
+          running: true,
         },
       },
     ];
@@ -100,7 +101,7 @@ describe("FridayAutonomyImpactCensusService", () => {
       "plugin:compatible",
       "provider_profile:adaptation_required",
       "mcp_server:adaptation_required",
-      "channel_adapter:blocked",
+      "channel_adapter:compatible",
     ]);
 
     const plugin = snapshots.find((snapshot) => snapshot.subject.kind === "plugin");

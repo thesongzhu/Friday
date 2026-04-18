@@ -7,6 +7,7 @@ import { createFridaySkillRepository } from "#skills";
 import { createFridayWorkflowRepository } from "#workflows";
 
 import { createFridayAutonomySubjectInventoryService } from "../../../src/autonomy/services/friday-autonomy-subject-inventory-service.js";
+import { createFridayAutonomySubjectUpgradeStateRepository } from "../../../src/autonomy/persistence/friday-autonomy-subject-upgrade-state-repository.js";
 import { createTestDb } from "../satellites/_helpers/create-test-db.helper.js";
 
 describe("FridayAutonomySubjectInventoryService", () => {
@@ -25,6 +26,7 @@ describe("FridayAutonomySubjectInventoryService", () => {
     const workflowRepo = createFridayWorkflowRepository({ db });
     const providerRepo = createFridayProviderProfileRepository();
     const pluginRepo = createFridayPluginRepository();
+    const subjectUpgradeStateRepo = createFridayAutonomySubjectUpgradeStateRepository();
     const pluginRegistry = createFridayPluginRegistryService({ sqlite: db, pluginRepository: pluginRepo });
 
     db.withWriteTransaction((conn) => {
@@ -98,6 +100,17 @@ describe("FridayAutonomySubjectInventoryService", () => {
         promotionChannel: "none",
         nowIso: "2026-04-17T21:00:00.000Z",
       });
+
+      subjectUpgradeStateRepo.setUpgradeMetadata(conn, "mcp_server", "mcp-1", {
+        compatibilityStatus: "compatible",
+        promotionChannel: "active",
+        shadowVersionId: "mcp-1@shadow",
+      }, "2026-04-17T21:05:00.000Z");
+
+      subjectUpgradeStateRepo.setUpgradeMetadata(conn, "channel_adapter", "webchat", {
+        compatibilityStatus: "compatible",
+        promotionChannel: "canary",
+      }, "2026-04-17T21:06:00.000Z");
     });
 
     const service = createFridayAutonomySubjectInventoryService({
@@ -106,16 +119,18 @@ describe("FridayAutonomySubjectInventoryService", () => {
       workflowRepo,
       providerProfileRepo: providerRepo,
       pluginRegistry,
+      subjectUpgradeStateRepo,
       mcpAdapter: {
         listServers: () => [{ id: "mcp-1", transport: "stdio", command: "npx", args: ["-y", "server"] }],
         listServerStates: () => [{ serverId: "mcp-1", transport: "stdio", state: "loaded", lazyDiscovery: false, toolCount: 2, resourceCount: 1 }],
       },
       channelRegistry: {
         listViews: () => [{
-          kind: "irc",
+          kind: "webchat",
           running: true,
           status: "connected",
-          health: { state: "connected", restartCount: 0, credentialStatus: "configured" },
+          health: { state: "connected", restartCount: 0, credentialStatus: "unknown" },
+          diagnostics: { authMode: "none" },
           allowlist: { hasAllowedUsers: false, allowedUsersCount: 0, hasAllowedChats: false, allowedChatsCount: 0 },
         }],
       },
@@ -123,7 +138,7 @@ describe("FridayAutonomySubjectInventoryService", () => {
 
     const subjects = service.list();
     expect(subjects.map((subject) => `${subject.kind}:${subject.id}`)).toEqual([
-      "channel_adapter:irc",
+      "channel_adapter:webchat",
       "mcp_server:mcp-1",
       "plugin:plugin-1",
       "provider_profile:prov-1",
@@ -140,8 +155,12 @@ describe("FridayAutonomySubjectInventoryService", () => {
 
     const mcp = subjects.find((subject) => subject.kind === "mcp_server")!;
     expect(mcp.status).toBe("loaded");
+    expect(mcp.promotionChannel).toBe("active");
+    expect(mcp.compatibilityStatus).toBe("compatible");
 
     const channel = subjects.find((subject) => subject.kind === "channel_adapter")!;
     expect(channel.status).toBe("connected");
+    expect(channel.promotionChannel).toBe("canary");
+    expect(channel.details?.authMode).toBe("none");
   });
 });
