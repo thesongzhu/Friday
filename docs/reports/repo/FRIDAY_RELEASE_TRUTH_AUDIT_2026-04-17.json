@@ -35167,10 +35167,10 @@
       {
         "claimId": "autonomous-persistence-proof",
         "reportSection": "PR #132 / 自主引擎 SQLite 持久化",
-        "claim": "autonomous persistence 已被真实证明可跨重启恢复。",
+        "claim": "autonomous persistence 已被真实证明可跨重启恢复；`exact content` deterministic file verification 只在独立 live restart 子链、SQLite/helper provenance、最终文件产物三者一致时计入 verified。",
         "classification": "verified",
-        "realEvidence": "docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-17.md contains live interrupted_recoverable -> restart -> resume_goal -> same-step completion evidence backed by SQLite readback.",
-        "verificationMethod": "Latest final proof-pack autonomous restart artifact review plus SQLite continuity checks."
+        "realEvidence": "docs/reports/repo/FRIDAY_FINAL_REAL_PROOF_PACK_2026-04-17.md contains live interrupted_recoverable -> restart -> resume_goal -> same-step completion evidence backed by SQLite readback, plus a dedicated planning-interruption exact-content lane with verificationMethod=deterministic_file and a persisted content-family pattern.",
+        "verificationMethod": "Latest final proof-pack autonomous restart artifact review plus SQLite continuity checks, including exact-content deterministic-file provenance."
       }
     ]
   },
