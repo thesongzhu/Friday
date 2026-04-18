@@ -97,10 +97,126 @@ function makeMockDb(options?: {
     created_at: string;
     updated_at: string;
   }>();
+  const skills = new Map<string, {
+    id: string;
+    name: string;
+    source: string;
+    origin: string;
+    publisher: string | null;
+    latest_version: string | null;
+    installed_version: string | null;
+    status: string;
+    current_manifest_json: string | null;
+    last_verified_at: string | null;
+    last_verified_runtime_version: string | null;
+    last_verified_provider_model: string | null;
+    compatibility_status: string;
+    promotion_channel: string;
+    shadow_version_id: string | null;
+    canary_stats_json: string;
+    created_at: string;
+    updated_at: string;
+    deleted_at: string | null;
+    deleted_by: string | null;
+  }>();
 
   function makeDb() {
     return {
       prepare: vi.fn((sql: string) => {
+        if (sql.startsWith("INSERT INTO skills")) {
+          return {
+            run: vi.fn((
+              id: string,
+              name: string,
+              source: string,
+              origin: string,
+              publisher: string | null,
+              latestVersion: string | null,
+              status: string,
+              currentManifestJson: string | null,
+              createdAt: string,
+              updatedAt: string,
+            ) => {
+              const existing = skills.get(id);
+              skills.set(id, {
+                id,
+                name,
+                source,
+                origin,
+                publisher,
+                latest_version: latestVersion,
+                installed_version: existing?.installed_version ?? null,
+                status: existing?.installed_version ? existing.status : status,
+                current_manifest_json: existing?.current_manifest_json ?? currentManifestJson,
+                last_verified_at: existing?.last_verified_at ?? null,
+                last_verified_runtime_version: existing?.last_verified_runtime_version ?? null,
+                last_verified_provider_model: existing?.last_verified_provider_model ?? null,
+                compatibility_status: existing?.compatibility_status ?? "unknown",
+                promotion_channel: existing?.promotion_channel ?? "active",
+                shadow_version_id: existing?.shadow_version_id ?? null,
+                canary_stats_json: existing?.canary_stats_json ?? "{}",
+                created_at: existing?.created_at ?? createdAt,
+                updated_at: updatedAt,
+                deleted_at: existing?.deleted_at ?? null,
+                deleted_by: existing?.deleted_by ?? null,
+              });
+            }),
+          };
+        }
+        if (sql.startsWith("SELECT * FROM skills WHERE id = ?")) {
+          return {
+            get: vi.fn((skillId: string) => skills.get(skillId)),
+          };
+        }
+        if (sql.startsWith("UPDATE skills SET status = ?, updated_at = ? WHERE id = ?")) {
+          return {
+            run: vi.fn((status: string, updatedAt: string, skillId: string) => {
+              const existing = skills.get(skillId);
+              if (!existing) {
+                return;
+              }
+              skills.set(skillId, {
+                ...existing,
+                status,
+                updated_at: updatedAt,
+              });
+            }),
+          };
+        }
+        if (sql.startsWith("UPDATE skills SET\n         installed_version = ?,")) {
+          return {
+            run: vi.fn((installedVersion: string, currentManifestJson: string, updatedAt: string, skillId: string) => {
+              const existing = skills.get(skillId);
+              if (!existing) {
+                return;
+              }
+              skills.set(skillId, {
+                ...existing,
+                installed_version: installedVersion,
+                status: "installed",
+                current_manifest_json: currentManifestJson,
+                updated_at: updatedAt,
+              });
+            }),
+          };
+        }
+        if (sql.startsWith("UPDATE skills SET\n         installed_version = NULL,")) {
+          return {
+            run: vi.fn((updatedAt: string, skillId: string) => {
+              const existing = skills.get(skillId);
+              if (!existing) {
+                return;
+              }
+              skills.set(skillId, {
+                ...existing,
+                installed_version: null,
+                status: "not_installed",
+                current_manifest_json: null,
+                updated_at: updatedAt,
+              });
+            }),
+          };
+        }
         if (sql.startsWith("INSERT INTO memory_items")) {
           return {
             run: vi.fn(
