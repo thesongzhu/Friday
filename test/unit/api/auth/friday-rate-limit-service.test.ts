@@ -66,7 +66,7 @@ describe("FridayRateLimitService", () => {
   });
 
   it("defines the write-heavy policies referenced by authenticated routes", () => {
-    expect(service.getPolicy("agent.run")).toMatchObject({ maxHits: 10, keyBy: "principal" });
+    expect(service.getPolicy("agent.run")).toMatchObject({ maxHits: 60, keyBy: "principal" });
     expect(service.getPolicy("session.write")).toMatchObject({ maxHits: 60, keyBy: "principal" });
     expect(service.getPolicy("memory.write")).toMatchObject({ maxHits: 60, keyBy: "principal" });
     expect(service.getPolicy("marketplace.checkout")).toMatchObject({ maxHits: 10, keyBy: "principal" });
@@ -81,8 +81,8 @@ describe("FridayRateLimitService", () => {
   it("persists counter rows for agent.run instead of falling back to the zero-limit path", () => {
     const decision = service.increment("agent.run", "user-1");
     expect(decision.allowed).toBe(true);
-    expect(decision.limit).toBe(10);
-    expect(decision.remaining).toBe(9);
+    expect(decision.limit).toBe(60);
+    expect(decision.remaining).toBe(59);
 
     const stored = db.withReadConnection((conn) =>
       conn.prepare(
