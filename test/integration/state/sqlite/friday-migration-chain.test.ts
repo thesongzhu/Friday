@@ -251,6 +251,13 @@ describe("Friday Migration Chain (V001–V024)", () => {
 
     // V013
     expect(tableNames).toContain("friday_subagent_runs");
+
+    // V072
+    expect(tableNames).toContain("auth_access_tokens");
+
+    // V073
+    expect(tableNames).toContain("obs_audit_entries");
+    expect(tableNames).toContain("obs_retention_checkpoints");
   });
 
   it("adds V064 subagent fork-mode columns", () => {

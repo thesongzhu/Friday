@@ -154,7 +154,6 @@ import {
   createFridayCompactionContextLoader,
   createFridayCompactionMemorySink,
   createFridayMcpAdapter,
-  createFridayPreferenceInjector,
   createFridaySubagentRegistry,
   createFridayWorkspaceContextEngine,
   createFridayWorldStateManager,
@@ -599,8 +598,9 @@ export function resolveFridayHubConfig(
   const pluginRuntimeMode = pluginRuntimeModeRaw === "stub" ? "stub" : "full";
   const pipelineRuntimeConfig = resolveFridayPipelineRuntimeConfig(env);
 
-  // Self-hosted deployments typically use local providers (Ollama on localhost).
-  // Default allowPrivateNetwork to true unless explicitly disabled or in production mode.
+  // Private-network access must be explicitly enabled. Local/self-hosted
+  // deployments that need loopback providers such as Ollama should opt in via
+  // FRIDAY_ALLOW_PRIVATE_NETWORK=true or input.ssrfPolicy.allowPrivateNetwork.
   let allowPrivateNetwork: boolean;
   const envAllowPrivate = (env.FRIDAY_ALLOW_PRIVATE_NETWORK ?? "").trim().toLowerCase();
   if (envAllowPrivate) {
@@ -608,8 +608,7 @@ export function resolveFridayHubConfig(
   } else if (input.ssrfPolicy?.allowPrivateNetwork !== undefined) {
     allowPrivateNetwork = input.ssrfPolicy.allowPrivateNetwork;
   } else {
-    // Default: allow for self-hosted (non-production); disallow in production
-    allowPrivateNetwork = !isProduction;
+    allowPrivateNetwork = false;
   }
 
   return {
@@ -706,7 +705,7 @@ export async function createFridayHub(
   // Full implementations with persistence are planned for the multi-node milestone.
   // Config mutations via API are silently no-ops; use env vars and friday.config.yaml instead.
   const configManager = createStubConfigManager(config, stateRuntime);
-  const auditLogPath = resolveFridayAuditLogPath(config.stateDir ?? ".");
+  const auditLogPath = resolveFridayAuditLogPath(stateRuntime.stateDir);
   const memoryState = createStubMemoryState(auditLogPath);
 
   // 3. Create skill registry
@@ -1077,6 +1076,9 @@ export async function createFridayHub(
                 failedNodeId: latestFailedNode.nodeId,
                 failedNodeAttempt: latestFailedNode.attempt,
                 failedNodeStatus: latestFailedNode.status,
+                ...(typeof latestFailedNode.error?.retryable === "boolean"
+                  ? { failedNodeRetryable: latestFailedNode.error.retryable }
+                  : {}),
                 ...(typeof latestFailedNode.error?.code === "string" ? { failedNodeErrorCode: latestFailedNode.error.code } : {}),
                 ...(typeof latestFailedNode.error?.message === "string" ? { failedNodeErrorMessage: latestFailedNode.error.message } : {}),
               }
@@ -2046,6 +2048,21 @@ export async function createFridayHub(
     skillRegistry: registry,
     workflowExecutionService: workflowRuntime.execution,
     memoryService,
+    listLearnedFacts: (input) =>
+      selfLearningRuntime.facts
+        .listActiveFacts({ userId: input.userId, minConfidence: 0, limit: input.limit })
+        .map((f) => ({
+          key: f.key,
+          value: f.value,
+          confidence: f.confidence,
+          evidenceCount: f.evidenceCount,
+          lastConfirmedAt: f.lastConfirmedAt,
+        })),
+    learningEventWriter: (events) => {
+      selfLearningRuntime.pipeline.processBatch(events);
+    },
+    idGenerator,
+    nowIso,
     browserManager,
     xhsPageInteractions,
     xhsSessionManager,
@@ -2683,7 +2700,11 @@ export async function createFridayHub(
     // Load recent interactions so the agent has access to learned knowledge.
     if (input.userId) {
       try {
-        const recentEpisodes = await worldModelStateManager.getRecentEpisodes(input.userId, 5);
+        const recentInteractionsRequested = typeof input.task === "string"
+          && /\brecent(?:[-\s])interactions\b/i.test(input.task);
+        const recentEpisodes = recentInteractionsRequested
+          ? await worldModelStateManager.getRecentEpisodes(input.userId, 5)
+          : [];
         if (recentEpisodes.length > 0) {
           const lines = recentEpisodes.map(
             (ep) => `- ${ep.taskIntent} → ${ep.outcome}`,
@@ -3094,9 +3115,6 @@ export async function createFridayHub(
   const agentCompactionContextLoader = memoryService
     ? createFridayCompactionContextLoader({ memoryService })
     : undefined;
-  const agentPreferenceInjector = memoryService
-    ? createFridayPreferenceInjector({ memoryService, nowIso })
-    : undefined;
 
   const agentRuntime = createFridayAgentRuntime({
     db: stateRuntime!.sqlite,
@@ -3133,12 +3151,6 @@ export async function createFridayHub(
     },
     communicationPromptBuilder: async (input) => {
       const fragments: string[] = [];
-      if (agentPreferenceInjector) {
-        const injected = await agentPreferenceInjector.loadPreferences(input.userId);
-        if (injected.fragment.trim().length > 0) {
-          fragments.push(injected.fragment.trim());
-        }
-      }
       const explicitPreferences = stateRuntime.sqlite.withReadConnection((db) =>
         uixUserPreferenceRepository.listByPrincipal(db, {
           principalId: input.userId,
@@ -3320,6 +3332,21 @@ export async function createFridayHub(
         skillRegistry: registry,
         workflowExecutionService: workflowRuntime.execution,
         memoryService,
+        listLearnedFacts: (input) =>
+          selfLearningRuntime.facts
+            .listActiveFacts({ userId: input.userId, minConfidence: 0, limit: input.limit })
+            .map((f) => ({
+              key: f.key,
+              value: f.value,
+              confidence: f.confidence,
+              evidenceCount: f.evidenceCount,
+              lastConfirmedAt: f.lastConfirmedAt,
+            })),
+        learningEventWriter: (events) => {
+          selfLearningRuntime.pipeline.processBatch(events);
+        },
+        idGenerator,
+        nowIso,
         subagentRegistry,
         subagentContext: {
           depth: params.depth,
@@ -3399,12 +3426,6 @@ export async function createFridayHub(
         },
         communicationPromptBuilder: async (input) => {
           const fragments: string[] = [];
-          if (agentPreferenceInjector) {
-            const injected = await agentPreferenceInjector.loadPreferences(input.userId);
-            if (injected.fragment.trim().length > 0) {
-              fragments.push(injected.fragment.trim());
-            }
-          }
           const explicitPreferences = stateRuntime.sqlite.withReadConnection((db) =>
             uixUserPreferenceRepository.listByPrincipal(db, {
               principalId: input.userId,
@@ -4584,6 +4605,9 @@ export async function createFridayHub(
 
     const personas: Record<string, FridayChannelPersonaConfig> = {};
     for (const [kind, value] of Object.entries(parsed)) {
+      if (!channelRegistry.describe(kind)) {
+        continue;
+      }
       if (!value || typeof value !== "object" || Array.isArray(value)) {
         continue;
       }
@@ -4624,7 +4648,9 @@ export async function createFridayHub(
     });
   }
 
-  hydrateChannelPersonaStore(loadPersistedChannelPersonas());
+  const persistedChannelPersonas = loadPersistedChannelPersonas();
+  hydrateChannelPersonaStore(persistedChannelPersonas);
+  savePersistedChannelPersonas(persistedChannelPersonas);
 
   const apiRuntime = createFridayApiRuntime({
     db: stateRuntime!.sqlite,
@@ -4657,7 +4683,7 @@ export async function createFridayHub(
     serverVersion: config.serverVersion ?? FRIDAY_HUB_DEFAULT_SERVER_VERSION,
     serverHost: config.host ?? "127.0.0.1",
     serverPort: config.port ?? 3141,
-    stateDir: config.stateDir ?? ".",
+    stateDir: stateRuntime.stateDir,
     managedSkillsDir: config.skillDirs[1] ?? "managed-skills",
     allowPrivateNetwork: config.ssrfPolicy?.allowPrivateNetwork,
     configManager,
@@ -4687,9 +4713,34 @@ export async function createFridayHub(
     system: systemRouteDeps,
     uix: {
       service: uixService,
+      readSetupCompletedAt: () =>
+        stateRuntime.sqlite.withReadConnection((db) => {
+          const row = db.prepare(
+            `SELECT setup_completed_at
+             FROM friday_setup_state
+             WHERE id = 'singleton'`,
+          ).get() as { setup_completed_at: string | null } | undefined;
+          return row?.setup_completed_at ?? null;
+        }),
       listLearnedFacts: (input: { userId: string }) =>
         selfLearningRuntime.facts.listActiveFacts({ userId: input.userId, minConfidence: 0, limit: 200 })
           .map((f) => ({ key: f.key, value: f.value, confidence: f.confidence, evidenceCount: f.evidenceCount, lastConfirmedAt: f.lastConfirmedAt })),
+      deleteLearnedFact: (input: { userId: string; key: string }) =>
+        selfLearningRuntime.facts.deleteFact({ userId: input.userId, key: input.key }),
+      clearLearnedFacts: (input: { userId: string }) => {
+        const facts = selfLearningRuntime.facts.listActiveFacts({
+          userId: input.userId,
+          minConfidence: 0,
+          limit: 1000,
+        });
+        let deletedCount = 0;
+        for (const fact of facts) {
+          if (selfLearningRuntime.facts.deleteFact({ userId: input.userId, key: fact.key })) {
+            deletedCount += 1;
+          }
+        }
+        return deletedCount;
+      },
       collectLearningEvents: learningEventWriter,
       idGenerator,
     },

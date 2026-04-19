@@ -39,6 +39,8 @@ function makeDeps(): FridayDeterministicPipelineRoutesDeps {
       listBundles: vi.fn().mockReturnValue({ bundles: [], total: 0 }),
       getBundle: vi.fn().mockReturnValue({ bundle: { id: "b-1" } }),
       createBundle: vi.fn().mockReturnValue({ bundle: { id: "b-new" } }),
+      updateBundle: vi.fn().mockReturnValue({ bundle: { id: "b-1", version: 2 } }),
+      listBundleVersions: vi.fn().mockReturnValue({ items: [] }),
       listRules: vi.fn().mockReturnValue({ rules: [] }),
       evaluateRules: vi.fn().mockReturnValue({ result: "pass" }),
       simulateRules: vi.fn().mockReturnValue({ result: "warn" }),
@@ -95,7 +97,7 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
   describe("route registration", () => {
     it("registers all expected routes", () => {
       const routes = createFridayDeterministicPipelineRoutes(makeDeps());
-      expect(routes.length).toBe(42);
+      expect(routes.length).toBe(44);
     });
 
     it("has unique operationIds", () => {
@@ -148,6 +150,24 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
       await expect(route.handler(makeCtx({ body: null }))).rejects.toThrow("name is required");
     });
 
+    it("POST /v1/rules/bundles rejects legacy rule-shaped payloads before bundle creation", async () => {
+      const deps = makeDeps();
+      const routes = createFridayDeterministicPipelineRoutes(deps);
+      const route = findRoute(routes, "rules.bundles.create");
+      const legacyRulePayload = {
+        resource: "memory",
+        action: "search",
+        decision: "allow",
+        conditions: {},
+        enabled: true,
+      };
+
+      await expect(route.handler(makeCtx({ body: legacyRulePayload }))).rejects.toThrow(
+        "name is required and must be a non-empty string",
+      );
+      expect(deps.rules.createBundle).not.toHaveBeenCalled();
+    });
+
     it("POST /v1/rules/bundles creates with valid body", async () => {
       const deps = makeDeps();
       const routes = createFridayDeterministicPipelineRoutes(deps);
@@ -155,6 +175,30 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
 
       await route.handler(makeCtx({ body: { name: "My Bundle" } }));
       expect(deps.rules.createBundle).toHaveBeenCalledWith({ name: "My Bundle" });
+    });
+
+    it("PATCH /v1/rules/bundles/:bundleId delegates to updateBundle", async () => {
+      const deps = makeDeps();
+      const routes = createFridayDeterministicPipelineRoutes(deps);
+      const route = findRoute(routes, "rules.bundles.update");
+
+      expect(route.method).toBe("PATCH");
+      expect(route.path).toBe("/v1/rules/bundles/:bundleId");
+
+      await route.handler(makeCtx({ params: { bundleId: "b-42" }, body: { etag: "etag-1", name: "Renamed" } }));
+      expect(deps.rules.updateBundle).toHaveBeenCalledWith("b-42", { etag: "etag-1", name: "Renamed" });
+    });
+
+    it("GET /v1/rules/bundles/:bundleId/versions delegates to listBundleVersions", async () => {
+      const deps = makeDeps();
+      const routes = createFridayDeterministicPipelineRoutes(deps);
+      const route = findRoute(routes, "rules.bundles.versions.list");
+
+      expect(route.method).toBe("GET");
+      expect(route.path).toBe("/v1/rules/bundles/:bundleId/versions");
+
+      await route.handler(makeCtx({ params: { bundleId: "b-42" }, query: { limit: 5 } }));
+      expect(deps.rules.listBundleVersions).toHaveBeenCalledWith("b-42", { limit: 5 });
     });
 
     it("POST /v1/rules/evaluate validates bundleId", async () => {
@@ -425,8 +469,8 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
     });
 
     it("expected scope counts", () => {
-      expect(readRoutes.length).toBe(25);
-      expect(writeRoutes.length).toBe(10);
+      expect(readRoutes.length).toBe(26);
+      expect(writeRoutes.length).toBe(11);
       expect(runRoutes.length).toBe(7);
     });
   });

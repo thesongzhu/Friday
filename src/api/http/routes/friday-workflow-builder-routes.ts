@@ -1,4 +1,8 @@
-import type { FridayPaginationQuery, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import type {
+  FridayAuthPrincipal,
+  FridayPaginationQuery,
+  FridayRouteDefinition,
+} from "../../model/friday-api-common.types.js";
 import type { UUID } from "#workflows";
 import type {
   FridayAcquireWorkflowLockRequest,
@@ -86,9 +90,21 @@ export interface FridayWorkflowBuilderRoutesDeps {
   autosaveDraft: (workflowId: UUID, draftId: UUID, input: FridayAutosaveDraftRequest) => FridayAutosaveDraftResponse;
   compileDraft: (workflowId: UUID, draftId: UUID) => FridayCompileDraftResponse;
   publishDraft: (workflowId: UUID, draftId: UUID, input: FridayPublishDraftRequest) => FridayPublishDraftResponse;
-  acquireLock: (workflowId: UUID, input: FridayAcquireWorkflowLockRequest) => FridayAcquireWorkflowLockResponse;
-  renewLock: (workflowId: UUID, input: FridayRenewWorkflowLockRequest) => FridayRenewWorkflowLockResponse;
-  releaseLock: (workflowId: UUID, input: FridayReleaseWorkflowLockRequest) => FridayReleaseWorkflowLockResponse;
+  acquireLock: (
+    workflowId: UUID,
+    input: FridayAcquireWorkflowLockRequest,
+    principal: FridayAuthPrincipal | null,
+  ) => FridayAcquireWorkflowLockResponse;
+  renewLock: (
+    workflowId: UUID,
+    input: FridayRenewWorkflowLockRequest,
+    principal: FridayAuthPrincipal | null,
+  ) => FridayRenewWorkflowLockResponse;
+  releaseLock: (
+    workflowId: UUID,
+    input: FridayReleaseWorkflowLockRequest,
+    principal: FridayAuthPrincipal | null,
+  ) => FridayReleaseWorkflowLockResponse;
 }
 
 export function createFridayWorkflowBuilderRoutes(
@@ -193,7 +209,7 @@ export function createFridayWorkflowBuilderRoutes(
       auth: { public: false, anyOfScopes: ["workflow.write"] },
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
-        return deps.acquireLock(workflowId, ctx.body as FridayAcquireWorkflowLockRequest);
+        return deps.acquireLock(workflowId, ctx.body as FridayAcquireWorkflowLockRequest, ctx.principal);
       },
     },
     {
@@ -203,7 +219,7 @@ export function createFridayWorkflowBuilderRoutes(
       auth: { public: false, anyOfScopes: ["workflow.write"] },
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
-        return deps.renewLock(workflowId, ctx.body as FridayRenewWorkflowLockRequest);
+        return deps.renewLock(workflowId, ctx.body as FridayRenewWorkflowLockRequest, ctx.principal);
       },
     },
     {
@@ -213,7 +229,7 @@ export function createFridayWorkflowBuilderRoutes(
       auth: { public: false, anyOfScopes: ["workflow.write"] },
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
-        return deps.releaseLock(workflowId, ctx.body as FridayReleaseWorkflowLockRequest);
+        return deps.releaseLock(workflowId, ctx.body as FridayReleaseWorkflowLockRequest, ctx.principal);
       },
     },
   ];

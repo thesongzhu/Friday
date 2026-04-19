@@ -15,6 +15,43 @@ export class FridayGraphValidationError extends Error {
   }
 }
 
+function readRecord(value: unknown): Record<string, unknown> | null {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function normalizeWorkflowNodeType(value: unknown): WorkflowNodeType | null {
+  if (typeof value !== "string" || value.trim() === "") {
+    return null;
+  }
+  switch (value.trim()) {
+    case "trigger":
+    case "action":
+    case "condition":
+    case "data":
+    case "ai":
+    case "approval":
+      return value.trim() as WorkflowNodeType;
+    case "start":
+      return "trigger";
+    case "tool_call":
+    case "skill_call":
+      return "action";
+    case "transform":
+      return "data";
+    case "human_approval":
+      return "approval";
+    default:
+      return null;
+  }
+}
+
 /**
  * Validate that a raw graph object has the required structural fields.
  * Returns an array of error messages (empty = valid).
@@ -102,16 +139,49 @@ export function parseGraphJson(graphJson: JsonValue): FridayCompiledWorkflowGrap
       workflowVersionId: (raw.workflowVersionId as string) ?? "",
       sourceSpecSchemaVersion: (raw.sourceSpecSchemaVersion as "1.0") ?? "1.0",
       graph: {
-        nodes: raw.nodes as FridayWorkflowNode[],
-        edges: (Array.isArray(raw.edges) ? raw.edges : []).map((e: Record<string, unknown>) => ({
-          id: (e.id as string) ?? "",
-          sourceNodeId: (e.sourceNodeId ?? e.source) as string,
-          targetNodeId: (e.targetNodeId ?? e.target) as string,
-          sourcePort: e.sourcePort as string | undefined,
-          targetPort: e.targetPort as string | undefined,
-          condition: e.condition as string | undefined,
-          priority: e.priority as number | undefined,
-        })) as FridayWorkflowEdge[],
+        nodes: raw.nodes.map((node, index) => {
+          const rawNode = readRecord(node) ?? {};
+          const nodeId = readString(rawNode.id) ?? `node-${index + 1}`;
+          const normalizedType =
+            normalizeWorkflowNodeType(rawNode.type ?? rawNode.kind)
+            ?? (readString(rawNode.type ?? rawNode.kind) as WorkflowNodeType | undefined)
+            ?? "action";
+          const config =
+            readRecord(rawNode.config)
+            ?? readRecord(rawNode.data)
+            ?? {};
+          return {
+            id: nodeId,
+            type: normalizedType,
+            label: readString(rawNode.label) ?? readString(rawNode.name) ?? nodeId,
+            config: config as Record<string, JsonValue>,
+            retryPolicy: rawNode.retryPolicy as FridayNodeRetryPolicy | undefined,
+            timeoutMs: typeof rawNode.timeoutMs === "number" ? rawNode.timeoutMs : undefined,
+          };
+        }),
+        edges: (Array.isArray(raw.edges) ? raw.edges : []).map((edge, index) => {
+          const rawEdge = readRecord(edge) ?? {};
+          const sourceNodeId =
+            readString(rawEdge.sourceNodeId)
+            ?? readString(rawEdge.source)
+            ?? readString(rawEdge.from)
+            ?? "";
+          const targetNodeId =
+            readString(rawEdge.targetNodeId)
+            ?? readString(rawEdge.target)
+            ?? readString(rawEdge.to)
+            ?? "";
+          const condition = readString(rawEdge.condition) ?? readString(rawEdge.when);
+          return {
+            id: readString(rawEdge.id) ?? `edge-${index + 1}:${sourceNodeId}:${targetNodeId}:${condition ?? "success"}`,
+            sourceNodeId,
+            targetNodeId,
+            sourcePort: readString(rawEdge.sourcePort),
+            targetPort: readString(rawEdge.targetPort),
+            condition,
+            priority: typeof rawEdge.priority === "number" ? rawEdge.priority : undefined,
+          };
+        }),
         variables: (raw.variables ?? {}) as Record<string, JsonValue>,
       },
       failurePolicy: (raw.failurePolicy as WorkflowFailurePolicyV2) ?? { onFailure: "fail_fast" },

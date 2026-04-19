@@ -25,6 +25,10 @@ import type { FridayProviderTenantContext } from "#providers";
 import { FridayDomainError } from "#errors";
 import { isValidCronExpression } from "#jobs";
 import type { FridayAgentRunEventRecord } from "#agent";
+import {
+  hashIdempotencyPayload,
+  readIdempotencyKeyHeader,
+} from "./friday-route-idempotency.js";
 
 // ─── Constants ───
 
@@ -81,6 +85,11 @@ function filterVisibleAgentRuns(runs: FridayAgentRunRecord[]): FridayAgentRunRec
 
 export interface FridayAgentRoutesDeps {
   assertListingEntitled?: (listingId: string, principalId: string) => Promise<void>;
+  validateRequestedRoute?: (
+    providerId?: string,
+    model?: string,
+    tenantContext?: FridayProviderTenantContext,
+  ) => Promise<void>;
   startRun: (input: {
     task: string;
     sessionKey?: string;
@@ -98,6 +107,9 @@ export interface FridayAgentRoutesDeps {
       browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
       packId?: string;
     };
+    apiIdempotencyKey?: string;
+    apiIdempotencyPayloadHash?: string;
+    apiIdempotencyReceivedAt?: string;
     principalId?: string;
     scopes?: string[];
     tenantContext?: FridayProviderTenantContext;
@@ -121,6 +133,40 @@ export interface FridayAgentRoutesDeps {
   rollbackRun?: (runId: string) => { restoredCount: number; errors: Array<{ filePath: string; error: string }> } | null;
   eventEmitter: FridayAgentEventEmitter;
   automationService: FridayAgentAutomationService;
+}
+
+function readPreferredString(
+  primary: unknown,
+  alias: unknown,
+): string | undefined {
+  if (typeof primary === "string" && primary.trim().length > 0) {
+    return primary.trim();
+  }
+  if (typeof alias === "string" && alias.trim().length > 0) {
+    return alias.trim();
+  }
+  return undefined;
+}
+
+function assertNoAliasConflict(
+  primary: unknown,
+  alias: unknown,
+  fieldName: string,
+  aliasFieldName: string,
+): void {
+  if (typeof primary !== "string" || typeof alias !== "string") {
+    return;
+  }
+  const normalizedPrimary = primary.trim();
+  const normalizedAlias = alias.trim();
+  if (!normalizedPrimary || !normalizedAlias || normalizedPrimary === normalizedAlias) {
+    return;
+  }
+  throw new FridayDomainError(
+    "VALIDATION_ERROR",
+    `${fieldName} and ${aliasFieldName} must match when both are provided`,
+    { httpStatus: 400 },
+  );
 }
 
 function toFridayAgentRunExecutionResponse(
@@ -226,7 +272,14 @@ export function createFridayAgentRoutes(
           await deps.assertListingEntitled?.(marketplaceListingId, ctx.principal.principalId);
         }
 
-        const providerId = typeof body.providerId === "string" ? body.providerId : undefined;
+        assertNoAliasConflict(body.providerId, body.requestedProviderId, "providerId", "requestedProviderId");
+        assertNoAliasConflict(body.model, body.requestedModel, "model", "requestedModel");
+        const providerId = readPreferredString(body.providerId, body.requestedProviderId);
+        const model = readPreferredString(body.model, body.requestedModel);
+        const tenantContext = buildTenantContext(ctx.principal);
+        if (providerId || model) {
+          await deps.validateRequestedRoute?.(providerId, model, tenantContext);
+        }
         const replyToMessageId = typeof body.replyToMessageId === "string" ? body.replyToMessageId : undefined;
         if (body.replyToMessageId !== undefined && (!replyToMessageId || replyToMessageId.trim() === "")) {
           throw new FridayDomainError(
@@ -243,7 +296,6 @@ export function createFridayAgentRoutes(
             { httpStatus: 400 },
           );
         }
-        const model = typeof body.model === "string" ? body.model : undefined;
         const timezone = parseOptionalIanaTimezone(body.timezone, "timezone");
         let timeoutMs: number | undefined;
         if (body.timeoutMs !== undefined) {
@@ -354,9 +406,25 @@ export function createFridayAgentRoutes(
           ? {
             principalId: ctx.principal.principalId,
             scopes: ctx.principal.scopes,
-            tenantContext: buildTenantContext(ctx.principal),
+            tenantContext,
           }
           : {};
+        const apiIdempotencyKey = readIdempotencyKeyHeader(ctx.headers);
+        const apiIdempotencyPayloadHash = apiIdempotencyKey
+          ? hashIdempotencyPayload({
+            task: body.task,
+            sessionKey,
+            providerId,
+            model,
+            replyToMessageId,
+            timezone,
+            timeoutMs,
+            requireReview,
+            constraints,
+            taskProfile,
+            executionContext,
+          })
+          : undefined;
 
         const result = await deps.startRun({
           task: body.task,
@@ -370,6 +438,13 @@ export function createFridayAgentRoutes(
           constraints,
           taskProfile,
           executionContext,
+          ...(apiIdempotencyKey
+            ? {
+              apiIdempotencyKey,
+              apiIdempotencyPayloadHash,
+              apiIdempotencyReceivedAt: ctx.receivedAt,
+            }
+            : {}),
           ...principalInput,
         });
         const response: FridayStartAgentRunResponse = {

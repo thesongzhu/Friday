@@ -18,6 +18,7 @@ const DEFAULT_POLICIES: FridayRateLimitPolicy[] = [
   { id: "auth.login", windowMs: 60_000, maxHits: 10, keyBy: "ip" },
   { id: "auth.refresh", windowMs: 60_000, maxHits: 30, keyBy: "session" },
   { id: "auth.logout", windowMs: 60_000, maxHits: 30, keyBy: "principal" },
+  { id: "session.write", windowMs: 60_000, maxHits: 60, keyBy: "principal" },
   { id: "workflow.start_run", windowMs: 60_000, maxHits: 60, keyBy: "principal" },
   { id: "workflow.publish", windowMs: 60_000, maxHits: 20, keyBy: "principal" },
   { id: "workflow.resolve_conflict", windowMs: 60_000, maxHits: 20, keyBy: "principal" },
@@ -27,6 +28,11 @@ const DEFAULT_POLICIES: FridayRateLimitPolicy[] = [
   // Provider write + validate
   { id: "provider.write", windowMs: 60_000, maxHits: 30, keyBy: "principal" },
   { id: "provider.validate", windowMs: 60_000, maxHits: 10, keyBy: "principal" },
+  // Agent / memory / marketplace writes
+  { id: "agent.run", windowMs: 60_000, maxHits: 10, keyBy: "principal" },
+  { id: "memory.write", windowMs: 60_000, maxHits: 60, keyBy: "principal" },
+  { id: "marketplace.checkout", windowMs: 60_000, maxHits: 10, keyBy: "principal" },
+  { id: "marketplace.write", windowMs: 60_000, maxHits: 30, keyBy: "principal" },
   // Workflow generator (LLM-heavy)
   { id: "generator.llm", windowMs: 60_000, maxHits: 10, keyBy: "principal" },
   { id: "generator.write", windowMs: 60_000, maxHits: 30, keyBy: "principal" },

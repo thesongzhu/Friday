@@ -27,6 +27,7 @@ import type { FridayWorkflowNodeExecutor } from "../engine/friday-workflow-node-
 import type { FridayWorkflowRetryManager } from "../engine/friday-workflow-retry-manager.js";
 import type { FridayWorkflowArtifactWriter } from "../engine/friday-workflow-artifact-writer.js";
 import type { FridayExpressionEvaluator } from "../engine/friday-workflow-expression-evaluator.js";
+import { classifyWorkflowError } from "../engine/friday-workflow-unified-retry-bridge.js";
 
 // ─── Interface ───
 
@@ -160,6 +161,7 @@ export interface CreateWorkflowExecutionServiceDeps {
     nodeId: string;
     attempt: number;
     errorCode: string;
+    errorMessage?: string;
     shouldRetry: boolean;
     delayMs: number;
     reason: string;
@@ -209,6 +211,21 @@ interface WorkflowRetryDecisionSnapshot {
   reason: string;
 }
 
+function summarizeWorkflowIntakeError(
+  error: unknown,
+): { errorCode: string; error: string } {
+  if (error instanceof FridayDomainError) {
+    return {
+      errorCode: error.code,
+      error: error.message,
+    };
+  }
+  return {
+    errorCode: "WORKFLOW_INTAKE_FAILED",
+    error: "Workflow intake failed before execution.",
+  };
+}
+
 // ─── Factory ───
 
 export function createFridayWorkflowExecutionService(
@@ -256,6 +273,18 @@ export function createFridayWorkflowExecutionService(
       >,
       steps,
     };
+  }
+
+  function computeRunDeadlineAt(
+    compiledGraph: FridayCompiledWorkflowGraphV2,
+    startedAtIso: string,
+  ): string | undefined {
+    const graphVariables = compiledGraph.graph.variables ?? {};
+    const runTimeoutMs = graphVariables.runTimeoutMs;
+    if (typeof runTimeoutMs !== "number" || !Number.isFinite(runTimeoutMs) || runTimeoutMs <= 0) {
+      return undefined;
+    }
+    return new Date(new Date(startedAtIso).getTime() + runTimeoutMs).toISOString();
   }
 
   function loadNodeContexts(runId: string): Map<string, NodeContextEntry> {
@@ -432,6 +461,7 @@ export function createFridayWorkflowExecutionService(
           nodeId: input.attempt.nodeId,
           attempt: input.attempt.attempt,
           errorCode: input.error.code,
+          errorMessage: input.error.message,
           shouldRetry: baseRetryDecision.shouldRetry,
           delayMs: baseRetryDecision.delayMs,
           reason: baseRetryDecision.reason,
@@ -779,14 +809,22 @@ export function createFridayWorkflowExecutionService(
       return { nodeId: attempt.nodeId, status: "completed", output: result.output };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      const errorCode = errorMessage.startsWith("NODE_")
-        ? errorMessage.split(":")[0]!
-        : "NODE_EXECUTION_FAILED";
+      const errorCode = err instanceof FridayDomainError
+        ? err.code
+        : errorMessage.startsWith("NODE_")
+          ? errorMessage.split(":")[0]!
+          : "NODE_EXECUTION_FAILED";
+      const errorCategory = classifyWorkflowError(errorCode, errorMessage);
+      const retryable = err instanceof FridayDomainError
+        ? err.retryable
+        : errorCategory === "timeout"
+          || errorCategory === "transient"
+          || errorCategory === "rate_limit";
 
       const errorObj = {
         code: errorCode,
         message: errorMessage,
-        retryable: true,
+        retryable,
       } as const;
 
       const failureStatus = await persistNodeFailure({
@@ -1173,10 +1211,12 @@ export function createFridayWorkflowExecutionService(
             };
           }
         } catch (error) {
+          const intakeError = summarizeWorkflowIntakeError(error);
           await deps.publishEvent?.("workflow.pipeline.intake.error", {
             runId,
             workflowId: input.workflowId,
-            error: error instanceof Error ? error.message : String(error),
+            errorCode: intakeError.errorCode,
+            error: intakeError.error,
           });
         }
       }
@@ -1191,6 +1231,7 @@ export function createFridayWorkflowExecutionService(
         startedByUserId: input.startedByUserId,
         startedBySatelliteId: input.startedBySatelliteId,
         startedAt: nowIso,
+        deadlineAt: computeRunDeadlineAt(compiledGraph, nowIso),
         correlationId: input.correlationId,
         context: runContext,
         createdAt: nowIso,
@@ -1373,7 +1414,11 @@ export function createFridayWorkflowExecutionService(
       }
 
       deps.db.withWriteTransaction((db) => {
-        deps.runRepo.updateRunStatus(db, runId, "running", deps.nowIso());
+        const nowIso = deps.nowIso();
+        deps.runRepo.updateRunStatus(db, runId, "running", nowIso, undefined, {
+          resumedAt: nowIso,
+          clearFinishedAt: true,
+        });
       });
 
       scheduleRunExecution(plan).catch(async (error) => {

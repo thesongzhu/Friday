@@ -158,6 +158,9 @@ export interface FridayWorkflowRunRow {
   started_by_user_id: string | null;
   started_by_satellite_id: string | null;
   started_at: string;
+  deadline_at: string | null;
+  paused_at: string | null;
+  resumed_at: string | null;
   finished_at: string | null;
   correlation_id: string | null;
   context_json: string | null;
@@ -180,6 +183,9 @@ export interface FridayWorkflowRunEntity {
   startedByUserId?: UUID;
   startedBySatelliteId?: UUID;
   startedAt: ISODateTime;
+  deadlineAt?: ISODateTime;
+  pausedAt?: ISODateTime;
+  resumedAt?: ISODateTime;
   finishedAt?: ISODateTime;
   correlationId?: string;
   context?: JsonObject;

@@ -10,6 +10,24 @@ export interface FridayRevokedAccessTokenRow {
   revoked_at: string;
 }
 
+export interface FridayAuthAccessTokenRow {
+  token_id: string;
+  session_id: string;
+  user_id: string;
+  expires_at_epoch: number;
+  revoked_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FridayCreateAuthAccessTokenInput {
+  tokenId: string;
+  sessionId: string;
+  userId: string;
+  expiresAtEpoch: number;
+  now: string;
+}
+
 export interface FridayApiTokenRepository {
   findById(db: Database.Database, tokenId: string): FridayApiTokenRow | null;
   isRevoked(db: Database.Database, tokenId: string): boolean;
@@ -28,6 +46,14 @@ export interface FridayApiTokenRepository {
   loadRevokedAccessTokens(db: Database.Database, nowEpochSec: number): FridayRevokedAccessTokenRow[];
   /** Purge expired revoked access token entries (SEC-005). */
   purgeExpiredAccessTokenRevocations(db: Database.Database, nowEpochSec: number): number;
+  /** Persist metadata for a minted session access token so tokenId-based revocation can be enforced. */
+  recordAuthAccessToken(db: Database.Database, input: FridayCreateAuthAccessTokenInput): void;
+  /** Look up a minted session access token by tokenId. */
+  findAuthAccessToken(db: Database.Database, tokenId: string): FridayAuthAccessTokenRow | null;
+  /** Mark a tracked session access token as revoked. */
+  revokeAuthAccessToken(db: Database.Database, tokenId: string, now: string): boolean;
+  /** Purge expired tracked session access tokens. */
+  purgeExpiredAuthAccessTokens(db: Database.Database, nowEpochSec: number): number;
 }
 
 // ─── Factory ───
@@ -125,6 +151,45 @@ export function createFridayApiTokenRepository(): FridayApiTokenRepository {
     purgeExpiredAccessTokenRevocations(db, nowEpochSec) {
       const result = db
         .prepare("DELETE FROM revoked_access_tokens WHERE expires_at_epoch < ?")
+        .run(nowEpochSec);
+      return result.changes;
+    },
+
+    recordAuthAccessToken(db, input) {
+      db.prepare(
+        `INSERT OR REPLACE INTO auth_access_tokens
+           (token_id, session_id, user_id, expires_at_epoch, revoked_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, NULL, ?, ?)`,
+      ).run(
+        input.tokenId,
+        input.sessionId,
+        input.userId,
+        input.expiresAtEpoch,
+        input.now,
+        input.now,
+      );
+    },
+
+    findAuthAccessToken(db, tokenId) {
+      return (
+        (db.prepare("SELECT * FROM auth_access_tokens WHERE token_id = ?").get(tokenId) as
+          | FridayAuthAccessTokenRow
+          | undefined) ?? null
+      );
+    },
+
+    revokeAuthAccessToken(db, tokenId, now) {
+      const result = db
+        .prepare(
+          "UPDATE auth_access_tokens SET revoked_at = ?, updated_at = ? WHERE token_id = ? AND revoked_at IS NULL",
+        )
+        .run(now, now, tokenId);
+      return result.changes > 0;
+    },
+
+    purgeExpiredAuthAccessTokens(db, nowEpochSec) {
+      const result = db
+        .prepare("DELETE FROM auth_access_tokens WHERE expires_at_epoch < ?")
         .run(nowEpochSec);
       return result.changes;
     },

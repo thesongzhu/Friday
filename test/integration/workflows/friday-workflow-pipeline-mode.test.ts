@@ -241,4 +241,63 @@ describe("Workflow runtime pipeline mode", () => {
     expect(publishedEvents).toContain("pipeline.retry.circuit.opened");
     db.close();
   });
+
+  it("persists workflow retry traces, escalations, and circuit breaker snapshots into public retry tables", async () => {
+    process.env.FRIDAY_PIPELINE_MODE = "enforce";
+    process.env.FRIDAY_PIPELINE_RETRY_MAX_ATTEMPTS = "8";
+    process.env.FRIDAY_PIPELINE_RETRY_BUDGET_MAX = "50";
+    process.env.FRIDAY_PIPELINE_RETRY_CIRCUIT_THRESHOLD = "2";
+
+    const db = createTestDb();
+    const runtime = createRuntimeWithOptions(db, {
+      invokeSkill: async () => {
+        throw new Error("NODE_TIMEOUT: simulated timeout");
+      },
+    });
+
+    const status = await runSimpleWorkflow(runtime);
+    expect(status).toBe("failed");
+
+    const persisted = db.withReadConnection((conn) => ({
+      traces: Number((conn.prepare("SELECT COUNT(*) AS count FROM retry_traces").get() as { count: number }).count),
+      attempts: Number((conn.prepare("SELECT COUNT(*) AS count FROM retry_attempts").get() as { count: number }).count),
+      escalations: Number((conn.prepare("SELECT COUNT(*) AS count FROM retry_escalations").get() as { count: number }).count),
+      circuitBreakers: Number((conn.prepare("SELECT COUNT(*) AS count FROM retry_circuit_breakers").get() as { count: number }).count),
+      openCircuitBreakers: Number((conn.prepare("SELECT COUNT(*) AS count FROM retry_circuit_breakers WHERE state = 'open'").get() as { count: number }).count),
+      escalatedTrace: conn.prepare(
+        `SELECT original_failure_category, original_error_code, original_error_message, status
+           FROM retry_traces
+          WHERE status = 'escalated'
+          ORDER BY updated_at DESC
+          LIMIT 1`,
+      ).get() as {
+        original_failure_category: string;
+        original_error_code: string | null;
+        original_error_message: string | null;
+        status: string;
+      } | undefined,
+      latestTrace: conn.prepare(
+        `SELECT original_failure_category, original_error_code, original_error_message, status
+           FROM retry_traces
+          ORDER BY updated_at DESC
+          LIMIT 1`,
+      ).get() as {
+        original_failure_category: string;
+        original_error_code: string | null;
+        original_error_message: string | null;
+        status: string;
+      } | undefined,
+    }));
+
+    expect(persisted.traces).toBeGreaterThan(0);
+    expect(persisted.attempts).toBeGreaterThan(0);
+    expect(persisted.escalations).toBeGreaterThan(0);
+    expect(persisted.circuitBreakers).toBeGreaterThan(0);
+    expect(persisted.openCircuitBreakers).toBeGreaterThan(0);
+    expect(persisted.latestTrace?.original_failure_category).toBe("timeout");
+    expect(persisted.latestTrace?.original_error_code).toBe("NODE_TIMEOUT");
+    expect(persisted.escalatedTrace?.status).toBe("escalated");
+    expect(persisted.escalatedTrace?.original_error_message).toContain("simulated timeout");
+    db.close();
+  });
 });

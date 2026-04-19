@@ -4,6 +4,7 @@ import type { FridayProviderService } from "#providers";
 import type { FridayWorkflowRuntime } from "#workflows";
 import {
   createFridayHubAutoFixExecutionSupport,
+  createStubConfigManager,
   createStubMemoryState,
 } from "../../../../src/hub/bootstrap/index.js";
 
@@ -28,7 +29,9 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
     };
   }
 
-  function makeWorkflowRuntime(): FridayWorkflowRuntime {
+  function makeWorkflowRuntime(
+    retryOutcomeStatus: "retrying" | "completed" | "failed" = "completed",
+  ): FridayWorkflowRuntime {
     const run = { id: "run-1", status: "running" } as ReturnType<FridayWorkflowRuntime["execution"]["getRun"]> extends infer T ? NonNullable<T> : never;
     const nodes = [
       { nodeId: "node-a", attempt: 1, status: "failed" },
@@ -48,8 +51,12 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
         },
         cancelRun: async () => run as never,
         retryRun: async () => {
-          nodes.push({ nodeId: "node-a", attempt: 2, status: "retrying" });
-          (run as { status: string }).status = "running";
+          nodes.push({ nodeId: "node-a", attempt: 2, status: retryOutcomeStatus });
+          (run as { status: string }).status = retryOutcomeStatus === "failed"
+            ? "failed"
+            : retryOutcomeStatus === "completed"
+              ? "completed"
+              : "running";
           return run as never;
         },
         getRun: () => run as never,
@@ -203,7 +210,7 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
     const support = createFridayHubAutoFixExecutionSupport({
       registry: makeRegistry(true),
       memoryState: createStubMemoryState(),
-      workflowRuntime: makeWorkflowRuntime(),
+      workflowRuntime: makeWorkflowRuntime("completed"),
       nowIso: () => "2026-03-13T10:00:00.000Z",
     });
 
@@ -217,6 +224,26 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
 
     await expect(support.stepExecutors.retry_node?.(step)).resolves.toBe(true);
     await expect(support.stepVerifiers.retry_node?.(step)).resolves.toBe(true);
+  });
+
+  it("fails retry verification when the new attempt immediately fails", async () => {
+    const support = createFridayHubAutoFixExecutionSupport({
+      registry: makeRegistry(true),
+      memoryState: createStubMemoryState(),
+      workflowRuntime: makeWorkflowRuntime("failed"),
+      nowIso: () => "2026-03-13T10:00:00.000Z",
+    });
+
+    const step = {
+      stepId: "retry-step-002",
+      kind: "retry_node" as const,
+      target: "run-1",
+      payload: { runId: "run-1", nodeId: "node-a" },
+      verify: { method: "error_absent" as const, timeoutMs: 100 },
+    };
+
+    await expect(support.stepExecutors.retry_node?.(step)).resolves.toBe(true);
+    await expect(support.stepVerifiers.retry_node?.(step)).resolves.toBe(false);
   });
 
   it("pauses a workflow run and verifies the paused state", async () => {
@@ -283,5 +310,33 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
     await expect(support.stepVerifiers.trim_payload?.(step)).resolves.toBe(true);
     expect(typeof (step.payload as { prompt: string }).prompt).toBe("string");
     expect((step.payload as { prompt: string }).prompt.length).toBeLessThanOrEqual(8);
+  });
+});
+
+describe("createStubConfigManager", () => {
+  it("hydrates currentConfig with the actual runtime state dir and launch cwd", async () => {
+    const manager = createStubConfigManager(
+      {
+        skillDirs: ["skills", "managed-skills"],
+      },
+      {
+        stateDir: "/tmp/friday-audit-state",
+        config: {
+          config: {
+            database: { readPoolSize: 1, busyTimeoutMs: 5000, synchronous: "NORMAL" },
+            telemetry: { enabled: false, fileName: "telemetry.jsonl", summaryFileName: "summary.json" },
+            backups: { configBackupCount: 3 },
+          },
+          configPath: "/tmp/friday-audit-state/friday.config.json5",
+          exists: false,
+        },
+      } as never,
+    );
+
+    const current = await manager.getCurrentConfig();
+
+    expect(current.runtimeStateDir).toBe("/tmp/friday-audit-state");
+    expect(current.launchCwd).toBe(process.cwd());
+    expect(current.configPath).toBe("/tmp/friday-audit-state/friday.config.json5");
   });
 });

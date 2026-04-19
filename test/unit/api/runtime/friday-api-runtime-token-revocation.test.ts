@@ -89,4 +89,36 @@ describe("FridayApiRuntime — Token Revocation & TTL Clamping (SEC-005)", () =>
     // Token should now be revoked
     expect(() => runtime.tokenValidator.validate(loginResult.accessToken)).toThrow();
   });
+
+  it("rejects untracked session access tokens after tracking enforcement is enabled", () => {
+    const runtime = createFridayApiRuntime({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => NOW,
+      providerService: createMockProviderService(),
+      tokenSecret: TOKEN_SECRET,
+      accessTokenTtlSec: 900,
+      computeChecksum: (s) => s,
+      resolveSkill: () => null,
+      invokeSkill: async () => ({}),
+    });
+
+    const nowSec = Math.floor(new Date(NOW).getTime() / 1000);
+    const token = encodeToken(
+      {
+        tokenId: "untracked-session-token",
+        principalType: "user",
+        principalId: "test-user",
+        userId: "test-user",
+        role: "admin",
+        scopes: ["session.read"],
+        iat: nowSec,
+        exp: nowSec + 900,
+        sid: "legacy-session-id",
+      } satisfies FridayAccessTokenClaims,
+      TOKEN_SECRET,
+    );
+
+    expect(() => runtime.tokenValidator.validate(token)).toThrow();
+  });
 });

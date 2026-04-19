@@ -670,7 +670,11 @@ export function createStubConfigManager(
   const securityProfile: FridaySkillSecurityProfile = {};
 
   return {
-    getCurrentConfig: async () => stateRuntime.config,
+    getCurrentConfig: async () => ({
+      ...stateRuntime.config,
+      runtimeStateDir: stateRuntime.stateDir,
+      launchCwd: process.cwd(),
+    }),
     getConfig: async () => ({ revision: 1, settings: {} }),
     validatePatch: async () => ({ valid: true, errors: [] }),
     applyPatch: async () => ({ revision: 1, changedKeys: [] }),
@@ -793,6 +797,9 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
 
   const workflowRuntime = deps.workflowRuntime;
   if (workflowRuntime) {
+    const sleep = async (ms: number): Promise<void> =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+
     stepExecutors.retry_node = async (step) => {
       const payload = readPayloadRecord(step.payload);
       const runId = readString(payload, "runId", "workflowRunId");
@@ -830,10 +837,51 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
       }
       const nodeId = readString(payload, "_retryNodeId", "nodeId");
       const beforeCount = readNumber(payload, "_retryCountBefore") ?? 0;
-      const currentCount = nodeId
-        ? workflowRuntime.execution.getRunNodes(runId).filter((node) => node.nodeId === nodeId).length
-        : workflowRuntime.execution.getRunNodes(runId).length;
-      return payload?._retryRequested === true && currentCount > beforeCount;
+      const verifySpec = "verify" in step ? step.verify : undefined;
+      const verifyMethod = verifySpec?.method;
+      const timeoutMs = typeof verifySpec?.timeoutMs === "number"
+        ? Math.max(0, verifySpec.timeoutMs)
+        : 0;
+      const deadline = Date.now() + timeoutMs;
+
+      while (true) {
+        const relevantNodes = nodeId
+          ? workflowRuntime.execution.getRunNodes(runId).filter((node) => node.nodeId === nodeId)
+          : workflowRuntime.execution.getRunNodes(runId);
+        const currentCount = relevantNodes.length;
+        if (payload?._retryRequested !== true || currentCount <= beforeCount) {
+          if (Date.now() >= deadline) {
+            return false;
+          }
+          await sleep(Math.min(50, Math.max(10, timeoutMs || 10)));
+          continue;
+        }
+
+        if (verifyMethod !== "error_absent" && verifyMethod !== "node_retry_success") {
+          return true;
+        }
+
+        const latestNode = relevantNodes.at(-1);
+        if (latestNode?.status === "completed") {
+          return true;
+        }
+        if (latestNode?.status === "failed") {
+          return false;
+        }
+        if (!nodeId) {
+          const run = workflowRuntime.execution.getRun(runId);
+          if (run?.status === "completed") {
+            return true;
+          }
+          if (run?.status === "failed" || run?.status === "cancelled") {
+            return false;
+          }
+        }
+        if (Date.now() >= deadline) {
+          return false;
+        }
+        await sleep(Math.min(50, Math.max(10, timeoutMs || 10)));
+      }
     };
 
     stepExecutors.pause_workflow = async (step) => {

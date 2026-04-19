@@ -55,6 +55,35 @@ describe("FridayMemoryItemRepository", () => {
     expect(found).toBeNull();
   });
 
+  it("finds the latest item by API idempotency metadata", () => {
+    const item = makeItem({
+      metadata: {
+        apiRequest: {
+          operationId: "memory.items.create",
+          principalId: "user-1",
+          idempotencyKey: "idem-1",
+          payloadHash: "hash-1",
+          receivedAt: NOW,
+        },
+      },
+    });
+    db.writer.transaction(() => repo.insert(db.writer, item))();
+
+    const found = repo.findLatestByApiRequestIdempotencyKey(db.writer, {
+      principalId: "user-1",
+      idempotencyKey: "idem-1",
+    });
+
+    expect(found?.id).toBe("item-1");
+    expect(found?.metadata.apiRequest).toEqual({
+      operationId: "memory.items.create",
+      principalId: "user-1",
+      idempotencyKey: "idem-1",
+      payloadHash: "hash-1",
+      receivedAt: NOW,
+    });
+  });
+
   it("deletes an item by ID", () => {
     const item = makeItem();
     db.writer.transaction(() => repo.insert(db.writer, item))();
@@ -368,6 +397,44 @@ describe("FridayMemoryItemRepository", () => {
     expect(deleted).toEqual(["i1"]);
     expect(repo.getById(db.writer, "i1")).toBeNull();
     expect(repo.getById(db.writer, "i2")).not.toBeNull();
+  });
+
+  it("prune with namespace filter still defaults to expired entries", () => {
+    const past = "2026-01-01T00:00:00.000Z";
+
+    db.writer.transaction(() => {
+      repo.insert(db.writer, makeItem({ id: "i1", key: "k1", namespace: "ns-a", expiresAt: past }));
+      repo.insert(db.writer, makeItem({ id: "i2", key: "k2", namespace: "ns-a" }));
+      repo.insert(db.writer, makeItem({ id: "i3", key: "k3", namespace: "ns-b", expiresAt: past }));
+    })();
+
+    const deleted = db.writer.transaction(() =>
+      repo.prune(db.writer, { namespace: "ns-a", nowIso: NOW }),
+    )();
+
+    expect(deleted).toEqual(["i1"]);
+    expect(repo.getById(db.writer, "i1")).toBeNull();
+    expect(repo.getById(db.writer, "i2")).not.toBeNull();
+    expect(repo.getById(db.writer, "i3")).not.toBeNull();
+  });
+
+  it("prune with expiredOnly false deletes all matching namespace entries", () => {
+    const past = "2026-01-01T00:00:00.000Z";
+
+    db.writer.transaction(() => {
+      repo.insert(db.writer, makeItem({ id: "i1", key: "k1", namespace: "ns-a", expiresAt: past }));
+      repo.insert(db.writer, makeItem({ id: "i2", key: "k2", namespace: "ns-a" }));
+      repo.insert(db.writer, makeItem({ id: "i3", key: "k3", namespace: "ns-b" }));
+    })();
+
+    const deleted = db.writer.transaction(() =>
+      repo.prune(db.writer, { namespace: "ns-a", expiredOnly: false, nowIso: NOW }),
+    )();
+
+    expect(deleted.sort()).toEqual(["i1", "i2"]);
+    expect(repo.getById(db.writer, "i1")).toBeNull();
+    expect(repo.getById(db.writer, "i2")).toBeNull();
+    expect(repo.getById(db.writer, "i3")).not.toBeNull();
   });
 
   // ─── FTS backfill ───

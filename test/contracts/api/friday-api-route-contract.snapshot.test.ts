@@ -744,7 +744,7 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         channels: false,
         system: false,
         discovery: false,
-        mcpServer: false,
+        mcpServer: true,
         marketplaceCommerce: false,
         marketplaceAssets: false,
         marketplaceCreators: false,

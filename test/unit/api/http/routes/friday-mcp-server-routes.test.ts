@@ -84,6 +84,25 @@ describe("createFridayMcpServerRoutes", () => {
     expect(routes[0]?.path).toBe("/v1/mcp");
   });
 
+  it("fails with CAPABILITY_DISABLED when MCP surface is absent", async () => {
+    const routes = createFridayMcpServerRoutes(undefined);
+    const route = routes[0]!;
+
+    await expect(route.handler(buildCtx({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {},
+    }) as never)).rejects.toMatchObject({
+      code: "CAPABILITY_DISABLED",
+      httpStatus: 501,
+      details: {
+        capability: "mcp_server",
+        surface: "/v1/mcp",
+      },
+    });
+  });
+
   it("handles initialize", async () => {
     const routes = createFridayMcpServerRoutes(createDeps());
     const route = routes[0]!;

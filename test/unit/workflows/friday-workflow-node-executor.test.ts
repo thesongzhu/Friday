@@ -114,6 +114,19 @@ describe("FridayWorkflowNodeExecutor", () => {
     expect((result.output as Record<string, unknown>).name).toBe("Alice");
   });
 
+  it("executes data node with empty config as a null-output no-op", async () => {
+    const executor = createExecutor();
+    const node: FridayWorkflowNode = {
+      id: "data-empty",
+      type: "data",
+      label: "Blank Data",
+      config: {},
+    };
+
+    const result = await executor.executeNode(makeInput(node));
+    expect(result.output).toBeNull();
+  });
+
   it("executes approval node — returns pending indicator", async () => {
     const executor = createExecutor();
     const node: FridayWorkflowNode = {

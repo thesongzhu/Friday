@@ -1,3 +1,4 @@
+import type Database from "better-sqlite3";
 import type { FridaySqliteLayer } from "#state";
 import type {
   FridayAuthBootstrapRequest,
@@ -27,6 +28,14 @@ export interface FridayAuthService {
   ): FridayAuthBootstrapResponse;
 }
 
+export interface FridayIssuedAccessTokenRecord {
+  tokenId: string;
+  sessionId: string;
+  userId: string;
+  expiresAtEpoch: number;
+  now: string;
+}
+
 export interface CreateFridayAuthServiceDeps {
   db: FridaySqliteLayer;
   idGenerator: () => string;
@@ -45,6 +54,11 @@ export interface CreateFridayAuthServiceDeps {
   warn?: (message: string) => void;
   /** Callback to mark an access token as revoked in the in-memory revocation map. */
   markAccessTokenRevoked?: (tokenId: string, expSec: number) => void;
+  /** Callback to persist minted session access-token metadata transactionally with auth session writes. */
+  registerIssuedAccessToken?: (
+    db: Database.Database,
+    input: FridayIssuedAccessTokenRecord,
+  ) => void;
   /** Optional rate limit service for auth lockout. */
   rateLimiter?: FridayRateLimitService;
   /** Optional tenant resolver used when issuing auth claims. Defaults to the principal ID. */

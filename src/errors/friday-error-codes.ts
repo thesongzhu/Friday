@@ -72,6 +72,7 @@ export interface FridayErrorShape {
 
 const RETRYABLE_CODES = new Set<string>([
   FRIDAY_ERROR_CODES.RATE_LIMITED,
+  FRIDAY_ERROR_CODES.DEGRADED_MODE,
 ]);
 
 // ─── Shape Builder ───
