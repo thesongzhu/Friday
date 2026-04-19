@@ -6,16 +6,15 @@ import type {
   FridayWorkflowEntity,
   FridayWorkflowListInput,
   FridayWorkflowUpdateInput,
+  JsonValue,
   FridayWorkflowVersionEntity,
   UUID,
 } from "../model/friday-workflow.types.js";
 import {
   type FridayCompiledWorkflowGraphV2,
-  parseGraphJson,
   validateGraphStructure,
 } from "../model/friday-workflow-graph.types.js";
 import { createFridayWorkflowValidator } from "../compiler/friday-workflow-validator.js";
-import type { JsonValue } from "../model/friday-workflow.types.js";
 
 // ─── Interface ───
 
@@ -105,18 +104,10 @@ export function createFridayWorkflowCrudService(
       "schemaVersion" in graph
       && graph.schemaVersion === "2.0"
       && "graph" in graph;
-    const rawChecksum = (graph as Record<string, unknown>).checksum;
-    const graphForValidation = isCompiled
-      ? graph as FridayCompiledWorkflowGraphV2
-      : {
-          ...parseGraphJson(graph as JsonValue),
-          checksum:
-            typeof rawChecksum === "string"
-              && rawChecksum.length > 0
-              ? rawChecksum
-              : "raw-graph-pending-checksum",
-        };
-    const validation = validator.validate(graphForValidation);
+    if (!isCompiled) {
+      return;
+    }
+    const validation = validator.validate(graph as FridayCompiledWorkflowGraphV2);
     if (!validation.valid) {
       const firstError = validation.errors[0]!;
       throw new FridayDomainError(firstError.code, firstError.message, { httpStatus: 400 });
