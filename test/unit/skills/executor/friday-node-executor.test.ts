@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { createFridayNodeExecutor } from "#skills";
+import {
+  createFridayNodeExecutor,
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+} from "#skills";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
@@ -15,7 +18,11 @@ describe("FridayNodeExecutor", () => {
   });
 
   function createExecutor() {
-    return createFridayNodeExecutor();
+    return createFridayNodeExecutor({
+      env: {
+        [FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV]: "true",
+      } as NodeJS.ProcessEnv,
+    });
   }
 
   async function writeModule(filename: string, code: string): Promise<string> {
@@ -190,5 +197,26 @@ describe("FridayNodeExecutor", () => {
 
     expect(result.error).toContain("cancelled");
     expect(result.durationMs).toBeLessThan(5_000);
+  });
+
+  it("blocks unisolated node execution when the runtime gate is off", async () => {
+    await writeModule(
+      "blocked.mjs",
+      `export async function execute() { return { ok: true }; }`,
+    );
+
+    const executor = createFridayNodeExecutor({
+      env: {} as NodeJS.ProcessEnv,
+    });
+    const result = await executor.run({
+      entrypoint: "blocked.mjs",
+      input: {},
+      cwd: tmpDir,
+    });
+
+    expect(result.timedOut).toBe(false);
+    expect(result.output).toEqual({});
+    expect(result.error).toContain("disabled");
+    expect(result.error).toContain(FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV);
   });
 });

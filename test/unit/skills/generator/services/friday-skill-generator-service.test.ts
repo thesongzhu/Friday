@@ -1290,5 +1290,68 @@ describe("FridaySkillGeneratorService", () => {
         restoreFetch();
       }
     });
+
+    it("refuses approval when the recorded explicit self-test was not executable", async () => {
+      const analyzerResponse = {
+        state: "needs_clarification",
+        questions: ["What?"],
+        spec: {
+          goal: "Echo",
+          inputs: [{ key: "query", type: "string", required: true, label: "Query" }],
+          outputs: [{ key: "result", type: "string", description: "Result" }],
+          runtimeKind: "shell",
+        },
+      };
+      const manifest = makeManifest({
+        runtime: {
+          kind: "shell",
+          entrypoint: "run.sh",
+          minHubVersion: "0.1.0",
+          apiVersion: "1",
+          timeoutMsDefault: 30000,
+        },
+      });
+      const files: FridayGeneratedSkillFile[] = [
+        {
+          path: "run.sh",
+          language: "bash",
+          executable: true,
+          content: "#!/usr/bin/env bash\ncat <<'EOF'\n{\"result\":\"ok\"}\nEOF\n",
+        },
+      ];
+      const uiSchema = makeUiSchema();
+
+      mockFetchForLlm([analyzerResponse, manifest, files, uiSchema]);
+
+      try {
+        const startResult = await service.startSession({
+          goal: "Echo shell skill",
+          userId: "user-1",
+          channel: "discord",
+        });
+
+        await service.generateDraft(startResult.session.sessionId);
+        await service.recordExplicitTestResult(startResult.session.sessionId, {
+          ok: true,
+          executable: false,
+          issues: [],
+          durationMs: 25,
+          testedAt: NOW,
+          behavioralCheck: {
+            attempted: false,
+            satisfied: false,
+            expectedMarkers: [],
+            matchedMarkers: [],
+            reason: "missing markers",
+          },
+        });
+
+        await expect(
+          service.approveAndSave(startResult.session.sessionId),
+        ).rejects.toThrow("Explicit self-test must execute real runtime behavior before approval.");
+      } finally {
+        restoreFetch();
+      }
+    });
   });
 });

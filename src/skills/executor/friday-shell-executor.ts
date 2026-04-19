@@ -7,6 +7,36 @@ import type {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const TERMINATION_GRACE_MS = 500;
+const SAFE_PARENT_ENV_KEYS = [
+  "PATH",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "SHELL",
+  "TERM",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "USER",
+  "LOGNAME",
+  "PWD",
+  "SystemRoot",
+  "ComSpec",
+  "PATHEXT",
+  "WINDIR",
+] as const;
+
+function buildChildEnv(overrides?: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of SAFE_PARENT_ENV_KEYS) {
+    const value = process.env[key];
+    if (value != null) {
+      env[key] = value;
+    }
+  }
+  return overrides ? { ...env, ...overrides } : env;
+}
 
 /**
  * Creates a shell executor that spawns child processes and captures output.
@@ -28,9 +58,7 @@ export function createFridayShellExecutor(): FridayShellExecutor {
 
         const child = spawn(options.command, options.args ?? [], {
           cwd: options.cwd,
-          env: options.env
-            ? { ...process.env, ...options.env }
-            : process.env,
+          env: buildChildEnv(options.env),
           stdio: ["pipe", "pipe", "pipe"],
           detached: true,
         });

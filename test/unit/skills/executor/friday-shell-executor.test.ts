@@ -1,7 +1,17 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import { createFridayShellExecutor } from "#skills";
 
 describe("FridayShellExecutor", () => {
+  const originalParentSecret = process.env.FRIDAY_PARENT_SECRET;
+
+  afterEach(() => {
+    if (originalParentSecret == null) {
+      delete process.env.FRIDAY_PARENT_SECRET;
+    } else {
+      process.env.FRIDAY_PARENT_SECRET = originalParentSecret;
+    }
+  });
+
   function createExecutor() {
     return createFridayShellExecutor();
   }
@@ -58,15 +68,28 @@ describe("FridayShellExecutor", () => {
   });
 
   it("sets environment variables", async () => {
+    process.env.FRIDAY_PARENT_SECRET = "super-secret-parent-value";
     const executor = createExecutor();
     const result = await executor.run({
       command: "sh",
-      args: ["-c", "echo $FRIDAY_TEST_VAR"],
+      args: ["-c", "printf '%s|%s' \"$FRIDAY_TEST_VAR\" \"${FRIDAY_PARENT_SECRET-unset}\""],
       env: { FRIDAY_TEST_VAR: "test-value-42" },
     });
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.trim()).toBe("test-value-42");
+    expect(result.stdout.trim()).toBe("test-value-42|unset");
+  });
+
+  it("does not inherit undeclared parent env vars", async () => {
+    process.env.FRIDAY_PARENT_SECRET = "super-secret-parent-value";
+    const executor = createExecutor();
+    const result = await executor.run({
+      command: "sh",
+      args: ["-c", "printf '%s' \"${FRIDAY_PARENT_SECRET-unset}\""],
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe("unset");
   });
 
   it("handles command not found gracefully", async () => {

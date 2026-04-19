@@ -135,6 +135,45 @@ describe("FridayErrorIncidentRepository", () => {
     expect(results[0]!.incidentId).toBe("inc-002");
   });
 
+  it("findLatestOpenBySignature ignores resolved incidents", () => {
+    repo.insert(db.writer, {
+      ...baseIncident,
+      incidentId: "inc-resolved",
+      status: "resolved",
+      ts: "2025-06-15T11:00:00.000Z",
+    });
+    repo.insert(db.writer, {
+      ...baseIncident,
+      incidentId: "inc-open",
+      ts: "2025-06-15T12:00:00.000Z",
+    });
+
+    const result = repo.findLatestOpenBySignature(db.writer, "test-user", "sig-abc123");
+    expect(result?.incidentId).toBe("inc-open");
+  });
+
+  it("refreshOpenIncident updates the latest open observation in place", () => {
+    repo.insert(db.writer, baseIncident);
+
+    const refreshed = repo.refreshOpenIncident(db.writer, {
+      incidentId: "inc-001",
+      nodeId: "node-456",
+      ts: "2025-06-15T12:00:00.000Z",
+      category: "workflow",
+      severity: "high",
+      context: { workflowId: "wf-1" },
+      nowIso: "2025-06-15T12:00:00.000Z",
+    });
+
+    expect(refreshed).not.toBeNull();
+    expect(refreshed!.incidentId).toBe("inc-001");
+    expect(refreshed!.runId).toBeUndefined();
+    expect(refreshed!.nodeId).toBe("node-456");
+    expect(refreshed!.category).toBe("workflow");
+    expect(refreshed!.severity).toBe("high");
+    expect(refreshed!.context).toEqual({ workflowId: "wf-1" });
+  });
+
   it("handles optional nodeId", () => {
     repo.insert(db.writer, {
       ...baseIncident,

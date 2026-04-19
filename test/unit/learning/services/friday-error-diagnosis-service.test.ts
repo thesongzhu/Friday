@@ -99,6 +99,23 @@ describe("FridayErrorDiagnosisService", () => {
     expect(result.candidatePlans.length).toBeGreaterThan(0);
   });
 
+  it("normalizes recursive lesson prefixes before emitting candidate plans", () => {
+    const lessonRepo = createFridayLearnedLessonRepository();
+    lessonRepo.upsertByFingerprint(db.writer, {
+      id: "lesson-recursive-title",
+      fingerprint: "sig-tool-timeout",
+      title: "Auto-fixed: Auto-fix: retry workflow",
+      cause: "Historical retry resolved the issue",
+      fix: "Retry the workflow",
+      nowIso: NOW,
+    });
+
+    const result = service.diagnose({ incident: baseIncident, nowIso: NOW });
+
+    expect(result.candidatePlans).toHaveLength(1);
+    expect(result.candidatePlans[0]!.title).toBe("Auto-fix: retry workflow");
+  });
+
   it("ignores disabled lessons when a matching disable fact exists", () => {
     const lessonRepo = createFridayLearnedLessonRepository();
     const factRepo = createFridayPreferenceFactRepository();
@@ -394,6 +411,97 @@ describe("FridayErrorDiagnosisService", () => {
     expect(result.autoFixEligible).toBe(true);
     expect(payload?.runId).toBe("wf-ctx-run-1");
     expect(payload?.nodeId).toBe("ai-ctx-1");
+  });
+
+  it("suppresses auto-fix for deterministic workflow_runtime skill-missing failures", () => {
+    db.writer.prepare(
+      `INSERT INTO workflows (
+        id, slug, name, latest_version_number, revision, is_archived, etag, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "wf-missing-skill",
+      "workflow-missing-skill",
+      "Workflow Missing Skill",
+      1,
+      1,
+      0,
+      "etag-wf-missing-skill",
+      NOW,
+      NOW,
+    );
+    db.writer.prepare(
+      `INSERT INTO workflow_versions (
+        id, workflow_id, version_number, checksum, graph_json, created_by_user_id,
+        is_published, change_note, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "wf-missing-skill-v1",
+      "wf-missing-skill",
+      1,
+      "checksum-missing-skill",
+      "{\"nodes\":[],\"edges\":[]}",
+      "test-user",
+      1,
+      "Synthetic version for missing-skill suppression test",
+      NOW,
+      NOW,
+    );
+    db.writer.prepare(
+      `INSERT INTO workflow_runs (
+        id, workflow_id, workflow_version_id, status, trigger_type, trigger_payload_json,
+        started_by_user_id, started_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "wf-run-missing-skill",
+      "wf-missing-skill",
+      "wf-missing-skill-v1",
+      "failed",
+      "manual",
+      "{}",
+      "test-user",
+      NOW,
+      NOW,
+      NOW,
+    );
+
+    const lessonRepo = createFridayLearnedLessonRepository();
+    lessonRepo.upsertByFingerprint(db.writer, {
+      id: "lesson-skill-missing",
+      fingerprint: "sig-workflow-skill-missing",
+      title: "Auto-fixed: retry workflow",
+      cause: "Historical auto-fix claimed retry resolved it",
+      fix: "Retry the failed workflow operation",
+      mitigation: { autoFixApplied: true },
+      nowIso: NOW,
+    });
+
+    const workflowRuntimeIncident: FridayErrorIncidentEntity = {
+      ...baseIncident,
+      incidentId: "inc-workflow-skill-missing",
+      category: "workflow",
+      severity: "medium",
+      signature: "sig-workflow-skill-missing",
+      runId: "wf-run-missing-skill",
+      nodeId: "action1",
+      context: {
+        source: "workflow_runtime",
+        workflowId: "wf-missing-skill",
+        workflowVersionId: "wf-missing-skill-v1",
+        failedNodeErrorCode: "NODE_EXECUTION_FAILED",
+        failedNodeErrorMessage:
+          "NODE_EXECUTION_FAILED: Step \"execute\" failed: NODE_EXECUTION_FAILED: skill 'missing-skill' not found",
+        failedNodeRetryable: false,
+      },
+    };
+    const incidentRepo = createFridayErrorIncidentRepository();
+    incidentRepo.insert(db.writer, workflowRuntimeIncident);
+
+    const result = service.diagnose({ incident: workflowRuntimeIncident, nowIso: NOW });
+
+    expect(result.matchedLessons).toHaveLength(1);
+    expect(result.autoFixEligible).toBe(false);
+    expect(result.candidatePlans).toHaveLength(0);
+    expect(result.diagnosis.diagnosis.autoFixSuppressedReason).toBeDefined();
   });
 
   it("excludes negative lessons (rejected fixes) from candidate plans", () => {

@@ -37,6 +37,7 @@ import type {
   FridayProviderBackendKind,
   FridayProviderRoutingDecisionTrace,
 } from "#providers";
+import { normalizeAutoFixTitleBase } from "./friday-auto-fix-title-helpers.js";
 
 export interface FridaySelfHealingEventPublisher {
   publish(
@@ -1125,7 +1126,9 @@ export function createFridaySelfHealingApiService(
         deps.lessonRepo.upsertByFingerprint(db, {
           id: deps.idGenerator(),
           fingerprint: incident.signature,
-          title: input.title ?? `Manual resolution: ${incident.category}`,
+          title: input.title
+            ? `Auto-fixed: ${normalizeAutoFixTitleBase(input.title)}`
+            : `Manual resolution: ${incident.category}`,
           cause: input.cause ?? summarizeRootCause(diagnosis, incident),
           fix: input.fix,
           mitigation: {

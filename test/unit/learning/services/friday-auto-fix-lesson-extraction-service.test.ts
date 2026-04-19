@@ -185,6 +185,26 @@ describe("FridayAutoFixLessonExtractionService", () => {
     expect(mitigation.failedSteps).toEqual(["retry_node"]);
   });
 
+  it("collapses recursive plan prefixes when extracting lessons", () => {
+    const recursiveAction: FridayAutoFixActionEntity = {
+      ...baseAction,
+      plan: {
+        ...baseAction.plan,
+        title: "Auto-fix: Auto-fixed: Auto-fix: retry workflow",
+      },
+    };
+
+    const lesson = service.extractFromSuccess({
+      incident: baseIncident,
+      diagnosis: baseDiagnosis,
+      action: recursiveAction,
+      nowIso: NOW,
+    });
+
+    expect(lesson).not.toBeNull();
+    expect(lesson!.title).toBe("Auto-fixed: retry workflow");
+  });
+
   it("extractFromFailure returns null for success outcome", () => {
     const lesson = service.extractFromFailure({
       incident: baseIncident,

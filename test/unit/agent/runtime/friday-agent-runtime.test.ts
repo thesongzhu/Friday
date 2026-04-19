@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -7,6 +7,7 @@ import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/c
 import {
   createFridayAgentRuntime,
   createFridayAgentEventEmitter,
+  createFridayAgentFileTools,
   createFridayAgentRunRepository,
   createFridayAgentReviewGate,
   createFridayAgentRunEventRepository,
@@ -121,6 +122,37 @@ describe("FridayAgentRuntime", () => {
       async execute(args) {
         spy?.(args);
         return { content: "mock exec output" };
+      },
+    };
+  }
+
+  function createMemorySearchTool(spy?: ReturnType<typeof vi.fn>): FridayAgentToolDefinition {
+    return {
+      name: "memory_search",
+      description: "Mock memory search tool",
+      parameters: {
+        properties: {
+          query: { type: "string" },
+          namespace: { type: "string" },
+          limit: { type: "number" },
+        },
+        required: ["query"],
+      },
+      async execute(args) {
+        spy?.(args);
+        return {
+          content: JSON.stringify([
+            {
+              content: "Captain Friday",
+              score: 0.98,
+              metadata: {
+                id: "learned-fact:pref:user_name",
+                namespace: "preference",
+                source: "learned_fact",
+              },
+            },
+          ]),
+        };
       },
     };
   }
@@ -537,6 +569,64 @@ describe("FridayAgentRuntime", () => {
         model: "default",
       }),
     );
+  });
+
+  it.each([
+    {
+      label: "default routing",
+      providerId: undefined,
+      model: "route-default-model",
+    },
+    {
+      label: "an explicit Anthropic pin",
+      providerId: "anthropic",
+      model: "claude-sonnet-4-20250514",
+    },
+  ])("answers trivial fact prompts in English without tools under $label", async ({ providerId, model }) => {
+    const streamSpy = vi.fn(async function* (params: {
+      providerId?: string;
+      model?: string;
+    }) {
+      yield { type: "text_delta" as const, text: "Paris is the capital of France." };
+      yield { type: "message_end" as const, stopReason: "end_turn", inputTokens: 6, outputTokens: 6 };
+    });
+    const llmClient: FridayAgentLlmClient = { stream: streamSpy };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "route-default-model",
+      providerId: "default",
+      systemPrompt: "You are a test agent.",
+      tools: [createSuccessfulWebSearchTool(), createMemorySearchTool()],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "What is the capital of France? Answer in English.",
+      taskPrompt: "This is a new question. Ignore the previous sourdough topic.\nCurrent question: What is the capital of France? Answer in English.",
+      historyMessages: [
+        { role: "user", content: "How do I bake sourdough bread?" },
+        { role: "assistant", content: "Use a sourdough starter and let the dough ferment overnight." },
+      ],
+      conversationContext: {
+        turnKind: "new_topic",
+        previousTopicSummary: "How do I bake sourdough bread?",
+        currentTopicSummary: "What is the capital of France?",
+      },
+      providerId,
+      model,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toBe("Paris is the capital of France.");
+    expect(result.toolCallCount).toBe(0);
+    expect(streamSpy).toHaveBeenCalledWith(expect.objectContaining({
+      providerId,
+      model,
+    }));
   });
 
   it("prepends provided history messages before the new task", async () => {
@@ -2077,6 +2167,50 @@ describe("FridayAgentRuntime", () => {
     expect(result.response).not.toContain("feedback persistence was claimed");
   });
 
+  it("retries explicit preference-setting tasks until feedback persistence evidence exists", async () => {
+    const feedbackSpy = vi.fn();
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "Got it! I'll call you MemoryAuditName-123." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "feedback",
+          input: { kind: "preference", field: "user_name", value: "MemoryAuditName-123" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "Got it, I will use that name." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 7 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createFeedbackTool(feedbackSpy)],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Call me MemoryAuditName-123.",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(1);
+    expect(feedbackSpy).toHaveBeenCalledTimes(1);
+    expect(result.response).toContain("use that name");
+  });
+
   it("enforces tool evidence for desktop inspection tasks before concluding", async () => {
     const execSpy = vi.fn();
     const llmClient = createMockLlmClient([
@@ -2119,6 +2253,267 @@ describe("FridayAgentRuntime", () => {
     expect(result.toolCallCount).toBe(1);
     expect(execSpy).toHaveBeenCalledTimes(1);
     expect(result.response).toContain("可验证结果");
+  });
+
+  it("retries preference recall tasks until memory_search evidence exists", async () => {
+    const memorySearchSpy = vi.fn();
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "I do not know what to call you." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "memory_search",
+          input: { query: "what should i call you", namespace: "agent", limit: 1 },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "Captain Friday" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 3 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createMemorySearchTool(memorySearchSpy)],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Use memory_search if needed. What should you call me? Reply with only the name.",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(1);
+    expect(memorySearchSpy).toHaveBeenCalledTimes(1);
+    expect(result.response).toContain("Captain Friday");
+  });
+
+  it("retries natural name-recall questions when the first answer claims the stored name is missing", async () => {
+    const memorySearchSpy = vi.fn();
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "I don't have a specific name for you. Could you please tell me what you'd like to be called?" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "memory_search",
+          input: { query: "what should you call me", limit: 1 },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "Captain Friday" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 3 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createMemorySearchTool(memorySearchSpy)],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "What should you call me? Reply with only the name.",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(1);
+    expect(memorySearchSpy).toHaveBeenCalledTimes(1);
+    expect(result.response).toBe("Captain Friday");
+  });
+
+  it("retries when memory_search found a stored name but the answer ignored it", async () => {
+    const memorySearchSpy = vi.fn();
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "memory_search",
+          input: { query: "what should you call me", limit: 1 },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "I do not know what to call you." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "Captain Friday" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 7, outputTokens: 3 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createMemorySearchTool(memorySearchSpy)],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "What should you call me? Reply with only the name.",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(1);
+    expect(memorySearchSpy).toHaveBeenCalledTimes(1);
+    expect(result.response).toBe("Captain Friday");
+  });
+
+  it("does not misclassify preference recall questions as feedback-persistence tasks", async () => {
+    const memorySearchSpy = vi.fn();
+    const feedbackSpy = vi.fn();
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "memory_search",
+          input: { query: "what should you call me", namespace: "user", limit: 1 },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "Captain Friday" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 3 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createMemorySearchTool(memorySearchSpy), createFeedbackTool(feedbackSpy)],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Use memory_search if needed. What should you call me? Reply with only the name.",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(1);
+    expect(memorySearchSpy).toHaveBeenCalledTimes(1);
+    expect(feedbackSpy).not.toHaveBeenCalled();
+    expect(result.response).toContain("Captain Friday");
+  });
+
+  it("does not delegate direct memory recall tasks to sub-agents", async () => {
+    const memorySearchSpy = vi.fn();
+    const delegationHandler = vi.fn(async () => ({
+      delegated: true as const,
+      subagentId: "sub-1",
+      childRunId: "child-run-1",
+      childSessionKey: "subagent:child-run-1",
+      statusSnapshot: "completed" as const,
+      outcome: {
+        status: "completed" as const,
+        response: "Delegated child completed successfully.",
+        toolCallCount: 0,
+        durationMs: 100,
+        usageInput: 12,
+        usageOutput: 5,
+      },
+    }));
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "memory_search",
+          input: { query: "what should you call me", limit: 1 },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "Captain Friday" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 3 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createMemorySearchTool(memorySearchSpy)],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      delegationHandler,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Use memory_search if needed. What should you call me? Reply with only the name.",
+      sessionKey: "ui:memory:recall",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(delegationHandler).not.toHaveBeenCalled();
+    expect(memorySearchSpy).toHaveBeenCalledTimes(1);
+    expect(result.response).toBe("Captain Friday");
+  });
+
+  it("falls back to deterministic memory recall when the model returns an empty direct-name answer", async () => {
+    const memorySearchSpy = vi.fn();
+    const llmClient = createMockLlmClient([
+      [
+        { type: "message_end", stopReason: "end_turn", inputTokens: 0, outputTokens: 0 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createMemorySearchTool(memorySearchSpy)],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Use memory_search if needed. What should you call me? Reply with only the name.",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(1);
+    expect(memorySearchSpy).toHaveBeenCalledTimes(1);
+    expect(result.response).toBe("Captain Friday");
   });
 
   it("blocks app-launch tool calls for desktop content inspection tasks and retries with read-only evidence", async () => {
@@ -2802,6 +3197,115 @@ describe("FridayAgentRuntime", () => {
 
     const result = await runPromise;
     expect(result.status).toBe("completed");
+  });
+
+  it("uses the delegated child error message for failed parent-run events", async () => {
+    const eventEmitter = createFridayAgentEventEmitter();
+    const repo = createFridayAgentRunRepository();
+    const failedEvents: Array<{ message: string; code: string }> = [];
+    let resolveDelegation: ((value: {
+      delegated: true;
+      subagentId: string;
+      childRunId: string;
+      childSessionKey: string;
+      statusSnapshot: "failed";
+      outcome: {
+        status: "failed";
+        response: string;
+        toolCallCount: number;
+        durationMs: number;
+        usageInput: number;
+        usageOutput: number;
+      };
+    }) => void) | null = null;
+    const delegationPromise = new Promise<{
+      delegated: true;
+      subagentId: string;
+      childRunId: string;
+      childSessionKey: string;
+      statusSnapshot: "failed";
+      outcome: {
+        status: "failed";
+        response: string;
+        toolCallCount: number;
+        durationMs: number;
+        usageInput: number;
+        usageOutput: number;
+      };
+    }>((resolve) => {
+      resolveDelegation = resolve;
+    });
+
+    eventEmitter.on("agent.run.failed", (payload) => {
+      failedEvents.push({
+        message: payload.error.message,
+        code: payload.error.code,
+      });
+    });
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient: createMockLlmClient([]),
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createEchoTool()],
+      eventEmitter,
+      idGenerator,
+      nowIso: () => NOW,
+      delegationHandler: () => delegationPromise,
+    });
+
+    const runPromise = runtime.executeRun({
+      task: "Review the repository state and tell me the next action.",
+      sessionKey: "ui:delegation:test-failed",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    db.withWriteTransaction((writer) => {
+      repo.create(writer, {
+        id: "child-1",
+        task: "Delegated child task",
+        sessionKey: "subagent:child-1",
+        maxAttempts: 1,
+        nowIso: NOW,
+      });
+      repo.update(writer, {
+        id: "child-1",
+        status: "failed",
+        completedAt: NOW,
+        durationMs: 50,
+        errorCode: "AGENT_LLM_ERROR",
+        errorMessage: "Child execution failed after verification.",
+        responseText: "Successfully saved the report.",
+        summary: "Successfully saved the report.",
+      });
+    });
+
+    resolveDelegation?.({
+      delegated: true,
+      subagentId: "sub-1",
+      childRunId: "child-1",
+      childSessionKey: "subagent:child-1",
+      statusSnapshot: "failed",
+      outcome: {
+        status: "failed",
+        response: "Successfully saved the report.",
+        toolCallCount: 0,
+        durationMs: 50,
+        usageInput: 0,
+        usageOutput: 0,
+      },
+    });
+
+    const result = await runPromise;
+    expect(result.status).toBe("failed");
+    expect(result.response).toBe("Child execution failed after verification.");
+    expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0]).toEqual({
+      message: "Child execution failed after verification.",
+      code: "AGENT_LLM_ERROR",
+    });
   });
 
   // ─── Unknown tool ───
@@ -3863,6 +4367,125 @@ describe("FridayAgentRuntime", () => {
     }));
   });
 
+  it("persists cancelled status when the LLM stream aborts mid-run", async () => {
+    const abortController = new AbortController();
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        const pending = new Promise<never>((_, reject) => {
+          params.signal.addEventListener("abort", () => {
+            reject(
+              params.signal.reason instanceof Error
+                ? params.signal.reason
+                : new Error(String(params.signal.reason ?? "aborted")),
+            );
+          }, { once: true });
+        });
+        queueMicrotask(() => abortController.abort(new Error("Cancelled via API")));
+        await pending;
+      },
+    };
+    const repo = createFridayAgentRunRepository();
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Start and then cancel",
+      signal: abortController.signal,
+    });
+
+    const run = db.withReadConnection((reader) => repo.getById(reader, result.runId));
+    expect(result.status).toBe("cancelled");
+    expect(run?.status).toBe("cancelled");
+    expect(run?.errorCode).toBeUndefined();
+  });
+
+  it("blocks provider mutations for informational guidance prompts before approval flow", async () => {
+    const providerExecute = vi.fn(async () => ({ content: "provider updated" }));
+    const providerTool: FridayAgentToolDefinition = {
+      name: "provider",
+      description: "Manage providers",
+      parameters: {
+        properties: {
+          action: { type: "string" },
+          providerId: { type: "string" },
+          apiKey: { type: "string" },
+        },
+        required: ["action"],
+      },
+      execute: providerExecute,
+    };
+
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "provider",
+          input: {
+            action: "update",
+            providerId: "anthropic-live",
+            apiKey: "$ANTHROPIC_API_KEY",
+          },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 5, outputTokens: 3 },
+      ],
+      [
+        { type: "text", text: "Open Settings, choose Providers, paste your Anthropic key, validate it, then save." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 6, outputTokens: 12 },
+      ],
+    ]);
+
+    const emitter = createFridayAgentEventEmitter();
+    const toolEndEvents: Array<{
+      isError?: boolean;
+      summary?: string;
+      routeId?: string;
+    }> = [];
+    emitter.on("agent.run.tool_end", (payload) => {
+      toolEndEvents.push({
+        isError: payload.isError,
+        summary: payload.summary,
+        routeId: payload.routeId,
+      });
+    });
+
+    const toolApprovalResolver = vi.fn(async () => ({ approved: true }));
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [providerTool],
+      eventEmitter: emitter,
+      idGenerator,
+      nowIso: () => NOW,
+      toolApprovalResolver,
+    });
+
+    const result = await runtime.executeRun({
+      task: "How do I connect my Anthropic API key? Please guide me step by step.",
+    });
+
+    expect(providerExecute).not.toHaveBeenCalled();
+    expect(toolApprovalResolver).not.toHaveBeenCalled();
+    expect(toolEndEvents).toHaveLength(1);
+    expect(toolEndEvents[0].isError).toBe(true);
+    expect(toolEndEvents[0].routeId).toBe("agent.execute.tool.policy");
+    expect(toolEndEvents[0].summary).toContain("denied by policy");
+  });
+
   it("blocks tools listed in disabledToolNames", async () => {
     const browserExecute = vi.fn(async () => ({ content: "opened" }));
     const browserTool: FridayAgentToolDefinition = {
@@ -4171,6 +4794,84 @@ describe("FridayAgentRuntime", () => {
       }),
       expect.any(AbortSignal),
     );
+  });
+
+  it("fails the run when a requested file write is blocked outside the workspace root", async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "friday-agent-runtime-workspace-"));
+    const outsidePath = join(
+      tmpdir(),
+      `friday-agent-runtime-outside-${Date.now()}-${Math.random().toString(16).slice(2)}.md`,
+    );
+    rmSync(outsidePath, { force: true });
+
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "write",
+          input: { path: outsidePath, content: "# blocked\n" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 5, outputTokens: 3 },
+      ],
+      [
+        { type: "text_delta", text: "I could not create the file because the path is outside the workspace root." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 4, outputTokens: 2 },
+      ],
+    ]);
+
+    const mockWriter = {
+      writeRunArtifacts: vi.fn().mockReturnValue({
+        artifactDir: "/tmp/.friday/agent-runs/outside-workspace-write",
+        artifacts: [{ type: "run_record", path: "/tmp/.friday/agent-runs/outside-workspace-write/run.json" }],
+      }),
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: createFridayAgentFileTools({ workspaceRoot }),
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      artifactWriter: mockWriter,
+      workdir: workspaceRoot,
+      selfTestService: {
+        async runTests() {
+          return [{ strategy: "llm_eval", passed: true, durationMs: 25 }];
+        },
+      },
+    });
+
+    try {
+      const result = await runtime.executeRun({
+        task: `Create ${outsidePath} and write a short markdown summary into that file.`,
+      });
+
+      expect(result.status).toBe("failed");
+      expect(result.response).toContain("AGENT_OUTPUT_CLOSURE_ERROR");
+      expect(result.toolCallCount).toBe(1);
+      expect(mockWriter.writeRunArtifacts).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "failed",
+        }),
+      );
+      expect(existsSync(outsidePath)).toBe(false);
+
+      const repo = createFridayAgentRunRepository();
+      const run = db.withReadConnection((reader) => repo.getById(reader, result.runId));
+
+      expect(run?.status).toBe("failed");
+      expect(run?.errorCode).toBe("AGENT_OUTPUT_CLOSURE_ERROR");
+      expect(run?.testResults?.[0]?.passed).toBe(true);
+      expect(run?.artifactDir).toBe("/tmp/.friday/agent-runs/outside-workspace-write");
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+      rmSync(outsidePath, { force: true });
+    }
   });
 
   // ─── IMPL-5: Failing self-test returns failed terminal status ───
@@ -5736,7 +6437,7 @@ describe("FridayAgentRuntime", () => {
 
   // ─── Learning context enrichment (Layer 3 read path) ───
 
-  it("appends learned preferences to system prompt when principalId is provided", async () => {
+  it("does not append learned preferences to system prompt when principalId is provided", async () => {
     let capturedSystemPrompt = "";
 
     const llmClient: FridayAgentLlmClient = {
@@ -5767,10 +6468,7 @@ describe("FridayAgentRuntime", () => {
     await runtime.executeRun({ task: "Hello", principalId: "user-123" });
 
     expect(learningContextBuilder).toHaveBeenCalledWith({ userId: "user-123", nowIso: NOW });
-    expect(capturedSystemPrompt).toContain("<user-preferences>");
-    expect(capturedSystemPrompt).toContain("- language: Chinese");
-    expect(capturedSystemPrompt).toContain("- tone: formal");
-    expect(capturedSystemPrompt).toContain("</user-preferences>");
+    expect(capturedSystemPrompt).toBe("You are a test agent.");
   });
 
   it("awaits communicationPromptBuilder fragments before sending the prompt", async () => {

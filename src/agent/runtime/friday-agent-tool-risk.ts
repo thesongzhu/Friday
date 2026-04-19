@@ -16,6 +16,21 @@ export interface FridayShellRiskClassification {
   program?: string;
 }
 
+const PROVIDER_MUTATING_ACTIONS = new Set([
+  "create",
+  "update",
+  "delete",
+  "activate_profile",
+  "oauth_init",
+  "oauth_complete",
+  "set_default",
+]);
+
+const INFORMATIONAL_PROVIDER_GUIDANCE_RE =
+  /\b(how do i|how can i|guide me|walk me through|show me how|what steps|step by step|explain how|tell me how)\b/i;
+const INFORMATIONAL_PROVIDER_GUIDANCE_CJK_RE =
+  /(怎么|如何|指导我|一步一步|逐步|告诉我怎么|教我怎么).{0,12}(连接|配置|设置|接入|anthropic|claude|api key|密钥)/i;
+
 const SAFE_PROGRAMS = new Set([
   "ls", "cat", "head", "tail", "wc", "file", "stat", "which", "whereis",
   "echo", "printf", "date", "whoami", "uname", "hostname", "pwd",
@@ -119,6 +134,39 @@ function listPotentialFilePaths(text: string): string[] {
   return [...new Set(text.match(/\b[\w./-]+\.[A-Za-z0-9]+\b/g) ?? [])];
 }
 
+function readToolAction(args: Record<string, unknown>): string {
+  return typeof args.action === "string" ? args.action.trim().toLowerCase() : "";
+}
+
+export function getPolicyDeniedReasonForToolCall(
+  task: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): string | null {
+  if (toolName !== "provider") {
+    return null;
+  }
+
+  const action = readToolAction(args);
+  if (!PROVIDER_MUTATING_ACTIONS.has(action)) {
+    return null;
+  }
+
+  const normalizedTask = task.trim();
+  if (!normalizedTask) {
+    return null;
+  }
+
+  if (
+    INFORMATIONAL_PROVIDER_GUIDANCE_RE.test(normalizedTask)
+    || INFORMATIONAL_PROVIDER_GUIDANCE_CJK_RE.test(normalizedTask)
+  ) {
+    return "Informational guidance requests must not mutate provider configuration. Explain the steps first and wait for explicit approval before changing providers.";
+  }
+
+  return null;
+}
+
 export function getApprovalRequiredReasonForExecCommand(command: string): string | null {
   const trimmed = command.trim();
   if (!trimmed) {
@@ -169,6 +217,13 @@ export function getApprovalRequiredReasonForToolCall(
   toolName: string,
   args: Record<string, unknown>,
 ): string | null {
+  if (toolName === "provider") {
+    const action = readToolAction(args);
+    if (PROVIDER_MUTATING_ACTIONS.has(action)) {
+      return "Mutating provider configuration or authentication requires explicit approval in the current run context.";
+    }
+  }
+
   if (toolName === "exec" && typeof args.command === "string") {
     return getApprovalRequiredReasonForExecCommand(args.command);
   }

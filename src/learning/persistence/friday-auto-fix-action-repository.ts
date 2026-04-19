@@ -27,6 +27,16 @@ export interface FridayAutoFixActionRepository {
     },
   ): FridayAutoFixActionEntity[];
 
+  findLatestByFingerprint(
+    db: Database.Database,
+    input: {
+      userId: string;
+      fingerprint: string;
+      statuses?: FridayAutoFixActionEntity["status"][];
+      limit?: number;
+    },
+  ): FridayAutoFixActionEntity | null;
+
   listPlanned(
     db: Database.Database,
     input?: { maxRiskTier?: 0 | 1 | 2; incidentIds?: string[]; limit?: number },
@@ -154,6 +164,18 @@ export function createFridayAutoFixActionRepository(): FridayAutoFixActionReposi
 
       const rows = db.prepare(sql).all(...params) as FridayAutoFixActionRow[];
       return rows.map(rowToEntity);
+    },
+
+    findLatestByFingerprint(db, input) {
+      const allowedStatuses = input.statuses ? new Set(input.statuses) : null;
+      const actions = this.listByUser(db, {
+        userId: input.userId,
+        limit: input.limit ?? 200,
+      });
+      return actions.find((action) =>
+        action.plan.evidence.fingerprint === input.fingerprint
+        && (allowedStatuses == null || allowedStatuses.has(action.status))
+      ) ?? null;
     },
 
     listPlanned(db, input) {

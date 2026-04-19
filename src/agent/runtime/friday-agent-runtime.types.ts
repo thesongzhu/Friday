@@ -5,6 +5,7 @@ import type { FridayProviderTenantContext } from "#providers";
 import type { FridayWorkspaceContext } from "./friday-agent-workspace-context.js";
 
 import type {
+  FridayAgentApiRequestMetadata,
   FridayAgentMessage,
   FridayAgentPlanReviewPayload,
   FridayAgentRunConstraints,
@@ -177,6 +178,8 @@ export interface FridayAgentRuntime {
     disabledToolNames?: string[];
     /** Optional surface/runtime context for tool routing decisions. */
     executionContext?: FridayAgentExecutionContext;
+    /** Optional API request idempotency metadata for transport-level replay. */
+    apiRequestIdempotency?: FridayAgentApiRequestMetadata;
     /** Optional model-routing/temperature profile for the run. */
     taskProfile?: FridayAgentTaskProfileInput;
     /** Internal-only override used when a child runtime inherits its parent model. */
@@ -325,7 +328,7 @@ export interface CreateFridayAgentRuntimeDeps {
   artifactWriter?: FridayAgentArtifactWriter;
   /** Optional global rules evaluator used to gate run/tool execution. */
   evaluateRules?: (context: FridayEvaluationContext, signal?: AbortSignal) => Promise<FridayEvaluationResult>;
-  /** Optional callback that returns learned user preferences to inject into the system prompt. */
+  /** Optional callback that returns learned user preferences for non-prompt runtime context such as timezone resolution. */
   learningContextBuilder?: (input: { userId: string; nowIso: string }) => { preferences: Record<string, unknown> };
   /** Optional callback that returns persisted compaction context for the current session. */
   compactionContextBuilder?: (input: {

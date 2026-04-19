@@ -95,6 +95,39 @@ describe("FridayAgentRunRepository", () => {
       );
       expect(found).toBeNull();
     });
+
+    it("finds the latest run by API idempotency metadata", () => {
+      const repo = createRepo();
+      const id = idGenerator();
+      db.withWriteTransaction((writer) =>
+        repo.create(writer, {
+          id,
+          task: "Find me by idempotency",
+          sessionKey: "agent:run:idem",
+          maxAttempts: 3,
+          nowIso: NOW,
+          metadata: {
+            apiRequest: {
+              operationId: "agent.runs.start",
+              principalId: "user-1",
+              idempotencyKey: "idem-1",
+              payloadHash: "hash-1",
+              receivedAt: NOW,
+            },
+          },
+        }),
+      );
+
+      const found = db.withReadConnection((reader) =>
+        repo.findLatestByApiRequestIdempotencyKey(reader, {
+          principalId: "user-1",
+          idempotencyKey: "idem-1",
+        }),
+      );
+
+      expect(found?.id).toBe(id);
+      expect(found?.metadata?.apiRequest?.payloadHash).toBe("hash-1");
+    });
   });
 
   // ─── update ───

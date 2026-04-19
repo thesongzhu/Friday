@@ -1,9 +1,20 @@
 import { describe, it, expect, vi } from "vitest";
 import { createFridayAgentFeedbackTool } from "#agent";
 import type { FridayLearningEventAppendInput } from "#ledger";
+import { attachFridayAgentToolExecutionContext } from "../../../../src/agent/runtime/friday-agent-tool-execution-context.js";
 
 function signal(): AbortSignal {
   return new AbortController().signal;
+}
+
+function signalWithTaskPrompt(taskPrompt: string): AbortSignal {
+  return attachFridayAgentToolExecutionContext(new AbortController().signal, {
+    runId: "run-1",
+    sessionKey: "agent:run:run-1",
+    readOnly: false,
+    principalId: "admin-001",
+    taskPrompt,
+  });
 }
 
 describe("FridayAgentFeedbackTool", () => {
@@ -62,6 +73,24 @@ describe("FridayAgentFeedbackTool", () => {
       value: "Chinese",
     });
     expect(event.payload).not.toHaveProperty("context");
+  });
+
+  it("normalizes display-name preferences from the current task prompt when the model truncates them", async () => {
+    const { tool, written } = setup();
+
+    await tool.execute(
+      { kind: "preference", field: "user_name", value: "MemoryAuditName-1776601815" },
+      signalWithTaskPrompt("Call me MemoryAuditName-1776601813715."),
+    );
+
+    const event = written[0]![0]!;
+    expect(event.payload).toEqual({
+      feedbackKind: "preference",
+      correctedField: "user_name",
+      newValue: "MemoryAuditName-1776601813715",
+      field: "user_name",
+      value: "MemoryAuditName-1776601813715",
+    });
   });
 
   it("rejects invalid feedback kind", async () => {

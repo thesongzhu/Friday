@@ -445,14 +445,6 @@ async function* handleOpenAIStream(
   params: FridayAgentLlmStreamParams,
 ): AsyncIterable<FridayAgentLlmStreamEvent> {
   const base = baseUrl.replace(/\/+$/, "");
-  const messages: Array<{ role: string; content: string | Array<Record<string, unknown>> }> = [
-    { role: "system", content: params.systemPrompt },
-    ...params.messages.map((m) => ({
-      role: m.role,
-      content: typeof m.content === "string" ? m.content : mapContentBlocksForOpenAI(m.content),
-    })),
-  ];
-
   const openAiTools = params.tools.map(toOpenAiFunctionTool);
 
   let url: string;
@@ -460,12 +452,7 @@ async function* handleOpenAIStream(
 
   if (api === "openai-responses") {
     url = `${base}/v1/responses`;
-    const input: Array<Record<string, unknown>> = messages.map((m) => ({
-      role: m.role,
-      content: m.role === "system"
-        ? mapContentBlocksForOpenAIResponses("system", typeof m.content === "string" ? m.content : JSON.stringify(m.content))
-        : m.content,
-    }));
+    const input = mapMessagesForOpenAIResponses(params.systemPrompt, params.messages);
     body = {
       model: params.model,
       input,
@@ -483,6 +470,13 @@ async function* handleOpenAIStream(
         : {}),
     };
   } else {
+    const messages: Array<{ role: string; content: string | Array<Record<string, unknown>> }> = [
+      { role: "system", content: params.systemPrompt },
+      ...params.messages.map((m) => ({
+        role: m.role,
+        content: typeof m.content === "string" ? m.content : mapContentBlocksForOpenAI(m.content),
+      })),
+    ];
     const includeUsage = shouldIncludeOpenAiStreamUsage(base);
     url = `${base}/v1/chat/completions`;
     body = {
@@ -597,6 +591,70 @@ function mapContentBlocksForOpenAIResponses(
     }
     return { type: textBlockType, text: JSON.stringify(block) };
   });
+}
+
+function mapMessageForOpenAIResponses(
+  role: string,
+  content: string | FridayAgentContentBlock[],
+): Array<Record<string, unknown>> {
+  if (typeof content === "string") {
+    return [{
+      role,
+      content: mapContentBlocksForOpenAIResponses(role, content),
+    }];
+  }
+
+  const items: Array<Record<string, unknown>> = [];
+  let bufferedBlocks: FridayAgentContentBlock[] = [];
+  const flushBufferedBlocks = () => {
+    if (bufferedBlocks.length === 0) {
+      return;
+    }
+    items.push({
+      role,
+      content: mapContentBlocksForOpenAIResponses(role, bufferedBlocks),
+    });
+    bufferedBlocks = [];
+  };
+
+  for (const block of content) {
+    if (block.type === "tool_use" && role === "assistant") {
+      flushBufferedBlocks();
+      items.push({
+        type: "function_call",
+        call_id: block.id,
+        name: block.name,
+        arguments: JSON.stringify(block.input ?? {}),
+      });
+      continue;
+    }
+    if (block.type === "tool_result") {
+      flushBufferedBlocks();
+      items.push({
+        type: "function_call_output",
+        call_id: block.tool_use_id,
+        output: block.content,
+      });
+      continue;
+    }
+    bufferedBlocks.push(block);
+  }
+
+  flushBufferedBlocks();
+  return items;
+}
+
+function mapMessagesForOpenAIResponses(
+  systemPrompt: string,
+  messages: FridayAgentLlmStreamParams["messages"],
+): Array<Record<string, unknown>> {
+  return [
+    {
+      role: "system",
+      content: mapContentBlocksForOpenAIResponses("system", systemPrompt),
+    },
+    ...messages.flatMap((message) => mapMessageForOpenAIResponses(message.role, message.content)),
+  ];
 }
 
 function toAnthropicTool(tool: FridayAgentToolDefinition): AnthropicToolDefinition {

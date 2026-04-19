@@ -47,6 +47,8 @@ import { listFridayMcpServerReadiness } from "../mcp/friday-mcp-readiness.js";
 import type { FridaySessionMemoryExtractionService } from "#sessions";
 import type { FridayProviderService } from "../../providers/services/friday-provider-service.types.js";
 import { createFridayAgentProviderTool } from "./friday-agent-provider-tool.js";
+import type { FridayLearnedFactView } from "../../learning/services/friday-learned-fact-memory-view.js";
+import type { FridayLearningEventAppendInput } from "#ledger";
 import {
   createFridayAgentCapabilitiesTool,
   type FridayAgentCapabilitiesSnapshot,
@@ -66,6 +68,10 @@ export interface CreateFridayAgentToolRegistryOptions {
   skillRegistry?: FridaySkillRegistry;
   workflowExecutionService?: FridayWorkflowExecutionService;
   memoryService?: FridayMemoryService;
+  listLearnedFacts?: (input: { userId: string; limit: number }) => FridayLearnedFactView[];
+  learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
+  idGenerator?: () => string;
+  nowIso?: () => string;
   subagentRegistry?: FridaySubagentRegistry;
   subagentContext?: FridaySubagentContext;
   browserManager?: FridayBrowserManager;
@@ -168,7 +174,13 @@ export function createFridayAgentToolRegistry(
 
   if (options?.memoryService) {
     tools.push(
-      ...createFridayAgentMemoryTools({ memoryService: options.memoryService }),
+      ...createFridayAgentMemoryTools({
+        memoryService: options.memoryService,
+        listLearnedFacts: options.listLearnedFacts,
+        learningEventWriter: options.learningEventWriter,
+        idGenerator: options.idGenerator,
+        nowIso: options.nowIso,
+      }),
     );
   }
 

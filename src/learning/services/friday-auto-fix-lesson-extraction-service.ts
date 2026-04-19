@@ -10,6 +10,10 @@ import type {
   JsonObject,
 } from "../model/friday-learning.types.js";
 import type { FridayAutoFixActionEntity } from "../model/friday-auto-fix.types.js";
+import {
+  buildAutoFixedLessonTitle,
+  buildFailedFixLessonTitle,
+} from "./friday-auto-fix-title-helpers.js";
 
 export interface FridayAutoFixLessonExtractionService {
   extractFromSuccess(input: {
@@ -58,7 +62,7 @@ export function createFridayAutoFixLessonExtractionService(
         const lesson = deps.lessonRepo.upsertByFingerprint(db, {
           id: deps.idGenerator(),
           fingerprint: incident.signature,
-          title: `Auto-fixed: ${action.plan.title}`,
+          title: buildAutoFixedLessonTitle(action.plan.title),
           cause: (diagnosis.diagnosis as JsonObject)["summary"] as string ??
             `${incident.category} error`,
           fix: action.plan.summary,
@@ -102,7 +106,7 @@ export function createFridayAutoFixLessonExtractionService(
         const lesson = deps.lessonRepo.upsertByFingerprint(db, {
           id: deps.idGenerator(),
           fingerprint: incident.signature,
-          title: `Failed fix: ${action.plan.title}`,
+          title: buildFailedFixLessonTitle(action.plan.title),
           cause: (diagnosis.diagnosis as JsonObject)["summary"] as string ??
             `${incident.category} error`,
           fix: `Avoid repeating "${action.plan.steps.map((s) => s.kind).join(", ")}" for this error pattern without modification`,

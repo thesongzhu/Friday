@@ -16,6 +16,8 @@ const TOOL_DOMAIN_HINTS =
   /\b(browser|chrome|desktop|system|provider|oauth|model|workflow|skill|repo|repository|file|files|code|shell|command|discord|slack|telegram|memory|session|subagent|agent|log|logs|service|port|process|database|api)\b/i;
 const LIGHTWEIGHT_FOLLOW_UP_HINTS =
   /\b(acknowledge|remember|recall|keep .* available|available for later recall|earlier facts?|previous facts?|what did i tell you)\b/i;
+const DIRECT_MEMORY_RECALL_HINTS =
+  /\b(use memory[_ ]search if needed|what should you call me|what should i call you|preferred name|stored name|stored preference|remember my name|recall my name)\b/i;
 
 export interface FridayAgentDelegationPolicyInput {
   task: string;
@@ -40,6 +42,7 @@ export function shouldDelegateFridayAgentTask(
     || DIRECT_CAPABILITY_HINTS.test(task)
     || DIRECT_AUTONOMOUS_HINTS.test(task)
     || DIRECT_SUBAGENT_TOOL_HINTS.test(task)
+    || DIRECT_MEMORY_RECALL_HINTS.test(task)
   ) {
     return false;
   }

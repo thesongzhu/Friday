@@ -1479,6 +1479,156 @@ describe("FridayProviderService", () => {
       }
     });
 
+    it("skips OAuth fallback providers that do not have an active login", async () => {
+      process.env.OPENAI_KEY = "test-openai-key";
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$OPENAI_KEY",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
+        await service.createProvider({
+          kind: "anthropic",
+          name: "Anthropic OAuth",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "oauth",
+          api: "anthropic-messages",
+          supportedModels: ["claude-sonnet-4-20250514"],
+          defaultModel: "claude-sonnet-4-20250514",
+          validateOnSave: false,
+        });
+
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: ["test-id-0002"],
+        });
+
+        const run = vi.fn(async (route: { provider: { id: string } }) => {
+          throw new Error(`forced failure for ${route.provider.id}`);
+        });
+
+        let error: {
+          code?: string;
+          cause?: { message?: string };
+          details?: { attempts?: Array<{ providerId: string }> };
+        } | null = null;
+        try {
+          await service.runWithFallback({ run });
+        } catch (caught) {
+          error = caught as typeof error;
+        }
+
+        expect(error).not.toBeNull();
+        expect(error).toMatchObject({
+          code: "PROVIDER_ERROR",
+          cause: { message: "forced failure for test-id-0001" },
+          details: {
+            attempts: [
+              expect.objectContaining({
+                providerId: "test-id-0001",
+              }),
+            ],
+          },
+        });
+        expect(error?.details?.attempts).toHaveLength(1);
+        expect(run).toHaveBeenCalledTimes(1);
+      } finally {
+        delete process.env.OPENAI_KEY;
+      }
+    });
+
+    it("does not let learning history override a requestedProviderId pin", async () => {
+      process.env.OPENAI_KEY = "test-openai-key";
+      process.env.ANTHROPIC_KEY = "test-anthropic-key";
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-responses",
+          apiKey: "$OPENAI_KEY",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
+        await service.createProvider({
+          kind: "anthropic",
+          name: "Claude",
+          baseUrl: "https://api.anthropic.com",
+          authMode: "api-key",
+          api: "anthropic-messages",
+          apiKey: "$ANTHROPIC_KEY",
+          supportedModels: ["claude-sonnet-4-20250514"],
+          defaultModel: "claude-sonnet-4-20250514",
+          validateOnSave: false,
+        });
+
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: ["test-id-0002"],
+        });
+
+        db.withWriteTransaction((conn) => {
+          const insertRun = conn.prepare(
+            `INSERT INTO friday_agent_runs (
+              id, task, status, session_key, provider_id, model, attempt, max_attempts, created_at,
+              completed_at, task_profile_json, actual_execution_json
+            ) VALUES (?, ?, ?, ?, ?, ?, 1, 3, ?, ?, ?, ?)`,
+          );
+
+          insertRun.run(
+            "hist-pin-001",
+            "reply with only ok",
+            "completed",
+            "sess-pin-001",
+            "test-id-0002",
+            "claude-sonnet-4-20250514",
+            NOW,
+            NOW,
+            JSON.stringify({ id: "default", label: "Default", description: "Default", reasoningEffort: "medium", temperature: 0.2 }),
+            JSON.stringify({
+              actualProviderId: "test-id-0002",
+              actualModel: "claude-sonnet-4-20250514",
+              backendKind: "http",
+            }),
+          );
+        });
+
+        const { route, routingDecision } = await service.runWithFallback({
+          requestedProviderId: "test-id-0001",
+          requestedModel: "gpt-4o",
+          routingContext: {
+            estimatedInputTokens: 128,
+            complexity: "simple",
+            taskProfileId: "default",
+          },
+          run: async (candidate) => candidate.provider.id,
+        });
+
+        expect(route.provider.id).toBe("test-id-0001");
+        expect(route.model).toBe("gpt-4o");
+        expect(routingDecision.routeDecisionTrace?.selectedBeforeLearning).toMatchObject({
+          providerId: "test-id-0001",
+          model: "gpt-4o",
+        });
+        expect(routingDecision.routeDecisionTrace?.selectedAfterLearning).toMatchObject({
+          providerId: "test-id-0001",
+          model: "gpt-4o",
+        });
+        expect(routingDecision.selectedAdjusted).toBe(false);
+      } finally {
+        delete process.env.OPENAI_KEY;
+        delete process.env.ANTHROPIC_KEY;
+      }
+    });
+
     it("filters text-only CLI backends out when the task requires Friday native tools", async () => {
       process.env.OPENAI_KEY = "test-openai-key";
       try {

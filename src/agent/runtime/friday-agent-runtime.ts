@@ -29,6 +29,7 @@ import {
   FRIDAY_AGENT_TOOL_TIMEOUT_MS,
 } from "../friday-agent.constants.js";
 import type {
+  FridayAgentApiRequestMetadata,
   FridayAgentActualExecution,
   FridayAgentActualTurn,
   FridayAgentArtifact,
@@ -76,7 +77,11 @@ import { attachFridayAgentToolExecutionContext } from "./friday-agent-tool-execu
 import { shouldDelegateFridayAgentTask } from "./friday-agent-delegation-policy.js";
 import { resolveFridayAgentTaskProfile } from "./friday-agent-task-profile.js";
 import { isMutatingToolCall } from "./friday-agent-tool-mutation.js";
-import { classifyShellRisk, getApprovalRequiredReasonForToolCall } from "./friday-agent-tool-risk.js";
+import {
+  classifyShellRisk,
+  getApprovalRequiredReasonForToolCall,
+  getPolicyDeniedReasonForToolCall,
+} from "./friday-agent-tool-risk.js";
 import {
   buildFridayStarterSkillRoutingRetryPrompt,
   findFridayStarterSkillRoutingCandidate,
@@ -110,14 +115,22 @@ function hasCjkText(text: string): boolean {
 function buildFridayAgentRunMetadata(params: {
   executionContext?: FridayAgentExecutionContext;
   updatedAt: string;
+  apiRequestIdempotency?: FridayAgentApiRequestMetadata;
 }): FridayAgentRunMetadata | undefined {
   const surface = params.executionContext?.surface?.trim();
   const packId = params.executionContext?.packId?.trim();
-  if (!surface && !packId) {
+  if (!surface && !packId && !params.apiRequestIdempotency) {
     return undefined;
   }
 
   return {
+    ...(params.apiRequestIdempotency
+      ? {
+        apiRequest: {
+          ...params.apiRequestIdempotency,
+        },
+      }
+      : {}),
     ...(!packId && surface ? { surface } : {}),
     ...(packId
       ? {
@@ -486,6 +499,7 @@ export function createFridayAgentRuntime(
       const runMetadata = buildFridayAgentRunMetadata({
         executionContext,
         updatedAt: nowIso(),
+        apiRequestIdempotency: params.apiRequestIdempotency,
       });
       const conversationContext = params.conversationContext;
       const hasAnchoredAssistantFact = Boolean(
@@ -1226,11 +1240,13 @@ export function createFridayAgentRuntime(
             const completedAt = nowIso();
             const summaryText = deriveSummary(responseText);
             const terminalStatus = delegated.outcome.status;
-            const terminalResponse = responseText.trim().length > 0
-              ? responseText
-              : terminalStatus === "completed"
-                ? `Delegated sub-agent ${delegated.subagentId} completed without a response.`
-                : `Delegated sub-agent ${delegated.subagentId} ${terminalStatus}.`;
+            const terminalResponse = terminalStatus === "failed"
+              ? childRunRecord?.errorMessage?.trim() || `Delegated sub-agent ${delegated.subagentId} failed.`
+              : responseText.trim().length > 0
+                ? responseText
+                : terminalStatus === "completed"
+                  ? `Delegated sub-agent ${delegated.subagentId} completed without a response.`
+                  : `Delegated sub-agent ${delegated.subagentId} ${terminalStatus}.`;
             const persistedArtifacts = persistRunArtifacts({
               status: terminalStatus,
               response: terminalResponse,
@@ -1363,18 +1379,7 @@ export function createFridayAgentRuntime(
           ? undefined
           : promptBuildResult.contextCostSummary;
 
-        // ─── Enrich system prompt with learned user preferences ───
         let effectiveSystemPrompt = baseSystemPrompt;
-        const prefEntries = Object.entries(learnedPreferences);
-        if (prefEntries.length > 0) {
-          const prefLines = prefEntries.map(([k, v]) => `- ${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`);
-          effectiveSystemPrompt +=
-            "\n\n<user-preferences>\n" +
-            "The following preferences were learned from past interactions. " +
-            "Respect these when generating responses:\n" +
-            prefLines.join("\n") +
-            "\n</user-preferences>";
-        }
         if (deps.compactionContextBuilder && params.sessionKey) {
           try {
             const fragment = await deps.compactionContextBuilder({
@@ -1496,6 +1501,9 @@ export function createFridayAgentRuntime(
 
         let iterations = 0;
         let evidenceEnforcementRetries = 0;
+        let feedbackPersistenceRetries = 0;
+        let memorySearchEnforcementRetries = 0;
+        let memoryRecallAlignmentRetries = 0;
         let timelinessEnforcementRetries = 0;
         let answerAlignmentRetries = 0;
         let desktopInspectionRetries = 0;
@@ -1901,6 +1909,26 @@ export function createFridayAgentRuntime(
 
             if (
               candidateResponse.trim().length > 0 &&
+              feedbackPersistenceRetries < 1 &&
+              shouldEnforceFeedbackPersistenceForTask({
+                task: params.task,
+                toolMap,
+                toolCalls: allToolCalls,
+                disabledToolNames,
+              })
+            ) {
+              feedbackPersistenceRetries++;
+              messages.push({
+                role: "user",
+                content: buildFeedbackPersistenceRetryPrompt({
+                  task: params.task,
+                }),
+              });
+              continue;
+            }
+
+            if (
+              candidateResponse.trim().length > 0 &&
               evidenceEnforcementRetries < 2 &&
               shouldEnforceToolEvidenceForTask({
                 task: params.task,
@@ -1920,6 +1948,27 @@ export function createFridayAgentRuntime(
               messages.push({
                 role: "user",
                 content: verificationPrompt,
+              });
+              continue;
+            }
+
+            if (
+              candidateResponse.trim().length > 0
+              && memorySearchEnforcementRetries < 1
+              && shouldEnforceMemorySearchForTask({
+                task: params.task,
+                responseText: candidateResponse,
+                toolMap,
+                toolCalls: allToolCalls,
+                disabledToolNames,
+              })
+            ) {
+              memorySearchEnforcementRetries++;
+              messages.push({
+                role: "user",
+                content: buildMemorySearchRetryPrompt({
+                  task: params.task,
+                }),
               });
               continue;
             }
@@ -1948,6 +1997,71 @@ export function createFridayAgentRuntime(
               task: params.task,
               responseText: timelinessDecision.responseText,
             });
+            const memoryRecallAlignmentDecision = evaluateMemoryRecallAnswerAlignment({
+              task: params.task,
+              responseText: alignedResponse,
+              toolCalls: allToolCalls,
+            });
+            if (
+              memoryRecallAlignmentDecision.retryPrompt
+              && alignedResponse.trim().length > 0
+              && memoryRecallAlignmentRetries < 1
+            ) {
+              memoryRecallAlignmentRetries++;
+              messages.push({
+                role: "user",
+                content: memoryRecallAlignmentDecision.retryPrompt,
+              });
+              continue;
+            }
+
+            if (shouldAttemptDeterministicMemoryRecallFallback({
+              task: params.task,
+              responseText: alignedResponse,
+              toolMap,
+              toolCalls: allToolCalls,
+              disabledToolNames,
+            })) {
+              if (!hasSuccessfulMemorySearchEvidence(allToolCalls)) {
+                const fallbackMemorySearchRecord = await executeToolCall({
+                  toolUse: {
+                    type: "tool_use",
+                    id: `auto-memory-recall-${idGenerator()}`,
+                    name: "memory_search",
+                    input: {
+                      query: "user name",
+                      namespace: "user",
+                      limit: 1,
+                    },
+                  },
+                  toolMap,
+                  signal: runAbortController.signal,
+                  runId,
+                  sessionKey,
+                  readOnly: isReadOnly,
+                  operationalMode: runOperationalMode,
+                  timezone: runTimeContext.timezone,
+                  taskPrompt: llmTask,
+                  conversationContext,
+                  principalId,
+                  tenantContext: params.tenantContext,
+                  requestedProviderId,
+                  requestedModel: resolvedTaskProfile.model ?? requestedModel,
+                  executionContext,
+                  fileVersionTracker,
+                  nowIso,
+                  emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                });
+                allToolCalls.push(fallbackMemorySearchRecord);
+              }
+
+              const fallbackValues = latestMemorySearchResultContents(allToolCalls);
+              if (fallbackValues.length > 0) {
+                responseText = fallbackValues[0]!;
+                break;
+              }
+            }
+
             if (
               taskRequiresReadOnlyDesktopInspection(params.task)
               && hasDesktopContentInspectionCoverageEvidence(allToolCalls)
@@ -2212,6 +2326,24 @@ export function createFridayAgentRuntime(
                 routeId: "agent.execute.tool.readonly",
                 correlationId: runId,
                 message: `Tool '${toolUse.name}' blocked: run has readOnly constraint`,
+              }));
+              continue;
+            }
+
+            const policyDeniedReason = getPolicyDeniedReasonForToolCall(
+              params.task,
+              toolUse.name,
+              toolUse.input,
+            );
+            if (policyDeniedReason) {
+              toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                toolUse,
+                runId,
+                nowIso,
+                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                routeId: "agent.execute.tool.policy",
+                correlationId: runId,
+                message: `Tool '${toolUse.name}' denied by policy. ${policyDeniedReason}`,
               }));
               continue;
             }
@@ -2890,6 +3022,64 @@ export function createFridayAgentRuntime(
       } catch (error) {
         const durationMs = Date.now() - startedAt;
         const errorMessage = error instanceof Error ? error.message : String(error);
+        if (runAbortController.signal.aborted) {
+          const completedAt = nowIso();
+          const cancelMessage = runAbortController.signal.reason instanceof Error
+            ? runAbortController.signal.reason.message
+            : "Agent run cancelled";
+          latestActualExecution = latestActualExecution ?? buildActualExecution({
+            finalFailureReason: "Agent run cancelled",
+          });
+          const persistedArtifacts = persistRunArtifacts({
+            status: "cancelled",
+            response: responseText || cancelMessage,
+            durationMs,
+            completedAt,
+            testResults: latestTestResults,
+            artifacts: latestArtifacts.length > 0 ? latestArtifacts : deriveArtifactsFromToolCalls(allToolCalls),
+            costUsd: latestCostUsd,
+          });
+
+          db.withWriteTransaction((writer) =>
+            repo.update(writer, {
+              id: runId,
+              status: "cancelled",
+              completedAt,
+              durationMs,
+              usageInput: totalInputTokens,
+              usageOutput: totalOutputTokens,
+              costUsd: latestCostUsd,
+              actualExecution: latestActualExecution,
+              testResults: latestTestResults,
+              artifacts: persistedArtifacts.artifacts,
+              responseText: responseText || undefined,
+              summary: deriveSummary(responseText) || undefined,
+              artifactDir: persistedArtifacts.artifactDir,
+              contextCostSummary: latestContextCostSummary,
+              taskProfile: resolvedTaskProfile,
+            }),
+          );
+
+          handleTrackedEvent("agent.run.cancelled", {
+            runId,
+            reason: cancelMessage,
+          });
+          await mirrorAssistantResponse(responseText, allToolCalls);
+
+          return await finalizeResult({
+            runId,
+            status: "cancelled",
+            response: responseText,
+            toolCallCount: allToolCalls.length,
+            durationMs,
+            usageInput: totalInputTokens,
+            usageOutput: totalOutputTokens,
+            contextCostSummary: latestContextCostSummary,
+            taskProfile: resolvedTaskProfile,
+            summary: deriveSummary(responseText) || undefined,
+            artifactDir: persistedArtifacts.artifactDir,
+          });
+        }
         const errorCode = error instanceof FridayDomainError
           ? error.code
           : FRIDAY_AGENT_ERROR_CODES.LLM_ERROR;
@@ -3474,9 +3664,43 @@ function detectArtifactTruthGap(params: {
   responseText: string;
   toolCalls: FridayAgentToolCallRecord[];
 }): OutputClosureGap | null {
-  return detectRequiredBlockerArtifactGap(params)
+  return detectUnfulfilledFileMutationGap(params)
+    ?? detectRequiredBlockerArtifactGap(params)
     ?? detectApprovalBoundaryArtifactGap(params)
     ?? detectSourceArtifactCompletionGap(params);
+}
+
+function detectUnfulfilledFileMutationGap(params: {
+  task: string;
+  responseText: string;
+  toolCalls: FridayAgentToolCallRecord[];
+}): OutputClosureGap | null {
+  if (taskRequiresApprovalBoundary(params.task) || !taskRequiresVerifiedFileMutation(params.task)) {
+    return null;
+  }
+
+  const fileMutationCalls = params.toolCalls.filter((call) =>
+    isMutatingToolCall(call.toolName, call.args) && extractFilePaths(call.toolName, call.args).length > 0
+  );
+  if (fileMutationCalls.length === 0 || fileMutationCalls.some((call) => !call.result.isError)) {
+    return null;
+  }
+
+  const lastFailure = fileMutationCalls[fileMutationCalls.length - 1];
+  const touchedPaths = [...new Set(fileMutationCalls.flatMap((call) => extractFilePaths(call.toolName, call.args)))];
+  const failureDetail = lastFailure?.result.content.replace(/\s+/g, " ").trim() ?? "file mutation failed";
+
+  return {
+    errorCode: FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR,
+    userMessage:
+      "Requested file mutation was not completed. The target path was not changed, so this run cannot be marked successful.",
+    developerMessage:
+      `File mutation closure failed for task "${params.task.slice(0, 160)}": ` +
+      `all ${String(fileMutationCalls.length)} file mutation tool call(s) failed for ` +
+      `${touchedPaths.join(", ")}. Last failure: ${failureDetail}`,
+    attemptedImageToolCalls: 0,
+    failedImageToolCalls: 0,
+  };
 }
 
 function detectRequiredBlockerArtifactGap(params: {
@@ -3643,6 +3867,34 @@ function listSuccessfulWrittenTextArtifacts(
 function taskRequiresExplicitBlockerRecord(task: string): boolean {
   return /\b(record|explicitly record|document|include)\b[\s\S]{0,32}\bblocker\b/i.test(task)
     || /(记录|写明|注明).{0,10}(阻塞|卡点)/.test(task);
+}
+
+function taskRequiresVerifiedFileMutation(task: string): boolean {
+  if (taskRequestsGuidanceOnly(task)) {
+    return false;
+  }
+
+  return (
+    (
+      /\b(write|create|update|edit|modify|delete|remove|rename|move|save|patch|fix)\b/i.test(task)
+      && (
+        /\b(file|files|folder|directory|repo|repository|workspace|project|path)\b/i.test(task)
+        || /\b[\w./-]+\.[A-Za-z0-9]+\b/.test(task)
+      )
+    )
+    || (
+      /(写|创建|新建|更新|编辑|修改|删除|移除|重命名|移动|保存|修复)/.test(task)
+      && (
+        /(文件|目录|文件夹|仓库|项目|工作区|路径)/.test(task)
+        || /\b[\w./-]+\.[A-Za-z0-9]+\b/.test(task)
+      )
+    )
+  );
+}
+
+function taskRequestsGuidanceOnly(task: string): boolean {
+  return /\b(how do i|how to|guide me|walk me through|show me how|step by step|steps?|explain)\b/i.test(task)
+    || /(怎么|如何|请指导|一步一步|步骤|解释|说明|教我)/.test(task);
 }
 
 function extractMissingFileMentions(task: string): string[] {
@@ -4259,6 +4511,243 @@ function buildEvidenceRetryPrompt(params: {
     `System verification: your previous reply has no successful tool evidence for ${taskLabel}. ` +
     `You must use available tools (${toolHint}) and provide an evidence-backed answer. ` +
     `${approachHint} If all attempts fail, report exact tool errors and what you retried.`
+  );
+}
+
+function taskRequiresPreferencePersistence(task: string): boolean {
+  const normalized = task.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return false;
+  }
+  return (
+    /^\s*call me\b/.test(normalized)
+    || /\bplease call me\b/.test(normalized)
+    || /\bi prefer\b/.test(normalized)
+    || /\bplease use\b/.test(normalized)
+    || /\bmy name is\b/.test(normalized)
+    || /^(叫我|称呼我为|把我叫做|被称为|请叫我)/u.test(task.trim())
+    || /(请用中文|请用英文)/u.test(task)
+  );
+}
+
+function extractTaskDeclaredDisplayName(task: string): string | null {
+  const patterns = [
+    /\bcall me\s+(.+?)\s*[.!?]?$/i,
+    /(叫我|称呼我为|把我叫做|被称为)\s*["“]?([^"”'。！？!,，\n]+)["”']?/u,
+  ] as const;
+  for (const pattern of patterns) {
+    const match = task.match(pattern);
+    const rawValue = match?.[2] ?? match?.[1];
+    if (typeof rawValue === "string" && rawValue.trim().length > 0) {
+      return rawValue.trim().replace(/^["“']+|["”']+$/gu, "");
+    }
+  }
+  return null;
+}
+
+function shouldEnforceFeedbackPersistenceForTask(params: {
+  task: string;
+  toolMap: Map<string, FridayAgentToolDefinition>;
+  toolCalls: FridayAgentToolCallRecord[];
+  disabledToolNames?: ReadonlySet<string>;
+}): boolean {
+  if (!taskRequiresPreferencePersistence(params.task)) {
+    return false;
+  }
+  const feedbackAvailable = params.toolMap.has("feedback") && !(params.disabledToolNames?.has("feedback") ?? false);
+  const memoryStoreAvailable = params.toolMap.has("memory_store") && !(params.disabledToolNames?.has("memory_store") ?? false);
+  if (!feedbackAvailable && !memoryStoreAvailable) {
+    return false;
+  }
+  return !hasFeedbackPersistenceEvidence(params.toolCalls);
+}
+
+function buildFeedbackPersistenceRetryPrompt(params: { task: string }): string {
+  const declaredDisplayName = extractTaskDeclaredDisplayName(params.task);
+  if (declaredDisplayName) {
+    return (
+      `System verification: the user explicitly set a preferred name in "${params.task.trim()}". ` +
+      `Before replying, persist that preference with feedback using kind="preference", field="user_name", value="${declaredDisplayName}". ` +
+      `Only use memory_store as a fallback if feedback is unavailable. After the tool succeeds, acknowledge the preference.`
+    );
+  }
+  return (
+    `System verification: the user explicitly stated a preference or correction in "${params.task.trim()}". ` +
+    `Before replying, persist it with feedback. Only use memory_store as a fallback if feedback is unavailable, then acknowledge the saved preference.`
+  );
+}
+
+function taskRequiresMemorySearch(task: string): boolean {
+  const normalized = task.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return false;
+  }
+  return (
+    /\buse memory[_ ]search\b/.test(normalized)
+    || /\bwhat should you call me\b/.test(normalized)
+    || /\bwhat should i call you\b/.test(normalized)
+    || /\bwhat (?:do )?i (?:like|prefer)\b/.test(normalized)
+    || /\b(?:my|user)\s+(?:preferred|stored)\s+(?:name|preference|preferences)\b/.test(normalized)
+    || /\b(?:remember|recall|stored fact|stored facts|previous conversation|past decision|past decisions)\b/.test(normalized)
+  );
+}
+
+function taskRequestsDirectNameRecall(task: string): boolean {
+  const normalized = task.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return false;
+  }
+  return (
+    /\bwhat should you call me\b/.test(normalized)
+    || /\bwhat should i call you\b/.test(normalized)
+    || /\bwhat (?:name|nickname) (?:should|do) you (?:use|call me with)\b/.test(normalized)
+    || /(怎么称呼我|该怎么叫我|应该怎么称呼我|应该叫我什么|你该怎么称呼我|你应该怎么叫我|怎么称呼您|该怎么叫您|应该怎么称呼您|应该叫您什么)/u.test(task)
+  );
+}
+
+function responseClaimsStoredFactMissing(responseText: string): boolean {
+  const normalized = responseText.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return false;
+  }
+  return (
+    /\bi (?:do not|don't)(?:\s+\w+){0,3}\s+have\b/.test(normalized)
+    || /\bi (?:did not|didn't) find\b/.test(normalized)
+    || /\bnot stored\b/.test(normalized)
+    || /\bno (?:stored|specific|saved)\b/.test(normalized)
+    || /\bcould you please tell me\b/.test(normalized)
+    || /(没有找到|没找到|不知道该怎么称呼|请告诉我|请您告诉我|还不知道)/u.test(responseText)
+  );
+}
+
+function hasSuccessfulMemorySearchEvidence(toolCalls: FridayAgentToolCallRecord[]): boolean {
+  return toolCalls.some((call) => call.toolName === "memory_search" && !call.result.isError);
+}
+
+function parseMemorySearchResults(toolCall: FridayAgentToolCallRecord): Array<Record<string, unknown>> {
+  if (toolCall.toolName !== "memory_search" || toolCall.result.isError) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(toolCall.result.content);
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function latestMemorySearchResultContents(toolCalls: FridayAgentToolCallRecord[]): string[] {
+  const successfulSearchCalls = toolCalls
+    .filter((call) => call.toolName === "memory_search" && !call.result.isError);
+  if (successfulSearchCalls.length === 0) {
+    return [];
+  }
+  const latestCall = successfulSearchCalls[successfulSearchCalls.length - 1];
+  return parseMemorySearchResults(latestCall)
+    .map((entry) => typeof entry.content === "string" ? entry.content.trim() : "")
+    .filter((content) => content.length > 0);
+}
+
+function responseMatchesAnyMemoryRecallValue(
+  responseText: string,
+  expectedValues: string[],
+): boolean {
+  const normalizedResponse = responseText.trim().toLowerCase();
+  if (normalizedResponse.length === 0) {
+    return false;
+  }
+  return expectedValues.some((value) => normalizedResponse.includes(value.trim().toLowerCase()));
+}
+
+function evaluateMemoryRecallAnswerAlignment(params: {
+  task: string;
+  responseText: string;
+  toolCalls: FridayAgentToolCallRecord[];
+}): { retryPrompt?: string } {
+  if (!taskRequestsDirectNameRecall(params.task)) {
+    return {};
+  }
+  const expectedValues = latestMemorySearchResultContents(params.toolCalls);
+  if (expectedValues.length === 0) {
+    return {};
+  }
+
+  if (responseMatchesAnyMemoryRecallValue(params.responseText, expectedValues)) {
+    return {};
+  }
+
+  const primaryExpectedValue = expectedValues[0];
+  return {
+    retryPrompt: [
+      "System verification: memory_search already returned a stored preferred name for this user, but your answer did not use it.",
+      `Current task: ${params.task.trim()}`,
+      `Stored preferred name from memory_search: ${primaryExpectedValue}`,
+      "Reply with that stored name directly.",
+      "Do not say the name is unknown or ask the user again unless the tool result was empty.",
+      "If the user asked for only the name, return only the name.",
+    ].join(" "),
+  };
+}
+
+function shouldAttemptDeterministicMemoryRecallFallback(params: {
+  task: string;
+  responseText: string;
+  toolMap: Map<string, FridayAgentToolDefinition>;
+  toolCalls: FridayAgentToolCallRecord[];
+  disabledToolNames?: ReadonlySet<string>;
+}): boolean {
+  if (!taskRequestsDirectNameRecall(params.task)) {
+    return false;
+  }
+  if (!params.toolMap.has("memory_search")) {
+    return false;
+  }
+  if (params.disabledToolNames?.has("memory_search")) {
+    return false;
+  }
+
+  const expectedValues = latestMemorySearchResultContents(params.toolCalls);
+  if (expectedValues.length > 0) {
+    return !responseMatchesAnyMemoryRecallValue(params.responseText, expectedValues);
+  }
+
+  return true;
+}
+
+function shouldEnforceMemorySearchForTask(params: {
+  task: string;
+  responseText: string;
+  toolMap: Map<string, FridayAgentToolDefinition>;
+  toolCalls: FridayAgentToolCallRecord[];
+  disabledToolNames?: ReadonlySet<string>;
+}): boolean {
+  if (
+    !taskRequiresMemorySearch(params.task)
+    && !(
+      taskRequestsDirectNameRecall(params.task)
+      && responseClaimsStoredFactMissing(params.responseText)
+    )
+  ) {
+    return false;
+  }
+  if (!params.toolMap.has("memory_search")) {
+    return false;
+  }
+  if (params.disabledToolNames?.has("memory_search")) {
+    return false;
+  }
+  return !hasSuccessfulMemorySearchEvidence(params.toolCalls);
+}
+
+function buildMemorySearchRetryPrompt(params: { task: string }): string {
+  return (
+    `System verification: this task asks about stored user facts or prior conversation state. ` +
+    `Before answering "${params.task.trim()}", you must call memory_search. ` +
+    `Search without a namespace first, then use preference or user if you need narrower recall. ` +
+    `If memory_search finds relevant results, answer from that evidence only. ` +
+    `If it returns no relevant result, explicitly say the information is not stored.`
   );
 }
 
@@ -5176,7 +5665,11 @@ function augmentToolArgsForRuntime(params: {
   executionContext?: FridayAgentExecutionContext;
 }): Record<string, unknown> {
   if (params.toolName === "memory_search" || params.toolName === "memory_store") {
-    return { ...params.input, __sessionId: params.sessionKey };
+    return {
+      ...params.input,
+      __sessionId: params.sessionKey,
+      ...(params.principalId ? { __principalId: params.principalId } : {}),
+    };
   }
   if (params.toolName === "feedback") {
     return { ...params.input, __principalId: params.principalId };
