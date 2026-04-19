@@ -3,10 +3,10 @@ import * as crypto from "node:crypto";
 import { FridayDomainError } from "#errors";
 
 import type {
+  FridayAccessTokenClaims,
   FridayAuthBootstrapRequest,
   FridayAuthBootstrapResponse,
   FridayAuthBootstrapStatusResponse,
-  FridayAccessTokenClaims,
   FridayAuthMeResponse,
   FridayAuthPrincipal,
   FridayLoginRequest,
