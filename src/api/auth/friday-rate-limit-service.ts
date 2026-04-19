@@ -29,7 +29,7 @@ const DEFAULT_POLICIES: FridayRateLimitPolicy[] = [
   { id: "provider.write", windowMs: 60_000, maxHits: 30, keyBy: "principal" },
   { id: "provider.validate", windowMs: 60_000, maxHits: 10, keyBy: "principal" },
   // Agent / memory / marketplace writes
-  { id: "agent.run", windowMs: 60_000, maxHits: 10, keyBy: "principal" },
+  { id: "agent.run", windowMs: 60_000, maxHits: 60, keyBy: "principal" },
   { id: "memory.write", windowMs: 60_000, maxHits: 60, keyBy: "principal" },
   { id: "marketplace.checkout", windowMs: 60_000, maxHits: 10, keyBy: "principal" },
   { id: "marketplace.write", windowMs: 60_000, maxHits: 30, keyBy: "principal" },

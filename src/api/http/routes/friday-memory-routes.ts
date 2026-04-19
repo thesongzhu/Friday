@@ -228,9 +228,10 @@ export function createFridayMemoryRoutes(
         validateStoreNumericFields(rawBody);
         validateStoreBody(rawBody);
         const body = rawBody;
-        const principalId = readPrincipalUserId(ctx.principal);
+        const memory = deps.memoryGuardFactory.forPrincipal(ctx.principal);
         const idempotencyKey = readIdempotencyKeyHeader(ctx.headers);
         if (idempotencyKey) {
+          const principalId = readPrincipalUserId(ctx.principal);
           const payloadHash = hashIdempotencyPayload({
             namespace: body.namespace,
             content: body.content,
@@ -262,7 +263,6 @@ export function createFridayMemoryRoutes(
           };
           body.metadata = metadata;
         }
-        const memory = deps.memoryGuardFactory.forPrincipal(ctx.principal);
         const item = await memory.store(body.namespace, body.content, {
           source: body.source,
           key: body.key,
