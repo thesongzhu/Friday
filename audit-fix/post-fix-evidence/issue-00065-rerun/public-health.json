@@ -1,0 +1,31 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "status": "ok",
+      "version": "1.0.0",
+      "uptime": 28
+    },
+    "requestId": "b43bf309-3818-4b18-aabf-f26d0389b265"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/health",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "status": "ok",
+        "version": "1.0.0",
+        "uptime": 28
+      },
+      "requestId": "b43bf309-3818-4b18-aabf-f26d0389b265"
+    }
+  }
+}

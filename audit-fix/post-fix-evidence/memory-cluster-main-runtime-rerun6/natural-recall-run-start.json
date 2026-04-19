@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "What should you call me? Reply with only the name.",
+      "providerId": "33525000-9455-4093-bb23-708db1235b0f"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "535e8a92-217d-4e4a-ba3f-7dd477a56118",
+        "status": "completed",
+        "response": "Your preferred name isn't stored in my memory. Please let me know what you'd like me to call you!",
+        "toolCallCount": 0,
+        "durationMs": 8424,
+        "usageInput": 11294,
+        "usageOutput": 23,
+        "finalResponse": "Your preferred name isn't stored in my memory. Please let me know what you'd like me to call you!",
+        "eventStreamAvailable": true
+      },
+      "requestId": "6dbda5cc-6d37-4ad9-85d7-7d577359fb86"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "535e8a92-217d-4e4a-ba3f-7dd477a56118",
+      "status": "completed",
+      "response": "Your preferred name isn't stored in my memory. Please let me know what you'd like me to call you!",
+      "toolCallCount": 0,
+      "durationMs": 8424,
+      "usageInput": 11294,
+      "usageOutput": 23,
+      "finalResponse": "Your preferred name isn't stored in my memory. Please let me know what you'd like me to call you!",
+      "eventStreamAvailable": true
+    },
+    "requestId": "6dbda5cc-6d37-4ad9-85d7-7d577359fb86"
+  }
+}

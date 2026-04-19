@@ -1,0 +1,22 @@
+{
+  "checkedAt": "2026-04-19T18:49:59.735Z",
+  "candidateId": "CAND-20260419-004",
+  "baseUrl": "http://127.0.0.1:3241",
+  "outDir": "audit-fix/post-fix-evidence/cand-20260419-004-main-rerun-current",
+  "loginArtifactTokensRedacted": true,
+  "requestFileCount": 22,
+  "bearerRequestCount": 21,
+  "non401Statuses": [
+    200,
+    404
+  ],
+  "authFalseNegative401Count": 0,
+  "authFalseNegative401Files": [],
+  "rawJwtLeakCount": 0,
+  "rawJwtLeakFiles": [],
+  "providerKind": "openai",
+  "teachRunStatus": "completed",
+  "naturalRecallStatus": "failed",
+  "explicitRecallStatus": "failed",
+  "note": "This rerun hardens evidence redaction only. Provider recall outcomes remain orthogonal to the audit-harness token-redaction regression."
+}

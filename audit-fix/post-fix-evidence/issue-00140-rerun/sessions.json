@@ -1,0 +1,144 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "items": [
+        {
+          "id": "5715c9c3-931c-4f4d-982e-7817016a3e34",
+          "key": "discord:tui-audit:issue-00140-1776597761204",
+          "channel": "discord",
+          "accountId": "tui-audit",
+          "chatId": "issue-00140-1776597761204",
+          "chatKind": "dm",
+          "status": "active",
+          "rootSessionKey": "discord:tui-audit:issue-00140-1776597761204",
+          "metadata": {},
+          "contextInputTokens": 0,
+          "contextOutputTokens": 0,
+          "contextTotalTokens": 0,
+          "messageCount": 0,
+          "createdAt": "2026-04-19T11:22:41.205Z",
+          "updatedAt": "2026-04-19T11:22:41.205Z",
+          "lastActivityAt": "2026-04-19T11:22:41.205Z",
+          "statusChangedAt": "2026-04-19T11:22:41.205Z"
+        },
+        {
+          "id": "e30f8a9a-fec4-410a-859d-479c1d6463a4",
+          "key": "discord:tui-audit:issue-00140-1776597679179",
+          "channel": "discord",
+          "accountId": "tui-audit",
+          "chatId": "issue-00140-1776597679179",
+          "chatKind": "dm",
+          "status": "active",
+          "rootSessionKey": "discord:tui-audit:issue-00140-1776597679179",
+          "metadata": {},
+          "contextInputTokens": 0,
+          "contextOutputTokens": 0,
+          "contextTotalTokens": 0,
+          "messageCount": 0,
+          "createdAt": "2026-04-19T11:21:19.180Z",
+          "updatedAt": "2026-04-19T11:21:19.180Z",
+          "lastActivityAt": "2026-04-19T11:21:19.180Z",
+          "statusChangedAt": "2026-04-19T11:21:19.180Z"
+        },
+        {
+          "id": "d408bb5d-25b5-4c0c-a396-0ee20b0f32d0",
+          "key": "discord:tui-audit:issue-00140-1776597345788",
+          "channel": "discord",
+          "accountId": "tui-audit",
+          "chatId": "issue-00140-1776597345788",
+          "chatKind": "dm",
+          "status": "active",
+          "rootSessionKey": "discord:tui-audit:issue-00140-1776597345788",
+          "metadata": {},
+          "contextInputTokens": 0,
+          "contextOutputTokens": 0,
+          "contextTotalTokens": 0,
+          "messageCount": 0,
+          "createdAt": "2026-04-19T11:15:45.790Z",
+          "updatedAt": "2026-04-19T11:15:45.790Z",
+          "lastActivityAt": "2026-04-19T11:15:45.790Z",
+          "statusChangedAt": "2026-04-19T11:15:45.790Z"
+        }
+      ]
+    },
+    "requestId": "4d5e7898-cb16-4d41-adbc-42d9fd756a28"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/sessions",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "items": [
+          {
+            "id": "5715c9c3-931c-4f4d-982e-7817016a3e34",
+            "key": "discord:tui-audit:issue-00140-1776597761204",
+            "channel": "discord",
+            "accountId": "tui-audit",
+            "chatId": "issue-00140-1776597761204",
+            "chatKind": "dm",
+            "status": "active",
+            "rootSessionKey": "discord:tui-audit:issue-00140-1776597761204",
+            "metadata": {},
+            "contextInputTokens": 0,
+            "contextOutputTokens": 0,
+            "contextTotalTokens": 0,
+            "messageCount": 0,
+            "createdAt": "2026-04-19T11:22:41.205Z",
+            "updatedAt": "2026-04-19T11:22:41.205Z",
+            "lastActivityAt": "2026-04-19T11:22:41.205Z",
+            "statusChangedAt": "2026-04-19T11:22:41.205Z"
+          },
+          {
+            "id": "e30f8a9a-fec4-410a-859d-479c1d6463a4",
+            "key": "discord:tui-audit:issue-00140-1776597679179",
+            "channel": "discord",
+            "accountId": "tui-audit",
+            "chatId": "issue-00140-1776597679179",
+            "chatKind": "dm",
+            "status": "active",
+            "rootSessionKey": "discord:tui-audit:issue-00140-1776597679179",
+            "metadata": {},
+            "contextInputTokens": 0,
+            "contextOutputTokens": 0,
+            "contextTotalTokens": 0,
+            "messageCount": 0,
+            "createdAt": "2026-04-19T11:21:19.180Z",
+            "updatedAt": "2026-04-19T11:21:19.180Z",
+            "lastActivityAt": "2026-04-19T11:21:19.180Z",
+            "statusChangedAt": "2026-04-19T11:21:19.180Z"
+          },
+          {
+            "id": "d408bb5d-25b5-4c0c-a396-0ee20b0f32d0",
+            "key": "discord:tui-audit:issue-00140-1776597345788",
+            "channel": "discord",
+            "accountId": "tui-audit",
+            "chatId": "issue-00140-1776597345788",
+            "chatKind": "dm",
+            "status": "active",
+            "rootSessionKey": "discord:tui-audit:issue-00140-1776597345788",
+            "metadata": {},
+            "contextInputTokens": 0,
+            "contextOutputTokens": 0,
+            "contextTotalTokens": 0,
+            "messageCount": 0,
+            "createdAt": "2026-04-19T11:15:45.790Z",
+            "updatedAt": "2026-04-19T11:15:45.790Z",
+            "lastActivityAt": "2026-04-19T11:15:45.790Z",
+            "statusChangedAt": "2026-04-19T11:15:45.790Z"
+          }
+        ]
+      },
+      "requestId": "4d5e7898-cb16-4d41-adbc-42d9fd756a28"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "checkedAt": "2026-04-19T10:38:00.433Z",
+  "channelsListCount": 0,
+  "fakePersonaGetStatus": 404,
+  "fakePersonaGetError": {
+    "code": "CHANNEL_NOT_FOUND",
+    "message": "Channel \"fake-kind\" is not registered",
+    "retryable": false
+  },
+  "fakePersonaPutStatus": 404,
+  "fakePersonaPutError": {
+    "code": "CHANNEL_NOT_FOUND",
+    "message": "Channel \"fake-kind\" is not registered",
+    "retryable": false
+  },
+  "fakeChannelGetStatus": 404,
+  "fakeChannelGetError": {
+    "code": "CHANNEL_NOT_FOUND",
+    "message": "Channel \"fake-kind\" is not registered",
+    "retryable": false
+  },
+  "personaStateBeforeKeys": [],
+  "personaStateAfterKeys": []
+}

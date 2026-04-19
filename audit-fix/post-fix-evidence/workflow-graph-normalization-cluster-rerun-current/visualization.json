@@ -1,0 +1,282 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "visualization": {
+        "workflow": {
+          "id": "7141ac9e-5dce-426e-9bd1-de1240bbdd9d",
+          "slug": "wf-normalize-1776606285423",
+          "name": "Workflow Graph Normalize Probe",
+          "tags": [],
+          "latestVersionNumber": 1,
+          "publishedVersionNumber": 1,
+          "isArchived": false,
+          "revision": 1,
+          "etag": "3c15462f-3032-42",
+          "compatibilityStatus": "unknown",
+          "promotionChannel": "none",
+          "createdAt": "2026-04-19T13:44:45.424Z",
+          "updatedAt": "2026-04-19T13:44:45.426Z"
+        },
+        "targetKind": "published_version",
+        "version": {
+          "id": "f86e96a8-4cb8-45e5-a1ba-565c225e4b1d",
+          "workflowId": "7141ac9e-5dce-426e-9bd1-de1240bbdd9d",
+          "versionNumber": 1,
+          "checksum": "45f2233e1de63919a036e66e87c234cf6149e415a9e3329e0c359eda3796e259",
+          "graphJson": {
+            "nodes": [
+              {
+                "id": "n1",
+                "kind": "start",
+                "data": {}
+              },
+              {
+                "id": "n2",
+                "kind": "data",
+                "data": {
+                  "mapping": {
+                    "ok": true
+                  }
+                }
+              }
+            ],
+            "edges": [
+              {
+                "from": "n1",
+                "to": "n2"
+              }
+            ]
+          },
+          "isPublished": true,
+          "createdAt": "2026-04-19T13:44:45.424Z",
+          "updatedAt": "2026-04-19T13:44:45.426Z"
+        },
+        "spec": {
+          "schemaVersion": "1.0",
+          "workflowId": "7141ac9e-5dce-426e-9bd1-de1240bbdd9d",
+          "name": "Workflow Graph Normalize Probe",
+          "description": "",
+          "startStepId": "n2",
+          "trigger": {
+            "type": "manual"
+          },
+          "inputs": [],
+          "steps": [
+            {
+              "id": "n2",
+              "type": "transform",
+              "args": {
+                "mapping": {
+                  "ok": true
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "from": "n1",
+              "to": "n2",
+              "when": "success"
+            }
+          ],
+          "outputs": [
+            {
+              "key": "result",
+              "fromStep": "n2",
+              "path": "output"
+            }
+          ],
+          "errorPolicy": {
+            "onFailure": "fail_fast"
+          },
+          "tests": []
+        },
+        "visual": {
+          "schemaVersion": "1.0",
+          "workflowId": "7141ac9e-5dce-426e-9bd1-de1240bbdd9d",
+          "viewport": {
+            "x": 0,
+            "y": 0,
+            "zoom": 0.85
+          },
+          "panelLayout": {
+            "leftOpen": true,
+            "rightOpen": true,
+            "bottomOpen": false
+          },
+          "nodes": [
+            {
+              "nodeId": "__trigger__",
+              "x": 56,
+              "y": 72
+            },
+            {
+              "nodeId": "n2",
+              "x": 320,
+              "y": 72
+            }
+          ],
+          "edges": [
+            {
+              "edgeKey": "__trigger__:n2:any"
+            },
+            {
+              "edgeKey": "n1:n2:success"
+            }
+          ]
+        },
+        "recentRuns": [],
+        "nodeTimeline": [],
+        "latestEvidenceExports": []
+      }
+    },
+    "requestId": "38a8dc26-02d7-48b2-8356-25a5d082396e"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/workflows/7141ac9e-5dce-426e-9bd1-de1240bbdd9d/visualization",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "visualization": {
+          "workflow": {
+            "id": "7141ac9e-5dce-426e-9bd1-de1240bbdd9d",
+            "slug": "wf-normalize-1776606285423",
+            "name": "Workflow Graph Normalize Probe",
+            "tags": [],
+            "latestVersionNumber": 1,
+            "publishedVersionNumber": 1,
+            "isArchived": false,
+            "revision": 1,
+            "etag": "3c15462f-3032-42",
+            "compatibilityStatus": "unknown",
+            "promotionChannel": "none",
+            "createdAt": "2026-04-19T13:44:45.424Z",
+            "updatedAt": "2026-04-19T13:44:45.426Z"
+          },
+          "targetKind": "published_version",
+          "version": {
+            "id": "f86e96a8-4cb8-45e5-a1ba-565c225e4b1d",
+            "workflowId": "7141ac9e-5dce-426e-9bd1-de1240bbdd9d",
+            "versionNumber": 1,
+            "checksum": "45f2233e1de63919a036e66e87c234cf6149e415a9e3329e0c359eda3796e259",
+            "graphJson": {
+              "nodes": [
+                {
+                  "id": "n1",
+                  "kind": "start",
+                  "data": {}
+                },
+                {
+                  "id": "n2",
+                  "kind": "data",
+                  "data": {
+                    "mapping": {
+                      "ok": true
+                    }
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "from": "n1",
+                  "to": "n2"
+                }
+              ]
+            },
+            "isPublished": true,
+            "createdAt": "2026-04-19T13:44:45.424Z",
+            "updatedAt": "2026-04-19T13:44:45.426Z"
+          },
+          "spec": {
+            "schemaVersion": "1.0",
+            "workflowId": "7141ac9e-5dce-426e-9bd1-de1240bbdd9d",
+            "name": "Workflow Graph Normalize Probe",
+            "description": "",
+            "startStepId": "n2",
+            "trigger": {
+              "type": "manual"
+            },
+            "inputs": [],
+            "steps": [
+              {
+                "id": "n2",
+                "type": "transform",
+                "args": {
+                  "mapping": {
+                    "ok": true
+                  }
+                }
+              }
+            ],
+            "edges": [
+              {
+                "from": "n1",
+                "to": "n2",
+                "when": "success"
+              }
+            ],
+            "outputs": [
+              {
+                "key": "result",
+                "fromStep": "n2",
+                "path": "output"
+              }
+            ],
+            "errorPolicy": {
+              "onFailure": "fail_fast"
+            },
+            "tests": []
+          },
+          "visual": {
+            "schemaVersion": "1.0",
+            "workflowId": "7141ac9e-5dce-426e-9bd1-de1240bbdd9d",
+            "viewport": {
+              "x": 0,
+              "y": 0,
+              "zoom": 0.85
+            },
+            "panelLayout": {
+              "leftOpen": true,
+              "rightOpen": true,
+              "bottomOpen": false
+            },
+            "nodes": [
+              {
+                "nodeId": "__trigger__",
+                "x": 56,
+                "y": 72
+              },
+              {
+                "nodeId": "n2",
+                "x": 320,
+                "y": 72
+              }
+            ],
+            "edges": [
+              {
+                "edgeKey": "__trigger__:n2:any"
+              },
+              {
+                "edgeKey": "n1:n2:success"
+              }
+            ]
+          },
+          "recentRuns": [],
+          "nodeTimeline": [],
+          "latestEvidenceExports": []
+        }
+      },
+      "requestId": "38a8dc26-02d7-48b2-8356-25a5d082396e"
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "token": "eyJ0b2tlbklkIjoiOTQxYmE1NzgtM2UxMS00NWFhLWEwYjctMTU4MzYzYmIwY2IwIiwicHJpbmNpcGFsVHlwZSI6InNhdGVsbGl0ZSIsInByaW5jaXBhbElkIjoiN2UyNGJkOGItZDVmNC00OTE4LTk2NjMtYzYyYjE3MWVlYmM2Iiwic2NvcGVzIjpbInNhdGVsbGl0ZS53cml0ZSJdLCJpYXQiOjE3NzY2MTQ1NTcsImV4cCI6MTc3NjYxNDg1NywidmVyIjoxfQ.Na7OaQ6J0LsNHXfdYk07CTPWm8r1kvAa7-5hrDOAKlU",
+      "tokenId": "941ba578-3e11-45aa-a0b7-158363bb0cb0",
+      "expiresAt": "2026-04-19T16:07:37.664Z",
+      "configRevision": 1,
+      "tokenVersion": 1
+    },
+    "requestId": "64cf718e-f10d-4882-8731-6641c045a032"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/satellites/7e24bd8b-d5f4-4918-9663-c62b171eebc6/pairing/approve",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "scopes": [
+        "satellite.write"
+      ],
+      "tokenTtlMs": 300000
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "connection": "keep-alive",
+      "content-length": "520",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Sun, 19 Apr 2026 16:02:37 GMT",
+      "keep-alive": "timeout=5",
+      "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY"
+    },
+    "body": {
+      "ok": true,
+      "data": {
+        "token": "eyJ0b2tlbklkIjoiOTQxYmE1NzgtM2UxMS00NWFhLWEwYjctMTU4MzYzYmIwY2IwIiwicHJpbmNpcGFsVHlwZSI6InNhdGVsbGl0ZSIsInByaW5jaXBhbElkIjoiN2UyNGJkOGItZDVmNC00OTE4LTk2NjMtYzYyYjE3MWVlYmM2Iiwic2NvcGVzIjpbInNhdGVsbGl0ZS53cml0ZSJdLCJpYXQiOjE3NzY2MTQ1NTcsImV4cCI6MTc3NjYxNDg1NywidmVyIjoxfQ.Na7OaQ6J0LsNHXfdYk07CTPWm8r1kvAa7-5hrDOAKlU",
+        "tokenId": "941ba578-3e11-45aa-a0b7-158363bb0cb0",
+        "expiresAt": "2026-04-19T16:07:37.664Z",
+        "configRevision": 1,
+        "tokenVersion": 1
+      },
+      "requestId": "64cf718e-f10d-4882-8731-6641c045a032"
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3242/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+      "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "c0003ee7-c015-453b-815f-4212ae238c65",
+        "status": "completed",
+        "response": "I don't see an explicit preference or correction in the user's message \"Use memory_search if needed. What should you call me? Reply with only the name.\" - this appears to be a question asking me to find out what to call them, not stating a new preference. The memory search already returned the stored preference \"MemoryAuditName-1776602222290\" which I provided as requested.\n\nIf there was a specific preference or correction I missed, please clarify what should be recorded.",
+        "toolCallCount": 1,
+        "durationMs": 10593,
+        "usageInput": 951,
+        "usageOutput": 183,
+        "finalResponse": "I don't see an explicit preference or correction in the user's message \"Use memory_search if needed. What should you call me? Reply with only the name.\" - this appears to be a question asking me to find out what to call them, not stating a new preference. The memory search already returned the stored preference \"MemoryAuditName-1776602222290\" which I provided as requested.\n\nIf there was a specific preference or correction I missed, please clarify what should be recorded.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "949d4b4a-7338-485b-ad81-1fec8b9841b8"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "c0003ee7-c015-453b-815f-4212ae238c65",
+      "status": "completed",
+      "response": "I don't see an explicit preference or correction in the user's message \"Use memory_search if needed. What should you call me? Reply with only the name.\" - this appears to be a question asking me to find out what to call them, not stating a new preference. The memory search already returned the stored preference \"MemoryAuditName-1776602222290\" which I provided as requested.\n\nIf there was a specific preference or correction I missed, please clarify what should be recorded.",
+      "toolCallCount": 1,
+      "durationMs": 10593,
+      "usageInput": 951,
+      "usageOutput": 183,
+      "finalResponse": "I don't see an explicit preference or correction in the user's message \"Use memory_search if needed. What should you call me? Reply with only the name.\" - this appears to be a question asking me to find out what to call them, not stating a new preference. The memory search already returned the stored preference \"MemoryAuditName-1776602222290\" which I provided as requested.\n\nIf there was a specific preference or correction I missed, please clarify what should be recorded.",
+      "eventStreamAvailable": true
+    },
+    "requestId": "949d4b4a-7338-485b-ad81-1fec8b9841b8"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+      "providerId": "33525000-9455-4093-bb23-708db1235b0f"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "ca30ca84-87f8-4a19-8097-f409412dd75e",
+        "status": "failed",
+        "response": "Validation criteria not met",
+        "toolCallCount": 1,
+        "durationMs": 12110,
+        "usageInput": 6341,
+        "usageOutput": 28,
+        "finalResponse": "Validation criteria not met",
+        "eventStreamAvailable": true
+      },
+      "requestId": "2839d7b9-9e74-437b-aa9e-8f7adc1d1005"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "ca30ca84-87f8-4a19-8097-f409412dd75e",
+      "status": "failed",
+      "response": "Validation criteria not met",
+      "toolCallCount": 1,
+      "durationMs": 12110,
+      "usageInput": 6341,
+      "usageOutput": 28,
+      "finalResponse": "Validation criteria not met",
+      "eventStreamAvailable": true
+    },
+    "requestId": "2839d7b9-9e74-437b-aa9e-8f7adc1d1005"
+  }
+}

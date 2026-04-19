@@ -1,0 +1,21 @@
+{
+  "checkedAt": "2026-04-19T20:27:32Z",
+  "issueId": "ISSUE-00021",
+  "status": "verified_targeted_tests",
+  "routeFile": "src/api/http/routes/friday-uix-routes.ts",
+  "runtimeFile": "src/hub/friday-hub-bootstrap.ts",
+  "testCommands": [
+    "npm exec vitest run test/unit/api/http/routes/friday-uix-routes.test.ts",
+    "npm exec vitest run test/e2e/setup-wizard.e2e.test.ts -t \"A12b|A12c\""
+  ],
+  "testFiles": [
+    "test/unit/api/http/routes/friday-uix-routes.test.ts",
+    "test/e2e/setup-wizard.e2e.test.ts"
+  ],
+  "testsPassed": {
+    "unit": 13,
+    "e2e": 20
+  },
+  "typeErrors": "none",
+  "summary": "`/v1/uix/user-profile` now falls back to `friday_setup_state.setup_completed_at` when `user.onboarded_at` is unset, so a setup-complete runtime no longer reports `needsSetup=false` together with `onboardedAt=null`; targeted unit and setup-wizard verification both passed."
+}

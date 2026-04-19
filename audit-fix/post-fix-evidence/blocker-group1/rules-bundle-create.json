@@ -1,0 +1,44 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/rules/bundles",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "name": "Audit Bundle Group1",
+      "description": "blocker group 1 validation",
+      "tags": [
+        "audit",
+        "group1"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "bundle": {
+          "id": "e335d676-bfa5-413f-93d5-9694bc26b973",
+          "name": "Audit Bundle Group1",
+          "description": "blocker group 1 validation",
+          "version": 1,
+          "priority": 100,
+          "enabled": true,
+          "tags": [
+            "audit",
+            "group1"
+          ],
+          "source": "user",
+          "etag": "918750dbbdda673296ce64e4adac54bc",
+          "createdAt": "2026-04-19T09:10:03.445Z",
+          "updatedAt": "2026-04-19T09:10:03.445Z"
+        },
+        "rules": []
+      },
+      "requestId": "602bd4cf-eb1f-40be-baee-3b1c567c14ec"
+    }
+  }
+}

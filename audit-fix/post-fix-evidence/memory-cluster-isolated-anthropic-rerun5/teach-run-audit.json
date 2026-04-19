@@ -1,0 +1,206 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3242/v1/agent/runs/0a7ed6a9-bc1c-4d35-bda5-8f686019f27d/audit",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+        "events": [
+          {
+            "seq": 1,
+            "type": "agent.run.started",
+            "timestamp": "2026-04-19T12:14:32.092Z",
+            "payload": {
+              "runId": "0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+              "task": "Call me MemoryAuditName-1776600872035.",
+              "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "taskProfile": {
+                "id": "default",
+                "modelSelectionSource": "route_default"
+              }
+            }
+          },
+          {
+            "seq": 7,
+            "type": "agent.run.mode_changed",
+            "timestamp": "2026-04-19T12:14:32.101Z",
+            "payload": {
+              "runId": "0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+              "previousMode": "execute",
+              "newMode": "restricted",
+              "reason": "Auto-restricted after LLM provider error: All providers failed (1): anthropic/claude-sonnet-4-20250514: Environment variable 'FRIDAY_ANTHROPIC_API_KEY' is not set. code=PROVIDER_ENV_VAR_MISSING"
+            }
+          },
+          {
+            "seq": 9,
+            "type": "agent.run.degraded",
+            "timestamp": "2026-04-19T12:14:32.101Z",
+            "payload": {
+              "runId": "0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+              "level": "conversational",
+              "unavailableTools": [
+                "exec",
+                "read",
+                "write",
+                "edit",
+                "web_fetch",
+                "web_search",
+                "skills_list",
+                "skill_run",
+                "workflow_run",
+                "memory_search",
+                "memory_store",
+                "browser",
+                "xhs",
+                "canvas",
+                "sessions",
+                "system",
+                "provider",
+                "capabilities",
+                "task_status",
+                "message",
+                "feedback",
+                "memory_extract",
+                "cron",
+                "agents_list",
+                "spawn_subagent",
+                "list_subagents",
+                "get_subagent",
+                "image_analysis",
+                "autonomous",
+                "setup",
+                "setup_assistant",
+                "gateway",
+                "skill_generate",
+                "workflow_generate",
+                "skill_import"
+              ],
+              "message": "LLM provider temporarily unavailable: All providers failed (1): anthropic/claude-sonnet-4-20250514: Environment variable 'FRIDAY_ANTHROPIC_API_KEY' is not set. code=PROVIDER_ENV_VAR_MISSING"
+            }
+          },
+          {
+            "seq": 12,
+            "type": "agent.run.failed",
+            "timestamp": "2026-04-19T12:14:32.104Z",
+            "payload": {
+              "runId": "0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+              "error": {
+                "code": "AGENT_LLM_ERROR",
+                "message": "All providers failed (1): anthropic/claude-sonnet-4-20250514: Environment variable 'FRIDAY_ANTHROPIC_API_KEY' is not set. code=PROVIDER_ENV_VAR_MISSING"
+              },
+              "durationMs": 22,
+              "routeId": "agent.execute.run.llm_degraded",
+              "correlationId": "0a7ed6a9-bc1c-4d35-bda5-8f686019f27d"
+            }
+          }
+        ]
+      },
+      "requestId": "26fe2d4a-ec41-4021-9208-627be9494aa0"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+      "events": [
+        {
+          "seq": 1,
+          "type": "agent.run.started",
+          "timestamp": "2026-04-19T12:14:32.092Z",
+          "payload": {
+            "runId": "0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+            "task": "Call me MemoryAuditName-1776600872035.",
+            "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "taskProfile": {
+              "id": "default",
+              "modelSelectionSource": "route_default"
+            }
+          }
+        },
+        {
+          "seq": 7,
+          "type": "agent.run.mode_changed",
+          "timestamp": "2026-04-19T12:14:32.101Z",
+          "payload": {
+            "runId": "0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+            "previousMode": "execute",
+            "newMode": "restricted",
+            "reason": "Auto-restricted after LLM provider error: All providers failed (1): anthropic/claude-sonnet-4-20250514: Environment variable 'FRIDAY_ANTHROPIC_API_KEY' is not set. code=PROVIDER_ENV_VAR_MISSING"
+          }
+        },
+        {
+          "seq": 9,
+          "type": "agent.run.degraded",
+          "timestamp": "2026-04-19T12:14:32.101Z",
+          "payload": {
+            "runId": "0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+            "level": "conversational",
+            "unavailableTools": [
+              "exec",
+              "read",
+              "write",
+              "edit",
+              "web_fetch",
+              "web_search",
+              "skills_list",
+              "skill_run",
+              "workflow_run",
+              "memory_search",
+              "memory_store",
+              "browser",
+              "xhs",
+              "canvas",
+              "sessions",
+              "system",
+              "provider",
+              "capabilities",
+              "task_status",
+              "message",
+              "feedback",
+              "memory_extract",
+              "cron",
+              "agents_list",
+              "spawn_subagent",
+              "list_subagents",
+              "get_subagent",
+              "image_analysis",
+              "autonomous",
+              "setup",
+              "setup_assistant",
+              "gateway",
+              "skill_generate",
+              "workflow_generate",
+              "skill_import"
+            ],
+            "message": "LLM provider temporarily unavailable: All providers failed (1): anthropic/claude-sonnet-4-20250514: Environment variable 'FRIDAY_ANTHROPIC_API_KEY' is not set. code=PROVIDER_ENV_VAR_MISSING"
+          }
+        },
+        {
+          "seq": 12,
+          "type": "agent.run.failed",
+          "timestamp": "2026-04-19T12:14:32.104Z",
+          "payload": {
+            "runId": "0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+            "error": {
+              "code": "AGENT_LLM_ERROR",
+              "message": "All providers failed (1): anthropic/claude-sonnet-4-20250514: Environment variable 'FRIDAY_ANTHROPIC_API_KEY' is not set. code=PROVIDER_ENV_VAR_MISSING"
+            },
+            "durationMs": 22,
+            "routeId": "agent.execute.run.llm_degraded",
+            "correlationId": "0a7ed6a9-bc1c-4d35-bda5-8f686019f27d"
+          }
+        }
+      ]
+    },
+    "requestId": "26fe2d4a-ec41-4021-9208-627be9494aa0"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Call me MemoryAuditName-1776600872035.",
+      "providerId": "33525000-9455-4093-bb23-708db1235b0f"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "307e07d3-02e6-425b-9d6e-220b2081759a",
+        "status": "completed",
+        "response": "Got it, MemoryAuditName-1776600872035! 如果有其他问题或需要帮助，请随时告诉我。",
+        "toolCallCount": 1,
+        "durationMs": 20473,
+        "usageInput": 22518,
+        "usageOutput": 71,
+        "finalResponse": "Got it, MemoryAuditName-1776600872035! 如果有其他问题或需要帮助，请随时告诉我。",
+        "eventStreamAvailable": true
+      },
+      "requestId": "b911c443-3d9c-4efe-a687-dfa58424094f"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "307e07d3-02e6-425b-9d6e-220b2081759a",
+      "status": "completed",
+      "response": "Got it, MemoryAuditName-1776600872035! 如果有其他问题或需要帮助，请随时告诉我。",
+      "toolCallCount": 1,
+      "durationMs": 20473,
+      "usageInput": 22518,
+      "usageOutput": 71,
+      "finalResponse": "Got it, MemoryAuditName-1776600872035! 如果有其他问题或需要帮助，请随时告诉我。",
+      "eventStreamAvailable": true
+    },
+    "requestId": "b911c443-3d9c-4efe-a687-dfa58424094f"
+  }
+}

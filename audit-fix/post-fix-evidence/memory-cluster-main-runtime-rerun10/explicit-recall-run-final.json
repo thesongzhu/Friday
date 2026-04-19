@@ -1,0 +1,332 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/agent/runs/e2a007f5-3a24-4154-a131-d0eb371db462",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "run": {
+          "id": "e2a007f5-3a24-4154-a131-d0eb371db462",
+          "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+          "status": "failed",
+          "sessionKey": "agent:run:e2a007f5-3a24-4154-a131-d0eb371db462",
+          "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+          "attempt": 0,
+          "maxAttempts": 3,
+          "artifacts": [
+            {
+              "type": "run_record",
+              "path": ".friday/agent-runs/599a98d3-7faa-4f11-a649-5897a3518544/run.json"
+            },
+            {
+              "type": "run_record",
+              "path": ".friday/agent-runs/e2a007f5-3a24-4154-a131-d0eb371db462/run.json"
+            }
+          ],
+          "testResults": [
+            {
+              "strategy": "llm_eval",
+              "passed": true,
+              "errors": [],
+              "durationMs": 0
+            }
+          ],
+          "createdAt": "2026-04-19T12:37:22.852Z",
+          "startedAt": "2026-04-19T12:37:22.854Z",
+          "completedAt": "2026-04-19T12:37:36.216Z",
+          "durationMs": 13364,
+          "usageInput": 6340,
+          "usageOutput": 26,
+          "costUsd": 0.006444,
+          "planReview": {
+            "plan": {
+              "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+              "stepCount": 1,
+              "description": "Planning approach for: Use memory_search if needed. What should you call me? Reply with only the name."
+            },
+            "decision": {
+              "approved": true,
+              "mode": "off",
+              "reason": "No review required",
+              "reviewedAt": "2026-04-19T12:37:22.854Z"
+            }
+          },
+          "actualExecution": {
+            "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfileId": "deterministic",
+            "modelSelectionSource": "inherited",
+            "actualProviderKind": "openai",
+            "actualProviderApi": "openai-responses",
+            "backendKind": "http",
+            "totalCostUsd": 0.006444,
+            "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+            "routeDecisionTrace": {
+              "taskProfileId": "deterministic",
+              "requiresNativeTools": false,
+              "learningAdjusted": false,
+              "learningSignalsPresent": true,
+              "orderingAdjusted": false,
+              "selectedAdjusted": false,
+              "reasonCode": "historical_bias",
+              "reasonText": "Historical route outcomes influenced candidate scoring.",
+              "historyWindow": {
+                "sampleLimit": 250
+              },
+              "selectedBeforeLearning": {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http"
+              },
+              "selectedAfterLearning": {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http"
+              },
+              "candidateScores": [
+                {
+                  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                  "providerKind": "openai",
+                  "model": "gpt-4o",
+                  "backendKind": "http",
+                  "originalRank": 1,
+                  "finalRank": 1,
+                  "selected": true,
+                  "eligible": true,
+                  "ineligibilityReasons": [],
+                  "pinned": false,
+                  "historicalSuccessRate": 1,
+                  "historicalFailureRate": 0,
+                  "sampleCount": 4,
+                  "baseRankScore": 1,
+                  "historyScore": 5,
+                  "patternScore": 0,
+                  "lessonScore": 0,
+                  "routePenaltyScore": 0,
+                  "pinBonus": 0,
+                  "finalScore": 6,
+                  "historyStats": {
+                    "sampleCount": 4,
+                    "successRate": 1,
+                    "failureRate": 0
+                  },
+                  "matchedLessonIds": [],
+                  "matchedPatternIds": []
+                }
+              ]
+            },
+            "finalFailureReason": "Validation criteria not met",
+            "turns": [
+              {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "model": "gpt-4o",
+                "inputTokens": 6340,
+                "outputTokens": 26,
+                "costUsd": 0.006444
+              },
+              {
+                "inputTokens": 0,
+                "outputTokens": 0
+              }
+            ]
+          },
+          "responseText": "Validation criteria not met",
+          "summary": "Validation criteria not met",
+          "artifactDir": ".friday/agent-runs/e2a007f5-3a24-4154-a131-d0eb371db462",
+          "taskProfile": {
+            "id": "default",
+            "label": "Balanced",
+            "description": "General-purpose execution profile for standard assistant turns.",
+            "reasoningEffort": "medium"
+          },
+          "rollbackAvailable": false,
+          "health": {
+            "state": "failed",
+            "rollbackAvailable": false,
+            "reasonCodes": [
+              "failed"
+            ]
+          },
+          "contextSummary": {
+            "taskProfileId": "default",
+            "taskProfileLabel": "Balanced",
+            "dominantContextKinds": [],
+            "learningAdjusted": false,
+            "fallbackAttemptCount": 0,
+            "blockedToolCount": 0,
+            "modelSelectionSource": "inherited"
+          }
+        }
+      },
+      "requestId": "ca04e4ae-2fcd-4fc5-bbe3-a1796ca29cee"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "run": {
+        "id": "e2a007f5-3a24-4154-a131-d0eb371db462",
+        "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+        "status": "failed",
+        "sessionKey": "agent:run:e2a007f5-3a24-4154-a131-d0eb371db462",
+        "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+        "attempt": 0,
+        "maxAttempts": 3,
+        "artifacts": [
+          {
+            "type": "run_record",
+            "path": ".friday/agent-runs/599a98d3-7faa-4f11-a649-5897a3518544/run.json"
+          },
+          {
+            "type": "run_record",
+            "path": ".friday/agent-runs/e2a007f5-3a24-4154-a131-d0eb371db462/run.json"
+          }
+        ],
+        "testResults": [
+          {
+            "strategy": "llm_eval",
+            "passed": true,
+            "errors": [],
+            "durationMs": 0
+          }
+        ],
+        "createdAt": "2026-04-19T12:37:22.852Z",
+        "startedAt": "2026-04-19T12:37:22.854Z",
+        "completedAt": "2026-04-19T12:37:36.216Z",
+        "durationMs": 13364,
+        "usageInput": 6340,
+        "usageOutput": 26,
+        "costUsd": 0.006444,
+        "planReview": {
+          "plan": {
+            "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+            "stepCount": 1,
+            "description": "Planning approach for: Use memory_search if needed. What should you call me? Reply with only the name."
+          },
+          "decision": {
+            "approved": true,
+            "mode": "off",
+            "reason": "No review required",
+            "reviewedAt": "2026-04-19T12:37:22.854Z"
+          }
+        },
+        "actualExecution": {
+          "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+          "taskProfileId": "deterministic",
+          "modelSelectionSource": "inherited",
+          "actualProviderKind": "openai",
+          "actualProviderApi": "openai-responses",
+          "backendKind": "http",
+          "totalCostUsd": 0.006444,
+          "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+          "routeDecisionTrace": {
+            "taskProfileId": "deterministic",
+            "requiresNativeTools": false,
+            "learningAdjusted": false,
+            "learningSignalsPresent": true,
+            "orderingAdjusted": false,
+            "selectedAdjusted": false,
+            "reasonCode": "historical_bias",
+            "reasonText": "Historical route outcomes influenced candidate scoring.",
+            "historyWindow": {
+              "sampleLimit": 250
+            },
+            "selectedBeforeLearning": {
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "providerKind": "openai",
+              "model": "gpt-4o",
+              "backendKind": "http"
+            },
+            "selectedAfterLearning": {
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "providerKind": "openai",
+              "model": "gpt-4o",
+              "backendKind": "http"
+            },
+            "candidateScores": [
+              {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http",
+                "originalRank": 1,
+                "finalRank": 1,
+                "selected": true,
+                "eligible": true,
+                "ineligibilityReasons": [],
+                "pinned": false,
+                "historicalSuccessRate": 1,
+                "historicalFailureRate": 0,
+                "sampleCount": 4,
+                "baseRankScore": 1,
+                "historyScore": 5,
+                "patternScore": 0,
+                "lessonScore": 0,
+                "routePenaltyScore": 0,
+                "pinBonus": 0,
+                "finalScore": 6,
+                "historyStats": {
+                  "sampleCount": 4,
+                  "successRate": 1,
+                  "failureRate": 0
+                },
+                "matchedLessonIds": [],
+                "matchedPatternIds": []
+              }
+            ]
+          },
+          "finalFailureReason": "Validation criteria not met",
+          "turns": [
+            {
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "model": "gpt-4o",
+              "inputTokens": 6340,
+              "outputTokens": 26,
+              "costUsd": 0.006444
+            },
+            {
+              "inputTokens": 0,
+              "outputTokens": 0
+            }
+          ]
+        },
+        "responseText": "Validation criteria not met",
+        "summary": "Validation criteria not met",
+        "artifactDir": ".friday/agent-runs/e2a007f5-3a24-4154-a131-d0eb371db462",
+        "taskProfile": {
+          "id": "default",
+          "label": "Balanced",
+          "description": "General-purpose execution profile for standard assistant turns.",
+          "reasoningEffort": "medium"
+        },
+        "rollbackAvailable": false,
+        "health": {
+          "state": "failed",
+          "rollbackAvailable": false,
+          "reasonCodes": [
+            "failed"
+          ]
+        },
+        "contextSummary": {
+          "taskProfileId": "default",
+          "taskProfileLabel": "Balanced",
+          "dominantContextKinds": [],
+          "learningAdjusted": false,
+          "fallbackAttemptCount": 0,
+          "blockedToolCount": 0,
+          "modelSelectionSource": "inherited"
+        }
+      }
+    },
+    "requestId": "ca04e4ae-2fcd-4fc5-bbe3-a1796ca29cee"
+  }
+}

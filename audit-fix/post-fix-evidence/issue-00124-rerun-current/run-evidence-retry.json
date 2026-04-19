@@ -1,0 +1,306 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "run": {
+        "id": "885335b8-a25e-430f-be95-aa1ec9ed39a7",
+        "workflowId": "75dd728b-5372-4b26-a996-972e3305009e",
+        "workflowVersionId": "306265ed-aaca-4a8c-a45d-ee423325727e",
+        "status": "failed",
+        "triggerType": "manual",
+        "triggerPayload": {},
+        "startedByUserId": "admin-001",
+        "startedAt": "2026-04-19T13:59:19.719Z",
+        "deadlineAt": "2026-04-19T14:00:19.719Z",
+        "finishedAt": "2026-04-19T13:59:19.721Z",
+        "context": {
+          "security": {
+            "ownerPrincipalId": "admin-001",
+            "ownerPrincipalType": "user",
+            "ownerUserId": "admin-001",
+            "tenantId": "admin-001",
+            "tokenId": "33c57e19-cb5b-4f38-882f-174252f9835c"
+          },
+          "pipeline": {
+            "playbook": {
+              "decision": "no_match",
+              "playbookId": null,
+              "versionNumber": null,
+              "matchScore": null,
+              "evaluatedAt": "2026-04-19T13:59:19.719Z"
+            }
+          }
+        },
+        "failure": {
+          "code": "WORKFLOW_FAILED",
+          "message": "Workflow failed due to fail_fast policy"
+        },
+        "createdAt": "2026-04-19T13:59:19.719Z",
+        "updatedAt": "2026-04-19T13:59:19.721Z"
+      },
+      "exportedAt": "2026-04-19T13:59:19.730Z",
+      "query": {
+        "modules": [
+          "retry"
+        ]
+      },
+      "summary": {
+        "totalEvents": 1,
+        "byModule": {
+          "rules": 0,
+          "node-runner": 0,
+          "acceptance": 0,
+          "retry": 1,
+          "playbook": 0
+        },
+        "retryTraceCount": 1,
+        "playbookTraceCount": 0,
+        "acceptanceDecisions": {
+          "passed": 0,
+          "warned": 0,
+          "failed": 0
+        }
+      },
+      "events": [
+        {
+          "eventId": "0ce9b94e-5846-43f1-975b-a4d94e8ba45e",
+          "event": "pipeline.retry.exhausted",
+          "module": "retry",
+          "emittedAt": "2026-04-19T13:59:19.721Z",
+          "redacted": false,
+          "correlation": {
+            "runId": "885335b8-a25e-430f-be95-aa1ec9ed39a7",
+            "workflowId": "75dd728b-5372-4b26-a996-972e3305009e",
+            "nodeId": "missing-skill-action",
+            "attempt": 1
+          },
+          "payload": {
+            "category": "logic",
+            "totalAttempts": 1,
+            "escalatedToDlq": true
+          }
+        }
+      ],
+      "playbook": {
+        "traces": []
+      },
+      "acceptance": {
+        "events": []
+      },
+      "retry": {
+        "events": [
+          {
+            "eventId": "0ce9b94e-5846-43f1-975b-a4d94e8ba45e",
+            "event": "pipeline.retry.exhausted",
+            "module": "retry",
+            "emittedAt": "2026-04-19T13:59:19.721Z",
+            "redacted": false,
+            "correlation": {
+              "runId": "885335b8-a25e-430f-be95-aa1ec9ed39a7",
+              "workflowId": "75dd728b-5372-4b26-a996-972e3305009e",
+              "nodeId": "missing-skill-action",
+              "attempt": 1
+            },
+            "payload": {
+              "category": "logic",
+              "totalAttempts": 1,
+              "escalatedToDlq": true
+            }
+          }
+        ],
+        "traces": [
+          {
+            "runId": "885335b8-a25e-430f-be95-aa1ec9ed39a7",
+            "nodeId": "missing-skill-action",
+            "attempt": 1,
+            "category": "logic",
+            "errorCode": "NODE_EXECUTION_FAILED",
+            "errorMessage": "NODE_EXECUTION_FAILED: Step \"execute\" failed: NODE_EXECUTION_FAILED: skill 'missing-skill-issue-00124' not found",
+            "decision": {
+              "shouldRetry": false,
+              "delayMs": 0,
+              "reason": "logic errors are not retryable",
+              "maxAttempts": 3,
+              "budgetExhausted": false,
+              "circuitOpen": false,
+              "escalateToDlq": true
+            },
+            "timestamp": "2026-04-19T13:59:19.721Z"
+          }
+        ]
+      },
+      "correlation": {
+        "items": [
+          {
+            "nodeId": "missing-skill-action",
+            "attempt": 1,
+            "eventCount": 1,
+            "modules": [
+              "retry"
+            ],
+            "retryTraceCount": 1
+          }
+        ]
+      }
+    },
+    "requestId": "ad52fdd8-7327-4e58-a603-badcdbf898ff"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/workflow-runs/885335b8-a25e-430f-be95-aa1ec9ed39a7/evidence?modules=retry",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "run": {
+          "id": "885335b8-a25e-430f-be95-aa1ec9ed39a7",
+          "workflowId": "75dd728b-5372-4b26-a996-972e3305009e",
+          "workflowVersionId": "306265ed-aaca-4a8c-a45d-ee423325727e",
+          "status": "failed",
+          "triggerType": "manual",
+          "triggerPayload": {},
+          "startedByUserId": "admin-001",
+          "startedAt": "2026-04-19T13:59:19.719Z",
+          "deadlineAt": "2026-04-19T14:00:19.719Z",
+          "finishedAt": "2026-04-19T13:59:19.721Z",
+          "context": {
+            "security": {
+              "ownerPrincipalId": "admin-001",
+              "ownerPrincipalType": "user",
+              "ownerUserId": "admin-001",
+              "tenantId": "admin-001",
+              "tokenId": "33c57e19-cb5b-4f38-882f-174252f9835c"
+            },
+            "pipeline": {
+              "playbook": {
+                "decision": "no_match",
+                "playbookId": null,
+                "versionNumber": null,
+                "matchScore": null,
+                "evaluatedAt": "2026-04-19T13:59:19.719Z"
+              }
+            }
+          },
+          "failure": {
+            "code": "WORKFLOW_FAILED",
+            "message": "Workflow failed due to fail_fast policy"
+          },
+          "createdAt": "2026-04-19T13:59:19.719Z",
+          "updatedAt": "2026-04-19T13:59:19.721Z"
+        },
+        "exportedAt": "2026-04-19T13:59:19.730Z",
+        "query": {
+          "modules": [
+            "retry"
+          ]
+        },
+        "summary": {
+          "totalEvents": 1,
+          "byModule": {
+            "rules": 0,
+            "node-runner": 0,
+            "acceptance": 0,
+            "retry": 1,
+            "playbook": 0
+          },
+          "retryTraceCount": 1,
+          "playbookTraceCount": 0,
+          "acceptanceDecisions": {
+            "passed": 0,
+            "warned": 0,
+            "failed": 0
+          }
+        },
+        "events": [
+          {
+            "eventId": "0ce9b94e-5846-43f1-975b-a4d94e8ba45e",
+            "event": "pipeline.retry.exhausted",
+            "module": "retry",
+            "emittedAt": "2026-04-19T13:59:19.721Z",
+            "redacted": false,
+            "correlation": {
+              "runId": "885335b8-a25e-430f-be95-aa1ec9ed39a7",
+              "workflowId": "75dd728b-5372-4b26-a996-972e3305009e",
+              "nodeId": "missing-skill-action",
+              "attempt": 1
+            },
+            "payload": {
+              "category": "logic",
+              "totalAttempts": 1,
+              "escalatedToDlq": true
+            }
+          }
+        ],
+        "playbook": {
+          "traces": []
+        },
+        "acceptance": {
+          "events": []
+        },
+        "retry": {
+          "events": [
+            {
+              "eventId": "0ce9b94e-5846-43f1-975b-a4d94e8ba45e",
+              "event": "pipeline.retry.exhausted",
+              "module": "retry",
+              "emittedAt": "2026-04-19T13:59:19.721Z",
+              "redacted": false,
+              "correlation": {
+                "runId": "885335b8-a25e-430f-be95-aa1ec9ed39a7",
+                "workflowId": "75dd728b-5372-4b26-a996-972e3305009e",
+                "nodeId": "missing-skill-action",
+                "attempt": 1
+              },
+              "payload": {
+                "category": "logic",
+                "totalAttempts": 1,
+                "escalatedToDlq": true
+              }
+            }
+          ],
+          "traces": [
+            {
+              "runId": "885335b8-a25e-430f-be95-aa1ec9ed39a7",
+              "nodeId": "missing-skill-action",
+              "attempt": 1,
+              "category": "logic",
+              "errorCode": "NODE_EXECUTION_FAILED",
+              "errorMessage": "NODE_EXECUTION_FAILED: Step \"execute\" failed: NODE_EXECUTION_FAILED: skill 'missing-skill-issue-00124' not found",
+              "decision": {
+                "shouldRetry": false,
+                "delayMs": 0,
+                "reason": "logic errors are not retryable",
+                "maxAttempts": 3,
+                "budgetExhausted": false,
+                "circuitOpen": false,
+                "escalateToDlq": true
+              },
+              "timestamp": "2026-04-19T13:59:19.721Z"
+            }
+          ]
+        },
+        "correlation": {
+          "items": [
+            {
+              "nodeId": "missing-skill-action",
+              "attempt": 1,
+              "eventCount": 1,
+              "modules": [
+                "retry"
+              ],
+              "retryTraceCount": 1
+            }
+          ]
+        }
+      },
+      "requestId": "ad52fdd8-7327-4e58-a603-badcdbf898ff"
+    }
+  }
+}

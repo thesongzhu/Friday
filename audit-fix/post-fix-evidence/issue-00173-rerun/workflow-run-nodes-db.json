@@ -1,0 +1,20 @@
+[
+  {
+    "run_id": "a381db70-6e15-42a6-9db8-9b39dde9734d",
+    "node_id": "trigger",
+    "attempt": 1,
+    "status": "completed",
+    "error_json": null,
+    "created_at": "2026-04-19T10:14:56.242Z",
+    "updated_at": "2026-04-19T10:14:56.247Z"
+  },
+  {
+    "run_id": "a381db70-6e15-42a6-9db8-9b39dde9734d",
+    "node_id": "action1",
+    "attempt": 1,
+    "status": "failed",
+    "error_json": "{\"code\":\"NODE_EXECUTION_FAILED\",\"message\":\"NODE_EXECUTION_FAILED: Step \\\"execute\\\" failed: NODE_EXECUTION_FAILED: skill 'missing-skill-postfix' not found\",\"retryable\":false}",
+    "created_at": "2026-04-19T10:14:56.247Z",
+    "updated_at": "2026-04-19T10:14:56.249Z"
+  }
+]

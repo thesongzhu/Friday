@@ -1,0 +1,249 @@
+{
+  "entries": [
+    {
+      "blockerId": "FIX-BLK-20260419-001",
+      "phaseFound": "phase2",
+      "earliestAffectedPhase": "phase2",
+      "status": "closed",
+      "summary": "workflow lock persistence path drift between lock repo and workflow_locks consumers",
+      "evidencePaths": [
+        "audit-fix/post-fix-evidence/blocker-group1-rerun/workflow-lock-acquire-valid.json",
+        "audit-fix/post-fix-evidence/blocker-group1-rerun/workflow-lock-valid-db.json",
+        "audit-fix/post-fix-evidence/blocker-group1-rerun/workflow-lock-release-db.json",
+        "src/workflows/builder/persistence/friday-workflow-builder-lock-repository.ts",
+        "src/api/conflicts/friday-workflow-conflict-service.ts"
+      ],
+      "recordedAt": "2026-04-19T09:11:04.433Z",
+      "resolvedAt": "2026-04-19T09:16:31.709Z",
+      "rerunArtifacts": [
+        "audit-fix/post-fix-evidence/blocker-group1-rerun/blocker-group1-summary.json",
+        "audit-fix/post-fix-evidence/blocker-group1-rerun/workflow-run-final-db.json"
+      ]
+    },
+    {
+      "blockerId": "FIX-BLK-20260419-002",
+      "phaseFound": "phase2",
+      "earliestAffectedPhase": "phase2",
+      "status": "closed",
+      "summary": "session memory remember path duplicated memory_items for already extracted messages until extractSpecificMessages became idempotent",
+      "evidencePaths": [
+        "audit-fix/post-fix-evidence/session-memory-rerun/memory-extract.json",
+        "audit-fix/post-fix-evidence/session-memory-rerun/memory-remember.json",
+        "audit-fix/post-fix-evidence/session-memory-rerun/session-messages-db.json",
+        "audit-fix/post-fix-evidence/session-memory-rerun/memory-items-db.json",
+        "src/sessions/services/friday-session-memory-extraction-service.ts"
+      ],
+      "recordedAt": "2026-04-19T09:45:00.000Z",
+      "resolvedAt": "2026-04-19T09:50:45.000Z",
+      "rerunArtifacts": [
+        "audit-fix/post-fix-evidence/session-memory-idempotency-rerun/session-memory-summary.json",
+        "audit-fix/post-fix-evidence/session-memory-idempotency-rerun/memory-remember.json",
+        "audit-fix/post-fix-evidence/session-memory-idempotency-rerun/session-messages-after-remember-db.json",
+        "audit-fix/post-fix-evidence/session-memory-idempotency-rerun/memory-items-after-remember-db.json",
+        "test/unit/sessions/services/friday-session-memory-extraction-service.test.ts"
+      ]
+    },
+    {
+      "blockerId": "FIX-BLK-20260419-003",
+      "phaseFound": "phase2",
+      "earliestAffectedPhase": "phase2",
+      "status": "closed",
+      "summary": "idle self-churn from deterministic missing-skill workflow failures stopped after retryable truth, diagnosis gating, and retry verification were corrected",
+      "evidencePaths": [
+        "audit-fix/post-fix-evidence/issue-00173-rerun/issue-00173-summary.json",
+        "audit-fix/post-fix-evidence/issue-00173-rerun/post-failure-learning-rows.json",
+        "audit-fix/post-fix-evidence/issue-00173-rerun/post-soak-learning-rows.json",
+        "audit-fix/post-fix-evidence/issue-00173-main-runtime.log",
+        "src/workflows/services/friday-workflow-execution-service.ts",
+        "src/learning/services/friday-error-diagnosis-service.ts",
+        "src/hub/bootstrap/hub-helpers.ts",
+        "src/hub/friday-hub-bootstrap.ts"
+      ],
+      "recordedAt": "2026-04-19T10:03:55.130Z",
+      "resolvedAt": "2026-04-19T10:17:06.260Z",
+      "rerunArtifacts": [
+        "audit-fix/post-fix-evidence/issue-00173-rerun/baseline-counts.json",
+        "audit-fix/post-fix-evidence/issue-00173-rerun/post-idle-counts.json",
+        "audit-fix/post-fix-evidence/issue-00173-rerun/post-failure-counts.json",
+        "audit-fix/post-fix-evidence/issue-00173-rerun/post-soak-counts.json",
+        "audit-fix/post-fix-evidence/issue-00173-rerun/workflow-run-nodes-db.json",
+        "test/unit/hub/bootstrap/hub-helpers.test.ts",
+        "test/unit/learning/services/friday-error-diagnosis-service.test.ts",
+        "test/unit/workflows/friday-workflow-execution-service-edge-cases.test.ts"
+      ]
+    },
+    {
+      "blockerId": "FIX-BLK-20260419-004",
+      "phaseFound": "phase3",
+      "earliestAffectedPhase": "phase3",
+      "status": "closed",
+      "summary": "default 500 validation masking and DELETE-body parsing are fixed for the alert-rule mutation family on main runtime",
+      "evidencePaths": [
+        "audit-fix/post-fix-evidence/issue-00040-rerun/issue-00040-summary.json",
+        "audit-fix/post-fix-evidence/issue-00040-rerun/alert-rule-invalid-create.json",
+        "audit-fix/post-fix-evidence/issue-00040-rerun/alert-rule-valid-create.json",
+        "audit-fix/post-fix-evidence/issue-00040-rerun/alert-rule-delete.json",
+        "audit-fix/post-fix-evidence/issue-00040-rerun/runtime-log-tail.txt",
+        "src/errors/friday-domain-error.ts",
+        "src/api/http/friday-http-server.ts"
+      ],
+      "recordedAt": "2026-04-19T10:22:35.000Z",
+      "resolvedAt": "2026-04-19T10:30:29.165Z",
+      "rerunArtifacts": [
+        "audit-fix/post-fix-evidence/issue-00040-rerun/alert-rules-before.json",
+        "audit-fix/post-fix-evidence/issue-00040-rerun/alert-rules-after-create.json",
+        "audit-fix/post-fix-evidence/issue-00040-rerun/alert-rules-after-delete.json",
+        "test/unit/api/http/friday-http-error-mapper.test.ts",
+        "test/unit/api/http/friday-http-server-head-body.test.ts",
+        "test/unit/api/http/routes/friday-observability-routes.test.ts"
+      ]
+    },
+    {
+      "blockerId": "FIX-BLK-20260419-005",
+      "phaseFound": "phase3",
+      "earliestAffectedPhase": "phase3",
+      "status": "closed",
+      "summary": "main-runtime MCP JSON-RPC surface is mounted with stable disabled semantics and truthful health when MCP is off",
+      "evidencePaths": [
+        "audit-fix/post-fix-evidence/issue-00033-rerun/issue-00033-summary.json",
+        "audit-fix/post-fix-evidence/issue-00033-rerun/health.json",
+        "audit-fix/post-fix-evidence/issue-00033-rerun/mcp-initialize.json",
+        "src/api/http/routes/friday-mcp-server-routes.ts",
+        "src/api/runtime/friday-api-runtime.ts",
+        "src/api/http/routes/friday-capability-disabled.ts"
+      ],
+      "recordedAt": "2026-04-19T10:34:07.000Z",
+      "resolvedAt": "2026-04-19T10:34:07.862Z",
+      "rerunArtifacts": [
+        "audit-fix/scripts/reprobe-issue-00033-mcp-disabled.mjs"
+      ]
+    },
+    {
+      "blockerId": "FIX-BLK-20260419-006",
+      "phaseFound": "phase3",
+      "earliestAffectedPhase": "phase3",
+      "status": "closed",
+      "summary": "unknown channel persona keys can no longer be read/written and stale fake-kind persona state is pruned on bootstrap",
+      "evidencePaths": [
+        "audit-fix/post-fix-evidence/issue-00045-rerun/issue-00045-summary.json",
+        "audit-fix/post-fix-evidence/issue-00045-rerun/persona-state-before.json",
+        "audit-fix/post-fix-evidence/issue-00045-rerun/persona-state-after.json",
+        "audit-fix/post-fix-evidence/issue-00045-rerun/fake-persona-get.json",
+        "audit-fix/post-fix-evidence/issue-00045-rerun/fake-persona-put.json",
+        "src/api/http/routes/friday-channel-routes.ts",
+        "src/hub/friday-hub-bootstrap.ts"
+      ],
+      "recordedAt": "2026-04-19T10:35:06.000Z",
+      "resolvedAt": "2026-04-19T10:38:00.433Z",
+      "rerunArtifacts": [
+        "audit-fix/scripts/reprobe-issue-00045-channel-persona-guard.mjs",
+        "test/unit/api/http/routes/friday-channel-routes.test.ts"
+      ]
+    },
+    {
+      "blockerId": "FIX-BLK-20260419-007",
+      "phaseFound": "phase3",
+      "earliestAffectedPhase": "phase3",
+      "status": "closed",
+      "summary": "session-token revoke now records issued access tokens, revokes tracked tokens/session rows truthfully, and rejects legacy untracked session tokens on main runtime",
+      "evidencePaths": [
+        "audit-fix/post-fix-evidence/issue-00186-rerun/issue-00186-summary.json",
+        "audit-fix/post-fix-evidence/issue-00186-rerun/state-before.json",
+        "audit-fix/post-fix-evidence/issue-00186-rerun/state-after.json",
+        "audit-fix/post-fix-evidence/issue-00186-rerun/legacy-auth-me.json",
+        "src/api/auth/friday-auth-service.ts",
+        "src/api/auth/friday-token-validator.ts",
+        "src/api/persistence/friday-api-token-repository.ts",
+        "src/api/runtime/friday-api-runtime.ts",
+        "src/state/sqlite/migrations/v072-auth-access-token-registry.ts"
+      ],
+      "recordedAt": "2026-04-19T10:52:15.302Z",
+      "resolvedAt": "2026-04-19T10:52:15.302Z",
+      "rerunArtifacts": [
+        "audit-fix/scripts/reprobe-issue-00186-token-revoke.mjs",
+        "test/e2e/api/friday-api-audit-verification.test.ts",
+        "test/unit/api/runtime/friday-api-runtime-revocation-persistence.test.ts",
+        "test/unit/api/runtime/friday-api-runtime-token-revocation.test.ts",
+        "test/integration/state/sqlite/friday-migration-chain.test.ts"
+      ]
+    },
+    {
+      "blockerId": "FIX-BLK-20260419-008",
+      "phaseFound": "phase3",
+      "earliestAffectedPhase": "phase3",
+      "status": "closed",
+      "summary": "public health disclosure is now limited to liveness while authenticated /v1/health/capabilities carries the full capability map for the UI",
+      "evidencePaths": [
+        "audit-fix/post-fix-evidence/issue-00065-rerun/issue-00065-summary.json",
+        "audit-fix/post-fix-evidence/issue-00065-rerun/public-health.json",
+        "audit-fix/post-fix-evidence/issue-00065-rerun/unauth-capabilities.json",
+        "audit-fix/post-fix-evidence/issue-00065-rerun/auth-capabilities.json",
+        "src/api/http/routes/friday-health-routes.ts",
+        "ui/src/lib/api/health.ts",
+        "ui/src/providers/auth-provider.tsx",
+        "ui/src/routes/plugins-page.tsx",
+        "ui/src/routes/settings-page.tsx"
+      ],
+      "recordedAt": "2026-04-19T10:59:10.516Z",
+      "resolvedAt": "2026-04-19T11:00:13.000Z",
+      "rerunArtifacts": [
+        "audit-fix/scripts/reprobe-issue-00065-health-redaction.mjs",
+        "test/unit/api/http/routes/friday-health-routes.test.ts",
+        "test/e2e/api/friday-api-health-routes.test.ts",
+        "test/contracts/api/friday-api-route-contract.snapshot.test.ts",
+        "test/contracts/api/__snapshots__/friday-api-route-contract.snapshot.test.ts.snap",
+        "npm run typecheck",
+        "npm run build:ui"
+      ]
+    },
+    {
+      "blockerId": "FIX-BLK-20260419-009",
+      "phaseFound": "phase3",
+      "earliestAffectedPhase": "phase3",
+      "status": "closed",
+      "summary": "phase3 TUI rerun uncovered that the public CLI parser/help path still stranded the now-fixed TUI API routes behind an unreachable `tui` command until parser/help/base-url wiring was corrected",
+      "evidencePaths": [
+        "audit-fix/post-fix-evidence/issue-00140-rerun/issue-00140-summary.json",
+        "audit-fix/post-fix-evidence/issue-00140-rerun/runtime-log-tail.txt",
+        "audit-fix/post-fix-evidence/issue-00163-rerun/issue-00163-summary.json",
+        "src/cli/friday-cli.ts",
+        "src/cli/friday-cli-tui.ts"
+      ],
+      "recordedAt": "2026-04-19T11:25:01.279679Z",
+      "resolvedAt": "2026-04-19T11:25:01.279679Z",
+      "rerunArtifacts": [
+        "audit-fix/post-fix-evidence/issue-00140-rerun/issue-00140-summary.json",
+        "audit-fix/post-fix-evidence/issue-00140-rerun/tui-typescript.txt",
+        "audit-fix/post-fix-evidence/issue-00163-rerun/issue-00163-summary.json",
+        "audit-fix/post-fix-evidence/issue-00163-rerun/root-help.txt",
+        "audit-fix/post-fix-evidence/issue-00163-rerun/tui-help.txt",
+        "test/unit/cli/friday-cli.test.ts",
+        "test/unit/tui/friday-tui.test.ts",
+        "test/unit/api/http/routes/friday-tui-routes.test.ts",
+        "test/e2e/api/friday-api-tui-routes.test.ts",
+        "npm run build:api"
+      ]
+    },
+    {
+      "blockerId": "FIX-BLK-20260419-010",
+      "phaseFound": "phase3",
+      "earliestAffectedPhase": "phase3",
+      "status": "closed",
+      "summary": "execution classifier capability regex falsely matched the incidental clause \"is blocked or disabled\" inside agent tasks and short-circuited /v1/agent/runs into deterministic capability output",
+      "evidencePaths": [
+        "audit-fix/post-fix-evidence/issue-00200-isolated-rerun-current/agent-start.json",
+        "audit-fix/post-fix-evidence/issue-00200-isolated-rerun-current/agent-final.json",
+        "audit-fix/post-fix-evidence/issue-00200-isolated-rerun-current/agent-audit.json",
+        "src/sessions/services/friday-execution-classifier.ts"
+      ],
+      "recordedAt": "2026-04-19T16:41:11Z",
+      "resolvedAt": "2026-04-19T16:41:11Z",
+      "rerunArtifacts": [
+        "audit-fix/post-fix-evidence/cand-20260419-013-rerun-current/cand-20260419-013-summary.json",
+        "audit-fix/post-fix-evidence/cand-20260419-013-main-rerun-current/cand-20260419-013-summary.json",
+        "audit-fix/post-fix-evidence/cand-20260419-013-main-rerun-current/agent-event-rows.json",
+        "test/unit/sessions/friday-execution-classifier.test.ts"
+      ]
+    }
+  ]
+}

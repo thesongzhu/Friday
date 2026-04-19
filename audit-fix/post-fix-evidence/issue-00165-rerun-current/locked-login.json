@@ -1,0 +1,47 @@
+{
+  "rawBody": {
+    "ok": false,
+    "error": {
+      "code": "DEGRADED_MODE",
+      "message": "Internal Server Error",
+      "retryable": true,
+      "retryAfterMs": 1000
+    },
+    "requestId": "6bdf56c6-b1af-46bd-b743-11e63999d2c1"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/auth/login",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "local": true
+    }
+  },
+  "response": {
+    "status": 503,
+    "headers": {
+      "connection": "keep-alive",
+      "content-length": "167",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Sun, 19 Apr 2026 14:43:48 GMT",
+      "keep-alive": "timeout=5",
+      "referrer-policy": "no-referrer",
+      "retry-after": "1",
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY"
+    },
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "DEGRADED_MODE",
+        "message": "Internal Server Error",
+        "retryable": true,
+        "retryAfterMs": 1000
+      },
+      "requestId": "6bdf56c6-b1af-46bd-b743-11e63999d2c1"
+    }
+  }
+}

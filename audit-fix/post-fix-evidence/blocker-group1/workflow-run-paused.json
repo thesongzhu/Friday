@@ -1,0 +1,51 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/workflow-runs/bb94ea63-49f1-46c5-8456-80266b4fc796",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "run": {
+          "id": "bb94ea63-49f1-46c5-8456-80266b4fc796",
+          "workflowId": "9c962641-139d-49db-a078-e9a256985c64",
+          "workflowVersionId": "bacc4ad9-4bde-453c-8223-a6d8532d030c",
+          "status": "paused",
+          "triggerType": "manual",
+          "startedByUserId": "admin-001",
+          "startedAt": "2026-04-19T09:10:03.461Z",
+          "deadlineAt": "2026-04-19T09:11:03.461Z",
+          "pausedAt": "2026-04-19T09:10:03.465Z",
+          "context": {
+            "security": {
+              "ownerPrincipalId": "admin-001",
+              "ownerPrincipalType": "user",
+              "ownerUserId": "admin-001",
+              "tenantId": "admin-001",
+              "tokenId": "26ce8413-d92d-4da3-be7b-f87fe4b40823"
+            },
+            "pipeline": {
+              "playbook": {
+                "decision": "no_match",
+                "playbookId": null,
+                "versionNumber": null,
+                "matchScore": null,
+                "evaluatedAt": "2026-04-19T09:10:03.461Z"
+              }
+            }
+          },
+          "createdAt": "2026-04-19T09:10:03.461Z",
+          "updatedAt": "2026-04-19T09:10:03.465Z"
+        }
+      },
+      "requestId": "926f7f2d-3167-470d-89fa-2fb4afb71255"
+    }
+  }
+}

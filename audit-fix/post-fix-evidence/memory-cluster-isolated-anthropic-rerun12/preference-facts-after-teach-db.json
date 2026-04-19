@@ -1,0 +1,12 @@
+[
+  {
+    "fact_id": "45295358-b7f5-46e1-93bd-66343bff886f",
+    "user_id": "admin-001",
+    "key": "pref:name",
+    "value_json": "\"MemoryAuditName-1776603060515\"",
+    "confidence": 1,
+    "evidence_count": 1,
+    "last_confirmed_at": "2026-04-19T12:51:03.941Z",
+    "updated_at": "2026-04-19T12:51:03.941Z"
+  }
+]

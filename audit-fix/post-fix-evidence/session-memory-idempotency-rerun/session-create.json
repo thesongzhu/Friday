@@ -1,0 +1,70 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "session": {
+        "id": "c683bbd0-e455-4dd3-ac77-bc6ca048693f",
+        "key": "audit:default:issue-00117-idempotency-1776592173515",
+        "channel": "audit",
+        "accountId": "default",
+        "chatId": "issue-00117-idempotency-1776592173515",
+        "userId": "admin-001",
+        "chatKind": "dm",
+        "status": "active",
+        "rootSessionKey": "audit:default:issue-00117-idempotency-1776592173515",
+        "metadata": {},
+        "contextInputTokens": 0,
+        "contextOutputTokens": 0,
+        "contextTotalTokens": 0,
+        "messageCount": 0,
+        "createdAt": "2026-04-19T09:49:33.516Z",
+        "updatedAt": "2026-04-19T09:49:33.516Z",
+        "lastActivityAt": "2026-04-19T09:49:33.516Z",
+        "statusChangedAt": "2026-04-19T09:49:33.516Z"
+      }
+    },
+    "requestId": "6a8f71d7-a9df-4642-9642-d5cb068c432f"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/sessions",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "channel": "audit",
+      "chatId": "issue-00117-idempotency-1776592173515",
+      "userId": "admin-001"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "session": {
+          "id": "c683bbd0-e455-4dd3-ac77-bc6ca048693f",
+          "key": "audit:default:issue-00117-idempotency-1776592173515",
+          "channel": "audit",
+          "accountId": "default",
+          "chatId": "issue-00117-idempotency-1776592173515",
+          "userId": "admin-001",
+          "chatKind": "dm",
+          "status": "active",
+          "rootSessionKey": "audit:default:issue-00117-idempotency-1776592173515",
+          "metadata": {},
+          "contextInputTokens": 0,
+          "contextOutputTokens": 0,
+          "contextTotalTokens": 0,
+          "messageCount": 0,
+          "createdAt": "2026-04-19T09:49:33.516Z",
+          "updatedAt": "2026-04-19T09:49:33.516Z",
+          "lastActivityAt": "2026-04-19T09:49:33.516Z",
+          "statusChangedAt": "2026-04-19T09:49:33.516Z"
+        }
+      },
+      "requestId": "6a8f71d7-a9df-4642-9642-d5cb068c432f"
+    }
+  }
+}

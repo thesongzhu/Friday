@@ -1,0 +1,18 @@
+{
+  "checkedAt": "2026-04-19T10:30:29.165Z",
+  "alertRuleValidationStatus": 422,
+  "alertRuleValidationError": {
+    "code": "VALIDATION_ERROR",
+    "message": "condition is required",
+    "retryable": false
+  },
+  "validCreateStatus": 200,
+  "validCreateRuleId": "76669ddc-3423-4f0d-a89a-b207cb3564cc",
+  "validCreateRuleEtag": "<redacted-etag>",
+  "deleteStatus": 200,
+  "alertRuleCountBefore": 2,
+  "alertRuleCountAfterCreate": 3,
+  "alertRuleCountAfterDelete": 2,
+  "alertRuleCreateDelta": 1,
+  "alertRuleDeleteDelta": 0
+}

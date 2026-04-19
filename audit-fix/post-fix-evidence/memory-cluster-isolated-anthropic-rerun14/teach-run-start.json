@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3242/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Call me MemoryAuditName-1776603654745.",
+      "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "8a578362-1ac4-4ca1-994c-9af77e398016",
+        "status": "completed",
+        "response": "已记录您的称呼偏好。有什么我可以为您做的吗，MemoryAuditName-1776603654745？",
+        "toolCallCount": 1,
+        "durationMs": 6031,
+        "usageInput": 498,
+        "usageOutput": 191,
+        "finalResponse": "已记录您的称呼偏好。有什么我可以为您做的吗，MemoryAuditName-1776603654745？",
+        "eventStreamAvailable": true
+      },
+      "requestId": "30326cbd-f455-477d-a5c8-aa94c075d100"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "8a578362-1ac4-4ca1-994c-9af77e398016",
+      "status": "completed",
+      "response": "已记录您的称呼偏好。有什么我可以为您做的吗，MemoryAuditName-1776603654745？",
+      "toolCallCount": 1,
+      "durationMs": 6031,
+      "usageInput": 498,
+      "usageOutput": 191,
+      "finalResponse": "已记录您的称呼偏好。有什么我可以为您做的吗，MemoryAuditName-1776603654745？",
+      "eventStreamAvailable": true
+    },
+    "requestId": "30326cbd-f455-477d-a5c8-aa94c075d100"
+  }
+}

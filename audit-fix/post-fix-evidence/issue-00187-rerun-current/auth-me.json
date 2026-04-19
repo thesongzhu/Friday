@@ -1,0 +1,125 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "user": {
+        "id": "admin-001",
+        "email": "admin@friday.dev",
+        "displayName": "Admin",
+        "role": "admin"
+      },
+      "scopes": [
+        "hub.admin",
+        "workflow.read",
+        "workflow.write",
+        "workflow.run",
+        "workflow.conflict.resolve",
+        "satellite.read",
+        "satellite.write",
+        "fleet.read",
+        "security.read",
+        "security.write",
+        "session.read",
+        "session.write",
+        "diagnosis.read",
+        "diagnosis.write",
+        "agent.read",
+        "agent.run",
+        "agent.write",
+        "skill.read",
+        "skill.write",
+        "plugin.read",
+        "plugin.write",
+        "plugin.install",
+        "desktop.read",
+        "desktop.write",
+        "desktop.execute",
+        "marketplace.read",
+        "marketplace.write",
+        "marketplace.admin",
+        "rules.read",
+        "rules.write",
+        "execution.read",
+        "acceptance.read",
+        "retry.read",
+        "playbook.read",
+        "playbook.write"
+      ],
+      "sessionExpiresAt": "2026-04-26T14:53:46.712Z"
+    },
+    "requestId": "38d2d12e-4a55-475b-a5d7-cb2e17e31ede"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/auth/me",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "connection": "keep-alive",
+      "content-length": "781",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Sun, 19 Apr 2026 14:53:46 GMT",
+      "keep-alive": "timeout=5",
+      "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY"
+    },
+    "body": {
+      "ok": true,
+      "data": {
+        "user": {
+          "id": "admin-001",
+          "email": "admin@friday.dev",
+          "displayName": "Admin",
+          "role": "admin"
+        },
+        "scopes": [
+          "hub.admin",
+          "workflow.read",
+          "workflow.write",
+          "workflow.run",
+          "workflow.conflict.resolve",
+          "satellite.read",
+          "satellite.write",
+          "fleet.read",
+          "security.read",
+          "security.write",
+          "session.read",
+          "session.write",
+          "diagnosis.read",
+          "diagnosis.write",
+          "agent.read",
+          "agent.run",
+          "agent.write",
+          "skill.read",
+          "skill.write",
+          "plugin.read",
+          "plugin.write",
+          "plugin.install",
+          "desktop.read",
+          "desktop.write",
+          "desktop.execute",
+          "marketplace.read",
+          "marketplace.write",
+          "marketplace.admin",
+          "rules.read",
+          "rules.write",
+          "execution.read",
+          "acceptance.read",
+          "retry.read",
+          "playbook.read",
+          "playbook.write"
+        ],
+        "sessionExpiresAt": "2026-04-26T14:53:46.712Z"
+      },
+      "requestId": "38d2d12e-4a55-475b-a5d7-cb2e17e31ede"
+    }
+  }
+}

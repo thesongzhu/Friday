@@ -1,0 +1,33 @@
+{
+  "checkedAt": "2026-04-19T13:03:06.194Z",
+  "baseUrl": "http://127.0.0.1:3242",
+  "providerKind": "anthropic",
+  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+  "auditName": "MemoryAuditName-1776603772524",
+  "teachRunId": "e7624ed3-4cd2-49fe-985b-b381c555f9c4",
+  "teachRunStatus": "completed",
+  "learnedFactKeyAfterTeach": "pref:name",
+  "learnedFactPresentAfterTeach": true,
+  "memoryListShowsLearnedFactAfterTeach": true,
+  "memorySearchShowsLearnedFactAfterTeach": true,
+  "naturalRecall": {
+    "runId": "a51788cf-5eb7-4e35-a600-d2427990f9ff",
+    "status": "completed",
+    "responseText": "MemoryAuditName-1776603772524",
+    "usedMemorySearch": true,
+    "memorySearchSummary": "[\n  {\n    \"content\": \"MemoryAuditName-1776603772524\",\n    \"score\": 0.95,\n    \"metadata\": {\n      \"id\": \"learned-fact:pref:name\",\n      \"namespace\": \"preference\",\n      \"tags\": [\n        \"learned\",\n   ",
+    "answeredExpectedName": true
+  },
+  "explicitRecall": {
+    "runId": "d2f9847a-30d5-4f21-a6b3-b1b5cbd517d5",
+    "status": "completed",
+    "responseText": "MemoryAuditName-1776603772524",
+    "usedMemorySearch": true,
+    "memorySearchSummary": "[\n  {\n    \"content\": \"MemoryAuditName-1776603772524\",\n    \"score\": 0.95,\n    \"metadata\": {\n      \"id\": \"learned-fact:pref:name\",\n      \"namespace\": \"preference\",\n      \"tags\": [\n        \"learned\",\n   ",
+    "answeredExpectedName": true
+  },
+  "deleteByKeyStatus": 200,
+  "deletedFactKey": "pref:name",
+  "learnedFactPresentAfterDelete": false,
+  "memoryListShowsLearnedFactAfterDelete": false
+}

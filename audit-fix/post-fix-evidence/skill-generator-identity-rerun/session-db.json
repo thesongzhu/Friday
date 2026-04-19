@@ -1,0 +1,26 @@
+{
+  "key": "b39a046d-0183-4744-9f6b-66bfd4ef5a10",
+  "value_json": {
+    "sessionId": "b39a046d-0183-4744-9f6b-66bfd4ef5a10",
+    "userId": "admin-001",
+    "channel": "assistant",
+    "tenantContext": {
+      "hubId": "admin-001",
+      "userId": "admin-001",
+      "channelKind": "assistant"
+    },
+    "status": "needs_clarification",
+    "goal": "Audit skill generator principal 1776590587635",
+    "specSummary": "{\"goal\":\"Audit skill generator principal 1776590587635\",\"designPattern\":\"reviewer\",\"successTests\":[],\"constraints\":[],\"inputs\":[{\"key\":\"audit_target\",\"type\":\"string\",\"required\":true,\"label\":\"Audit Target\"}],\"outputs\":[{\"key\":\"audit_report\",\"type\":\"string\",\"description\":\"Detailed audit report\"}],\"triggers\":{\"intents\":[],\"phrases\":[]},\"runtimeKind\":null,\"securityNotes\":[],\"externalDependencies\":[]}",
+    "openQuestions": [
+      "What specific aspects or criteria should the audit focus on?",
+      "What are the expected inputs and outputs for this audit?",
+      "Are there any specific triggers or external dependencies involved in this audit?"
+    ],
+    "decisions": [],
+    "createdAt": "2026-04-19T09:23:07.636Z",
+    "updatedAt": "2026-04-19T09:23:10.826Z"
+  },
+  "created_at": "2026-04-19T09:23:07.637Z",
+  "updated_at": "2026-04-19T09:23:10.826Z"
+}

@@ -1,0 +1,16 @@
+{
+  "id": "default",
+  "expert_mode_enabled": 1,
+  "expert_mode_user_ids_json": "[]",
+  "expert_mode_workspace_ids_json": "[]",
+  "expert_mode_environments_json": "[]",
+  "context_inference_allowed": 1,
+  "multi_step_hypothesis_search_allowed": 1,
+  "safe_probe_execution_allowed": 1,
+  "cross_surface_orchestration_allowed": 1,
+  "high_risk_final_approval_required": 1,
+  "production_destructive_action_approval_required": 1,
+  "probe_budget": 6,
+  "time_budget_minutes": 25,
+  "updated_at": "2026-04-19T09:20:08.317Z"
+}

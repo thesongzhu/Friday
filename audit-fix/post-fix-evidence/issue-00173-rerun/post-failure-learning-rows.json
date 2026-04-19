@@ -1,0 +1,26 @@
+{
+  "incidents": [
+    {
+      "incident_id": "679f6a89-2226-422e-bf9e-84d1ca09df77",
+      "run_id": "a381db70-6e15-42a6-9db8-9b39dde9734d",
+      "node_id": "action1",
+      "status": "open",
+      "signature": "a8d996c69e193850",
+      "created_at": "2026-04-19T10:14:56.251Z",
+      "updated_at": "2026-04-19T10:14:56.251Z",
+      "context_json": "{\"category\":\"workflow\",\"severity\":\"medium\",\"message\":\"Workflow failed due to fail_fast policy\",\"workflowId\":\"7e4409b2-0b7c-42cb-870c-8f2834043e97\",\"workflowVersionId\":\"2321c449-66e8-47d8-a8ea-e7ff912d83cf\",\"failedNodeCount\":1,\"source\":\"workflow_runtime\",\"sourceEvent\":\"workflow.run.completed\",\"failureCode\":\"WORKFLOW_FAILED\",\"failureMessage\":\"Workflow failed due to fail_fast policy\",\"failedNodeId\":\"action1\",\"failedNodeAttempt\":1,\"failedNodeStatus\":\"failed\",\"failedNodeRetryable\":false,\"failedNodeErrorCode\":\"NODE_EXECUTION_FAILED\",\"failedNodeErrorMessage\":\"NODE_EXECUTION_FAILED: Step \\\"execute\\\" failed: NODE_EXECUTION_FAILED: skill 'missing-skill-postfix' not found\",\"nodeId\":\"action1\",\"signature\":\"a8d996c69e193850\"}"
+    }
+  ],
+  "actions": [],
+  "diagnoses": [
+    {
+      "id": "da1b5f76-7013-4ab6-a807-f0104f0a43a7",
+      "incident_id": "679f6a89-2226-422e-bf9e-84d1ca09df77",
+      "error_fingerprint": "a8d996c69e193850",
+      "confidence": 0.35,
+      "resolved_at": null,
+      "diagnosis_json": "{\"summary\":\"Diagnosis for workflow error: a8d996c69e193850\",\"rankedCauses\":[{\"cause\":\"Detected workflow failure\",\"confidence\":0.35}],\"suggestedFixes\":[],\"matchedLessonIds\":[],\"recurrenceCount\":1,\"autoDetected\":true,\"autoFixSuppressedReason\":\"workflow runtime reported a deterministic non-retryable node failure\"}",
+      "created_at": "2026-04-19T10:14:56.251Z"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "runId": "773a9d7c-4cad-439e-9ba0-6cd34947e8ae",
+  "startedAt": "2026-04-19T09:58:46.952Z",
+  "finishedAt": "2026-04-19T10:11:40.298Z",
+  "appliedMigrations": [],
+  "mirrorWrites": {
+    "ok": 0,
+    "mismatch": 0,
+    "error": 0
+  },
+  "consistencyChecks": {
+    "ok": 0,
+    "mismatch": 0,
+    "error": 0
+  }
+}

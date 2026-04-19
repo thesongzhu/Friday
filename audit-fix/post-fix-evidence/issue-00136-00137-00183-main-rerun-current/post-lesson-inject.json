@@ -1,0 +1,20 @@
+{
+  "label": "second",
+  "eventId": "second-816453c0-9a1a-4890-943f-85e8ec99155f",
+  "message": "issue-00136-00137-00183-1776620351",
+  "signature": "d81e248a038aaf5b",
+  "incidentsCreated": 1,
+  "diagnosisCreated": 1,
+  "incidentId": "368541cc-569f-4e36-8c59-547e23261a41",
+  "openIncidentId": "368541cc-569f-4e36-8c59-547e23261a41",
+  "latestPlannedActionId": "8a42856a-3dc9-4e89-8ae5-83a0a71ef422",
+  "latestPlannedActionTitle": "Auto-fix: retry workflow",
+  "lessonTitle": "Auto-fixed: retry workflow",
+  "counts": {
+    "incidents": 2,
+    "openIncidents": 1,
+    "diagnoses": 2,
+    "actions": 1,
+    "plannedActions": 1
+  }
+}

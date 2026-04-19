@@ -1,0 +1,13 @@
+[
+  {
+    "id": "2e64ef94-01bb-4849-b23a-52a5d9df8679",
+    "namespace": "agent",
+    "key": "2e64ef94-01bb-4849-b23a-52a5d9df8679",
+    "value_json": "ISSUE-00150-MARKER-1776622470250",
+    "content_text": "ISSUE-00150-MARKER-1776622470250",
+    "source": "agent",
+    "tags_json": "[\"issue-00150\",\"audit\"]",
+    "created_at": "2026-04-19T18:14:33.068Z",
+    "updated_at": "2026-04-19T18:14:33.068Z"
+  }
+]

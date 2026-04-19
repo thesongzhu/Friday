@@ -1,0 +1,11 @@
+{
+  "checkedAt": "2026-04-19T13:35:55.682Z",
+  "modelRoutingStatus": 200,
+  "modelRoutingDefaultProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+  "providerHealthStatus": 200,
+  "providerHealthHasPrimary": true,
+  "legacyActiveStatus": 404,
+  "legacyRoutingStatus": 404,
+  "legacyRoutesAbsent": true,
+  "canonicalSurfaceHealthy": true
+}

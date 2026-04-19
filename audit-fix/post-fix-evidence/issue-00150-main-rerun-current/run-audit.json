@@ -1,0 +1,288 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/agent/runs/f77e9f68-16d4-4fad-a054-f54c00b0c4d9/audit",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+        "events": [
+          {
+            "seq": 1,
+            "type": "agent.run.started",
+            "timestamp": "2026-04-19T18:14:30.287Z",
+            "payload": {
+              "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+              "task": "Persist and recall the marker below.\nUse memory_store exactly once with:\n- namespace: \"agent\"\n- content: \"ISSUE-00150-MARKER-1776622470250\"\n- tags: [\"issue-00150\", \"audit\"]\nThen use memory_search exactly once with:\n- namespace: \"agent\"\n- query: \"ISSUE-00150-MARKER-1776622470250\"\n- limit: 5\nIf the search result contains \"ISSUE-00150-MARKER-1776622470250\", reply with exactly: FOUND ISSUE-00150-MARKER-1776622470250\nOtherwise reply with exactly: MISSING ISSUE-00150-MARKER-1776622470250\nDo not use any other tools and do not add any extra words.",
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "taskProfile": {
+                "id": "default",
+                "modelSelectionSource": "route_default"
+              }
+            }
+          },
+          {
+            "seq": 9,
+            "type": "agent.run.tool_start",
+            "timestamp": "2026-04-19T18:14:36.610Z",
+            "payload": {
+              "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+              "toolName": "memory_store",
+              "toolCallId": "call_VcVck2FrjvgssbwrwoLv4I10",
+              "params": {
+                "content": "ISSUE-00150-MARKER-1776622470250",
+                "namespace": "agent",
+                "tags": [
+                  "issue-00150",
+                  "audit"
+                ],
+                "expiresAt": "9999-12-31T23:59:59Z"
+              }
+            }
+          },
+          {
+            "seq": 10,
+            "type": "agent.run.tool_start",
+            "timestamp": "2026-04-19T18:14:36.611Z",
+            "payload": {
+              "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+              "toolName": "memory_search",
+              "toolCallId": "call_MoBlS2pr96Y0OHPm6yzSEIR5",
+              "params": {
+                "query": "ISSUE-00150-MARKER-1776622470250",
+                "namespace": "agent",
+                "limit": 5
+              }
+            }
+          },
+          {
+            "seq": 11,
+            "type": "agent.run.tool_end",
+            "timestamp": "2026-04-19T18:14:36.611Z",
+            "payload": {
+              "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+              "toolName": "memory_store",
+              "toolCallId": "call_VcVck2FrjvgssbwrwoLv4I10",
+              "durationMs": 5,
+              "isError": false,
+              "summary": "{\n  \"itemId\": \"2e64ef94-01bb-4849-b23a-52a5d9df8679\",\n  \"stored\": true\n}",
+              "routeId": "agent.execute.tool",
+              "correlationId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+              "toolCallSummary": {
+                "toolName": "memory_store",
+                "argKeys": [
+                  "content",
+                  "namespace",
+                  "tags",
+                  "expiresAt"
+                ],
+                "resultIsError": false,
+                "resultLengthChars": 72,
+                "outputShape": "json",
+                "toolCategory": "other",
+                "turnIndex": 0,
+                "toolIndex": 0
+              }
+            }
+          },
+          {
+            "seq": 12,
+            "type": "agent.run.tool_end",
+            "timestamp": "2026-04-19T18:14:36.611Z",
+            "payload": {
+              "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+              "toolName": "memory_search",
+              "toolCallId": "call_MoBlS2pr96Y0OHPm6yzSEIR5",
+              "durationMs": 4,
+              "isError": false,
+              "summary": "[\n  {\n    \"content\": \"ISSUE-00150-MARKER-1776622470250\",\n    \"score\": 0.1,\n    \"metadata\": {\n      \"id\": \"2e64ef94-01bb-4849-b23a-52a5d9df8679\",\n      \"namespace\": \"agent\",\n      \"tags\": [\n        \"is",
+              "routeId": "agent.execute.tool",
+              "correlationId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+              "toolCallSummary": {
+                "toolName": "memory_search",
+                "argKeys": [
+                  "query",
+                  "namespace",
+                  "limit"
+                ],
+                "resultIsError": false,
+                "resultLengthChars": 319,
+                "outputShape": "json",
+                "toolCategory": "other",
+                "turnIndex": 0,
+                "toolIndex": 0
+              }
+            }
+          },
+          {
+            "seq": 13,
+            "type": "agent.run.completed",
+            "timestamp": "2026-04-19T18:14:36.614Z",
+            "payload": {
+              "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+              "durationMs": 6330,
+              "toolCallCount": 2,
+              "testsPassed": true,
+              "artifacts": [
+                {
+                  "type": "run_record",
+                  "path": ".friday/agent-runs/03c2ac3c-1318-47d6-9105-e0ba9ca37705/run.json"
+                },
+                {
+                  "type": "run_record",
+                  "path": ".friday/agent-runs/f77e9f68-16d4-4fad-a054-f54c00b0c4d9/run.json"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "requestId": "73281a86-4012-4ee6-a175-1178e48bc004"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+      "events": [
+        {
+          "seq": 1,
+          "type": "agent.run.started",
+          "timestamp": "2026-04-19T18:14:30.287Z",
+          "payload": {
+            "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+            "task": "Persist and recall the marker below.\nUse memory_store exactly once with:\n- namespace: \"agent\"\n- content: \"ISSUE-00150-MARKER-1776622470250\"\n- tags: [\"issue-00150\", \"audit\"]\nThen use memory_search exactly once with:\n- namespace: \"agent\"\n- query: \"ISSUE-00150-MARKER-1776622470250\"\n- limit: 5\nIf the search result contains \"ISSUE-00150-MARKER-1776622470250\", reply with exactly: FOUND ISSUE-00150-MARKER-1776622470250\nOtherwise reply with exactly: MISSING ISSUE-00150-MARKER-1776622470250\nDo not use any other tools and do not add any extra words.",
+            "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfile": {
+              "id": "default",
+              "modelSelectionSource": "route_default"
+            }
+          }
+        },
+        {
+          "seq": 9,
+          "type": "agent.run.tool_start",
+          "timestamp": "2026-04-19T18:14:36.610Z",
+          "payload": {
+            "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+            "toolName": "memory_store",
+            "toolCallId": "call_VcVck2FrjvgssbwrwoLv4I10",
+            "params": {
+              "content": "ISSUE-00150-MARKER-1776622470250",
+              "namespace": "agent",
+              "tags": [
+                "issue-00150",
+                "audit"
+              ],
+              "expiresAt": "9999-12-31T23:59:59Z"
+            }
+          }
+        },
+        {
+          "seq": 10,
+          "type": "agent.run.tool_start",
+          "timestamp": "2026-04-19T18:14:36.611Z",
+          "payload": {
+            "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+            "toolName": "memory_search",
+            "toolCallId": "call_MoBlS2pr96Y0OHPm6yzSEIR5",
+            "params": {
+              "query": "ISSUE-00150-MARKER-1776622470250",
+              "namespace": "agent",
+              "limit": 5
+            }
+          }
+        },
+        {
+          "seq": 11,
+          "type": "agent.run.tool_end",
+          "timestamp": "2026-04-19T18:14:36.611Z",
+          "payload": {
+            "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+            "toolName": "memory_store",
+            "toolCallId": "call_VcVck2FrjvgssbwrwoLv4I10",
+            "durationMs": 5,
+            "isError": false,
+            "summary": "{\n  \"itemId\": \"2e64ef94-01bb-4849-b23a-52a5d9df8679\",\n  \"stored\": true\n}",
+            "routeId": "agent.execute.tool",
+            "correlationId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+            "toolCallSummary": {
+              "toolName": "memory_store",
+              "argKeys": [
+                "content",
+                "namespace",
+                "tags",
+                "expiresAt"
+              ],
+              "resultIsError": false,
+              "resultLengthChars": 72,
+              "outputShape": "json",
+              "toolCategory": "other",
+              "turnIndex": 0,
+              "toolIndex": 0
+            }
+          }
+        },
+        {
+          "seq": 12,
+          "type": "agent.run.tool_end",
+          "timestamp": "2026-04-19T18:14:36.611Z",
+          "payload": {
+            "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+            "toolName": "memory_search",
+            "toolCallId": "call_MoBlS2pr96Y0OHPm6yzSEIR5",
+            "durationMs": 4,
+            "isError": false,
+            "summary": "[\n  {\n    \"content\": \"ISSUE-00150-MARKER-1776622470250\",\n    \"score\": 0.1,\n    \"metadata\": {\n      \"id\": \"2e64ef94-01bb-4849-b23a-52a5d9df8679\",\n      \"namespace\": \"agent\",\n      \"tags\": [\n        \"is",
+            "routeId": "agent.execute.tool",
+            "correlationId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+            "toolCallSummary": {
+              "toolName": "memory_search",
+              "argKeys": [
+                "query",
+                "namespace",
+                "limit"
+              ],
+              "resultIsError": false,
+              "resultLengthChars": 319,
+              "outputShape": "json",
+              "toolCategory": "other",
+              "turnIndex": 0,
+              "toolIndex": 0
+            }
+          }
+        },
+        {
+          "seq": 13,
+          "type": "agent.run.completed",
+          "timestamp": "2026-04-19T18:14:36.614Z",
+          "payload": {
+            "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+            "durationMs": 6330,
+            "toolCallCount": 2,
+            "testsPassed": true,
+            "artifacts": [
+              {
+                "type": "run_record",
+                "path": ".friday/agent-runs/03c2ac3c-1318-47d6-9105-e0ba9ca37705/run.json"
+              },
+              {
+                "type": "run_record",
+                "path": ".friday/agent-runs/f77e9f68-16d4-4fad-a054-f54c00b0c4d9/run.json"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "requestId": "73281a86-4012-4ee6-a175-1178e48bc004"
+  }
+}

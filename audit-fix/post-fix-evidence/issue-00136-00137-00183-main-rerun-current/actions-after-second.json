@@ -1,0 +1,98 @@
+{
+  "ok": true,
+  "data": {
+    "items": [
+      {
+        "action": {
+          "actionId": "8a42856a-3dc9-4e89-8ae5-83a0a71ef422",
+          "incidentId": "368541cc-569f-4e36-8c59-547e23261a41",
+          "userId": "admin-001",
+          "riskTier": 0,
+          "plan": {
+            "title": "Auto-fix: retry workflow",
+            "summary": "Retry the workflow step",
+            "steps": [
+              {
+                "stepId": "4e91a723-9bbd-4419-8a56-2f5755f5ddea",
+                "kind": "retry_node",
+                "target": "workflow",
+                "payload": {
+                  "incidentId": "368541cc-569f-4e36-8c59-547e23261a41",
+                  "category": "workflow",
+                  "signature": "d81e248a038aaf5b",
+                  "lessonId": "c2cc4704-a6b0-4567-88c6-6388acd6dc1c",
+                  "fix": "Retry the workflow step",
+                  "source": "manual_resolved",
+                  "resolvedBy": "admin-001",
+                  "verificationSummary": "Operator confirmed the retry path works.",
+                  "rejectedActionIds": []
+                },
+                "verify": {
+                  "method": "error_absent",
+                  "timeoutMs": 5000
+                }
+              }
+            ],
+            "evidence": {
+              "fingerprint": "d81e248a038aaf5b",
+              "matchedLessonIds": [
+                "c2cc4704-a6b0-4567-88c6-6388acd6dc1c"
+              ],
+              "diagnosisId": "6e328e5a-ad4e-48e3-98cb-05367d32e4dd",
+              "recurrenceCount": 2
+            }
+          },
+          "status": "planned",
+          "outcome": null,
+          "createdAt": "2026-04-19T17:39:11.980Z",
+          "updatedAt": "2026-04-19T17:39:11.980Z"
+        },
+        "approval": null,
+        "summary": {
+          "actionId": "8a42856a-3dc9-4e89-8ae5-83a0a71ef422",
+          "incidentId": "368541cc-569f-4e36-8c59-547e23261a41",
+          "title": "Auto-fix: retry workflow",
+          "summary": "Retry the workflow step",
+          "riskTier": 0,
+          "status": "planned",
+          "outcome": null,
+          "requiresApproval": false,
+          "autoApplyAllowed": true,
+          "rollbackPlanAvailable": false,
+          "createdAt": "2026-04-19T17:39:11.980Z",
+          "updatedAt": "2026-04-19T17:39:11.980Z"
+        },
+        "evidence": {
+          "rootCauseSummary": "Known workflow timeout",
+          "selectedPlan": {
+            "title": "Auto-fix: retry workflow",
+            "summary": "Retry the workflow step",
+            "stepCount": 1,
+            "rollbackPlanAvailable": false
+          },
+          "riskTier": 0,
+          "executionResult": {
+            "status": "planned",
+            "outcome": null
+          },
+          "rollbackResult": {
+            "available": false,
+            "rollbackAttempted": false,
+            "rollbackSucceeded": false
+          },
+          "acceptanceResult": {
+            "passed": false,
+            "reason": "Mitigation has not completed acceptance checks"
+          },
+          "extractedLesson": {
+            "id": "c2cc4704-a6b0-4567-88c6-6388acd6dc1c",
+            "title": "Auto-fixed: retry workflow",
+            "cause": "Known workflow timeout",
+            "fix": "Retry the workflow step"
+          }
+        }
+      }
+    ]
+  },
+  "requestId": "aa00445e-56b0-4e79-92ec-8fbb9c5610ad"
+}

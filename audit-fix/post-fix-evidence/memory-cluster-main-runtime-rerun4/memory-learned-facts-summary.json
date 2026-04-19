@@ -1,0 +1,33 @@
+{
+  "checkedAt": "2026-04-19T12:07:53.386Z",
+  "baseUrl": "http://127.0.0.1:3241",
+  "providerKind": "openai",
+  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+  "auditName": "MemoryAuditName-1776600445739",
+  "teachRunId": "4db6108b-9947-4bf7-98c4-8d98faca1d9c",
+  "teachRunStatus": "completed",
+  "learnedFactKeyAfterTeach": "pref:name",
+  "learnedFactPresentAfterTeach": true,
+  "memoryListShowsLearnedFactAfterTeach": true,
+  "memorySearchShowsLearnedFactAfterTeach": true,
+  "naturalRecall": {
+    "runId": "b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c",
+    "status": "failed",
+    "responseText": "",
+    "usedMemorySearch": false,
+    "memorySearchSummary": null,
+    "answeredExpectedName": false
+  },
+  "explicitRecall": {
+    "runId": "97044a7e-bb2a-4473-a755-cd9f9d105bca",
+    "status": "completed",
+    "responseText": "User",
+    "usedMemorySearch": true,
+    "memorySearchSummary": "[]",
+    "answeredExpectedName": false
+  },
+  "deleteByKeyStatus": 200,
+  "deletedFactKey": "pref:name",
+  "learnedFactPresentAfterDelete": false,
+  "memoryListShowsLearnedFactAfterDelete": false
+}

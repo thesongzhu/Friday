@@ -1,0 +1,19 @@
+{
+  "url": "http://127.0.0.1:3241/v1/system/intents",
+  "method": "POST",
+  "status": 400,
+  "request": {
+    "idempotencyKey": "ISSUE-00176-FOCUS-1",
+    "action": "focus",
+    "appIdentifier": "Finder\nbeep"
+  },
+  "response": {
+    "ok": false,
+    "error": {
+      "code": "VALIDATION_ERROR",
+      "message": "Unsafe AppleScript app identifier: line breaks are not allowed",
+      "retryable": false
+    },
+    "requestId": "e1580284-1b97-4935-a24e-144090ab531e"
+  }
+}

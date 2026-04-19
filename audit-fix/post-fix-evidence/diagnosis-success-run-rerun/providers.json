@@ -1,0 +1,94 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "items": [
+        {
+          "id": "80fcb4e5-7ca8-4b6d-9c26-985fc08ee0a6",
+          "kind": "openai",
+          "name": "openai (auto-detected)",
+          "baseUrl": "https://api.openai.com",
+          "enabled": true,
+          "defaultModel": "gpt-4o",
+          "config": {
+            "api": "openai-responses",
+            "authMode": "bearer-token",
+            "backendKind": "http",
+            "deploymentKind": "hosted",
+            "regionTag": "global",
+            "keySource": {
+              "kind": "env-ref",
+              "envVar": "OPENAI_API_KEY"
+            },
+            "supportedModels": [
+              "gpt-4o"
+            ],
+            "httpConfig": {
+              "headersPolicy": "custom"
+            },
+            "validation": {
+              "status": "never"
+            }
+          },
+          "compatibilityStatus": "unknown",
+          "promotionChannel": "none",
+          "createdAt": "2026-04-19T09:06:51.234Z",
+          "updatedAt": "2026-04-19T09:06:51.234Z"
+        }
+      ]
+    },
+    "requestId": "29871708-2250-4e47-9052-c77c97db0e6a"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/providers",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "items": [
+          {
+            "id": "80fcb4e5-7ca8-4b6d-9c26-985fc08ee0a6",
+            "kind": "openai",
+            "name": "openai (auto-detected)",
+            "baseUrl": "https://api.openai.com",
+            "enabled": true,
+            "defaultModel": "gpt-4o",
+            "config": {
+              "api": "openai-responses",
+              "authMode": "bearer-token",
+              "backendKind": "http",
+              "deploymentKind": "hosted",
+              "regionTag": "global",
+              "keySource": {
+                "kind": "env-ref",
+                "envVar": "OPENAI_API_KEY"
+              },
+              "supportedModels": [
+                "gpt-4o"
+              ],
+              "httpConfig": {
+                "headersPolicy": "custom"
+              },
+              "validation": {
+                "status": "never"
+              }
+            },
+            "compatibilityStatus": "unknown",
+            "promotionChannel": "none",
+            "createdAt": "2026-04-19T09:06:51.234Z",
+            "updatedAt": "2026-04-19T09:06:51.234Z"
+          }
+        ]
+      },
+      "requestId": "29871708-2250-4e47-9052-c77c97db0e6a"
+    }
+  }
+}

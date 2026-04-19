@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3242/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+      "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "42207ad6-5360-469f-98db-8c19712c27d4",
+        "status": "failed",
+        "response": "All providers failed (1): anthropic/claude-sonnet-4-20250514: Environment variable 'FRIDAY_ANTHROPIC_API_KEY' is not set. code=PROVIDER_ENV_VAR_MISSING",
+        "toolCallCount": 0,
+        "durationMs": 258,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "finalResponse": "All providers failed (1): anthropic/claude-sonnet-4-20250514: Environment variable 'FRIDAY_ANTHROPIC_API_KEY' is not set. code=PROVIDER_ENV_VAR_MISSING",
+        "eventStreamAvailable": true
+      },
+      "requestId": "365fa671-0cc4-4d47-b3eb-5d1b3d3319d6"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "42207ad6-5360-469f-98db-8c19712c27d4",
+      "status": "failed",
+      "response": "All providers failed (1): anthropic/claude-sonnet-4-20250514: Environment variable 'FRIDAY_ANTHROPIC_API_KEY' is not set. code=PROVIDER_ENV_VAR_MISSING",
+      "toolCallCount": 0,
+      "durationMs": 258,
+      "usageInput": 0,
+      "usageOutput": 0,
+      "finalResponse": "All providers failed (1): anthropic/claude-sonnet-4-20250514: Environment variable 'FRIDAY_ANTHROPIC_API_KEY' is not set. code=PROVIDER_ENV_VAR_MISSING",
+      "eventStreamAvailable": true
+    },
+    "requestId": "365fa671-0cc4-4d47-b3eb-5d1b3d3319d6"
+  }
+}

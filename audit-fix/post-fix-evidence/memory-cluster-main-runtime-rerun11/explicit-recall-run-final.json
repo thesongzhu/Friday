@@ -1,0 +1,194 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/agent/runs/5930582f-38eb-42ca-bd6c-e17cfafd7ed7",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "run": {
+          "id": "5930582f-38eb-42ca-bd6c-e17cfafd7ed7",
+          "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+          "status": "failed",
+          "sessionKey": "agent:run:5930582f-38eb-42ca-bd6c-e17cfafd7ed7",
+          "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+          "attempt": 0,
+          "maxAttempts": 3,
+          "artifacts": [
+            {
+              "type": "run_record",
+              "path": ".friday/agent-runs/38c8308a-e369-43d0-a5b1-458d0e0fb61c/run.json"
+            },
+            {
+              "type": "run_record",
+              "path": ".friday/agent-runs/5930582f-38eb-42ca-bd6c-e17cfafd7ed7/run.json"
+            }
+          ],
+          "testResults": [
+            {
+              "strategy": "llm_eval",
+              "passed": true,
+              "errors": [],
+              "durationMs": 0
+            }
+          ],
+          "createdAt": "2026-04-19T12:40:38.977Z",
+          "startedAt": "2026-04-19T12:40:38.979Z",
+          "completedAt": "2026-04-19T12:40:44.282Z",
+          "durationMs": 5305,
+          "usageInput": 0,
+          "usageOutput": 0,
+          "planReview": {
+            "plan": {
+              "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+              "stepCount": 1,
+              "description": "Planning approach for: Use memory_search if needed. What should you call me? Reply with only the name."
+            },
+            "decision": {
+              "approved": true,
+              "mode": "off",
+              "reason": "No review required",
+              "reviewedAt": "2026-04-19T12:40:38.980Z"
+            }
+          },
+          "actualExecution": {
+            "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfileId": "deterministic",
+            "modelSelectionSource": "inherited",
+            "finalFailureReason": "Validation criteria not met",
+            "turns": [
+              {
+                "inputTokens": 0,
+                "outputTokens": 0
+              }
+            ]
+          },
+          "responseText": "Validation criteria not met",
+          "summary": "Validation criteria not met",
+          "artifactDir": ".friday/agent-runs/5930582f-38eb-42ca-bd6c-e17cfafd7ed7",
+          "taskProfile": {
+            "id": "default",
+            "label": "Balanced",
+            "description": "General-purpose execution profile for standard assistant turns.",
+            "reasoningEffort": "medium"
+          },
+          "rollbackAvailable": false,
+          "health": {
+            "state": "failed",
+            "rollbackAvailable": false,
+            "reasonCodes": [
+              "failed"
+            ]
+          },
+          "contextSummary": {
+            "taskProfileId": "default",
+            "taskProfileLabel": "Balanced",
+            "dominantContextKinds": [],
+            "learningAdjusted": false,
+            "fallbackAttemptCount": 0,
+            "blockedToolCount": 0,
+            "modelSelectionSource": "inherited"
+          }
+        }
+      },
+      "requestId": "40c5d896-52bd-493b-b95e-999cc03be714"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "run": {
+        "id": "5930582f-38eb-42ca-bd6c-e17cfafd7ed7",
+        "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+        "status": "failed",
+        "sessionKey": "agent:run:5930582f-38eb-42ca-bd6c-e17cfafd7ed7",
+        "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+        "attempt": 0,
+        "maxAttempts": 3,
+        "artifacts": [
+          {
+            "type": "run_record",
+            "path": ".friday/agent-runs/38c8308a-e369-43d0-a5b1-458d0e0fb61c/run.json"
+          },
+          {
+            "type": "run_record",
+            "path": ".friday/agent-runs/5930582f-38eb-42ca-bd6c-e17cfafd7ed7/run.json"
+          }
+        ],
+        "testResults": [
+          {
+            "strategy": "llm_eval",
+            "passed": true,
+            "errors": [],
+            "durationMs": 0
+          }
+        ],
+        "createdAt": "2026-04-19T12:40:38.977Z",
+        "startedAt": "2026-04-19T12:40:38.979Z",
+        "completedAt": "2026-04-19T12:40:44.282Z",
+        "durationMs": 5305,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "planReview": {
+          "plan": {
+            "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+            "stepCount": 1,
+            "description": "Planning approach for: Use memory_search if needed. What should you call me? Reply with only the name."
+          },
+          "decision": {
+            "approved": true,
+            "mode": "off",
+            "reason": "No review required",
+            "reviewedAt": "2026-04-19T12:40:38.980Z"
+          }
+        },
+        "actualExecution": {
+          "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+          "taskProfileId": "deterministic",
+          "modelSelectionSource": "inherited",
+          "finalFailureReason": "Validation criteria not met",
+          "turns": [
+            {
+              "inputTokens": 0,
+              "outputTokens": 0
+            }
+          ]
+        },
+        "responseText": "Validation criteria not met",
+        "summary": "Validation criteria not met",
+        "artifactDir": ".friday/agent-runs/5930582f-38eb-42ca-bd6c-e17cfafd7ed7",
+        "taskProfile": {
+          "id": "default",
+          "label": "Balanced",
+          "description": "General-purpose execution profile for standard assistant turns.",
+          "reasoningEffort": "medium"
+        },
+        "rollbackAvailable": false,
+        "health": {
+          "state": "failed",
+          "rollbackAvailable": false,
+          "reasonCodes": [
+            "failed"
+          ]
+        },
+        "contextSummary": {
+          "taskProfileId": "default",
+          "taskProfileLabel": "Balanced",
+          "dominantContextKinds": [],
+          "learningAdjusted": false,
+          "fallbackAttemptCount": 0,
+          "blockedToolCount": 0,
+          "modelSelectionSource": "inherited"
+        }
+      }
+    },
+    "requestId": "40c5d896-52bd-493b-b95e-999cc03be714"
+  }
+}

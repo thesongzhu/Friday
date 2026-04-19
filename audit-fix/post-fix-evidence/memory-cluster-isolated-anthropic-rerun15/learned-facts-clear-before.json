@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "DELETE",
+    "url": "http://127.0.0.1:3242/v1/uix/learned-facts",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "deletedCount": 0
+      },
+      "requestId": "e7161642-8902-437d-8852-57867edaa2ad"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "deletedCount": 0
+    },
+    "requestId": "e7161642-8902-437d-8852-57867edaa2ad"
+  }
+}

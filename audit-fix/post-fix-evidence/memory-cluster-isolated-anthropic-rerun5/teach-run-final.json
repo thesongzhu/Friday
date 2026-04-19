@@ -1,0 +1,252 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3242/v1/agent/runs/0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "run": {
+          "id": "0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+          "task": "Call me MemoryAuditName-1776600872035.",
+          "status": "failed",
+          "sessionKey": "agent:run:0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+          "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+          "attempt": 0,
+          "maxAttempts": 3,
+          "artifacts": [
+            {
+              "type": "run_record",
+              "path": ".friday/agent-runs/0a7ed6a9-bc1c-4d35-bda5-8f686019f27d/run.json"
+            }
+          ],
+          "testResults": [
+            {
+              "strategy": "llm_eval",
+              "passed": true,
+              "errors": [],
+              "durationMs": 0
+            }
+          ],
+          "errorCode": "AGENT_LLM_ERROR",
+          "errorMessage": "All providers failed (1): anthropic/claude-sonnet-4-20250514: Environment variable 'FRIDAY_ANTHROPIC_API_KEY' is not set. code=PROVIDER_ENV_VAR_MISSING",
+          "createdAt": "2026-04-19T12:14:32.082Z",
+          "startedAt": "2026-04-19T12:14:32.093Z",
+          "completedAt": "2026-04-19T12:14:32.103Z",
+          "durationMs": 22,
+          "usageInput": 0,
+          "usageOutput": 0,
+          "planReview": {
+            "plan": {
+              "task": "Call me MemoryAuditName-1776600872035.",
+              "stepCount": 1,
+              "description": "Planning approach for: Call me MemoryAuditName-1776600872035."
+            },
+            "decision": {
+              "approved": true,
+              "mode": "off",
+              "reason": "No review required",
+              "reviewedAt": "2026-04-19T12:14:32.093Z"
+            }
+          },
+          "actualExecution": {
+            "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "taskProfileId": "default",
+            "modelSelectionSource": "route_default",
+            "finalFailureReason": "All providers failed (1): anthropic/claude-sonnet-4-20250514: Environment variable 'FRIDAY_ANTHROPIC_API_KEY' is not set. code=PROVIDER_ENV_VAR_MISSING",
+            "turns": [
+              {
+                "inputTokens": 0,
+                "outputTokens": 0
+              }
+            ]
+          },
+          "responseText": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "summary": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "artifactDir": ".friday/agent-runs/0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+          "contextCostSummary": {
+            "totalEstimatedChars": 6983,
+            "components": [
+              {
+                "kind": "workspace_context",
+                "estimatedChars": 4832,
+                "count": 3,
+                "metadata": {
+                  "pathRuleCount": 0,
+                  "candidatePaths": []
+                }
+              },
+              {
+                "kind": "starter_skills",
+                "estimatedChars": 2055,
+                "count": 8
+              },
+              {
+                "kind": "subagents",
+                "estimatedChars": 96,
+                "count": 1,
+                "metadata": {
+                  "enabled": true
+                }
+              }
+            ]
+          },
+          "taskProfile": {
+            "id": "default",
+            "label": "Balanced",
+            "description": "General-purpose execution profile for standard assistant turns.",
+            "reasoningEffort": "medium"
+          },
+          "rollbackAvailable": false,
+          "health": {
+            "state": "failed",
+            "rollbackAvailable": false,
+            "reasonCodes": [
+              "failed"
+            ]
+          },
+          "contextSummary": {
+            "taskProfileId": "default",
+            "taskProfileLabel": "Balanced",
+            "totalEstimatedChars": 6983,
+            "dominantContextKinds": [
+              "workspace_context",
+              "starter_skills"
+            ],
+            "learningAdjusted": false,
+            "fallbackAttemptCount": 0,
+            "blockedToolCount": 0,
+            "modelSelectionSource": "route_default"
+          }
+        }
+      },
+      "requestId": "0608b6c1-c1b1-48e9-9073-fb614b6b91ce"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "run": {
+        "id": "0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+        "task": "Call me MemoryAuditName-1776600872035.",
+        "status": "failed",
+        "sessionKey": "agent:run:0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "attempt": 0,
+        "maxAttempts": 3,
+        "artifacts": [
+          {
+            "type": "run_record",
+            "path": ".friday/agent-runs/0a7ed6a9-bc1c-4d35-bda5-8f686019f27d/run.json"
+          }
+        ],
+        "testResults": [
+          {
+            "strategy": "llm_eval",
+            "passed": true,
+            "errors": [],
+            "durationMs": 0
+          }
+        ],
+        "errorCode": "AGENT_LLM_ERROR",
+        "errorMessage": "All providers failed (1): anthropic/claude-sonnet-4-20250514: Environment variable 'FRIDAY_ANTHROPIC_API_KEY' is not set. code=PROVIDER_ENV_VAR_MISSING",
+        "createdAt": "2026-04-19T12:14:32.082Z",
+        "startedAt": "2026-04-19T12:14:32.093Z",
+        "completedAt": "2026-04-19T12:14:32.103Z",
+        "durationMs": 22,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "planReview": {
+          "plan": {
+            "task": "Call me MemoryAuditName-1776600872035.",
+            "stepCount": 1,
+            "description": "Planning approach for: Call me MemoryAuditName-1776600872035."
+          },
+          "decision": {
+            "approved": true,
+            "mode": "off",
+            "reason": "No review required",
+            "reviewedAt": "2026-04-19T12:14:32.093Z"
+          }
+        },
+        "actualExecution": {
+          "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+          "taskProfileId": "default",
+          "modelSelectionSource": "route_default",
+          "finalFailureReason": "All providers failed (1): anthropic/claude-sonnet-4-20250514: Environment variable 'FRIDAY_ANTHROPIC_API_KEY' is not set. code=PROVIDER_ENV_VAR_MISSING",
+          "turns": [
+            {
+              "inputTokens": 0,
+              "outputTokens": 0
+            }
+          ]
+        },
+        "responseText": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "summary": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "artifactDir": ".friday/agent-runs/0a7ed6a9-bc1c-4d35-bda5-8f686019f27d",
+        "contextCostSummary": {
+          "totalEstimatedChars": 6983,
+          "components": [
+            {
+              "kind": "workspace_context",
+              "estimatedChars": 4832,
+              "count": 3,
+              "metadata": {
+                "pathRuleCount": 0,
+                "candidatePaths": []
+              }
+            },
+            {
+              "kind": "starter_skills",
+              "estimatedChars": 2055,
+              "count": 8
+            },
+            {
+              "kind": "subagents",
+              "estimatedChars": 96,
+              "count": 1,
+              "metadata": {
+                "enabled": true
+              }
+            }
+          ]
+        },
+        "taskProfile": {
+          "id": "default",
+          "label": "Balanced",
+          "description": "General-purpose execution profile for standard assistant turns.",
+          "reasoningEffort": "medium"
+        },
+        "rollbackAvailable": false,
+        "health": {
+          "state": "failed",
+          "rollbackAvailable": false,
+          "reasonCodes": [
+            "failed"
+          ]
+        },
+        "contextSummary": {
+          "taskProfileId": "default",
+          "taskProfileLabel": "Balanced",
+          "totalEstimatedChars": 6983,
+          "dominantContextKinds": [
+            "workspace_context",
+            "starter_skills"
+          ],
+          "learningAdjusted": false,
+          "fallbackAttemptCount": 0,
+          "blockedToolCount": 0,
+          "modelSelectionSource": "route_default"
+        }
+      }
+    },
+    "requestId": "0608b6c1-c1b1-48e9-9073-fb614b6b91ce"
+  }
+}

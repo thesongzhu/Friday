@@ -1,0 +1,198 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "workflow": {
+        "id": "75dd728b-5372-4b26-a996-972e3305009e",
+        "slug": "wf-retry-diag-1776607159715",
+        "name": "Workflow Retry Diagnostics Probe",
+        "tags": [],
+        "latestVersionNumber": 1,
+        "isArchived": false,
+        "revision": 1,
+        "etag": "097c5aa2-63e2-4f",
+        "compatibilityStatus": "unknown",
+        "promotionChannel": "none",
+        "createdAt": "2026-04-19T13:59:19.716Z",
+        "updatedAt": "2026-04-19T13:59:19.716Z"
+      },
+      "version": {
+        "id": "306265ed-aaca-4a8c-a45d-ee423325727e",
+        "workflowId": "75dd728b-5372-4b26-a996-972e3305009e",
+        "versionNumber": 1,
+        "checksum": "d70453958f1ca754f100ba8652405851d045ed6db6bc3fde9f30227bcedd1ccf",
+        "graphJson": {
+          "schemaVersion": "2.0",
+          "workflowId": "wf-retry-diag-placeholder",
+          "workflowVersionId": "wv-retry-diag-placeholder",
+          "sourceSpecSchemaVersion": "1.0",
+          "graph": {
+            "variables": {
+              "runTimeoutMs": 60000
+            },
+            "nodes": [
+              {
+                "id": "trigger",
+                "type": "trigger",
+                "label": "Trigger",
+                "config": {}
+              },
+              {
+                "id": "missing-skill-action",
+                "type": "action",
+                "label": "Missing Skill Action",
+                "config": {
+                  "skillId": "missing-skill-issue-00124",
+                  "args": {}
+                }
+              }
+            ],
+            "edges": [
+              {
+                "id": "e1",
+                "sourceNodeId": "trigger",
+                "targetNodeId": "missing-skill-action"
+              }
+            ]
+          },
+          "failurePolicy": {
+            "onFailure": "fail_fast",
+            "notifyUser": false
+          },
+          "tests": [],
+          "checksum": "placeholder"
+        },
+        "isPublished": false,
+        "createdAt": "2026-04-19T13:59:19.716Z",
+        "updatedAt": "2026-04-19T13:59:19.716Z"
+      }
+    },
+    "requestId": "b677d81a-c691-4260-a828-84d32ee35dfb"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/workflows",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "slug": "wf-retry-diag-1776607159715",
+      "name": "Workflow Retry Diagnostics Probe",
+      "graph": {
+        "schemaVersion": "2.0",
+        "workflowId": "wf-retry-diag-placeholder",
+        "workflowVersionId": "wv-retry-diag-placeholder",
+        "sourceSpecSchemaVersion": "1.0",
+        "graph": {
+          "variables": {
+            "runTimeoutMs": 60000
+          },
+          "nodes": [
+            {
+              "id": "trigger",
+              "type": "trigger",
+              "label": "Trigger",
+              "config": {}
+            },
+            {
+              "id": "missing-skill-action",
+              "type": "action",
+              "label": "Missing Skill Action",
+              "config": {
+                "skillId": "missing-skill-issue-00124",
+                "args": {}
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "e1",
+              "sourceNodeId": "trigger",
+              "targetNodeId": "missing-skill-action"
+            }
+          ]
+        },
+        "failurePolicy": {
+          "onFailure": "fail_fast",
+          "notifyUser": false
+        },
+        "tests": [],
+        "checksum": "placeholder"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "workflow": {
+          "id": "75dd728b-5372-4b26-a996-972e3305009e",
+          "slug": "wf-retry-diag-1776607159715",
+          "name": "Workflow Retry Diagnostics Probe",
+          "tags": [],
+          "latestVersionNumber": 1,
+          "isArchived": false,
+          "revision": 1,
+          "etag": "097c5aa2-63e2-4f",
+          "compatibilityStatus": "unknown",
+          "promotionChannel": "none",
+          "createdAt": "2026-04-19T13:59:19.716Z",
+          "updatedAt": "2026-04-19T13:59:19.716Z"
+        },
+        "version": {
+          "id": "306265ed-aaca-4a8c-a45d-ee423325727e",
+          "workflowId": "75dd728b-5372-4b26-a996-972e3305009e",
+          "versionNumber": 1,
+          "checksum": "d70453958f1ca754f100ba8652405851d045ed6db6bc3fde9f30227bcedd1ccf",
+          "graphJson": {
+            "schemaVersion": "2.0",
+            "workflowId": "wf-retry-diag-placeholder",
+            "workflowVersionId": "wv-retry-diag-placeholder",
+            "sourceSpecSchemaVersion": "1.0",
+            "graph": {
+              "variables": {
+                "runTimeoutMs": 60000
+              },
+              "nodes": [
+                {
+                  "id": "trigger",
+                  "type": "trigger",
+                  "label": "Trigger",
+                  "config": {}
+                },
+                {
+                  "id": "missing-skill-action",
+                  "type": "action",
+                  "label": "Missing Skill Action",
+                  "config": {
+                    "skillId": "missing-skill-issue-00124",
+                    "args": {}
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e1",
+                  "sourceNodeId": "trigger",
+                  "targetNodeId": "missing-skill-action"
+                }
+              ]
+            },
+            "failurePolicy": {
+              "onFailure": "fail_fast",
+              "notifyUser": false
+            },
+            "tests": [],
+            "checksum": "placeholder"
+          },
+          "isPublished": false,
+          "createdAt": "2026-04-19T13:59:19.716Z",
+          "updatedAt": "2026-04-19T13:59:19.716Z"
+        }
+      },
+      "requestId": "b677d81a-c691-4260-a828-84d32ee35dfb"
+    }
+  }
+}

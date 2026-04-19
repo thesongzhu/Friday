@@ -1,0 +1,40 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/workflow-approvals/ad65f21b-bab7-4bdb-8bb6-76434f39bdfe/approve",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "comment": "approve for blocker-group1 validation"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "approval": {
+          "id": "ad65f21b-bab7-4bdb-8bb6-76434f39bdfe",
+          "workflowId": "9c962641-139d-49db-a078-e9a256985c64",
+          "workflowVersionId": "bacc4ad9-4bde-453c-8223-a6d8532d030c",
+          "runId": "bb94ea63-49f1-46c5-8456-80266b4fc796",
+          "runNodeAttemptId": "e5eb1329-fbc5-41c8-be27-f5c601e32602",
+          "nodeId": "approval1",
+          "approverRole": "admin",
+          "status": "approved",
+          "requestPayload": {},
+          "timeoutAt": "2026-04-19T10:10:03.465Z",
+          "decidedAt": "2026-04-19T09:10:03.472Z",
+          "decidedByUserId": "admin-001",
+          "decisionComment": "approve for blocker-group1 validation",
+          "createdAt": "2026-04-19T09:10:03.465Z",
+          "updatedAt": "2026-04-19T09:10:03.472Z"
+        },
+        "resumed": true
+      },
+      "requestId": "ed7dbad7-b3ee-452e-9182-fd47f3d9eb92"
+    }
+  }
+}

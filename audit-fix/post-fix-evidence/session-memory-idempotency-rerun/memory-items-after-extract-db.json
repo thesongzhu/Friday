@@ -1,0 +1,14 @@
+[
+  {
+    "id": "bc6e6bc9-adba-49a5-b4dc-96016f79f093",
+    "namespace": "tenant.admin-001.channel.audit.user.admin-001.shared",
+    "metadata_json": "{\"sessionKey\":\"audit:default:issue-00117-idempotency-1776592173515\",\"messageIds\":[\"4840d4a0-5873-4a53-97f0-0998ccfbf10b\"],\"trigger\":\"manual\",\"accountId\":\"admin-001\",\"chatId\":\"issue-00117-idempotency-1776592173515\",\"extractedAt\":\"2026-04-19T09:49:35.585Z\"}",
+    "created_at": "2026-04-19T09:49:35.585Z"
+  },
+  {
+    "id": "35fb2205-b709-4a7b-9136-71f388e4c560",
+    "namespace": "tenant.admin-001.channel.audit.user.admin-001.shared",
+    "metadata_json": "{\"sessionKey\":\"audit:default:issue-00117-idempotency-1776592173515\",\"messageIds\":[\"4840d4a0-5873-4a53-97f0-0998ccfbf10b\"],\"trigger\":\"manual\",\"accountId\":\"admin-001\",\"chatId\":\"issue-00117-idempotency-1776592173515\",\"extractedAt\":\"2026-04-19T09:49:35.587Z\"}",
+    "created_at": "2026-04-19T09:49:35.587Z"
+  }
+]

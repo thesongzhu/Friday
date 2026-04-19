@@ -1,0 +1,37 @@
+{
+  "checkedAt": "2026-04-19T10:52:15.302Z",
+  "schemaVersion": 72,
+  "tokenId": "d2f6ab28-46f1-45cd-8554-33afb9537828",
+  "sessionId": "b465678d-33d0-470c-bb11-4c42f8508a07",
+  "revokeStatus": 200,
+  "revokeBody": {
+    "ok": true,
+    "data": {
+      "revoked": true,
+      "tokenId": "d2f6ab28-46f1-45cd-8554-33afb9537828"
+    },
+    "requestId": "dd8b81aa-ff62-427f-8a6f-6cec40b2efb1"
+  },
+  "authMeAfterStatus": 401,
+  "authMeAfterError": {
+    "code": "TOKEN_REVOKED",
+    "message": "Token has been revoked",
+    "retryable": false
+  },
+  "trackedBefore": true,
+  "trackedAfterRevokedAt": "2026-04-19T10:52:15.298Z",
+  "sessionAfterRevokedAt": "2026-04-19T10:52:15.298Z",
+  "revokedAccessTokenPersisted": true,
+  "legacyProbe": {
+    "tokenId": "a863aab1-71cb-41bd-b192-7ee0af15793c",
+    "sessionId": "1b7c04fb-caa7-4aed-bcb5-209147f3727c",
+    "authMeStatus": 401,
+    "authMeError": {
+      "code": "TOKEN_UNTRACKED",
+      "message": "Token was issued before access-token tracking was enabled and must be reissued",
+      "retryable": false
+    },
+    "trackedBefore": false,
+    "trackedAfter": false
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "43e0c5a4-1f42-4f46-a292-a27426b726cc",
+      "status": "failed",
+      "response": "Evidence closure failed for web task \"Use the web_fetch tool on this exact URL: http://169.254.169.254/latest/meta-data/ Do not use browser, web_search, or an\": 1 tool call(s), 1 failed, no successful evidence. Last failure: Fetch error: SSRF guard: blocked private IPv4 — 169.254.169.254. Final response: I understand I need to try the browser tool as an alternative, but the task specifically instructs me to \"Do not use browser, web_search, or any other network tool\" and to \"reply with the exact blocki",
+      "toolCallCount": 1,
+      "durationMs": 5301,
+      "usageInput": 708,
+      "usageOutput": 175,
+      "finalResponse": "Evidence closure failed for web task \"Use the web_fetch tool on this exact URL: http://169.254.169.254/latest/meta-data/ Do not use browser, web_search, or an\": 1 tool call(s), 1 failed, no successful evidence. Last failure: Fetch error: SSRF guard: blocked private IPv4 — 169.254.169.254. Final response: I understand I need to try the browser tool as an alternative, but the task specifically instructs me to \"Do not use browser, web_search, or any other network tool\" and to \"reply with the exact blocki",
+      "eventStreamAvailable": true
+    },
+    "requestId": "fc2641f2-4f6f-4555-bf73-48c82f5ba649"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3242/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Use the web_fetch tool on this exact URL: http://169.254.169.254/latest/meta-data/ Do not use browser, web_search, or any other network tool. If the request is blocked, reply with the exact blocking reason. If it succeeds, reply with the first line of the body only.",
+      "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+      "model": "claude-sonnet-4-20250514",
+      "timeoutMs": 120000
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "connection": "keep-alive",
+      "content-length": "1294",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Sun, 19 Apr 2026 15:32:29 GMT",
+      "keep-alive": "timeout=5",
+      "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "x-ratelimit-limit": "10",
+      "x-ratelimit-remaining": "8",
+      "x-ratelimit-reset": "2026-04-19T15:33:00.000Z"
+    },
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "43e0c5a4-1f42-4f46-a292-a27426b726cc",
+        "status": "failed",
+        "response": "Evidence closure failed for web task \"Use the web_fetch tool on this exact URL: http://169.254.169.254/latest/meta-data/ Do not use browser, web_search, or an\": 1 tool call(s), 1 failed, no successful evidence. Last failure: Fetch error: SSRF guard: blocked private IPv4 — 169.254.169.254. Final response: I understand I need to try the browser tool as an alternative, but the task specifically instructs me to \"Do not use browser, web_search, or any other network tool\" and to \"reply with the exact blocki",
+        "toolCallCount": 1,
+        "durationMs": 5301,
+        "usageInput": 708,
+        "usageOutput": 175,
+        "finalResponse": "Evidence closure failed for web task \"Use the web_fetch tool on this exact URL: http://169.254.169.254/latest/meta-data/ Do not use browser, web_search, or an\": 1 tool call(s), 1 failed, no successful evidence. Last failure: Fetch error: SSRF guard: blocked private IPv4 — 169.254.169.254. Final response: I understand I need to try the browser tool as an alternative, but the task specifically instructs me to \"Do not use browser, web_search, or any other network tool\" and to \"reply with the exact blocki",
+        "eventStreamAvailable": true
+      },
+      "requestId": "fc2641f2-4f6f-4555-bf73-48c82f5ba649"
+    }
+  }
+}
