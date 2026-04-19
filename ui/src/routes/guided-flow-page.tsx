@@ -10,11 +10,13 @@ import { ChoiceCard } from "@/components/guided/choice-card";
 import { PlanReviewVisual, type PlanStep } from "@/components/guided/plan-review-visual";
 import { JourneyTracker, type JourneyPhase } from "@/components/guided/journey-tracker";
 import { ActionButton, ShellCard } from "@/components/core/primitives";
+import { useAuth } from "@/hooks/use-auth";
 import { useGuidedFlow } from "@/hooks/use-guided-flow";
 import { useInvestigationEvents } from "@/hooks/use-investigation-events";
 import { useAgentRunEvents } from "@/hooks/use-agent-run-events";
 import { getGoalCategoryById } from "@/lib/guided/goal-categories";
 import { planReviewStepsFromMarkdown, type WizardStepChoice } from "@/lib/guided/flow-adapters";
+import { buildGuidedAssistantSessionKey } from "@/lib/guided/session-key";
 import { localize, localizedText, resolveLocalizedText } from "@/lib/i18n/localized-text";
 import { resolvePackLaunchContext } from "@/lib/packs/pack-links";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -124,6 +126,7 @@ export function GuidedFlowPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { locale } = useAppLocale();
+  const { user } = useAuth();
   const [phase, setPhase] = useState<FlowPhase>("investigating");
   const [investigationRunId, setInvestigationRunId] = useState<string | null>(null);
   const [executionRunId, setExecutionRunId] = useState<string | null>(null);
@@ -141,6 +144,17 @@ export function GuidedFlowPage() {
     : undefined;
   const goalTitle = goalCategory?.title ?? localizedText(wizardId ?? "目标", wizardId ?? "Goal");
   const goalTitleInline = resolveLocalizedText(goalTitle, locale);
+  const assistantSessionKey = useMemo(
+    () => (
+      wizardId
+        ? buildGuidedAssistantSessionKey({
+          wizardId,
+          userId: user?.id,
+        })
+        : undefined
+    ),
+    [wizardId, user?.id],
+  );
   const investigationTask = goalCategory
     ? `Investigate and analyze options for: ${goalCategory.title.en}. ${goalCategory.subtitle.en} ${focusNote ? `Focus note: ${focusNote}.` : ""} Provide structured findings with recommendations.`
     : `Investigate and analyze options for the goal: ${wizardId ?? "unknown"}`;
@@ -148,6 +162,7 @@ export function GuidedFlowPage() {
   // ─── Wizard lifecycle (backend state machine) ───
   const guidedFlow = useGuidedFlow({
     wizardId: wizardId ?? "",
+    assistantSessionKey,
     enabled: !!wizardId,
   });
 
@@ -156,7 +171,7 @@ export function GuidedFlowPage() {
     mutationFn: async () => {
       return agentApi.startRun({
         task: investigationTask,
-        sessionKey: `guided:${wizardId ?? "unknown"}`,
+        sessionKey: assistantSessionKey,
         executionContext: {
           surface: "guided-flow",
           interactive: true,
@@ -179,7 +194,7 @@ export function GuidedFlowPage() {
       guidedFlow.start();
       startInvestigation.mutate();
     }
-  }, [readyToStart, wizardId]);
+  }, [readyToStart, wizardId, assistantSessionKey]);
 
   // ─── Investigation SSE events ───
   const investigation = useInvestigationEvents(investigationRunId, {
@@ -261,7 +276,7 @@ export function GuidedFlowPage() {
       const result = await agentApi.startRun({
         task: `Execute the ${choiceLabel} for: ${goalTitle.en}. Based on the previous investigation, proceed with implementation.`,
         requireReview: true,
-        sessionKey: `guided:${wizardId ?? "unknown"}`,
+        sessionKey: assistantSessionKey,
         executionContext: {
           surface: "guided-flow",
           interactive: true,

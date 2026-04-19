@@ -8,6 +8,10 @@ export const healthApi = {
     return apiClient.get<FridayHealthResponse>("/v1/health");
   },
 
+  async getCapabilityHealth(): Promise<FridayHealthResponse> {
+    return apiClient.get<FridayHealthResponse>("/v1/health/capabilities");
+  },
+
   async getMe(): Promise<MeResponse> {
     return apiClient.get<MeResponse>("/v1/auth/me");
   },

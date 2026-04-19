@@ -1,7 +1,6 @@
 import * as React from "react";
 import { authStorage } from "@/lib/storage/auth-storage";
 import { fetchBootstrapStatus, fetchMe, login, logout, type LoginInput } from "@/lib/api/auth";
-import { healthApi } from "@/lib/api/health";
 import type { FridayUser } from "@/lib/api/types";
 
 // ─── Context shape ───
@@ -49,31 +48,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
 
       try {
-        const health = await healthApi.getHealth();
-        if (cancelled) return;
-
-        const authCapabilities = health.capabilities?.auth;
-        const localBootstrapAllowed = authCapabilities?.allowLocalBypassLogin
-          || authCapabilities?.allowPasswordlessLocalLogin;
-        if (!localBootstrapAllowed) {
-          setIsLoading(false);
-          return;
-        }
-
-        const response = await login({ local: true });
-        if (cancelled) return;
-        setUser(response.user);
-        setIsLoading(false);
-        return;
-      } catch {
-        // Fall through to bootstrap probe and regular login page.
-      }
-
-      try {
         const status = await fetchBootstrapStatus();
         if (cancelled) return;
 
-        // If local bypass/passwordless is allowed, retry once after bootstrap probe.
         if (status.allowLocalBypassLogin || status.allowPasswordlessLocalLogin) {
           try {
             const response = await login({ local: true });

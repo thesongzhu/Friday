@@ -2351,6 +2351,7 @@ export function createFridayUixSurfaceService(
         "automate-work": { title: "Automate Repetitive Work", goalPrompt: "What task do you want automated? Friday will build the workflow." },
         "content-social": { title: "Content & Social Media", goalPrompt: "What content or social media operation? Friday will plan the flow." },
         "ecommerce": { title: "E-commerce & Cross-border", goalPrompt: "What e-commerce goal? Friday will research products, platforms, and data." },
+        "cross-border-hero": { title: "Cross-border Hero", goalPrompt: "What cross-border operating goal should Friday help with first? Friday will set up the profile, workflow, and next actions." },
         "team-management": { title: "Manage a Team", goalPrompt: "What team operation? Friday will set up task tracking and workflows." },
         "ai-saas-build": { title: "Build an AI App / SaaS", goalPrompt: "Describe the AI product idea. Friday will plan architecture and implementation." },
         "invest-trade": { title: "Investment & Trading", goalPrompt: "What investment goal? Friday will research and automate your analysis." },

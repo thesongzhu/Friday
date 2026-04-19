@@ -526,7 +526,7 @@ describe("Setup Wizard E2E", () => {
       expect(json.data.channelCount).toBeGreaterThanOrEqual(1);
     });
 
-    it("A12b: setup completion keeps onboarding pending until the user finishes onboarding", async () => {
+    it("A12b: setup completion makes user-profile reflect onboarding completion", async () => {
       const profileRes = await fetch(`${baseUrl}/v1/uix/user-profile`, {
         headers: authHeaders(accessToken),
       });
@@ -540,10 +540,10 @@ describe("Setup Wizard E2E", () => {
       };
       expect(profileJson.ok).toBe(true);
       expect(profileJson.data.profileType).toBe("beginner");
-      expect(profileJson.data.onboardedAt).toBeNull();
+      expect(profileJson.data.onboardedAt).not.toBeNull();
     });
 
-    itBrowser("A12c: browser redirects to onboarding after setup completes", async () => {
+    itBrowser("A12c: browser no longer loops back to onboarding after setup completes", async () => {
       const browser = await chromium.launch({ headless: true });
       const context = await browser.newContext({
         baseURL: baseUrl,
@@ -552,9 +552,8 @@ describe("Setup Wizard E2E", () => {
       const page = await context.newPage();
       try {
         await page.goto("/", { waitUntil: "networkidle" });
-        await page.waitForURL("**/onboarding", { timeout: 30_000 });
-        await page.locator("[data-testid='onboarding-page']").waitFor({ state: "visible", timeout: 30_000 });
-        expect(new URL(page.url()).pathname).toBe("/onboarding");
+        await page.waitForURL("**/chat", { timeout: 30_000 });
+        expect(new URL(page.url()).pathname).toBe("/chat");
       } finally {
         await context.close();
         await browser.close();
