@@ -110,8 +110,8 @@ import type {
   FridayAgentExecutionContext,
   FridayAgentMessage,
   FridayAgentRunRecord,
-  FridayAgentRuntimeResult,
   FridayAgentRunStatus,
+  FridayAgentRuntimeResult,
   FridayAgentTaskProfileInput,
 } from "#agent";
 import { buildFridayEvidenceBlocks } from "#agent";

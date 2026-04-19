@@ -10,11 +10,11 @@ import { join } from "node:path";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import {
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
-  getFridayUnisolatedNodeSkillsDisabledMessage,
-  isFridayUnisolatedNodeSkillsEnabled,
   type FridaySkillExecutor,
   type FridaySkillLifecycleService,
   type FridaySkillRegistry,
+  getFridayUnisolatedNodeSkillsDisabledMessage,
+  isFridayUnisolatedNodeSkillsEnabled,
 } from "#skills";
 import { FridayDomainError } from "#errors";
 import { resolveSafeInstallDir } from "#utilities";

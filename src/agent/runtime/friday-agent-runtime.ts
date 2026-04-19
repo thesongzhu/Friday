@@ -29,9 +29,9 @@ import {
   FRIDAY_AGENT_TOOL_TIMEOUT_MS,
 } from "../friday-agent.constants.js";
 import type {
-  FridayAgentApiRequestMetadata,
   FridayAgentActualExecution,
   FridayAgentActualTurn,
+  FridayAgentApiRequestMetadata,
   FridayAgentArtifact,
   FridayAgentContentBlock,
   FridayAgentEtaConfidence,

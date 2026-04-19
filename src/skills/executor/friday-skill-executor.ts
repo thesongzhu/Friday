@@ -15,8 +15,8 @@ import {
 } from "#providers";
 import { createFridayShellExecutor } from "./friday-shell-executor.js";
 import {
-  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   createFridayNodeExecutor,
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   getFridayUnisolatedNodeSkillsDisabledMessage,
   isFridayUnisolatedNodeSkillsEnabled,
 } from "./friday-node-executor.js";
