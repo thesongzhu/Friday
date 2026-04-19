@@ -6,8 +6,8 @@ import type {
   FridayWorkflowEntity,
   FridayWorkflowListInput,
   FridayWorkflowUpdateInput,
-  JsonValue,
   FridayWorkflowVersionEntity,
+  JsonValue,
   UUID,
 } from "../model/friday-workflow.types.js";
 import {
