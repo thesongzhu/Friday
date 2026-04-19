@@ -11,7 +11,9 @@ import {
   loadProcessEnvFromDotEnvFile,
   prepareStartupChannelsConfig,
   readSetupNetworkBinding,
+  runCliSkillCommand,
   resolveStartupNetworkBinding,
+  type FridayCliRunCommandDeps,
 } from "#cli";
 import { FRIDAY_SQLITE_MIGRATIONS, runFridayMigrations } from "#state";
 import Database from "better-sqlite3";
@@ -67,12 +69,19 @@ describe("parseArgs", () => {
       expect(parseArgs(argv("phases", "doctor")).command).toBe("phases");
     });
 
-    it("falls back to help for unknown command", () => {
-      expect(parseArgs(argv("bogus")).command).toBe("help");
+    it("parses tui command", () => {
+      expect(parseArgs(argv("tui")).command).toBe("tui");
     });
 
-    it("keeps experimental tui entrypoint out of the public parser", () => {
-      expect(parseArgs(argv("tui")).command).toBe("help");
+    it("preserves host/port overrides for tui", () => {
+      const result = parseArgs(argv("tui", "--host", "0.0.0.0", "--port", "4145"));
+      expect(result.command).toBe("tui");
+      expect(result.host).toBe("0.0.0.0");
+      expect(result.port).toBe(4145);
+    });
+
+    it("falls back to help for unknown command", () => {
+      expect(parseArgs(argv("bogus")).command).toBe("help");
     });
   });
 
@@ -589,6 +598,146 @@ describe("cmdRuns", () => {
     } finally {
       reopened.close();
     }
+  });
+});
+
+describe("runCliSkillCommand", () => {
+  const argv = (...args: string[]) => ["node", "friday-cli.js", ...args];
+
+  it("uses the configured remote hub instead of self-hosting when FRIDAY_HUB_URL and FRIDAY_ACCESS_TOKEN are set", async () => {
+    const parsed = parseArgs(argv("run", "demo-skill", "--input", "name=Friday"));
+    const logs: string[] = [];
+
+    let requestedUrl = "";
+    let requestedHeaders: HeadersInit | undefined;
+    let requestedBody = "";
+    const fetchFn: typeof fetch = async (input, init) => {
+      requestedUrl = String(input);
+      requestedHeaders = init?.headers;
+      requestedBody = String(init?.body ?? "");
+      return new Response(JSON.stringify({
+        ok: true,
+        data: {
+          runId: "run-remote-1",
+          status: "completed",
+          durationMs: 42,
+          output: { echoed: true },
+          stdout: "remote ok",
+        },
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    const createHub: FridayCliRunCommandDeps["createHub"] = async () => {
+      throw new Error("createHub should not be called for remote execution");
+    };
+
+    await runCliSkillCommand(parsed, {
+      env: {
+        FRIDAY_HUB_URL: "https://hub.example.test/",
+        FRIDAY_ACCESS_TOKEN: "secret-token",
+      },
+      createHub,
+      fetchFn,
+      logger: {
+        log: (...args: unknown[]) => logs.push(args.map((value) => String(value)).join(" ")),
+        error: (...args: unknown[]) => logs.push(args.map((value) => String(value)).join(" ")),
+      },
+    });
+
+    expect(requestedUrl).toBe("https://hub.example.test/v1/skills/demo-skill/run");
+    expect(requestedHeaders).toMatchObject({
+      Authorization: "Bearer secret-token",
+      "Content-Type": "application/json",
+    });
+    expect(JSON.parse(requestedBody)).toEqual({
+      input: { name: "Friday" },
+      sessionId: "cli",
+      channel: "cli",
+    });
+    expect(logs.some((line) => line.includes("Run run-remote-1 — completed (42ms)"))).toBe(true);
+    expect(logs.some((line) => line.includes("remote ok"))).toBe(true);
+  });
+
+  it("falls back to an embedded hub when no remote hub env is configured", async () => {
+    const parsed = parseArgs(argv("run", "demo-skill"));
+    const logs: string[] = [];
+    let startCount = 0;
+    let stopCount = 0;
+    let executeCount = 0;
+
+    const localHub = {
+      start: async () => {
+        startCount += 1;
+      },
+      stop: async () => {
+        stopCount += 1;
+      },
+      executor: {
+        execute() {
+          executeCount += 1;
+          return {
+            result: Promise.resolve({
+              runId: "run-local-1",
+              status: "completed",
+              durationMs: 9,
+              output: {},
+              stdout: "local ok",
+            }),
+          };
+        },
+      },
+    };
+    const createHub = (async () => localHub) as FridayCliRunCommandDeps["createHub"];
+
+    await runCliSkillCommand(parsed, {
+      env: {},
+      createHub,
+      fetchFn: async () => {
+        throw new Error("fetch should not be called for local execution");
+      },
+      logger: {
+        log: (...args: unknown[]) => logs.push(args.map((value) => String(value)).join(" ")),
+        error: (...args: unknown[]) => logs.push(args.map((value) => String(value)).join(" ")),
+      },
+    });
+
+    expect(startCount).toBe(1);
+    expect(executeCount).toBe(1);
+    expect(stopCount).toBe(1);
+    expect(logs.some((line) => line.includes("Run run-local-1 — completed (9ms)"))).toBe(true);
+  });
+
+  it("fails fast when only one remote-hub env var is configured", async () => {
+    const parsed = parseArgs(argv("run", "demo-skill"));
+    const logs: string[] = [];
+    let exitCode: number | undefined;
+
+    await runCliSkillCommand(parsed, {
+      env: {
+        FRIDAY_HUB_URL: "https://hub.example.test",
+      },
+      createHub: async () => {
+        throw new Error("createHub should not be called on invalid remote config");
+      },
+      fetchFn: async () => {
+        throw new Error("fetch should not be called on invalid remote config");
+      },
+      logger: {
+        log: (...args: unknown[]) => logs.push(args.map((value) => String(value)).join(" ")),
+        error: (...args: unknown[]) => logs.push(args.map((value) => String(value)).join(" ")),
+      },
+      setExitCode: (code) => {
+        exitCode = code;
+      },
+    });
+
+    expect(exitCode).toBe(1);
+    expect(
+      logs.some((line) => line.includes("requires both FRIDAY_HUB_URL and FRIDAY_ACCESS_TOKEN")),
+    ).toBe(true);
   });
 });
 

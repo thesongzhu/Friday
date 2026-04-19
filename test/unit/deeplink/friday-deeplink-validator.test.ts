@@ -34,6 +34,16 @@ describe("validateFridayDeepLink", () => {
       }));
       expect(result.verdict).toBe("ready");
       expect(result.permissionSummary.length).toBeGreaterThan(0);
+      expect(result.payload.providerTemplate?.apiKey).toBe("[redacted]");
+    });
+
+    it("redacts plaintext provider api keys from the preview payload", () => {
+      const result = validateFridayDeepLink(makePayload({
+        type: "provider-template",
+        providerTemplate: { providerKind: "openai", apiKey: "sk-live-secret-value" },
+      }));
+
+      expect(result.payload.providerTemplate?.apiKey).toBe("[redacted]");
     });
 
     it("warns on private base URL", () => {

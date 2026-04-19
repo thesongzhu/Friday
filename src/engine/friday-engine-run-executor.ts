@@ -17,7 +17,11 @@
  */
 
 import type { FridayAgentRuntimeResult } from "../agent/runtime/friday-agent-runtime.types.js";
-import type { FridayAgentRunConstraints, FridayAgentRunStatus } from "../agent/model/friday-agent.types.js";
+import type {
+  FridayAgentApiRequestMetadata,
+  FridayAgentRunConstraints,
+  FridayAgentRunStatus,
+} from "../agent/model/friday-agent.types.js";
 import type { FridaySessionConversationFocusState } from "../sessions/model/friday-session.types.js";
 import type {
   FridayEngineRunInput,
@@ -51,6 +55,7 @@ export interface FridayEngineRunExecutorAgentRuntime {
     principalId?: string;
     scopes?: string[];
     executionContext?: FridayEngineRunInput["executionContext"];
+    apiRequestIdempotency?: FridayAgentApiRequestMetadata;
     historyMessages?: FridayPreparedEngineContext["historyMessages"];
     taskProfile?: FridayEngineRunInput["taskProfile"];
   }): Promise<FridayAgentRuntimeResult>;
@@ -491,6 +496,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
       principalId: input.principalId,
       scopes: input.scopes,
       executionContext: input.executionContext,
+      apiRequestIdempotency: input.apiRequestIdempotency,
       historyMessages: prepared.historyMessages,
       taskProfile: input.taskProfile,
     });

@@ -285,6 +285,30 @@ describe("createFridayUixSurfaceService", () => {
     );
   });
 
+  it("accepts the legacy cross-border-hero wizard id as a live alias", () => {
+    const service = createFridayUixSurfaceService({
+      idGenerator: () => "wizard-cross-border-hero",
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+        reportStructuredFailure: vi.fn(),
+      } as never,
+    });
+
+    const started = service.startWizard({
+      wizardId: "cross-border-hero",
+      userId: "user-1",
+      assistantSessionKey: "guided:default:user-1-cross-border-hero",
+    });
+
+    expect(started.wizard.wizardId).toBe("cross-border-hero");
+    expect(started.wizard.title).toBe("Cross-border Hero");
+    expect(started.wizard.currentStepId).toBe("goal");
+    expect(started.wizard.steps[0]).toMatchObject({
+      id: "goal",
+      inputKey: "goal",
+    });
+  });
+
   it("marks destructive requests as blocked by policy during intent resolution", () => {
     const service = createFridayUixSurfaceService({
       selfHealing: {

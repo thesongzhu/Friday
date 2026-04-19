@@ -182,6 +182,10 @@ export const FRIDAY_GOAL_CATEGORIES: FridayGoalCategory[] = [
   },
 ];
 
+const FRIDAY_GOAL_CATEGORY_ALIASES = new Map<string, string>([
+  ["cross-border-hero", "ecommerce"],
+]);
+
 export function getGoalCategoriesForProfile(
   profileType: UserProfileType,
   limit?: number,
@@ -196,5 +200,8 @@ export function getGoalCategoriesForProfile(
 }
 
 export function getGoalCategoryById(id: string): FridayGoalCategory | undefined {
-  return FRIDAY_GOAL_CATEGORIES.find((category) => category.id === id);
+  const resolvedId = FRIDAY_GOAL_CATEGORY_ALIASES.get(id) ?? id;
+  return FRIDAY_GOAL_CATEGORIES.find(
+    (category) => category.id === resolvedId || category.wizardId === resolvedId,
+  );
 }

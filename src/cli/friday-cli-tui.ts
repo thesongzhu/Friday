@@ -1,7 +1,5 @@
 /**
- * Internal experimental CLI TUI entry point.
- *
- * This module is intentionally not wired into the public CLI parser.
+ * Friday CLI TUI entry point.
  *
  * @module cli/friday-cli-tui
  */
@@ -21,6 +19,28 @@ export interface FridayCliTuiOptions {
   readonly realtimeEnabled?: boolean;
 }
 
+interface FridayCliAuthEnvelope {
+  ok: boolean;
+  data?: {
+    accessToken?: string;
+  };
+  error?: {
+    code?: string;
+    message?: string;
+  };
+}
+
+function isLoopbackBaseUrl(baseUrl: string): boolean {
+  try {
+    const parsed = new URL(baseUrl);
+    return parsed.hostname === "127.0.0.1"
+      || parsed.hostname === "localhost"
+      || parsed.hostname === "::1";
+  } catch {
+    return false;
+  }
+}
+
 // ─── Factory ───
 
 export async function runFridayCliTui(options: FridayCliTuiOptions = {}): Promise<void> {
@@ -30,16 +50,80 @@ export async function runFridayCliTui(options: FridayCliTuiOptions = {}): Promis
     ...(options.refreshIntervalMs ? { refreshIntervalMs: options.refreshIntervalMs } : {}),
     ...(options.realtimeEnabled !== undefined ? { realtimeEnabled: options.realtimeEnabled } : {}),
   };
+  const configuredAccessToken = process.env.FRIDAY_TUI_ACCESS_TOKEN?.trim() || undefined;
+  const loopbackBaseUrl = isLoopbackBaseUrl(config.apiBaseUrl);
+  let cachedAccessToken = configuredAccessToken;
+
+  async function loginLocalBypass(): Promise<string> {
+    const response = await fetch(`${config.apiBaseUrl}/v1/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ local: true }),
+    });
+    const body = await response.json().catch(() => null) as FridayCliAuthEnvelope | null;
+    if (!response.ok || body?.ok !== true || typeof body.data?.accessToken !== "string") {
+      throw new FridayDomainError(
+        typeof body?.error?.code === "string" ? body.error.code : "UNAUTHORIZED",
+        typeof body?.error?.message === "string"
+          ? body.error.message
+          : `HTTP ${response.status}: ${response.statusText}`,
+        { httpStatus: response.status },
+      );
+    }
+    cachedAccessToken = body.data.accessToken;
+    return cachedAccessToken;
+  }
+
+  async function resolveAccessToken(forceRefresh = false): Promise<string | undefined> {
+    if (configuredAccessToken && !forceRefresh) {
+      return configuredAccessToken;
+    }
+    if (cachedAccessToken && !forceRefresh) {
+      return cachedAccessToken;
+    }
+    if (!loopbackBaseUrl) {
+      return undefined;
+    }
+    return loginLocalBypass();
+  }
 
   const apiClient = createFridayTuiApiClient({
     async fetchJson<T>(url: string, init?: { method?: string; body?: string; headers?: Record<string, string> }): Promise<T> {
-      const res = await fetch(url, {
-        method: init?.method ?? "GET",
-        body: init?.body,
-        headers: init?.headers,
-      });
-      if (!res.ok) throw new FridayDomainError("INTERNAL_ERROR", `HTTP ${res.status}: ${res.statusText}`, { httpStatus: 500 });
-      return res.json() as Promise<T>;
+      const doFetch = async (token: string | undefined) =>
+        fetch(url, {
+          method: init?.method ?? "GET",
+          body: init?.body,
+          headers: {
+            ...init?.headers,
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+
+      let token = await resolveAccessToken(false);
+      let res = await doFetch(token);
+
+      if (res.status === 401 && !configuredAccessToken && loopbackBaseUrl) {
+        token = await resolveAccessToken(true);
+        res = await doFetch(token);
+      }
+
+      const body = await res.json().catch(() => null) as {
+        error?: {
+          code?: string;
+          message?: string;
+        };
+      } | null;
+
+      if (!res.ok) {
+        throw new FridayDomainError(
+          typeof body?.error?.code === "string" ? body.error.code : "INTERNAL_ERROR",
+          typeof body?.error?.message === "string"
+            ? body.error.message
+            : `HTTP ${res.status}: ${res.statusText}`,
+          { httpStatus: res.status },
+        );
+      }
+      return body as T;
     },
     baseUrl: config.apiBaseUrl,
   });

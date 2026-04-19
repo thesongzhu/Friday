@@ -163,6 +163,43 @@ describe("C-001 FridayDesktopAdapters", () => {
       expect(result.status).toBe("success");
     });
 
+    it("encodes multiline AppleScript text safely", async () => {
+      const exec = mockExec();
+      adapter = await createDarwinAdapter(makeConfig(exec));
+
+      const action: FridayDesktopAction = { type: "type", text: "hello\nworld" };
+      const result = await adapter.execute(action);
+
+      expect(result.status).toBe("success");
+      const command = (exec as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string;
+      expect(command).toContain("linefeed");
+      expect(command).not.toContain("hello\nworld");
+    });
+
+    it("rejects unsafe AppleScript control characters", async () => {
+      const exec = mockExec();
+      adapter = await createDarwinAdapter(makeConfig(exec));
+
+      const action: FridayDesktopAction = { type: "type", text: "hello\u0001world" };
+      const result = await adapter.execute(action);
+
+      expect(result.status).toBe("failed");
+      expect(result.errorMessage).toContain("Unsafe AppleScript input");
+      expect(exec).not.toHaveBeenCalled();
+    });
+
+    it("rejects multiline AppleScript keys", async () => {
+      const exec = mockExec();
+      adapter = await createDarwinAdapter(makeConfig(exec));
+
+      const action: FridayDesktopAction = { type: "keypress", key: "enter\nbeep" };
+      const result = await adapter.execute(action);
+
+      expect(result.status).toBe("failed");
+      expect(result.errorMessage).toContain("Unsafe AppleScript key");
+      expect(exec).not.toHaveBeenCalled();
+    });
+
     it("rejects unsafe app identifiers", async () => {
       const exec = mockExec();
       adapter = await createDarwinAdapter(makeConfig(exec));

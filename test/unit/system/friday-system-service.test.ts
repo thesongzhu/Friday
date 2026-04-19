@@ -1032,6 +1032,32 @@ describe("createFridaySystemService", () => {
     });
   });
 
+  it("rejects multiline focus app identifiers before calling the companion bridge", async () => {
+    const focusTarget = vi.fn(async (input: { appIdentifier?: string; windowId?: string }) => ({
+      appIdentifier: input.appIdentifier,
+      windowId: input.windowId,
+      focused: true,
+      focusedAt: "2026-03-06T12:00:00.000Z",
+    }));
+    const fixture = await createServiceFixtureWithOptions({
+      companionBridge: {
+        ...createCompanionBridge(),
+        focusTarget,
+      },
+    });
+    allocatedDbs.push(fixture.db);
+
+    await expect(
+      fixture.service.executeIntent({
+        action: "focus",
+        actorId: "agent-1",
+        actorKind: "agent",
+        appIdentifier: "Finder\nbeep",
+      }),
+    ).rejects.toThrow("Unsafe AppleScript app identifier");
+    expect(focusTarget).not.toHaveBeenCalled();
+  });
+
   it("blocks remote device registration when trusted-device remote access is disabled", async () => {
     const fixture = await createServiceFixtureWithOptions({
       remoteMode: "disabled",

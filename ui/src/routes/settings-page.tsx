@@ -120,7 +120,7 @@ export function SettingsPage() {
 
   const { data: health } = useQuery({
     queryKey: ["settings", "health"],
-    queryFn: () => healthApi.getHealth(),
+    queryFn: () => healthApi.getCapabilityHealth(),
     refetchInterval: 30_000,
   });
 

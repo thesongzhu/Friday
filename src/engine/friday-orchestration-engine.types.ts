@@ -10,7 +10,7 @@
 
 import type { FridayAgentContextCostSummary, FridayAgentConversationContext, FridayAgentExecutionContext } from "../agent/runtime/friday-agent-runtime.types.js";
 import type { FridayAgentTaskProfileInput, FridayResolvedAgentTaskProfile } from "../agent/runtime/friday-agent-task-profile.js";
-import type { FridayAgentRunConstraints } from "../agent/model/friday-agent.types.js";
+import type { FridayAgentApiRequestMetadata, FridayAgentRunConstraints } from "../agent/model/friday-agent.types.js";
 import type { FridayConversationTurnKind } from "../sessions/model/friday-session.types.js";
 import type { FridayProviderTenantContext } from "#providers";
 
@@ -61,6 +61,8 @@ export interface FridayEngineRunInput {
   taskAlreadyInHistory?: boolean;
   /** Idempotency prefix for dedup of session messages. */
   idempotencyPrefix?: string;
+  /** API request idempotency metadata for transport-level replay. */
+  apiRequestIdempotency?: FridayAgentApiRequestMetadata;
 }
 
 // ─── Terminal status & error taxonomy ───
