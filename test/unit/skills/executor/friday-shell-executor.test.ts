@@ -68,7 +68,7 @@ describe("FridayShellExecutor", () => {
   });
 
   it("sets environment variables", async () => {
-    process.env.FRIDAY_PARENT_SECRET = "super-secret-parent-value";
+    process.env.FRIDAY_PARENT_SECRET = "super-secret-parent-value"; // pragma: allowlist secret
     const executor = createExecutor();
     const result = await executor.run({
       command: "sh",
@@ -81,7 +81,7 @@ describe("FridayShellExecutor", () => {
   });
 
   it("does not inherit undeclared parent env vars", async () => {
-    process.env.FRIDAY_PARENT_SECRET = "super-secret-parent-value";
+    process.env.FRIDAY_PARENT_SECRET = "super-secret-parent-value"; // pragma: allowlist secret
     const executor = createExecutor();
     const result = await executor.run({
       command: "sh",

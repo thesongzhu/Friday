@@ -104,7 +104,7 @@ if (typeof userId !== "string" || userId.length === 0) {
   throw new Error("Failed to determine user id before DB lock");
 }
 
-const secretRefKey = `audit.issue-00165.${Date.now()}`;
+const secretRefKey = `audit.issue-00165.${Date.now()}`; // pragma: allowlist secret
 const authSessionsBefore = dbGet(
   "SELECT COUNT(*) AS count FROM auth_sessions WHERE user_id = ?",
   userId,
