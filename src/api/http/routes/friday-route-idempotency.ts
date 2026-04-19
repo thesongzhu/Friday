@@ -34,8 +34,11 @@ export function hashIdempotencyPayload(payload: unknown): string {
 }
 
 export function readIdempotencyKeyHeader(
-  headers: Record<string, string | undefined>,
+  headers?: Record<string, string | undefined> | null,
 ): string | undefined {
+  if (!headers) {
+    return undefined;
+  }
   const raw = headers["idempotency-key"];
   if (typeof raw !== "string") {
     return undefined;
