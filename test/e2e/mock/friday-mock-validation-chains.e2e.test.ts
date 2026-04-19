@@ -323,13 +323,19 @@ describe("Friday Validation Chain E2E", () => {
       expect(run1.json.data.status).toBe("completed");
 
       // Turn 2
-      mock.enqueue({ type: "text", text: "Nice to meet you, Alice!" });
+      mock.enqueue({ type: "text", text: "Got it. I will remember that you work on frontend systems." });
       const run2 = await apiFetch<AgentRunResult>(
         env.baseUrl,
         env.accessToken,
         "POST",
         "/v1/agent/runs",
-        { task: "My name is Alice. Remember that.", providerId, model, timeoutMs: RUN_TIMEOUT_MS, sessionKey },
+        {
+          task: "I work on frontend systems. Remember that.",
+          providerId,
+          model,
+          timeoutMs: RUN_TIMEOUT_MS,
+          sessionKey,
+        },
       );
       expect(run2.json.data.status).toBe("completed");
 

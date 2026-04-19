@@ -12,7 +12,11 @@ import { tmpdir } from "node:os";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 
 import type { SkillManifestV2 } from "#skills";
-import { FridaySkillRegistryImpl, createFridaySkillExecutor } from "#skills";
+import {
+  FridaySkillRegistryImpl,
+  createFridaySkillExecutor,
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+} from "#skills";
 import { createFridaySkillRunStore } from "#ledger";
 import type { FridaySkillRunStore } from "#ledger";
 import type { FridayHubConfigManagerService, FridayHubMemoryStateService } from "#hub";
@@ -367,48 +371,59 @@ module.exports.execute = async function execute(input) {
 
     writeSkillToDir(skillsDir, "node-greet", manifest, nodeScript);
 
-    const configManager = createStubConfigManager([skillsDir], workspaceDir);
-    const memoryState = createStubMemoryState();
+    const previousNodeRuntimeFlag = process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+    process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = "true";
 
-    const registry = new FridaySkillRegistryImpl({
-      workspaceDir,
-      hubVersion: "1.0.0",
-      supportedApiVersions: ["1"],
-      configManager,
-      memoryStateService: memoryState,
-    });
+    try {
+      const configManager = createStubConfigManager([skillsDir], workspaceDir);
+      const memoryState = createStubMemoryState();
 
-    await registry.refresh();
+      const registry = new FridaySkillRegistryImpl({
+        workspaceDir,
+        hubVersion: "1.0.0",
+        supportedApiVersions: ["1"],
+        configManager,
+        memoryStateService: memoryState,
+      });
 
-    const executor = createFridaySkillExecutor({
-      db,
-      registry,
-      runStore,
-      idGenerator: () => crypto.randomUUID(),
-      nowIso: () => new Date().toISOString(),
-    });
+      await registry.refresh();
 
-    const handle = executor.execute({
-      skillId: "node-greet",
-      input: { name: "Friday" },
-      sessionId: "test-session",
-      userId: "test-user",
-      channel: "test",
-    });
+      const executor = createFridaySkillExecutor({
+        db,
+        registry,
+        runStore,
+        idGenerator: () => crypto.randomUUID(),
+        nowIso: () => new Date().toISOString(),
+      });
 
-    const result = await handle.result;
+      const handle = executor.execute({
+        skillId: "node-greet",
+        input: { name: "Friday" },
+        sessionId: "test-session",
+        userId: "test-user",
+        channel: "test",
+      });
 
-    expect(result.status).toBe("completed");
-    expect(result.output).toEqual({ greeting: "hello Friday" });
-    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+      const result = await handle.result;
 
-    // Verify ledger entry
-    const storedRun = runStore.getRun(handle.runId);
-    expect(storedRun).not.toBeNull();
-    expect(storedRun!.skillId).toBe("node-greet");
-    expect(storedRun!.status).toBe("completed");
+      expect(result.status).toBe("completed");
+      expect(result.output).toEqual({ greeting: "hello Friday" });
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
 
-    await registry.close();
+      // Verify ledger entry
+      const storedRun = runStore.getRun(handle.runId);
+      expect(storedRun).not.toBeNull();
+      expect(storedRun!.skillId).toBe("node-greet");
+      expect(storedRun!.status).toBe("completed");
+
+      await registry.close();
+    } finally {
+      if (previousNodeRuntimeFlag === undefined) {
+        delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+      } else {
+        process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = previousNodeRuntimeFlag;
+      }
+    }
   });
 
   // ── registry_refresh_picks_up_new_skill ────────────────────────────────

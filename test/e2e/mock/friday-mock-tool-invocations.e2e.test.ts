@@ -352,9 +352,10 @@ describe("Friday Mock Tool Invocations E2E", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(res.json.data.status).toBe("completed");
+    expect(res.json.data.status).toBe("failed");
+    expect(res.json.data.response).toContain("AGENT_OUTPUT_CLOSURE_ERROR");
     expect(res.json.data.toolCallCount).toBeGreaterThanOrEqual(1);
-    // LLM received error and responded gracefully
+    // File mutation tasks must fail closed when every write attempt is blocked.
     expect(mock.calls.length).toBe(2);
   });
 
@@ -383,7 +384,12 @@ describe("Friday Mock Tool Invocations E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "Remember my dark mode preference", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
+      {
+        task: "Store this note for later: the interface should default to dark mode",
+        providerId,
+        model,
+        timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS,
+      },
     );
 
     expect(run1.json.data.status).toBe("completed");
@@ -409,7 +415,12 @@ describe("Friday Mock Tool Invocations E2E", () => {
       env.accessToken,
       "POST",
       "/v1/agent/runs",
-      { task: "What are my UI preferences?", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
+      {
+        task: "Search my saved note about the interface theme",
+        providerId,
+        model,
+        timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS,
+      },
     );
 
     expect(run2.json.data.status).toBe("completed");
