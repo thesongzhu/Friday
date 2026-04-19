@@ -11,9 +11,11 @@ import type {
 } from "../model/friday-workflow.types.js";
 import {
   type FridayCompiledWorkflowGraphV2,
+  parseGraphJson,
   validateGraphStructure,
 } from "../model/friday-workflow-graph.types.js";
 import { createFridayWorkflowValidator } from "../compiler/friday-workflow-validator.js";
+import type { JsonValue } from "../model/friday-workflow.types.js";
 
 // ─── Interface ───
 
@@ -88,6 +90,39 @@ export function createFridayWorkflowCrudService(
 ): FridayWorkflowCrudService {
   const validator = createFridayWorkflowValidator();
 
+  function assertGraphIsWritable(
+    graph: FridayCompiledWorkflowGraphV2 | Record<string, unknown>,
+  ): void {
+    if (graph == null || typeof graph !== "object" || Array.isArray(graph)) {
+      throw new FridayDomainError("INVALID_GRAPH", "Graph must be a non-null object", { httpStatus: 400 });
+    }
+    const structuralErrors = validateGraphStructure(graph as Record<string, unknown>);
+    if (structuralErrors.length > 0) {
+      throw new FridayDomainError("INVALID_GRAPH", structuralErrors[0]!, { httpStatus: 400 });
+    }
+
+    const isCompiled =
+      "schemaVersion" in graph
+      && graph.schemaVersion === "2.0"
+      && "graph" in graph;
+    const rawChecksum = (graph as Record<string, unknown>).checksum;
+    const graphForValidation = isCompiled
+      ? graph as FridayCompiledWorkflowGraphV2
+      : {
+          ...parseGraphJson(graph as JsonValue),
+          checksum:
+            typeof rawChecksum === "string"
+              && rawChecksum.length > 0
+              ? rawChecksum
+              : "raw-graph-pending-checksum",
+        };
+    const validation = validator.validate(graphForValidation);
+    if (!validation.valid) {
+      const firstError = validation.errors[0]!;
+      throw new FridayDomainError(firstError.code, firstError.message, { httpStatus: 400 });
+    }
+  }
+
   return {
     createWorkflow(input) {
       const id = deps.idGenerator();
@@ -127,26 +162,7 @@ export function createFridayWorkflowCrudService(
     },
 
     updateWorkflowWithGraph(input, graph, createdByUserId, changeNote) {
-      if (graph == null || typeof graph !== "object" || Array.isArray(graph)) {
-        throw new FridayDomainError("INVALID_GRAPH", "Graph must be a non-null object", { httpStatus: 400 });
-      }
-      const structuralErrors = validateGraphStructure(graph as Record<string, unknown>);
-      if (structuralErrors.length > 0) {
-        throw new FridayDomainError("INVALID_GRAPH", structuralErrors[0]!, { httpStatus: 400 });
-      }
-
-      const isCompiled =
-        graph != null &&
-        typeof graph === "object" &&
-        "schemaVersion" in graph &&
-        graph.schemaVersion === "2.0";
-      if (isCompiled) {
-        const validation = validator.validate(graph as FridayCompiledWorkflowGraphV2);
-        if (!validation.valid) {
-          const firstError = validation.errors[0]!;
-          throw new FridayDomainError(firstError.code, firstError.message, { httpStatus: 400 });
-        }
-      }
+      assertGraphIsWritable(graph);
 
       const graphJson = JSON.stringify(graph);
       const checksum = deps.computeChecksum(graphJson);
@@ -173,28 +189,7 @@ export function createFridayWorkflowCrudService(
     },
 
     createWorkflowWithVersion(input, graph, createdByUserId, changeNote) {
-      // Structural validation: ensure graph has required fields
-      if (graph == null || typeof graph !== "object" || Array.isArray(graph)) {
-        throw new FridayDomainError("INVALID_GRAPH", "Graph must be a non-null object", { httpStatus: 400 });
-      }
-      const structuralErrors = validateGraphStructure(graph as Record<string, unknown>);
-      if (structuralErrors.length > 0) {
-        throw new FridayDomainError("INVALID_GRAPH", structuralErrors[0]!, { httpStatus: 400 });
-      }
-
-      // Only validate compiled graphs (schemaVersion "2.0").
-      const isCompiled =
-        graph != null &&
-        typeof graph === "object" &&
-        "schemaVersion" in graph &&
-        graph.schemaVersion === "2.0";
-      if (isCompiled) {
-        const validation = validator.validate(graph as FridayCompiledWorkflowGraphV2);
-        if (!validation.valid) {
-          const firstError = validation.errors[0]!;
-          throw new FridayDomainError(firstError.code, firstError.message, { httpStatus: 400 });
-        }
-      }
+      assertGraphIsWritable(graph);
 
       const graphJson = JSON.stringify(graph);
       const checksum = deps.computeChecksum(graphJson);
@@ -227,30 +222,7 @@ export function createFridayWorkflowCrudService(
     },
 
     createVersion(workflowId, compiledGraph, createdByUserId, changeNote) {
-      // Structural validation: ensure graph has required fields
-      if (compiledGraph == null || typeof compiledGraph !== "object" || Array.isArray(compiledGraph)) {
-        throw new FridayDomainError("INVALID_GRAPH", "Graph must be a non-null object", { httpStatus: 400 });
-      }
-      const structuralErrors = validateGraphStructure(compiledGraph as Record<string, unknown>);
-      if (structuralErrors.length > 0) {
-        throw new FridayDomainError("INVALID_GRAPH", structuralErrors[0]!, { httpStatus: 400 });
-      }
-
-      // Only validate compiled graphs (schemaVersion "2.0").
-      // Raw authoring graphs (e.g. { nodes: [], edges: [] }) are stored as-is
-      // and get compiled later when the workflow is run.
-      const isCompiled =
-        compiledGraph != null &&
-        typeof compiledGraph === "object" &&
-        "schemaVersion" in compiledGraph &&
-        compiledGraph.schemaVersion === "2.0";
-      if (isCompiled) {
-        const validation = validator.validate(compiledGraph as FridayCompiledWorkflowGraphV2);
-        if (!validation.valid) {
-          const firstError = validation.errors[0]!;
-          throw new FridayDomainError(firstError.code, firstError.message, { httpStatus: 400 });
-        }
-      }
+      assertGraphIsWritable(compiledGraph);
 
       const graphJson = JSON.stringify(compiledGraph);
       const checksum = deps.computeChecksum(graphJson);

@@ -158,4 +158,44 @@ describe("FridayHttpServer — HEAD body suppression", () => {
     expect(res.headers.get("content-type")).toContain("text/plain");
     expect(await res.text()).toBe("challenge-plain");
   });
+
+  it("DELETE parses a JSON request body for routes that require etag-style input", async () => {
+    const routes = createFridayHttpRouteRegistry();
+    routes.register({
+      operationId: "test.delete.body",
+      method: "DELETE",
+      path: "/v1/delete-body-test",
+      auth: { public: true },
+      async handler(ctx) {
+        return {
+          seenBody: ctx.body,
+        };
+      },
+    });
+
+    server = createFridayHttpServer({
+      routes,
+      wsGateway: makeStubWsGateway(),
+      middleware: makeStubMiddleware(),
+      port,
+      host: "127.0.0.1",
+    });
+    await server.listen();
+
+    const res = await fetch(`${baseUrl}/v1/delete-body-test`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ etag: "etag-123" }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        seenBody: {
+          etag: "etag-123",
+        },
+      },
+    });
+  });
 });

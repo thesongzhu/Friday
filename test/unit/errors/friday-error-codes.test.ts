@@ -44,6 +44,11 @@ describe("buildFridayErrorShape", () => {
     expect(shape.retryable).toBe(true);
   });
 
+  it("auto-sets retryable=true for DEGRADED_MODE", () => {
+    const shape = buildFridayErrorShape("DEGRADED_MODE", "temporarily degraded");
+    expect(shape.retryable).toBe(true);
+  });
+
   it("allows retryable override", () => {
     const shape = buildFridayErrorShape("RATE_LIMITED", "Too many", { retryable: false });
     expect(shape.retryable).toBe(false);

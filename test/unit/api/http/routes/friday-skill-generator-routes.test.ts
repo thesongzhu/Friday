@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { createFridaySkillGeneratorRoutes } from "#api";
 import type { FridaySkillGeneratorService } from "#skills/generator";
-import type { FridaySkillRegistry, FridayRegisteredSkill } from "#skills";
+import {
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  type FridaySkillRegistry,
+  type FridayRegisteredSkill,
+} from "#skills";
 import type { FridayHttpContext } from "#api";
 import type { SkillManifestV2 } from "#skills";
 import type { FridaySkillGenerationTurnResponse } from "#skills/generator";
@@ -105,7 +109,7 @@ function makeMockDraft() {
         path: "run.sh",
         language: "bash" as const,
         executable: true,
-        content: "#!/usr/bin/env bash\nprintf '{\"result\":\"ok\"}'\n",
+        content: "#!/usr/bin/env bash\nprintf '{\"result\":\"OK-MARKER\"}'\n",
       },
     ],
     uiSchema: {
@@ -300,12 +304,39 @@ describe("FridaySkillGeneratorRoutes", () => {
       const result = await route.handler(
         makeCtx({
           body: { goal: "Build a timer", userId: "user-1", channel: "discord" },
+          principal: { userId: "user-1", principalId: "user-1", tenantId: "tenant-1" },
         }),
       );
 
       expect(generatorService.startSession).toHaveBeenCalledOnce();
+      expect(generatorService.startSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "user-1",
+          tenantContext: expect.objectContaining({
+            userId: "user-1",
+            hubId: "tenant-1",
+            channelKind: "discord",
+          }),
+        }),
+      );
       expect(result).toHaveProperty("session");
       expect(result).toHaveProperty("mode", "clarification_required");
+    });
+
+    it("rejects a userId that does not match the authenticated principal", async () => {
+      const { routes, generatorService } = createRoutes();
+      const route = routes.find((r) => r.operationId === "skills.generator.sessions.create")!;
+
+      await expect(
+        route.handler(
+          makeCtx({
+            body: { goal: "Build a timer", userId: "victim-999", channel: "discord" },
+            principal: { userId: "admin-001", principalId: "admin-001", tenantId: "tenant-1" },
+          }),
+        ),
+      ).rejects.toThrow("userId must match the authenticated principal");
+
+      expect(generatorService.startSession).not.toHaveBeenCalled();
     });
   });
 
@@ -422,6 +453,28 @@ describe("FridaySkillGeneratorRoutes", () => {
       const route = routes.find(
         (r) => r.operationId === "skills.generator.sessions.test",
       )!;
+      generatorService.getSession = vi.fn(async (sessionId: string) => {
+        if (sessionId === "not-found") return null;
+        return {
+          session: {
+            ...makeMockSession().session,
+            sessionId,
+            draftSkillId: "test-skill",
+            status: "ready_for_review",
+            goal: 'Build a timer and must output the exact string "OK-MARKER"',
+          },
+          turns: [
+            {
+              turnId: "t-1",
+              sessionId,
+              role: "user" as const,
+              content: 'Build a timer and must output the exact string "OK-MARKER"',
+              createdAt: NOW,
+            },
+          ],
+          draft: makeMockDraft(),
+        };
+      });
 
       const result = await route.handler(
         makeCtx({ params: { sessionId: "sess-1" } }),
@@ -436,6 +489,110 @@ describe("FridaySkillGeneratorRoutes", () => {
           executable: true,
         }),
       );
+    });
+
+    it("fails closed when the extracted contract has no required output markers", async () => {
+      const { routes, generatorService } = createRoutes();
+      const route = routes.find(
+        (r) => r.operationId === "skills.generator.sessions.test",
+      )!;
+
+      const result = await route.handler(
+        makeCtx({ params: { sessionId: "sess-1" } }),
+      ) as {
+        test: {
+          ok: boolean;
+          executable: boolean;
+          behavioralCheck?: { attempted: boolean; satisfied: boolean; reason?: string };
+          issues: Array<{ code: string }>;
+        };
+      };
+
+      expect(result.test.ok).toBe(false);
+      expect(result.test.executable).toBe(false);
+      expect(result.test.behavioralCheck).toMatchObject({
+        attempted: false,
+        satisfied: false,
+      });
+      expect(result.test.behavioralCheck?.reason).toContain("required output marker");
+      expect(result.test.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "BEHAVIOR_TEST_MARKERS_REQUIRED" }),
+        ]),
+      );
+      expect(generatorService.recordExplicitTestResult).toHaveBeenCalledWith(
+        "sess-1",
+        expect.objectContaining({
+          ok: false,
+          executable: false,
+        }),
+      );
+    });
+
+    it("returns CAPABILITY_DISABLED for node-runtime draft self-tests when the gate is off", async () => {
+      const previousGate = process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+      delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+      try {
+        const generatorService = makeMockGeneratorService();
+        generatorService.getSession = vi.fn(async (sessionId: string) => {
+          if (sessionId === "not-found") return null;
+          const draft = makeMockDraft();
+          return {
+            session: {
+              ...makeMockSession().session,
+              sessionId,
+              draftSkillId: "test-skill",
+              status: "ready_for_review",
+              goal: 'Build a timer and must output the exact string "OK-MARKER"',
+            },
+            turns: [],
+            draft: {
+              ...draft,
+              runtimeKind: "node" as const,
+              manifest: {
+                ...draft.manifest,
+                runtime: {
+                  kind: "node",
+                  entrypoint: "index.mjs",
+                  minHubVersion: "1.0.0",
+                  apiVersion: "1",
+                  timeoutMsDefault: 30_000,
+                },
+              },
+              files: [
+                {
+                  path: "index.mjs",
+                  language: "javascript" as const,
+                  executable: false,
+                  content: "export async function execute() { return { result: 'ok' }; }",
+                },
+              ],
+            },
+          };
+        });
+
+        const routes = createFridaySkillGeneratorRoutes({
+          skillGenerator: generatorService,
+          registry: makeMockRegistry(),
+        });
+        const route = routes.find(
+          (r) => r.operationId === "skills.generator.sessions.test",
+        )!;
+
+        await expect(
+          route.handler(makeCtx({ params: { sessionId: "sess-1" } })),
+        ).rejects.toMatchObject({
+          code: "CAPABILITY_DISABLED",
+          httpStatus: 501,
+        });
+        expect(generatorService.recordExplicitTestResult).not.toHaveBeenCalled();
+      } finally {
+        if (previousGate === undefined) {
+          delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+        } else {
+          process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = previousGate;
+        }
+      }
     });
   });
 
@@ -452,6 +609,40 @@ describe("FridaySkillGeneratorRoutes", () => {
 
       expect(result.evidence.validationSummary.ok).toBe(true);
       expect(result.evidence.approvalReadiness.ready).toBe(true);
+    });
+
+    it("keeps approval readiness false when the recorded self-test was not executable", async () => {
+      const { routes, generatorService } = createRoutes();
+      const route = routes.find(
+        (r) => r.operationId === "skills.generator.sessions.evidence.get",
+      )!;
+      generatorService.getSession = vi.fn(async (sessionId: string) => {
+        if (sessionId === "not-found") return null;
+        return {
+          session: {
+            ...makeMockSession().session,
+            sessionId,
+            draftSkillId: "test-skill",
+            status: "ready_for_review",
+            explicitTest: {
+              ok: true,
+              executable: false,
+              issues: [],
+              durationMs: 5,
+              testedAt: NOW,
+            },
+          },
+          turns: [],
+          draft: makeMockDraft(),
+        };
+      });
+
+      const result = await route.handler(
+        makeCtx({ params: { sessionId: "sess-1" } }),
+      ) as { evidence: { approvalReadiness: { ready: boolean; reason: string } } };
+
+      expect(result.evidence.approvalReadiness.ready).toBe(false);
+      expect(result.evidence.approvalReadiness.reason).toContain("did not execute runtime behavior");
     });
   });
 

@@ -5,6 +5,7 @@ import type { FridayMemoryGuardServiceFactory } from "#memory";
 import type { FridayRouteDefinition, FridayHttpContext } from "#api";
 import type { FridayMemoryItem, FridayMemorySearchResult } from "#memory";
 import { FridayDomainError } from "#errors";
+import { hashIdempotencyPayload } from "../../../../../src/api/http/routes/friday-route-idempotency.js";
 
 describe("FridayMemoryRoutes", () => {
   let memoryService: FridayMemoryService;
@@ -145,6 +146,62 @@ describe("FridayMemoryRoutes", () => {
     await expect(route.handler(ctx)).rejects.toThrow(FridayDomainError);
   });
 
+  it("store handler replays an existing item when Idempotency-Key matches", async () => {
+    const replayItem: FridayMemoryItem = {
+      ...mockItem,
+      metadata: {
+        apiRequest: {
+          operationId: "memory.items.create",
+          principalId: "user-1",
+          idempotencyKey: "idem-1",
+          payloadHash: hashIdempotencyPayload({
+            namespace: "default",
+            content: "Hello",
+          }),
+          receivedAt: NOW,
+        },
+      },
+    };
+    routes = createFridayMemoryRoutes({
+      memoryGuardFactory,
+      findStoreReplay: vi.fn(() => replayItem),
+    });
+    const route = findRoute("memory.store");
+
+    const result = await route.handler(makeCtx({
+      body: { content: "Hello" },
+      headers: { "idempotency-key": "idem-1" },
+    })) as { item: FridayMemoryItem };
+
+    expect(result.item).toEqual(replayItem);
+    expect(memoryService.store).not.toHaveBeenCalled();
+  });
+
+  it("store handler rejects an Idempotency-Key replay with a different payload", async () => {
+    const replayItem: FridayMemoryItem = {
+      ...mockItem,
+      metadata: {
+        apiRequest: {
+          operationId: "memory.items.create",
+          principalId: "user-1",
+          idempotencyKey: "idem-1",
+          payloadHash: "different-hash",
+          receivedAt: NOW,
+        },
+      },
+    };
+    routes = createFridayMemoryRoutes({
+      memoryGuardFactory,
+      findStoreReplay: vi.fn(() => replayItem),
+    });
+    const route = findRoute("memory.store");
+
+    await expect(route.handler(makeCtx({
+      body: { content: "Hello" },
+      headers: { "idempotency-key": "idem-1" },
+    }))).rejects.toThrow("Idempotency-Key 'idem-1'");
+  });
+
   // ─── Search handler ───
 
   it("search handler calls service.search", async () => {
@@ -169,6 +226,23 @@ describe("FridayMemoryRoutes", () => {
     const route = findRoute("memory.search");
     const ctx = makeCtx({ body: { query: "" } });
     await expect(route.handler(ctx)).rejects.toThrow(FridayDomainError);
+  });
+
+  it("search handler merges learned facts into the public memory surface", async () => {
+    routes = createFridayMemoryRoutes({
+      memoryGuardFactory,
+      listLearnedFacts: () => [{
+        key: "pref:display_name",
+        value: "Captain Friday",
+        confidence: 0.8,
+        evidenceCount: 1,
+        lastConfirmedAt: NOW,
+      }],
+    });
+    const route = findRoute("memory.search");
+    const result = await route.handler(makeCtx({ body: { query: "call me" } })) as { items: FridayMemorySearchResult[] };
+
+    expect(result.items.some((entry) => entry.item.source === "learned_fact")).toBe(true);
   });
 
   // ─── Get handler ───
@@ -203,6 +277,21 @@ describe("FridayMemoryRoutes", () => {
     await expect(route.handler(ctx)).rejects.toThrow(FridayDomainError);
   });
 
+  it("delete handler removes learned facts through synthetic memory ids", async () => {
+    const deleteLearnedFact = vi.fn(() => true);
+    routes = createFridayMemoryRoutes({
+      memoryGuardFactory,
+      deleteLearnedFact,
+    });
+    const route = findRoute("memory.delete");
+    const result = await route.handler(
+      makeCtx({ params: { id: "learned-fact:pref:display_name" } }),
+    ) as { deleted: boolean };
+
+    expect(result.deleted).toBe(true);
+    expect(deleteLearnedFact).toHaveBeenCalledWith({ userId: "user-1", key: "pref:display_name" });
+  });
+
   // ─── List handler ───
 
   it("list handler returns items", async () => {
@@ -210,6 +299,23 @@ describe("FridayMemoryRoutes", () => {
     const ctx = makeCtx({ query: { namespace: "test" } });
     const result = await route.handler(ctx) as { items: FridayMemoryItem[] };
     expect(result.items).toHaveLength(1);
+  });
+
+  it("list handler includes learned facts in the preference surface", async () => {
+    routes = createFridayMemoryRoutes({
+      memoryGuardFactory,
+      listLearnedFacts: () => [{
+        key: "pref:display_name",
+        value: "Captain Friday",
+        confidence: 0.8,
+        evidenceCount: 1,
+        lastConfirmedAt: NOW,
+      }],
+    });
+    const route = findRoute("memory.list");
+    const result = await route.handler(makeCtx()) as { items: FridayMemoryItem[] };
+
+    expect(result.items.some((entry) => entry.id === "learned-fact:pref:display_name")).toBe(true);
   });
 
   // ─── Prune handler ───

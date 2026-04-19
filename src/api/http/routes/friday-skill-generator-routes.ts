@@ -10,8 +10,11 @@ import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridaySkillRegistry } from "#skills";
 import type { FridaySkillUiSchemaV1 } from "#skills/generator";
 import {
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   createFridayNodeExecutor,
   createFridayShellExecutor,
+  getFridayUnisolatedNodeSkillsDisabledMessage,
+  isFridayUnisolatedNodeSkillsEnabled,
   loadFridaySkillPackage,
   type SkillManifestV2,
   validateFridaySkillPackage,
@@ -32,6 +35,19 @@ import type {
   FridayStartSessionResponse,
   FridaySubmitTurnResponse,
 } from "../../model/friday-api-skill-generator.types.js";
+import { throwFridayCapabilityDisabled } from "./friday-capability-disabled.js";
+
+function requireUserId(principal: unknown): string {
+  const record = principal && typeof principal === "object"
+    ? principal as { userId?: unknown }
+    : {};
+  if (typeof record.userId === "string" && record.userId.trim().length > 0) {
+    return record.userId.trim();
+  }
+  throw new FridayDomainError("UNAUTHORIZED", "A user-scoped skill-generator principal is required", {
+    httpStatus: 401,
+  });
+}
 
 function buildTenantContext(principal: unknown, fallbackUserId: string, fallbackChannel: string): FridayProviderTenantContext {
   const record = principal && typeof principal === "object"
@@ -285,6 +301,18 @@ async function executeDraftFromTempDir(
   }
 
   if (manifest.runtime.kind === "node") {
+    if (!isFridayUnisolatedNodeSkillsEnabled()) {
+      throwFridayCapabilityDisabled({
+        capability: "skill_node_runtime",
+        surface: "POST /v1/skills/generator/sessions/:sessionId/test",
+        message: getFridayUnisolatedNodeSkillsDisabledMessage(),
+        details: {
+          runtimeKind: "node",
+          gate: FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+          skillId: manifest.id,
+        },
+      });
+    }
     const nodeExecutor = createFridayNodeExecutor();
     const nodeResult = await nodeExecutor.run({
       entrypoint: manifest.runtime.entrypoint,
@@ -416,57 +444,67 @@ export function createFridaySkillGeneratorRoutes(
       }));
       const behavioralCheck: NonNullable<FridaySkillGeneratorTestResponse["test"]["behavioralCheck"]> = {
         attempted: false,
-        satisfied: contract.requiredOutputMarkers.length === 0,
+        satisfied: false,
         expectedMarkers: [...contract.requiredOutputMarkers],
         matchedMarkers: [],
       };
 
-      if (validation.ok && contract.requiredOutputMarkers.length > 0) {
-        const synthesized = buildDraftExecutionInput(
-          draft.manifest,
-          result.session.goal,
-          contract.requiredOutputMarkers,
-          contract.expectedSkillId,
-        );
-        if (!synthesized.ok) {
-          behavioralCheck.satisfied = false;
-          behavioralCheck.reason = synthesized.reason;
+      if (validation.ok) {
+        if (contract.requiredOutputMarkers.length === 0) {
+          behavioralCheck.reason =
+            "Explicit self-test requires at least one required output marker to prove runtime behavior.";
           issues.push({
-            code: "BEHAVIOR_TEST_INPUT_UNAVAILABLE",
+            code: "BEHAVIOR_TEST_MARKERS_REQUIRED",
             severity: "error",
-            message: synthesized.reason,
+            message: behavioralCheck.reason,
             path: undefined,
           });
         } else {
-          behavioralCheck.attempted = true;
-          const execution = await executeDraftFromTempDir(root, loaded.value.manifest, synthesized.input);
-          behavioralCheck.runStatus = execution.status;
-          const combinedOutput = `${execution.stdout}\n${JSON.stringify(execution.output)}`;
-          behavioralCheck.matchedMarkers = contract.requiredOutputMarkers.filter((marker) =>
-            combinedOutput.includes(marker),
+          const synthesized = buildDraftExecutionInput(
+            draft.manifest,
+            result.session.goal,
+            contract.requiredOutputMarkers,
+            contract.expectedSkillId,
           );
-          behavioralCheck.satisfied =
-            execution.status === "completed" &&
-            behavioralCheck.matchedMarkers.length === contract.requiredOutputMarkers.length;
-          if (!behavioralCheck.satisfied) {
-            behavioralCheck.reason = execution.status !== "completed"
-              ? `Draft execution finished with status ${execution.status}`
-              : `Runtime output missed required marker(s): ${contract.requiredOutputMarkers.filter((marker) => !behavioralCheck.matchedMarkers.includes(marker)).join(", ")}`;
+          if (!synthesized.ok) {
+            behavioralCheck.reason = synthesized.reason;
             issues.push({
-              code: execution.status !== "completed"
-                ? "BEHAVIOR_TEST_EXECUTION_FAILED"
-                : "BEHAVIOR_TEST_MARKER_MISMATCH",
+              code: "BEHAVIOR_TEST_INPUT_UNAVAILABLE",
               severity: "error",
-              message: behavioralCheck.reason,
+              message: synthesized.reason,
               path: undefined,
             });
+          } else {
+            behavioralCheck.attempted = true;
+            const execution = await executeDraftFromTempDir(root, loaded.value.manifest, synthesized.input);
+            behavioralCheck.runStatus = execution.status;
+            const combinedOutput = `${execution.stdout}\n${JSON.stringify(execution.output)}`;
+            behavioralCheck.matchedMarkers = contract.requiredOutputMarkers.filter((marker) =>
+              combinedOutput.includes(marker),
+            );
+            behavioralCheck.satisfied =
+              execution.status === "completed" &&
+              behavioralCheck.matchedMarkers.length === contract.requiredOutputMarkers.length;
+            if (!behavioralCheck.satisfied) {
+              behavioralCheck.reason = execution.status !== "completed"
+                ? `Draft execution finished with status ${execution.status}`
+                : `Runtime output missed required marker(s): ${contract.requiredOutputMarkers.filter((marker) => !behavioralCheck.matchedMarkers.includes(marker)).join(", ")}`;
+              issues.push({
+                code: execution.status !== "completed"
+                  ? "BEHAVIOR_TEST_EXECUTION_FAILED"
+                  : "BEHAVIOR_TEST_MARKER_MISMATCH",
+                severity: "error",
+                message: behavioralCheck.reason,
+                path: undefined,
+              });
+            }
           }
         }
       }
 
       return {
         ok: validation.ok && issues.every((issue) => issue.severity !== "error"),
-        executable: validation.ok && (behavioralCheck.attempted ? behavioralCheck.satisfied : true),
+        executable: validation.ok && behavioralCheck.attempted && behavioralCheck.satisfied,
         issues,
         durationMs: Date.now() - startedAt,
         testedAt: new Date().toISOString(),
@@ -506,11 +544,15 @@ export function createFridaySkillGeneratorRoutes(
       }
       : draft
         ? {
-          ready: draft.validation.ok && (test?.ok ?? false),
+          ready: draft.validation.ok && (test?.ok ?? false) && (test?.executable ?? false),
           reason: draft.validation.ok
-            ? test?.ok
-              ? "Draft passed validation and explicit self-test"
-              : "Draft still needs to pass explicit self-test"
+            ? !test
+              ? "Draft still needs to pass explicit self-test"
+              : !test.ok
+                ? "Draft still needs to pass explicit self-test"
+                : !test.executable
+                  ? "Draft explicit self-test did not execute runtime behavior"
+                  : "Draft passed validation and explicit self-test"
             : "Draft has validation issues that must be fixed before approval",
         }
         : savedOrApproved
@@ -560,12 +602,20 @@ export function createFridaySkillGeneratorRoutes(
       async handler(ctx): Promise<FridayStartSessionResponse> {
         validateStartSessionBody(ctx.body);
         const body = ctx.body;
+        const principalUserId = requireUserId(ctx.principal);
+        if (body.userId.trim() !== principalUserId) {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "userId must match the authenticated principal",
+            { httpStatus: 400 },
+          );
+        }
         const result = await deps.skillGenerator.startSession({
           goal: body.goal,
           requestedModel: body.requestedModel,
-          userId: body.userId,
+          userId: principalUserId,
           channel: body.channel,
-          tenantContext: buildTenantContext(ctx.principal, body.userId, body.channel),
+          tenantContext: buildTenantContext(ctx.principal, principalUserId, body.channel),
         });
         if (result.mode === "generation_failed") {
           await reportGenerationFailure({

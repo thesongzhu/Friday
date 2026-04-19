@@ -77,6 +77,18 @@ describe("FridayApiRuntime — SEC-005: Revocation persistence", () => {
     expect(row).toBeDefined();
     expect(row!.token_id).toBe(validated.principal.tokenId);
     expect(row!.expires_at_epoch).toBeGreaterThan(0);
+
+    const accessTokenRow = db.writer.prepare(
+      "SELECT token_id, session_id, user_id, revoked_at FROM auth_access_tokens WHERE token_id = ?",
+    ).get(validated.principal.tokenId) as
+      | { token_id: string; session_id: string; user_id: string; revoked_at: string | null }
+      | undefined;
+
+    expect(accessTokenRow).toBeDefined();
+    expect(accessTokenRow!.token_id).toBe(validated.principal.tokenId);
+    expect(accessTokenRow!.session_id).toBe(validated.principal.sessionId);
+    expect(accessTokenRow!.user_id).toBe(validated.principal.userId);
+    expect(accessTokenRow!.revoked_at).toBe(NOW);
   });
 
   it("loads persisted revocations from DB on startup", () => {
@@ -111,5 +123,17 @@ describe("FridayApiRuntime — SEC-005: Revocation persistence", () => {
     ).get();
 
     expect(row).toBeUndefined();
+  });
+
+  it("rejects tracked access tokens after their auth session is revoked", () => {
+    const runtime = makeRuntime();
+    const loginResult = runtime.auth.login({ localPassphrase: "any" });
+    const validated = runtime.tokenValidator.validate(loginResult.accessToken);
+
+    db.writer
+      .prepare("UPDATE auth_sessions SET revoked_at = ?, updated_at = ? WHERE id = ?")
+      .run(NOW, NOW, validated.principal.sessionId);
+
+    expect(() => runtime.tokenValidator.validate(loginResult.accessToken)).toThrow();
   });
 });

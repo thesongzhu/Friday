@@ -24,9 +24,9 @@ function findRoute(routes: FridayRouteDefinition<unknown, unknown, unknown, unkn
 // ─── Tests ───
 
 describe("createFridayHealthRoutes", () => {
-  it("returns exactly one route", () => {
+  it("returns exactly two routes", () => {
     const routes = createFridayHealthRoutes({ version: "1.0.0" });
-    expect(routes).toHaveLength(1);
+    expect(routes).toHaveLength(2);
   });
 
   it("registers GET /v1/health with correct operationId", () => {
@@ -35,6 +35,15 @@ describe("createFridayHealthRoutes", () => {
     expect(route).toBeDefined();
     expect(route.method).toBe("GET");
     expect(route.path).toBe("/v1/health");
+  });
+
+  it("registers GET /v1/health/capabilities with correct operationId", () => {
+    const routes = createFridayHealthRoutes({ version: "1.0.0" });
+    const route = findRoute(routes, "health.capabilities");
+    expect(route).toBeDefined();
+    expect(route.method).toBe("GET");
+    expect(route.path).toBe("/v1/health/capabilities");
+    expect(route.auth).toEqual({ public: false, anyOfScopes: ["session.read"] });
   });
 
   it("is public (no auth)", () => {
@@ -50,6 +59,43 @@ describe("createFridayHealthRoutes", () => {
     });
     const route = findRoute(routes, "health.check");
     const result = await route.handler(makeCtx());
+    expect(result).toEqual({
+      status: "ok",
+      version: "0.1.0",
+      uptime: 42,
+    });
+  });
+
+  it("omits capabilities for unauthenticated callers", async () => {
+    const routes = createFridayHealthRoutes({
+      version: "0.1.0",
+      getUptimeSeconds: () => 42,
+    });
+    const route = findRoute(routes, "health.check");
+    const result = await route.handler(makeCtx()) as {
+      capabilities?: unknown;
+    };
+    expect(result.capabilities).toBeUndefined();
+  });
+
+  it("returns capabilities from the authenticated route", async () => {
+    const routes = createFridayHealthRoutes({
+      version: "0.1.0",
+      getUptimeSeconds: () => 42,
+    });
+    const route = findRoute(routes, "health.capabilities");
+    const result = await route.handler(makeCtx({
+      principal: {
+        principalType: "user",
+        principalId: "user-1",
+        userId: "user-1",
+        role: "admin",
+        scopes: ["session.read"],
+        tokenId: "token-1",
+        tokenKind: "access",
+        issuedAt: "2025-06-15T10:00:00.000Z",
+      },
+    }));
     expect(result).toEqual({
       status: "ok",
       version: "0.1.0",
@@ -72,6 +118,17 @@ describe("createFridayHealthRoutes", () => {
         channels: {
           supportedKinds: [],
           enabledKinds: [],
+          webhookEndpoints: {
+            line: false,
+            whatsapp: false,
+            lark: false,
+          },
+        },
+        mcp: {
+          enabled: false,
+        },
+        packaging: {
+          enabled: false,
         },
         search: {
           provider: "duckduckgo_html",
@@ -94,7 +151,7 @@ describe("createFridayHealthRoutes", () => {
     expect(result.version).toBe("2.0.0");
     expect(typeof result.uptime).toBe("number");
     expect(result.uptime).toBeGreaterThanOrEqual(0);
-    expect(result).toHaveProperty("capabilities");
+    expect(result).not.toHaveProperty("capabilities");
   });
 
   it("passes version through unchanged", async () => {
@@ -129,6 +186,17 @@ describe("createFridayHealthRoutes", () => {
         channels: {
           supportedKinds: ["discord", "slack"],
           enabledKinds: ["discord"],
+          webhookEndpoints: {
+            line: false,
+            whatsapp: false,
+            lark: false,
+          },
+        },
+        mcp: {
+          enabled: true,
+        },
+        packaging: {
+          enabled: true,
         },
         search: {
           provider: "serper",
@@ -145,8 +213,19 @@ describe("createFridayHealthRoutes", () => {
         },
       }),
     });
-    const route = findRoute(routes, "health.check");
-    const result = await route.handler(makeCtx()) as {
+    const route = findRoute(routes, "health.capabilities");
+    const result = await route.handler(makeCtx({
+      principal: {
+        principalType: "user",
+        principalId: "user-1",
+        userId: "user-1",
+        role: "admin",
+        scopes: ["session.read"],
+        tokenId: "token-1",
+        tokenKind: "access",
+        issuedAt: "2025-06-15T10:00:00.000Z",
+      },
+    })) as {
       capabilities: {
         plugins: { runtimeMode: string };
         search: { provider: string };

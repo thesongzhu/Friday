@@ -4,6 +4,7 @@ import type {
 } from "../../model/friday-api-common.types.js";
 import type { UUID } from "#workflows";
 import { FridayDomainError } from "#errors";
+import type { FridayHttpRawTextResponse } from "../friday-http-raw-response.js";
 import type {
   FridayCancelRunRequest,
   FridayCancelRunResponse,
@@ -74,7 +75,7 @@ export interface FridayWorkflowRunRoutesDeps {
     runId: UUID,
     exportId: UUID,
     principal: FridayAuthPrincipal | null,
-  ) => FridayDownloadRunEvidenceExportResponse;
+  ) => FridayDownloadRunEvidenceExportResponse | FridayHttpRawTextResponse;
   cancelRun: (
     runId: UUID,
     input: FridayCancelRunRequest,

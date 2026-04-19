@@ -125,10 +125,10 @@ describe("createFridayChannelRoutes", () => {
   it("returns null persona when none is configured", async () => {
     const routes = createFridayChannelRoutes(createDeps());
     const route = routes.find((item) => item.operationId === "channels.persona.get");
-    const result = await route!.handler(makeCtx({ params: { kind: "discord" } }) as never);
+    const result = await route!.handler(makeCtx({ params: { kind: "telegram" } }) as never);
 
     expect(result).toEqual({
-      kind: "discord",
+      kind: "telegram",
       persona: null,
     });
   });
@@ -139,16 +139,16 @@ describe("createFridayChannelRoutes", () => {
     const getRoute = routes.find((item) => item.operationId === "channels.persona.get");
 
     const updateResult = await updateRoute!.handler(makeCtx({
-      params: { kind: "discord" },
+      params: { kind: "telegram" },
       body: {
         persona: "A concise operator persona",
         systemPrompt: "",
       },
     }) as never);
-    const getResult = await getRoute!.handler(makeCtx({ params: { kind: "discord" } }) as never);
+    const getResult = await getRoute!.handler(makeCtx({ params: { kind: "telegram" } }) as never);
 
     expect(updateResult).toMatchObject({
-      kind: "discord",
+      kind: "telegram",
       persona: {
         persona: "A concise operator persona",
         systemPrompt: "",
@@ -156,7 +156,7 @@ describe("createFridayChannelRoutes", () => {
       },
     });
     expect(getResult).toMatchObject({
-      kind: "discord",
+      kind: "telegram",
       persona: {
         persona: "A concise operator persona",
         systemPrompt: "",
@@ -171,35 +171,35 @@ describe("createFridayChannelRoutes", () => {
     const getRoute = routes.find((item) => item.operationId === "channels.persona.get");
 
     await updateRoute!.handler(makeCtx({
-      params: { kind: "slack" },
+      params: { kind: "telegram" },
       body: {
         persona: "Temporary persona",
         systemPrompt: "Temporary system prompt",
       },
     }) as never);
     const clearResult = await updateRoute!.handler(makeCtx({
-      params: { kind: "slack" },
+      params: { kind: "telegram" },
       body: {
         persona: "",
         systemPrompt: "",
       },
     }) as never);
-    const getResult = await getRoute!.handler(makeCtx({ params: { kind: "slack" } }) as never);
+    const getResult = await getRoute!.handler(makeCtx({ params: { kind: "telegram" } }) as never);
 
     expect(clearResult).toEqual({
-      kind: "slack",
+      kind: "telegram",
       persona: null,
       cleared: true,
     });
     expect(getResult).toEqual({
-      kind: "slack",
+      kind: "telegram",
       persona: null,
     });
   });
 
   it("hydrates persisted personas into the runtime store", async () => {
     hydrateChannelPersonaStore({
-      discord: {
+      telegram: {
         persona: "Persisted persona",
         systemPrompt: "Persisted system prompt",
         updatedAt: NOW,
@@ -207,10 +207,10 @@ describe("createFridayChannelRoutes", () => {
     });
     const routes = createFridayChannelRoutes(createDeps());
     const route = routes.find((item) => item.operationId === "channels.persona.get");
-    const result = await route!.handler(makeCtx({ params: { kind: "discord" } }) as never);
+    const result = await route!.handler(makeCtx({ params: { kind: "telegram" } }) as never);
 
     expect(result).toEqual({
-      kind: "discord",
+      kind: "telegram",
       persona: {
         persona: "Persisted persona",
         systemPrompt: "Persisted system prompt",
@@ -225,14 +225,14 @@ describe("createFridayChannelRoutes", () => {
     const updateRoute = routes.find((item) => item.operationId === "channels.persona.update");
 
     await updateRoute!.handler(makeCtx({
-      params: { kind: "discord" },
+      params: { kind: "telegram" },
       body: {
         persona: "Persist me",
         systemPrompt: "",
       },
     }) as never);
 
-    expect(deps.persistPersona).toHaveBeenCalledWith("discord", {
+    expect(deps.persistPersona).toHaveBeenCalledWith("telegram", {
       persona: "Persist me",
       systemPrompt: "",
       updatedAt: NOW,
@@ -247,5 +247,34 @@ describe("createFridayChannelRoutes", () => {
       code: "CHANNEL_NOT_FOUND",
       httpStatus: 404,
     });
+  });
+
+  it("rejects persona reads for an unregistered channel kind", async () => {
+    const routes = createFridayChannelRoutes(createDeps());
+    const route = routes.find((item) => item.operationId === "channels.persona.get");
+
+    await expect(route!.handler(makeCtx({ params: { kind: "missing" } }) as never)).rejects.toMatchObject({
+      code: "CHANNEL_NOT_FOUND",
+      httpStatus: 404,
+    });
+  });
+
+  it("rejects persona writes for an unregistered channel kind", async () => {
+    const deps = createDeps();
+    const routes = createFridayChannelRoutes(deps);
+    const route = routes.find((item) => item.operationId === "channels.persona.update");
+
+    await expect(route!.handler(makeCtx({
+      params: { kind: "missing" },
+      body: {
+        persona: "Nope",
+        systemPrompt: "",
+      },
+    }) as never)).rejects.toMatchObject({
+      code: "CHANNEL_NOT_FOUND",
+      httpStatus: 404,
+    });
+
+    expect(deps.persistPersona).not.toHaveBeenCalled();
   });
 });

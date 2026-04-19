@@ -12,6 +12,10 @@ export const FridayLarkChannelConfigSchema = z.object({
   appId: z.string().min(1),
   /** Lark/Feishu application secret. */
   appSecret: z.string().min(1),
+  /** Event subscription verification token used by webhook callbacks. */
+  verificationToken: z.string().min(1).optional(),
+  /** Event subscription encrypt key used for webhook signature verification and decryption. */
+  encryptKey: z.string().min(1).optional(),
   /** Use Feishu (China) API endpoints instead of Lark (international). */
   useFeishu: z.boolean().default(false),
   /** If set, only accept messages from these user IDs. */
@@ -20,6 +24,14 @@ export const FridayLarkChannelConfigSchema = z.object({
   allowedChats: z.array(z.string()).optional(),
   /** Receive mode: websocket (default) or webhook relay. */
   receiveMode: z.enum(["websocket", "webhook"]).default("websocket"),
+}).superRefine((value, ctx) => {
+  if (value.receiveMode === "webhook" && !value.verificationToken) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["verificationToken"],
+      message: "verificationToken is required when receiveMode=webhook",
+    });
+  }
 });
 
 export type FridayLarkChannelConfig = z.infer<typeof FridayLarkChannelConfigSchema>;

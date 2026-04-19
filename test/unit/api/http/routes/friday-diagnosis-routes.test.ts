@@ -118,12 +118,16 @@ function makeService(): FridaySelfHealingApiService {
 describe("FridayDiagnosisRoutes", () => {
   it("creates diagnosis route definitions", () => {
     const routes = createFridayDiagnosisRoutes({ service: makeService() });
-    expect(routes).toHaveLength(7);
+    expect(routes).toHaveLength(11);
     expect(routes.map((route) => route.operationId)).toEqual([
       "diagnosis.incidents.list",
+      "learning.incidents.list",
       "diagnosis.incidents.get",
+      "learning.incidents.get",
       "diagnosis.incidents.diagnosis.get",
+      "learning.incidents.diagnosis.get",
       "diagnosis.learning.overview",
+      "learning.overview.get",
       "diagnosis.incidents.manual.resolve",
       "diagnosis.lessons.enabled.set",
       "diagnosis.patterns.demote",
@@ -215,6 +219,45 @@ describe("FridayDiagnosisRoutes", () => {
     });
     expect(result.lessons).toEqual([]);
     expect(result.patterns).toEqual([]);
+  });
+
+  it("exposes learning incident aliases under /v1/learning/*", async () => {
+    const service = makeService();
+    const routes = createFridayDiagnosisRoutes({ service });
+    const listRoute = routes.find((entry) => entry.operationId === "learning.incidents.list")!;
+    const detailRoute = routes.find((entry) => entry.operationId === "learning.incidents.get")!;
+    const diagnosisRoute = routes.find((entry) => entry.operationId === "learning.incidents.diagnosis.get")!;
+    const overviewRoute = routes.find((entry) => entry.operationId === "learning.overview.get")!;
+
+    const listResult = await listRoute.handler(makeCtx({ query: { limit: "3" } })) as {
+      items: Array<{ summary: { incidentId: string } }>;
+    };
+    const detailResult = await detailRoute.handler(makeCtx({ params: { incidentId: "incident-1" } })) as {
+      summary: { incidentId: string };
+    };
+    const diagnosisResult = await diagnosisRoute.handler(makeCtx({ params: { incidentId: "incident-1" } })) as {
+      incident: { incidentId: string };
+    };
+    const overviewResult = await overviewRoute.handler(makeCtx({ query: { limit: "4" } })) as {
+      lessons: unknown[];
+    };
+
+    expect(service.listIncidents).toHaveBeenCalledWith({
+      userId: "user-1",
+      status: undefined,
+      limit: 3,
+    });
+    expect(service.getIncident).toHaveBeenCalledWith({ incidentId: "incident-1" });
+    expect(service.getIncidentDiagnosis).toHaveBeenCalledWith({ incidentId: "incident-1" });
+    expect(service.getLearningOverview).toHaveBeenCalledWith({ userId: "user-1", limit: 4 });
+    expect(listRoute.path).toBe("/v1/learning/incidents");
+    expect(detailRoute.path).toBe("/v1/learning/incidents/:incidentId");
+    expect(diagnosisRoute.path).toBe("/v1/learning/incidents/:incidentId/diagnosis");
+    expect(overviewRoute.path).toBe("/v1/learning/overview");
+    expect(listResult.items[0]?.summary.incidentId).toBe("incident-1");
+    expect(detailResult.summary.incidentId).toBe("incident-1");
+    expect(diagnosisResult.incident.incidentId).toBe("incident-1");
+    expect(overviewResult.lessons).toEqual([]);
   });
 
   it("toggles lesson enabled state with a boolean body", async () => {

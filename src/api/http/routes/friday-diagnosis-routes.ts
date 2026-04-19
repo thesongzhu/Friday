@@ -1,6 +1,6 @@
 import { FridayDomainError } from "#errors";
 import type { FridaySelfHealingApiService } from "#learning";
-import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import type { FridayHttpContext, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
   FridayDemotePatternResponse,
   FridayDiagnosisIncidentRecord,
@@ -80,94 +80,138 @@ function toIncidentRecord(
 export function createFridayDiagnosisRoutes(
   deps: FridayDiagnosisRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  const listIncidentsHandler = async (
+    ctx: FridayHttpContext<unknown, unknown, unknown>,
+  ): Promise<FridayListDiagnosisIncidentsResponse> => {
+    const userId = requireUserId(ctx.principal);
+    const query = (ctx.query ?? {}) as Record<string, unknown>;
+    const status = typeof query.status === "string"
+      ? query.status as "open" | "mitigated" | "resolved"
+      : undefined;
+    const limit = readPositiveInt(query.limit);
+    return {
+      items: deps.service.listIncidents({ userId, status, limit }).map((item) => toIncidentRecord(deps, item)),
+    };
+  };
+
+  const getIncidentHandler = async (
+    ctx: FridayHttpContext<unknown, unknown, unknown>,
+  ): Promise<FridayGetDiagnosisIncidentResponse> => {
+    requireUserId(ctx.principal);
+    const { incidentId } = ctx.params as { incidentId: string };
+    const incident = deps.service.getIncident({ incidentId });
+    if (!incident) {
+      throw new FridayDomainError("DIAGNOSIS_INCIDENT_NOT_FOUND", "Incident not found", {
+        httpStatus: 404,
+      });
+    }
+    return toIncidentRecord(deps, incident);
+  };
+
+  const getIncidentDiagnosisHandler = async (
+    ctx: FridayHttpContext<unknown, unknown, unknown>,
+  ): Promise<FridayGetIncidentDiagnosisResponse> => {
+    requireUserId(ctx.principal);
+    const { incidentId } = ctx.params as { incidentId: string };
+    const details = deps.service.getIncidentDiagnosis({ incidentId });
+    if (!details) {
+      throw new FridayDomainError("DIAGNOSIS_RECORD_NOT_FOUND", "Diagnosis not found", {
+        httpStatus: 404,
+      });
+    }
+    return {
+      incident: details.incident,
+      diagnosis: toFridayNormalizedDiagnosisRecord(details),
+      summary: toDiagnosisSummary(deps, details),
+      action: details.action
+        ? {
+          action: details.action.action,
+          approval: details.action.approval,
+          summary: {
+            actionId: details.action.action.actionId,
+            incidentId: details.action.action.incidentId,
+            title: details.action.action.plan.title,
+            summary: details.action.action.plan.summary,
+            riskTier: details.action.action.riskTier,
+            status: details.action.action.status,
+            outcome: details.action.action.outcome,
+            requiresApproval: details.action.risk.requiresApproval,
+            autoApplyAllowed: details.action.risk.autoApplyAllowed,
+            rollbackPlanAvailable: details.action.evidence.selectedPlan.rollbackPlanAvailable,
+            createdAt: details.action.action.createdAt,
+            updatedAt: details.action.action.updatedAt,
+          },
+          evidence: details.action.evidence,
+        }
+        : null,
+    };
+  };
+
+  const getLearningOverviewHandler = async (
+    ctx: FridayHttpContext<unknown, unknown, unknown>,
+  ): Promise<FridayGetLearningOverviewResponse> => {
+    const userId = requireUserId(ctx.principal);
+    const query = (ctx.query ?? {}) as Record<string, unknown>;
+    const limit = readPositiveInt(query.limit);
+    return deps.service.getLearningOverview({ userId, limit });
+  };
+
   return [
     {
       operationId: "diagnosis.incidents.list",
       method: "GET",
       path: "/v1/diagnosis/incidents",
       auth: { public: false, anyOfScopes: ["diagnosis.read"] },
-      async handler(ctx): Promise<FridayListDiagnosisIncidentsResponse> {
-        const userId = requireUserId(ctx.principal);
-        const query = (ctx.query ?? {}) as Record<string, unknown>;
-        const status = typeof query.status === "string"
-          ? query.status as "open" | "mitigated" | "resolved"
-          : undefined;
-        const limit = readPositiveInt(query.limit);
-        return {
-          items: deps.service.listIncidents({ userId, status, limit }).map((item) => toIncidentRecord(deps, item)),
-        };
-      },
+      handler: listIncidentsHandler,
+    },
+    {
+      operationId: "learning.incidents.list",
+      method: "GET",
+      path: "/v1/learning/incidents",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      handler: listIncidentsHandler,
     },
     {
       operationId: "diagnosis.incidents.get",
       method: "GET",
       path: "/v1/diagnosis/incidents/:incidentId",
       auth: { public: false, anyOfScopes: ["diagnosis.read"] },
-      async handler(ctx): Promise<FridayGetDiagnosisIncidentResponse> {
-        requireUserId(ctx.principal);
-        const { incidentId } = ctx.params as { incidentId: string };
-        const incident = deps.service.getIncident({ incidentId });
-        if (!incident) {
-          throw new FridayDomainError("DIAGNOSIS_INCIDENT_NOT_FOUND", "Incident not found", {
-            httpStatus: 404,
-          });
-        }
-        return toIncidentRecord(deps, incident);
-      },
+      handler: getIncidentHandler,
+    },
+    {
+      operationId: "learning.incidents.get",
+      method: "GET",
+      path: "/v1/learning/incidents/:incidentId",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      handler: getIncidentHandler,
     },
     {
       operationId: "diagnosis.incidents.diagnosis.get",
       method: "GET",
       path: "/v1/diagnosis/incidents/:incidentId/diagnosis",
       auth: { public: false, anyOfScopes: ["diagnosis.read"] },
-      async handler(ctx): Promise<FridayGetIncidentDiagnosisResponse> {
-        requireUserId(ctx.principal);
-        const { incidentId } = ctx.params as { incidentId: string };
-        const details = deps.service.getIncidentDiagnosis({ incidentId });
-        if (!details) {
-          throw new FridayDomainError("DIAGNOSIS_RECORD_NOT_FOUND", "Diagnosis not found", {
-            httpStatus: 404,
-          });
-        }
-        return {
-          incident: details.incident,
-          diagnosis: toFridayNormalizedDiagnosisRecord(details),
-          summary: toDiagnosisSummary(deps, details),
-          action: details.action
-            ? {
-              action: details.action.action,
-              approval: details.action.approval,
-              summary: {
-                actionId: details.action.action.actionId,
-                incidentId: details.action.action.incidentId,
-                title: details.action.action.plan.title,
-                summary: details.action.action.plan.summary,
-                riskTier: details.action.action.riskTier,
-                status: details.action.action.status,
-                outcome: details.action.action.outcome,
-                requiresApproval: details.action.risk.requiresApproval,
-                autoApplyAllowed: details.action.risk.autoApplyAllowed,
-                rollbackPlanAvailable: details.action.evidence.selectedPlan.rollbackPlanAvailable,
-                createdAt: details.action.action.createdAt,
-                updatedAt: details.action.action.updatedAt,
-              },
-              evidence: details.action.evidence,
-            }
-            : null,
-        };
-      },
+      handler: getIncidentDiagnosisHandler,
+    },
+    {
+      operationId: "learning.incidents.diagnosis.get",
+      method: "GET",
+      path: "/v1/learning/incidents/:incidentId/diagnosis",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      handler: getIncidentDiagnosisHandler,
     },
     {
       operationId: "diagnosis.learning.overview",
       method: "GET",
       path: "/v1/diagnosis/learning/overview",
       auth: { public: false, anyOfScopes: ["diagnosis.read"] },
-      async handler(ctx): Promise<FridayGetLearningOverviewResponse> {
-        const userId = requireUserId(ctx.principal);
-        const query = (ctx.query ?? {}) as Record<string, unknown>;
-        const limit = readPositiveInt(query.limit);
-        return deps.service.getLearningOverview({ userId, limit });
-      },
+      handler: getLearningOverviewHandler,
+    },
+    {
+      operationId: "learning.overview.get",
+      method: "GET",
+      path: "/v1/learning/overview",
+      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      handler: getLearningOverviewHandler,
     },
     {
       operationId: "diagnosis.incidents.manual.resolve",

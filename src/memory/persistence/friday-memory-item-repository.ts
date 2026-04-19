@@ -33,6 +33,13 @@ interface MemoryItemRow {
 export interface FridayMemoryItemRepository {
   insert(db: Database.Database, item: FridayMemoryItem): void;
   getById(db: Database.Database, id: string): FridayMemoryItem | null;
+  findLatestByApiRequestIdempotencyKey(
+    db: Database.Database,
+    input: {
+      principalId: string;
+      idempotencyKey: string;
+    },
+  ): FridayMemoryItem | null;
   list(
     db: Database.Database,
     input?: {
@@ -81,6 +88,10 @@ function rowToItem(row: MemoryItemRow): FridayMemoryItem {
 function toArray(val: string | string[] | undefined): string[] | undefined {
   if (val === undefined) return undefined;
   return Array.isArray(val) ? val : [val];
+}
+
+function shouldPruneExpiredByDefault(options: FridayMemoryPruneOptions): boolean {
+  return options.expiredOnly !== false && !options.olderThan;
 }
 
 // ─── FTS safety ───
@@ -167,6 +178,17 @@ export function createFridayMemoryItemRepository(): FridayMemoryItemRepository {
       return row ? rowToItem(row) : null;
     },
 
+    findLatestByApiRequestIdempotencyKey(db, input) {
+      const row = db.prepare(
+        `SELECT * FROM memory_items
+         WHERE json_extract(metadata_json, '$.apiRequest.principalId') = ?
+           AND json_extract(metadata_json, '$.apiRequest.idempotencyKey') = ?
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      ).get(input.principalId, input.idempotencyKey) as MemoryItemRow | undefined;
+      return row ? rowToItem(row) : null;
+    },
+
     list(db, input) {
       const conditions: string[] = [];
       const params: unknown[] = [];
@@ -234,7 +256,7 @@ export function createFridayMemoryItemRepository(): FridayMemoryItemRepository {
         params.push(...options.tagsAny.map((t) => `%${t}%`));
       }
 
-      if (options.expiredOnly) {
+      if (shouldPruneExpiredByDefault(options)) {
         conditions.push("expires_at IS NOT NULL AND expires_at <= ?");
         params.push(options.nowIso);
       }
@@ -242,12 +264,6 @@ export function createFridayMemoryItemRepository(): FridayMemoryItemRepository {
       if (options.olderThan) {
         conditions.push("updated_at < ?");
         params.push(options.olderThan);
-      }
-
-      if (conditions.length === 0) {
-        // Default: prune expired entries when no explicit filter is provided
-        conditions.push("expires_at IS NOT NULL AND expires_at <= ?");
-        params.push(options.nowIso);
       }
 
       const where = `WHERE ${conditions.join(" AND ")}`;

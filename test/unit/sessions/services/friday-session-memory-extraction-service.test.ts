@@ -239,6 +239,34 @@ describe("FridaySessionMemoryExtractionService", () => {
       expect(result.trigger).toBe("manual");
       expect(result.processedMessageCount).toBe(1);
     });
+
+    it("does not re-extract messages that are already marked extracted", async () => {
+      const messages = await sessionService.getMessages("discord:default:user1");
+      const targetId = messages[0].id;
+
+      db.withWriteTransaction((d) => {
+        d.prepare(
+          `UPDATE session_messages
+           SET memory_extract_status = 'extracted',
+               memory_extracted_at = ?,
+               updated_at = ?
+           WHERE id = ?`,
+        ).run(NOW, NOW, targetId);
+      });
+
+      const result = await extractionService.extractSpecificMessages(
+        "discord:default:user1",
+        [targetId],
+      );
+
+      expect(result.mode).toBe("inline");
+      expect(result.trigger).toBe("manual");
+      expect(result.processedMessageCount).toBe(0);
+      expect(result.skippedMessageCount).toBe(1);
+      expect(result.memoryItemsCreated).toBe(0);
+      expect(memoryService.store).not.toHaveBeenCalled();
+      expect(providerService.runWithFallback).not.toHaveBeenCalled();
+    });
   });
 
   describe("getExtractionStatus", () => {

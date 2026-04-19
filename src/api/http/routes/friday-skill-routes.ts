@@ -8,9 +8,17 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
-import type { FridaySkillExecutor, FridaySkillLifecycleService, FridaySkillRegistry } from "#skills";
+import {
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  getFridayUnisolatedNodeSkillsDisabledMessage,
+  isFridayUnisolatedNodeSkillsEnabled,
+  type FridaySkillExecutor,
+  type FridaySkillLifecycleService,
+  type FridaySkillRegistry,
+} from "#skills";
 import { FridayDomainError } from "#errors";
 import { resolveSafeInstallDir } from "#utilities";
+import { throwFridayCapabilityDisabled } from "./friday-capability-disabled.js";
 
 export interface FridaySkillRoutesDeps {
   skillRegistry?: FridaySkillRegistry;
@@ -350,12 +358,18 @@ export function createFridaySkillRoutes(
       const tenantId = typeof principalRecord?.tenantId === "string" && principalRecord.tenantId.trim().length > 0
         ? principalRecord.tenantId.trim()
         : principalId;
+      const lifecycleSkill = deps.lifecycle?.getSkill(skillId) as {
+        currentManifest?: { runtime?: { kind?: string } };
+        catalogEntry?: { manifest?: { runtime?: { kind?: string } } };
+      } | null | undefined;
+      const registeredSkill = typeof deps.skillRegistry?.get === "function"
+        ? deps.skillRegistry.get(skillId)
+        : null;
 
       // Resolve the skill from registry or lifecycle to validate it exists.
       // `ai-inference` is a built-in executor path even when it is not listed
       // in the registry inventory.
-      const skill = deps.lifecycle?.getSkill(skillId)
-        ?? (deps.skillRegistry?.get(skillId) ? { skillId } : null);
+      const skill = lifecycleSkill ?? (registeredSkill ? { skillId } : null);
       if (!skill && skillId !== "ai-inference") {
         throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${skillId}" not found`, {
           httpStatus: 404,
@@ -364,6 +378,22 @@ export function createFridaySkillRoutes(
       if (!deps.skillExecutor) {
         throw new FridayDomainError("SKILL_EXECUTOR_UNAVAILABLE", "Skill executor is unavailable in this runtime", {
           httpStatus: 503,
+        });
+      }
+
+      const runtimeKind = registeredSkill?.manifest.runtime.kind
+        ?? lifecycleSkill?.currentManifest?.runtime?.kind
+        ?? lifecycleSkill?.catalogEntry?.manifest?.runtime?.kind;
+      if (runtimeKind === "node" && !isFridayUnisolatedNodeSkillsEnabled()) {
+        throwFridayCapabilityDisabled({
+          capability: "skill_node_runtime",
+          surface: "POST /v1/skills/:skillId/run",
+          message: getFridayUnisolatedNodeSkillsDisabledMessage(),
+          details: {
+            runtimeKind: "node",
+            gate: FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+            skillId,
+          },
         });
       }
 

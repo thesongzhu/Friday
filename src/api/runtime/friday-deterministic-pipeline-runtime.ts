@@ -40,6 +40,7 @@ import {
   type FridayPlaybookSelector,
 } from "#playbook";
 import {
+  createFridayPolicyBundleRepository,
   createFridayRulesRepository,
   type FridayEvaluationContext,
   type FridayEvaluationResult,
@@ -72,6 +73,11 @@ import {
   resolveFridayPipelineRetryConfig,
   resolveFridayPipelineRuntimeConfig,
 } from "../../workflows/engine/friday-workflow-pipeline-mode.js";
+import {
+  buildDefaultRetryPolicy,
+  buildDefaultRetryStrategies,
+  DEFAULT_UNIFIED_RETRY_POLICY_ID,
+} from "../../retry/engine/friday-default-retry-policy.js";
 import type { JsonObject, JsonValue } from "../../workflows/model/friday-workflow.types.js";
 import type { FridayDeterministicPipelineRoutesDeps } from "../http/routes/friday-deterministic-pipeline-routes.js";
 
@@ -355,120 +361,6 @@ function addRetryCost(
   };
 }
 
-function buildDefaultRetryStrategies(): FridayRetryStrategy[] {
-  return [
-    {
-      strategy: "exponential",
-      failureCategory: "rate_limit",
-      maxAttempts: 5,
-      baseDelayMs: 1000,
-      maxDelayMs: 60_000,
-      jitterPercent: 25,
-      respectRetryAfter: true,
-      timeoutMultiplier: 1,
-      escalate: false,
-      escalateOnExhaustion: true,
-      escalationChannel: "operator",
-    },
-    {
-      strategy: "exponential",
-      failureCategory: "timeout",
-      maxAttempts: 3,
-      baseDelayMs: 1500,
-      maxDelayMs: 30_000,
-      jitterPercent: 20,
-      respectRetryAfter: false,
-      timeoutMultiplier: 1.5,
-      escalate: false,
-      escalateOnExhaustion: true,
-      escalationChannel: "operator",
-    },
-    {
-      strategy: "exponential",
-      failureCategory: "transient",
-      maxAttempts: 3,
-      baseDelayMs: 500,
-      maxDelayMs: 15_000,
-      jitterPercent: 30,
-      respectRetryAfter: false,
-      timeoutMultiplier: 1,
-      escalate: false,
-      escalateOnExhaustion: true,
-      escalationChannel: "developer",
-    },
-    {
-      strategy: "linear",
-      failureCategory: "resource",
-      maxAttempts: 2,
-      baseDelayMs: 5000,
-      maxDelayMs: 30_000,
-      jitterPercent: 10,
-      respectRetryAfter: false,
-      timeoutMultiplier: 1,
-      escalate: false,
-      escalateOnExhaustion: true,
-      escalationChannel: "operator",
-    },
-    {
-      strategy: "none",
-      failureCategory: "auth",
-      maxAttempts: 0,
-      respectRetryAfter: false,
-      timeoutMultiplier: 1,
-      escalate: true,
-      escalateOnExhaustion: false,
-      escalationChannel: "operator",
-    },
-    {
-      strategy: "none",
-      failureCategory: "logic",
-      maxAttempts: 0,
-      respectRetryAfter: false,
-      timeoutMultiplier: 1,
-      escalate: false,
-      escalateOnExhaustion: false,
-    },
-    {
-      strategy: "fixed",
-      failureCategory: "unknown",
-      maxAttempts: 1,
-      baseDelayMs: 1000,
-      maxDelayMs: 5000,
-      jitterPercent: 50,
-      respectRetryAfter: false,
-      timeoutMultiplier: 1,
-      escalate: false,
-      escalateOnExhaustion: true,
-      escalationChannel: "developer",
-    },
-  ];
-}
-
-function buildDefaultRetryPolicy(
-  nowIso: string,
-  etag: string,
-): FridayRetryPolicy {
-  const costBudget: FridayRetryCostBudget = {
-    maxTotalTokens: 100_000,
-    maxTotalApiCalls: 50,
-    maxTotalComputeMs: 300_000,
-  };
-  return {
-    id: "default-unified-retry-policy-v1",
-    name: "Default Unified Retry Policy",
-    description: "Stable retry defaults for workflow execution and acceptance-quality flows.",
-    version: 1,
-    priority: 100,
-    enabled: true,
-    tags: ["built-in", "default"],
-    costBudget,
-    strategies: buildDefaultRetryStrategies(),
-    etag,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-  };
-}
-
 function toClassifyFailureError(value: unknown):
   | { errorCode: string; errorMessage?: string; httpStatusCode?: number }
   | { errorCode?: string; errorMessage: string; httpStatusCode?: number }
@@ -569,6 +461,7 @@ export function createFridayDeterministicPipelineRuntime(
   const pipelineEnforceMode = pipelineConfig.mode === "enforce";
 
   const rulesRepository = createFridayRulesRepository();
+  const policyBundleRepository = createFridayPolicyBundleRepository();
   const rulesEngine = new FridayRuleEngine({
     auditLogSink: (entry) => {
       try {
@@ -642,6 +535,16 @@ export function createFridayDeterministicPipelineRuntime(
     }
     return rawResult;
   };
+
+  function assertRuleBundleExists(bundleId: string): void {
+    if (!rulesEngine.getPolicyBundle(bundleId)) {
+      throw new FridayDomainError(
+        "RULES_BUNDLE_NOT_FOUND",
+        `Policy bundle '${bundleId}' not found`,
+        { httpStatus: 404 },
+      );
+    }
+  }
 
   const adapterRegistry = new NodeAdapterRegistry({ registerBuiltIns: false });
   adapterRegistry.register(new ToolNodeAdapter({
@@ -806,7 +709,7 @@ export function createFridayDeterministicPipelineRuntime(
     ...DEFAULT_CIRCUIT_BREAKER_CONFIG,
     failureThreshold: pipelineRetryConfig.circuitBreakerThreshold,
   });
-  const defaultRetryPolicy = buildDefaultRetryPolicy(deps.nowIso(), makeEtag(deps.idGenerator));
+  const defaultRetryPolicy = buildDefaultRetryPolicy(deps.nowIso(), `${DEFAULT_UNIFIED_RETRY_POLICY_ID}-v1`);
   let retryPersistenceAvailable = true;
 
   try {
@@ -906,26 +809,21 @@ export function createFridayDeterministicPipelineRuntime(
         const tags = Array.isArray(payload.tags)
           ? payload.tags.filter((tag): tag is string => typeof tag === "string")
           : [];
-        const row: FridayPolicyBundleRow = {
-          id,
-          name: asString(payload.name) ?? "Untitled Policy Bundle",
-          description: asString(payload.description),
-          version: asNumber(payload.version, 1),
-          priority: asNumber(payload.priority, 100),
-          enabled: payload.enabled === false ? 0 : 1,
-          tags_json: JSON.stringify(tags),
-          source: "user",
-          etag: deps.idGenerator().slice(0, 16),
-          created_at: now,
-          updated_at: now,
-          deleted_at: null,
-        };
-
-        const domainBundle = mapBundleRow(row);
+        let domainBundle: FridayPolicyBundle | null = null;
         const domainRules: FridayRule[] = [];
 
         deps.db.withWriteTransaction((db) => {
-          rulesRepository.insertPolicyBundle(db, row);
+          domainBundle = policyBundleRepository.create(db, {
+            id,
+            name: asString(payload.name) ?? "Untitled Policy Bundle",
+            description: asString(payload.description) ?? undefined,
+            priority: asNumber(payload.priority, 100),
+            enabled: payload.enabled === false ? false : true,
+            tags,
+            source: "user",
+            nowIso: now,
+            changedBy: asString(payload.changedBy) ?? undefined,
+          });
           if (Array.isArray(payload.rules)) {
             for (const rawRule of payload.rules) {
               const rulePayload = asRecord(rawRule);
@@ -953,11 +851,103 @@ export function createFridayDeterministicPipelineRuntime(
           }
         });
 
-        rulesEngine.loadDomainBundle(domainBundle, domainRules);
+        rulesEngine.loadDomainBundle(domainBundle!, domainRules);
 
         return {
-          bundle: domainBundle,
+          bundle: domainBundle!,
           rules: domainRules,
+        };
+      },
+
+      updateBundle: (bundleId, body) => {
+        const payload = asRecord(body);
+        const now = deps.nowIso();
+        const etag = asString(payload.etag);
+        if (!etag) {
+          throw new FridayDomainError("VALIDATION_ERROR", "etag is required", { httpStatus: 400 });
+        }
+
+        const normalized: {
+          name?: string;
+          description?: string;
+          priority?: number;
+          enabled?: boolean;
+          tags?: string[];
+        } = {};
+
+        if (payload.name !== undefined) {
+          const name = asString(payload.name);
+          if (!name) {
+            throw new FridayDomainError("VALIDATION_ERROR", "name must be a non-empty string", {
+              httpStatus: 400,
+            });
+          }
+          normalized.name = name;
+        }
+        if (payload.description !== undefined) {
+          if (payload.description === null) {
+            throw new FridayDomainError("VALIDATION_ERROR", "description must be a string when provided", {
+              httpStatus: 400,
+            });
+          }
+          normalized.description = asString(payload.description) ?? "";
+        }
+        if (payload.priority !== undefined) {
+          if (typeof payload.priority !== "number" || !Number.isFinite(payload.priority) || payload.priority < 0) {
+            throw new FridayDomainError("VALIDATION_ERROR", "priority must be a non-negative number", {
+              httpStatus: 400,
+            });
+          }
+          normalized.priority = payload.priority;
+        }
+        if (payload.enabled !== undefined) {
+          if (typeof payload.enabled !== "boolean") {
+            throw new FridayDomainError("VALIDATION_ERROR", "enabled must be a boolean", {
+              httpStatus: 400,
+            });
+          }
+          normalized.enabled = payload.enabled;
+        }
+        if (payload.tags !== undefined) {
+          if (!Array.isArray(payload.tags) || payload.tags.some((tag) => typeof tag !== "string")) {
+            throw new FridayDomainError("VALIDATION_ERROR", "tags must be an array of strings", {
+              httpStatus: 400,
+            });
+          }
+          normalized.tags = payload.tags as string[];
+        }
+        if (Object.keys(normalized).length === 0) {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "At least one bundle field must be provided",
+            { httpStatus: 400 },
+          );
+        }
+
+        let bundle: FridayPolicyBundle | null = null;
+        let rules: FridayRule[] = [];
+        deps.db.withWriteTransaction((db) => {
+          bundle = policyBundleRepository.update(db, {
+            id: bundleId,
+            etag,
+            nowIso: now,
+            changedBy: asString(payload.changedBy) ?? undefined,
+            changeNote: asString(payload.changeNote) ?? undefined,
+            ...(normalized.name !== undefined ? { name: normalized.name } : {}),
+            ...(normalized.description !== undefined ? { description: normalized.description } : {}),
+            ...(normalized.priority !== undefined ? { priority: normalized.priority } : {}),
+            ...(normalized.enabled !== undefined ? { enabled: normalized.enabled } : {}),
+            ...(normalized.tags !== undefined ? { tags: normalized.tags } : {}),
+          });
+          rules = rulesRepository.listRulesByBundleId(db, bundleId, { enabledOnly: false }).map((row) =>
+            mapRuleRow(row)
+          );
+        });
+
+        rulesEngine.loadDomainBundle(bundle!, rules);
+        return {
+          bundle: bundle!,
+          rules,
         };
       },
 
@@ -978,6 +968,7 @@ export function createFridayDeterministicPipelineRuntime(
         if (!bundleId) {
           throw new FridayDomainError("VALIDATION_ERROR", "bundleId is required", { httpStatus: 400 });
         }
+        assertRuleBundleExists(bundleId);
         const context: FridayEvaluationContext = {
           resource: toRuleResource(payload.resource),
           action: toRuleAction(payload.action),
@@ -1003,6 +994,7 @@ export function createFridayDeterministicPipelineRuntime(
         if (!bundleId) {
           throw new FridayDomainError("VALIDATION_ERROR", "bundleId is required", { httpStatus: 400 });
         }
+        assertRuleBundleExists(bundleId);
         const context: FridayEvaluationContext = {
           resource: toRuleResource(payload.resource),
           action: toRuleAction(payload.action),
@@ -1030,6 +1022,15 @@ export function createFridayDeterministicPipelineRuntime(
         const offset = asNumber(query.offset, 0);
         const items = deps.db.withReadConnection((db) =>
           rulesRepository.listVersions(db, ruleId, limit, offset),
+        );
+        return { items, total: items.length };
+      },
+
+      listBundleVersions: (bundleId, query) => {
+        const limit = asNumber(query.limit, 50);
+        const offset = asNumber(query.offset, 0);
+        const items = deps.db.withReadConnection((db) =>
+          policyBundleRepository.listVersions(db, bundleId, limit, offset),
         );
         return { items, total: items.length };
       },

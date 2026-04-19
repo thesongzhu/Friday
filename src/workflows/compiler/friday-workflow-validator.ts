@@ -3,6 +3,15 @@ import { createFridayExpressionEvaluator } from "../engine/friday-workflow-expre
 
 // ─── Types ───
 
+const SUPPORTED_NODE_TYPES = new Set([
+  "trigger",
+  "action",
+  "condition",
+  "data",
+  "ai",
+  "approval",
+]);
+
 export interface FridayWorkflowValidationError {
   code: string;
   message: string;
@@ -58,6 +67,13 @@ export function createFridayWorkflowValidator(): FridayWorkflowValidator {
       // 4. Unique node ids
       const nodeIds = new Set<string>();
       for (const node of graph.graph.nodes) {
+        if (!SUPPORTED_NODE_TYPES.has(node.type)) {
+          errors.push({
+            code: "WORKFLOW_UNSUPPORTED_NODE_TYPE",
+            message: `Unsupported workflow node type '${node.type}' for node '${node.id}'`,
+            nodeId: node.id,
+          });
+        }
         if (nodeIds.has(node.id)) {
           errors.push({
             code: "WORKFLOW_DUPLICATE_NODE_ID",

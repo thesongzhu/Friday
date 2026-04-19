@@ -4,6 +4,7 @@ import type { FridaySqliteLayer } from "#state";
 import { createFridayWorkflowRepository } from "#workflows";
 import { createFridayWorkflowCrudService } from "#workflows";
 import type { FridayCompiledWorkflowGraphV2 } from "#workflows";
+import { parseGraphJson } from "#workflows";
 import { createTestDb, createTestIdGenerator } from "./_helpers/create-test-db.helper.js";
 
 describe("FridayWorkflowCrudService", () => {
@@ -151,6 +152,63 @@ describe("FridayWorkflowCrudService", () => {
     invalidGraph.graph.nodes = []; // empty graph
 
     expect(() => service.createVersion(wf.id, invalidGraph)).toThrow();
+  });
+
+  it("normalizes raw authoring graphs so kind/data/from-to survive read and run surfaces", () => {
+    const service = createService();
+    const { workflow, version } = service.createWorkflowWithVersion(
+      { slug: "raw-graph", name: "Raw Graph" },
+      {
+        nodes: [
+          { id: "start", kind: "start", data: {} },
+          { id: "transform-1", kind: "transform", data: { mapping: { ok: true } } },
+        ],
+        edges: [{ from: "start", to: "transform-1" }],
+      },
+    );
+
+    expect(workflow.slug).toBe("raw-graph");
+
+    const parsed = parseGraphJson(version.graphJson);
+    expect(parsed.graph.nodes).toEqual([
+      { id: "start", type: "trigger", label: "start", config: {} },
+      {
+        id: "transform-1",
+        type: "data",
+        label: "transform-1",
+        config: { mapping: { ok: true } },
+      },
+    ]);
+    expect(parsed.graph.edges).toEqual([
+      {
+        id: "edge-1:start:transform-1:success",
+        sourceNodeId: "start",
+        targetNodeId: "transform-1",
+        sourcePort: undefined,
+        targetPort: undefined,
+        condition: undefined,
+        priority: undefined,
+      },
+    ]);
+  });
+
+  it("rejects compiled graphs with unsupported node types before they are persisted", () => {
+    const service = createService();
+    expect(() =>
+      service.createWorkflowWithVersion(
+        { slug: "bad-node-type", name: "Bad Node Type" },
+        {
+          ...makeValidGraph(),
+          graph: {
+            nodes: [
+              { id: "start", type: "start" as never, label: "Start", config: {} },
+              { id: "next", type: "action", label: "Next", config: { skillId: "test-skill" } },
+            ],
+            edges: [{ id: "e1", sourceNodeId: "start", targetNodeId: "next" }],
+          },
+        },
+      ),
+    ).toThrow(/Unsupported workflow node type 'start'/);
   });
 
   it("publishes a version", () => {

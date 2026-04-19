@@ -311,6 +311,24 @@ describe("FridayMemoryService", () => {
     expect(items).toHaveLength(1);
   });
 
+  it("defaults namespace-scoped prune to expired items only", async () => {
+    const past = "2025-01-01T00:00:00.000Z";
+    await service.store("ns-a", "expired item", { expiresAt: past });
+    await service.store("ns-a", "valid item");
+    await service.store("ns-b", "other namespace expired item", { expiresAt: past });
+
+    const result = await service.prune({ namespace: "ns-a" });
+    expect(result.deletedCount).toBe(1);
+
+    const nsAItems = await service.list({ namespace: "ns-a", includeExpired: true });
+    expect(nsAItems).toHaveLength(1);
+    expect(nsAItems[0]?.content).toBe("valid item");
+
+    const nsBItems = await service.list({ namespace: "ns-b", includeExpired: true });
+    expect(nsBItems).toHaveLength(1);
+    expect(nsBItems[0]?.content).toBe("other namespace expired item");
+  });
+
   // ─── A3: Memory Hybrid Search (service-level) ───
 
   describe("hybrid search filtering", () => {

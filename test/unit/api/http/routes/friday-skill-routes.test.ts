@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { FridayDomainError } from "#errors";
+import { FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV } from "#skills";
 import { createFridaySkillRoutes } from "../../../../../src/api/http/routes/friday-skill-routes.js";
 
 function makeCtx(overrides: Record<string, unknown> = {}) {
@@ -278,5 +279,44 @@ describe("createFridaySkillRoutes", () => {
     expect(result).toHaveProperty("status", "completed");
     expect(result).toHaveProperty("completionDepth", "executed");
     expect(result).toHaveProperty("output.result", "ok");
+  });
+
+  it("returns CAPABILITY_DISABLED for node-runtime skill execution when the gate is off", async () => {
+    const previousGate = process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+    delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+    try {
+      const lifecycle = makeLifecycle();
+      const executor = makeExecutor();
+      const routes = createFridaySkillRoutes({
+        skillRegistry: {
+          list: () => [],
+          get: vi.fn(() => ({
+            manifest: {
+              id: "skill.alpha",
+              runtime: { kind: "node" },
+            },
+          })),
+        } as never,
+        lifecycle: lifecycle as never,
+        skillExecutor: executor as never,
+      });
+
+      await expect(
+        routes.find((item) => item.operationId === "skills.run")!.handler(makeCtx({
+          params: { skillId: "skill.alpha" },
+          body: { input: {} },
+        })),
+      ).rejects.toMatchObject({
+        code: "CAPABILITY_DISABLED",
+        httpStatus: 501,
+      });
+      expect(executor.execute).not.toHaveBeenCalled();
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+      } else {
+        process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = previousGate;
+      }
+    }
   });
 });

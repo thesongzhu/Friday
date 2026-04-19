@@ -30,7 +30,7 @@ export function resolveFridayCapabilityGates(
     marketplaceCommerceEnabled: envNotFalse(env.FRIDAY_MARKETPLACE_COMMERCE_ENABLED),
     marketplaceInstallRequired: envNotFalse(env.FRIDAY_MARKETPLACE_INSTALL_REQUIRED),
     marketplaceInstallMaterialize: envNotFalse(env.FRIDAY_MARKETPLACE_INSTALL_MATERIALIZE),
-    heartbeatEnabled: envEqualsTrue(env.FRIDAY_HEARTBEAT_ENABLED),
+    heartbeatEnabled: envNotFalse(env.FRIDAY_HEARTBEAT_ENABLED),
     heartbeatActiveHoursEnabled: envNotFalse(env.FRIDAY_HEARTBEAT_ACTIVE_HOURS_ENABLED),
     autoFixDispatchEnabled: envNotFalse(env.FRIDAY_AUTOFIX_DISPATCHER_ENABLED),
   };

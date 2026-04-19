@@ -45,6 +45,15 @@ describe("A-005 classifyWorkflowError", () => {
     expect(classifyWorkflowError("CONNECTION_REFUSED")).toBe("transient");
   });
 
+  it("classifies missing-skill node execution failures as logic instead of unknown", () => {
+    expect(
+      classifyWorkflowError(
+        "NODE_EXECUTION_FAILED",
+        "NODE_EXECUTION_FAILED: skill 'missing-skill' not found",
+      ),
+    ).toBe("logic");
+  });
+
   it("defaults to unknown for unrecognized errors", () => {
     expect(classifyWorkflowError("UNKNOWN_ERROR")).toBe("unknown");
     expect(classifyWorkflowError("INTERNAL")).toBe("unknown");
@@ -233,12 +242,19 @@ describe("A-005 WorkflowUnifiedRetryBridge", () => {
   describe("retry trace events", () => {
     it("emits trace for every retry evaluation", () => {
       const bridge = makeBridge();
-      bridge.evaluateRetry({ runId: "r-1", nodeId: "n-1", attempt: 1, errorCode: "TIMEOUT" });
+      bridge.evaluateRetry({
+        runId: "r-1",
+        nodeId: "n-1",
+        attempt: 1,
+        errorCode: "TIMEOUT",
+        errorMessage: "connection timed out",
+      });
 
       expect(onRetryTrace).toHaveBeenCalledOnce();
       const trace: WorkflowRetryTrace = onRetryTrace.mock.calls[0][0];
       expect(trace.runId).toBe("r-1");
       expect(trace.category).toBe("timeout");
+      expect(trace.errorMessage).toBe("connection timed out");
       expect(trace.timestamp).toBe("2026-01-01T00:00:00Z");
     });
 

@@ -1,4 +1,4 @@
-import * as fs from "node:fs";
+import { createHash } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FridayCompiledWorkflowGraphV2 } from "#workflows";
 import {
@@ -835,6 +835,7 @@ describe("API — Workflow routes", () => {
         export: {
           exportId: string;
           runId: string;
+          checksum: string;
         };
       };
     };
@@ -847,23 +848,15 @@ describe("API — Workflow routes", () => {
       { headers: authHeaders(token) },
     );
     expect(downloadRes.status).toBe(200);
-    const downloadJson = (await downloadRes.json()) as {
-      ok: boolean;
-      data: {
-        file: {
-          exists: boolean;
-          path?: string;
-        };
-        content: string;
-      };
-    };
-    expect(downloadJson.ok).toBe(true);
-    expect(downloadJson.data.content.length).toBeGreaterThan(0);
-    if (downloadJson.data.file.exists && downloadJson.data.file.path) {
-      const stat = fs.statSync(downloadJson.data.file.path);
-      expect(stat.isFile()).toBe(true);
-      expect(stat.size).toBeGreaterThan(0);
-    }
+    expect(downloadRes.headers.get("content-type")).toContain("application/json");
+    expect(downloadRes.headers.get("x-friday-evidence-checksum")).toBe(
+      getExportJson.data.export.checksum,
+    );
+    const downloadBody = await downloadRes.text();
+    expect(downloadBody.length).toBeGreaterThan(0);
+    expect(createHash("sha256").update(downloadBody).digest("hex")).toBe(
+      getExportJson.data.export.checksum,
+    );
 
     const missingRes = await fetch(
       `${env.baseUrl}/v1/workflow-runs/${runId}/evidence/exports/not-found-export/download`,

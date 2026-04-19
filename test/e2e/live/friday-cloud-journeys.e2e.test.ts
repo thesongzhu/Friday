@@ -406,24 +406,37 @@ describe.skipIf(!CLOUD_GATED)(
       const exportId = exportRes.json.data.export.exportId;
       expect(typeof exportId).toBe("string");
 
-      const downloadRes = await apiFetch<{
+      const exportMetaRes = await apiFetch<{
         ok: boolean;
         data: {
-          file: {
-            exists: boolean;
+          export: {
+            checksum: string;
           };
-          content: string;
         };
       }>(
         env.baseUrl,
         env.accessToken,
         "GET",
-        `/v1/workflow-runs/${runResult.run.id}/evidence/exports/${exportId}/download`,
+        `/v1/workflow-runs/${runResult.run.id}/evidence/exports/${exportId}`,
+      );
+      expect(exportMetaRes.status).toBe(200);
+      expect(exportMetaRes.json.ok).toBe(true);
+
+      const downloadRes = await fetch(
+        `${env.baseUrl}/v1/workflow-runs/${runResult.run.id}/evidence/exports/${exportId}/download`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${env.accessToken}`,
+          },
+        },
       );
       expect(downloadRes.status).toBe(200);
-      expect(downloadRes.json.ok).toBe(true);
-      expect(downloadRes.json.data.file.exists).toBe(true);
-      expect(downloadRes.json.data.content.length).toBeGreaterThan(2);
+      expect(downloadRes.headers.get("x-friday-evidence-checksum")).toBe(
+        exportMetaRes.json.data.export.checksum,
+      );
+      const downloadBody = await downloadRes.text();
+      expect(downloadBody.length).toBeGreaterThan(2);
 
       const unauthenticated = await fetch(
         `${env.baseUrl}/v1/workflow-runs/${runResult.run.id}/evidence/exports/${exportId}/download`,

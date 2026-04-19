@@ -56,6 +56,19 @@ export function classifyWorkflowError(
     return "transient";
   }
 
+  if (code.includes("NODE_EXECUTION_FAILED")) {
+    if (
+      msg.includes("NOT FOUND")
+      || msg.includes("MISSING")
+      || msg.includes("UNKNOWN NODE TYPE")
+      || msg.includes("UNSUPPORTED")
+      || msg.includes("INVALID")
+    ) {
+      return "logic";
+    }
+    return "transient";
+  }
+
   // Unknown catch-all (non-retryable by default)
   return "unknown";
 }

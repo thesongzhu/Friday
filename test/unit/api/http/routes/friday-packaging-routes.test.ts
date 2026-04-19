@@ -92,6 +92,22 @@ describe("B-008 FridayPackagingRoutes", () => {
         expect(route.operationId).toMatch(/^packaging\./);
       }
     });
+
+    it("returns CAPABILITY_DISABLED when packaging surface is absent", async () => {
+      const routes = createFridayPackagingRoutes(undefined);
+      const route = findRoute(routes, "packaging.packages.publish");
+
+      await expect(route.handler(makeCtx({
+        body: { archive: "base64data", idempotencyKey: "key-1" },
+      }))).rejects.toMatchObject({
+        code: "CAPABILITY_DISABLED",
+        httpStatus: 501,
+        details: {
+          capability: "packaging",
+          surface: "/v1/packages",
+        },
+      });
+    });
   });
 
   describe("package routes", () => {

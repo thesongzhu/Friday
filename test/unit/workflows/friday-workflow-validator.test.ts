@@ -193,6 +193,23 @@ describe("FridayWorkflowValidator", () => {
     ).toBe(true);
   });
 
+  it("rejects unsupported workflow node types before execution time", () => {
+    const graph = makeGraph({
+      graph: {
+        nodes: [
+          { id: "A", type: "start" as never, label: "A", config: {} },
+          { id: "B", type: "action", label: "B", config: { skillId: "s" } },
+        ],
+        edges: [{ id: "e1", sourceNodeId: "A", targetNodeId: "B" }],
+      },
+    });
+    const result = validator.validate(graph);
+    expect(result.valid).toBe(false);
+    expect(
+      result.errors.some((e) => e.code === "WORKFLOW_UNSUPPORTED_NODE_TYPE"),
+    ).toBe(true);
+  });
+
   it("rejects invalid expression in edge condition", () => {
     const graph = makeGraph({
       graph: {

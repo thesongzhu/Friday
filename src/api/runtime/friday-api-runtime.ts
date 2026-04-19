@@ -1,5 +1,5 @@
 import { FridayDomainError } from "#errors";
-import { createFridayMemoryGuardServiceFactory } from "#memory";
+import { createFridayMemoryGuardServiceFactory, createFridayMemoryItemRepository } from "#memory";
 import { createFridaySecretAdminService } from "#providers";
 import type { FridayProviderTenantContext } from "#providers";
 import {
@@ -29,6 +29,7 @@ import { createFridayAuthService } from "../auth/friday-auth-service.js";
 import { createFridayTokenValidator } from "../auth/friday-token-validator.js";
 import { createFridayRateLimitService } from "../auth/friday-rate-limit-service.js";
 import { createFridayAuthMiddlewareFactory } from "../auth/friday-auth-middleware.js";
+import { createFridayAuthSessionRepository } from "../persistence/friday-auth-session-repository.js";
 import { createFridayRealtimeEventBus } from "../realtime/friday-realtime-event-bus.js";
 import { createFridayRealtimeEventRepository } from "../persistence/friday-realtime-event-repository.js";
 import { createFridayRealtimeCheckpointRepository } from "../persistence/friday-realtime-checkpoint-repository.js";
@@ -37,6 +38,7 @@ import { createFridayRealtimeWsGateway } from "../realtime/friday-realtime-ws-ga
 import { createFridayFleetDashboardService } from "../fleet/friday-fleet-dashboard-service.js";
 import { createFridayWorkflowConflictService } from "../conflicts/friday-workflow-conflict-service.js";
 import { createFridayHttpRouteRegistry } from "../http/friday-http-route-registry.js";
+import { createFridayHttpRawTextResponse } from "../http/friday-http-raw-response.js";
 import { createFridayAuthRoutes } from "../http/routes/friday-auth-routes.js";
 import { createFridayRuntimeAdminRoutes } from "../http/routes/friday-runtime-admin-routes.js";
 import { createFridayAutonomyRoutes } from "../http/routes/friday-autonomy-routes.js";
@@ -62,6 +64,10 @@ import { createFridaySkillConverterRoutes } from "../http/routes/friday-skill-co
 import { createFridayWorkflowGeneratorRoutes } from "../http/routes/friday-workflow-generator-routes.js";
 import { createFridayDeterministicPipelineRoutes } from "../http/routes/friday-deterministic-pipeline-routes.js";
 import { createFridayMemoryRoutes } from "../http/routes/friday-memory-routes.js";
+import {
+  readStoredIdempotencyPayloadHash,
+  throwIdempotencyConflict,
+} from "../http/routes/friday-route-idempotency.js";
 import { createFridaySessionRoutes } from "../http/routes/friday-session-routes.js";
 import { createFridaySessionUsageRoutes } from "../http/routes/friday-session-usage-routes.js";
 import { createFridayPluginRoutes } from "../http/routes/friday-plugin-routes.js";
@@ -103,6 +109,8 @@ import type {
   FridayAgentAutomationService,
   FridayAgentExecutionContext,
   FridayAgentMessage,
+  FridayAgentRunRecord,
+  FridayAgentRuntimeResult,
   FridayAgentRunStatus,
   FridayAgentTaskProfileInput,
 } from "#agent";
@@ -113,6 +121,7 @@ import type { FridayEngineRunResult } from "#engine";
 import type { CreateFridayEngineTurnPreparerDeps } from "#engine";
 import type { CreateFridayEngineRunExecutorDeps } from "#engine";
 import { createFridayHealthRoutes } from "../http/routes/friday-health-routes.js";
+import { createFridayTuiRoutes } from "../http/routes/friday-tui-routes.js";
 import { createFridayApiTokenRepository } from "../persistence/friday-api-token-repository.js";
 import { createFridayProviderProfileRepository } from "#providers";
 import { createFridaySkillRepository } from "#skills";
@@ -326,6 +335,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Auth
   const tokenRepo = createFridayApiTokenRepository();
+  const sessionRepo = createFridayAuthSessionRepository();
 
   // ─── In-memory access token revocation map (SEC-005) ───
   // Load persisted revocations from DB on startup
@@ -341,6 +351,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     // Purge expired entries from DB
     deps.db.withWriteTransaction((db) => {
       tokenRepo.purgeExpiredAccessTokenRevocations(db, nowSec);
+      tokenRepo.purgeExpiredAuthAccessTokens(db, nowSec);
     });
   }
 
@@ -349,6 +360,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     // Persist to DB so revocations survive restarts (SEC-005)
     deps.db.withWriteTransaction((db) => {
       tokenRepo.revokeAccessToken(db, tokenId, expSec, deps.nowIso());
+      tokenRepo.revokeAuthAccessToken(db, tokenId, deps.nowIso());
     });
   }
 
@@ -366,9 +378,33 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const tokenValidator = createFridayTokenValidator({
     tokenSecret: deps.tokenSecret,
     nowMs: () => new Date(deps.nowIso()).getTime(),
-    lookupTokenRevocation: (tokenId) =>
-      isAccessTokenRevokedInMemory(tokenId) ||
-      deps.db.withReadConnection((db) => tokenRepo.isRevoked(db, tokenId)),
+    lookupTokenRevocation: (tokenId) => {
+      if (isAccessTokenRevokedInMemory(tokenId)) {
+        return true;
+      }
+      return deps.db.withReadConnection((db) => {
+        return tokenRepo.isAccessTokenRevoked(db, tokenId) || tokenRepo.isRevoked(db, tokenId);
+      });
+    },
+    lookupSessionTokenState: (claims) => {
+      if (!claims.sid) {
+        return "active";
+      }
+      return deps.db.withReadConnection((db) => {
+        const accessToken = tokenRepo.findAuthAccessToken(db, claims.tokenId);
+        if (!accessToken) {
+          return "unknown";
+        }
+        if (accessToken.revoked_at) {
+          return "revoked";
+        }
+        const session = sessionRepo.findById(db, accessToken.session_id);
+        if (!session || session.revoked_at !== null && session.revoked_at !== undefined) {
+          return "revoked";
+        }
+        return "active";
+      });
+    },
     lookupSatelliteTokenVersion: (satelliteId) => {
       const row = deps.db.withReadConnection((db) =>
         db
@@ -403,6 +439,15 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     allowPasswordlessLocalLogin: deps.allowPasswordlessLocalLogin ?? false,
     allowLocalBypassLogin: deps.allowLocalBypassLogin ?? false,
     markAccessTokenRevoked,
+    registerIssuedAccessToken: (db, input) => {
+      tokenRepo.recordAuthAccessToken(db, {
+        tokenId: input.tokenId,
+        sessionId: input.sessionId,
+        userId: input.userId,
+        expiresAtEpoch: input.expiresAtEpoch,
+        now: input.now,
+      });
+    },
     rateLimiter,
     resolveTenantId: (input) =>
       deps.resolveAuthTenantId?.({
@@ -566,6 +611,28 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     return resolveAuthorizedRun(runId, principal, { evidence: true });
   };
 
+  const requireWorkflowBuilderOperator = (
+    principal: FridayAuthPrincipal | null,
+  ): string => {
+    if (!principal?.userId) {
+      throw new FridayDomainError(
+        "UNAUTHORIZED",
+        "A user-scoped workflow builder principal is required",
+        { httpStatus: 401 },
+      );
+    }
+    return principal.userId;
+  };
+
+  const assertWorkflowExistsForBuilder = (workflowId: string): void => {
+    const workflow = deps.db.withReadConnection((db) =>
+      workflowRepo.getWorkflowById(db, workflowId),
+    );
+    if (!workflow || workflow.deletedAt || workflow.isArchived) {
+      throw new FridayDomainError("WORKFLOW_NOT_FOUND", "Workflow not found", { httpStatus: 404 });
+    }
+  };
+
   // ─── Builder runtime ───
   const builderRuntime = createFridayWorkflowBuilderRuntime({
     db: deps.db,
@@ -692,6 +759,17 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         channels: {
           supportedKinds: deps.supportedChannelKinds ?? [],
           enabledKinds: enabledChannelKinds ?? [],
+          webhookEndpoints: {
+            line: deps.channelWebhooks?.lineWebhookRelay?.isListening() === true,
+            whatsapp: deps.channelWebhooks?.whatsappWebhookRelay?.isListening() === true,
+            lark: deps.channelWebhooks?.larkWebhookRelay?.isListening() === true,
+          },
+        },
+        mcp: {
+          enabled: deps.mcpServer !== undefined,
+        },
+        packaging: {
+          enabled: deps.packaging !== undefined,
         },
         search: searchHealth ?? {
           provider: "duckduckgo_html",
@@ -704,6 +782,14 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         },
       };
     },
+  })) {
+    routes.register(route);
+  }
+
+  for (const route of createFridayTuiRoutes({
+    db: deps.db,
+    version: serverVersion,
+    fleetService: fleet,
   })) {
     routes.register(route);
   }
@@ -1239,10 +1325,19 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         publishNow: input.publishNow,
       });
     },
-    acquireLock: (workflowId, input) => {
+    acquireLock: (workflowId, input, principal) => {
+      assertWorkflowExistsForBuilder(workflowId);
+      const actorUserId = requireWorkflowBuilderOperator(principal);
+      if (input.ownerUserId && input.ownerUserId !== actorUserId) {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          "ownerUserId must match the authenticated principal",
+          { httpStatus: 400 },
+        );
+      }
       const result = builderRuntime.collaboration.acquireLock({
         workflowId,
-        ownerUserId: input.ownerUserId,
+        ownerUserId: actorUserId,
         ownerSessionId: input.ownerSessionId,
         ttlSec: input.ttlSec,
       });
@@ -1252,16 +1347,21 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         conflict: result.conflict,
       };
     },
-    renewLock: (workflowId, input) => {
+    renewLock: (workflowId, input, principal) => {
+      assertWorkflowExistsForBuilder(workflowId);
+      const actorUserId = requireWorkflowBuilderOperator(principal);
       const lock = builderRuntime.collaboration.renewLock(
         workflowId,
         input.lockToken,
         input.ttlSec,
+        actorUserId,
       );
       return { lock };
     },
-    releaseLock: (workflowId, input) => {
-      builderRuntime.collaboration.releaseLock(workflowId, input.lockToken);
+    releaseLock: (workflowId, input, principal) => {
+      assertWorkflowExistsForBuilder(workflowId);
+      const actorUserId = requireWorkflowBuilderOperator(principal);
+      builderRuntime.collaboration.releaseLock(workflowId, input.lockToken, actorUserId);
       return { released: true };
     },
   })) {
@@ -1386,7 +1486,15 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           httpStatus: 404,
         });
       }
-      return download;
+      return createFridayHttpRawTextResponse(download.content, {
+        contentType: "application/json; charset=utf-8",
+        headers: {
+          "Content-Disposition": `attachment; filename=\"workflow-run-evidence-${exportId}.json\"`,
+          ETag: `"${download.export.checksum}"`,
+          "X-Friday-Evidence-Checksum": download.export.checksum,
+          "X-Friday-Evidence-File-Persisted": download.export.filePersisted ? "true" : "false",
+        },
+      });
     },
     cancelRun: async (runId, input, principal) => {
       resolveAuthorizedRun(runId, principal);
@@ -1636,10 +1744,34 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   for (const route of createFridaySecurityRoutes({
     fleetService: fleet,
     revokeToken: (tokenId) => {
-      const changed = deps.db.withWriteTransaction((db) =>
-        tokenRepo.revoke(db, tokenId, deps.nowIso()),
-      );
-      return { revoked: changed, tokenId };
+      const now = deps.nowIso();
+      const result = deps.db.withWriteTransaction((db) => {
+        let revoked = false;
+        let accessTokenExpiry: number | null = null;
+
+        const apiToken = tokenRepo.findById(db, tokenId);
+        if (apiToken) {
+          revoked = true;
+          if (apiToken.revoked_at === null || apiToken.revoked_at === undefined) {
+            tokenRepo.revoke(db, tokenId, now);
+          }
+        }
+
+        const accessToken = tokenRepo.findAuthAccessToken(db, tokenId);
+        if (accessToken) {
+          revoked = true;
+          accessTokenExpiry = accessToken.expires_at_epoch;
+          tokenRepo.revokeAccessToken(db, tokenId, accessToken.expires_at_epoch, now);
+          tokenRepo.revokeAuthAccessToken(db, tokenId, now);
+          sessionRepo.revokeById(db, accessToken.session_id, now);
+        }
+
+        return { revoked, accessTokenExpiry };
+      });
+      if (result.accessTokenExpiry !== null) {
+        revokedAccessTokens.set(tokenId, result.accessTokenExpiry);
+      }
+      return { revoked: result.revoked, tokenId };
     },
     revokeSatellite: (satelliteId, reason) => {
       deps.db.withWriteTransaction((db) => {
@@ -1764,11 +1896,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     }
   }
 
-  // Register MCP server routes (optional)
-  if (deps.mcpServer) {
-    for (const route of createFridayMcpServerRoutes(deps.mcpServer)) {
-      routes.register(route as unknown as Parameters<typeof routes.register>[0]);
-    }
+  // Register MCP server route surface with stable disabled semantics when absent.
+  for (const route of createFridayMcpServerRoutes(deps.mcpServer)) {
+    routes.register(route as unknown as Parameters<typeof routes.register>[0]);
   }
 
   // Register marketplace commerce routes (optional)
@@ -1884,18 +2014,14 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     }
   }
 
-  // Register channel webhook relay routes (optional)
-  if (deps.channelWebhooks) {
-    for (const route of createFridayChannelWebhookRoutes(deps.channelWebhooks)) {
-      routes.register(route);
-    }
+  // Register channel webhook relay routes with stable disabled semantics when listeners are absent.
+  for (const route of createFridayChannelWebhookRoutes(deps.channelWebhooks ?? {})) {
+    routes.register(route);
   }
 
-  // Register packaging routes (optional)
-  if (deps.packaging) {
-    for (const route of createFridayPackagingRoutes(deps.packaging)) {
-      routes.register(route);
-    }
+  // Register packaging routes with stable disabled semantics when packaging is absent.
+  for (const route of createFridayPackagingRoutes(deps.packaging)) {
+    routes.register(route);
   }
 
   // Register realtime routes
@@ -2001,6 +2127,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // Register memory routes (optional — only if service is provided)
   let memoryGuardFactory: ReturnType<typeof createFridayMemoryGuardServiceFactory> | undefined;
   if (deps.memoryService) {
+    const memoryItemRepo = createFridayMemoryItemRepository();
     memoryGuardFactory = createFridayMemoryGuardServiceFactory({
       core: deps.memoryService,
       db: deps.db,
@@ -2010,6 +2137,16 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
     for (const route of createFridayMemoryRoutes({
       memoryGuardFactory,
+      findStoreReplay: ({ principalId, idempotencyKey }) =>
+        deps.db.withReadConnection((db) =>
+          memoryItemRepo.findLatestByApiRequestIdempotencyKey(db, {
+            principalId,
+            idempotencyKey,
+          })),
+      listLearnedFacts: deps.uix?.listLearnedFacts
+        ? (input) => deps.uix!.listLearnedFacts!({ userId: input.userId }).slice(0, input.limit)
+        : undefined,
+      deleteLearnedFact: deps.uix?.deleteLearnedFact,
     })) {
       routes.register(route);
     }
@@ -2212,6 +2349,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       persistTaskMessage?: boolean;
       taskAlreadyInHistory?: boolean;
       idempotencyPrefix: "api-agent-run" | "api-session-run";
+      apiRequestIdempotency?: {
+        operationId: string;
+        idempotencyKey: string;
+        payloadHash: string;
+        receivedAt: string;
+        principalId?: string;
+      };
     }) => {
       const packId = input.executionContext?.packId?.trim();
       let sessionRecord: FridaySessionRecord | null = null;
@@ -2267,6 +2411,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         taskProfile: input.taskProfile,
         taskAlreadyInHistory: input.taskAlreadyInHistory ?? (input.persistTaskMessage === false),
         idempotencyPrefix: input.idempotencyPrefix,
+        apiRequestIdempotency: input.apiRequestIdempotency,
       });
       return engineResultToRuntimeResult(engineResult);
     }
@@ -2349,6 +2494,18 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   let agentAutomationService: FridayAgentAutomationService | undefined;
   if (deps.agentRuntime && deps.agentEventEmitter && agentRepo && agentRunEventRepo) {
     const agentAbortControllers = new Map<string, AbortController>();
+    const replayAgentRunResult = (run: FridayAgentRunRecord): FridayAgentRuntimeResult => ({
+      runId: run.id,
+      status: run.status,
+      response: run.responseText ?? run.summary ?? "",
+      toolCallCount: 0,
+      durationMs: run.durationMs ?? 0,
+      usageInput: run.usageInput ?? 0,
+      usageOutput: run.usageOutput ?? 0,
+      ...(run.responseText ? { finalResponse: run.responseText } : {}),
+      ...(run.contextCostSummary ? { contextCostSummary: run.contextCostSummary } : {}),
+      ...(run.taskProfile ? { taskProfile: run.taskProfile } : {}),
+    });
 
     const startRun = async (input: {
       task: string;
@@ -2365,7 +2522,29 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       principalId?: string;
       scopes?: string[];
       tenantContext?: FridayProviderTenantContext;
+      apiIdempotencyKey?: string;
+      apiIdempotencyPayloadHash?: string;
+      apiIdempotencyReceivedAt?: string;
     }) => {
+      const principalId =
+        typeof input.principalId === "string" && input.principalId.trim().length > 0
+          ? input.principalId.trim()
+          : undefined;
+      if (input.apiIdempotencyKey && input.apiIdempotencyPayloadHash) {
+        const scopedPrincipalId = principalId ?? "anonymous";
+        const existingRun = deps.db.withReadConnection((db) =>
+          agentRepo.findLatestByApiRequestIdempotencyKey(db, {
+            principalId: scopedPrincipalId,
+            idempotencyKey: input.apiIdempotencyKey!,
+          }));
+        if (existingRun) {
+          const existingHash = readStoredIdempotencyPayloadHash(existingRun.metadata);
+          if (existingHash && existingHash !== input.apiIdempotencyPayloadHash) {
+            throwIdempotencyConflict(input.apiIdempotencyKey, "agent.runs.start");
+          }
+          return replayAgentRunResult(existingRun);
+        }
+      }
       // Create the AbortController and pre-generate the runId BEFORE starting
       // the run so that cancelRun can abort in-flight execution.
       const abortController = new AbortController();
@@ -2385,11 +2564,22 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           signal: abortController.signal,
           reviewRequired: input.requireReview,
           constraints: input.constraints,
-          principalId: input.principalId,
+          principalId,
           scopes: input.scopes,
           tenantContext: input.tenantContext,
           executionContext: input.executionContext,
           taskProfile: input.taskProfile,
+          ...(input.apiIdempotencyKey && input.apiIdempotencyPayloadHash
+            ? {
+              apiRequestIdempotency: {
+                operationId: "agent.runs.start",
+                idempotencyKey: input.apiIdempotencyKey,
+                payloadHash: input.apiIdempotencyPayloadHash,
+                receivedAt: input.apiIdempotencyReceivedAt ?? deps.nowIso(),
+                principalId: principalId ?? "anonymous",
+              },
+            }
+            : {}),
           idempotencyPrefix: "api-agent-run",
         });
       } finally {
@@ -2416,6 +2606,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           listingId,
           principalId,
         });
+      },
+      validateRequestedRoute: async (providerId, model) => {
+        await deps.providerService.resolveRoute(model, providerId);
       },
       startRun,
       getRun: (runId) => {
