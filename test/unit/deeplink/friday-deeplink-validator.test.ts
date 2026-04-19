@@ -40,7 +40,7 @@ describe("validateFridayDeepLink", () => {
     it("redacts plaintext provider api keys from the preview payload", () => {
       const result = validateFridayDeepLink(makePayload({
         type: "provider-template",
-        providerTemplate: { providerKind: "openai", apiKey: "sk-live-secret-value" },
+        providerTemplate: { providerKind: "openai", apiKey: "sk-live-secret-value" }, // pragma: allowlist secret
       }));
 
       expect(result.payload.providerTemplate?.apiKey).toBe("[redacted]");
