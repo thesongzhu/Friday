@@ -1,0 +1,90 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/agent/runs/ebb3f523-776f-4f6f-817a-cafa973866c1/audit",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "ebb3f523-776f-4f6f-817a-cafa973866c1",
+        "events": [
+          {
+            "seq": 1,
+            "type": "agent.run.started",
+            "timestamp": "2026-04-19T12:19:24.036Z",
+            "payload": {
+              "runId": "ebb3f523-776f-4f6f-817a-cafa973866c1",
+              "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "taskProfile": {
+                "id": "default",
+                "modelSelectionSource": "route_default"
+              }
+            }
+          },
+          {
+            "seq": 9,
+            "type": "agent.run.failed",
+            "timestamp": "2026-04-19T12:19:29.085Z",
+            "payload": {
+              "runId": "ebb3f523-776f-4f6f-817a-cafa973866c1",
+              "error": {
+                "code": "AGENT_LLM_ERROR",
+                "message": "Validation criteria not met"
+              },
+              "durationMs": 5048,
+              "routeId": "agent.execute.run.delegated",
+              "correlationId": "c3f2b1f5-775a-4fba-b0ff-2fdc41628184"
+            }
+          }
+        ]
+      },
+      "requestId": "db6e75f6-5a36-4161-9085-fa317a9ff52a"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "ebb3f523-776f-4f6f-817a-cafa973866c1",
+      "events": [
+        {
+          "seq": 1,
+          "type": "agent.run.started",
+          "timestamp": "2026-04-19T12:19:24.036Z",
+          "payload": {
+            "runId": "ebb3f523-776f-4f6f-817a-cafa973866c1",
+            "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+            "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfile": {
+              "id": "default",
+              "modelSelectionSource": "route_default"
+            }
+          }
+        },
+        {
+          "seq": 9,
+          "type": "agent.run.failed",
+          "timestamp": "2026-04-19T12:19:29.085Z",
+          "payload": {
+            "runId": "ebb3f523-776f-4f6f-817a-cafa973866c1",
+            "error": {
+              "code": "AGENT_LLM_ERROR",
+              "message": "Validation criteria not met"
+            },
+            "durationMs": 5048,
+            "routeId": "agent.execute.run.delegated",
+            "correlationId": "c3f2b1f5-775a-4fba-b0ff-2fdc41628184"
+          }
+        }
+      ]
+    },
+    "requestId": "db6e75f6-5a36-4161-9085-fa317a9ff52a"
+  }
+}

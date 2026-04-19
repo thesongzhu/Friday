@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "What should you call me? Reply with only the name.",
+      "providerId": "33525000-9455-4093-bb23-708db1235b0f"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "82f5b64a-4580-4763-a539-1173c0355d5e",
+        "status": "completed",
+        "response": "I don't have a specific name for you. Could you please tell me what you'd like to be called?",
+        "toolCallCount": 0,
+        "durationMs": 8748,
+        "usageInput": 11294,
+        "usageOutput": 23,
+        "finalResponse": "I don't have a specific name for you. Could you please tell me what you'd like to be called?",
+        "eventStreamAvailable": true
+      },
+      "requestId": "80a5f5f6-bce9-4152-b112-351af0d7fc50"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "82f5b64a-4580-4763-a539-1173c0355d5e",
+      "status": "completed",
+      "response": "I don't have a specific name for you. Could you please tell me what you'd like to be called?",
+      "toolCallCount": 0,
+      "durationMs": 8748,
+      "usageInput": 11294,
+      "usageOutput": 23,
+      "finalResponse": "I don't have a specific name for you. Could you please tell me what you'd like to be called?",
+      "eventStreamAvailable": true
+    },
+    "requestId": "80a5f5f6-bce9-4152-b112-351af0d7fc50"
+  }
+}

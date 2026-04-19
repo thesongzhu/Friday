@@ -1,0 +1,242 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/agent/runs/c2247d4e-0455-451a-a3ab-f6c2f70ec2c9/audit",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "c2247d4e-0455-451a-a3ab-f6c2f70ec2c9",
+        "events": [
+          {
+            "seq": 1,
+            "type": "agent.run.started",
+            "timestamp": "2026-04-19T11:53:00.900Z",
+            "payload": {
+              "runId": "c2247d4e-0455-451a-a3ab-f6c2f70ec2c9",
+              "task": "What should you call me? Reply with only the name.",
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "taskProfile": {
+                "id": "default",
+                "modelSelectionSource": "route_default"
+              }
+            }
+          },
+          {
+            "seq": 16,
+            "type": "agent.run.route_selected",
+            "timestamp": "2026-04-19T11:53:04.094Z",
+            "payload": {
+              "runId": "c2247d4e-0455-451a-a3ab-f6c2f70ec2c9",
+              "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+              "taskProfileId": "default",
+              "modelSelectionSource": "route_default",
+              "actualProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+              "actualModel": "gpt-4o",
+              "actualProviderKind": "openai",
+              "actualProviderApi": "openai-responses",
+              "backendKind": "http",
+              "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+              "learningAdjusted": false,
+              "routeDecisionTrace": {
+                "taskProfileId": "default",
+                "requiresNativeTools": true,
+                "learningAdjusted": false,
+                "learningSignalsPresent": true,
+                "orderingAdjusted": false,
+                "selectedAdjusted": false,
+                "reasonCode": "historical_bias",
+                "reasonText": "Historical route outcomes influenced candidate scoring.",
+                "historyWindow": {
+                  "sampleLimit": 250
+                },
+                "selectedBeforeLearning": {
+                  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                  "providerKind": "openai",
+                  "model": "gpt-4o",
+                  "backendKind": "http"
+                },
+                "selectedAfterLearning": {
+                  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                  "providerKind": "openai",
+                  "model": "gpt-4o",
+                  "backendKind": "http"
+                },
+                "candidateScores": [
+                  {
+                    "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                    "providerKind": "openai",
+                    "model": "gpt-4o",
+                    "backendKind": "http",
+                    "originalRank": 1,
+                    "finalRank": 1,
+                    "selected": true,
+                    "eligible": true,
+                    "ineligibilityReasons": [],
+                    "pinned": false,
+                    "historicalSuccessRate": 1,
+                    "historicalFailureRate": 0,
+                    "sampleCount": 1,
+                    "baseRankScore": 1,
+                    "historyScore": 4.25,
+                    "patternScore": 0,
+                    "lessonScore": 0,
+                    "routePenaltyScore": 0,
+                    "pinBonus": 0,
+                    "finalScore": 5.25,
+                    "historyStats": {
+                      "sampleCount": 1,
+                      "successRate": 1,
+                      "failureRate": 0
+                    },
+                    "matchedLessonIds": [],
+                    "matchedPatternIds": []
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "seq": 19,
+            "type": "agent.run.completed",
+            "timestamp": "2026-04-19T11:53:04.099Z",
+            "payload": {
+              "runId": "c2247d4e-0455-451a-a3ab-f6c2f70ec2c9",
+              "durationMs": 3198,
+              "toolCallCount": 0,
+              "testsPassed": true,
+              "artifacts": [
+                {
+                  "type": "run_record",
+                  "path": ".friday/agent-runs/c2247d4e-0455-451a-a3ab-f6c2f70ec2c9/run.json"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "requestId": "e239b462-d3dc-47d8-82b4-475ea0f4850d"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "c2247d4e-0455-451a-a3ab-f6c2f70ec2c9",
+      "events": [
+        {
+          "seq": 1,
+          "type": "agent.run.started",
+          "timestamp": "2026-04-19T11:53:00.900Z",
+          "payload": {
+            "runId": "c2247d4e-0455-451a-a3ab-f6c2f70ec2c9",
+            "task": "What should you call me? Reply with only the name.",
+            "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfile": {
+              "id": "default",
+              "modelSelectionSource": "route_default"
+            }
+          }
+        },
+        {
+          "seq": 16,
+          "type": "agent.run.route_selected",
+          "timestamp": "2026-04-19T11:53:04.094Z",
+          "payload": {
+            "runId": "c2247d4e-0455-451a-a3ab-f6c2f70ec2c9",
+            "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfileId": "default",
+            "modelSelectionSource": "route_default",
+            "actualProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+            "actualModel": "gpt-4o",
+            "actualProviderKind": "openai",
+            "actualProviderApi": "openai-responses",
+            "backendKind": "http",
+            "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+            "learningAdjusted": false,
+            "routeDecisionTrace": {
+              "taskProfileId": "default",
+              "requiresNativeTools": true,
+              "learningAdjusted": false,
+              "learningSignalsPresent": true,
+              "orderingAdjusted": false,
+              "selectedAdjusted": false,
+              "reasonCode": "historical_bias",
+              "reasonText": "Historical route outcomes influenced candidate scoring.",
+              "historyWindow": {
+                "sampleLimit": 250
+              },
+              "selectedBeforeLearning": {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http"
+              },
+              "selectedAfterLearning": {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http"
+              },
+              "candidateScores": [
+                {
+                  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                  "providerKind": "openai",
+                  "model": "gpt-4o",
+                  "backendKind": "http",
+                  "originalRank": 1,
+                  "finalRank": 1,
+                  "selected": true,
+                  "eligible": true,
+                  "ineligibilityReasons": [],
+                  "pinned": false,
+                  "historicalSuccessRate": 1,
+                  "historicalFailureRate": 0,
+                  "sampleCount": 1,
+                  "baseRankScore": 1,
+                  "historyScore": 4.25,
+                  "patternScore": 0,
+                  "lessonScore": 0,
+                  "routePenaltyScore": 0,
+                  "pinBonus": 0,
+                  "finalScore": 5.25,
+                  "historyStats": {
+                    "sampleCount": 1,
+                    "successRate": 1,
+                    "failureRate": 0
+                  },
+                  "matchedLessonIds": [],
+                  "matchedPatternIds": []
+                }
+              ]
+            }
+          }
+        },
+        {
+          "seq": 19,
+          "type": "agent.run.completed",
+          "timestamp": "2026-04-19T11:53:04.099Z",
+          "payload": {
+            "runId": "c2247d4e-0455-451a-a3ab-f6c2f70ec2c9",
+            "durationMs": 3198,
+            "toolCallCount": 0,
+            "testsPassed": true,
+            "artifacts": [
+              {
+                "type": "run_record",
+                "path": ".friday/agent-runs/c2247d4e-0455-451a-a3ab-f6c2f70ec2c9/run.json"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "requestId": "e239b462-d3dc-47d8-82b4-475ea0f4850d"
+  }
+}

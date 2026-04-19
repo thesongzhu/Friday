@@ -1,0 +1,56 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "expertMode": {
+        "enabled": false,
+        "activeForCurrentRuntime": false,
+        "allowedUserIds": [],
+        "allowedWorkspaceIds": [],
+        "allowedEnvironments": [],
+        "contextInferenceAllowed": true,
+        "multiStepHypothesisSearchAllowed": true,
+        "safeProbeExecutionAllowed": true,
+        "crossSurfaceOrchestrationAllowed": true,
+        "highRiskFinalApprovalRequired": true,
+        "productionDestructiveActionApprovalRequired": true,
+        "probeBudget": 4,
+        "timeBudgetMinutes": 20
+      }
+    },
+    "requestId": "489ae8c1-9615-4fef-a2fe-8315abe2d72a"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/agent-loop/expert-mode",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "expertMode": {
+          "enabled": false,
+          "activeForCurrentRuntime": false,
+          "allowedUserIds": [],
+          "allowedWorkspaceIds": [],
+          "allowedEnvironments": [],
+          "contextInferenceAllowed": true,
+          "multiStepHypothesisSearchAllowed": true,
+          "safeProbeExecutionAllowed": true,
+          "crossSurfaceOrchestrationAllowed": true,
+          "highRiskFinalApprovalRequired": true,
+          "productionDestructiveActionApprovalRequired": true,
+          "probeBudget": 4,
+          "timeBudgetMinutes": 20
+        }
+      },
+      "requestId": "489ae8c1-9615-4fef-a2fe-8315abe2d72a"
+    }
+  }
+}

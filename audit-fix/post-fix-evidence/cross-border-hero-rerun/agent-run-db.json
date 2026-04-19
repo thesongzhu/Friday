@@ -1,0 +1,15 @@
+[
+  {
+    "id": "324b953b-da34-4d69-a852-495799f76128",
+    "status": "completed",
+    "session_key": "guided:default:admin-001-cross-border-hero",
+    "response_text": "To set up a TikTok Shop US cross-border operation, follow these initial steps:\n\n1. **Research and Compliance:**\n   - Understand the legal and regulatory requirements for cross-border e-commerce in the US.\n   - Ensure compliance with TikTok's policies and guidelines for sellers.\n\n2. **Account Setup:**\n   - Create a TikTok Business Account if you don't have one.\n   - Apply for a TikTok Shop account and complete the necessary verification processes.\n\n3. **Product and Inventory Management:**\n   - Identify the products you want to sell and ensure they comply with TikTok's product guidelines.\n   - Set up an inventory management system to handle cross-border logistics.\n\n4. **Logistics and Shipping:**\n   - Partner with reliable logistics providers experienced in cross-border shipping.\n   - Understand customs regulations and duties for shipping to the US.\n\n5. **Payment and Currency:**\n   - Set up a payment gateway that supports cross-border transactions.\n   - Ensure you can handle currency conversion and international payments.\n\n6. **Marketing and Promotion:**\n   - Develop a marketing strategy tailored to the US market.\n   - Utilize TikTok's advertising tools to reach your target audience.\n\n7. **Customer Service:**\n   - Establish a customer service system to handle inquiries and support in different time zones.\n   - Consider language support if necessary.\n\n8. **Analytics and Optimization:**\n   - Use TikTok's analytics tools to monitor performance and optimize your shop.\n   - Continuously assess and adjust your strategy based on data insights.\n\nThese steps provide a foundational approach to launching a TikTok Shop US cross-border operation. Each step may require further detailed planning and execution based on specific business needs and goals.",
+    "error_message": null,
+    "created_at": "2026-04-19T09:38:39.835Z",
+    "started_at": "2026-04-19T09:38:39.843Z",
+    "completed_at": "2026-04-19T09:38:44.125Z",
+    "duration_ms": 4291,
+    "usage_input": 6333,
+    "usage_output": 344
+  }
+]

@@ -1,0 +1,155 @@
+{
+  "url": "http://127.0.0.1:3241/v1/skills/generator/sessions/7a24caf9-df1f-4070-acee-67feaf42617d/generate",
+  "method": "POST",
+  "status": 200,
+  "request": {},
+  "response": {
+    "ok": true,
+    "data": {
+      "draft": {
+        "manifest": {
+          "schemaVersion": "2.0",
+          "id": "list-largest-files",
+          "name": "List Largest Files",
+          "description": "Lists the top 3 largest files in a given directory.",
+          "version": "1.0.0",
+          "kind": "system",
+          "category": "filesystem",
+          "author": {
+            "name": "Automation Developer"
+          },
+          "tags": [
+            "generated",
+            "generated.draft",
+            "cli-backed"
+          ],
+          "runtime": {
+            "kind": "shell",
+            "entrypoint": "run.sh",
+            "minHubVersion": "1.0.0",
+            "apiVersion": "1",
+            "timeoutMsDefault": 30000
+          },
+          "triggers": {
+            "intents": [],
+            "phrases": [],
+            "channels": [
+              "*"
+            ]
+          },
+          "invocation": {
+            "userInvocable": true,
+            "modelInvocable": true,
+            "priority": 50,
+            "modes": [
+              "intent"
+            ]
+          },
+          "requirements": {
+            "bins": [],
+            "env": [],
+            "config": [],
+            "os": [
+              "darwin",
+              "linux",
+              "win32"
+            ],
+            "mcpServers": []
+          },
+          "inputs": [
+            {
+              "key": "directoryPath",
+              "type": "string",
+              "required": true,
+              "label": "Directory Path"
+            }
+          ],
+          "outputs": [
+            {
+              "key": "largestFiles",
+              "type": "array",
+              "description": "List of the top 3 largest files with their sizes."
+            }
+          ],
+          "permissions": {
+            "grants": [],
+            "promptOn": []
+          },
+          "schemas": null,
+          "flow": null,
+          "executionTargets": {
+            "allowedSatelliteTypes": [
+              "phone",
+              "desktop",
+              "rpi",
+              "cloud-vm"
+            ],
+            "requiredCapabilities": []
+          },
+          "telemetry": {
+            "events": []
+          }
+        },
+        "files": [
+          {
+            "path": "run.sh",
+            "content": "#!/usr/bin/env bash\n\nset -euo pipefail\n\n# Read input JSON from stdin\nINPUT_JSON=\"$(cat)\"\n\ndirectoryPath=$(echo \"$INPUT_JSON\" | jq -r '.directoryPath')\n\nif [[ ! -d \"$directoryPath\" ]]; then\n  echo '{\"error\": \"Invalid directory path.\"}'\n  exit 1\nfi\n\n# Find the top 3 largest files in the directory\nlargestFiles=$(find \"$directoryPath\" -type f -exec du -b {} + | sort -nr | head -n 3 | awk '{print {\"size\": $1, \"path\": $2}}' | jq -s '.')\n\n# Output the result as JSON\njq -n --argjson largestFiles \"$largestFiles\" '{largestFiles: $largestFiles}'\n",
+            "language": "bash",
+            "executable": true
+          }
+        ],
+        "uiSchema": {
+          "schemaVersion": "1.0",
+          "title": "List Largest Files",
+          "description": "Lists the top 3 largest files in a given directory.",
+          "sections": [
+            {
+              "id": "main",
+              "label": "Inputs",
+              "fieldIds": [
+                "directoryPath-field"
+              ]
+            }
+          ],
+          "fields": [
+            {
+              "id": "directoryPath-field",
+              "inputKey": "directoryPath",
+              "kind": "text",
+              "label": "Directory Path",
+              "required": true
+            }
+          ],
+          "outputs": [
+            {
+              "id": "largestFiles-output",
+              "outputKey": "largestFiles",
+              "label": "largestFiles",
+              "widget": "table"
+            }
+          ],
+          "actions": [
+            {
+              "id": "run",
+              "label": "Run",
+              "style": "primary"
+            },
+            {
+              "id": "reset",
+              "label": "Reset",
+              "style": "secondary"
+            }
+          ]
+        },
+        "runtimeKind": "shell",
+        "validation": {
+          "ok": true,
+          "issues": [],
+          "repaired": true,
+          "repairAttempts": 1
+        }
+      }
+    },
+    "requestId": "e18e41a9-457d-4b52-8f53-8ce02f9d771a"
+  }
+}

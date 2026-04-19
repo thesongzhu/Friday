@@ -1,0 +1,20 @@
+{
+  "checkedAt": "2026-04-19T11:22:42.526Z",
+  "statusRouteStatus": 200,
+  "jobsRouteStatus": 200,
+  "sessionsRouteStatus": 200,
+  "pairingsRouteStatus": 200,
+  "statusRouteData": {
+    "version": "1.0.0",
+    "uptime": 471,
+    "activeSessions": 3,
+    "runningJobs": 0,
+    "connectedSatellites": 0
+  },
+  "jobsRouteCount": 11,
+  "dbActiveSessionCount": 3,
+  "dbJobCount": 11,
+  "tuiRenderedDashboard": true,
+  "tuiRenderedJobsLabel": true,
+  "tuiProcessExitCode": 0
+}

@@ -1,0 +1,31 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/memory/search",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "query": "what should you call me",
+      "limit": 20
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "items": []
+      },
+      "requestId": "8846e177-6b6b-46b3-84f2-f9db16f6697d"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "items": []
+    },
+    "requestId": "8846e177-6b6b-46b3-84f2-f9db16f6697d"
+  }
+}

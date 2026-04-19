@@ -1,0 +1,482 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/agent/runs/22c1902f-55e6-4a7e-acd2-974f79fa7668/audit",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+        "events": [
+          {
+            "seq": 1,
+            "type": "agent.run.started",
+            "timestamp": "2026-04-19T12:04:24.922Z",
+            "payload": {
+              "runId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+              "task": "Call me MemoryAuditName-1776600264871.",
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "taskProfile": {
+                "id": "default",
+                "modelSelectionSource": "route_default"
+              }
+            }
+          },
+          {
+            "seq": 7,
+            "type": "agent.run.route_selected",
+            "timestamp": "2026-04-19T12:04:28.583Z",
+            "payload": {
+              "runId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+              "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+              "taskProfileId": "default",
+              "modelSelectionSource": "route_default",
+              "actualProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+              "actualModel": "gpt-4o",
+              "actualProviderKind": "openai",
+              "actualProviderApi": "openai-responses",
+              "backendKind": "http",
+              "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+              "learningAdjusted": false,
+              "routeDecisionTrace": {
+                "taskProfileId": "default",
+                "requiresNativeTools": true,
+                "learningAdjusted": false,
+                "learningSignalsPresent": true,
+                "orderingAdjusted": false,
+                "selectedAdjusted": false,
+                "reasonCode": "historical_bias",
+                "reasonText": "Historical route outcomes influenced candidate scoring.",
+                "historyWindow": {
+                  "sampleLimit": 250
+                },
+                "selectedBeforeLearning": {
+                  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                  "providerKind": "openai",
+                  "model": "gpt-4o",
+                  "backendKind": "http"
+                },
+                "selectedAfterLearning": {
+                  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                  "providerKind": "openai",
+                  "model": "gpt-4o",
+                  "backendKind": "http"
+                },
+                "candidateScores": [
+                  {
+                    "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                    "providerKind": "openai",
+                    "model": "gpt-4o",
+                    "backendKind": "http",
+                    "originalRank": 1,
+                    "finalRank": 1,
+                    "selected": true,
+                    "eligible": true,
+                    "ineligibilityReasons": [],
+                    "pinned": false,
+                    "historicalSuccessRate": 1,
+                    "historicalFailureRate": 0,
+                    "sampleCount": 5,
+                    "baseRankScore": 1,
+                    "historyScore": 5.25,
+                    "patternScore": 0,
+                    "lessonScore": 0,
+                    "routePenaltyScore": 0,
+                    "pinBonus": 0,
+                    "finalScore": 6.25,
+                    "historyStats": {
+                      "sampleCount": 5,
+                      "successRate": 1,
+                      "failureRate": 0
+                    },
+                    "matchedLessonIds": [],
+                    "matchedPatternIds": []
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "seq": 9,
+            "type": "agent.run.tool_start",
+            "timestamp": "2026-04-19T12:04:28.585Z",
+            "payload": {
+              "runId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+              "toolName": "feedback",
+              "toolCallId": "call_leklldVjlC5kd1vd1E8Zg4Yn",
+              "params": {
+                "kind": "preference",
+                "field": "user name",
+                "value": "MemoryAuditName-1776600264871",
+                "context": "User requested to be called MemoryAuditName-1776600264871."
+              }
+            }
+          },
+          {
+            "seq": 11,
+            "type": "agent.run.tool_end",
+            "timestamp": "2026-04-19T12:04:28.587Z",
+            "payload": {
+              "runId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+              "toolName": "feedback",
+              "toolCallId": "call_leklldVjlC5kd1vd1E8Zg4Yn",
+              "durationMs": 2,
+              "isError": false,
+              "summary": "Feedback recorded: preference for \"user name\" = \"MemoryAuditName-1776600264871\".",
+              "routeId": "agent.execute.tool",
+              "correlationId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+              "toolCallSummary": {
+                "toolName": "feedback",
+                "argKeys": [
+                  "kind",
+                  "field",
+                  "value",
+                  "context"
+                ],
+                "resultIsError": false,
+                "resultLengthChars": 80,
+                "outputShape": "text",
+                "toolCategory": "other",
+                "turnIndex": 0,
+                "toolIndex": 0
+              }
+            }
+          },
+          {
+            "seq": 31,
+            "type": "agent.run.route_selected",
+            "timestamp": "2026-04-19T12:04:31.145Z",
+            "payload": {
+              "runId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+              "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+              "taskProfileId": "default",
+              "modelSelectionSource": "route_default",
+              "actualProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+              "actualModel": "gpt-4o",
+              "actualProviderKind": "openai",
+              "actualProviderApi": "openai-responses",
+              "backendKind": "http",
+              "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+              "learningAdjusted": false,
+              "routeDecisionTrace": {
+                "taskProfileId": "default",
+                "requiresNativeTools": true,
+                "learningAdjusted": false,
+                "learningSignalsPresent": true,
+                "orderingAdjusted": false,
+                "selectedAdjusted": false,
+                "reasonCode": "historical_bias",
+                "reasonText": "Historical route outcomes influenced candidate scoring.",
+                "historyWindow": {
+                  "sampleLimit": 250
+                },
+                "selectedBeforeLearning": {
+                  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                  "providerKind": "openai",
+                  "model": "gpt-4o",
+                  "backendKind": "http"
+                },
+                "selectedAfterLearning": {
+                  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                  "providerKind": "openai",
+                  "model": "gpt-4o",
+                  "backendKind": "http"
+                },
+                "candidateScores": [
+                  {
+                    "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                    "providerKind": "openai",
+                    "model": "gpt-4o",
+                    "backendKind": "http",
+                    "originalRank": 1,
+                    "finalRank": 1,
+                    "selected": true,
+                    "eligible": true,
+                    "ineligibilityReasons": [],
+                    "pinned": false,
+                    "historicalSuccessRate": 1,
+                    "historicalFailureRate": 0,
+                    "sampleCount": 5,
+                    "baseRankScore": 1,
+                    "historyScore": 5.25,
+                    "patternScore": 0,
+                    "lessonScore": 0,
+                    "routePenaltyScore": 0,
+                    "pinBonus": 0,
+                    "finalScore": 6.25,
+                    "historyStats": {
+                      "sampleCount": 5,
+                      "successRate": 1,
+                      "failureRate": 0
+                    },
+                    "matchedLessonIds": [],
+                    "matchedPatternIds": []
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "seq": 34,
+            "type": "agent.run.completed",
+            "timestamp": "2026-04-19T12:04:31.152Z",
+            "payload": {
+              "runId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+              "durationMs": 6240,
+              "toolCallCount": 1,
+              "testsPassed": true,
+              "artifacts": [
+                {
+                  "type": "run_record",
+                  "path": ".friday/agent-runs/22c1902f-55e6-4a7e-acd2-974f79fa7668/run.json"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "requestId": "9bc6e810-b636-48aa-bae4-589ab3444611"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+      "events": [
+        {
+          "seq": 1,
+          "type": "agent.run.started",
+          "timestamp": "2026-04-19T12:04:24.922Z",
+          "payload": {
+            "runId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+            "task": "Call me MemoryAuditName-1776600264871.",
+            "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfile": {
+              "id": "default",
+              "modelSelectionSource": "route_default"
+            }
+          }
+        },
+        {
+          "seq": 7,
+          "type": "agent.run.route_selected",
+          "timestamp": "2026-04-19T12:04:28.583Z",
+          "payload": {
+            "runId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+            "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfileId": "default",
+            "modelSelectionSource": "route_default",
+            "actualProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+            "actualModel": "gpt-4o",
+            "actualProviderKind": "openai",
+            "actualProviderApi": "openai-responses",
+            "backendKind": "http",
+            "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+            "learningAdjusted": false,
+            "routeDecisionTrace": {
+              "taskProfileId": "default",
+              "requiresNativeTools": true,
+              "learningAdjusted": false,
+              "learningSignalsPresent": true,
+              "orderingAdjusted": false,
+              "selectedAdjusted": false,
+              "reasonCode": "historical_bias",
+              "reasonText": "Historical route outcomes influenced candidate scoring.",
+              "historyWindow": {
+                "sampleLimit": 250
+              },
+              "selectedBeforeLearning": {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http"
+              },
+              "selectedAfterLearning": {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http"
+              },
+              "candidateScores": [
+                {
+                  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                  "providerKind": "openai",
+                  "model": "gpt-4o",
+                  "backendKind": "http",
+                  "originalRank": 1,
+                  "finalRank": 1,
+                  "selected": true,
+                  "eligible": true,
+                  "ineligibilityReasons": [],
+                  "pinned": false,
+                  "historicalSuccessRate": 1,
+                  "historicalFailureRate": 0,
+                  "sampleCount": 5,
+                  "baseRankScore": 1,
+                  "historyScore": 5.25,
+                  "patternScore": 0,
+                  "lessonScore": 0,
+                  "routePenaltyScore": 0,
+                  "pinBonus": 0,
+                  "finalScore": 6.25,
+                  "historyStats": {
+                    "sampleCount": 5,
+                    "successRate": 1,
+                    "failureRate": 0
+                  },
+                  "matchedLessonIds": [],
+                  "matchedPatternIds": []
+                }
+              ]
+            }
+          }
+        },
+        {
+          "seq": 9,
+          "type": "agent.run.tool_start",
+          "timestamp": "2026-04-19T12:04:28.585Z",
+          "payload": {
+            "runId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+            "toolName": "feedback",
+            "toolCallId": "call_leklldVjlC5kd1vd1E8Zg4Yn",
+            "params": {
+              "kind": "preference",
+              "field": "user name",
+              "value": "MemoryAuditName-1776600264871",
+              "context": "User requested to be called MemoryAuditName-1776600264871."
+            }
+          }
+        },
+        {
+          "seq": 11,
+          "type": "agent.run.tool_end",
+          "timestamp": "2026-04-19T12:04:28.587Z",
+          "payload": {
+            "runId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+            "toolName": "feedback",
+            "toolCallId": "call_leklldVjlC5kd1vd1E8Zg4Yn",
+            "durationMs": 2,
+            "isError": false,
+            "summary": "Feedback recorded: preference for \"user name\" = \"MemoryAuditName-1776600264871\".",
+            "routeId": "agent.execute.tool",
+            "correlationId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+            "toolCallSummary": {
+              "toolName": "feedback",
+              "argKeys": [
+                "kind",
+                "field",
+                "value",
+                "context"
+              ],
+              "resultIsError": false,
+              "resultLengthChars": 80,
+              "outputShape": "text",
+              "toolCategory": "other",
+              "turnIndex": 0,
+              "toolIndex": 0
+            }
+          }
+        },
+        {
+          "seq": 31,
+          "type": "agent.run.route_selected",
+          "timestamp": "2026-04-19T12:04:31.145Z",
+          "payload": {
+            "runId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+            "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfileId": "default",
+            "modelSelectionSource": "route_default",
+            "actualProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+            "actualModel": "gpt-4o",
+            "actualProviderKind": "openai",
+            "actualProviderApi": "openai-responses",
+            "backendKind": "http",
+            "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+            "learningAdjusted": false,
+            "routeDecisionTrace": {
+              "taskProfileId": "default",
+              "requiresNativeTools": true,
+              "learningAdjusted": false,
+              "learningSignalsPresent": true,
+              "orderingAdjusted": false,
+              "selectedAdjusted": false,
+              "reasonCode": "historical_bias",
+              "reasonText": "Historical route outcomes influenced candidate scoring.",
+              "historyWindow": {
+                "sampleLimit": 250
+              },
+              "selectedBeforeLearning": {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http"
+              },
+              "selectedAfterLearning": {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http"
+              },
+              "candidateScores": [
+                {
+                  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                  "providerKind": "openai",
+                  "model": "gpt-4o",
+                  "backendKind": "http",
+                  "originalRank": 1,
+                  "finalRank": 1,
+                  "selected": true,
+                  "eligible": true,
+                  "ineligibilityReasons": [],
+                  "pinned": false,
+                  "historicalSuccessRate": 1,
+                  "historicalFailureRate": 0,
+                  "sampleCount": 5,
+                  "baseRankScore": 1,
+                  "historyScore": 5.25,
+                  "patternScore": 0,
+                  "lessonScore": 0,
+                  "routePenaltyScore": 0,
+                  "pinBonus": 0,
+                  "finalScore": 6.25,
+                  "historyStats": {
+                    "sampleCount": 5,
+                    "successRate": 1,
+                    "failureRate": 0
+                  },
+                  "matchedLessonIds": [],
+                  "matchedPatternIds": []
+                }
+              ]
+            }
+          }
+        },
+        {
+          "seq": 34,
+          "type": "agent.run.completed",
+          "timestamp": "2026-04-19T12:04:31.152Z",
+          "payload": {
+            "runId": "22c1902f-55e6-4a7e-acd2-974f79fa7668",
+            "durationMs": 6240,
+            "toolCallCount": 1,
+            "testsPassed": true,
+            "artifacts": [
+              {
+                "type": "run_record",
+                "path": ".friday/agent-runs/22c1902f-55e6-4a7e-acd2-974f79fa7668/run.json"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "requestId": "9bc6e810-b636-48aa-bae4-589ab3444611"
+  }
+}

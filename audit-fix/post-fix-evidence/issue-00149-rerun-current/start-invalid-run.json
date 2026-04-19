@@ -1,0 +1,36 @@
+{
+  "rawBody": {
+    "ok": false,
+    "error": {
+      "code": "PROVIDER_NOT_FOUND",
+      "message": "Provider \"missing-provider-issue-00149\" not found",
+      "retryable": false
+    },
+    "requestId": "a9ab5007-23ea-4fd6-bd00-7b4f8a8327ed"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Reply with only INVALID_PROVIDER_PRECHECK_OK.",
+      "providerId": "missing-provider-issue-00149",
+      "model": "gpt-4o"
+    }
+  },
+  "response": {
+    "status": 404,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "PROVIDER_NOT_FOUND",
+        "message": "Provider \"missing-provider-issue-00149\" not found",
+        "retryable": false
+      },
+      "requestId": "a9ab5007-23ea-4fd6-bd00-7b4f8a8327ed"
+    }
+  }
+}

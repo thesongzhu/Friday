@@ -1,0 +1,33 @@
+{
+  "checkedAt": "2026-04-19T12:07:47.217Z",
+  "baseUrl": "http://127.0.0.1:3242",
+  "providerKind": "anthropic",
+  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+  "auditName": "MemoryAuditName-1776600445743",
+  "teachRunId": "456d48a0-4f53-455a-abb0-1d251e10100a",
+  "teachRunStatus": "completed",
+  "learnedFactKeyAfterTeach": "pref:name",
+  "learnedFactPresentAfterTeach": true,
+  "memoryListShowsLearnedFactAfterTeach": true,
+  "memorySearchShowsLearnedFactAfterTeach": true,
+  "naturalRecall": {
+    "runId": "d8314a7a-87d9-4110-9d2c-95d01d8b7aef",
+    "status": "completed",
+    "responseText": "MemoryAuditName-1776600264869",
+    "usedMemorySearch": true,
+    "memorySearchSummary": "[]",
+    "answeredExpectedName": false
+  },
+  "explicitRecall": {
+    "runId": "8612990e-18ab-4d61-832e-a7e558abcfd3",
+    "status": "completed",
+    "responseText": "User",
+    "usedMemorySearch": true,
+    "memorySearchSummary": "[]",
+    "answeredExpectedName": false
+  },
+  "deleteByKeyStatus": 200,
+  "deletedFactKey": "pref:name",
+  "learnedFactPresentAfterDelete": false,
+  "memoryListShowsLearnedFactAfterDelete": false
+}

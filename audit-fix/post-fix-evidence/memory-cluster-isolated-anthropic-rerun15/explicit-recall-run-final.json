@@ -1,0 +1,390 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3242/v1/agent/runs/d2f9847a-30d5-4f21-a6b3-b1b5cbd517d5",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "run": {
+          "id": "d2f9847a-30d5-4f21-a6b3-b1b5cbd517d5",
+          "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+          "status": "completed",
+          "sessionKey": "agent:run:d2f9847a-30d5-4f21-a6b3-b1b5cbd517d5",
+          "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+          "attempt": 0,
+          "maxAttempts": 3,
+          "artifacts": [
+            {
+              "type": "run_record",
+              "path": ".friday/agent-runs/d2f9847a-30d5-4f21-a6b3-b1b5cbd517d5/run.json"
+            }
+          ],
+          "testResults": [
+            {
+              "strategy": "llm_eval",
+              "passed": true,
+              "errors": [],
+              "durationMs": 0
+            }
+          ],
+          "createdAt": "2026-04-19T13:03:02.361Z",
+          "startedAt": "2026-04-19T13:03:02.363Z",
+          "completedAt": "2026-04-19T13:03:06.176Z",
+          "durationMs": 3815,
+          "usageInput": 518,
+          "usageOutput": 78,
+          "costUsd": 0.054993,
+          "planReview": {
+            "plan": {
+              "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+              "stepCount": 1,
+              "description": "Planning approach for: Use memory_search if needed. What should you call me? Reply with only the name."
+            },
+            "decision": {
+              "approved": true,
+              "mode": "off",
+              "reason": "No review required",
+              "reviewedAt": "2026-04-19T13:03:02.363Z"
+            }
+          },
+          "actualExecution": {
+            "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "taskProfileId": "default",
+            "modelSelectionSource": "route_default",
+            "actualProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "actualModel": "claude-sonnet-4-20250514",
+            "actualProviderKind": "anthropic",
+            "actualProviderApi": "anthropic-messages",
+            "backendKind": "http",
+            "totalCostUsd": 0.054993,
+            "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+            "routeDecisionTrace": {
+              "taskProfileId": "default",
+              "requiresNativeTools": true,
+              "learningAdjusted": false,
+              "learningSignalsPresent": true,
+              "orderingAdjusted": false,
+              "selectedAdjusted": false,
+              "reasonCode": "historical_bias",
+              "reasonText": "Historical route outcomes influenced candidate scoring.",
+              "historyWindow": {
+                "sampleLimit": 250
+              },
+              "selectedBeforeLearning": {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http"
+              },
+              "selectedAfterLearning": {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http"
+              },
+              "candidateScores": [
+                {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http",
+                  "originalRank": 1,
+                  "finalRank": 1,
+                  "selected": true,
+                  "eligible": true,
+                  "ineligibilityReasons": [],
+                  "pinned": false,
+                  "historicalSuccessRate": 1,
+                  "historicalFailureRate": 0,
+                  "sampleCount": 44,
+                  "baseRankScore": 1,
+                  "historyScore": 5.25,
+                  "patternScore": 0,
+                  "lessonScore": 0,
+                  "routePenaltyScore": 0,
+                  "pinBonus": 0,
+                  "finalScore": 6.25,
+                  "historyStats": {
+                    "sampleCount": 44,
+                    "successRate": 1,
+                    "failureRate": 0
+                  },
+                  "matchedLessonIds": [],
+                  "matchedPatternIds": []
+                }
+              ]
+            },
+            "turns": [
+              {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "model": "claude-sonnet-4-20250514",
+                "inputTokens": 159,
+                "outputTokens": 62,
+                "costUsd": 0.048924
+              },
+              {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "model": "claude-sonnet-4-20250514",
+                "inputTokens": 359,
+                "outputTokens": 16,
+                "costUsd": 0.006069
+              }
+            ]
+          },
+          "responseText": "MemoryAuditName-1776603772524",
+          "summary": "MemoryAuditName-1776603772524",
+          "artifactDir": ".friday/agent-runs/d2f9847a-30d5-4f21-a6b3-b1b5cbd517d5",
+          "contextCostSummary": {
+            "totalEstimatedChars": 7385,
+            "components": [
+              {
+                "kind": "workspace_context",
+                "estimatedChars": 5234,
+                "count": 4,
+                "metadata": {
+                  "pathRuleCount": 0,
+                  "candidatePaths": []
+                }
+              },
+              {
+                "kind": "starter_skills",
+                "estimatedChars": 2055,
+                "count": 8
+              },
+              {
+                "kind": "subagents",
+                "estimatedChars": 96,
+                "count": 1,
+                "metadata": {
+                  "enabled": true
+                }
+              }
+            ]
+          },
+          "taskProfile": {
+            "id": "default",
+            "label": "Balanced",
+            "description": "General-purpose execution profile for standard assistant turns.",
+            "reasoningEffort": "medium"
+          },
+          "rollbackAvailable": false,
+          "health": {
+            "state": "healthy",
+            "rollbackAvailable": false,
+            "reasonCodes": []
+          },
+          "contextSummary": {
+            "taskProfileId": "default",
+            "taskProfileLabel": "Balanced",
+            "totalEstimatedChars": 7385,
+            "dominantContextKinds": [
+              "workspace_context",
+              "starter_skills"
+            ],
+            "learningAdjusted": false,
+            "fallbackAttemptCount": 0,
+            "blockedToolCount": 0,
+            "modelSelectionSource": "route_default"
+          }
+        }
+      },
+      "requestId": "ced28c62-2758-487d-8833-b92184456f93"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "run": {
+        "id": "d2f9847a-30d5-4f21-a6b3-b1b5cbd517d5",
+        "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+        "status": "completed",
+        "sessionKey": "agent:run:d2f9847a-30d5-4f21-a6b3-b1b5cbd517d5",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "attempt": 0,
+        "maxAttempts": 3,
+        "artifacts": [
+          {
+            "type": "run_record",
+            "path": ".friday/agent-runs/d2f9847a-30d5-4f21-a6b3-b1b5cbd517d5/run.json"
+          }
+        ],
+        "testResults": [
+          {
+            "strategy": "llm_eval",
+            "passed": true,
+            "errors": [],
+            "durationMs": 0
+          }
+        ],
+        "createdAt": "2026-04-19T13:03:02.361Z",
+        "startedAt": "2026-04-19T13:03:02.363Z",
+        "completedAt": "2026-04-19T13:03:06.176Z",
+        "durationMs": 3815,
+        "usageInput": 518,
+        "usageOutput": 78,
+        "costUsd": 0.054993,
+        "planReview": {
+          "plan": {
+            "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+            "stepCount": 1,
+            "description": "Planning approach for: Use memory_search if needed. What should you call me? Reply with only the name."
+          },
+          "decision": {
+            "approved": true,
+            "mode": "off",
+            "reason": "No review required",
+            "reviewedAt": "2026-04-19T13:03:02.363Z"
+          }
+        },
+        "actualExecution": {
+          "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+          "taskProfileId": "default",
+          "modelSelectionSource": "route_default",
+          "actualProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+          "actualModel": "claude-sonnet-4-20250514",
+          "actualProviderKind": "anthropic",
+          "actualProviderApi": "anthropic-messages",
+          "backendKind": "http",
+          "totalCostUsd": 0.054993,
+          "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+          "routeDecisionTrace": {
+            "taskProfileId": "default",
+            "requiresNativeTools": true,
+            "learningAdjusted": false,
+            "learningSignalsPresent": true,
+            "orderingAdjusted": false,
+            "selectedAdjusted": false,
+            "reasonCode": "historical_bias",
+            "reasonText": "Historical route outcomes influenced candidate scoring.",
+            "historyWindow": {
+              "sampleLimit": 250
+            },
+            "selectedBeforeLearning": {
+              "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "providerKind": "anthropic",
+              "model": "claude-sonnet-4-20250514",
+              "backendKind": "http"
+            },
+            "selectedAfterLearning": {
+              "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "providerKind": "anthropic",
+              "model": "claude-sonnet-4-20250514",
+              "backendKind": "http"
+            },
+            "candidateScores": [
+              {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http",
+                "originalRank": 1,
+                "finalRank": 1,
+                "selected": true,
+                "eligible": true,
+                "ineligibilityReasons": [],
+                "pinned": false,
+                "historicalSuccessRate": 1,
+                "historicalFailureRate": 0,
+                "sampleCount": 44,
+                "baseRankScore": 1,
+                "historyScore": 5.25,
+                "patternScore": 0,
+                "lessonScore": 0,
+                "routePenaltyScore": 0,
+                "pinBonus": 0,
+                "finalScore": 6.25,
+                "historyStats": {
+                  "sampleCount": 44,
+                  "successRate": 1,
+                  "failureRate": 0
+                },
+                "matchedLessonIds": [],
+                "matchedPatternIds": []
+              }
+            ]
+          },
+          "turns": [
+            {
+              "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "model": "claude-sonnet-4-20250514",
+              "inputTokens": 159,
+              "outputTokens": 62,
+              "costUsd": 0.048924
+            },
+            {
+              "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "model": "claude-sonnet-4-20250514",
+              "inputTokens": 359,
+              "outputTokens": 16,
+              "costUsd": 0.006069
+            }
+          ]
+        },
+        "responseText": "MemoryAuditName-1776603772524",
+        "summary": "MemoryAuditName-1776603772524",
+        "artifactDir": ".friday/agent-runs/d2f9847a-30d5-4f21-a6b3-b1b5cbd517d5",
+        "contextCostSummary": {
+          "totalEstimatedChars": 7385,
+          "components": [
+            {
+              "kind": "workspace_context",
+              "estimatedChars": 5234,
+              "count": 4,
+              "metadata": {
+                "pathRuleCount": 0,
+                "candidatePaths": []
+              }
+            },
+            {
+              "kind": "starter_skills",
+              "estimatedChars": 2055,
+              "count": 8
+            },
+            {
+              "kind": "subagents",
+              "estimatedChars": 96,
+              "count": 1,
+              "metadata": {
+                "enabled": true
+              }
+            }
+          ]
+        },
+        "taskProfile": {
+          "id": "default",
+          "label": "Balanced",
+          "description": "General-purpose execution profile for standard assistant turns.",
+          "reasoningEffort": "medium"
+        },
+        "rollbackAvailable": false,
+        "health": {
+          "state": "healthy",
+          "rollbackAvailable": false,
+          "reasonCodes": []
+        },
+        "contextSummary": {
+          "taskProfileId": "default",
+          "taskProfileLabel": "Balanced",
+          "totalEstimatedChars": 7385,
+          "dominantContextKinds": [
+            "workspace_context",
+            "starter_skills"
+          ],
+          "learningAdjusted": false,
+          "fallbackAttemptCount": 0,
+          "blockedToolCount": 0,
+          "modelSelectionSource": "route_default"
+        }
+      }
+    },
+    "requestId": "ced28c62-2758-487d-8833-b92184456f93"
+  }
+}

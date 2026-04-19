@@ -1,0 +1,19 @@
+{
+  "issueId": "ISSUE-00159",
+  "canonicalFixId": "ISSUE-00159",
+  "phase": "phase5-regression-guards",
+  "status": "verified_targeted_tests",
+  "verifiedAt": "2026-04-19T19:47:20Z",
+  "evidenceType": "targeted_workflow_generator_approval_compiled_graph_test",
+  "summary": "Targeted regression coverage now proves approveAndSave persists a compiled workflow graph with non-empty trigger/action nodes and an execution edge, preventing generated approvals from degrading into an empty no-op graph.",
+  "artifacts": [
+    "test/unit/workflows/generator/services/friday-workflow-generator-service.test.ts"
+  ],
+  "tests": [
+    {
+      "command": "npm exec vitest run test/unit/workflows/generator/services/friday-workflow-generator-service.test.ts -t \"persists an executable compiled graph instead of an empty no-op graph\"",
+      "status": "passed",
+      "details": "1 file passed, 25 tests passed, Type Errors: no errors"
+    }
+  ]
+}

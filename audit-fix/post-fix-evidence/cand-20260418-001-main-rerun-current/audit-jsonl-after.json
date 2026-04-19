@@ -1,0 +1,21 @@
+{
+  "exists": true,
+  "lineCount": 4,
+  "lastLine": {
+    "id": "f62e428c-db48-49a4-9562-32529dce0667",
+    "ts": "2026-04-19T18:38:57.938Z",
+    "actorType": "service",
+    "actorId": "admin-001",
+    "action": "listing.installation.denied",
+    "resourceType": "marketplace_listing",
+    "resourceId": "3f43b60a-cdd4-4565-a8f9-b154b4843b84",
+    "details": {
+      "reason": "entitlement_required"
+    },
+    "result": "success",
+    "caller": "marketplace.runtime",
+    "pid": 15821,
+    "nodeVersion": "v22.22.0",
+    "platform": "darwin"
+  }
+}

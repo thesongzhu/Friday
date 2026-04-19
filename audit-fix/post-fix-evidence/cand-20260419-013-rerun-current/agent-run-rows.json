@@ -1,0 +1,15 @@
+[
+  {
+    "id": "4f200d91-8c7d-4244-b62e-865f7dc93e4c",
+    "task": "Use the skill_run tool on skillId \"system-health-snapshot\" with input {}. Do not summarize the system manually. If the tool is blocked or disabled, report the exact blocker and stop.",
+    "status": "failed",
+    "duration_ms": 288,
+    "usage_input": 0,
+    "usage_output": 0,
+    "provider_id": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+    "model": "claude-sonnet-4-20250514",
+    "response_text": "All providers failed (1): anthropic/claude-sonnet-4-20250514: LLM request failed (401): {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"},\"request_id\":\"req_011CaDTRNeWc8HhRA6V1rbA1\"} code=AGENT_LLM_ERROR",
+    "actual_execution_json": "{\"requestedProviderId\":\"66fef3c5-6032-4891-bb0c-e36fc08e6228\",\"requestedModel\":\"claude-sonnet-4-20250514\",\"taskProfileId\":\"deterministic\",\"taskProfileModel\":\"claude-sonnet-4-20250514\",\"modelSelectionSource\":\"provider+model\",\"finalFailureReason\":\"All providers failed (1): anthropic/claude-sonnet-4-20250514: LLM request failed (401): {\\\"type\\\":\\\"error\\\",\\\"error\\\":{\\\"type\\\":\\\"authentication_error\\\",\\\"message\\\":\\\"invalid x-api-key\\\"},\\\"request_id\\\":\\\"req_011CaDTRNeWc8HhRA6V1rbA1\\\"} code=AGENT_LLM_ERROR\",\"turns\":[{\"inputTokens\":0,\"outputTokens\":0}]}",
+    "created_at": "2026-04-19T16:36:42.775Z"
+  }
+]

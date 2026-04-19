@@ -1,0 +1,124 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "publishedVersion": {
+        "id": "13f123df-59ba-43e2-8872-deff360879f2",
+        "workflowId": "248c0a97-365c-4e21-afcb-028d2d013dc7",
+        "versionNumber": 1,
+        "checksum": "20c8e21cef97d4847f7add6b09d32ab78ec576face884b219270d8c1cdd7af70",
+        "graphJson": {
+          "schemaVersion": "2.0",
+          "workflowId": "wf-public-retry-placeholder",
+          "workflowVersionId": "wv-public-retry-placeholder",
+          "sourceSpecSchemaVersion": "1.0",
+          "graph": {
+            "nodes": [
+              {
+                "id": "trigger",
+                "type": "trigger",
+                "label": "Trigger",
+                "config": {}
+              },
+              {
+                "id": "timeout-node-mo5ui769",
+                "type": "action",
+                "label": "Timeout Action",
+                "timeoutMs": 0,
+                "config": {
+                  "skillId": "shell-skill-current-datetime",
+                  "args": {}
+                }
+              }
+            ],
+            "edges": [
+              {
+                "id": "e1",
+                "sourceNodeId": "trigger",
+                "targetNodeId": "timeout-node-mo5ui769"
+              }
+            ]
+          },
+          "failurePolicy": {
+            "onFailure": "fail_fast",
+            "notifyUser": false
+          },
+          "tests": [],
+          "checksum": "placeholder"
+        },
+        "isPublished": true,
+        "createdAt": "2026-04-19T14:12:34.642Z",
+        "updatedAt": "2026-04-19T14:12:34.644Z"
+      }
+    },
+    "requestId": "619fece5-f1e6-4e39-b3b1-8d9c0dc65d3c"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/workflows/248c0a97-365c-4e21-afcb-028d2d013dc7/publish",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "versionNumber": 1
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "publishedVersion": {
+          "id": "13f123df-59ba-43e2-8872-deff360879f2",
+          "workflowId": "248c0a97-365c-4e21-afcb-028d2d013dc7",
+          "versionNumber": 1,
+          "checksum": "20c8e21cef97d4847f7add6b09d32ab78ec576face884b219270d8c1cdd7af70",
+          "graphJson": {
+            "schemaVersion": "2.0",
+            "workflowId": "wf-public-retry-placeholder",
+            "workflowVersionId": "wv-public-retry-placeholder",
+            "sourceSpecSchemaVersion": "1.0",
+            "graph": {
+              "nodes": [
+                {
+                  "id": "trigger",
+                  "type": "trigger",
+                  "label": "Trigger",
+                  "config": {}
+                },
+                {
+                  "id": "timeout-node-mo5ui769",
+                  "type": "action",
+                  "label": "Timeout Action",
+                  "timeoutMs": 0,
+                  "config": {
+                    "skillId": "shell-skill-current-datetime",
+                    "args": {}
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e1",
+                  "sourceNodeId": "trigger",
+                  "targetNodeId": "timeout-node-mo5ui769"
+                }
+              ]
+            },
+            "failurePolicy": {
+              "onFailure": "fail_fast",
+              "notifyUser": false
+            },
+            "tests": [],
+            "checksum": "placeholder"
+          },
+          "isPublished": true,
+          "createdAt": "2026-04-19T14:12:34.642Z",
+          "updatedAt": "2026-04-19T14:12:34.644Z"
+        }
+      },
+      "requestId": "619fece5-f1e6-4e39-b3b1-8d9c0dc65d3c"
+    }
+  }
+}

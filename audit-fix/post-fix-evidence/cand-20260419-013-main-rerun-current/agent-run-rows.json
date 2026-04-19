@@ -1,0 +1,15 @@
+[
+  {
+    "id": "e8c967af-6ac9-48d8-849c-d5ffbbb4c71d",
+    "task": "Use the skill_run tool on skillId \"system-health-snapshot\" with input {}. Do not summarize the system manually. If the tool is blocked or disabled, report the exact blocker and stop.",
+    "status": "completed",
+    "duration_ms": 5302,
+    "usage_input": 12931,
+    "usage_output": 95,
+    "provider_id": "33525000-9455-4093-bb23-708db1235b0f",
+    "model": "gpt-4o",
+    "response_text": "The \"system-health-snapshot\" skill is blocked due to the following reason:\n\n- **Blocker**: Node-based skills are disabled because they execute in-process without isolation. To enable, set `FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true` only in controlled environments.\n\nThe capability required is currently disabled.",
+    "actual_execution_json": "{\"requestedProviderId\":\"33525000-9455-4093-bb23-708db1235b0f\",\"requestedModel\":\"gpt-4o\",\"taskProfileId\":\"deterministic\",\"taskProfileModel\":\"gpt-4o\",\"modelSelectionSource\":\"provider+model\",\"actualProviderId\":\"33525000-9455-4093-bb23-708db1235b0f\",\"actualModel\":\"gpt-4o\",\"actualProviderKind\":\"openai\",\"actualProviderApi\":\"openai-responses\",\"backendKind\":\"http\",\"totalCostUsd\":0.013311,\"routingDecisionReason\":\"Historical route outcomes influenced candidate scoring.\",\"routeDecisionTrace\":{\"taskProfileId\":\"deterministic\",\"requiresNativeTools\":false,\"learningAdjusted\":false,\"learningSignalsPresent\":true,\"orderingAdjusted\":false,\"selectedAdjusted\":false,\"reasonCode\":\"historical_bias\",\"reasonText\":\"Historical route outcomes influenced candidate scoring.\",\"historyWindow\":{\"sampleLimit\":250},\"selectedBeforeLearning\":{\"providerId\":\"33525000-9455-4093-bb23-708db1235b0f\",\"providerKind\":\"openai\",\"model\":\"gpt-4o\",\"backendKind\":\"http\"},\"selectedAfterLearning\":{\"providerId\":\"33525000-9455-4093-bb23-708db1235b0f\",\"providerKind\":\"openai\",\"model\":\"gpt-4o\",\"backendKind\":\"http\"},\"candidateScores\":[{\"providerId\":\"33525000-9455-4093-bb23-708db1235b0f\",\"providerKind\":\"openai\",\"model\":\"gpt-4o\",\"backendKind\":\"http\",\"originalRank\":1,\"finalRank\":1,\"selected\":true,\"eligible\":true,\"ineligibilityReasons\":[],\"pinned\":false,\"historicalSuccessRate\":0.8,\"historicalFailureRate\":0.2,\"sampleCount\":5,\"baseRankScore\":1,\"historyScore\":4.050000000000001,\"patternScore\":0,\"lessonScore\":0,\"routePenaltyScore\":0,\"pinBonus\":0,\"finalScore\":5.050000000000001,\"historyStats\":{\"sampleCount\":5,\"successRate\":0.8,\"failureRate\":0.2},\"matchedLessonIds\":[],\"matchedPatternIds\":[]}]},\"turns\":[{\"providerId\":\"33525000-9455-4093-bb23-708db1235b0f\",\"model\":\"gpt-4o\",\"inputTokens\":6387,\"outputTokens\":29,\"costUsd\":0.006503},{\"providerId\":\"33525000-9455-4093-bb23-708db1235b0f\",\"model\":\"gpt-4o\",\"inputTokens\":6544,\"outputTokens\":66,\"costUsd\":0.006808}]}",
+    "created_at": "2026-04-19T16:38:37.268Z"
+  }
+]

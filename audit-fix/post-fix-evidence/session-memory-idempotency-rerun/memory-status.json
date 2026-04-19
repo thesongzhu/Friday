@@ -1,0 +1,44 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "status": {
+        "sessionKey": "audit:default:issue-00117-idempotency-1776592173515",
+        "pendingMessages": 0,
+        "extractedMessages": 1,
+        "skippedMessages": 1,
+        "failedMessages": 0,
+        "queuedJobs": 0,
+        "runningJobs": 0
+      }
+    },
+    "requestId": "677c3ecb-4215-44e7-a8a0-81db1d11f7b7"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/sessions/audit%3Adefault%3Aissue-00117-idempotency-1776592173515/memory/extraction",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "status": {
+          "sessionKey": "audit:default:issue-00117-idempotency-1776592173515",
+          "pendingMessages": 0,
+          "extractedMessages": 1,
+          "skippedMessages": 1,
+          "failedMessages": 0,
+          "queuedJobs": 0,
+          "runningJobs": 0
+        }
+      },
+      "requestId": "677c3ecb-4215-44e7-a8a0-81db1d11f7b7"
+    }
+  }
+}

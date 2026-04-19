@@ -1,0 +1,64 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "acceptedAcks": [],
+      "conflicts": [
+        {
+          "streamId": "satellite:7e24bd8b-d5f4-4918-9663-c62b171eebc6",
+          "seq": 0,
+          "code": "AUTH_UNAUTHORIZED",
+          "message": "Invalid ack cursor"
+        }
+      ]
+    },
+    "requestId": "f6483239-c33c-4f91-83ec-6742e6ddf92b"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/satellites/7e24bd8b-d5f4-4918-9663-c62b171eebc6/sync/push",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "acks": [
+        {
+          "streamId": "satellite:7e24bd8b-d5f4-4918-9663-c62b171eebc6",
+          "seq": 0,
+          "epoch": 40,
+          "cursor": "eyJzZXEiOjAsInN0cmVhbUlkIjoic2F0ZWxsaXRlOjdlMjRiZDhiLWQ1ZjQtNDkxOC05NjYzLWM2MmIxNzFlZWJjNiIsImVwb2NoIjo0MCwiaXNzdWVkQXQiOiIyMDI2LTA0LTE5VDE2OjAyOjM3LjY3MVoifQ.S0AoZGXIRawf17QFTguCe4zc6Rkjvi4SheqlCvxxxxx"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "connection": "keep-alive",
+      "content-length": "231",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Sun, 19 Apr 2026 16:02:37 GMT",
+      "keep-alive": "timeout=5",
+      "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY"
+    },
+    "body": {
+      "ok": true,
+      "data": {
+        "acceptedAcks": [],
+        "conflicts": [
+          {
+            "streamId": "satellite:7e24bd8b-d5f4-4918-9663-c62b171eebc6",
+            "seq": 0,
+            "code": "AUTH_UNAUTHORIZED",
+            "message": "Invalid ack cursor"
+          }
+        ]
+      },
+      "requestId": "f6483239-c33c-4f91-83ec-6742e6ddf92b"
+    }
+  }
+}

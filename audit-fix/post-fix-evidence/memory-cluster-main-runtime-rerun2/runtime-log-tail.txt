@@ -1,0 +1,78 @@
+[friday] Deterministic pipeline mode: enforce
+[friday] Agent OS system runtime enabled (remote=trusted_private_network, cloud=opt_in, companion=unix_socket/embedded)
+[friday] Plugin runtime mode: full
+[friday] Program discovery enabled (darwin).
+[friday] Marketplace commerce runtime: enabled
+[friday] ✓ Friday is running
+[friday]   Providers: 1
+[friday]   Channels:  0 — no messaging channels configured
+[friday]   Skills:    54
+🚀 Friday hub running — 54 skill(s) loaded
+🚀 Friday API server listening on http://127.0.0.1:3241
+   Open http://127.0.0.1:3241 in your browser to get started.
+[FRIDAY] GET / 404 1ms
+[FRIDAY] POST /v1/auth/login 200 1ms
+[FRIDAY] GET /v1/channels 200 0ms
+[FRIDAY] GET /v1/channels/fake-kind/persona 404 0ms
+[FRIDAY] PUT /v1/channels/fake-kind/persona 404 0ms
+[FRIDAY] GET /v1/channels/fake-kind 404 0ms
+[FRIDAY] GET /v1/health 200 1ms
+[FRIDAY] POST /v1/auth/login 200 0ms
+[FRIDAY] POST /v1/security/tokens/revoke 200 0ms
+[FRIDAY] GET /v1/auth/me 200 0ms
+[friday] Deterministic pipeline mode: enforce
+[friday] Agent OS system runtime enabled (remote=trusted_private_network, cloud=opt_in, companion=unix_socket/embedded)
+[friday] Plugin runtime mode: full
+[friday] Program discovery enabled (darwin).
+[friday] Marketplace commerce runtime: enabled
+[friday] ✓ Friday is running
+[friday]   Providers: 1
+[friday]   Channels:  0 — no messaging channels configured
+[friday]   Skills:    54
+🚀 Friday hub running — 54 skill(s) loaded
+🚀 Friday API server listening on http://127.0.0.1:3241
+   Open http://127.0.0.1:3241 in your browser to get started.
+[FRIDAY] GET / 200 3ms
+[FRIDAY] GET /v1/uix/preferences?category=uix 401 1ms
+[FRIDAY] GET /v1/auth/me 401 0ms
+[FRIDAY] POST /v1/auth/refresh 200 1ms
+[FRIDAY] GET /v1/uix/preferences?category=uix 200 0ms
+[FRIDAY] GET /v1/auth/me 200 1ms
+[FRIDAY] GET /v1/setup/status 200 0ms
+[FRIDAY] GET /v1/uix/user-profile 200 0ms
+[FRIDAY] GET /v1/providers 200 2ms
+[FRIDAY] GET /v1/providers/templates 200 2ms
+[FRIDAY] GET /v1/uix/persona 200 2ms
+[FRIDAY] GET /v1/health 200 0ms
+[friday] WARNING: Local bypass login used (no-signin mode).
+[FRIDAY] POST /v1/auth/login 200 1ms
+[FRIDAY] GET /v1/providers 200 0ms
+[FRIDAY] DELETE /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 1ms
+[FRIDAY] POST /v1/memory/search 200 2ms
+[friday][marker] world_model_episode_extracted runId=3e713a96-cdbf-4eca-bac5-09f8d6cf80fe userId=admin-001 steps=1
+[friday][marker] world_model_snapshot_saved runId=3e713a96-cdbf-4eca-bac5-09f8d6cf80fe userId=admin-001
+[FRIDAY] POST /v1/agent/runs 200 5184ms
+[FRIDAY] GET /v1/agent/runs/3e713a96-cdbf-4eca-bac5-09f8d6cf80fe 200 0ms
+[FRIDAY] GET /v1/agent/runs/3e713a96-cdbf-4eca-bac5-09f8d6cf80fe/audit 200 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 0ms
+[FRIDAY] POST /v1/memory/search 200 0ms
+[friday][marker] world_model_episode_extracted runId=a3f0b251-a26e-4510-a9f7-da3f57ea0544 userId=admin-001 steps=0
+[friday][marker] world_model_snapshot_saved runId=a3f0b251-a26e-4510-a9f7-da3f57ea0544 userId=admin-001
+[friday][marker] world_model_pattern_upserted runId=a3f0b251-a26e-4510-a9f7-da3f57ea0544 userId=admin-001 count=2
+[FRIDAY] POST /v1/agent/runs 200 7228ms
+[FRIDAY] GET /v1/agent/runs/a3f0b251-a26e-4510-a9f7-da3f57ea0544 200 1ms
+[FRIDAY] GET /v1/agent/runs/a3f0b251-a26e-4510-a9f7-da3f57ea0544/audit 200 1ms
+[friday][marker] world_model_episode_extracted runId=e7cd7e60-19b7-45b4-bd59-32ef1a0b6eb9 userId=admin-001 steps=0
+[friday][marker] world_model_snapshot_saved runId=e7cd7e60-19b7-45b4-bd59-32ef1a0b6eb9 userId=admin-001
+[friday][marker] world_model_pattern_upserted runId=e7cd7e60-19b7-45b4-bd59-32ef1a0b6eb9 userId=admin-001 count=2
+[FRIDAY] POST /v1/agent/runs 200 5060ms
+[FRIDAY] GET /v1/agent/runs/e7cd7e60-19b7-45b4-bd59-32ef1a0b6eb9 200 1ms
+[FRIDAY] GET /v1/agent/runs/e7cd7e60-19b7-45b4-bd59-32ef1a0b6eb9/audit 200 0ms
+[FRIDAY] DELETE /v1/uix/learned-facts/pref%3Adisplay_name 404 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 0ms
+[FRIDAY] POST /v1/memory/search 200 0ms
+

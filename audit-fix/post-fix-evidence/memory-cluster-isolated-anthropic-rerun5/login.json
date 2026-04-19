@@ -1,0 +1,45 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3242/v1/auth/login",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "local": true
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "accessToken": "eyJ0b2tlbklkIjoiN2MxOGU1MjctOTNkNy00MDRiLWE4MDUtNWUxZmNlNTI2YTdmIiwicHJpbmNpcGFsVHlwZSI6InVzZXIiLCJwcmluY2lwYWxJZCI6ImFkbWluLTAwMSIsInRlbmFudElkIjoiYWRtaW4tMDAxIiwidXNlcklkIjoiYWRtaW4tMDAxIiwicm9sZSI6ImFkbWluIiwic2NvcGVzIjpbImh1Yi5hZG1pbiIsIndvcmtmbG93LnJlYWQiLCJ3b3JrZmxvdy53cml0ZSIsIndvcmtmbG93LnJ1biIsIndvcmtmbG93LmNvbmZsaWN0LnJlc29sdmUiLCJzYXRlbGxpdGUucmVhZCIsInNhdGVsbGl0ZS53cml0ZSIsImZsZWV0LnJlYWQiLCJzZWN1cml0eS5yZWFkIiwic2VjdXJpdHkud3JpdGUiLCJzZXNzaW9uLnJlYWQiLCJzZXNzaW9uLndyaXRlIiwiZGlhZ25vc2lzLnJlYWQiLCJkaWFnbm9zaXMud3JpdGUiLCJhZ2VudC5yZWFkIiwiYWdlbnQucnVuIiwiYWdlbnQud3JpdGUiLCJza2lsbC5yZWFkIiwic2tpbGwud3JpdGUiLCJwbHVnaW4ucmVhZCIsInBsdWdpbi53cml0ZSIsInBsdWdpbi5pbnN0YWxsIiwiZGVza3RvcC5yZWFkIiwiZGVza3RvcC53cml0ZSIsImRlc2t0b3AuZXhlY3V0ZSIsIm1hcmtldHBsYWNlLnJlYWQiLCJtYXJrZXRwbGFjZS53cml0ZSIsIm1hcmtldHBsYWNlLmFkbWluIiwicnVsZXMucmVhZCIsInJ1bGVzLndyaXRlIiwiZXhlY3V0aW9uLnJlYWQiLCJhY2NlcHRhbmNlLnJlYWQiLCJyZXRyeS5yZWFkIiwicGxheWJvb2sucmVhZCIsInBsYXlib29rLndyaXRlIl0sImlhdCI6MTc3NjYwMDg3MiwiZXhwIjoxNzc2NjA0NDcyLCJzaWQiOiJiYWE1YTgxYy0wMGNmLTQyYzctYjRkNC04NTE1NDg5ZGM0ZDUifQ.FG6iTJqIQ0iJ9So3Wf4ASaodVZzVrHdz8GVmONjJDJA",
+        "refreshToken": "b96628a1-89a7-4300-a461-581979cf776c",
+        "expiresInSec": 3600,
+        "user": {
+          "id": "admin-001",
+          "email": "admin@friday.dev",
+          "displayName": "Admin",
+          "role": "admin"
+        }
+      },
+      "requestId": "b9dc7ff3-9a72-4ee9-a07d-ca64bd36f372"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "accessToken": "eyJ0b2tlbklkIjoiN2MxOGU1MjctOTNkNy00MDRiLWE4MDUtNWUxZmNlNTI2YTdmIiwicHJpbmNpcGFsVHlwZSI6InVzZXIiLCJwcmluY2lwYWxJZCI6ImFkbWluLTAwMSIsInRlbmFudElkIjoiYWRtaW4tMDAxIiwidXNlcklkIjoiYWRtaW4tMDAxIiwicm9sZSI6ImFkbWluIiwic2NvcGVzIjpbImh1Yi5hZG1pbiIsIndvcmtmbG93LnJlYWQiLCJ3b3JrZmxvdy53cml0ZSIsIndvcmtmbG93LnJ1biIsIndvcmtmbG93LmNvbmZsaWN0LnJlc29sdmUiLCJzYXRlbGxpdGUucmVhZCIsInNhdGVsbGl0ZS53cml0ZSIsImZsZWV0LnJlYWQiLCJzZWN1cml0eS5yZWFkIiwic2VjdXJpdHkud3JpdGUiLCJzZXNzaW9uLnJlYWQiLCJzZXNzaW9uLndyaXRlIiwiZGlhZ25vc2lzLnJlYWQiLCJkaWFnbm9zaXMud3JpdGUiLCJhZ2VudC5yZWFkIiwiYWdlbnQucnVuIiwiYWdlbnQud3JpdGUiLCJza2lsbC5yZWFkIiwic2tpbGwud3JpdGUiLCJwbHVnaW4ucmVhZCIsInBsdWdpbi53cml0ZSIsInBsdWdpbi5pbnN0YWxsIiwiZGVza3RvcC5yZWFkIiwiZGVza3RvcC53cml0ZSIsImRlc2t0b3AuZXhlY3V0ZSIsIm1hcmtldHBsYWNlLnJlYWQiLCJtYXJrZXRwbGFjZS53cml0ZSIsIm1hcmtldHBsYWNlLmFkbWluIiwicnVsZXMucmVhZCIsInJ1bGVzLndyaXRlIiwiZXhlY3V0aW9uLnJlYWQiLCJhY2NlcHRhbmNlLnJlYWQiLCJyZXRyeS5yZWFkIiwicGxheWJvb2sucmVhZCIsInBsYXlib29rLndyaXRlIl0sImlhdCI6MTc3NjYwMDg3MiwiZXhwIjoxNzc2NjA0NDcyLCJzaWQiOiJiYWE1YTgxYy0wMGNmLTQyYzctYjRkNC04NTE1NDg5ZGM0ZDUifQ.FG6iTJqIQ0iJ9So3Wf4ASaodVZzVrHdz8GVmONjJDJA",
+      "refreshToken": "b96628a1-89a7-4300-a461-581979cf776c",
+      "expiresInSec": 3600,
+      "user": {
+        "id": "admin-001",
+        "email": "admin@friday.dev",
+        "displayName": "Admin",
+        "role": "admin"
+      }
+    },
+    "requestId": "b9dc7ff3-9a72-4ee9-a07d-ca64bd36f372"
+  }
+}

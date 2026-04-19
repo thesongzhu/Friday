@@ -1,0 +1,13 @@
+[
+  {
+    "id": "c3e7b9bc-e6b5-4958-8e42-ea4cf2fc9fd1",
+    "run_id": "885335b8-a25e-430f-be95-aa1ec9ed39a7",
+    "node_id": "missing-skill-action",
+    "attempt": 1,
+    "category": "logic",
+    "error_code": "NODE_EXECUTION_FAILED",
+    "error_message": "NODE_EXECUTION_FAILED: Step \"execute\" failed: NODE_EXECUTION_FAILED: skill 'missing-skill-issue-00124' not found",
+    "decision_json": "{\"shouldRetry\":false,\"category\":\"logic\",\"delayMs\":0,\"attempt\":1,\"maxAttempts\":3,\"reason\":\"logic errors are not retryable\",\"budgetExhausted\":false,\"circuitOpen\":false,\"escalateToDlq\":true}",
+    "timestamp": "2026-04-19T13:59:19.721Z"
+  }
+]

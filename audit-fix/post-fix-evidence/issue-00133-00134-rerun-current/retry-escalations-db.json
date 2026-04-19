@@ -1,0 +1,32 @@
+[
+  {
+    "id": "4e077049-4fbd-48bc-9912-9359dfbfbd00",
+    "trace_id": "d7135adb-0a8f-4410-bba7-333ec05f77d2",
+    "target": "operator",
+    "channel": "operator",
+    "reason": "circuit breaker open",
+    "failure_category": "timeout",
+    "attempt_count": 1,
+    "escalated_at": "2026-04-19T14:12:40.787Z"
+  },
+  {
+    "id": "b23a2983-2887-4d0a-84f7-e5754d20bb50",
+    "trace_id": "7d640cb4-ed72-49bd-9a05-6ac2395be070",
+    "target": "operator",
+    "channel": "operator",
+    "reason": "max attempts reached",
+    "failure_category": "timeout",
+    "attempt_count": 3,
+    "escalated_at": "2026-04-19T14:12:40.740Z"
+  },
+  {
+    "id": "ad65e613-64c7-43b9-aa0b-3ae158eef460",
+    "trace_id": "0ac23be8-3e18-4589-a7bd-a5f6994b34bd",
+    "target": "operator",
+    "channel": "operator",
+    "reason": "max attempts reached",
+    "failure_category": "timeout",
+    "attempt_count": 3,
+    "escalated_at": "2026-04-19T14:12:37.667Z"
+  }
+]

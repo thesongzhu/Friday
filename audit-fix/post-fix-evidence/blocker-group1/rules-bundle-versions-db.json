@@ -1,0 +1,18 @@
+[
+  {
+    "id": "01e8dbb0-3653-47e3-80f6-904276ff5fe1",
+    "bundle_id": "e335d676-bfa5-413f-93d5-9694bc26b973",
+    "version": 2,
+    "changed_by": null,
+    "change_note": "verify version persistence",
+    "created_at": "2026-04-19T09:10:03.446Z"
+  },
+  {
+    "id": "70af39ca-0ea0-4254-b715-5a32dc4832b2",
+    "bundle_id": "e335d676-bfa5-413f-93d5-9694bc26b973",
+    "version": 1,
+    "changed_by": null,
+    "change_note": "Initial creation",
+    "created_at": "2026-04-19T09:10:03.445Z"
+  }
+]

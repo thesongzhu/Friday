@@ -1,0 +1,32 @@
+{
+  "rawBody": {
+    "ok": false,
+    "error": {
+      "code": "TOKEN_REVOKED",
+      "message": "Token has been revoked",
+      "retryable": false
+    },
+    "requestId": "f5c25ba0-7948-4006-95a9-94a234f051bd"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/auth/me",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "TOKEN_REVOKED",
+        "message": "Token has been revoked",
+        "retryable": false
+      },
+      "requestId": "f5c25ba0-7948-4006-95a9-94a234f051bd"
+    }
+  }
+}

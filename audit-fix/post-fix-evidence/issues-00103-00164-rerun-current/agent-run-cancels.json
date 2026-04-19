@@ -1,0 +1,432 @@
+[
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "AGENT_RUN_ALREADY_TERMINAL",
+        "message": "Agent run is already in terminal status: failed",
+        "retryable": false
+      },
+      "requestId": "458f766b-1703-4f2e-8c01-6680cbc7cc55"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs/fd86e1dc-9ff9-4039-b64d-8921ed3473d9/cancel",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 409,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "187",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "AGENT_RUN_ALREADY_TERMINAL",
+          "message": "Agent run is already in terminal status: failed",
+          "retryable": false
+        },
+        "requestId": "458f766b-1703-4f2e-8c01-6680cbc7cc55"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "AGENT_RUN_ALREADY_TERMINAL",
+        "message": "Agent run is already in terminal status: failed",
+        "retryable": false
+      },
+      "requestId": "4742efe8-5eb2-4ab5-bb21-a9531ed35bee"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs/72cad695-923d-4409-9509-923ddab0f08a/cancel",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 409,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "187",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "AGENT_RUN_ALREADY_TERMINAL",
+          "message": "Agent run is already in terminal status: failed",
+          "retryable": false
+        },
+        "requestId": "4742efe8-5eb2-4ab5-bb21-a9531ed35bee"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "AGENT_RUN_ALREADY_TERMINAL",
+        "message": "Agent run is already in terminal status: failed",
+        "retryable": false
+      },
+      "requestId": "1acdec15-83f2-4f0f-a0dd-c47452dd6f98"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs/8069400d-e19c-44fe-9225-179e2ff354d7/cancel",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 409,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "187",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "AGENT_RUN_ALREADY_TERMINAL",
+          "message": "Agent run is already in terminal status: failed",
+          "retryable": false
+        },
+        "requestId": "1acdec15-83f2-4f0f-a0dd-c47452dd6f98"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "AGENT_RUN_ALREADY_TERMINAL",
+        "message": "Agent run is already in terminal status: failed",
+        "retryable": false
+      },
+      "requestId": "db7cca4f-c6d8-4dcb-8d6a-b49774047b30"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs/ade31b8b-74c3-4e83-a37c-dac1b9989c9e/cancel",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 409,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "187",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "AGENT_RUN_ALREADY_TERMINAL",
+          "message": "Agent run is already in terminal status: failed",
+          "retryable": false
+        },
+        "requestId": "db7cca4f-c6d8-4dcb-8d6a-b49774047b30"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "AGENT_RUN_ALREADY_TERMINAL",
+        "message": "Agent run is already in terminal status: failed",
+        "retryable": false
+      },
+      "requestId": "3a77b5aa-826a-492a-8bde-9a5838fbb23c"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs/bf118614-da1e-4943-a7dd-439f16c0c51d/cancel",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 409,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "187",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "AGENT_RUN_ALREADY_TERMINAL",
+          "message": "Agent run is already in terminal status: failed",
+          "retryable": false
+        },
+        "requestId": "3a77b5aa-826a-492a-8bde-9a5838fbb23c"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "AGENT_RUN_ALREADY_TERMINAL",
+        "message": "Agent run is already in terminal status: failed",
+        "retryable": false
+      },
+      "requestId": "4101ee65-e9dc-4aa9-92a0-6da85d477a78"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs/968f6541-73a6-44fd-b2dc-76215e6368a4/cancel",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 409,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "187",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "AGENT_RUN_ALREADY_TERMINAL",
+          "message": "Agent run is already in terminal status: failed",
+          "retryable": false
+        },
+        "requestId": "4101ee65-e9dc-4aa9-92a0-6da85d477a78"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "AGENT_RUN_ALREADY_TERMINAL",
+        "message": "Agent run is already in terminal status: failed",
+        "retryable": false
+      },
+      "requestId": "6ec1f8cb-1c97-4a9b-a52a-16130c831508"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs/47c6758a-6164-44ce-a5dc-002cdb937cd5/cancel",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 409,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "187",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "AGENT_RUN_ALREADY_TERMINAL",
+          "message": "Agent run is already in terminal status: failed",
+          "retryable": false
+        },
+        "requestId": "6ec1f8cb-1c97-4a9b-a52a-16130c831508"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "AGENT_RUN_ALREADY_TERMINAL",
+        "message": "Agent run is already in terminal status: failed",
+        "retryable": false
+      },
+      "requestId": "112ad3d2-8826-49fe-9fe8-723a12c90595"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs/fff9f8e4-dc03-422e-b2f5-315b7a12a85e/cancel",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 409,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "187",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "AGENT_RUN_ALREADY_TERMINAL",
+          "message": "Agent run is already in terminal status: failed",
+          "retryable": false
+        },
+        "requestId": "112ad3d2-8826-49fe-9fe8-723a12c90595"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "AGENT_RUN_ALREADY_TERMINAL",
+        "message": "Agent run is already in terminal status: failed",
+        "retryable": false
+      },
+      "requestId": "95a048cd-5136-4fe5-a86f-b830298bbf22"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs/fd2c511a-2e16-4b03-a685-ab55242367bc/cancel",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 409,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "187",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "AGENT_RUN_ALREADY_TERMINAL",
+          "message": "Agent run is already in terminal status: failed",
+          "retryable": false
+        },
+        "requestId": "95a048cd-5136-4fe5-a86f-b830298bbf22"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "AGENT_RUN_ALREADY_TERMINAL",
+        "message": "Agent run is already in terminal status: failed",
+        "retryable": false
+      },
+      "requestId": "ecc1831c-bb9e-4f3e-b1a7-ae3d6e821439"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs/3869ac0e-b9c7-45fc-9600-107a3dbc1b2a/cancel",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 409,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "187",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "AGENT_RUN_ALREADY_TERMINAL",
+          "message": "Agent run is already in terminal status: failed",
+          "retryable": false
+        },
+        "requestId": "ecc1831c-bb9e-4f3e-b1a7-ae3d6e821439"
+      }
+    }
+  }
+]

@@ -1,0 +1,31 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3242/v1/memory/search",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "query": "call me",
+      "limit": 20
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "items": []
+      },
+      "requestId": "d7e5fd96-5c81-4177-a12c-7d74b5478fb4"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "items": []
+    },
+    "requestId": "d7e5fd96-5c81-4177-a12c-7d74b5478fb4"
+  }
+}

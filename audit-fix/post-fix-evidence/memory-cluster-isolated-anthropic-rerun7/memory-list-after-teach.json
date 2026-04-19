@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3242/v1/memory/items?limit=50",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "items": []
+      },
+      "requestId": "2e433b0c-2907-4c3c-ad86-39127b2e76b0"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "items": []
+    },
+    "requestId": "2e433b0c-2907-4c3c-ad86-39127b2e76b0"
+  }
+}

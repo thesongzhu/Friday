@@ -1,0 +1,30 @@
+{
+  "request": {
+    "method": "DELETE",
+    "url": "http://127.0.0.1:3241/v1/uix/learned-facts/pref%3Auser_name",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "deleted": true,
+        "key": "pref:user_name"
+      },
+      "requestId": "972d0e5e-3678-4d37-82c4-ec0ce6c4d531"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "deleted": true,
+      "key": "pref:user_name"
+    },
+    "requestId": "972d0e5e-3678-4d37-82c4-ec0ce6c4d531"
+  }
+}

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "47a18273-7cca-42f2-8814-0af620e5cb22",
+    "namespace": "tenant.admin-001.channel.audit.user.admin-001.shared",
+    "metadata_json": "{\"sessionKey\":\"audit:default:issue-00117-1776591829\",\"messageIds\":[\"89b9aa13-4b01-42e4-a24c-26401bfb2ad0\"],\"trigger\":\"manual\",\"accountId\":\"admin-001\",\"chatId\":\"issue-00117-1776591829\",\"extractedAt\":\"2026-04-19T09:43:54.897Z\"}",
+    "created_at": "2026-04-19T09:43:54.897Z"
+  },
+  {
+    "id": "a19b2c20-e9e0-4e2e-89a1-5b3c15472315",
+    "namespace": "tenant.admin-001.channel.audit.user.admin-001.shared",
+    "metadata_json": "{\"sessionKey\":\"audit:default:issue-00117-1776591829\",\"messageIds\":[\"89b9aa13-4b01-42e4-a24c-26401bfb2ad0\"],\"trigger\":\"manual\",\"accountId\":\"admin-001\",\"chatId\":\"issue-00117-1776591829\",\"extractedAt\":\"2026-04-19T09:43:54.896Z\"}",
+    "created_at": "2026-04-19T09:43:54.896Z"
+  },
+  {
+    "id": "5484540d-229b-41d5-b180-e45131f1c04e",
+    "namespace": "tenant.admin-001.channel.audit.user.admin-001.shared",
+    "metadata_json": "{\"sessionKey\":\"audit:default:issue-00117-1776591829\",\"messageIds\":[\"89b9aa13-4b01-42e4-a24c-26401bfb2ad0\"],\"trigger\":\"manual\",\"accountId\":\"admin-001\",\"chatId\":\"issue-00117-1776591829\",\"extractedAt\":\"2026-04-19T09:43:54.896Z\"}",
+    "created_at": "2026-04-19T09:43:54.896Z"
+  },
+  {
+    "id": "4ab3792a-34af-4089-ac1d-9456f3bcf954",
+    "namespace": "tenant.admin-001.channel.audit.user.admin-001.shared",
+    "metadata_json": "{\"sessionKey\":\"audit:default:issue-00117-1776591829\",\"messageIds\":[\"89b9aa13-4b01-42e4-a24c-26401bfb2ad0\"],\"trigger\":\"manual\",\"accountId\":\"admin-001\",\"chatId\":\"issue-00117-1776591829\",\"extractedAt\":\"2026-04-19T09:43:54.894Z\"}",
+    "created_at": "2026-04-19T09:43:54.894Z"
+  },
+  {
+    "id": "d7888aae-964b-4b79-a171-dae70ac872ab",
+    "namespace": "tenant.admin-001.channel.audit.user.admin-001.shared",
+    "metadata_json": "{\"sessionKey\":\"audit:default:issue-00117-1776591829\",\"messageIds\":[\"89b9aa13-4b01-42e4-a24c-26401bfb2ad0\"],\"trigger\":\"manual\",\"accountId\":\"admin-001\",\"chatId\":\"issue-00117-1776591829\",\"extractedAt\":\"2026-04-19T09:43:52.438Z\"}",
+    "created_at": "2026-04-19T09:43:52.438Z"
+  },
+  {
+    "id": "c308bc51-d855-4c11-840a-94cc04124260",
+    "namespace": "tenant.admin-001.channel.audit.user.admin-001.shared",
+    "metadata_json": "{\"sessionKey\":\"audit:default:issue-00117-1776591829\",\"messageIds\":[\"89b9aa13-4b01-42e4-a24c-26401bfb2ad0\"],\"trigger\":\"manual\",\"accountId\":\"admin-001\",\"chatId\":\"issue-00117-1776591829\",\"extractedAt\":\"2026-04-19T09:43:52.437Z\"}",
+    "created_at": "2026-04-19T09:43:52.437Z"
+  },
+  {
+    "id": "304c15cf-f5fc-4773-b217-41ea4e3dfddc",
+    "namespace": "tenant.admin-001.channel.audit.user.admin-001.shared",
+    "metadata_json": "{\"sessionKey\":\"audit:default:issue-00117-1776591829\",\"messageIds\":[\"89b9aa13-4b01-42e4-a24c-26401bfb2ad0\"],\"trigger\":\"manual\",\"accountId\":\"admin-001\",\"chatId\":\"issue-00117-1776591829\",\"extractedAt\":\"2026-04-19T09:43:52.436Z\"}",
+    "created_at": "2026-04-19T09:43:52.436Z"
+  },
+  {
+    "id": "cea1b0a0-7d64-466b-a254-a9eeb0ce6578",
+    "namespace": "tenant.admin-001.channel.audit.user.admin-001.shared",
+    "metadata_json": "{\"sessionKey\":\"audit:default:issue-00117-1776591829\",\"messageIds\":[\"89b9aa13-4b01-42e4-a24c-26401bfb2ad0\"],\"trigger\":\"manual\",\"accountId\":\"admin-001\",\"chatId\":\"issue-00117-1776591829\",\"extractedAt\":\"2026-04-19T09:43:52.435Z\"}",
+    "created_at": "2026-04-19T09:43:52.435Z"
+  }
+]

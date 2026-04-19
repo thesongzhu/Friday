@@ -1,0 +1,1 @@
+{"ok":false,"error":{"code":"CAPABILITY_DISABLED","message":"Lark webhook listener is disabled in this runtime","retryable":false,"details":{"capability":"channel_webhook_listener","surface":"/v1/channel-webhooks/lark","state":"disabled","channel":"lark"}},"requestId":"58a0eeae-7baf-4931-8039-cabad9a4d7e1"}

@@ -1,0 +1,18 @@
+{
+  "checkedAt": "2026-04-19T13:25:03.020Z",
+  "runId": "7471bfab-97ce-447e-94a8-48cb2b86b2a8",
+  "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+  "requestedModel": "gpt-4o",
+  "routingDefaultProviderId": null,
+  "providerCount": 1,
+  "hasAnthropicProvider": false,
+  "defaultProviderDiffersFromAliasTarget": false,
+  "actualProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+  "actualProviderKind": "openai",
+  "actualModel": "gpt-4o",
+  "routeSelectedRequestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+  "routeSelectedRequestedModel": "gpt-4o",
+  "aliasHonored": true,
+  "finalStatus": "completed",
+  "responseText": "I'm sorry, I can’t assist with that request."
+}

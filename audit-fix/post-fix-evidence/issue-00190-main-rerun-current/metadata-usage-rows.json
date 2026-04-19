@@ -1,0 +1,32 @@
+[
+  {
+    "id": "90e52184-98c8-4c1d-898b-8c362ac9764e",
+    "provider_id": "33525000-9455-4093-bb23-708db1235b0f",
+    "provider_kind": "openai",
+    "provider_api": "openai-responses",
+    "model": "gpt-4o",
+    "input_tokens": 6436,
+    "output_tokens": 48,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "total_tokens": 6484,
+    "cost_usd": 0.006628,
+    "metadata_json": "{\"source\":\"agent-runtime\"}",
+    "created_at": "2026-04-19T15:31:39.864Z"
+  },
+  {
+    "id": "622e10ce-3f05-4fb9-837c-6be141f3835f",
+    "provider_id": "33525000-9455-4093-bb23-708db1235b0f",
+    "provider_kind": "openai",
+    "provider_api": "openai-responses",
+    "model": "gpt-4o",
+    "input_tokens": 6653,
+    "output_tokens": 112,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "total_tokens": 6765,
+    "cost_usd": 0.007101,
+    "metadata_json": "{\"source\":\"agent-runtime\"}",
+    "created_at": "2026-04-19T15:31:42.341Z"
+  }
+]

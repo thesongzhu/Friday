@@ -1,0 +1,49 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "7fcb10d9-0d33-428b-8f62-44f61af34808",
+      "status": "completed",
+      "response": "I cannot verify the latestness as of 2026-04-19 (America/Los_Angeles) because the required skill is not available.",
+      "toolCallCount": 1,
+      "durationMs": 6809,
+      "usageInput": 19330,
+      "usageOutput": 83,
+      "finalResponse": "I cannot verify the latestness as of 2026-04-19 (America/Los_Angeles) because the required skill is not available.",
+      "eventStreamAvailable": true
+    },
+    "requestId": "79393359-2490-4585-9939-e8d3c6dd3bb5"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Use the shell-skill-current-datetime skill and report only the returned datetime.",
+      "providerId": "80fcb4e5-7ca8-4b6d-9c26-985fc08ee0a6",
+      "model": "gpt-4o",
+      "sessionKey": "audit:issue-00104:1776590918493"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "7fcb10d9-0d33-428b-8f62-44f61af34808",
+        "status": "completed",
+        "response": "I cannot verify the latestness as of 2026-04-19 (America/Los_Angeles) because the required skill is not available.",
+        "toolCallCount": 1,
+        "durationMs": 6809,
+        "usageInput": 19330,
+        "usageOutput": 83,
+        "finalResponse": "I cannot verify the latestness as of 2026-04-19 (America/Los_Angeles) because the required skill is not available.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "79393359-2490-4585-9939-e8d3c6dd3bb5"
+    }
+  }
+}

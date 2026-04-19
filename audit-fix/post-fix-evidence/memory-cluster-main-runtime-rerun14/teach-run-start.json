@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Call me MemoryAuditName-1776603654745.",
+      "providerId": "33525000-9455-4093-bb23-708db1235b0f"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "44b66a91-58b8-4ebb-9e60-e098e1a91578",
+        "status": "completed",
+        "response": "Got it! I'll call you MemoryAuditName-1776603654745.",
+        "toolCallCount": 1,
+        "durationMs": 13045,
+        "usageInput": 22504,
+        "usageOutput": 63,
+        "finalResponse": "Got it! I'll call you MemoryAuditName-1776603654745.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "9e25fd86-f89c-40b8-86d5-5fdc3ab481a9"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "44b66a91-58b8-4ebb-9e60-e098e1a91578",
+      "status": "completed",
+      "response": "Got it! I'll call you MemoryAuditName-1776603654745.",
+      "toolCallCount": 1,
+      "durationMs": 13045,
+      "usageInput": 22504,
+      "usageOutput": 63,
+      "finalResponse": "Got it! I'll call you MemoryAuditName-1776603654745.",
+      "eventStreamAvailable": true
+    },
+    "requestId": "9e25fd86-f89c-40b8-86d5-5fdc3ab481a9"
+  }
+}

@@ -1,0 +1,482 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3242/v1/agent/runs/63cee99b-4936-42ba-ba11-0f413a20596a/audit",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+        "events": [
+          {
+            "seq": 1,
+            "type": "agent.run.started",
+            "timestamp": "2026-04-19T11:52:57.594Z",
+            "payload": {
+              "runId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+              "task": "Call me MemoryAuditName-1776599577553.",
+              "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "taskProfile": {
+                "id": "default",
+                "modelSelectionSource": "route_default"
+              }
+            }
+          },
+          {
+            "seq": 9,
+            "type": "agent.run.route_selected",
+            "timestamp": "2026-04-19T11:53:01.185Z",
+            "payload": {
+              "runId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+              "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "taskProfileId": "default",
+              "modelSelectionSource": "route_default",
+              "actualProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "actualModel": "claude-sonnet-4-20250514",
+              "actualProviderKind": "anthropic",
+              "actualProviderApi": "anthropic-messages",
+              "backendKind": "http",
+              "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+              "learningAdjusted": false,
+              "routeDecisionTrace": {
+                "taskProfileId": "default",
+                "requiresNativeTools": true,
+                "learningAdjusted": false,
+                "learningSignalsPresent": true,
+                "orderingAdjusted": false,
+                "selectedAdjusted": false,
+                "reasonCode": "historical_bias",
+                "reasonText": "Historical route outcomes influenced candidate scoring.",
+                "historyWindow": {
+                  "sampleLimit": 250
+                },
+                "selectedBeforeLearning": {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http"
+                },
+                "selectedAfterLearning": {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http"
+                },
+                "candidateScores": [
+                  {
+                    "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                    "providerKind": "anthropic",
+                    "model": "claude-sonnet-4-20250514",
+                    "backendKind": "http",
+                    "originalRank": 1,
+                    "finalRank": 1,
+                    "selected": true,
+                    "eligible": true,
+                    "ineligibilityReasons": [],
+                    "pinned": false,
+                    "historicalSuccessRate": 1,
+                    "historicalFailureRate": 0,
+                    "sampleCount": 3,
+                    "baseRankScore": 1,
+                    "historyScore": 4.75,
+                    "patternScore": 0,
+                    "lessonScore": 0,
+                    "routePenaltyScore": 0,
+                    "pinBonus": 0,
+                    "finalScore": 5.75,
+                    "historyStats": {
+                      "sampleCount": 3,
+                      "successRate": 1,
+                      "failureRate": 0
+                    },
+                    "matchedLessonIds": [],
+                    "matchedPatternIds": []
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "seq": 11,
+            "type": "agent.run.tool_start",
+            "timestamp": "2026-04-19T11:53:01.187Z",
+            "payload": {
+              "runId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+              "toolName": "feedback",
+              "toolCallId": "toolu_01Ff3nxtymiF4uJqyYCY3tNw",
+              "params": {
+                "kind": "preference",
+                "field": "name",
+                "value": "MemoryAuditName-1776599577553",
+                "context": "User requested to be called by this specific name"
+              }
+            }
+          },
+          {
+            "seq": 13,
+            "type": "agent.run.tool_end",
+            "timestamp": "2026-04-19T11:53:01.189Z",
+            "payload": {
+              "runId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+              "toolName": "feedback",
+              "toolCallId": "toolu_01Ff3nxtymiF4uJqyYCY3tNw",
+              "durationMs": 2,
+              "isError": false,
+              "summary": "Feedback recorded: preference for \"name\" = \"MemoryAuditName-1776599577553\".",
+              "routeId": "agent.execute.tool",
+              "correlationId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+              "toolCallSummary": {
+                "toolName": "feedback",
+                "argKeys": [
+                  "kind",
+                  "field",
+                  "value",
+                  "context"
+                ],
+                "resultIsError": false,
+                "resultLengthChars": 75,
+                "outputShape": "text",
+                "toolCategory": "other",
+                "turnIndex": 0,
+                "toolIndex": 0
+              }
+            }
+          },
+          {
+            "seq": 20,
+            "type": "agent.run.route_selected",
+            "timestamp": "2026-04-19T11:53:03.212Z",
+            "payload": {
+              "runId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+              "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "taskProfileId": "default",
+              "modelSelectionSource": "route_default",
+              "actualProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "actualModel": "claude-sonnet-4-20250514",
+              "actualProviderKind": "anthropic",
+              "actualProviderApi": "anthropic-messages",
+              "backendKind": "http",
+              "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+              "learningAdjusted": false,
+              "routeDecisionTrace": {
+                "taskProfileId": "default",
+                "requiresNativeTools": true,
+                "learningAdjusted": false,
+                "learningSignalsPresent": true,
+                "orderingAdjusted": false,
+                "selectedAdjusted": false,
+                "reasonCode": "historical_bias",
+                "reasonText": "Historical route outcomes influenced candidate scoring.",
+                "historyWindow": {
+                  "sampleLimit": 250
+                },
+                "selectedBeforeLearning": {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http"
+                },
+                "selectedAfterLearning": {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http"
+                },
+                "candidateScores": [
+                  {
+                    "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                    "providerKind": "anthropic",
+                    "model": "claude-sonnet-4-20250514",
+                    "backendKind": "http",
+                    "originalRank": 1,
+                    "finalRank": 1,
+                    "selected": true,
+                    "eligible": true,
+                    "ineligibilityReasons": [],
+                    "pinned": false,
+                    "historicalSuccessRate": 1,
+                    "historicalFailureRate": 0,
+                    "sampleCount": 3,
+                    "baseRankScore": 1,
+                    "historyScore": 4.75,
+                    "patternScore": 0,
+                    "lessonScore": 0,
+                    "routePenaltyScore": 0,
+                    "pinBonus": 0,
+                    "finalScore": 5.75,
+                    "historyStats": {
+                      "sampleCount": 3,
+                      "successRate": 1,
+                      "failureRate": 0
+                    },
+                    "matchedLessonIds": [],
+                    "matchedPatternIds": []
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "seq": 23,
+            "type": "agent.run.completed",
+            "timestamp": "2026-04-19T11:53:03.216Z",
+            "payload": {
+              "runId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+              "durationMs": 5622,
+              "toolCallCount": 1,
+              "testsPassed": true,
+              "artifacts": [
+                {
+                  "type": "run_record",
+                  "path": ".friday/agent-runs/63cee99b-4936-42ba-ba11-0f413a20596a/run.json"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "requestId": "d453de0d-f894-4efb-990e-c59dac746dd8"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+      "events": [
+        {
+          "seq": 1,
+          "type": "agent.run.started",
+          "timestamp": "2026-04-19T11:52:57.594Z",
+          "payload": {
+            "runId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+            "task": "Call me MemoryAuditName-1776599577553.",
+            "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "taskProfile": {
+              "id": "default",
+              "modelSelectionSource": "route_default"
+            }
+          }
+        },
+        {
+          "seq": 9,
+          "type": "agent.run.route_selected",
+          "timestamp": "2026-04-19T11:53:01.185Z",
+          "payload": {
+            "runId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+            "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "taskProfileId": "default",
+            "modelSelectionSource": "route_default",
+            "actualProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "actualModel": "claude-sonnet-4-20250514",
+            "actualProviderKind": "anthropic",
+            "actualProviderApi": "anthropic-messages",
+            "backendKind": "http",
+            "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+            "learningAdjusted": false,
+            "routeDecisionTrace": {
+              "taskProfileId": "default",
+              "requiresNativeTools": true,
+              "learningAdjusted": false,
+              "learningSignalsPresent": true,
+              "orderingAdjusted": false,
+              "selectedAdjusted": false,
+              "reasonCode": "historical_bias",
+              "reasonText": "Historical route outcomes influenced candidate scoring.",
+              "historyWindow": {
+                "sampleLimit": 250
+              },
+              "selectedBeforeLearning": {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http"
+              },
+              "selectedAfterLearning": {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http"
+              },
+              "candidateScores": [
+                {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http",
+                  "originalRank": 1,
+                  "finalRank": 1,
+                  "selected": true,
+                  "eligible": true,
+                  "ineligibilityReasons": [],
+                  "pinned": false,
+                  "historicalSuccessRate": 1,
+                  "historicalFailureRate": 0,
+                  "sampleCount": 3,
+                  "baseRankScore": 1,
+                  "historyScore": 4.75,
+                  "patternScore": 0,
+                  "lessonScore": 0,
+                  "routePenaltyScore": 0,
+                  "pinBonus": 0,
+                  "finalScore": 5.75,
+                  "historyStats": {
+                    "sampleCount": 3,
+                    "successRate": 1,
+                    "failureRate": 0
+                  },
+                  "matchedLessonIds": [],
+                  "matchedPatternIds": []
+                }
+              ]
+            }
+          }
+        },
+        {
+          "seq": 11,
+          "type": "agent.run.tool_start",
+          "timestamp": "2026-04-19T11:53:01.187Z",
+          "payload": {
+            "runId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+            "toolName": "feedback",
+            "toolCallId": "toolu_01Ff3nxtymiF4uJqyYCY3tNw",
+            "params": {
+              "kind": "preference",
+              "field": "name",
+              "value": "MemoryAuditName-1776599577553",
+              "context": "User requested to be called by this specific name"
+            }
+          }
+        },
+        {
+          "seq": 13,
+          "type": "agent.run.tool_end",
+          "timestamp": "2026-04-19T11:53:01.189Z",
+          "payload": {
+            "runId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+            "toolName": "feedback",
+            "toolCallId": "toolu_01Ff3nxtymiF4uJqyYCY3tNw",
+            "durationMs": 2,
+            "isError": false,
+            "summary": "Feedback recorded: preference for \"name\" = \"MemoryAuditName-1776599577553\".",
+            "routeId": "agent.execute.tool",
+            "correlationId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+            "toolCallSummary": {
+              "toolName": "feedback",
+              "argKeys": [
+                "kind",
+                "field",
+                "value",
+                "context"
+              ],
+              "resultIsError": false,
+              "resultLengthChars": 75,
+              "outputShape": "text",
+              "toolCategory": "other",
+              "turnIndex": 0,
+              "toolIndex": 0
+            }
+          }
+        },
+        {
+          "seq": 20,
+          "type": "agent.run.route_selected",
+          "timestamp": "2026-04-19T11:53:03.212Z",
+          "payload": {
+            "runId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+            "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "taskProfileId": "default",
+            "modelSelectionSource": "route_default",
+            "actualProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "actualModel": "claude-sonnet-4-20250514",
+            "actualProviderKind": "anthropic",
+            "actualProviderApi": "anthropic-messages",
+            "backendKind": "http",
+            "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+            "learningAdjusted": false,
+            "routeDecisionTrace": {
+              "taskProfileId": "default",
+              "requiresNativeTools": true,
+              "learningAdjusted": false,
+              "learningSignalsPresent": true,
+              "orderingAdjusted": false,
+              "selectedAdjusted": false,
+              "reasonCode": "historical_bias",
+              "reasonText": "Historical route outcomes influenced candidate scoring.",
+              "historyWindow": {
+                "sampleLimit": 250
+              },
+              "selectedBeforeLearning": {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http"
+              },
+              "selectedAfterLearning": {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http"
+              },
+              "candidateScores": [
+                {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http",
+                  "originalRank": 1,
+                  "finalRank": 1,
+                  "selected": true,
+                  "eligible": true,
+                  "ineligibilityReasons": [],
+                  "pinned": false,
+                  "historicalSuccessRate": 1,
+                  "historicalFailureRate": 0,
+                  "sampleCount": 3,
+                  "baseRankScore": 1,
+                  "historyScore": 4.75,
+                  "patternScore": 0,
+                  "lessonScore": 0,
+                  "routePenaltyScore": 0,
+                  "pinBonus": 0,
+                  "finalScore": 5.75,
+                  "historyStats": {
+                    "sampleCount": 3,
+                    "successRate": 1,
+                    "failureRate": 0
+                  },
+                  "matchedLessonIds": [],
+                  "matchedPatternIds": []
+                }
+              ]
+            }
+          }
+        },
+        {
+          "seq": 23,
+          "type": "agent.run.completed",
+          "timestamp": "2026-04-19T11:53:03.216Z",
+          "payload": {
+            "runId": "63cee99b-4936-42ba-ba11-0f413a20596a",
+            "durationMs": 5622,
+            "toolCallCount": 1,
+            "testsPassed": true,
+            "artifacts": [
+              {
+                "type": "run_record",
+                "path": ".friday/agent-runs/63cee99b-4936-42ba-ba11-0f413a20596a/run.json"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "requestId": "d453de0d-f894-4efb-990e-c59dac746dd8"
+  }
+}

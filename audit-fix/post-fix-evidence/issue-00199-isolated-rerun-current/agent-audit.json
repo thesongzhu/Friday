@@ -1,0 +1,189 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "b710f22a-9023-4d5c-aed7-456ffb3e3c24",
+      "events": [
+        {
+          "seq": 1,
+          "type": "agent.run.started",
+          "timestamp": "2026-04-19T15:52:48.779Z",
+          "payload": {
+            "runId": "b710f22a-9023-4d5c-aed7-456ffb3e3c24",
+            "task": "Use the skill_run tool immediately with skillId \"audit-shell-env-presence-probe\" and input {}. Do not call skills_list first, do not filter for starter or bundled skills, and do not claim the skill is unavailable unless skill_run itself fails. Return only the skill's visibleEnv JSON and nothing else.",
+            "model": "claude-sonnet-4-20250514",
+            "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "taskProfile": {
+              "id": "default",
+              "model": "claude-sonnet-4-20250514",
+              "modelSelectionSource": "provider+model"
+            }
+          }
+        },
+        {
+          "seq": 9,
+          "type": "agent.run.tool_start",
+          "timestamp": "2026-04-19T15:52:53.338Z",
+          "payload": {
+            "runId": "b710f22a-9023-4d5c-aed7-456ffb3e3c24",
+            "toolName": "skill_run",
+            "toolCallId": "toolu_019zAbFofTJHfwjF3inzp8bQ",
+            "params": {
+              "skillId": "audit-shell-env-presence-probe",
+              "input": {}
+            }
+          }
+        },
+        {
+          "seq": 10,
+          "type": "agent.run.tool_end",
+          "timestamp": "2026-04-19T15:52:53.338Z",
+          "payload": {
+            "runId": "b710f22a-9023-4d5c-aed7-456ffb3e3c24",
+            "toolName": "skill_run",
+            "toolCallId": "toolu_019zAbFofTJHfwjF3inzp8bQ",
+            "durationMs": 16,
+            "isError": false,
+            "summary": "{\n  \"runId\": \"4aa1cbcd-4327-4148-9051-7bb83ed9bc26\",\n  \"status\": \"completed\",\n  \"output\": {\n    \"visibleEnv\": {\n      \"OPENAI_API_KEY\": false,\n      \"ANTHROPIC_API_KEY\": false,\n      \"FRIDAY_ANTHROPIC",
+            "routeId": "agent.execute.tool",
+            "correlationId": "b710f22a-9023-4d5c-aed7-456ffb3e3c24",
+            "toolCallSummary": {
+              "toolName": "skill_run",
+              "argKeys": [
+                "skillId",
+                "input"
+              ],
+              "resultIsError": false,
+              "resultLengthChars": 344,
+              "outputShape": "json",
+              "toolCategory": "mutate",
+              "turnIndex": 0,
+              "toolIndex": 0
+            }
+          }
+        },
+        {
+          "seq": 11,
+          "type": "agent.run.failed",
+          "timestamp": "2026-04-19T15:52:53.339Z",
+          "payload": {
+            "runId": "b710f22a-9023-4d5c-aed7-456ffb3e3c24",
+            "error": {
+              "code": "AGENT_LLM_ERROR",
+              "message": "Validation criteria not met"
+            },
+            "durationMs": 4571,
+            "routeId": "agent.execute.run.delegated",
+            "correlationId": "793740cb-df88-4216-a896-a859b2edf589"
+          }
+        }
+      ]
+    },
+    "requestId": "4fe33fc3-eb2b-4ab4-abde-bc6a87822fed"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3242/v1/agent/runs/b710f22a-9023-4d5c-aed7-456ffb3e3c24/audit",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "connection": "keep-alive",
+      "content-length": "2118",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Sun, 19 Apr 2026 15:52:53 GMT",
+      "keep-alive": "timeout=5",
+      "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY"
+    },
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "b710f22a-9023-4d5c-aed7-456ffb3e3c24",
+        "events": [
+          {
+            "seq": 1,
+            "type": "agent.run.started",
+            "timestamp": "2026-04-19T15:52:48.779Z",
+            "payload": {
+              "runId": "b710f22a-9023-4d5c-aed7-456ffb3e3c24",
+              "task": "Use the skill_run tool immediately with skillId \"audit-shell-env-presence-probe\" and input {}. Do not call skills_list first, do not filter for starter or bundled skills, and do not claim the skill is unavailable unless skill_run itself fails. Return only the skill's visibleEnv JSON and nothing else.",
+              "model": "claude-sonnet-4-20250514",
+              "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "taskProfile": {
+                "id": "default",
+                "model": "claude-sonnet-4-20250514",
+                "modelSelectionSource": "provider+model"
+              }
+            }
+          },
+          {
+            "seq": 9,
+            "type": "agent.run.tool_start",
+            "timestamp": "2026-04-19T15:52:53.338Z",
+            "payload": {
+              "runId": "b710f22a-9023-4d5c-aed7-456ffb3e3c24",
+              "toolName": "skill_run",
+              "toolCallId": "toolu_019zAbFofTJHfwjF3inzp8bQ",
+              "params": {
+                "skillId": "audit-shell-env-presence-probe",
+                "input": {}
+              }
+            }
+          },
+          {
+            "seq": 10,
+            "type": "agent.run.tool_end",
+            "timestamp": "2026-04-19T15:52:53.338Z",
+            "payload": {
+              "runId": "b710f22a-9023-4d5c-aed7-456ffb3e3c24",
+              "toolName": "skill_run",
+              "toolCallId": "toolu_019zAbFofTJHfwjF3inzp8bQ",
+              "durationMs": 16,
+              "isError": false,
+              "summary": "{\n  \"runId\": \"4aa1cbcd-4327-4148-9051-7bb83ed9bc26\",\n  \"status\": \"completed\",\n  \"output\": {\n    \"visibleEnv\": {\n      \"OPENAI_API_KEY\": false,\n      \"ANTHROPIC_API_KEY\": false,\n      \"FRIDAY_ANTHROPIC",
+              "routeId": "agent.execute.tool",
+              "correlationId": "b710f22a-9023-4d5c-aed7-456ffb3e3c24",
+              "toolCallSummary": {
+                "toolName": "skill_run",
+                "argKeys": [
+                  "skillId",
+                  "input"
+                ],
+                "resultIsError": false,
+                "resultLengthChars": 344,
+                "outputShape": "json",
+                "toolCategory": "mutate",
+                "turnIndex": 0,
+                "toolIndex": 0
+              }
+            }
+          },
+          {
+            "seq": 11,
+            "type": "agent.run.failed",
+            "timestamp": "2026-04-19T15:52:53.339Z",
+            "payload": {
+              "runId": "b710f22a-9023-4d5c-aed7-456ffb3e3c24",
+              "error": {
+                "code": "AGENT_LLM_ERROR",
+                "message": "Validation criteria not met"
+              },
+              "durationMs": 4571,
+              "routeId": "agent.execute.run.delegated",
+              "correlationId": "793740cb-df88-4216-a896-a859b2edf589"
+            }
+          }
+        ]
+      },
+      "requestId": "4fe33fc3-eb2b-4ab4-abde-bc6a87822fed"
+    }
+  }
+}

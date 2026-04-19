@@ -1,0 +1,89 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/memory/search",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "query": "what should you call me",
+      "limit": 20
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "items": [
+          {
+            "item": {
+              "id": "learned-fact:pref:user_name",
+              "namespace": "preference",
+              "key": "pref:user_name",
+              "content": "MemoryAuditName-1776602222290",
+              "source": "learned_fact",
+              "tags": [
+                "learned",
+                "preference_fact"
+              ],
+              "metadata": {
+                "learnedFact": true,
+                "evidenceCount": 1,
+                "lastConfirmedAt": "2026-04-19T12:37:07.303Z"
+              },
+              "confidence": 1,
+              "createdAt": "2026-04-19T12:37:07.303Z",
+              "updatedAt": "2026-04-19T12:37:07.303Z"
+            },
+            "score": 0.95,
+            "ftsScore": 0,
+            "semanticScore": 0,
+            "matchedBy": [
+              "substring"
+            ],
+            "snippet": "MemoryAuditName-1776602222290"
+          }
+        ]
+      },
+      "requestId": "2ed379af-e345-4400-bb5a-c7fddd9e0b0e"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "items": [
+        {
+          "item": {
+            "id": "learned-fact:pref:user_name",
+            "namespace": "preference",
+            "key": "pref:user_name",
+            "content": "MemoryAuditName-1776602222290",
+            "source": "learned_fact",
+            "tags": [
+              "learned",
+              "preference_fact"
+            ],
+            "metadata": {
+              "learnedFact": true,
+              "evidenceCount": 1,
+              "lastConfirmedAt": "2026-04-19T12:37:07.303Z"
+            },
+            "confidence": 1,
+            "createdAt": "2026-04-19T12:37:07.303Z",
+            "updatedAt": "2026-04-19T12:37:07.303Z"
+          },
+          "score": 0.95,
+          "ftsScore": 0,
+          "semanticScore": 0,
+          "matchedBy": [
+            "substring"
+          ],
+          "snippet": "MemoryAuditName-1776602222290"
+        }
+      ]
+    },
+    "requestId": "2ed379af-e345-4400-bb5a-c7fddd9e0b0e"
+  }
+}

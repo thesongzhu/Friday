@@ -1,0 +1,121 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "listing": {
+        "id": "08658207-8739-4ee3-8635-83cf31c7e023",
+        "publisherId": "b1bd4307-affc-4bec-81f3-0861260df29b",
+        "slug": "audit-listing-1776610426720",
+        "status": "draft",
+        "currentVersionId": "468caf1f-6c7d-4abf-86e8-e6cf0fe0cbe0",
+        "pendingVersionId": null,
+        "tenantId": "admin-001",
+        "tags": [],
+        "createdAt": "2026-04-19T14:53:46.721Z",
+        "updatedAt": "2026-04-19T14:53:46.721Z"
+      },
+      "version": {
+        "id": "468caf1f-6c7d-4abf-86e8-e6cf0fe0cbe0",
+        "listingId": "08658207-8739-4ee3-8635-83cf31c7e023",
+        "versionNumber": 1,
+        "status": "draft",
+        "title": "Audit Listing 1776610426720",
+        "description": "Audit listing for sqlite audit mirror reprobe",
+        "longDescription": null,
+        "screenshotUrls": [],
+        "packageName": "@audit/issue-00187-1776610426720",
+        "packageVersion": "1.0.0",
+        "assetType": "agent",
+        "distributionMode": "declarative_public",
+        "permissionManifest": {
+          "permissions": [],
+          "requiresExplicitApproval": false
+        },
+        "pricingPlan": {
+          "type": "free"
+        },
+        "releaseNotes": null,
+        "createdAt": "2026-04-19T14:53:46.721Z"
+      }
+    },
+    "requestId": "6f72f1be-74a1-4776-9cc6-3a8cc46a8184"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/marketplace/listings",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "publisherId": "b1bd4307-affc-4bec-81f3-0861260df29b",
+      "slug": "audit-listing-1776610426720",
+      "assetType": "agent",
+      "title": "Audit Listing 1776610426720",
+      "description": "Audit listing for sqlite audit mirror reprobe",
+      "packageName": "@audit/issue-00187-1776610426720",
+      "packageVersion": "1.0.0",
+      "pricingPlan": {
+        "type": "free"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "connection": "keep-alive",
+      "content-length": "1008",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Sun, 19 Apr 2026 14:53:46 GMT",
+      "keep-alive": "timeout=5",
+      "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "x-ratelimit-limit": "30",
+      "x-ratelimit-remaining": "28",
+      "x-ratelimit-reset": "2026-04-19T14:54:00.000Z"
+    },
+    "body": {
+      "ok": true,
+      "data": {
+        "listing": {
+          "id": "08658207-8739-4ee3-8635-83cf31c7e023",
+          "publisherId": "b1bd4307-affc-4bec-81f3-0861260df29b",
+          "slug": "audit-listing-1776610426720",
+          "status": "draft",
+          "currentVersionId": "468caf1f-6c7d-4abf-86e8-e6cf0fe0cbe0",
+          "pendingVersionId": null,
+          "tenantId": "admin-001",
+          "tags": [],
+          "createdAt": "2026-04-19T14:53:46.721Z",
+          "updatedAt": "2026-04-19T14:53:46.721Z"
+        },
+        "version": {
+          "id": "468caf1f-6c7d-4abf-86e8-e6cf0fe0cbe0",
+          "listingId": "08658207-8739-4ee3-8635-83cf31c7e023",
+          "versionNumber": 1,
+          "status": "draft",
+          "title": "Audit Listing 1776610426720",
+          "description": "Audit listing for sqlite audit mirror reprobe",
+          "longDescription": null,
+          "screenshotUrls": [],
+          "packageName": "@audit/issue-00187-1776610426720",
+          "packageVersion": "1.0.0",
+          "assetType": "agent",
+          "distributionMode": "declarative_public",
+          "permissionManifest": {
+            "permissions": [],
+            "requiresExplicitApproval": false
+          },
+          "pricingPlan": {
+            "type": "free"
+          },
+          "releaseNotes": null,
+          "createdAt": "2026-04-19T14:53:46.721Z"
+        }
+      },
+      "requestId": "6f72f1be-74a1-4776-9cc6-3a8cc46a8184"
+    }
+  }
+}

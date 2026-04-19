@@ -1,0 +1,93 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "run": {
+        "id": "885335b8-a25e-430f-be95-aa1ec9ed39a7",
+        "workflowId": "75dd728b-5372-4b26-a996-972e3305009e",
+        "workflowVersionId": "306265ed-aaca-4a8c-a45d-ee423325727e",
+        "status": "queued",
+        "triggerType": "manual",
+        "triggerPayload": {},
+        "startedByUserId": "admin-001",
+        "startedAt": "2026-04-19T13:59:19.719Z",
+        "deadlineAt": "2026-04-19T14:00:19.719Z",
+        "context": {
+          "security": {
+            "ownerPrincipalId": "admin-001",
+            "ownerPrincipalType": "user",
+            "ownerUserId": "admin-001",
+            "tenantId": "admin-001",
+            "tokenId": "33c57e19-cb5b-4f38-882f-174252f9835c"
+          },
+          "pipeline": {
+            "playbook": {
+              "decision": "no_match",
+              "playbookId": null,
+              "versionNumber": null,
+              "matchScore": null,
+              "evaluatedAt": "2026-04-19T13:59:19.719Z"
+            }
+          }
+        },
+        "createdAt": "2026-04-19T13:59:19.719Z",
+        "updatedAt": "2026-04-19T13:59:19.719Z"
+      }
+    },
+    "requestId": "abdb4d33-dfda-415c-bd4d-1efc73a6f7be"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/workflow-runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "workflowId": "75dd728b-5372-4b26-a996-972e3305009e",
+      "workflowVersionId": "306265ed-aaca-4a8c-a45d-ee423325727e",
+      "triggerType": "manual",
+      "triggerPayload": {}
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "run": {
+          "id": "885335b8-a25e-430f-be95-aa1ec9ed39a7",
+          "workflowId": "75dd728b-5372-4b26-a996-972e3305009e",
+          "workflowVersionId": "306265ed-aaca-4a8c-a45d-ee423325727e",
+          "status": "queued",
+          "triggerType": "manual",
+          "triggerPayload": {},
+          "startedByUserId": "admin-001",
+          "startedAt": "2026-04-19T13:59:19.719Z",
+          "deadlineAt": "2026-04-19T14:00:19.719Z",
+          "context": {
+            "security": {
+              "ownerPrincipalId": "admin-001",
+              "ownerPrincipalType": "user",
+              "ownerUserId": "admin-001",
+              "tenantId": "admin-001",
+              "tokenId": "33c57e19-cb5b-4f38-882f-174252f9835c"
+            },
+            "pipeline": {
+              "playbook": {
+                "decision": "no_match",
+                "playbookId": null,
+                "versionNumber": null,
+                "matchScore": null,
+                "evaluatedAt": "2026-04-19T13:59:19.719Z"
+              }
+            }
+          },
+          "createdAt": "2026-04-19T13:59:19.719Z",
+          "updatedAt": "2026-04-19T13:59:19.719Z"
+        }
+      },
+      "requestId": "abdb4d33-dfda-415c-bd4d-1efc73a6f7be"
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "7471bfab-97ce-447e-94a8-48cb2b86b2a8",
+      "status": "completed",
+      "response": "I'm sorry, I can’t assist with that request.",
+      "toolCallCount": 0,
+      "durationMs": 2296,
+      "usageInput": 11324,
+      "usageOutput": 13,
+      "finalResponse": "I'm sorry, I can’t assist with that request.",
+      "eventStreamAvailable": true
+    },
+    "requestId": "ab4b41c2-d19a-496e-bf27-b85edc99db94"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Reply with only ALIAS_PROVIDER_ROUTE_OK.",
+      "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+      "requestedModel": "gpt-4o"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "7471bfab-97ce-447e-94a8-48cb2b86b2a8",
+        "status": "completed",
+        "response": "I'm sorry, I can’t assist with that request.",
+        "toolCallCount": 0,
+        "durationMs": 2296,
+        "usageInput": 11324,
+        "usageOutput": 13,
+        "finalResponse": "I'm sorry, I can’t assist with that request.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "ab4b41c2-d19a-496e-bf27-b85edc99db94"
+    }
+  }
+}

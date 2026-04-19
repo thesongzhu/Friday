@@ -1,0 +1,7 @@
+[
+  {
+    "id": "621720a4-0d9f-4069-8d82-3b0d5f3f4cf8",
+    "created_at": "2026-04-19T15:24:55.823Z",
+    "metadata_json": "{\"apiRequest\":{\"operationId\":\"memory.items.create\",\"principalId\":\"admin-001\",\"idempotencyKey\":\"issue-00158-memory-1776612295813\",\"payloadHash\":\"a6b38cc504a2e075d5d2a6d9c568b9824d536cf81096930df2fc7f09a7bb2523\",\"receivedAt\":\"2026-04-19T15:24:55.816Z\"}}"
+  }
+]

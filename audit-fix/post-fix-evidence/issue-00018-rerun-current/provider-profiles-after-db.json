@@ -1,0 +1,20 @@
+[
+  {
+    "id": "1fd6a8d0-dbb1-47d1-995e-a48cd1d2e324",
+    "kind": "openai",
+    "display_name": "openai (auto-detected)",
+    "enabled": 1,
+    "default_model": "gpt-4o",
+    "config_json": "{\"api\":\"openai-responses\",\"authMode\":\"bearer-token\",\"backendKind\":\"http\",\"deploymentKind\":\"hosted\",\"regionTag\":\"global\",\"keySource\":{\"kind\":\"env-ref\",\"envVar\":\"OPENAI_API_KEY\"},\"supportedModels\":[\"gpt-4o\"],\"httpConfig\":{\"headersPolicy\":\"custom\"},\"validation\":{\"status\":\"never\"}}",
+    "updated_at": "2026-04-19T11:34:05.330Z"
+  },
+  {
+    "id": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+    "kind": "anthropic",
+    "display_name": "anthropic (auto-detected)",
+    "enabled": 1,
+    "default_model": "claude-sonnet-4-20250514",
+    "config_json": "{\"api\":\"anthropic-messages\",\"authMode\":\"api-key\",\"backendKind\":\"http\",\"deploymentKind\":\"hosted\",\"regionTag\":\"global\",\"keySource\":{\"kind\":\"env-ref\",\"envVar\":\"FRIDAY_ANTHROPIC_API_KEY\"},\"supportedModels\":[\"claude-sonnet-4-20250514\"],\"httpConfig\":{\"headersPolicy\":\"custom\"},\"validation\":{\"status\":\"never\"}}",
+    "updated_at": "2026-04-19T11:34:05.329Z"
+  }
+]

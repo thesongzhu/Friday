@@ -1,0 +1,29 @@
+{
+  "ok": true,
+  "data": {
+    "wizard": {
+      "wizardId": "cross-border-hero",
+      "contextId": "2b804e47-9f42-4c1b-86d8-85ddd4f1e6c4",
+      "title": "Cross-border Hero",
+      "status": "awaiting_input",
+      "currentStepId": "goal",
+      "steps": [
+        {
+          "id": "goal",
+          "title": "Describe your goal",
+          "prompt": "What cross-border operating goal should Friday help with first? Friday will set up the profile, workflow, and next actions.",
+          "inputKey": "goal"
+        },
+        {
+          "id": "clarification",
+          "title": "Answer a follow-up",
+          "prompt": "If Friday needs more detail, answer the follow-up question.",
+          "inputKey": "answer"
+        }
+      ],
+      "collectedValues": {},
+      "nextActionLabel": "Continue"
+    }
+  },
+  "requestId": "6b90322e-cc2b-43ee-b52b-e72426b8cdcc"
+}
