@@ -47,6 +47,7 @@ export function createFridayAgentLearningBridge(
         payload: {
           agentRunId: payload.runId,
           errorCode: payload.error.code,
+          message: payload.error.message,
           errorMessage: payload.error.message,
           durationMs: payload.durationMs,
         },

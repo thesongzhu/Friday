@@ -150,6 +150,21 @@ export interface AppendAuditEntryOptions {
   readonly metadata?: JsonObject;
 }
 
+export interface FridayAuditTrailPersistenceSnapshot {
+  readonly entries: readonly FridayAuditEntry[];
+  readonly checkpoints: readonly FridayRetentionCheckpoint[];
+}
+
+export interface FridayAuditTrailStore {
+  loadSnapshot(): FridayAuditTrailPersistenceSnapshot;
+  appendEntry(entry: FridayAuditEntry): void;
+  recordRetention(checkpoint: FridayRetentionCheckpoint): void;
+}
+
+export interface FridayAuditTrailOptions {
+  readonly store?: FridayAuditTrailStore;
+}
+
 // ─── UUID Generation ───
 
 /** Generate a v4-style UUID using crypto. */
@@ -190,7 +205,47 @@ function generateUUID(): UUID {
 export class FridayAuditTrail {
   private readonly entries: FridayAuditEntry[] = [];
   private readonly checkpoints: FridayRetentionCheckpoint[] = [];
+  private readonly store?: FridayAuditTrailStore;
+  private mutationQueue: Promise<void> = Promise.resolve();
   private nextSequenceNumber = 1;
+
+  constructor(options: FridayAuditTrailOptions = {}) {
+    this.store = options.store;
+    this.loadPersistedState();
+  }
+
+  private loadPersistedState(): void {
+    if (!this.store) {
+      return;
+    }
+
+    const snapshot = this.store.loadSnapshot();
+    const entries = [...snapshot.entries]
+      .map((entry) => cloneAndFreeze(entry))
+      .sort((left, right) => left.sequenceNumber - right.sequenceNumber);
+    const checkpoints = [...snapshot.checkpoints]
+      .map((checkpoint) => cloneAndFreeze(checkpoint))
+      .sort(
+        (left, right) =>
+          left.lastDeletedSequenceNumber - right.lastDeletedSequenceNumber,
+      );
+
+    this.entries.push(...entries);
+    this.checkpoints.push(...checkpoints);
+
+    const lastEntrySequence = entries.at(-1)?.sequenceNumber ?? 0;
+    const lastDeletedSequence = checkpoints.at(-1)?.lastDeletedSequenceNumber ?? 0;
+    this.nextSequenceNumber = Math.max(lastEntrySequence, lastDeletedSequence) + 1;
+  }
+
+  private async runExclusive<T>(operation: () => Promise<T> | T): Promise<T> {
+    const pending = this.mutationQueue.then(() => operation());
+    this.mutationQueue = pending.then(
+      () => undefined,
+      () => undefined,
+    );
+    return pending;
+  }
 
   /** Get the hash of the last entry, or genesis hash if empty. */
   private getLastHash(): string {
@@ -206,53 +261,56 @@ export class FridayAuditTrail {
 
   /** Append a new audit entry to the trail. Returns the created entry. */
   async append(options: AppendAuditEntryOptions): Promise<FridayAuditEntry> {
-    const id = generateUUID();
-    const sequenceNumber = this.nextSequenceNumber++;
-    const previousHash = this.getLastHash();
-    const recordedAt = new Date().toISOString();
+    return this.runExclusive(async () => {
+      const id = generateUUID();
+      const sequenceNumber = this.nextSequenceNumber++;
+      const previousHash = this.getLastHash();
+      const recordedAt = new Date().toISOString();
 
-    // Build entry without integrityHash first
-    const entryWithoutHash: Omit<FridayAuditEntry, "integrityHash"> = {
-      id,
-      sequenceNumber,
-      actor: structuredClone(options.actor),
-      actionCategory: options.actionCategory,
-      action: options.action,
-      resource: structuredClone(options.resource),
-      outcome: options.outcome,
-      description: options.description,
-      module: options.module,
-      previousHash,
-      recordedAt,
-    };
+      // Build entry without integrityHash first
+      const entryWithoutHash: Omit<FridayAuditEntry, "integrityHash"> = {
+        id,
+        sequenceNumber,
+        actor: structuredClone(options.actor),
+        actionCategory: options.actionCategory,
+        action: options.action,
+        resource: structuredClone(options.resource),
+        outcome: options.outcome,
+        description: options.description,
+        module: options.module,
+        previousHash,
+        recordedAt,
+      };
 
-    if (options.errorCode !== undefined) {
-      (entryWithoutHash as Record<string, unknown>).errorCode = options.errorCode;
-    }
-    if (options.errorMessage !== undefined) {
-      (entryWithoutHash as Record<string, unknown>).errorMessage = options.errorMessage;
-    }
-    if (options.traceId !== undefined) {
-      (entryWithoutHash as Record<string, unknown>).traceId = options.traceId;
-    }
-    if (options.spanId !== undefined) {
-      (entryWithoutHash as Record<string, unknown>).spanId = options.spanId;
-    }
-    if (options.metadata !== undefined) {
-      (entryWithoutHash as Record<string, unknown>).metadata = structuredClone(options.metadata);
-    }
+      if (options.errorCode !== undefined) {
+        (entryWithoutHash as Record<string, unknown>).errorCode = options.errorCode;
+      }
+      if (options.errorMessage !== undefined) {
+        (entryWithoutHash as Record<string, unknown>).errorMessage = options.errorMessage;
+      }
+      if (options.traceId !== undefined) {
+        (entryWithoutHash as Record<string, unknown>).traceId = options.traceId;
+      }
+      if (options.spanId !== undefined) {
+        (entryWithoutHash as Record<string, unknown>).spanId = options.spanId;
+      }
+      if (options.metadata !== undefined) {
+        (entryWithoutHash as Record<string, unknown>).metadata = structuredClone(options.metadata);
+      }
 
-    // Compute integrity hash: SHA-256(previousHash + canonicalize(entry))
-    const canonical = canonicalizeAuditEntry(entryWithoutHash);
-    const integrityHash = await sha256(previousHash + canonical);
+      // Compute integrity hash: SHA-256(previousHash + canonicalize(entry))
+      const canonical = canonicalizeAuditEntry(entryWithoutHash);
+      const integrityHash = await sha256(previousHash + canonical);
 
-    const entry = deepFreeze<FridayAuditEntry>({
-      ...entryWithoutHash,
-      integrityHash,
+      const entry = deepFreeze<FridayAuditEntry>({
+        ...entryWithoutHash,
+        integrityHash,
+      });
+
+      this.store?.appendEntry(entry);
+      this.entries.push(entry);
+      return cloneAndFreeze(entry);
     });
-
-    this.entries.push(entry);
-    return cloneAndFreeze(entry);
   }
 
   /**
@@ -334,28 +392,32 @@ export class FridayAuditTrail {
    * Records a retention checkpoint for chain continuity.
    */
   async applyRetention(maxSequenceNumber: number, reason: string): Promise<FridayRetentionCheckpoint | null> {
-    const toDelete = this.entries.filter((e) => e.sequenceNumber <= maxSequenceNumber);
-    if (toDelete.length === 0) return null;
+    return this.runExclusive(async () => {
+      const toDelete = this.entries.filter((e) => e.sequenceNumber <= maxSequenceNumber);
+      if (toDelete.length === 0) return null;
 
-    const lastDeleted = toDelete[toDelete.length - 1];
-    const firstRetained = this.entries.find((e) => e.sequenceNumber > maxSequenceNumber);
+      const lastDeleted = toDelete[toDelete.length - 1];
+      const firstRetained = this.entries.find((e) => e.sequenceNumber > maxSequenceNumber);
 
-    const checkpoint = deepFreeze<FridayRetentionCheckpoint>({
-      id: generateUUID(),
-      lastDeletedSequenceNumber: lastDeleted.sequenceNumber,
-      boundaryHash: lastDeleted.integrityHash,
-      firstRetainedSequenceNumber: firstRetained?.sequenceNumber ?? lastDeleted.sequenceNumber + 1,
-      createdAt: new Date().toISOString(),
-      reason,
+      const checkpoint = deepFreeze<FridayRetentionCheckpoint>({
+        id: generateUUID(),
+        lastDeletedSequenceNumber: lastDeleted.sequenceNumber,
+        boundaryHash: lastDeleted.integrityHash,
+        firstRetainedSequenceNumber: firstRetained?.sequenceNumber ?? lastDeleted.sequenceNumber + 1,
+        createdAt: new Date().toISOString(),
+        reason,
+      });
+
+      this.store?.recordRetention(checkpoint);
+
+      // Remove deleted entries
+      const remaining = this.entries.filter((e) => e.sequenceNumber > maxSequenceNumber);
+      this.entries.length = 0;
+      this.entries.push(...remaining);
+
+      this.checkpoints.push(checkpoint);
+      return cloneAndFreeze(checkpoint);
     });
-
-    // Remove deleted entries
-    const remaining = this.entries.filter((e) => e.sequenceNumber > maxSequenceNumber);
-    this.entries.length = 0;
-    this.entries.push(...remaining);
-
-    this.checkpoints.push(checkpoint);
-    return cloneAndFreeze(checkpoint);
   }
 
   /** Get all retention checkpoints. */
@@ -398,6 +460,7 @@ export class FridayAuditTrail {
     this.entries.length = 0;
     this.checkpoints.length = 0;
     this.nextSequenceNumber = 1;
+    this.mutationQueue = Promise.resolve();
   }
 
   // ─── SIEM Export Adapters ───

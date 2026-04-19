@@ -5,6 +5,7 @@ import type {
   JsonObject,
 } from "../model/friday-learning.types.js";
 import type { FridayAutoFixPlan, FridayAutoFixStepKind } from "../model/friday-auto-fix.types.js";
+import { buildAutoFixPlanTitle, normalizeAutoFixTitleBase } from "./friday-auto-fix-title-helpers.js";
 
 export interface FridayAutoFixPlanService {
   buildPlans(input: {
@@ -175,8 +176,9 @@ export function createFridayAutoFixPlanService(
       }
 
       for (const lesson of matchedLessons) {
+        const lessonTitleBase = normalizeAutoFixTitleBase(lesson.title);
         const plan: FridayAutoFixPlan = {
-          title: `Auto-fix: ${lesson.title}`,
+          title: buildAutoFixPlanTitle(lesson.title),
           summary: lesson.fix,
           steps: [
             {
@@ -210,7 +212,7 @@ export function createFridayAutoFixPlanService(
           stepKind === "switch_model_fallback"
         ) {
           plan.rollbackPlan = {
-            summary: `Revert config change for ${lesson.title}`,
+            summary: `Revert config change for ${lessonTitleBase}`,
             steps: [
                 {
                   stepId: deps.idGenerator(),

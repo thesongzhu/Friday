@@ -252,7 +252,9 @@ export function createFridayPreferenceExtractionService(
             ? rawCategory
             : "tool"; // default to most generic allowed value
           const errorMsg =
-            (event.payload["message"] as string) ?? "unknown_error";
+            (event.payload["message"] as string)
+            ?? (event.payload["errorMessage"] as string)
+            ?? "unknown_error";
           const key = `incident:${normalizeKey(category)}:${normalizeKey(errorMsg)}`;
           const sig = computeSignature(
             "error_incident",

@@ -192,4 +192,21 @@ describe("FridayAutoFixPlanService", () => {
     expect(plans[0]!.title).toContain("Tool Timeout Fix");
     expect(plans[1]!.title).toContain("Alternative Fix");
   });
+
+  it("normalizes recursive lesson titles before building plans", () => {
+    const recursiveLesson: FridayLearnedLessonEntity = {
+      ...baseLesson,
+      title: "Auto-fixed: Auto-fix: Auto-fixed: retry workflow",
+    };
+
+    const plans = service.buildPlans({
+      incident: baseIncident,
+      diagnosis: baseDiagnosis,
+      matchedLessons: [recursiveLesson],
+      recurrenceCount: 2,
+    });
+
+    expect(plans).toHaveLength(1);
+    expect(plans[0]!.title).toBe("Auto-fix: retry workflow");
+  });
 });

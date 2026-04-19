@@ -191,9 +191,18 @@ export interface FridayAgentPackContextMetadata {
   updatedAt: string;
 }
 
+export interface FridayAgentApiRequestMetadata {
+  operationId: string;
+  idempotencyKey: string;
+  payloadHash: string;
+  receivedAt: string;
+  principalId?: string;
+}
+
 export interface FridayAgentRunMetadata {
   surface?: string;
   packContext?: FridayAgentPackContextMetadata;
+  apiRequest?: FridayAgentApiRequestMetadata;
 }
 
 // ─── Plan review payload (IMPL-1) ───

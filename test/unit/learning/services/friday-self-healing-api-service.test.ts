@@ -161,4 +161,61 @@ describe("FridaySelfHealingApiService", () => {
     expect(result.incidentsCreated[0]!.nodeId).toBe("node-a");
     expect(result.diagnosisCreated[0]!.nodeId).toBe("node-a");
   });
+
+  it("manualResolveIncident normalizes recursive lesson titles before persisting them", () => {
+    seedWorkflowRun("run-manual-resolve");
+    const idGenerator = createTestIdGenerator();
+    const runtime = createFridaySelfLearningRuntime({
+      db,
+      idGenerator,
+      nowIso: () => NOW,
+    });
+    const lessonRepo = createFridayLearnedLessonRepository();
+    const service = createFridaySelfHealingApiService({
+      db,
+      idGenerator,
+      nowIso: () => NOW,
+      incidentRepo: createFridayErrorIncidentRepository(),
+      diagnosisRepo: createFridayDiagnosisRecordRepository(),
+      lessonRepo,
+      actionRepo: createFridayAutoFixActionRepository(),
+      approvalRepo: createFridayApprovalRequestRepository(),
+      factRepo: createFridayPreferenceFactRepository(),
+      diagnosisService: runtime.diagnosis,
+      planService: runtime.autoFixPlan,
+      riskService: runtime.autoFixRisk,
+      executionService: runtime.autoFixExecution,
+      rollbackService: runtime.autoFixRollback,
+      approvalService: runtime.approvals,
+      autoFixDispatcher: runtime.autoFixDispatcher,
+      metricsService: runtime.metrics,
+      pipeline: runtime.pipeline,
+    });
+
+    const report = service.reportStructuredFailure({
+      userId: "test-user",
+      runId: "run-manual-resolve",
+      nodeId: "node-manual-resolve",
+      category: "workflow",
+      severity: "medium",
+      message: "Manual resolution normalization",
+      context: {
+        workflowId: "wf-1",
+      },
+    });
+
+    const incident = report.incidentsCreated[0];
+    expect(incident).toBeDefined();
+
+    service.manualResolveIncident({
+      incidentId: incident!.incidentId,
+      resolvedBy: "operator-1",
+      title: "Auto-fixed: Auto-fix: retry workflow",
+      fix: "Retried the workflow and confirmed it completed",
+    });
+
+    const lesson = lessonRepo.getByFingerprint(db.writer, incident!.signature);
+    expect(lesson).toBeTruthy();
+    expect(lesson!.title).toBe("Auto-fixed: retry workflow");
+  });
 });

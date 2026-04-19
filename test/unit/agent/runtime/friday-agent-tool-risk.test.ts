@@ -4,6 +4,7 @@ import {
   classifyShellRisk,
   getApprovalRequiredReasonForExecCommand,
   getApprovalRequiredReasonForFileMutation,
+  getPolicyDeniedReasonForToolCall,
   getApprovalRequiredReasonForToolCall,
 } from "../../../../src/agent/runtime/friday-agent-tool-risk.js";
 
@@ -225,6 +226,12 @@ describe("friday-agent-tool-risk", () => {
       expect(getApprovalRequiredReasonForToolCall("tts", { action: "synthesize" })).toContain("approval");
     });
 
+    it("blocks mutating provider actions", () => {
+      expect(getApprovalRequiredReasonForToolCall("provider", { action: "update", providerId: "prov-1" })).toContain("approval");
+      expect(getApprovalRequiredReasonForToolCall("provider", { action: "set_default", providerId: "prov-1" })).toContain("approval");
+      expect(getApprovalRequiredReasonForToolCall("provider", { action: "oauth_complete", providerId: "prov-1" })).toContain("approval");
+    });
+
     it("allows safe tool calls", () => {
       expect(getApprovalRequiredReasonForToolCall("read", { path: "file.txt" })).toBeNull();
       expect(getApprovalRequiredReasonForToolCall("web_fetch", { url: "https://example.com" })).toBeNull();
@@ -232,6 +239,8 @@ describe("friday-agent-tool-risk", () => {
       expect(getApprovalRequiredReasonForToolCall("desktop", { action: "screenshot" })).toBeNull();
       expect(getApprovalRequiredReasonForToolCall("canvas", { action: "render" })).toBeNull();
       expect(getApprovalRequiredReasonForToolCall("tts", { action: "status" })).toBeNull();
+      expect(getApprovalRequiredReasonForToolCall("provider", { action: "list" })).toBeNull();
+      expect(getApprovalRequiredReasonForToolCall("provider", { action: "routing" })).toBeNull();
     });
 
     it("allows exec with safe commands", () => {
@@ -241,6 +250,38 @@ describe("friday-agent-tool-risk", () => {
 
     it("allows write to normal files", () => {
       expect(getApprovalRequiredReasonForToolCall("write", { path: "main.ts", content: "code" })).toBeNull();
+    });
+  });
+
+  describe("getPolicyDeniedReasonForToolCall", () => {
+    it("blocks provider mutations for informational guidance prompts", () => {
+      expect(
+        getPolicyDeniedReasonForToolCall(
+          "How do I connect my Anthropic API key? Please guide me step by step.",
+          "provider",
+          { action: "update", providerId: "prov-1" },
+        ),
+      ).toContain("must not mutate provider configuration");
+    });
+
+    it("allows explicit execution requests to proceed to approval handling", () => {
+      expect(
+        getPolicyDeniedReasonForToolCall(
+          "Connect my Anthropic API key now.",
+          "provider",
+          { action: "update", providerId: "prov-1" },
+        ),
+      ).toBeNull();
+    });
+
+    it("allows non-mutating provider actions on guidance prompts", () => {
+      expect(
+        getPolicyDeniedReasonForToolCall(
+          "How do I connect my Anthropic API key? Please guide me step by step.",
+          "provider",
+          { action: "list" },
+        ),
+      ).toBeNull();
     });
   });
 });

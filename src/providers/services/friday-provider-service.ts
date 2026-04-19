@@ -123,6 +123,16 @@ function explainPinnedProviderNoCandidates(
   return `Provider "${provider.id}" does not have any eligible models for routing.`;
 }
 
+function filterCandidatesToPinnedProvider(
+  candidates: FridayResolvedProviderRoute[],
+  pinnedProvider?: FridayProviderProfile,
+): FridayResolvedProviderRoute[] {
+  if (!pinnedProvider) {
+    return candidates;
+  }
+  return candidates.filter((candidate) => candidate.provider.id === pinnedProvider.id);
+}
+
 interface FridayHistoricalRunRouteRow {
   status: string;
   actual_execution_json: string | null;
@@ -363,6 +373,51 @@ export function createFridayProviderService(
     }
 
     return resolved.value;
+  }
+
+  async function prepareRouteCredential(
+    profile: FridayProviderProfile,
+    tenantContext?: FridayProviderTenantContext,
+  ): Promise<{
+    ready: boolean;
+    credential?: string;
+  }> {
+    if (tenantContext && deps.credentialResolver) {
+      const scoped = await deps.credentialResolver.resolve(profile.id, tenantContext);
+      if (scoped.credential) {
+        return {
+          ready: true,
+          credential: scoped.credential,
+        };
+      }
+    }
+
+    const authProfile = deps.db.withReadConnection((db) =>
+      authProfileRepo.getActiveByProviderProfileId(db, profile.id),
+    );
+    const effectiveAuthMode = authProfile?.authMode ?? profile.config.authMode;
+    const effectiveOauthProvider = authProfile?.oauthProvider ?? profile.config.oauthProvider;
+
+    if (effectiveAuthMode !== "oauth") {
+      return { ready: true };
+    }
+    if (!effectiveOauthProvider) {
+      return { ready: false };
+    }
+
+    const accessToken = await oauthTokenManager.getValidAccessToken({
+      providerProfileId: profile.id,
+      oauthProvider: effectiveOauthProvider,
+    });
+
+    if (!accessToken) {
+      return { ready: false };
+    }
+
+    return {
+      ready: true,
+      credential: accessToken,
+    };
   }
 
   function buildRouteHistoryKey(
@@ -1327,6 +1382,7 @@ export function createFridayProviderService(
         providers,
         requestedModel: input.requestedModel,
       });
+      candidates = filterCandidatesToPinnedProvider(candidates, pinnedProvider);
       const requiresNativeTools = input.routingContext?.requiresNativeTools === true;
       if (candidates.length === 0) {
         throw new FridayDomainError(
@@ -1860,7 +1916,8 @@ export function createFridayProviderService(
       const pinnedProvider = requestedProviderId
         ? assertRequestedProviderAvailable(providers, requestedProviderId)
         : undefined;
-      const candidates = fallback.resolveCandidates({
+      const candidates = filterCandidatesToPinnedProvider(
+        fallback.resolveCandidates({
         routing: pinnedProvider
           ? {
               defaultProviderId: pinnedProvider.id,
@@ -1869,7 +1926,9 @@ export function createFridayProviderService(
           : routing,
         providers,
         requestedModel,
-      });
+        }),
+        pinnedProvider,
+      );
       if (candidates.length === 0) {
         throw new FridayDomainError(
           "PROVIDER_NO_CANDIDATES",
@@ -1916,6 +1975,7 @@ export function createFridayProviderService(
       const pinnedProvider = params.requestedProviderId
         ? assertRequestedProviderAvailable(providers, params.requestedProviderId)
         : undefined;
+      const prefetchedCredentials = new Map<string, string>();
       let candidates = fallback.resolveCandidates({
         routing: pinnedProvider
           ? {
@@ -1926,6 +1986,27 @@ export function createFridayProviderService(
         providers,
         requestedModel: params.requestedModel,
       });
+      candidates = filterCandidatesToPinnedProvider(candidates, pinnedProvider);
+      if (!pinnedProvider) {
+        const routableCandidates = await Promise.all(
+          candidates.map(async (candidate) => {
+            const prepared = await prepareRouteCredential(
+              candidate.provider,
+              params.tenantContext,
+            );
+            if (!prepared.ready) {
+              return null;
+            }
+            if (prepared.credential) {
+              prefetchedCredentials.set(candidate.provider.id, prepared.credential);
+            }
+            return candidate;
+          }),
+        );
+        candidates = routableCandidates.filter(
+          (candidate): candidate is FridayResolvedProviderRoute => candidate !== null,
+        );
+      }
       if (candidates.length === 0) {
         throw new FridayDomainError(
           "PROVIDER_NO_CANDIDATES",
@@ -1991,7 +2072,9 @@ export function createFridayProviderService(
       const fallbackResult = await fallback.runWithFallback({
         candidates,
         run: async (route) => {
-          const credential = await resolveCredential(route.provider, params.tenantContext);
+          const credential = prefetchedCredentials.has(route.provider.id)
+            ? prefetchedCredentials.get(route.provider.id) ?? null
+            : await resolveCredential(route.provider, params.tenantContext);
           return params.run(route, credential);
         },
       });

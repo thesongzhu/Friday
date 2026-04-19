@@ -154,24 +154,24 @@ describe("loadFridayWorkspaceContext", () => {
   });
 
   describe("memory export feedback loop", () => {
-    it("loads exported memory items from .friday/exports/memory/", async () => {
+    it("loads prompt-safe exported memory items from .friday/exports/memory/", async () => {
       const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
       await fs.mkdir(exportDir, { recursive: true });
 
       const exported = {
-        namespace: "agent:session:123",
+        namespace: "compaction.summary",
         exportedAt: "2026-03-03T10:00:00Z",
         items: [
           {
             id: "mem-1",
-            contentText: "User prefers TypeScript over JavaScript",
-            tags: ["preference", "language"],
+            contentText: "Compaction summary says the deployment wiring was already validated.",
+            tags: ["compaction", "summary"],
             createdAt: "2026-03-01T08:00:00Z",
           },
           {
             id: "mem-2",
-            contentText: "User's project uses Vitest for testing",
-            tags: ["tooling"],
+            contentText: "Compaction summary says the rollback path was tested.",
+            tags: ["compaction"],
             createdAt: "2026-03-02T14:30:00Z",
           },
         ],
@@ -183,31 +183,62 @@ describe("loadFridayWorkspaceContext", () => {
       );
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      expect(ctx.promptFragment).toContain("TypeScript over JavaScript");
-      expect(ctx.promptFragment).toContain("Vitest for testing");
-      expect(ctx.promptFragment).toContain("[preference, language]");
+      expect(ctx.promptFragment).toContain("deployment wiring was already validated");
+      expect(ctx.promptFragment).toContain("rollback path was tested");
+      expect(ctx.promptFragment).toContain("[compaction, summary]");
       expect(ctx.promptFragment).toContain("stored-memories");
     });
 
-    it("loads multiple memory export files", async () => {
+    it("loads multiple prompt-safe memory export files", async () => {
       const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
       await fs.mkdir(exportDir, { recursive: true });
 
       const ns1 = {
-        namespace: "ns1",
-        items: [{ id: "1", contentText: "Memory from namespace 1", tags: [], createdAt: "2026-03-01" }],
+        namespace: "compaction.summary",
+        items: [{ id: "1", contentText: "Compaction memory from export 1", tags: [], createdAt: "2026-03-01" }],
       };
       const ns2 = {
-        namespace: "ns2",
-        items: [{ id: "2", contentText: "Memory from namespace 2", tags: [], createdAt: "2026-03-02" }],
+        namespace: "compaction.summary",
+        items: [{ id: "2", contentText: "Compaction memory from export 2", tags: [], createdAt: "2026-03-02" }],
       };
 
       await fs.writeFile(path.join(exportDir, "ns1_abc.json"), JSON.stringify(ns1));
       await fs.writeFile(path.join(exportDir, "ns2_def.json"), JSON.stringify(ns2));
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      expect(ctx.promptFragment).toContain("Memory from namespace 1");
-      expect(ctx.promptFragment).toContain("Memory from namespace 2");
+      expect(ctx.promptFragment).toContain("Compaction memory from export 1");
+      expect(ctx.promptFragment).toContain("Compaction memory from export 2");
+    });
+
+    it("skips non-compaction exported memories so durable user facts stay behind memory_search", async () => {
+      const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
+      await fs.mkdir(exportDir, { recursive: true });
+
+      await fs.writeFile(
+        path.join(exportDir, "agent_memory_blocked.json"),
+        JSON.stringify({
+          namespace: "agent:session:123",
+          items: [
+            {
+              id: "pref-1",
+              contentText: "User prefers to be called MemoryAuditName-leak",
+              tags: ["user_preference", "name"],
+              createdAt: "2026-03-02",
+            },
+          ],
+        }),
+      );
+      await fs.writeFile(
+        path.join(exportDir, "allowed.json"),
+        JSON.stringify({
+          namespace: "compaction.summary",
+          items: [{ id: "2", contentText: "Visible exported memory", tags: [], createdAt: "2026-03-02" }],
+        }),
+      );
+
+      const ctx = await loadFridayWorkspaceContext(tmpDir);
+      expect(ctx.promptFragment).toContain("Visible exported memory");
+      expect(ctx.promptFragment).not.toContain("MemoryAuditName-leak");
     });
 
     it("skips malformed JSON files gracefully", async () => {
@@ -218,7 +249,7 @@ describe("loadFridayWorkspaceContext", () => {
       await fs.writeFile(
         path.join(exportDir, "good.json"),
         JSON.stringify({
-          namespace: "good",
+          namespace: "compaction.summary",
           items: [{ id: "1", contentText: "Valid memory", tags: [], createdAt: "2026-03-03" }],
         }),
       );
@@ -232,7 +263,7 @@ describe("loadFridayWorkspaceContext", () => {
       await fs.mkdir(exportDir, { recursive: true });
 
       const exported = {
-        namespace: "test",
+        namespace: "compaction.summary",
         items: [
           { id: "1", contentText: null, value: null, tags: [] },
           { id: "2", contentText: "Has content", tags: [], createdAt: "2026-03-03" },
@@ -271,7 +302,7 @@ describe("loadFridayWorkspaceContext", () => {
 
       await fs.writeFile(
         path.join(exportDir, "big_ns.json"),
-        JSON.stringify({ namespace: "big", items }),
+        JSON.stringify({ namespace: "compaction.summary", items }),
       );
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
@@ -365,17 +396,17 @@ describe("loadFridayWorkspaceContext", () => {
       await fs.writeFile(
         path.join(exportDir, "session.json"),
         JSON.stringify({
-          namespace: "agent:session:test",
+          namespace: "compaction.summary",
           items: [
             {
               id: "mem-1",
-              contentText: "GitHub browser issue was caused by browser not connected",
+              contentText: "Compaction summary: GitHub browser issue was caused by browser not connected",
               tags: ["incident"],
               createdAt: "2026-03-16T10:00:00Z",
             },
             {
               id: "mem-2",
-              contentText: "Unrelated note about sourdough hydration",
+              contentText: "Compaction summary: unrelated note about sourdough hydration",
               tags: ["recipe"],
               createdAt: "2026-03-15T10:00:00Z",
             },
@@ -409,11 +440,11 @@ describe("loadFridayWorkspaceContext", () => {
       await fs.writeFile(
         path.join(exportDir, "session.json"),
         JSON.stringify({
-          namespace: "agent:session:test",
+          namespace: "compaction.summary",
           items: [
             {
               id: "mem-1",
-              contentText: "The user likes matcha drinks",
+              contentText: "Compaction summary: the user likes matcha drinks",
               tags: ["preference"],
               createdAt: "2026-03-17T00:00:00Z",
             },

@@ -224,6 +224,17 @@ describe("FridayPreferenceExtractionService", () => {
       expect(value["category"]).toBe("tool");
     });
 
+    it("falls back to errorMessage for legacy bridge payloads", () => {
+      const event = makeEvent({
+        kind: "error_incident",
+        payload: { category: "tool", errorMessage: "legacy_bridge_error" },
+      });
+
+      const signals = service.extract(event);
+      const value = signals[0]!.value as Record<string, unknown>;
+      expect(value["message"]).toBe("legacy_bridge_error");
+    });
+
     it("preserves valid categories unchanged", () => {
       for (const cat of ["tool", "model", "routing", "config", "workflow"]) {
         const event = makeEvent({

@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { createFridayAgentSkillTool } from "#agent";
-import type { FridaySkillExecutor, FridaySkillExecuteResult, FridaySkillRegistry } from "#skills";
+import {
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  type FridaySkillExecutor,
+  type FridaySkillExecuteResult,
+  type FridaySkillRegistry,
+} from "#skills";
 import { makeManifest } from "../../skills/_helpers/make-manifest.helper.js";
 
 function signal(): AbortSignal {
@@ -277,6 +282,79 @@ describe("FridayAgentSkillTool", () => {
     expect(result.content).toContain("missing required input(s): topic");
     expect(result.content).toContain('{"topic":"<topic>"}');
     expect(executor.execute).not.toHaveBeenCalled();
+  });
+
+  it("returns a structured CAPABILITY_DISABLED blocker for node-runtime skills when the gate is off", async () => {
+    const previousGate = process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+    delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+    try {
+      const executor = mockExecutor(makeResult());
+      const tool = createFridayAgentSkillTool({
+        skillExecutor: executor,
+        skillRegistry: {
+          ...mockRegistry(),
+          get: vi.fn((skillId: string) => {
+            if (skillId !== "node-skill") {
+              return null;
+            }
+            const manifest = {
+              ...makeManifest({ id: "node-skill" }),
+              runtime: {
+                kind: "node",
+                entrypoint: "index.mjs",
+                minHubVersion: "1.0.0",
+                apiVersion: "1",
+                timeoutMsDefault: 30_000,
+              },
+            };
+            return {
+              manifest,
+              skillDir: "/tmp/node-skill",
+              source: "bundled",
+              origin: "bundled",
+              status: "installed",
+              loaded: {
+                skillDir: "/tmp/node-skill",
+                manifest,
+                loadMode: "manifest-v2",
+                declaredFiles: [],
+              },
+              validation: { ok: true, issues: [] },
+              trust: {
+                trustTier: "bundled",
+                executionMode: "trusted",
+                sandboxPolicy: {
+                  trustTier: "bundled",
+                  defaultExecutionMode: "trusted",
+                  allowedExecutionModes: ["trusted", "restricted"],
+                },
+              },
+            };
+          }),
+        } as FridaySkillRegistry,
+      });
+
+      const result = await tool.execute(
+        { skillId: "node-skill", input: {} },
+        signal(),
+      );
+
+      expect(executor.execute).not.toHaveBeenCalled();
+      expect(JSON.parse(result.content)).toMatchObject({
+        skillId: "node-skill",
+        status: "blocked",
+        ready: false,
+        code: "CAPABILITY_DISABLED",
+        capability: "skill_node_runtime",
+        surface: "skill_run",
+      });
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+      } else {
+        process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = previousGate;
+      }
+    }
   });
 
   // ─── Missing required param ───

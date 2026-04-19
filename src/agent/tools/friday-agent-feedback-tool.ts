@@ -1,6 +1,7 @@
 import type { FridayLearningEventAppendInput } from "#ledger";
 
 import type { FridayAgentToolDefinition } from "../model/friday-agent.types.js";
+import { getFridayAgentToolExecutionContext } from "../runtime/friday-agent-tool-execution-context.js";
 import { readStringParam, textResult } from "./friday-agent-tool-helpers.js";
 
 // ─── Factory deps ───
@@ -16,6 +17,28 @@ export interface CreateFridayAgentFeedbackToolDeps {
 // ─── Factory ───
 
 const VALID_KINDS = ["correction", "preference", "positive_feedback"] as const;
+
+function normalizeFeedbackField(field: string): string {
+  return field.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function extractExplicitDisplayName(taskPrompt?: string): string | null {
+  if (!taskPrompt) {
+    return null;
+  }
+  const patterns = [
+    /\bcall me\s+(.+?)\s*[.!?]?$/i,
+    /(叫我|称呼我为|把我叫做|被称为)\s*["“]?([^"”'。！？!,，\n]+)["”']?/u,
+  ] as const;
+  for (const pattern of patterns) {
+    const match = taskPrompt.match(pattern);
+    const rawValue = match?.[2] ?? match?.[1];
+    if (typeof rawValue === "string" && rawValue.trim().length > 0) {
+      return rawValue.trim().replace(/^["“']+|["”']+$/gu, "");
+    }
+  }
+  return null;
+}
 
 export function createFridayAgentFeedbackTool(
   deps: CreateFridayAgentFeedbackToolDeps,
@@ -51,11 +74,18 @@ export function createFridayAgentFeedbackTool(
       required: ["kind", "field", "value"],
     },
 
-    async execute(args: Record<string, unknown>) {
+    async execute(args: Record<string, unknown>, signal: AbortSignal) {
       const kind = readStringParam(args, "kind", { required: true });
       const field = readStringParam(args, "field", { required: true });
-      const value = readStringParam(args, "value", { required: true });
+      const normalizedField = normalizeFeedbackField(field);
+      const rawValue = readStringParam(args, "value", { required: true });
       const context = typeof args["context"] === "string" ? args["context"] : undefined;
+      const executionContext = getFridayAgentToolExecutionContext(signal);
+      const exactDisplayName = kind === "preference"
+        && (normalizedField === "user_name" || normalizedField === "display_name" || normalizedField === "name")
+        ? extractExplicitDisplayName(executionContext?.taskPrompt)
+        : null;
+      const value = exactDisplayName ?? rawValue;
 
       // Use per-run principal if injected by the runtime, otherwise fall back to default.
       const userId =

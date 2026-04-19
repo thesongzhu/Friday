@@ -305,7 +305,12 @@ export type {
   FridayProviderServiceLike,
 } from "./executor/friday-skill-executor.types.js";
 export { createFridayShellExecutor } from "./executor/friday-shell-executor.js";
-export { createFridayNodeExecutor } from "./executor/friday-node-executor.js";
+export {
+  createFridayNodeExecutor,
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  getFridayUnisolatedNodeSkillsDisabledMessage,
+  isFridayUnisolatedNodeSkillsEnabled,
+} from "./executor/friday-node-executor.js";
 export { createFridaySkillExecutor } from "./executor/friday-skill-executor.js";
 
 // Converter (re-export key types for convenience; full module at #skills/converter)

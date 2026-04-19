@@ -6,16 +6,42 @@ import type {
 } from "./friday-skill-executor.types.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const ENABLED_VALUES = new Set(["1", "true", "yes", "on"]);
+
+export const FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV =
+  "FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS";
+
+export function isFridayUnisolatedNodeSkillsEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const raw = env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+  return typeof raw === "string" && ENABLED_VALUES.has(raw.trim().toLowerCase());
+}
+
+export function getFridayUnisolatedNodeSkillsDisabledMessage(): string {
+  return `Node-based skills are disabled because they execute in-process without isolation. Set ${FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV}=true only in controlled environments.`;
+}
 
 /**
  * Creates a node executor that dynamically imports JS modules and calls their
  * exported `execute` function. Handles timeouts via `AbortSignal.timeout`.
  */
-export function createFridayNodeExecutor(): FridayNodeExecutor {
+export function createFridayNodeExecutor(config?: {
+  env?: NodeJS.ProcessEnv;
+}): FridayNodeExecutor {
   return {
     async run(options: FridayNodeRunOptions): Promise<FridayNodeRunResult> {
       const startMs = Date.now();
       const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+      if (!isFridayUnisolatedNodeSkillsEnabled(config?.env ?? process.env)) {
+        return {
+          output: {},
+          timedOut: false,
+          durationMs: Date.now() - startMs,
+          error: getFridayUnisolatedNodeSkillsDisabledMessage(),
+        };
+      }
 
       const entrypoint = options.cwd
         ? resolve(options.cwd, options.entrypoint)

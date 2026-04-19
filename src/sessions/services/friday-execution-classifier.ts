@@ -41,7 +41,9 @@ export interface ClassifyFridayExecutionInput {
 // ─── Hint patterns ───
 
 const CAPABILITY_QUERY =
-  /\b((?:what|which)\s+(?:capabilities?|features?)|show(?: me)? (?:the )?capabilities|what can\b|can (?:friday|you)\b.*\bdo\b|what(?:'s| is)? enabled|what(?:'s| is)? disabled|is [^?.!\n]{0,40}\b(?:enabled|disabled|available|connected)\b|deployment status|runtime facts?)\b/i;
+  /\b((?:what|which)\s+(?:capabilities?|features?)|show(?: me)? (?:the )?capabilities|what can\b|can (?:friday|you)\b.*\bdo\b|what(?:'s| is)? enabled|what(?:'s| is)? disabled|deployment status|runtime facts?)\b/i;
+const CAPABILITY_STATE_QUERY =
+  /^\s*(?:is|are)\s+[^?.!\n]{0,40}\b(?:enabled|disabled|available|connected)\b(?:\s+now)?\s*[?!.]?\s*$/i;
 const CHINESE_CAPABILITY_QUERY =
   /(能力|能做什么|哪些功能|显示能力|当前启用|当前禁用|部署状态|运行时信息|是否可用|是否启用)/;
 
@@ -149,7 +151,11 @@ export function classifyFridayExecution(
   }
 
   // 7. Capability queries
-  if (CAPABILITY_QUERY.test(normalized) || CHINESE_CAPABILITY_QUERY.test(normalized)) {
+  if (
+    CAPABILITY_QUERY.test(normalized)
+    || CAPABILITY_STATE_QUERY.test(normalized)
+    || CHINESE_CAPABILITY_QUERY.test(normalized)
+  ) {
     return { category: "sync_immediate", handler: "capabilities" };
   }
 

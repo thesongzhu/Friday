@@ -18,7 +18,12 @@ export type {
   FridayProviderServiceLike,
 } from "./friday-skill-executor.types.js";
 export { createFridayShellExecutor } from "./friday-shell-executor.js";
-export { createFridayNodeExecutor } from "./friday-node-executor.js";
+export {
+  createFridayNodeExecutor,
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  getFridayUnisolatedNodeSkillsDisabledMessage,
+  isFridayUnisolatedNodeSkillsEnabled,
+} from "./friday-node-executor.js";
 export { createFridaySkillExecutor } from "./friday-skill-executor.js";
 
 // ─── Desktop Helper (C-002) ───
