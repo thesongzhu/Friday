@@ -341,8 +341,10 @@ describe("Friday Mock Error Resilience E2E", () => {
       },
     );
 
-    expect(res.json.data.status).toBe("completed");
+    expect(res.json.data.status).toBe("failed");
+    expect(res.json.data.response).toContain("AGENT_OUTPUT_CLOSURE_ERROR");
     expect(res.json.data.toolCallCount).toBeGreaterThanOrEqual(1);
+    expect(mock.calls.length).toBe(2);
     // The file should NOT have been created
     expect(fs.existsSync(path.join(env.stateDir, "readonly-test.txt"))).toBe(false);
   });

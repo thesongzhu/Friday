@@ -2115,7 +2115,7 @@ export function createFridayAgentRuntime(
                   responseText: anchoredFallback,
                   toolCalls: allToolCalls,
                 });
-                if (artifactTruthGap && artifactTruthRetries < 2) {
+                if (artifactTruthGap && (artifactTruthGap.retryable ?? true) && artifactTruthRetries < 2) {
                   artifactTruthRetries++;
                   messages.push({
                     role: "user",
@@ -2134,7 +2134,12 @@ export function createFridayAgentRuntime(
               responseText: alignedResponse,
               toolCalls: allToolCalls,
             });
-            if (artifactTruthGap && alignedResponse.trim().length > 0 && artifactTruthRetries < 2) {
+            if (
+              artifactTruthGap
+              && (artifactTruthGap.retryable ?? true)
+              && alignedResponse.trim().length > 0
+              && artifactTruthRetries < 2
+            ) {
               artifactTruthRetries++;
               messages.push({
                 role: "user",
@@ -3473,6 +3478,7 @@ interface OutputClosureGap {
   developerMessage: string;
   attemptedImageToolCalls: number;
   failedImageToolCalls: number;
+  retryable?: boolean;
 }
 
 const READ_ONLY_DIAGNOSTIC_SKILL_IDS = new Set([
@@ -3637,6 +3643,7 @@ function detectEvidenceClosureGap(params: {
       errorCode: FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR,
       userMessage,
       developerMessage:
+        `${FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR}: ` +
         `Desktop evidence closure failed for task "${normalizedTask.slice(0, 120)}": ` +
         `${String(attemptedCount)} tool call(s), ${String(failedCount)} failed, no successful evidence. ` +
         `Last failure: ${failureDetail}. Final response: ${responseSummary}`,
@@ -3651,6 +3658,7 @@ function detectEvidenceClosureGap(params: {
       "External task could not be completed with verifiable tool output. " +
       "Please retry after checking network/tool availability.",
     developerMessage:
+      `${FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR}: ` +
       `Evidence closure failed for web task "${normalizedTask.slice(0, 120)}": ` +
       `${String(attemptedCount)} tool call(s), ${String(failedCount)} failed, no successful evidence. ` +
       `Last failure: ${failureDetail}. Final response: ${responseSummary}`,
@@ -3695,11 +3703,13 @@ function detectUnfulfilledFileMutationGap(params: {
     userMessage:
       "Requested file mutation was not completed. The target path was not changed, so this run cannot be marked successful.",
     developerMessage:
+      `${FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR}: ` +
       `File mutation closure failed for task "${params.task.slice(0, 160)}": ` +
       `all ${String(fileMutationCalls.length)} file mutation tool call(s) failed for ` +
       `${touchedPaths.join(", ")}. Last failure: ${failureDetail}`,
     attemptedImageToolCalls: 0,
     failedImageToolCalls: 0,
+    retryable: false,
   };
 }
 
@@ -3730,6 +3740,7 @@ function detectRequiredBlockerArtifactGap(params: {
     userMessage:
       "Artifact truth check failed: the required blocker was not recorded in the written artifact.",
     developerMessage:
+      `${FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR}: ` +
       `Task "${params.task.slice(0, 160)}" required a recorded blocker, but written artifacts ` +
       `(${writtenArtifacts.map((artifact) => artifact.path).join(", ")}) did not contain a clear blocker section.`,
     attemptedImageToolCalls: 0,
@@ -3759,6 +3770,7 @@ function detectApprovalBoundaryArtifactGap(params: {
       userMessage:
         "Artifact truth check failed: approval-boundary reasoning was required but no decision artifact was written.",
       developerMessage:
+        `${FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR}: ` +
         `Task "${params.task.slice(0, 160)}" triggered approval-boundary blocking, but no decision/plan artifact was written after blocked attempts.`,
       attemptedImageToolCalls: 0,
       failedImageToolCalls: 0,
@@ -3778,6 +3790,7 @@ function detectApprovalBoundaryArtifactGap(params: {
     userMessage:
       "Artifact truth check failed: approval-boundary output must say the action was stopped pending approval and not executed.",
     developerMessage:
+      `${FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR}: ` +
       `Approval-boundary task "${params.task.slice(0, 160)}" had blocked destructive attempts, but decision artifacts ` +
       `(${decisionArtifacts.map((artifact) => artifact.path).join(", ")}) or the final response still implied execution.`,
     attemptedImageToolCalls: 0,
@@ -3829,6 +3842,7 @@ function detectSourceArtifactCompletionGap(params: {
     userMessage:
       "Artifact truth check failed: the completion claim does not match the actual content written to the required artifact.",
     developerMessage:
+      `${FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR}: ` +
       `Task "${params.task.slice(0, 160)}" required ${requirement.outputPath} to use ${requirement.sourcePath}, ` +
       `but artifact "${outputArtifact.path}" did not contain meaningful source-derived content.`,
     attemptedImageToolCalls: 0,
@@ -4588,7 +4602,7 @@ function taskRequiresMemorySearch(task: string): boolean {
     || /\bwhat should i call you\b/.test(normalized)
     || /\bwhat (?:do )?i (?:like|prefer)\b/.test(normalized)
     || /\b(?:my|user)\s+(?:preferred|stored)\s+(?:name|preference|preferences)\b/.test(normalized)
-    || /\b(?:remember|recall|stored fact|stored facts|previous conversation|past decision|past decisions)\b/.test(normalized)
+    || /\b(?:do you remember|what do you remember|recall|stored fact|stored facts|previous conversation|past decision|past decisions)\b/.test(normalized)
   );
 }
 
