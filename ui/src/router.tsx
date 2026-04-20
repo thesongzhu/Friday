@@ -1,14 +1,23 @@
 import { Suspense, lazy, useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Navigate, Outlet, createBrowserRouter, useLocation, useRouteError } from "react-router-dom";
+import {
+  AuthErrorSplash,
+  LoadingSplash,
+  NetworkErrorSplash,
+  SetupGateSplash,
+  type SplashAction,
+  type SplashStep,
+} from "@/components/console/shell";
 import { AppShell } from "@/components/layout/app-shell";
 import { useAuth } from "@/hooks/use-auth";
 import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences";
 import { useSetupStatusQuery } from "@/hooks/use-setup";
 import { useUserProfile } from "@/hooks/use-user-profile";
+import { ApiError, AuthExpiredError } from "@/lib/api/types";
 import { uixSnapshotsApi } from "@/lib/api/uix-snapshots";
 import { HIDE_MARKETPLACE_UI } from "@/lib/feature-flags";
-import { localizedText, resolveLocalizedText, type LocalizedText } from "@/lib/i18n/localized-text";
+import { localize, localizedText, resolveLocalizedText, type LocalizedText } from "@/lib/i18n/localized-text";
 import { resolveLegacyRedirect } from "@/lib/routes/legacy-routes";
 import { describeSetupStatusFailure } from "@/lib/setup/setup-status-diagnostics";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -39,31 +48,82 @@ const MemoryPage = lazy(async () => import("@/routes/memory-page").then((module)
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
 const ChannelsPage = lazy(async () => import("@/routes/channels-page").then((module) => ({ default: module.ChannelsPage })));
 
-function FullscreenMessage(props: { title: string | LocalizedText; detail: string | LocalizedText; actions?: Array<string | LocalizedText> }) {
+/**
+ * Router-level loading splash. Resolves `LocalizedText` into the active locale
+ * and defers layout to <LoadingSplash />. Used by RequireAuth, RouteSuspense,
+ * DefaultEntryRedirect, and SetupGate during `isLoading` states.
+ */
+function LoadingMessage(props: { title: string | LocalizedText; detail: string | LocalizedText }) {
   const { locale } = useAppLocale();
+  const title = typeof props.title === "string" ? props.title : resolveLocalizedText(props.title, locale);
+  const body = typeof props.detail === "string" ? props.detail : resolveLocalizedText(props.detail, locale);
+  return <LoadingSplash eyebrow="Friday" title={title} body={body} />;
+}
+
+/**
+ * Setup-status failure splash. Picks the splash variant based on the error
+ * kind surfaced by `describeSetupStatusFailure`:
+ *
+ *   - `AuthExpiredError` / `ApiError(401|403)` → AuthErrorSplash
+ *   - `ApiError(NETWORK_ERROR | status 0)`   → NetworkErrorSplash (retry wired)
+ *   - anything else (404 / 500 / invalid)    → SetupGateSplash
+ *
+ * Advice strings from the diagnostic are rendered as `steps`, preserving the
+ * old FullscreenMessage list shape with the new splash layout.
+ */
+function SetupFailureMessage(props: { error: unknown; origin: string; onRetry: () => void }) {
+  const { locale } = useAppLocale();
+  const diagnostics = describeSetupStatusFailure(props.error, props.origin);
+  const steps: SplashStep[] = diagnostics.actions.map((advice) => ({ label: advice, status: "todo" }));
+
+  const retry: SplashAction = {
+    label: localize(locale, "重试", "Retry"),
+    onClick: props.onRetry,
+    tone: "primary",
+  };
+  const reload: SplashAction = {
+    label: localize(locale, "刷新页面", "Reload page"),
+    onClick: () => {
+      if (typeof window !== "undefined") window.location.reload();
+    },
+    tone: "secondary",
+  };
+
+  const isAuth = props.error instanceof AuthExpiredError
+    || (props.error instanceof ApiError && (props.error.statusCode === 401 || props.error.statusCode === 403));
+  const isNetwork = props.error instanceof ApiError
+    && (props.error.code === "NETWORK_ERROR" || props.error.statusCode === 0);
+
+  if (isAuth) {
+    return (
+      <AuthErrorSplash
+        eyebrow="Friday"
+        title={diagnostics.title}
+        body={diagnostics.detail}
+        steps={steps}
+        actions={[reload]}
+      />
+    );
+  }
+  if (isNetwork) {
+    return (
+      <NetworkErrorSplash
+        eyebrow="Friday"
+        title={diagnostics.title}
+        body={diagnostics.detail}
+        steps={steps}
+        actions={[retry, reload]}
+      />
+    );
+  }
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[color:var(--color-bg-base)] px-6 text-[color:var(--color-text-primary)]">
-      <div className="max-w-xl text-center">
-        <p className="agent-eyebrow">Friday</p>
-        <h1 className="font-[var(--font-display)] text-3xl font-semibold tracking-tight">
-          {typeof props.title === "string" ? props.title : resolveLocalizedText(props.title, locale)}
-        </h1>
-        <p className="mt-4 text-sm leading-7 text-[color:var(--color-text-secondary)]">
-          {typeof props.detail === "string" ? props.detail : resolveLocalizedText(props.detail, locale)}
-        </p>
-        {props.actions && props.actions.length > 0
-          ? (
-            <ul className="mt-6 space-y-3 text-left text-sm leading-6 text-[color:var(--color-text-secondary)]">
-              {props.actions.map((action) => (
-                <li key={typeof action === "string" ? action : `${action.zh}:${action.en}`} className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-3">
-                  {typeof action === "string" ? action : resolveLocalizedText(action, locale)}
-                </li>
-              ))}
-            </ul>
-          )
-          : null}
-      </div>
-    </div>
+    <SetupGateSplash
+      eyebrow="Friday"
+      title={diagnostics.title}
+      body={diagnostics.detail}
+      steps={steps}
+      actions={[retry]}
+    />
   );
 }
 
@@ -94,7 +154,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
       return <Navigate to="/login" replace state={{ redirectTo }} />;
     }
     return (
-      <FullscreenMessage
+      <LoadingMessage
         title={localizedText("启动 Friday", "Starting Friday")}
         detail={localizedText("Friday 正在准备你的本地会话。", "Friday is preparing your local session.")}
       />
@@ -106,7 +166,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
 function RouteSuspense(props: { title: string | LocalizedText; detail: string | LocalizedText; children: ReactNode }) {
   return (
-    <Suspense fallback={<FullscreenMessage title={props.title} detail={props.detail} />}>
+    <Suspense fallback={<LoadingMessage title={props.title} detail={props.detail} />}>
       {props.children}
     </Suspense>
   );
@@ -123,7 +183,7 @@ function DefaultEntryRedirect() {
 
   if (profileLoading || homeSnapshotQuery.isLoading) {
     return (
-      <FullscreenMessage
+      <LoadingMessage
         title={localizedText("正在整理你的入口", "Choosing your entry point")}
         detail={localizedText("Friday 正在根据你最近的任务和待处理事项决定先把你带到哪里。", "Friday is choosing the best surface based on your recent work and pending actions.")}
       />
@@ -158,12 +218,12 @@ function DefaultEntryRedirect() {
 
 function SetupGate() {
   const location = useLocation();
-  const { data: setupStatus, isLoading, isError, error } = useSetupStatusQuery();
+  const { data: setupStatus, isLoading, isError, error, refetch } = useSetupStatusQuery();
   const { isFirstVisit, isLoading: profileLoading } = useUserProfile();
 
   if (isLoading || profileLoading) {
     return (
-      <FullscreenMessage
+      <LoadingMessage
         title={localizedText("检查本地环境", "Inspecting local setup")}
         detail={localizedText("Friday 正在确认这台机器是否已经完成引导配置。", "Friday is verifying whether this machine has already completed bootstrap.")}
       />
@@ -171,15 +231,14 @@ function SetupGate() {
   }
 
   if (isError) {
-    const diagnostics = describeSetupStatusFailure(
-      error,
-      typeof window !== "undefined" ? window.location.origin : "this origin",
-    );
+    const origin = typeof window !== "undefined" ? window.location.origin : "this origin";
     return (
-      <FullscreenMessage
-        title={diagnostics.title}
-        detail={diagnostics.detail}
-        actions={diagnostics.actions}
+      <SetupFailureMessage
+        error={error}
+        origin={origin}
+        onRetry={() => {
+          void refetch();
+        }}
       />
     );
   }

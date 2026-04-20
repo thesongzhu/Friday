@@ -1,66 +1,78 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,500;0,600;0,700;1,500;1,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap");
 @import "tailwindcss";
+@import "./tokens.css";
 
+/*
+ * Brand tokens aligned to the Console v1.0 prototype (Friday Console —
+ * Real-repo Re-baseline). Values mirror the prototype :root:
+ *   --bg #f6f0e4, --paper #fbf6ec, --paper-2 #fffaf0,
+ *   --accent #c4532d, --accent-soft #f3dcc9,
+ *   --ink #1a1612, --ink-2 #4b4239, --ink-3 #7a6e62, --mute #9a8b7b,
+ *   --line #e7dfd4, --line-soft #efe8dd,
+ *   --ok #2f7a49, --warn #b86a17, --danger #a53028,
+ *   --serif Fraunces, --sans Inter, --mono JetBrains/IBM Plex Mono.
+ */
 :root {
-  --color-bg-base: #faf2e7;
-  --color-ink: #332922;
-  --color-accent: #5E6AD2;
+  --color-bg-base: #f6f0e4;
+  --color-ink: #1a1612;
+  --color-accent: #c4532d;
 
-  --color-bg-elevated: #fcf7f0;
-  --color-bg-surface: rgba(255, 255, 255, 0.56);
-  --color-bg-surface-strong: rgba(255, 255, 255, 0.74);
-  --color-bg-subtle: rgba(255, 255, 255, 0.4);
-  --color-bg-contrast: rgba(51, 41, 34, 0.045);
+  --color-bg-elevated: #fffaf0;
+  --color-bg-surface: rgba(255, 250, 240, 0.72);
+  --color-bg-surface-strong: rgba(255, 250, 240, 0.88);
+  --color-bg-subtle: rgba(251, 246, 236, 0.56);
+  --color-bg-contrast: rgba(26, 22, 18, 0.045);
 
-  --color-border-soft: rgba(51, 41, 34, 0.1);
-  --color-border-strong: rgba(51, 41, 34, 0.16);
+  --color-border-soft: #e7dfd4;
+  --color-border-strong: #d4c8b6;
 
-  --color-text-primary: #332922;
-  --color-text-secondary: rgba(51, 41, 34, 0.72);
-  --color-text-tertiary: rgba(51, 41, 34, 0.54);
-  --color-text-faint: rgba(51, 41, 34, 0.34);
+  --color-text-primary: #1a1612;
+  --color-text-secondary: #4b4239;
+  --color-text-tertiary: #7a6e62;
+  --color-text-faint: #9a8b7b;
 
-  --color-accent-soft: rgba(94, 106, 210, 0.12);
-  --color-accent-muted: rgba(94, 106, 210, 0.06);
-  --color-accent-strong: rgba(94, 106, 210, 0.22);
-  --color-focus-ring: rgba(94, 106, 210, 0.18);
+  --color-accent-soft: #f3dcc9;
+  --color-accent-muted: rgba(196, 83, 45, 0.06);
+  --color-accent-strong: rgba(196, 83, 45, 0.22);
+  --color-focus-ring: rgba(196, 83, 45, 0.25);
 
-  /* Semantic status colors */
-  --color-success: #34C759;
-  --color-warning: #FAAD14;
-  --color-error: #E5484D;
-  --color-info: #5E6AD2;
-  --color-live: #34C759;
+  /* Semantic status colors — prototype palette */
+  --color-success: #2f7a49;
+  --color-warning: #b86a17;
+  --color-error: #a53028;
+  --color-info: #c4532d;
+  --color-live: #2f7a49;
 
-  /* Status subtle backgrounds and text (for StatusPill, cards) */
-  --color-bg-success-subtle: #dcfce7;
-  --color-bg-warning-subtle: #fef9c3;
-  --color-bg-danger-subtle: #fee2e2;
-  --color-text-success: #15803d;
-  --color-text-warning: #92400e;
-  --color-text-danger: #dc2626;
-  --color-border-success: #bbf7d0;
-  --color-border-warning: #fde68a;
-  --color-border-danger: #fecaca;
+  /* Status subtle backgrounds and text (StatusPill, cards) */
+  --color-bg-success-subtle: #d9ecd9;
+  --color-bg-warning-subtle: #f5e1c2;
+  --color-bg-danger-subtle: #f5d6cf;
+  --color-text-success: #2f7a49;
+  --color-text-warning: #b86a17;
+  --color-text-danger: #a53028;
+  --color-border-success: #bcd8bc;
+  --color-border-warning: #e6c999;
+  --color-border-danger: #e3b8b0;
 
-  /* Skeleton loading (warm-tinted to match beige background) */
-  --color-skeleton-base: #ede5da;
-  --color-skeleton-shimmer: rgba(255, 255, 255, 0.4);
+  /* Skeleton loading — matches line-soft */
+  --color-skeleton-base: #efe8dd;
+  --color-skeleton-shimmer: rgba(255, 250, 240, 0.55);
 
-  --shadow-card: 0 16px 36px rgba(88, 74, 61, 0.08);
-  --shadow-card-strong: 0 24px 52px rgba(88, 74, 61, 0.1);
-  --shadow-floating: 0 10px 30px rgba(88, 74, 61, 0.06);
+  --shadow-card: 0 16px 36px rgba(26, 22, 18, 0.08);
+  --shadow-card-strong: 0 24px 52px rgba(26, 22, 18, 0.1);
+  --shadow-floating: 0 10px 30px rgba(26, 22, 18, 0.06);
 
   --font-display: "Inter", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
-  --font-mono: "IBM Plex Mono", "SFMono-Regular", monospace;
+  --font-serif: "Fraunces", Georgia, "Songti SC", "Noto Serif SC", serif;
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", "SFMono-Regular", ui-monospace, monospace;
 
   --density-card-padding: 1.35rem;
   --density-card-radius: 28px;
   --density-section-gap: 1.25rem;
   --density-grid-gap: 1rem;
 
-  --color-bg-chrome: rgba(252, 247, 240, 0.94);
-  --color-bg-chrome-strong: rgba(252, 247, 240, 0.92);
+  --color-bg-chrome: #fbf6ec;
+  --color-bg-chrome-strong: #fbf6ec;
 
   color-scheme: light;
 }

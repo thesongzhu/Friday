@@ -1,0 +1,57 @@
+/**
+ * Console v2.0 brand + shell tokens.
+ *
+ * Surfaces, ink, amber/jade/rust, radius, and shell-layout variables used by
+ * the Console shell. Legacy --color-* tokens remain in globals.css so existing
+ * pages keep rendering; pages will migrate to these new tokens in later batches.
+ *
+ * Fonts (Noto Serif SC + JetBrains Mono) ship via @fontsource packages imported
+ * at the top of main.tsx so the app works offline and avoids first-paint FOUT.
+ */
+
+:root {
+  /* ── Surfaces ── */
+  --surface-0: #f4eee2; /* page background */
+  --surface-1: #fbf7ee; /* chrome / elevated panel */
+  --surface-2: #ffffff; /* cards / floating */
+
+  /* ── Ink (text) ── */
+  --ink-900: #2b2118;
+  --ink-700: #4a3e32;
+  --ink-500: #7a6a58;
+  --ink-300: #b3a794;
+
+  /* ── Amber (accent) ── */
+  --amber-100: #f4e3c9;
+  --amber-500: #c77d2e;
+  --amber-600: #a86620;
+
+  /* ── Jade (healthy) ── */
+  --jade-500: #4f7a5c;
+
+  /* ── Rust (degraded / danger) ── */
+  --rust-500: #b0503a;
+
+  /* ── Radius ── */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  /* ── Shell layout ── */
+  --shell-rail-w: 240px;
+  --shell-rail-w-collapsed: 64px;
+  --shell-right-rail-w-full: 360px;
+  --shell-right-rail-w-compact: 280px;
+  --shell-right-rail-w-collapsed: 44px;
+  --shell-content-max-w: 1280px;
+  --shell-topbar-h: 56px;
+  --shell-mobile-topbar-h: 56px;
+  --shell-mobile-nav-h: 72px;
+
+  /* ── Typography ── */
+  --font-serif-sc: "Noto Serif SC", "Source Han Serif SC", "Songti SC", Georgia, serif;
+  --font-mono-jb: "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
+
+  /* ── Motion ── */
+  --motion-swift: 160ms cubic-bezier(0.2, 0, 0, 1);
+}
