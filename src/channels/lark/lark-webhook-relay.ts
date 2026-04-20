@@ -5,7 +5,7 @@
  * owns HTTP webhook ingress state and challenge/event dispatch semantics.
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 export interface LarkWebhookRelayResult {
   accepted: boolean;
@@ -15,6 +15,9 @@ export interface LarkWebhookRelayResult {
     | "LARK_LISTENER_INACTIVE"
     | "LARK_PAYLOAD_INVALID"
     | "LARK_EVENT_IGNORED"
+    | "LARK_TOKEN_UNCONFIGURED"
+    | "LARK_TOKEN_MISSING"
+    | "LARK_TOKEN_INVALID"
     | "LARK_SIGNATURE_MISSING"
     | "LARK_SIGNATURE_INVALID";
 }
@@ -23,7 +26,8 @@ export interface LarkWebhookRelayService {
   start(onEvent: (event: Record<string, unknown>) => void): Promise<void>;
   stop(): Promise<void>;
   isListening(): boolean;
-  setAppSecret(secret: string): void;
+  setVerificationToken(token?: string): void;
+  setEncryptKey(key?: string): void;
   handleHttpWebhook(
     rawBody: string,
     signatureHeader?: string,
@@ -33,24 +37,29 @@ export interface LarkWebhookRelayService {
 }
 
 /**
- * Validate Lark webhook signature using HMAC-SHA256.
- * Lark signs: sha256(timestamp + nonce + appSecret)
- * See: https://open.larksuite.com/document/server-docs/event-subscription-guide/event-subscription-configure-/request-verification
+ * Validate Lark webhook signature using the official event callback contract:
+ * sha256(timestamp + nonce + encryptKey + rawBody)
  */
 export function validateLarkWebhookSignature(
   timestamp: string,
   nonce: string,
-  appSecret: string,
+  encryptKey: string,
+  rawBody: string,
   expectedSignature: string,
 ): boolean {
   try {
-    const content = timestamp + nonce + appSecret;
-    const computedHex = createHmac("sha256", "")
+    const normalizedSignature = expectedSignature.trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(normalizedSignature)) {
+      return false;
+    }
+
+    const content = timestamp + nonce + encryptKey + rawBody;
+    const computedHex = createHash("sha256")
       .update(content, "utf-8")
       .digest("hex");
 
     const computedBuf = Buffer.from(computedHex, "hex");
-    const receivedBuf = Buffer.from(expectedSignature, "hex");
+    const receivedBuf = Buffer.from(normalizedSignature, "hex");
 
     if (computedBuf.length !== receivedBuf.length) {
       return false;
@@ -64,11 +73,25 @@ export function validateLarkWebhookSignature(
 export function createLarkWebhookRelayService(): LarkWebhookRelayService {
   let listening = false;
   let onEvent: ((event: Record<string, unknown>) => void) | null = null;
-  let appSecret: string | null = null;
+  let verificationToken: string | null = null;
+  let encryptKey: string | null = null;
+
+  function extractPayloadToken(payload: Record<string, unknown>): string | undefined {
+    if (typeof payload.token === "string" && payload.token.length > 0) {
+      return payload.token;
+    }
+    const header = payload.header as Record<string, unknown> | undefined;
+    return typeof header?.token === "string" && header.token.length > 0
+      ? header.token
+      : undefined;
+  }
 
   return {
-    setAppSecret(secret) {
-      appSecret = secret;
+    setVerificationToken(token) {
+      verificationToken = token?.trim() ? token.trim() : null;
+    },
+    setEncryptKey(key) {
+      encryptKey = key?.trim() ? key.trim() : null;
     },
     async start(handler) {
       listening = true;
@@ -102,8 +125,30 @@ export function createLarkWebhookRelayService(): LarkWebhookRelayService {
         };
       }
 
-      // URL verification challenge event — skip signature check (Lark sends this before signing is active).
+      const payloadToken = extractPayloadToken(payload);
+
       if (payload.type === "url_verification") {
+        if (!verificationToken) {
+          return {
+            accepted: false,
+            statusCode: 503,
+            code: "LARK_TOKEN_UNCONFIGURED",
+          };
+        }
+        if (!payloadToken) {
+          return {
+            accepted: false,
+            statusCode: 401,
+            code: "LARK_TOKEN_MISSING",
+          };
+        }
+        if (payloadToken !== verificationToken) {
+          return {
+            accepted: false,
+            statusCode: 403,
+            code: "LARK_TOKEN_INVALID",
+          };
+        }
         return {
           accepted: true,
           statusCode: 200,
@@ -111,8 +156,29 @@ export function createLarkWebhookRelayService(): LarkWebhookRelayService {
         };
       }
 
-      // Signature validation: enforce if appSecret is configured.
-      if (appSecret && appSecret.length > 0) {
+      if (!verificationToken) {
+        return {
+          accepted: false,
+          statusCode: 503,
+          code: "LARK_TOKEN_UNCONFIGURED",
+        };
+      }
+      if (!payloadToken) {
+        return {
+          accepted: false,
+          statusCode: 401,
+          code: "LARK_TOKEN_MISSING",
+        };
+      }
+      if (payloadToken !== verificationToken) {
+        return {
+          accepted: false,
+          statusCode: 403,
+          code: "LARK_TOKEN_INVALID",
+        };
+      }
+
+      if (encryptKey) {
         if (!signatureHeader || !timestampHeader || !nonceHeader) {
           return {
             accepted: false,
@@ -120,7 +186,7 @@ export function createLarkWebhookRelayService(): LarkWebhookRelayService {
             code: "LARK_SIGNATURE_MISSING",
           };
         }
-        if (!validateLarkWebhookSignature(timestampHeader, nonceHeader, appSecret, signatureHeader)) {
+        if (!validateLarkWebhookSignature(timestampHeader, nonceHeader, encryptKey, rawBody, signatureHeader)) {
           return {
             accepted: false,
             statusCode: 403,

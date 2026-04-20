@@ -71,6 +71,10 @@ function isProviderHealthEligible(snapshot) {
   return snapshot.routingEligible === true && snapshot.validationStatus !== "failed";
 }
 
+function isProviderValidationEligible(provider) {
+  return !isCliProvider(provider) && providerValidationStatus(provider) === "ok";
+}
+
 function uniqueProviders(providers) {
   const seen = new Set();
   return providers.filter((provider) => {
@@ -89,6 +93,28 @@ function chooseDefaultLane(providers, routing) {
   return buildLane(provider, resolveProviderModel(provider, routing.defaultModel), "default", "routing.default");
 }
 
+export function resolveFallbackLaneRequirement(providers, routing, defaultLane, providerHealthById = new Map()) {
+  const preferredIds = asArray(routing?.fallbackProviderIds).filter((value) => typeof value === "string" && value.length > 0);
+  if (preferredIds.length > 0) {
+    return {
+      fallbackRequired: true,
+      source: "routing.fallback_configured",
+    };
+  }
+
+  const hasValidatedAlternative = providers.some((provider) =>
+    provider?.enabled
+    && provider.id !== defaultLane?.providerId
+    && (
+      isProviderHealthEligible(providerHealthSnapshot(providerHealthById, provider.id))
+      || isProviderValidationEligible(provider)
+    ));
+  return {
+    fallbackRequired: hasValidatedAlternative,
+    source: hasValidatedAlternative ? "validated_alternative_available" : "no_validated_alternative",
+  };
+}
+
 function chooseFallbackLane(providers, routing, defaultLane, providerHealthById = new Map()) {
   const enabled = providers.filter((provider) => provider.enabled && provider.id !== defaultLane?.providerId);
   const preferredIds = asArray(routing?.fallbackProviderIds);
@@ -97,24 +123,30 @@ function chooseFallbackLane(providers, routing, defaultLane, providerHealthById 
     .filter(Boolean));
   const preferredKinds = new Set(fromPreferred.map((provider) => provider.kind).filter((value) => typeof value === "string"));
   const eligibleByHealth = (provider) => isProviderHealthEligible(providerHealthSnapshot(providerHealthById, provider.id));
-  const candidates = uniqueProviders([
+  const explicitCandidates = uniqueProviders([
     ...fromPreferred.filter((provider) => eligibleByHealth(provider) && provider.kind !== defaultLane?.providerKind),
     ...enabled.filter((provider) => eligibleByHealth(provider) && preferredKinds.has(provider.kind) && provider.kind !== defaultLane?.providerKind),
     ...enabled.filter((provider) => eligibleByHealth(provider) && provider.kind !== defaultLane?.providerKind),
     ...fromPreferred.filter((provider) => eligibleByHealth(provider)),
     ...enabled.filter((provider) => eligibleByHealth(provider) && preferredKinds.has(provider.kind)),
     ...enabled.filter((provider) => eligibleByHealth(provider)),
-    ...fromPreferred.filter((provider) => !isCliProvider(provider) && providerValidationStatus(provider) === "ok" && provider.kind !== defaultLane?.providerKind),
-    ...enabled.filter((provider) => !isCliProvider(provider) && providerValidationStatus(provider) === "ok" && provider.kind !== defaultLane?.providerKind),
-    ...fromPreferred.filter((provider) => !isCliProvider(provider) && providerValidationStatus(provider) === "ok"),
-    ...enabled.filter((provider) => !isCliProvider(provider) && providerValidationStatus(provider) === "ok"),
+    ...fromPreferred.filter((provider) => isProviderValidationEligible(provider) && provider.kind !== defaultLane?.providerKind),
+    ...enabled.filter((provider) => isProviderValidationEligible(provider) && preferredKinds.has(provider.kind) && provider.kind !== defaultLane?.providerKind),
+    ...enabled.filter((provider) => isProviderValidationEligible(provider) && provider.kind !== defaultLane?.providerKind),
+    ...fromPreferred.filter((provider) => isProviderValidationEligible(provider)),
+    ...enabled.filter((provider) => isProviderValidationEligible(provider) && preferredKinds.has(provider.kind)),
+    ...enabled.filter((provider) => isProviderValidationEligible(provider)),
     ...fromPreferred.filter((provider) => !isCliProvider(provider)),
-    ...enabled.filter((provider) => !isCliProvider(provider)),
     ...fromPreferred.filter((provider) => provider.config?.backendKind !== defaultLane?.backendKind),
-    ...enabled.filter((provider) => provider.config?.backendKind !== defaultLane?.backendKind),
     ...fromPreferred,
-    ...enabled,
   ].filter(Boolean));
+  const heuristicCandidates = uniqueProviders([
+    ...enabled.filter((provider) => eligibleByHealth(provider) && provider.kind !== defaultLane?.providerKind),
+    ...enabled.filter((provider) => eligibleByHealth(provider)),
+    ...enabled.filter((provider) => isProviderValidationEligible(provider) && provider.kind !== defaultLane?.providerKind),
+    ...enabled.filter((provider) => isProviderValidationEligible(provider)),
+  ].filter(Boolean));
+  const candidates = preferredIds.length > 0 ? explicitCandidates : heuristicCandidates;
   const selected = candidates[0];
   if (!selected) return null;
   return buildLane(selected, resolveProviderModel(selected), "fallback", selected.id && preferredIds.includes(selected.id) ? "routing.fallback" : "heuristic.fallback");
@@ -200,7 +232,7 @@ export function resolveScenarioLanes(scenario, envTruth) {
   if (scenario.providerLane === "default_and_fallback") {
     if (envTruth.providerLanes.fallback) {
       lanes.push(envTruth.providerLanes.fallback);
-    } else {
+    } else if (envTruth.providerLaneRequirements?.fallbackRequired !== false) {
       lanes.push({
         id: "fallback-missing",
         laneKey: "fallback",
@@ -318,6 +350,7 @@ export async function collectEnvironmentTruth({
   const routing = routingResponse.json?.data?.routing ?? null;
   const enabledProviders = providers.filter((provider) => provider.enabled);
   const defaultLane = chooseDefaultLane(enabledProviders, routing);
+  const providerLaneRequirements = resolveFallbackLaneRequirement(enabledProviders, routing, defaultLane, providerHealthById);
   const fallbackLane = chooseFallbackLane(enabledProviders, routing, defaultLane, providerHealthById);
   const enabledProviderLanes = enabledProviders
     .map((provider) => buildLane(provider, resolveProviderModel(provider), "candidate", "providers.list"))
@@ -356,6 +389,7 @@ export async function collectEnvironmentTruth({
     providers,
     providerHealth,
     enabledProviders,
+    providerLaneRequirements,
     providerLanes: {
       default: defaultLane,
       fallback: fallbackLane,

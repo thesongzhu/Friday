@@ -1,5 +1,12 @@
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
-import type { FridaySkillExecuteRequest, FridaySkillExecutor, FridaySkillRegistry } from "#skills";
+import {
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  type FridaySkillExecuteRequest,
+  type FridaySkillExecutor,
+  type FridaySkillRegistry,
+  getFridayUnisolatedNodeSkillsDisabledMessage,
+  isFridayUnisolatedNodeSkillsEnabled,
+} from "#skills";
 import { FRIDAY_AGENT_TOOL_TIMEOUT_MS } from "../friday-agent.constants.js";
 import { evaluateFridaySkillMcpReadiness, type FridayMcpServerReadiness } from "../mcp/friday-mcp-readiness.js";
 import {
@@ -109,6 +116,25 @@ export function createFridayAgentSkillTool(
             ready: false,
             blockers: readiness.blockers,
             ...(readiness.requirements ? { requirements: readiness.requirements } : {}),
+          });
+        }
+
+        if (
+          registeredSkill.manifest.runtime.kind === "node" &&
+          !isFridayUnisolatedNodeSkillsEnabled()
+        ) {
+          return jsonResult({
+            skillId,
+            status: "blocked",
+            ready: false,
+            code: "CAPABILITY_DISABLED",
+            capability: "skill_node_runtime",
+            surface: "skill_run",
+            blockers: [getFridayUnisolatedNodeSkillsDisabledMessage()],
+            details: {
+              runtimeKind: "node",
+              gate: FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+            },
           });
         }
       }

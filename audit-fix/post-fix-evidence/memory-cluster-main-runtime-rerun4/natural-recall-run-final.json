@@ -1,0 +1,248 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/agent/runs/b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "run": {
+          "id": "b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c",
+          "task": "What should you call me? Reply with only the name.",
+          "status": "failed",
+          "sessionKey": "agent:run:b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c",
+          "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+          "attempt": 0,
+          "maxAttempts": 3,
+          "artifacts": [
+            {
+              "type": "run_record",
+              "path": ".friday/agent-runs/b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c/run.json"
+            }
+          ],
+          "testResults": [
+            {
+              "strategy": "llm_eval",
+              "passed": true,
+              "errors": [],
+              "durationMs": 0
+            }
+          ],
+          "errorCode": "AGENT_VALIDATION_ERROR",
+          "errorMessage": "Validation criteria not met",
+          "createdAt": "2026-04-19T12:07:29.547Z",
+          "startedAt": "2026-04-19T12:07:29.548Z",
+          "completedAt": "2026-04-19T12:07:35.936Z",
+          "durationMs": 6389,
+          "usageInput": 0,
+          "usageOutput": 0,
+          "planReview": {
+            "plan": {
+              "task": "What should you call me? Reply with only the name.",
+              "stepCount": 1,
+              "description": "Planning approach for: What should you call me? Reply with only the name."
+            },
+            "decision": {
+              "approved": true,
+              "mode": "off",
+              "reason": "No review required",
+              "reviewedAt": "2026-04-19T12:07:29.548Z"
+            }
+          },
+          "actualExecution": {
+            "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfileId": "default",
+            "modelSelectionSource": "route_default",
+            "finalFailureReason": "Validation criteria not met",
+            "turns": [
+              {
+                "inputTokens": 0,
+                "outputTokens": 0
+              }
+            ]
+          },
+          "artifactDir": ".friday/agent-runs/b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c",
+          "contextCostSummary": {
+            "totalEstimatedChars": 7492,
+            "components": [
+              {
+                "kind": "workspace_context",
+                "estimatedChars": 5341,
+                "count": 5,
+                "metadata": {
+                  "pathRuleCount": 0,
+                  "candidatePaths": []
+                }
+              },
+              {
+                "kind": "starter_skills",
+                "estimatedChars": 2055,
+                "count": 8
+              },
+              {
+                "kind": "subagents",
+                "estimatedChars": 96,
+                "count": 1,
+                "metadata": {
+                  "enabled": true
+                }
+              }
+            ]
+          },
+          "taskProfile": {
+            "id": "default",
+            "label": "Balanced",
+            "description": "General-purpose execution profile for standard assistant turns.",
+            "reasoningEffort": "medium"
+          },
+          "rollbackAvailable": false,
+          "health": {
+            "state": "failed",
+            "rollbackAvailable": false,
+            "reasonCodes": [
+              "failed"
+            ]
+          },
+          "contextSummary": {
+            "taskProfileId": "default",
+            "taskProfileLabel": "Balanced",
+            "totalEstimatedChars": 7492,
+            "dominantContextKinds": [
+              "workspace_context",
+              "starter_skills"
+            ],
+            "learningAdjusted": false,
+            "fallbackAttemptCount": 0,
+            "blockedToolCount": 0,
+            "modelSelectionSource": "route_default"
+          }
+        }
+      },
+      "requestId": "9fe0a985-7a95-44bc-b7b3-cb4396a38a21"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "run": {
+        "id": "b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c",
+        "task": "What should you call me? Reply with only the name.",
+        "status": "failed",
+        "sessionKey": "agent:run:b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c",
+        "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+        "attempt": 0,
+        "maxAttempts": 3,
+        "artifacts": [
+          {
+            "type": "run_record",
+            "path": ".friday/agent-runs/b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c/run.json"
+          }
+        ],
+        "testResults": [
+          {
+            "strategy": "llm_eval",
+            "passed": true,
+            "errors": [],
+            "durationMs": 0
+          }
+        ],
+        "errorCode": "AGENT_VALIDATION_ERROR",
+        "errorMessage": "Validation criteria not met",
+        "createdAt": "2026-04-19T12:07:29.547Z",
+        "startedAt": "2026-04-19T12:07:29.548Z",
+        "completedAt": "2026-04-19T12:07:35.936Z",
+        "durationMs": 6389,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "planReview": {
+          "plan": {
+            "task": "What should you call me? Reply with only the name.",
+            "stepCount": 1,
+            "description": "Planning approach for: What should you call me? Reply with only the name."
+          },
+          "decision": {
+            "approved": true,
+            "mode": "off",
+            "reason": "No review required",
+            "reviewedAt": "2026-04-19T12:07:29.548Z"
+          }
+        },
+        "actualExecution": {
+          "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+          "taskProfileId": "default",
+          "modelSelectionSource": "route_default",
+          "finalFailureReason": "Validation criteria not met",
+          "turns": [
+            {
+              "inputTokens": 0,
+              "outputTokens": 0
+            }
+          ]
+        },
+        "artifactDir": ".friday/agent-runs/b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c",
+        "contextCostSummary": {
+          "totalEstimatedChars": 7492,
+          "components": [
+            {
+              "kind": "workspace_context",
+              "estimatedChars": 5341,
+              "count": 5,
+              "metadata": {
+                "pathRuleCount": 0,
+                "candidatePaths": []
+              }
+            },
+            {
+              "kind": "starter_skills",
+              "estimatedChars": 2055,
+              "count": 8
+            },
+            {
+              "kind": "subagents",
+              "estimatedChars": 96,
+              "count": 1,
+              "metadata": {
+                "enabled": true
+              }
+            }
+          ]
+        },
+        "taskProfile": {
+          "id": "default",
+          "label": "Balanced",
+          "description": "General-purpose execution profile for standard assistant turns.",
+          "reasoningEffort": "medium"
+        },
+        "rollbackAvailable": false,
+        "health": {
+          "state": "failed",
+          "rollbackAvailable": false,
+          "reasonCodes": [
+            "failed"
+          ]
+        },
+        "contextSummary": {
+          "taskProfileId": "default",
+          "taskProfileLabel": "Balanced",
+          "totalEstimatedChars": 7492,
+          "dominantContextKinds": [
+            "workspace_context",
+            "starter_skills"
+          ],
+          "learningAdjusted": false,
+          "fallbackAttemptCount": 0,
+          "blockedToolCount": 0,
+          "modelSelectionSource": "route_default"
+        }
+      }
+    },
+    "requestId": "9fe0a985-7a95-44bc-b7b3-cb4396a38a21"
+  }
+}

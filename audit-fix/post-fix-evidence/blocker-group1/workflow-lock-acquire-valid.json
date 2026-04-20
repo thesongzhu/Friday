@@ -1,0 +1,32 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/workflows/9c962641-139d-49db-a078-e9a256985c64/locks/acquire",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "ownerUserId": "admin-001",
+      "ttlSec": 60
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "acquired": true,
+        "lock": {
+          "workflowId": "9c962641-139d-49db-a078-e9a256985c64",
+          "lockToken": "61edc074-51f9-4afa-ad40-8c39a46e4fb9",
+          "ownerUserId": "admin-001",
+          "acquiredAt": "2026-04-19T09:10:03.458Z",
+          "heartbeatAt": "2026-04-19T09:10:03.458Z",
+          "expiresAt": "2026-04-19T09:11:03.458Z"
+        }
+      },
+      "requestId": "217bae72-688c-4abe-958a-a4bca3940c0a"
+    }
+  }
+}

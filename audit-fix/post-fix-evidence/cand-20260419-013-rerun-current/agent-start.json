@@ -1,0 +1,18 @@
+{
+  "status": 200,
+  "body": {
+    "ok": true,
+    "data": {
+      "runId": "4f200d91-8c7d-4244-b62e-865f7dc93e4c",
+      "status": "failed",
+      "response": "All providers failed (1): anthropic/claude-sonnet-4-20250514: LLM request failed (401): {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"},\"request_id\":\"req_011CaDTRNeWc8HhRA6V1rbA1\"} code=AGENT_LLM_ERROR",
+      "toolCallCount": 0,
+      "durationMs": 288,
+      "usageInput": 0,
+      "usageOutput": 0,
+      "finalResponse": "All providers failed (1): anthropic/claude-sonnet-4-20250514: LLM request failed (401): {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"},\"request_id\":\"req_011CaDTRNeWc8HhRA6V1rbA1\"} code=AGENT_LLM_ERROR",
+      "eventStreamAvailable": true
+    },
+    "requestId": "40413307-d272-4e05-ba19-7b0373394b2a"
+  }
+}

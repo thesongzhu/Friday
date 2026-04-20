@@ -1,0 +1,32 @@
+{
+  "rawBody": {
+    "ok": false,
+    "error": {
+      "code": "CHANNEL_NOT_FOUND",
+      "message": "Channel \"fake-kind\" is not registered",
+      "retryable": false
+    },
+    "requestId": "e51a8509-9e16-4dc1-9505-03216dacbbfb"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/channels/fake-kind",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 404,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "CHANNEL_NOT_FOUND",
+        "message": "Channel \"fake-kind\" is not registered",
+        "retryable": false
+      },
+      "requestId": "e51a8509-9e16-4dc1-9505-03216dacbbfb"
+    }
+  }
+}

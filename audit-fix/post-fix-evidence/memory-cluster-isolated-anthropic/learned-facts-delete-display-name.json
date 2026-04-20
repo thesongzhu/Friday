@@ -1,0 +1,32 @@
+{
+  "request": {
+    "method": "DELETE",
+    "url": "http://127.0.0.1:3242/v1/uix/learned-facts/pref%3Adisplay_name",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 404,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "NOT_FOUND",
+        "message": "No route matches DELETE /v1/uix/learned-facts/pref%3Adisplay_name",
+        "retryable": false
+      },
+      "requestId": "6ecb1ef8-d874-4ed3-88ca-d4f7bea511c6"
+    }
+  },
+  "rawBody": {
+    "ok": false,
+    "error": {
+      "code": "NOT_FOUND",
+      "message": "No route matches DELETE /v1/uix/learned-facts/pref%3Adisplay_name",
+      "retryable": false
+    },
+    "requestId": "6ecb1ef8-d874-4ed3-88ca-d4f7bea511c6"
+  }
+}

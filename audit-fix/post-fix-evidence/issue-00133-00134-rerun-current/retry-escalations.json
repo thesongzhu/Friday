@@ -1,0 +1,128 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "items": [
+        {
+          "id": "4e077049-4fbd-48bc-9912-9359dfbfbd00",
+          "traceId": "d7135adb-0a8f-4410-bba7-333ec05f77d2",
+          "target": "operator",
+          "channel": "operator",
+          "reason": "circuit breaker open",
+          "failureCategory": "timeout",
+          "attemptCount": 1,
+          "totalCost": {
+            "tokens": 0,
+            "apiCalls": 0,
+            "computeMs": 0
+          },
+          "acknowledged": false,
+          "escalatedAt": "2026-04-19T14:12:40.787Z"
+        },
+        {
+          "id": "b23a2983-2887-4d0a-84f7-e5754d20bb50",
+          "traceId": "7d640cb4-ed72-49bd-9a05-6ac2395be070",
+          "target": "operator",
+          "channel": "operator",
+          "reason": "max attempts reached",
+          "failureCategory": "timeout",
+          "attemptCount": 3,
+          "totalCost": {
+            "tokens": 0,
+            "apiCalls": 0,
+            "computeMs": 0
+          },
+          "acknowledged": false,
+          "escalatedAt": "2026-04-19T14:12:40.740Z"
+        },
+        {
+          "id": "ad65e613-64c7-43b9-aa0b-3ae158eef460",
+          "traceId": "0ac23be8-3e18-4589-a7bd-a5f6994b34bd",
+          "target": "operator",
+          "channel": "operator",
+          "reason": "max attempts reached",
+          "failureCategory": "timeout",
+          "attemptCount": 3,
+          "totalCost": {
+            "tokens": 0,
+            "apiCalls": 0,
+            "computeMs": 0
+          },
+          "acknowledged": false,
+          "escalatedAt": "2026-04-19T14:12:37.667Z"
+        }
+      ],
+      "total": 3
+    },
+    "requestId": "0dea9d19-3cf2-470e-9581-31bac8a72d79"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/retry/escalations?limit=20",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "items": [
+          {
+            "id": "4e077049-4fbd-48bc-9912-9359dfbfbd00",
+            "traceId": "d7135adb-0a8f-4410-bba7-333ec05f77d2",
+            "target": "operator",
+            "channel": "operator",
+            "reason": "circuit breaker open",
+            "failureCategory": "timeout",
+            "attemptCount": 1,
+            "totalCost": {
+              "tokens": 0,
+              "apiCalls": 0,
+              "computeMs": 0
+            },
+            "acknowledged": false,
+            "escalatedAt": "2026-04-19T14:12:40.787Z"
+          },
+          {
+            "id": "b23a2983-2887-4d0a-84f7-e5754d20bb50",
+            "traceId": "7d640cb4-ed72-49bd-9a05-6ac2395be070",
+            "target": "operator",
+            "channel": "operator",
+            "reason": "max attempts reached",
+            "failureCategory": "timeout",
+            "attemptCount": 3,
+            "totalCost": {
+              "tokens": 0,
+              "apiCalls": 0,
+              "computeMs": 0
+            },
+            "acknowledged": false,
+            "escalatedAt": "2026-04-19T14:12:40.740Z"
+          },
+          {
+            "id": "ad65e613-64c7-43b9-aa0b-3ae158eef460",
+            "traceId": "0ac23be8-3e18-4589-a7bd-a5f6994b34bd",
+            "target": "operator",
+            "channel": "operator",
+            "reason": "max attempts reached",
+            "failureCategory": "timeout",
+            "attemptCount": 3,
+            "totalCost": {
+              "tokens": 0,
+              "apiCalls": 0,
+              "computeMs": 0
+            },
+            "acknowledged": false,
+            "escalatedAt": "2026-04-19T14:12:37.667Z"
+          }
+        ],
+        "total": 3
+      },
+      "requestId": "0dea9d19-3cf2-470e-9581-31bac8a72d79"
+    }
+  }
+}

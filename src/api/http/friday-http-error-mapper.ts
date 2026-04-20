@@ -4,54 +4,99 @@ import { FRIDAY_ERROR_CODES, FridayDomainError, mapFridayErrorToHttpStatus } fro
 
 // ─── Error to HTTP status code ───
 
-export function mapErrorToStatusCode(error: unknown): number {
+const FRIDAY_GENERIC_5XX_MESSAGE = "Internal Server Error";
+const FRIDAY_SQLITE_BUSY_RETRY_AFTER_MS = 1_000;
+const FRIDAY_SQLITE_BUSY_CODES = new Set(["SQLITE_BUSY", "SQLITE_BUSY_SNAPSHOT"]);
+
+function isSqliteBusyLike(error: unknown, seen = new Set<object>()): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  if (seen.has(error)) {
+    return false;
+  }
+  seen.add(error);
+
+  const record = error as { code?: unknown; message?: unknown; cause?: unknown };
+  if (typeof record.code === "string" && FRIDAY_SQLITE_BUSY_CODES.has(record.code)) {
+    return true;
+  }
+  if (
+    typeof record.message === "string"
+    && record.message.toLowerCase().includes("database is locked")
+  ) {
+    return true;
+  }
+  return isSqliteBusyLike(record.cause, seen);
+}
+
+function normalizeHttpError(error: unknown): unknown {
   if (error instanceof FridayDomainError) {
-    return error.httpStatus;
+    return error;
+  }
+  if (isSqliteBusyLike(error)) {
+    return new FridayDomainError(
+      FRIDAY_ERROR_CODES.DEGRADED_MODE,
+      "Database is temporarily busy",
+      {
+        httpStatus: 503,
+        retryable: true,
+        details: {
+          retryAfterMs: FRIDAY_SQLITE_BUSY_RETRY_AFTER_MS,
+        },
+        cause: error,
+      },
+    );
+  }
+  return error;
+}
+
+export function mapErrorToStatusCode(error: unknown): number {
+  const normalized = normalizeHttpError(error);
+  if (normalized instanceof FridayDomainError) {
+    return normalized.httpStatus;
   }
   return 500;
 }
 
-// ─── Constants ───
-
-const FRIDAY_GENERIC_5XX_MESSAGE = "Internal Server Error";
-
 // ─── Error to API error ───
 
 export function mapErrorToApiError(error: unknown, statusCode: number): FridayApiError {
+  const normalized = normalizeHttpError(error);
   if (statusCode >= 500) {
-    if (error instanceof FridayDomainError && statusCode === 501) {
+    if (normalized instanceof FridayDomainError && statusCode === 501) {
       const apiError: FridayApiError = {
-        code: error.code,
-        message: error.message,
-        retryable: error.retryable,
+        code: normalized.code,
+        message: normalized.message,
+        retryable: normalized.retryable,
       };
-      if (error.details && Object.keys(error.details).length > 0) {
-        apiError.details = error.details as Record<string, JsonValue>;
+      if (normalized.details && Object.keys(normalized.details).length > 0) {
+        apiError.details = normalized.details as Record<string, JsonValue>;
       }
       return apiError;
     }
     // Mask all 5xx messages to prevent information leakage
     return {
-      code: error instanceof FridayDomainError ? error.code : FRIDAY_ERROR_CODES.INTERNAL_ERROR,
+      code: normalized instanceof FridayDomainError ? normalized.code : FRIDAY_ERROR_CODES.INTERNAL_ERROR,
       message: FRIDAY_GENERIC_5XX_MESSAGE,
-      retryable: false,
+      retryable: normalized instanceof FridayDomainError ? normalized.retryable : false,
     };
   }
-  if (error instanceof FridayDomainError) {
+  if (normalized instanceof FridayDomainError) {
     const apiError: FridayApiError = {
-      code: error.code,
-      message: error.message,
-      retryable: error.retryable,
+      code: normalized.code,
+      message: normalized.message,
+      retryable: normalized.retryable,
     };
-    if (error.details && Object.keys(error.details).length > 0) {
-      apiError.details = error.details as Record<string, JsonValue>;
+    if (normalized.details && Object.keys(normalized.details).length > 0) {
+      apiError.details = normalized.details as Record<string, JsonValue>;
     }
     return apiError;
   }
-  if (error instanceof Error) {
+  if (normalized instanceof Error) {
     return {
       code: FRIDAY_ERROR_CODES.INTERNAL_ERROR,
-      message: error.message,
+      message: normalized.message,
       retryable: false,
     };
   }
@@ -82,11 +127,12 @@ export function buildErrorResponse(error: unknown, requestId: string): {
   body: FridayApiErrorResponse;
   headers?: Record<string, string>;
 } {
-  const statusCode = mapErrorToStatusCode(error);
-  const apiError = mapErrorToApiError(error, statusCode);
+  const normalized = normalizeHttpError(error);
+  const statusCode = mapErrorToStatusCode(normalized);
+  const apiError = mapErrorToApiError(normalized, statusCode);
 
   // Propagate retryAfterMs into the API error and Retry-After header
-  const retryAfterMs = extractRetryAfterMs(error);
+  const retryAfterMs = extractRetryAfterMs(normalized);
   if (retryAfterMs != null) {
     apiError.retryAfterMs = retryAfterMs;
   }

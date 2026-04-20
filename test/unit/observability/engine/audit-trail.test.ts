@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   FridayAuditTrail,
   canonicalizeAuditEntry,
+  type FridayAuditTrailStore,
 } from "../../../../src/observability/engine/audit-trail.js";
 import { FRIDAY_AUDIT_GENESIS_HASH } from "../../../../src/observability/model/friday-observability.types.js";
 import type {
@@ -35,6 +36,38 @@ function makeEntry(overrides: Record<string, unknown> = {}) {
     description: "Created rule rule-1",
     module: "rules" as const,
     ...overrides,
+  };
+}
+
+function createInMemoryAuditStore(): FridayAuditTrailStore {
+  const entries: FridayAuditEntry[] = [];
+  const checkpoints: Array<{
+    id: string;
+    lastDeletedSequenceNumber: number;
+    boundaryHash: string;
+    firstRetainedSequenceNumber: number;
+    createdAt: string;
+    reason: string;
+  }> = [];
+
+  return {
+    loadSnapshot() {
+      return {
+        entries: structuredClone(entries),
+        checkpoints: structuredClone(checkpoints),
+      };
+    },
+    appendEntry(entry) {
+      entries.push(structuredClone(entry));
+    },
+    recordRetention(checkpoint) {
+      const remaining = entries.filter(
+        (entry) => entry.sequenceNumber > checkpoint.lastDeletedSequenceNumber,
+      );
+      entries.length = 0;
+      entries.push(...remaining);
+      checkpoints.push(structuredClone(checkpoint));
+    },
   };
 }
 
@@ -75,6 +108,23 @@ describe("FridayAuditTrail", () => {
     it("computes a SHA-256 integrity hash", async () => {
       const entry = await trail.append(makeEntry());
       expect(entry.integrityHash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it("serializes concurrent appends so the hash chain stays valid", async () => {
+      const entries = await Promise.all(
+        Array.from({ length: 6 }, (_, index) =>
+          trail.append(makeEntry({ action: `rules.update.${index}` })),
+        ),
+      );
+
+      expect(entries.map((entry) => entry.sequenceNumber)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(entries[0]!.previousHash).toBe(FRIDAY_AUDIT_GENESIS_HASH);
+
+      for (let index = 1; index < entries.length; index += 1) {
+        expect(entries[index]!.previousHash).toBe(entries[index - 1]!.integrityHash);
+      }
+
+      await expect(trail.verifyChain()).resolves.toEqual({ valid: true });
     });
 
     it("includes optional fields when provided", async () => {
@@ -378,6 +428,45 @@ describe("FridayAuditTrail", () => {
 
       const entry = await trail.append(makeEntry());
       expect(entry.sequenceNumber).toBe(1);
+    });
+  });
+
+  describe("store-backed recovery", () => {
+    it("reloads persisted state and continues sequence numbers after restart", async () => {
+      const store = createInMemoryAuditStore();
+      const firstTrail = new FridayAuditTrail({ store });
+
+      await firstTrail.append(makeEntry({ action: "rules.create.first" }));
+      const second = await firstTrail.append(makeEntry({ action: "rules.create.second" }));
+      await firstTrail.applyRetention(1, "trim old entries");
+
+      const recoveredTrail = new FridayAuditTrail({ store });
+      expect(recoveredTrail.getEntries()).toHaveLength(1);
+      expect(recoveredTrail.getEntries()[0]!.id).toBe(second.id);
+      expect(recoveredTrail.getCheckpoints()).toHaveLength(1);
+
+      const next = await recoveredTrail.append(makeEntry({ action: "rules.create.third" }));
+      expect(next.sequenceNumber).toBe(3);
+      expect(next.previousHash).toBe(second.integrityHash);
+      await expect(recoveredTrail.verifyChain()).resolves.toEqual({ valid: true });
+    });
+
+    it("anchors new entries from the last checkpoint when no retained entries remain", async () => {
+      const store = createInMemoryAuditStore();
+      const firstTrail = new FridayAuditTrail({ store });
+
+      const entry1 = await firstTrail.append(makeEntry({ action: "rules.create.first" }));
+      await firstTrail.append(makeEntry({ action: "rules.create.second" }));
+      const checkpoint = await firstTrail.applyRetention(2, "full trim");
+
+      const recoveredTrail = new FridayAuditTrail({ store });
+      const next = await recoveredTrail.append(makeEntry({ action: "rules.create.third" }));
+
+      expect(checkpoint).not.toBeNull();
+      expect(entry1.sequenceNumber).toBe(1);
+      expect(next.sequenceNumber).toBe(3);
+      expect(next.previousHash).toBe(checkpoint!.boundaryHash);
+      await expect(recoveredTrail.verifyChain()).resolves.toEqual({ valid: true });
     });
   });
 });

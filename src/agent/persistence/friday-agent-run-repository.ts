@@ -115,6 +115,14 @@ export interface FridayAgentRunRepository {
     id: string,
   ): FridayAgentRunRecord | null;
 
+  findLatestByApiRequestIdempotencyKey(
+    db: Database.Database,
+    input: {
+      principalId: string;
+      idempotencyKey: string;
+    },
+  ): FridayAgentRunRecord | null;
+
   update(
     db: Database.Database,
     input: {
@@ -197,6 +205,18 @@ export function createFridayAgentRunRepository(): FridayAgentRunRepository {
       const row = db.prepare(
         "SELECT * FROM friday_agent_runs WHERE id = ?",
       ).get(id) as FridayAgentRunRow | undefined;
+
+      return row ? rowToRecord(row) : null;
+    },
+
+    findLatestByApiRequestIdempotencyKey(db, input) {
+      const row = db.prepare(
+        `SELECT * FROM friday_agent_runs
+         WHERE json_extract(metadata_json, '$.apiRequest.principalId') = ?
+           AND json_extract(metadata_json, '$.apiRequest.idempotencyKey') = ?
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      ).get(input.principalId, input.idempotencyKey) as FridayAgentRunRow | undefined;
 
       return row ? rowToRecord(row) : null;
     },

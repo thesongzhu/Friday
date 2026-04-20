@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "data": {
+    "result": {
+      "deletedCount": 0,
+      "deletedIds": [],
+      "dryRun": true
+    }
+  },
+  "requestId": "7da87ff4-8725-4b91-a4d6-4c5ba11ecd4b"
+}

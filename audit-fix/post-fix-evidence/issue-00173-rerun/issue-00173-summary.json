@@ -1,0 +1,53 @@
+{
+  "baseUrl": "http://127.0.0.1:3241",
+  "dbPath": "/Users/jarvis/Projects/Friday/.claude/worktrees/friday-audit-remediation-20260419T085134Z/audit-fix/runtime/main-fix-state-issue173-postfix/friday.db",
+  "preIdleMs": 130000,
+  "postFailureSoakMs": 130000,
+  "workflowId": "7e4409b2-0b7c-42cb-870c-8f2834043e97",
+  "workflowVersionId": "2321c449-66e8-47d8-a8ea-e7ff912d83cf",
+  "runId": "a381db70-6e15-42a6-9db8-9b39dde9734d",
+  "baseline": {
+    "takenAt": "2026-04-19T10:12:46.222Z",
+    "learningEvents": 0,
+    "errorIncidents": 0,
+    "openErrorIncidents": 0,
+    "autoFixActions": 0,
+    "plannedAutoFixActions": 0,
+    "learnedLessons": 0
+  },
+  "postIdle": {
+    "takenAt": "2026-04-19T10:14:56.226Z",
+    "learningEvents": 0,
+    "errorIncidents": 0,
+    "openErrorIncidents": 0,
+    "autoFixActions": 0,
+    "plannedAutoFixActions": 0,
+    "learnedLessons": 0
+  },
+  "countsAfterFailure": {
+    "takenAt": "2026-04-19T10:14:56.256Z",
+    "learningEvents": 1,
+    "errorIncidents": 1,
+    "openErrorIncidents": 1,
+    "autoFixActions": 0,
+    "plannedAutoFixActions": 0,
+    "learnedLessons": 0
+  },
+  "postSoak": {
+    "takenAt": "2026-04-19T10:17:06.260Z",
+    "learningEvents": 1,
+    "errorIncidents": 1,
+    "openErrorIncidents": 1,
+    "autoFixActions": 0,
+    "plannedAutoFixActions": 0,
+    "learnedLessons": 0
+  },
+  "deltas": {
+    "idleLearningEvents": 0,
+    "idleErrorIncidents": 0,
+    "idleAutoFixActions": 0,
+    "failureToSoakLearningEvents": 0,
+    "failureToSoakErrorIncidents": 0,
+    "failureToSoakAutoFixActions": 0
+  }
+}

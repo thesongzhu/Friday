@@ -23,6 +23,8 @@ export interface FridayDeterministicPipelineRoutesDeps {
     listBundles: (query: Record<string, unknown>) => unknown;
     getBundle: (bundleId: string) => unknown;
     createBundle: (body: unknown) => unknown;
+    updateBundle: (bundleId: string, body: unknown) => unknown;
+    listBundleVersions: (bundleId: string, query: Record<string, unknown>) => unknown;
     listRules: (bundleId: string, query: Record<string, unknown>) => unknown;
     evaluateRules: (body: unknown) => unknown;
     simulateRules: (body: unknown) => unknown;
@@ -126,6 +128,34 @@ export function createFridayDeterministicPipelineRoutes(
           );
         }
         return deps.rules.createBundle(body);
+      },
+    },
+    {
+      operationId: "rules.bundles.update",
+      method: "PATCH",
+      path: "/v1/rules/bundles/:bundleId",
+      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      async handler(ctx) {
+        const { bundleId } = ctx.params as { bundleId: string };
+        const body = ctx.body as Record<string, unknown> | null;
+        if (!body) {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "Request body is required",
+            { httpStatus: 400 },
+          );
+        }
+        return deps.rules.updateBundle(bundleId, body);
+      },
+    },
+    {
+      operationId: "rules.bundles.versions.list",
+      method: "GET",
+      path: "/v1/rules/bundles/:bundleId/versions",
+      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      async handler(ctx) {
+        const { bundleId } = ctx.params as { bundleId: string };
+        return deps.rules.listBundleVersions(bundleId, ctx.query as Record<string, unknown>);
       },
     },
 

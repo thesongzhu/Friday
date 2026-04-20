@@ -1,0 +1,94 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "publishedVersion": {
+        "id": "f86e96a8-4cb8-45e5-a1ba-565c225e4b1d",
+        "workflowId": "7141ac9e-5dce-426e-9bd1-de1240bbdd9d",
+        "versionNumber": 1,
+        "checksum": "45f2233e1de63919a036e66e87c234cf6149e415a9e3329e0c359eda3796e259",
+        "graphJson": {
+          "nodes": [
+            {
+              "id": "n1",
+              "kind": "start",
+              "data": {}
+            },
+            {
+              "id": "n2",
+              "kind": "data",
+              "data": {
+                "mapping": {
+                  "ok": true
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "from": "n1",
+              "to": "n2"
+            }
+          ]
+        },
+        "isPublished": true,
+        "createdAt": "2026-04-19T13:44:45.424Z",
+        "updatedAt": "2026-04-19T13:44:45.426Z"
+      }
+    },
+    "requestId": "30b6ded4-34cf-4afd-a1f4-f347515e18fa"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/workflows/7141ac9e-5dce-426e-9bd1-de1240bbdd9d/publish",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "versionNumber": 1
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "publishedVersion": {
+          "id": "f86e96a8-4cb8-45e5-a1ba-565c225e4b1d",
+          "workflowId": "7141ac9e-5dce-426e-9bd1-de1240bbdd9d",
+          "versionNumber": 1,
+          "checksum": "45f2233e1de63919a036e66e87c234cf6149e415a9e3329e0c359eda3796e259",
+          "graphJson": {
+            "nodes": [
+              {
+                "id": "n1",
+                "kind": "start",
+                "data": {}
+              },
+              {
+                "id": "n2",
+                "kind": "data",
+                "data": {
+                  "mapping": {
+                    "ok": true
+                  }
+                }
+              }
+            ],
+            "edges": [
+              {
+                "from": "n1",
+                "to": "n2"
+              }
+            ]
+          },
+          "isPublished": true,
+          "createdAt": "2026-04-19T13:44:45.424Z",
+          "updatedAt": "2026-04-19T13:44:45.426Z"
+        }
+      },
+      "requestId": "30b6ded4-34cf-4afd-a1f4-f347515e18fa"
+    }
+  }
+}

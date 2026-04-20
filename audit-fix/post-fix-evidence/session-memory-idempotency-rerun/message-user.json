@@ -1,0 +1,62 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "message": {
+        "id": "4840d4a0-5873-4a53-97f0-0998ccfbf10b",
+        "sessionId": "c683bbd0-e455-4dd3-ac77-bc6ca048693f",
+        "sessionKey": "audit:default:issue-00117-idempotency-1776592173515",
+        "sequence": 1,
+        "role": "user",
+        "content": "Remember that I want weekly finance updates and I prefer dark mode.",
+        "contentText": "Remember that I want weekly finance updates and I prefer dark mode.",
+        "tokenCount": 0,
+        "metadata": {},
+        "memoryExtractStatus": "pending",
+        "occurredAt": "2026-04-19T09:49:33.518Z",
+        "createdAt": "2026-04-19T09:49:33.518Z",
+        "updatedAt": "2026-04-19T09:49:33.518Z"
+      },
+      "hint": "This endpoint stores the message only. To trigger an AI response, use POST /v1/sessions/:sessionKey/run with a { \"task\": \"...\" } body."
+    },
+    "requestId": "37cc860f-858a-454f-bc01-c77e09a90cf3"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/sessions/audit%3Adefault%3Aissue-00117-idempotency-1776592173515/messages",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "role": "user",
+      "content": "Remember that I want weekly finance updates and I prefer dark mode.",
+      "contentText": "Remember that I want weekly finance updates and I prefer dark mode."
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "message": {
+          "id": "4840d4a0-5873-4a53-97f0-0998ccfbf10b",
+          "sessionId": "c683bbd0-e455-4dd3-ac77-bc6ca048693f",
+          "sessionKey": "audit:default:issue-00117-idempotency-1776592173515",
+          "sequence": 1,
+          "role": "user",
+          "content": "Remember that I want weekly finance updates and I prefer dark mode.",
+          "contentText": "Remember that I want weekly finance updates and I prefer dark mode.",
+          "tokenCount": 0,
+          "metadata": {},
+          "memoryExtractStatus": "pending",
+          "occurredAt": "2026-04-19T09:49:33.518Z",
+          "createdAt": "2026-04-19T09:49:33.518Z",
+          "updatedAt": "2026-04-19T09:49:33.518Z"
+        },
+        "hint": "This endpoint stores the message only. To trigger an AI response, use POST /v1/sessions/:sessionKey/run with a { \"task\": \"...\" } body."
+      },
+      "requestId": "37cc860f-858a-454f-bc01-c77e09a90cf3"
+    }
+  }
+}

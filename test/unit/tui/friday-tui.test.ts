@@ -49,50 +49,100 @@ describe("DEFAULT_TUI_CONFIG", () => {
 describe("FridayTuiApiClient", () => {
   function makeApiDeps(overrides: Partial<FridayTuiApiClientDeps> = {}): FridayTuiApiClientDeps {
     return {
-      fetchJson: vi.fn().mockResolvedValue({}),
+      fetchJson: vi.fn().mockResolvedValue({ ok: true, data: {} }),
       baseUrl: "http://localhost:4145",
       ...overrides,
     };
   }
 
   it("getHubStatus calls correct URL", async () => {
-    const fetchJson = vi.fn().mockResolvedValue({ version: "1.0", uptime: 300 });
+    const fetchJson = vi.fn().mockResolvedValue({ ok: true, data: { version: "1.0", uptime: 300, activeSessions: 2, runningJobs: 1, connectedSatellites: 1 } });
     const client = createFridayTuiApiClient(makeApiDeps({ fetchJson }));
 
     const result = await client.getHubStatus();
     expect(result.ok).toBe(true);
-    expect(fetchJson).toHaveBeenCalledWith("http://localhost:4145/v1/status");
+    expect(fetchJson).toHaveBeenCalledWith("http://localhost:4145/v1/status", undefined);
   });
 
-  it("listSessions calls correct URL", async () => {
-    const fetchJson = vi.fn().mockResolvedValue([]);
+  it("listSessions unwraps items into tui summaries", async () => {
+    const fetchJson = vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        items: [
+          {
+            id: "sess-001",
+            key: "discord:acct:chat",
+            channel: "discord",
+            status: "active",
+            createdAt: "2026-02-25T10:00:00Z",
+            lastActivityAt: "2026-02-25T10:05:00Z",
+          },
+        ],
+      },
+    });
     const client = createFridayTuiApiClient(makeApiDeps({ fetchJson }));
 
     const result = await client.listSessions();
     expect(result.ok).toBe(true);
-    expect(fetchJson).toHaveBeenCalledWith("http://localhost:4145/v1/sessions");
+    expect(fetchJson).toHaveBeenCalledWith("http://localhost:4145/v1/sessions", undefined);
+    expect(result).toEqual({
+      ok: true,
+      data: [
+        {
+          sessionId: "sess-001",
+          channelId: "discord",
+          status: "active",
+          createdAt: "2026-02-25T10:00:00Z",
+          lastActivityAt: "2026-02-25T10:05:00Z",
+        },
+      ],
+    });
   });
 
   it("listJobs calls correct URL", async () => {
-    const fetchJson = vi.fn().mockResolvedValue([]);
+    const fetchJson = vi.fn().mockResolvedValue({ ok: true, data: [] });
     const client = createFridayTuiApiClient(makeApiDeps({ fetchJson }));
 
     const result = await client.listJobs();
     expect(result.ok).toBe(true);
-    expect(fetchJson).toHaveBeenCalledWith("http://localhost:4145/v1/jobs");
+    expect(fetchJson).toHaveBeenCalledWith("http://localhost:4145/v1/jobs", undefined);
   });
 
-  it("listPendingPairings calls correct URL", async () => {
-    const fetchJson = vi.fn().mockResolvedValue([]);
+  it("listPendingPairings maps current pairing shape", async () => {
+    const fetchJson = vi.fn().mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          satelliteId: "sat-001",
+          displayName: "Edge Node",
+          type: "edge",
+          pairingCode: "PAIR-1234",
+          expiresAt: "2026-02-26T00:00:00Z",
+        },
+      ],
+    });
     const client = createFridayTuiApiClient(makeApiDeps({ fetchJson }));
 
     const result = await client.listPendingPairings();
     expect(result.ok).toBe(true);
-    expect(fetchJson).toHaveBeenCalledWith("http://localhost:4145/v1/satellites/pairing");
+    expect(fetchJson).toHaveBeenCalledWith("http://localhost:4145/v1/satellites/pairing", undefined);
+    expect(result).toEqual({
+      ok: true,
+      data: [
+        {
+          satelliteId: "sat-001",
+          displayName: "Edge Node",
+          type: "edge",
+          pairingCode: "PAIR-1234",
+          status: "pending_approval",
+          expiresAt: "2026-02-26T00:00:00Z",
+        },
+      ],
+    });
   });
 
   it("approvePairing POSTs to correct URL", async () => {
-    const fetchJson = vi.fn().mockResolvedValue({ token: "tok-123" });
+    const fetchJson = vi.fn().mockResolvedValue({ ok: true, data: { token: "tok-123" } });
     const client = createFridayTuiApiClient(makeApiDeps({ fetchJson }));
 
     const result = await client.approvePairing("sat-001");
@@ -104,7 +154,7 @@ describe("FridayTuiApiClient", () => {
   });
 
   it("rejectPairing POSTs with reason", async () => {
-    const fetchJson = vi.fn().mockResolvedValue({ rejectedAt: "2026-02-25T00:00:00Z" });
+    const fetchJson = vi.fn().mockResolvedValue({ ok: true, data: { rejectedAt: "2026-02-25T00:00:00Z" } });
     const client = createFridayTuiApiClient(makeApiDeps({ fetchJson }));
 
     const result = await client.rejectPairing("sat-001", "not trusted");
@@ -119,7 +169,7 @@ describe("FridayTuiApiClient", () => {
   });
 
   it("triggerHeartbeat POSTs to correct URL", async () => {
-    const fetchJson = vi.fn().mockResolvedValue({ triggered: true });
+    const fetchJson = vi.fn().mockResolvedValue({ ok: true, data: { triggered: true } });
     const client = createFridayTuiApiClient(makeApiDeps({ fetchJson }));
 
     const result = await client.triggerHeartbeat();
@@ -137,6 +187,21 @@ describe("FridayTuiApiClient", () => {
     const result = await client.getHubStatus();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain("ECONNREFUSED");
+  });
+
+  it("surfaces API envelope errors as ok=false result", async () => {
+    const fetchJson = vi.fn().mockResolvedValue({
+      ok: false,
+      error: { code: "FORBIDDEN", message: "Forbidden" },
+    });
+    const client = createFridayTuiApiClient(makeApiDeps({ fetchJson }));
+
+    const result = await client.listJobs();
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("FORBIDDEN");
+      expect(result.error).toContain("Forbidden");
+    }
   });
 });
 

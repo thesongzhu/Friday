@@ -1,0 +1,180 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": [
+      {
+        "jobId": "agent-loop-cooldown-sweep",
+        "name": "agent-loop-cooldown-sweep",
+        "status": "scheduled",
+        "lastRunAt": "2026-04-19T11:21:53.330Z",
+        "nextRunAt": "2026-04-19T11:22:53.330Z"
+      },
+      {
+        "jobId": "approval-expiry-sweep",
+        "name": "approval-expiry-sweep",
+        "status": "scheduled",
+        "lastRunAt": "2026-04-19T11:21:50.911Z",
+        "nextRunAt": "2026-04-19T11:26:50.911Z"
+      },
+      {
+        "jobId": "autofix-dispatch",
+        "name": "autofix-dispatch",
+        "status": "scheduled",
+        "lastRunAt": "2026-04-19T11:21:53.328Z",
+        "nextRunAt": "2026-04-19T11:22:53.328Z"
+      },
+      {
+        "jobId": "learning-metrics-daily",
+        "name": "learning-metrics-daily",
+        "status": "scheduled",
+        "lastRunAt": "2026-04-19T10:11:50.867Z",
+        "nextRunAt": "2026-04-20T10:11:50.867Z"
+      },
+      {
+        "jobId": "marketplace-sync",
+        "name": "marketplace-sync",
+        "status": "scheduled",
+        "lastRunAt": "2026-04-19T11:11:50.885Z",
+        "nextRunAt": "2026-04-19T12:11:50.885Z"
+      },
+      {
+        "jobId": "retention-sweep",
+        "name": "retention-sweep",
+        "status": "scheduled",
+        "lastRunAt": "2026-04-19T11:11:50.883Z",
+        "nextRunAt": "2026-04-19T12:11:50.883Z"
+      },
+      {
+        "jobId": "session-lifecycle-sweep",
+        "name": "session-lifecycle-sweep",
+        "status": "scheduled",
+        "lastRunAt": "2026-04-19T11:21:53.320Z",
+        "nextRunAt": "2026-04-19T11:23:53.320Z"
+      },
+      {
+        "jobId": "session-memory-extraction",
+        "name": "session-memory-extraction",
+        "status": "scheduled",
+        "lastRunAt": "2026-04-19T11:21:53.328Z",
+        "nextRunAt": "2026-04-19T11:22:53.328Z"
+      },
+      {
+        "jobId": "system-health-monitor",
+        "name": "system-health-monitor",
+        "status": "scheduled",
+        "lastRunAt": "2026-04-19T11:21:50.914Z",
+        "nextRunAt": "2026-04-19T11:26:50.914Z"
+      },
+      {
+        "jobId": "workflow-cron-trigger",
+        "name": "workflow-cron-trigger",
+        "status": "scheduled",
+        "lastRunAt": "2026-04-19T11:21:53.326Z",
+        "nextRunAt": "2026-04-19T11:22:53.326Z"
+      },
+      {
+        "jobId": "workflow-timeout-sweep",
+        "name": "workflow-timeout-sweep",
+        "status": "scheduled",
+        "lastRunAt": "2026-04-19T11:22:23.449Z",
+        "nextRunAt": "2026-04-19T11:22:53.449Z"
+      }
+    ],
+    "requestId": "1b15d2e1-ee03-4811-af48-086bf3f9b2c0"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/jobs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": [
+        {
+          "jobId": "agent-loop-cooldown-sweep",
+          "name": "agent-loop-cooldown-sweep",
+          "status": "scheduled",
+          "lastRunAt": "2026-04-19T11:21:53.330Z",
+          "nextRunAt": "2026-04-19T11:22:53.330Z"
+        },
+        {
+          "jobId": "approval-expiry-sweep",
+          "name": "approval-expiry-sweep",
+          "status": "scheduled",
+          "lastRunAt": "2026-04-19T11:21:50.911Z",
+          "nextRunAt": "2026-04-19T11:26:50.911Z"
+        },
+        {
+          "jobId": "autofix-dispatch",
+          "name": "autofix-dispatch",
+          "status": "scheduled",
+          "lastRunAt": "2026-04-19T11:21:53.328Z",
+          "nextRunAt": "2026-04-19T11:22:53.328Z"
+        },
+        {
+          "jobId": "learning-metrics-daily",
+          "name": "learning-metrics-daily",
+          "status": "scheduled",
+          "lastRunAt": "2026-04-19T10:11:50.867Z",
+          "nextRunAt": "2026-04-20T10:11:50.867Z"
+        },
+        {
+          "jobId": "marketplace-sync",
+          "name": "marketplace-sync",
+          "status": "scheduled",
+          "lastRunAt": "2026-04-19T11:11:50.885Z",
+          "nextRunAt": "2026-04-19T12:11:50.885Z"
+        },
+        {
+          "jobId": "retention-sweep",
+          "name": "retention-sweep",
+          "status": "scheduled",
+          "lastRunAt": "2026-04-19T11:11:50.883Z",
+          "nextRunAt": "2026-04-19T12:11:50.883Z"
+        },
+        {
+          "jobId": "session-lifecycle-sweep",
+          "name": "session-lifecycle-sweep",
+          "status": "scheduled",
+          "lastRunAt": "2026-04-19T11:21:53.320Z",
+          "nextRunAt": "2026-04-19T11:23:53.320Z"
+        },
+        {
+          "jobId": "session-memory-extraction",
+          "name": "session-memory-extraction",
+          "status": "scheduled",
+          "lastRunAt": "2026-04-19T11:21:53.328Z",
+          "nextRunAt": "2026-04-19T11:22:53.328Z"
+        },
+        {
+          "jobId": "system-health-monitor",
+          "name": "system-health-monitor",
+          "status": "scheduled",
+          "lastRunAt": "2026-04-19T11:21:50.914Z",
+          "nextRunAt": "2026-04-19T11:26:50.914Z"
+        },
+        {
+          "jobId": "workflow-cron-trigger",
+          "name": "workflow-cron-trigger",
+          "status": "scheduled",
+          "lastRunAt": "2026-04-19T11:21:53.326Z",
+          "nextRunAt": "2026-04-19T11:22:53.326Z"
+        },
+        {
+          "jobId": "workflow-timeout-sweep",
+          "name": "workflow-timeout-sweep",
+          "status": "scheduled",
+          "lastRunAt": "2026-04-19T11:22:23.449Z",
+          "nextRunAt": "2026-04-19T11:22:53.449Z"
+        }
+      ],
+      "requestId": "1b15d2e1-ee03-4811-af48-086bf3f9b2c0"
+    }
+  }
+}

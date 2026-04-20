@@ -1,0 +1,33 @@
+{
+  "checkedAt": "2026-04-19T12:19:34.102Z",
+  "baseUrl": "http://127.0.0.1:3242",
+  "providerKind": "anthropic",
+  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+  "auditName": "MemoryAuditName-1776601150975",
+  "teachRunId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+  "teachRunStatus": "completed",
+  "learnedFactKeyAfterTeach": null,
+  "learnedFactPresentAfterTeach": false,
+  "memoryListShowsLearnedFactAfterTeach": false,
+  "memorySearchShowsLearnedFactAfterTeach": false,
+  "naturalRecall": {
+    "runId": "2f88b5cd-5174-487f-beee-fd5ee24b29bd",
+    "status": "completed",
+    "responseText": "用户",
+    "usedMemorySearch": true,
+    "memorySearchSummary": "[]",
+    "answeredExpectedName": false
+  },
+  "explicitRecall": {
+    "runId": "edf156bf-6a26-4c49-aebc-4814857cb4b6",
+    "status": "completed",
+    "responseText": "User",
+    "usedMemorySearch": true,
+    "memorySearchSummary": "[]",
+    "answeredExpectedName": false
+  },
+  "deleteByKeyStatus": 404,
+  "deletedFactKey": null,
+  "learnedFactPresentAfterDelete": false,
+  "memoryListShowsLearnedFactAfterDelete": false
+}

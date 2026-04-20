@@ -1,0 +1,45 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/auth/login",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "local": true
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "accessToken": "<redacted>",
+        "refreshToken": "<redacted>",
+        "expiresInSec": 3600,
+        "user": {
+          "id": "admin-001",
+          "email": "admin@friday.dev",
+          "displayName": "Admin",
+          "role": "admin"
+        }
+      },
+      "requestId": "fdab4841-ca75-473f-906d-cf7d0867fd0f"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "accessToken": "<redacted>",
+      "refreshToken": "<redacted>",
+      "expiresInSec": 3600,
+      "user": {
+        "id": "admin-001",
+        "email": "admin@friday.dev",
+        "displayName": "Admin",
+        "role": "admin"
+      }
+    },
+    "requestId": "fdab4841-ca75-473f-906d-cf7d0867fd0f"
+  }
+}

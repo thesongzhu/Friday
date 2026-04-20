@@ -1,0 +1,45 @@
+{
+  "rawBody": {
+    "ok": false,
+    "error": {
+      "code": "CAPABILITY_DISABLED",
+      "message": "LINE webhook listener is disabled in this runtime",
+      "retryable": false,
+      "details": {
+        "capability": "channel_webhook_listener",
+        "surface": "/v1/channel-webhooks/line",
+        "state": "disabled",
+        "channel": "line"
+      }
+    },
+    "requestId": "e11caae6-b0a4-46a0-8e9d-aef39e2e5333"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/channel-webhooks/line",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "events": []
+    }
+  },
+  "response": {
+    "status": 501,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "CAPABILITY_DISABLED",
+        "message": "LINE webhook listener is disabled in this runtime",
+        "retryable": false,
+        "details": {
+          "capability": "channel_webhook_listener",
+          "surface": "/v1/channel-webhooks/line",
+          "state": "disabled",
+          "channel": "line"
+        }
+      },
+      "requestId": "e11caae6-b0a4-46a0-8e9d-aef39e2e5333"
+    }
+  }
+}

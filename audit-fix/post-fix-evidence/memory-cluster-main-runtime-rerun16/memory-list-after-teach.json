@@ -1,0 +1,68 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/memory/items?limit=50",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "items": [
+          {
+            "id": "learned-fact:pref:user_name",
+            "namespace": "preference",
+            "key": "pref:user_name",
+            "content": "MemoryAuditName-1776603897971",
+            "source": "learned_fact",
+            "tags": [
+              "learned",
+              "preference_fact"
+            ],
+            "metadata": {
+              "learnedFact": true,
+              "evidenceCount": 1,
+              "lastConfirmedAt": "2026-04-19T13:05:01.470Z"
+            },
+            "confidence": 1,
+            "createdAt": "2026-04-19T13:05:01.470Z",
+            "updatedAt": "2026-04-19T13:05:01.470Z"
+          }
+        ]
+      },
+      "requestId": "b5a76439-5b18-46b9-a9fa-42339bb2da34"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "items": [
+        {
+          "id": "learned-fact:pref:user_name",
+          "namespace": "preference",
+          "key": "pref:user_name",
+          "content": "MemoryAuditName-1776603897971",
+          "source": "learned_fact",
+          "tags": [
+            "learned",
+            "preference_fact"
+          ],
+          "metadata": {
+            "learnedFact": true,
+            "evidenceCount": 1,
+            "lastConfirmedAt": "2026-04-19T13:05:01.470Z"
+          },
+          "confidence": 1,
+          "createdAt": "2026-04-19T13:05:01.470Z",
+          "updatedAt": "2026-04-19T13:05:01.470Z"
+        }
+      ]
+    },
+    "requestId": "b5a76439-5b18-46b9-a9fa-42339bb2da34"
+  }
+}

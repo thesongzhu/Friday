@@ -12,7 +12,9 @@ export interface FridayStartAgentRunRequest {
   task: string;
   marketplaceListingId?: string;
   providerId?: string;
+  requestedProviderId?: string;
   model?: string;
+  requestedModel?: string;
   replyToMessageId?: string;
   sessionKey?: string;
   timezone?: string;

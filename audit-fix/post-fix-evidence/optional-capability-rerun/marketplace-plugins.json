@@ -1,0 +1,30 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "items": [],
+      "total": 0
+    },
+    "requestId": "35445747-37dd-4490-b775-f17035999915"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/marketplace/plugins",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "items": [],
+        "total": 0
+      },
+      "requestId": "35445747-37dd-4490-b775-f17035999915"
+    }
+  }
+}

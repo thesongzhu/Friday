@@ -1,0 +1,57 @@
+{
+  "health": {
+    "status": 200,
+    "auth": {
+      "allowPasswordlessLocalLogin": true,
+      "allowLocalBypassLogin": true
+    }
+  },
+  "rulesBundle": {
+    "bundleId": "0ce60cf7-1f0e-40ff-b699-a7e1a0532caf",
+    "createStatus": 200,
+    "updateStatus": 200,
+    "routeVersionCount": 2,
+    "dbVersionCount": 2,
+    "latestVersion": {
+      "id": "fe212b51-97c7-43b6-b9d3-d880022bb6bb",
+      "bundle_id": "0ce60cf7-1f0e-40ff-b699-a7e1a0532caf",
+      "version": 2,
+      "changed_by": null,
+      "change_note": "verify version persistence rerun",
+      "created_at": "2026-04-19T09:16:31.689Z"
+    },
+    "updatedName": "Audit Bundle Group1 v2"
+  },
+  "workflowLocks": {
+    "workflowId": "0dc2519c-8840-4262-a473-bda805a0bd6d",
+    "nonexistentStatus": 404,
+    "mismatchStatus": 400,
+    "validAcquireStatus": 200,
+    "persistedLockRow": {
+      "workflow_id": "0dc2519c-8840-4262-a473-bda805a0bd6d",
+      "lock_token": "a73a1836-d758-4983-9a43-9e7117b596cb",
+      "owner_user_id": "admin-001",
+      "owner_session_id": null,
+      "acquired_at": "2026-04-19T09:16:31.701Z",
+      "heartbeat_at": "2026-04-19T09:16:31.701Z",
+      "expires_at": "2026-04-19T09:18:31.701Z",
+      "created_at": "2026-04-19T09:16:31.701Z",
+      "updated_at": "2026-04-19T09:16:31.701Z"
+    },
+    "releaseStatus": 200,
+    "releaseDbRows": []
+  },
+  "workflowRun": {
+    "runId": "5373d599-6417-49df-a9ea-5cb07cf70056",
+    "pausedStatus": "paused",
+    "pausedAt": "2026-04-19T09:16:31.705Z",
+    "deadlineAt": "2026-04-19T09:17:31.703Z",
+    "resumedAtAfterApproval": "2026-04-19T09:16:31.708Z",
+    "finishedAt": "2026-04-19T09:16:31.709Z",
+    "finalStatus": "failed"
+  },
+  "approval": {
+    "approvalId": "ca587ec5-41d6-46d8-b998-c1046c631557",
+    "approveStatus": 200
+  }
+}

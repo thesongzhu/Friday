@@ -1,0 +1,20 @@
+[
+  {
+    "run_id": "885335b8-a25e-430f-be95-aa1ec9ed39a7",
+    "node_id": "missing-skill-action",
+    "attempt": 1,
+    "status": "failed",
+    "error_json": "{\"code\":\"NODE_EXECUTION_FAILED\",\"message\":\"NODE_EXECUTION_FAILED: Step \\\"execute\\\" failed: NODE_EXECUTION_FAILED: skill 'missing-skill-issue-00124' not found\",\"retryable\":false}",
+    "created_at": "2026-04-19T13:59:19.721Z",
+    "finished_at": "2026-04-19T13:59:19.721Z"
+  },
+  {
+    "run_id": "885335b8-a25e-430f-be95-aa1ec9ed39a7",
+    "node_id": "trigger",
+    "attempt": 1,
+    "status": "completed",
+    "error_json": null,
+    "created_at": "2026-04-19T13:59:19.720Z",
+    "finished_at": "2026-04-19T13:59:19.720Z"
+  }
+]

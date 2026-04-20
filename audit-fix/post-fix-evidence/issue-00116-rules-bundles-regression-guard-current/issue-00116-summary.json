@@ -1,0 +1,19 @@
+{
+  "issueId": "ISSUE-00116",
+  "canonicalFixId": "ISSUE-00116",
+  "phase": "phase5-regression-guards",
+  "status": "verified_targeted_tests",
+  "verifiedAt": "2026-04-19T19:14:46Z",
+  "evidenceType": "targeted_route_regression_test",
+  "summary": "Targeted route coverage now proves POST /v1/rules/bundles rejects the legacy rule-shaped payload with 400 VALIDATION_ERROR and never calls createBundle, preventing the old silent default-allow path from reappearing through the HTTP contract.",
+  "artifacts": [
+    "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts"
+  ],
+  "tests": [
+    {
+      "command": "npm exec vitest run test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
+      "status": "passed",
+      "details": "1 file passed, 38 tests passed, Type Errors: no errors"
+    }
+  ]
+}

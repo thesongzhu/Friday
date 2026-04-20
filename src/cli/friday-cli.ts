@@ -17,6 +17,7 @@
  *   friday pack        <skill-dir> --out <file.tgz>
  *   friday skills init <skill-id> [--template node|shell] [--out <dir>]
  *   friday daemon      start|stop|restart|status            — manage background daemon
+ *   friday tui         [--host <addr>] [--port <n>]         — open the terminal dashboard
  *   friday --help                                           — usage info
  */
 
@@ -174,7 +175,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     return result;
   }
 
-  const validCommands = ["start", "list", "run", "runs", "status", "import", "convert", "converters", "pack", "auth", "skills", "daemon", "phases", "setup"] as const;
+  const validCommands = ["start", "list", "run", "runs", "status", "import", "convert", "converters", "pack", "auth", "skills", "daemon", "phases", "setup", "tui"] as const;
   type ValidCommand = (typeof validCommands)[number];
 
   if ((validCommands as readonly string[]).includes(cmd)) {
@@ -577,6 +578,15 @@ Inspect and drive the OpenClaw adoption phase controller.
     return;
   }
 
+  if (command === "tui") {
+    console.log(`
+friday tui [--host <addr>] [--port <n>]
+
+Open the terminal dashboard against the current Friday API binding.
+    `.trim());
+    return;
+  }
+
   console.log(`
 friday — Friday AI automation CLI
 
@@ -614,6 +624,9 @@ Usage:
 
   friday daemon start|stop|restart|status
       Manage the Friday background daemon process.
+
+  friday tui [--host <addr>] [--port <n>]
+      Open the terminal dashboard against the current Friday API binding.
 
   friday phases doctor|list|status|start-next|run-next|promote|resume|stabilize <phase-id>|closeout
       Inspect and drive the OpenClaw adoption phase controller.
@@ -868,6 +881,8 @@ function normalizeLegacyChannelEntry(
       if (receiveMode === "websocket" || receiveMode === "webhook") {
         instance.receiveMode = receiveMode;
       }
+      if (asNonEmptyString(raw.verificationToken)) instance.verificationToken = asNonEmptyString(raw.verificationToken);
+      if (asNonEmptyString(raw.encryptKey)) instance.encryptKey = asNonEmptyString(raw.encryptKey);
       if (allowedUsers) instance.allowedUsers = allowedUsers;
       if (allowedChats) instance.allowedChats = allowedChats;
       return instance;
@@ -1393,11 +1408,171 @@ export function resolveStartupNetworkBinding(
   };
 }
 
+function buildHttpBaseUrl(binding: FridayStartupNetworkBinding): string {
+  const hostname = binding.host.includes(":") && !binding.host.startsWith("[")
+    ? `[${binding.host}]`
+    : binding.host;
+  return `http://${hostname}:${binding.port}`;
+}
+
+function resolveFridayTuiBaseUrl(parsed: ParsedArgs, env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.FRIDAY_TUI_BASE_URL?.trim();
+  if (configured) {
+    return configured;
+  }
+  return buildHttpBaseUrl(resolveStartupNetworkBinding(parsed, { env }));
+}
+
 function buildConfig(parsed: ParsedArgs): FridayHubConfig {
   return {
     skillDirs: parsed.skillDirs,
     port: parsed.port,
   };
+}
+
+interface FridayCliSkillRunResult {
+  runId: string;
+  status: string;
+  durationMs: number;
+  output: Record<string, unknown>;
+  stdout?: string;
+  stderr?: string;
+}
+
+export interface FridayCliRunCommandDeps {
+  createHub?: typeof createFridayHub;
+  fetchFn?: typeof fetch;
+  env?: NodeJS.ProcessEnv;
+  logger?: Pick<typeof console, "log" | "error">;
+  setExitCode?: (code: number) => void;
+}
+
+function printCliSkillRunResult(
+  logger: Pick<typeof console, "log" | "error">,
+  result: FridayCliSkillRunResult,
+): void {
+  logger.log(`Run ${result.runId} — ${result.status} (${result.durationMs}ms)`);
+  if (result.stdout) {
+    logger.log("\n--- stdout ---");
+    logger.log(result.stdout);
+  }
+  if (result.stderr) {
+    logger.log("\n--- stderr ---");
+    logger.log(result.stderr);
+  }
+  if (Object.keys(result.output).length > 0) {
+    logger.log("\n--- output ---");
+    logger.log(JSON.stringify(result.output, null, 2));
+  }
+}
+
+async function runCliSkillRemotely(params: {
+  parsed: ParsedArgs;
+  baseUrl: string;
+  accessToken: string;
+  fetchFn: typeof fetch;
+}): Promise<FridayCliSkillRunResult> {
+  const response = await params.fetchFn(
+    `${params.baseUrl.replace(/\/+$/, "")}/v1/skills/${encodeURIComponent(params.parsed.skillId ?? "")}/run`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${params.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        input: params.parsed.input,
+        sessionId: "cli",
+        channel: "cli",
+      }),
+    },
+  );
+
+  const body = await response.json().catch(() => null) as {
+    ok?: boolean;
+    data?: Partial<FridayCliSkillRunResult> | null;
+    error?: { code?: string; message?: string } | null;
+  } | null;
+
+  if (
+    !response.ok
+    || body?.ok !== true
+    || !body.data
+    || typeof body.data.runId !== "string"
+    || typeof body.data.status !== "string"
+  ) {
+    const message = typeof body?.error?.message === "string"
+      ? body.error.message
+      : `HTTP ${response.status}: ${response.statusText}`;
+    throw new Error(message);
+  }
+
+  return {
+    runId: body.data.runId,
+    status: body.data.status,
+    durationMs: typeof body.data.durationMs === "number" ? body.data.durationMs : 0,
+    output: body.data.output && typeof body.data.output === "object"
+      ? body.data.output as Record<string, unknown>
+      : {},
+    stdout: typeof body.data.stdout === "string" ? body.data.stdout : undefined,
+    stderr: typeof body.data.stderr === "string" ? body.data.stderr : undefined,
+  };
+}
+
+export async function runCliSkillCommand(
+  parsed: ParsedArgs,
+  deps: FridayCliRunCommandDeps = {},
+): Promise<void> {
+  const logger = deps.logger ?? console;
+  const env = deps.env ?? process.env;
+  const setExitCode = deps.setExitCode ?? ((code: number) => {
+    process.exitCode = code;
+  });
+
+  if (!parsed.skillId) {
+    logger.error("Error: missing <skill-id> argument for `friday run`.");
+    setExitCode(1);
+    return;
+  }
+
+  const remoteHubUrl = env.FRIDAY_HUB_URL?.trim();
+  const remoteAccessToken = env.FRIDAY_ACCESS_TOKEN?.trim();
+  if (remoteHubUrl || remoteAccessToken) {
+    if (!remoteHubUrl || !remoteAccessToken) {
+      logger.error(
+        "Error: `friday run` requires both FRIDAY_HUB_URL and FRIDAY_ACCESS_TOKEN to use a remote hub.",
+      );
+      setExitCode(1);
+      return;
+    }
+
+    const result = await runCliSkillRemotely({
+      parsed,
+      baseUrl: remoteHubUrl,
+      accessToken: remoteAccessToken,
+      fetchFn: deps.fetchFn ?? fetch,
+    });
+    printCliSkillRunResult(logger, result);
+    return;
+  }
+
+  const config = buildConfig(parsed);
+  const hub = await (deps.createHub ?? createFridayHub)(config);
+
+  await hub.start();
+
+  const handle = hub.executor.execute({
+    skillId: parsed.skillId,
+    input: parsed.input,
+    sessionId: "cli",
+    userId: "cli-user",
+    channel: "cli",
+  });
+
+  const result = await handle.result;
+  printCliSkillRunResult(logger, result);
+
+  await hub.stop();
 }
 
 async function cmdStart(parsed: ParsedArgs): Promise<void> {
@@ -1491,42 +1666,7 @@ async function cmdList(parsed: ParsedArgs): Promise<void> {
 }
 
 async function cmdRun(parsed: ParsedArgs): Promise<void> {
-  if (!parsed.skillId) {
-    console.error("Error: missing <skill-id> argument for `friday run`.");
-    process.exitCode = 1;
-    return;
-  }
-
-  const config = buildConfig(parsed);
-  const hub = await createFridayHub(config);
-
-  await hub.start();
-
-  const handle = hub.executor.execute({
-    skillId: parsed.skillId,
-    input: parsed.input,
-    sessionId: "cli",
-    userId: "cli-user",
-    channel: "cli",
-  });
-
-  const result = await handle.result;
-
-  console.log(`Run ${result.runId} — ${result.status} (${result.durationMs}ms)`);
-  if (result.stdout) {
-    console.log("\n--- stdout ---");
-    console.log(result.stdout);
-  }
-  if (result.stderr) {
-    console.log("\n--- stderr ---");
-    console.log(result.stderr);
-  }
-  if (Object.keys(result.output).length > 0) {
-    console.log("\n--- output ---");
-    console.log(JSON.stringify(result.output, null, 2));
-  }
-
-  await hub.stop();
+  await runCliSkillCommand(parsed);
 }
 
 async function cmdImport(parsed: ParsedArgs): Promise<void> {
@@ -2305,7 +2445,9 @@ async function main(): Promise<void> {
       break;
     case "tui": {
       const { runFridayCliTui } = await import("./friday-cli-tui.js");
-      await runFridayCliTui();
+      await runFridayCliTui({
+        apiBaseUrl: resolveFridayTuiBaseUrl(parsed),
+      });
       break;
     }
     case "help":

@@ -363,13 +363,17 @@ function hasOnlyPassed(run) {
 
 function deriveGateReasons({ preflight, smoke, dailyCore, publicSurface, branchConformance, skillConformance, error }) {
   const reasons = [];
+  const fallbackRequired = preflight?.envTruth?.providerLaneRequirements?.fallbackRequired !== false;
   if (!preflight) {
     reasons.push("preflight did not complete");
   }
   if (preflight?.envTruth?.auth?.ok !== true) {
     reasons.push("preflight auth is not healthy");
   }
-  if (!preflight?.envTruth?.providerLanes?.default || !preflight?.envTruth?.providerLanes?.fallback) {
+  if (
+    !preflight?.envTruth?.providerLanes?.default
+    || (fallbackRequired && !preflight?.envTruth?.providerLanes?.fallback)
+  ) {
     reasons.push("provider lanes are incomplete");
   }
   if (!smoke) {

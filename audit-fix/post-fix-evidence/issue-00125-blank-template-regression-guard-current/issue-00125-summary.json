@@ -1,0 +1,20 @@
+{
+  "issueId": "ISSUE-00125",
+  "canonicalFixId": "ISSUE-00125",
+  "phase": "phase5-regression-guards",
+  "status": "verified_targeted_tests",
+  "verifiedAt": "2026-04-19T19:17:59Z",
+  "evidenceType": "targeted_builder_publish_and_executor_regression_tests",
+  "summary": "Targeted regression coverage now proves the real builtin-blank template compiles its transform starter into a data node, publishes successfully through the workflow builder compositor, and the empty data-node executor path returns null as a no-op instead of failing on an unsupported actionType shape.",
+  "artifacts": [
+    "test/unit/workflows/builder/friday-workflow-builder-compositor-service.test.ts",
+    "test/unit/workflows/friday-workflow-node-executor.test.ts"
+  ],
+  "tests": [
+    {
+      "command": "npm exec vitest run test/unit/workflows/builder/friday-workflow-builder-compositor-service.test.ts test/unit/workflows/friday-workflow-node-executor.test.ts",
+      "status": "passed",
+      "details": "2 files passed, 18 tests passed, Type Errors: no errors"
+    }
+  ]
+}

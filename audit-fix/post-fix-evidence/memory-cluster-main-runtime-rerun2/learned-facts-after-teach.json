@@ -1,0 +1,44 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/uix/learned-facts",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "items": [
+          {
+            "key": "pref:name",
+            "value": "MemoryAuditName-1776599967759",
+            "confidence": 1,
+            "evidenceCount": 1,
+            "lastConfirmedAt": "2026-04-19T11:59:30.471Z"
+          }
+        ]
+      },
+      "requestId": "637d2fb7-6505-4250-a836-985c76cba74e"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "items": [
+        {
+          "key": "pref:name",
+          "value": "MemoryAuditName-1776599967759",
+          "confidence": 1,
+          "evidenceCount": 1,
+          "lastConfirmedAt": "2026-04-19T11:59:30.471Z"
+        }
+      ]
+    },
+    "requestId": "637d2fb7-6505-4250-a836-985c76cba74e"
+  }
+}

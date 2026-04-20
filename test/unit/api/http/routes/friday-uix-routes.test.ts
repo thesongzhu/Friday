@@ -213,7 +213,7 @@ function makePreference(input: {
 describe("FridayUixRoutes", () => {
   it("creates assistant route definitions", () => {
     const routes = createFridayUixRoutes({ service: makeService() });
-    expect(routes).toHaveLength(18);
+    expect(routes).toHaveLength(20);
     expect(routes.map((route) => route.operationId)).toEqual([
       "uix.intents.resolve",
       "uix.templates.list",
@@ -233,6 +233,8 @@ describe("FridayUixRoutes", () => {
       "uix.user.profile.update",
       "uix.investigate",
       "uix.learnedfacts.list",
+      "uix.learnedfacts.clear",
+      "uix.learnedfacts.delete",
     ]);
   });
 
@@ -398,6 +400,27 @@ describe("FridayUixRoutes", () => {
     expect(result.onboardedAt).toBeNull();
   });
 
+  it("falls back to setup completion time when onboarding is already complete", async () => {
+    const service = makeService();
+    vi.mocked(service.listPreferences).mockReturnValue({
+      items: [],
+      nextCursor: undefined,
+    });
+    const routes = createFridayUixRoutes({
+      service,
+      readSetupCompletedAt: () => NOW,
+    });
+    const route = routes.find((entry) => entry.operationId === "uix.user.profile.get")!;
+
+    const result = await route.handler(makeCtx()) as { profileType: string; onboardedAt: string | null };
+
+    expect(result).toEqual({
+      profileType: "beginner",
+      onboardedAt: NOW,
+    });
+    expect(service.updatePreferences).not.toHaveBeenCalled();
+  });
+
   it("returns persisted user-profile values after update", async () => {
     const service = makeService();
     vi.mocked(service.listPreferences).mockReturnValue({
@@ -437,5 +460,44 @@ describe("FridayUixRoutes", () => {
       profileType: "developer",
       onboardedAt: NOW,
     });
+  });
+
+  it("clears and deletes learned facts when companion routes are wired", async () => {
+    const service = makeService();
+    const clearLearnedFacts = vi.fn(() => 3);
+    const deleteLearnedFact = vi.fn(() => true);
+    const routes = createFridayUixRoutes({
+      service,
+      clearLearnedFacts,
+      deleteLearnedFact,
+    });
+    const clearRoute = routes.find((entry) => entry.operationId === "uix.learnedfacts.clear")!;
+    const deleteRoute = routes.find((entry) => entry.operationId === "uix.learnedfacts.delete")!;
+
+    const clearResult = await clearRoute.handler(makeCtx()) as { deletedCount: number };
+    expect(clearResult.deletedCount).toBe(3);
+    expect(clearLearnedFacts).toHaveBeenCalledWith({ userId: "user-1" });
+
+    const deleteResult = await deleteRoute.handler(
+      makeCtx({ params: { factKey: encodeURIComponent("pref:display_name") } }),
+    ) as { deleted: boolean; key: string };
+    expect(deleteResult).toEqual({ deleted: true, key: "pref:display_name" });
+    expect(deleteLearnedFact).toHaveBeenCalledWith({ userId: "user-1", key: "pref:display_name" });
+  });
+
+  it("keeps learned-facts routes behind agent.run scope", () => {
+    const routes = createFridayUixRoutes({ service: makeService() });
+    const byId = new Map(routes.map((route) => [route.operationId, route]));
+
+    for (const operationId of [
+      "uix.learnedfacts.list",
+      "uix.learnedfacts.clear",
+      "uix.learnedfacts.delete",
+    ]) {
+      expect(byId.get(operationId)?.auth).toMatchObject({
+        public: false,
+        anyOfScopes: ["agent.run"],
+      });
+    }
   });
 });

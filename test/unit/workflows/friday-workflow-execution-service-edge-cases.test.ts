@@ -850,6 +850,42 @@ describe("Issue 3 (R2): End-to-end workflow execution flows", () => {
 
   // ── Retry flow: start → fail → retryRun → succeed → complete ──
 
+  it("sanitizes unexpected intake errors before publishing workflow timeline events", async () => {
+    const graph = makeGraph(
+      "wf-intake-sanitized",
+      "wv-intake-sanitized",
+      [{ id: "A" }],
+      [],
+    );
+    const { workflowId, versionId } = seedWorkflow(graph);
+    const svc = buildService({
+      onRunIntake: async () => {
+        throw new TypeError("Cannot read properties of undefined (reading 'actionType')");
+      },
+    });
+
+    const runEntity = await svc.startRun({
+      workflowId,
+      workflowVersionId: versionId,
+      triggerType: "manual",
+    });
+
+    await settle(200);
+
+    expect(svc.getRun(runEntity.id)?.status).toBe("completed");
+
+    const intakeErrorEvent = publishedEvents.find((entry) => entry.event === "workflow.pipeline.intake.error");
+    expect(intakeErrorEvent).toBeDefined();
+    expect(intakeErrorEvent?.payload).toEqual(expect.objectContaining({
+      runId: runEntity.id,
+      workflowId,
+      errorCode: "WORKFLOW_INTAKE_FAILED",
+      error: "Workflow intake failed before execution.",
+    }));
+    expect(JSON.stringify(intakeErrorEvent?.payload)).not.toContain("Cannot read properties");
+    expect(JSON.stringify(intakeErrorEvent?.payload)).not.toContain("actionType");
+  });
+
   it("persists dead-ended conditional nodes as cancelled and still completes the run", async () => {
     const graph = makeGraph(
       "wf-dead-ended-conditional",
@@ -1247,5 +1283,42 @@ describe("Issue 3 (R2): End-to-end workflow execution flows", () => {
       (n) => n.nodeId === "step2" && n.status === "completed",
     );
     expect(step2Completed).toBeUndefined();
+  });
+
+  it("persists missing-skill workflow failures as non-retryable", async () => {
+    const graph = makeGraph(
+      "wf-missing-skill",
+      "wv-missing-skill",
+      [{ id: "step1" }],
+      [],
+      "fail_fast",
+    );
+    const { workflowId, versionId } = seedWorkflow(graph);
+    const svc = buildService({
+      nodeExecutor: createFridayWorkflowNodeExecutor({
+        expressionEvaluator: createFridayExpressionEvaluator(),
+        resolveSkill: () => null,
+        invokeSkill: async () => ({}),
+        nowIso: () => "2026-02-16T12:00:00.000Z",
+      }),
+    });
+
+    const runEntity = await svc.startRun({
+      workflowId,
+      workflowVersionId: versionId,
+      triggerType: "manual",
+    });
+
+    await settle(200);
+
+    const run = svc.getRun(runEntity.id);
+    expect(run?.status).toBe("failed");
+
+    const failedNode = svc.getRunNodes(runEntity.id).find(
+      (node) => node.nodeId === "step1" && node.status === "failed",
+    );
+    expect(failedNode).toBeDefined();
+    expect(failedNode?.error?.message).toContain("skill 'test-skill' not found");
+    expect(failedNode?.error?.retryable).toBe(false);
   });
 });

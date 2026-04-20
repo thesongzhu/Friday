@@ -1,0 +1,31 @@
+{
+  "checkedAt": "2026-04-19T14:43:48.884Z",
+  "baseUrl": "http://127.0.0.1:3241",
+  "dbPath": "/Users/jarvis/Projects/Friday/.claude/worktrees/friday-audit-remediation-20260419T085134Z/audit-fix/runtime/main-fix-state-issue173-postfix/friday.db",
+  "userId": "admin-001",
+  "secretRefKey": "audit.issue-00165.1776609828877",
+  "lockedLogin": {
+    "status": 503,
+    "code": "DEGRADED_MODE",
+    "retryable": true,
+    "retryAfterMs": 1000,
+    "retryAfterHeader": "1"
+  },
+  "lockedSecretCreate": {
+    "status": 503,
+    "code": "DEGRADED_MODE",
+    "retryable": true,
+    "retryAfterMs": 1000,
+    "retryAfterHeader": "1"
+  },
+  "lockedAgentRuns": {
+    "status": 200,
+    "ok": true
+  },
+  "authSessionsBefore": 65,
+  "authSessionsAfter": 65,
+  "authSessionInsertedUnderLock": false,
+  "secretRowsBefore": 0,
+  "secretRowsAfter": 0,
+  "secretPersistedUnderLock": false
+}

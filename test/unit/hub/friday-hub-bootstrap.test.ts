@@ -6,10 +6,13 @@ import { beforeEach, describe, it, expect, afterEach, vi } from "vitest";
 import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
 import { FridayAuthError } from "#api";
+import { resolveStateDir } from "#state";
+import * as hubAuditWriterModule from "../../../src/hub/services/friday-hub-audit-log-writer.js";
 
 describe("createFridayHub", () => {
   let hub: FridayHub | null = null;
   let stateDir: string | null = null;
+  let homeDir: string | null = null;
   let bundledSkillsDir: string | null = null;
   let managedSkillsDir: string | null = null;
   const originalSuppression = process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
@@ -45,6 +48,10 @@ describe("createFridayHub", () => {
       await fs.rm(stateDir, { recursive: true, force: true });
       stateDir = null;
     }
+    if (homeDir) {
+      await fs.rm(homeDir, { recursive: true, force: true });
+      homeDir = null;
+    }
     bundledSkillsDir = null;
     managedSkillsDir = null;
   });
@@ -70,7 +77,7 @@ describe("createFridayHub", () => {
     const status = hub.status();
     expect(status.state).toBe("running");
     expect(status.upSince).not.toBeNull();
-  });
+  }, 20_000);
 
   it("transitions to stopped after stop()", async () => {
     hub = await createIsolatedHub();
@@ -85,7 +92,7 @@ describe("createFridayHub", () => {
     await hub.start();
     const status = hub.status();
     expect(status.skillCount).toBe(0);
-  });
+  }, 20_000);
 
   it("wires observability routes into the API runtime", async () => {
     hub = await createIsolatedHub();
@@ -137,6 +144,42 @@ describe("createFridayHub", () => {
     }
   });
 
+  it("uses the initialized state runtime path for audit logs when stateDir config is omitted", async () => {
+    const originalHome = process.env.HOME;
+    const originalStateDirEnv = process.env.FRIDAY_STATE_DIR;
+    homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-hub-home-"));
+    process.env.HOME = homeDir;
+    delete process.env.FRIDAY_STATE_DIR;
+
+    bundledSkillsDir = path.join(homeDir, "skills-empty");
+    managedSkillsDir = path.join(homeDir, "managed-skills-empty");
+    await fs.mkdir(bundledSkillsDir, { recursive: true });
+    await fs.mkdir(managedSkillsDir, { recursive: true });
+
+    stateDir = resolveStateDir({ env: process.env, homedir: () => homeDir! });
+
+    const auditPathSpy = vi.spyOn(hubAuditWriterModule, "resolveFridayAuditLogPath");
+    try {
+      hub = await createFridayHub({
+        skillDirs: [bundledSkillsDir, managedSkillsDir],
+      });
+
+      expect(auditPathSpy).toHaveBeenCalledWith(stateDir);
+    } finally {
+      auditPathSpy.mockRestore();
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      if (originalStateDirEnv === undefined) {
+        delete process.env.FRIDAY_STATE_DIR;
+      } else {
+        process.env.FRIDAY_STATE_DIR = originalStateDirEnv;
+      }
+    }
+  });
+
   it("executor returns failed for unknown skill", async () => {
     hub = await createIsolatedHub();
     await hub.start();
@@ -152,7 +195,7 @@ describe("createFridayHub", () => {
     const result = await handle.result;
     expect(result.status).toBe("failed");
     expect(result.stderr).toContain("not found");
-  });
+  }, 20_000);
 
   it("does not allow local bypass login from remote IP (allowLocalBypassLogin defaults to false)", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});

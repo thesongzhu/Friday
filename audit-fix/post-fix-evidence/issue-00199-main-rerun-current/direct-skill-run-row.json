@@ -1,0 +1,8 @@
+{
+  "id": "96af98c1-966b-4851-9bab-0200c35240ed",
+  "namespace": "skill_runs",
+  "key": "96af98c1-966b-4851-9bab-0200c35240ed",
+  "value_json": "{\"runId\":\"96af98c1-966b-4851-9bab-0200c35240ed\",\"skillId\":\"audit-shell-env-presence-probe\",\"version\":\"1.0.0\",\"status\":\"completed\",\"currentStepId\":\"execute\",\"attemptsByStep\":{\"execute\":1},\"state\":{},\"startedAt\":\"2026-04-19T15:52:19.481Z\",\"updatedAt\":\"2026-04-19T15:52:19.489Z\",\"sessionId\":\"api-skill-run:audit-shell-env-presence-probe\",\"userId\":\"admin-001\",\"channel\":\"api\",\"lastTransitionAt\":\"2026-04-19T15:52:19.489Z\",\"metadata\":{\"durationMs\":7,\"timedOut\":false}}",
+  "created_at": "2026-04-19T15:52:19.481Z",
+  "updated_at": "2026-04-19T15:52:19.489Z"
+}

@@ -1,4 +1,8 @@
 import { FridayDomainError } from "#errors";
+import {
+  toAppleScriptIdentifierLiteral,
+  toAppleScriptStringLiteral,
+} from "../../system/friday-applescript.js";
 
 /**
  * C-001 Real Desktop Adapters — macOS, Windows, and Linux implementations
@@ -207,12 +211,6 @@ function quotePosixShellArg(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-function escapeAppleScriptString(value: string): string {
-  return value
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, "\\\"");
-}
-
 function escapePowerShellSingleQuoted(value: string): string {
   return value.replace(/'/g, "''");
 }
@@ -299,17 +297,15 @@ export async function createDarwinAdapter(
         });
       }
       case "type": {
-        const escaped = escapeAppleScriptString(action.text);
-        const script = `tell application "System Events" to keystroke "${escaped}"`;
+        const script = `tell application "System Events" to keystroke ${toAppleScriptStringLiteral(action.text)}`;
         await exec(`osascript -e ${quotePosixShellArg(script)} 2>&1 || true`);
         return makeSuccessResult(config, action, "darwin", startedAt);
       }
       case "keypress": {
         const mods = (action.modifiers ?? []).map(m => m === "meta" || m === "command" ? "command down" : `${m} down`).join(", ");
-        const escapedKey = escapeAppleScriptString(action.key);
         const script = mods
-          ? `tell application "System Events" to keystroke "${escapedKey}" using {${mods}}`
-          : `tell application "System Events" to keystroke "${escapedKey}"`;
+          ? `tell application "System Events" to keystroke ${toAppleScriptIdentifierLiteral(action.key, "key")} using {${mods}}`
+          : `tell application "System Events" to keystroke ${toAppleScriptIdentifierLiteral(action.key, "key")}`;
         await exec(`osascript -e ${quotePosixShellArg(script)} 2>&1 || true`);
         return makeSuccessResult(config, action, "darwin", startedAt);
       }
@@ -350,9 +346,8 @@ export async function createDarwinAdapter(
       }
       case "close_app": {
         const appIdentifier = ensureSafeAppIdentifier(action.appIdentifier);
-        const escapedAppIdentifier = escapeAppleScriptString(appIdentifier);
         const force = action.force ? "force " : "";
-        const script = `tell application "${escapedAppIdentifier}" to ${force}quit`;
+        const script = `tell application ${toAppleScriptIdentifierLiteral(appIdentifier, "app identifier")} to ${force}quit`;
         await exec(`osascript -e ${quotePosixShellArg(script)} 2>&1 || true`);
         return makeSuccessResult(config, action, "darwin", startedAt);
       }
@@ -443,8 +438,7 @@ export async function createDarwinAdapter(
 
     async inspectElement(selector: FridayDesktopElementSelector): Promise<FridayDesktopElement | null> {
       try {
-        const escapedSelectorValue = escapeAppleScriptString(selector.value);
-        const script = `tell application "System Events" to get properties of first UI element whose name is "${escapedSelectorValue}"`;
+        const script = `tell application "System Events" to get properties of first UI element whose name is ${toAppleScriptIdentifierLiteral(selector.value, "selector")}`;
         const result = await exec(`osascript -e ${quotePosixShellArg(script)} 2>&1`);
         if (result.exitCode !== 0 || !result.stdout) return null;
         return makeElement(
@@ -460,10 +454,10 @@ export async function createDarwinAdapter(
 
     async searchElements(query: string, appBundleId?: string): Promise<FridayDesktopElement[]> {
       try {
-        const escapedAppBundleId = appBundleId ? escapeAppleScriptString(appBundleId) : undefined;
-        const app = escapedAppBundleId ? `application process "${escapedAppBundleId}"` : "application process 1";
-        const escapedQuery = escapeAppleScriptString(query);
-        const script = `tell application "System Events" to get name of every UI element of ${app} whose name contains "${escapedQuery}"`;
+        const app = appBundleId
+          ? `application process ${toAppleScriptIdentifierLiteral(appBundleId, "app identifier")}`
+          : "application process 1";
+        const script = `tell application "System Events" to get name of every UI element of ${app} whose name contains ${toAppleScriptIdentifierLiteral(query, "query")}`;
         const result = await exec(`osascript -e ${quotePosixShellArg(script)} 2>&1`);
         if (result.exitCode !== 0 || !result.stdout) return [];
         const names = result.stdout.split(", ").filter(Boolean);

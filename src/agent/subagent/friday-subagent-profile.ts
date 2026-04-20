@@ -119,10 +119,17 @@ export function inferFridaySubagentProfile(task: string, label?: string): Friday
   return "explore";
 }
 
-const DIRECT_WRITE_HINTS =
-  /\b(write|edit|modify|update|patch|rewrite|rename|delete|remove|store|save|create|generate|import|record|feedback|remember|learn|preference)\b/i;
-const IMPLEMENTATION_HINTS =
-  /\b(fix|implement|refactor|store|save|create|record|feedback|learn)\b/i;
+const TOKEN_EDGE = "(?:^|[^a-z0-9])";
+const TOKEN_END = "(?=$|[^a-z0-9])";
+
+const DIRECT_WRITE_HINTS = new RegExp(
+  `${TOKEN_EDGE}(write|edit|modify|update|patch|rewrite|rename|delete|remove|store|save|create|generate|import|record|feedback|remember|learn|preference|persist|memory_store|memory_delete|memory_clear|memory_update)${TOKEN_END}`,
+  "i",
+);
+const IMPLEMENTATION_HINTS = new RegExp(
+  `${TOKEN_EDGE}(fix|implement|refactor|store|save|create|record|feedback|learn|persist|memory_store|memory_delete|memory_clear|memory_update)${TOKEN_END}`,
+  "i",
+);
 const IMPLEMENTATION_DOMAINS =
   /\b(file|files|code|repo|repository|workflow|skill|test|tests|docs|document|folder|directory|workspace|project|memory|automation)\b/i;
 const BROWSER_MUTATION_HINTS =

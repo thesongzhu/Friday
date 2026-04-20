@@ -1,0 +1,16 @@
+{
+  "skillId": "system-health-snapshot",
+  "baseUrl": "http://127.0.0.1:3241",
+  "runAgent": false,
+  "direct": {
+    "status": 501,
+    "errorCode": "CAPABILITY_DISABLED",
+    "errorMessage": "Node-based skills are disabled because they execute in-process without isolation. Set FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true only in controlled environments.",
+    "skillRunCountBefore": 2,
+    "skillRunCountAfter": 2,
+    "noSkillRunPersisted": true,
+    "passed": true
+  },
+  "agent": null,
+  "passed": true
+}

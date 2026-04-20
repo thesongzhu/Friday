@@ -1,0 +1,53 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "result": {
+        "sessionKey": "audit:default:issue-00117-idempotency-1776592173515",
+        "trigger": "manual",
+        "mode": "inline",
+        "queued": false,
+        "processedMessageCount": 0,
+        "extractedMessageCount": 0,
+        "skippedMessageCount": 1,
+        "failedMessageCount": 0,
+        "memoryItemsCreated": 0
+      }
+    },
+    "requestId": "0cc88fe3-27df-4252-8354-90ffc6c6651d"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/sessions/audit%3Adefault%3Aissue-00117-idempotency-1776592173515/memory/remember",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "messageIds": [
+        "4840d4a0-5873-4a53-97f0-0998ccfbf10b"
+      ],
+      "mode": "inline"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "result": {
+          "sessionKey": "audit:default:issue-00117-idempotency-1776592173515",
+          "trigger": "manual",
+          "mode": "inline",
+          "queued": false,
+          "processedMessageCount": 0,
+          "extractedMessageCount": 0,
+          "skippedMessageCount": 1,
+          "failedMessageCount": 0,
+          "memoryItemsCreated": 0
+        }
+      },
+      "requestId": "0cc88fe3-27df-4252-8354-90ffc6c6651d"
+    }
+  }
+}

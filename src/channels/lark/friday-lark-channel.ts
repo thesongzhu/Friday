@@ -54,6 +54,8 @@ interface LarkAccessToken {
 interface LarkConfig {
   appId: string;
   appSecret: string;
+  verificationToken?: string;
+  encryptKey?: string;
   useFeishu: boolean;
   allowedUsers?: string[];
   allowedChats?: string[];
@@ -341,9 +343,8 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
           if (!webhookRelay) {
             throw new FridayDomainError("VALIDATION_ERROR", "Lark webhook mode requires webhookRelay dependency", { httpStatus: 400 });
           }
-          if (config.appSecret) {
-            webhookRelay.setAppSecret(config.appSecret);
-          }
+          webhookRelay.setVerificationToken(config.verificationToken);
+          webhookRelay.setEncryptKey(config.encryptKey);
           await webhookRelay.start((event) => {
             eventHandler(event);
           });
@@ -395,6 +396,8 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
       config = {
         appId: parsed.appId,
         appSecret: parsed.appSecret,
+        verificationToken: parsed.verificationToken,
+        encryptKey: parsed.encryptKey,
         useFeishu: parsed.useFeishu,
         allowedUsers: parsed.allowedUsers,
         allowedChats: parsed.allowedChats,

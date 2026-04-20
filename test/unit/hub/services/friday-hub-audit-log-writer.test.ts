@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import Database from "better-sqlite3";
 import { resolveFridayAuditLogPath, appendFridayAuditLog } from "#hub";
 import type { FridayAuditLogWrite } from "#hub";
 
@@ -60,6 +61,47 @@ describe("FridayHubAuditLogWriter", () => {
       const deepPath = path.join(tmpDir, "a", "b", "c", "audit.jsonl");
       await appendFridayAuditLog(deepPath, makeEntry("install"));
       expect(fs.existsSync(deepPath)).toBe(true);
+    });
+
+    it("mirrors entries into stateDir/friday.db when using the canonical audit path", async () => {
+      const stateDir = path.join(tmpDir, "state");
+      fs.mkdirSync(path.join(stateDir, ".friday"), { recursive: true });
+      const sqlitePath = path.join(stateDir, "friday.db");
+      const db = new Database(sqlitePath);
+      db.exec(`
+        CREATE TABLE audit_logs (
+          id TEXT PRIMARY KEY,
+          ts TEXT NOT NULL,
+          actor_type TEXT NOT NULL,
+          actor_id TEXT,
+          action TEXT NOT NULL,
+          resource_type TEXT NOT NULL,
+          resource_id TEXT,
+          request_id TEXT,
+          trace_id TEXT,
+          ip TEXT,
+          details_json TEXT
+        );
+      `);
+      db.close();
+
+      const canonicalLogPath = resolveFridayAuditLogPath(stateDir);
+      await appendFridayAuditLog(canonicalLogPath, makeEntry("install"));
+
+      const content = fs.readFileSync(canonicalLogPath, "utf8");
+      expect(content).toContain("\"action\":\"install\"");
+
+      const verifyDb = new Database(sqlitePath, { readonly: true });
+      const row = verifyDb
+        .prepare("SELECT action, actor_type, resource_type FROM audit_logs WHERE id = ?")
+        .get("audit-install") as { action: string; actor_type: string; resource_type: string } | undefined;
+      verifyDb.close();
+
+      expect(row).toEqual({
+        action: "install",
+        actor_type: "user",
+        resource_type: "skill",
+      });
     });
 
     it("rotates when exceeding maxBytes", async () => {

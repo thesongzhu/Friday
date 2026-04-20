@@ -1,0 +1,32 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "revoked": true,
+      "tokenId": "d2f6ab28-46f1-45cd-8554-33afb9537828"
+    },
+    "requestId": "dd8b81aa-ff62-427f-8a6f-6cec40b2efb1"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/security/tokens/revoke",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "tokenId": "d2f6ab28-46f1-45cd-8554-33afb9537828"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "revoked": true,
+        "tokenId": "d2f6ab28-46f1-45cd-8554-33afb9537828"
+      },
+      "requestId": "dd8b81aa-ff62-427f-8a6f-6cec40b2efb1"
+    }
+  }
+}

@@ -1,0 +1,386 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/agent/runs/3ed50680-a42b-4618-bf52-b3712141aa77",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "run": {
+          "id": "3ed50680-a42b-4618-bf52-b3712141aa77",
+          "task": "What should you call me? Reply with only the name.",
+          "status": "failed",
+          "sessionKey": "agent:run:3ed50680-a42b-4618-bf52-b3712141aa77",
+          "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+          "attempt": 0,
+          "maxAttempts": 3,
+          "artifacts": [
+            {
+              "type": "run_record",
+              "path": ".friday/agent-runs/3ed50680-a42b-4618-bf52-b3712141aa77/run.json"
+            }
+          ],
+          "testResults": [
+            {
+              "strategy": "llm_eval",
+              "passed": true,
+              "errors": [],
+              "durationMs": 0
+            }
+          ],
+          "errorCode": "AGENT_VALIDATION_ERROR",
+          "errorMessage": "Validation criteria not met",
+          "createdAt": "2026-04-19T18:47:33.029Z",
+          "startedAt": "2026-04-19T18:47:33.031Z",
+          "completedAt": "2026-04-19T18:47:46.627Z",
+          "durationMs": 13598,
+          "usageInput": 11682,
+          "usageOutput": 24,
+          "costUsd": 0.011778,
+          "planReview": {
+            "plan": {
+              "task": "What should you call me? Reply with only the name.",
+              "stepCount": 1,
+              "description": "Planning approach for: What should you call me? Reply with only the name."
+            },
+            "decision": {
+              "approved": true,
+              "mode": "off",
+              "reason": "No review required",
+              "reviewedAt": "2026-04-19T18:47:33.031Z"
+            }
+          },
+          "actualExecution": {
+            "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfileId": "default",
+            "modelSelectionSource": "route_default",
+            "actualProviderKind": "openai",
+            "actualProviderApi": "openai-responses",
+            "backendKind": "http",
+            "totalCostUsd": 0.011778,
+            "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+            "routeDecisionTrace": {
+              "taskProfileId": "default",
+              "requiresNativeTools": true,
+              "learningAdjusted": false,
+              "learningSignalsPresent": true,
+              "orderingAdjusted": false,
+              "selectedAdjusted": false,
+              "reasonCode": "historical_bias",
+              "reasonText": "Historical route outcomes influenced candidate scoring.",
+              "historyWindow": {
+                "sampleLimit": 250
+              },
+              "selectedBeforeLearning": {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http"
+              },
+              "selectedAfterLearning": {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http"
+              },
+              "candidateScores": [
+                {
+                  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                  "providerKind": "openai",
+                  "model": "gpt-4o",
+                  "backendKind": "http",
+                  "originalRank": 1,
+                  "finalRank": 1,
+                  "selected": true,
+                  "eligible": true,
+                  "ineligibilityReasons": [],
+                  "pinned": false,
+                  "historicalSuccessRate": 0.98,
+                  "historicalFailureRate": 0.02,
+                  "sampleCount": 50,
+                  "baseRankScore": 1,
+                  "historyScore": 5.13,
+                  "patternScore": 0,
+                  "lessonScore": 0,
+                  "routePenaltyScore": 0,
+                  "pinBonus": 0,
+                  "finalScore": 6.13,
+                  "historyStats": {
+                    "sampleCount": 50,
+                    "successRate": 0.98,
+                    "failureRate": 0.02
+                  },
+                  "matchedLessonIds": [],
+                  "matchedPatternIds": []
+                }
+              ]
+            },
+            "finalFailureReason": "Validation criteria not met",
+            "turns": [
+              {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "model": "gpt-4o",
+                "inputTokens": 11682,
+                "outputTokens": 24,
+                "costUsd": 0.011778
+              },
+              {
+                "inputTokens": 0,
+                "outputTokens": 0
+              }
+            ]
+          },
+          "artifactDir": ".friday/agent-runs/3ed50680-a42b-4618-bf52-b3712141aa77",
+          "contextCostSummary": {
+            "totalEstimatedChars": 7385,
+            "components": [
+              {
+                "kind": "workspace_context",
+                "estimatedChars": 5234,
+                "count": 4,
+                "metadata": {
+                  "pathRuleCount": 0,
+                  "candidatePaths": []
+                }
+              },
+              {
+                "kind": "starter_skills",
+                "estimatedChars": 2055,
+                "count": 8
+              },
+              {
+                "kind": "subagents",
+                "estimatedChars": 96,
+                "count": 1,
+                "metadata": {
+                  "enabled": true
+                }
+              }
+            ]
+          },
+          "taskProfile": {
+            "id": "default",
+            "label": "Balanced",
+            "description": "General-purpose execution profile for standard assistant turns.",
+            "reasoningEffort": "medium"
+          },
+          "rollbackAvailable": false,
+          "health": {
+            "state": "failed",
+            "rollbackAvailable": false,
+            "reasonCodes": [
+              "failed"
+            ]
+          },
+          "contextSummary": {
+            "taskProfileId": "default",
+            "taskProfileLabel": "Balanced",
+            "totalEstimatedChars": 7385,
+            "dominantContextKinds": [
+              "workspace_context",
+              "starter_skills"
+            ],
+            "learningAdjusted": false,
+            "fallbackAttemptCount": 0,
+            "blockedToolCount": 0,
+            "modelSelectionSource": "route_default"
+          }
+        }
+      },
+      "requestId": "f32ddc92-0851-4cab-b2b5-ee969be768b5"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "run": {
+        "id": "3ed50680-a42b-4618-bf52-b3712141aa77",
+        "task": "What should you call me? Reply with only the name.",
+        "status": "failed",
+        "sessionKey": "agent:run:3ed50680-a42b-4618-bf52-b3712141aa77",
+        "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+        "attempt": 0,
+        "maxAttempts": 3,
+        "artifacts": [
+          {
+            "type": "run_record",
+            "path": ".friday/agent-runs/3ed50680-a42b-4618-bf52-b3712141aa77/run.json"
+          }
+        ],
+        "testResults": [
+          {
+            "strategy": "llm_eval",
+            "passed": true,
+            "errors": [],
+            "durationMs": 0
+          }
+        ],
+        "errorCode": "AGENT_VALIDATION_ERROR",
+        "errorMessage": "Validation criteria not met",
+        "createdAt": "2026-04-19T18:47:33.029Z",
+        "startedAt": "2026-04-19T18:47:33.031Z",
+        "completedAt": "2026-04-19T18:47:46.627Z",
+        "durationMs": 13598,
+        "usageInput": 11682,
+        "usageOutput": 24,
+        "costUsd": 0.011778,
+        "planReview": {
+          "plan": {
+            "task": "What should you call me? Reply with only the name.",
+            "stepCount": 1,
+            "description": "Planning approach for: What should you call me? Reply with only the name."
+          },
+          "decision": {
+            "approved": true,
+            "mode": "off",
+            "reason": "No review required",
+            "reviewedAt": "2026-04-19T18:47:33.031Z"
+          }
+        },
+        "actualExecution": {
+          "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+          "taskProfileId": "default",
+          "modelSelectionSource": "route_default",
+          "actualProviderKind": "openai",
+          "actualProviderApi": "openai-responses",
+          "backendKind": "http",
+          "totalCostUsd": 0.011778,
+          "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+          "routeDecisionTrace": {
+            "taskProfileId": "default",
+            "requiresNativeTools": true,
+            "learningAdjusted": false,
+            "learningSignalsPresent": true,
+            "orderingAdjusted": false,
+            "selectedAdjusted": false,
+            "reasonCode": "historical_bias",
+            "reasonText": "Historical route outcomes influenced candidate scoring.",
+            "historyWindow": {
+              "sampleLimit": 250
+            },
+            "selectedBeforeLearning": {
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "providerKind": "openai",
+              "model": "gpt-4o",
+              "backendKind": "http"
+            },
+            "selectedAfterLearning": {
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "providerKind": "openai",
+              "model": "gpt-4o",
+              "backendKind": "http"
+            },
+            "candidateScores": [
+              {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http",
+                "originalRank": 1,
+                "finalRank": 1,
+                "selected": true,
+                "eligible": true,
+                "ineligibilityReasons": [],
+                "pinned": false,
+                "historicalSuccessRate": 0.98,
+                "historicalFailureRate": 0.02,
+                "sampleCount": 50,
+                "baseRankScore": 1,
+                "historyScore": 5.13,
+                "patternScore": 0,
+                "lessonScore": 0,
+                "routePenaltyScore": 0,
+                "pinBonus": 0,
+                "finalScore": 6.13,
+                "historyStats": {
+                  "sampleCount": 50,
+                  "successRate": 0.98,
+                  "failureRate": 0.02
+                },
+                "matchedLessonIds": [],
+                "matchedPatternIds": []
+              }
+            ]
+          },
+          "finalFailureReason": "Validation criteria not met",
+          "turns": [
+            {
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "model": "gpt-4o",
+              "inputTokens": 11682,
+              "outputTokens": 24,
+              "costUsd": 0.011778
+            },
+            {
+              "inputTokens": 0,
+              "outputTokens": 0
+            }
+          ]
+        },
+        "artifactDir": ".friday/agent-runs/3ed50680-a42b-4618-bf52-b3712141aa77",
+        "contextCostSummary": {
+          "totalEstimatedChars": 7385,
+          "components": [
+            {
+              "kind": "workspace_context",
+              "estimatedChars": 5234,
+              "count": 4,
+              "metadata": {
+                "pathRuleCount": 0,
+                "candidatePaths": []
+              }
+            },
+            {
+              "kind": "starter_skills",
+              "estimatedChars": 2055,
+              "count": 8
+            },
+            {
+              "kind": "subagents",
+              "estimatedChars": 96,
+              "count": 1,
+              "metadata": {
+                "enabled": true
+              }
+            }
+          ]
+        },
+        "taskProfile": {
+          "id": "default",
+          "label": "Balanced",
+          "description": "General-purpose execution profile for standard assistant turns.",
+          "reasoningEffort": "medium"
+        },
+        "rollbackAvailable": false,
+        "health": {
+          "state": "failed",
+          "rollbackAvailable": false,
+          "reasonCodes": [
+            "failed"
+          ]
+        },
+        "contextSummary": {
+          "taskProfileId": "default",
+          "taskProfileLabel": "Balanced",
+          "totalEstimatedChars": 7385,
+          "dominantContextKinds": [
+            "workspace_context",
+            "starter_skills"
+          ],
+          "learningAdjusted": false,
+          "fallbackAttemptCount": 0,
+          "blockedToolCount": 0,
+          "modelSelectionSource": "route_default"
+        }
+      }
+    },
+    "requestId": "f32ddc92-0851-4cab-b2b5-ee969be768b5"
+  }
+}

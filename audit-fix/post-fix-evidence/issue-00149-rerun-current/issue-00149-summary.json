@@ -1,0 +1,25 @@
+{
+  "checkedAt": "2026-04-19T13:32:32.145Z",
+  "invalidProviderId": "missing-provider-issue-00149",
+  "attemptedModel": "gpt-4o",
+  "responseStatus": 404,
+  "responseBody": {
+    "ok": false,
+    "error": {
+      "code": "PROVIDER_NOT_FOUND",
+      "message": "Provider \"missing-provider-issue-00149\" not found",
+      "retryable": false
+    },
+    "requestId": "a9ab5007-23ea-4fd6-bd00-7b4f8a8327ed"
+  },
+  "returnedRunId": null,
+  "errorCode": "PROVIDER_NOT_FOUND",
+  "errorMessage": "Provider \"missing-provider-issue-00149\" not found",
+  "runCountBefore": 60,
+  "runCountAfter": 60,
+  "runCountUnchanged": true,
+  "latestCreatedAtBefore": "2026-04-19T13:25:00.708Z",
+  "latestCreatedAtAfter": "2026-04-19T13:25:00.708Z",
+  "invalidProviderRowCount": 0,
+  "preflightRejected": true
+}

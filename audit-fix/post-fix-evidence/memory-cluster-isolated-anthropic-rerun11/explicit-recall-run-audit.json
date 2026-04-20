@@ -1,0 +1,182 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3242/v1/agent/runs/385dfa85-2c23-402d-b9b8-cda7ca47c09e/audit",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "385dfa85-2c23-402d-b9b8-cda7ca47c09e",
+        "events": [
+          {
+            "seq": 1,
+            "type": "agent.run.started",
+            "timestamp": "2026-04-19T12:40:37.884Z",
+            "payload": {
+              "runId": "385dfa85-2c23-402d-b9b8-cda7ca47c09e",
+              "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+              "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "taskProfile": {
+                "id": "default",
+                "modelSelectionSource": "route_default"
+              }
+            }
+          },
+          {
+            "seq": 9,
+            "type": "agent.run.tool_start",
+            "timestamp": "2026-04-19T12:40:42.437Z",
+            "payload": {
+              "runId": "385dfa85-2c23-402d-b9b8-cda7ca47c09e",
+              "toolName": "memory_search",
+              "toolCallId": "toolu_011iG8JkTN2E8KfjfVgxtKVH",
+              "params": {
+                "query": "what to call user name preference"
+              }
+            }
+          },
+          {
+            "seq": 10,
+            "type": "agent.run.tool_end",
+            "timestamp": "2026-04-19T12:40:42.437Z",
+            "payload": {
+              "runId": "385dfa85-2c23-402d-b9b8-cda7ca47c09e",
+              "toolName": "memory_search",
+              "toolCallId": "toolu_011iG8JkTN2E8KfjfVgxtKVH",
+              "durationMs": 2,
+              "isError": false,
+              "summary": "[\n  {\n    \"content\": \"MemoryAuditName-1776602420645\",\n    \"score\": 0.95,\n    \"metadata\": {\n      \"id\": \"learned-fact:pref:name\",\n      \"namespace\": \"preference\",\n      \"tags\": [\n        \"learned\",\n   ",
+              "routeId": "agent.execute.tool",
+              "correlationId": "385dfa85-2c23-402d-b9b8-cda7ca47c09e",
+              "toolCallSummary": {
+                "toolName": "memory_search",
+                "argKeys": [
+                  "query"
+                ],
+                "resultIsError": false,
+                "resultLengthChars": 321,
+                "outputShape": "json",
+                "toolCategory": "other",
+                "turnIndex": 0,
+                "toolIndex": 0
+              }
+            }
+          },
+          {
+            "seq": 11,
+            "type": "agent.run.completed",
+            "timestamp": "2026-04-19T12:40:42.440Z",
+            "payload": {
+              "runId": "385dfa85-2c23-402d-b9b8-cda7ca47c09e",
+              "durationMs": 4556,
+              "toolCallCount": 1,
+              "testsPassed": true,
+              "artifacts": [
+                {
+                  "type": "run_record",
+                  "path": ".friday/agent-runs/11bf1416-662e-4a25-977d-a7952a48bed3/run.json"
+                },
+                {
+                  "type": "run_record",
+                  "path": ".friday/agent-runs/385dfa85-2c23-402d-b9b8-cda7ca47c09e/run.json"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "requestId": "872f110b-79ee-4cc5-beac-fac6ad45abb9"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "385dfa85-2c23-402d-b9b8-cda7ca47c09e",
+      "events": [
+        {
+          "seq": 1,
+          "type": "agent.run.started",
+          "timestamp": "2026-04-19T12:40:37.884Z",
+          "payload": {
+            "runId": "385dfa85-2c23-402d-b9b8-cda7ca47c09e",
+            "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+            "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "taskProfile": {
+              "id": "default",
+              "modelSelectionSource": "route_default"
+            }
+          }
+        },
+        {
+          "seq": 9,
+          "type": "agent.run.tool_start",
+          "timestamp": "2026-04-19T12:40:42.437Z",
+          "payload": {
+            "runId": "385dfa85-2c23-402d-b9b8-cda7ca47c09e",
+            "toolName": "memory_search",
+            "toolCallId": "toolu_011iG8JkTN2E8KfjfVgxtKVH",
+            "params": {
+              "query": "what to call user name preference"
+            }
+          }
+        },
+        {
+          "seq": 10,
+          "type": "agent.run.tool_end",
+          "timestamp": "2026-04-19T12:40:42.437Z",
+          "payload": {
+            "runId": "385dfa85-2c23-402d-b9b8-cda7ca47c09e",
+            "toolName": "memory_search",
+            "toolCallId": "toolu_011iG8JkTN2E8KfjfVgxtKVH",
+            "durationMs": 2,
+            "isError": false,
+            "summary": "[\n  {\n    \"content\": \"MemoryAuditName-1776602420645\",\n    \"score\": 0.95,\n    \"metadata\": {\n      \"id\": \"learned-fact:pref:name\",\n      \"namespace\": \"preference\",\n      \"tags\": [\n        \"learned\",\n   ",
+            "routeId": "agent.execute.tool",
+            "correlationId": "385dfa85-2c23-402d-b9b8-cda7ca47c09e",
+            "toolCallSummary": {
+              "toolName": "memory_search",
+              "argKeys": [
+                "query"
+              ],
+              "resultIsError": false,
+              "resultLengthChars": 321,
+              "outputShape": "json",
+              "toolCategory": "other",
+              "turnIndex": 0,
+              "toolIndex": 0
+            }
+          }
+        },
+        {
+          "seq": 11,
+          "type": "agent.run.completed",
+          "timestamp": "2026-04-19T12:40:42.440Z",
+          "payload": {
+            "runId": "385dfa85-2c23-402d-b9b8-cda7ca47c09e",
+            "durationMs": 4556,
+            "toolCallCount": 1,
+            "testsPassed": true,
+            "artifacts": [
+              {
+                "type": "run_record",
+                "path": ".friday/agent-runs/11bf1416-662e-4a25-977d-a7952a48bed3/run.json"
+              },
+              {
+                "type": "run_record",
+                "path": ".friday/agent-runs/385dfa85-2c23-402d-b9b8-cda7ca47c09e/run.json"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "requestId": "872f110b-79ee-4cc5-beac-fac6ad45abb9"
+  }
+}

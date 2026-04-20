@@ -23,6 +23,17 @@ describe("Friday subagent profile helpers", () => {
     expect(inferFridaySubagentProfile("debug this failing log pipeline")).toBe("debug");
   });
 
+  it("treats explicit mutating tool instructions as execute work even when audit keywords appear", () => {
+    const task = [
+      "Persist and recall the marker below.",
+      "Use memory_store exactly once with namespace: 'agent'.",
+      "Tags: ['issue-00150', 'audit'].",
+    ].join(" ");
+
+    expect(inferFridaySubagentProfile(task)).toBe("execute");
+    expect(taskLikelyNeedsWriteAccessForSubagent(task)).toBe(true);
+  });
+
   it("keeps reconnaissance tasks read-only by default", () => {
     expect(taskLikelyNeedsWriteAccessForSubagent("Search for nodejs testing frameworks")).toBe(false);
     expect(taskLikelyNeedsWriteAccessForSubagent("Review the workflow diff and summarize risks")).toBe(false);

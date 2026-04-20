@@ -1,0 +1,2 @@
+Command failed: script -q /Users/jarvis/Projects/Friday/.claude/worktrees/friday-audit-remediation-20260419T085134Z/audit-fix/post-fix-evidence/issue-00140-rerun/tui-typescript.txt zsh -lc (sleep 1; printf 'q\n') | node dist/cli/friday-cli.js tui
+script: tcgetattr/ioctl: Operation not supported on socket

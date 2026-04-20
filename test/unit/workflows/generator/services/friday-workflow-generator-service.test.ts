@@ -691,6 +691,42 @@ describe("FridayWorkflowGeneratorService", () => {
       expect(deps.workflowCrud.publishVersion).toHaveBeenCalled();
     });
 
+    it("persists an executable compiled graph instead of an empty no-op graph", async () => {
+      mockFetchForLlm([
+        makeRequirementsResponse("ready_for_generation"),
+        makeSpecResponse(),
+        makeVisualResponse(),
+        makeTestsResponse(),
+      ]);
+
+      const startResult = await service.startSession({
+        goal: "Send emails",
+        userId: "u-1",
+        channel: "test",
+      });
+
+      await service.approveAndSave(startResult.session.sessionId);
+
+      const compiledGraph = vi.mocked(deps.workflowCrud.createVersion).mock.calls[0]?.[1] as {
+        schemaVersion: string;
+        graph: {
+          nodes: Array<{ id: string; type: string; config?: Record<string, unknown> }>;
+          edges: Array<unknown>;
+        };
+      };
+
+      expect(compiledGraph.schemaVersion).toBe("2.0");
+      expect(compiledGraph.graph.nodes).toHaveLength(2);
+      expect(compiledGraph.graph.nodes.map((node) => node.type)).toEqual(["trigger", "action"]);
+      expect(compiledGraph.graph.edges).toHaveLength(1);
+      expect(compiledGraph.graph.nodes.find((node) => node.id === "send")).toMatchObject({
+        type: "action",
+        config: {
+          skillId: "send-email",
+        },
+      });
+    });
+
     it("persists approved workflow identity on the saved session", async () => {
       mockFetchForLlm([
         makeRequirementsResponse("ready_for_generation"),

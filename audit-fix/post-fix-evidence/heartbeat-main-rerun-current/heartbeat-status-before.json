@@ -1,0 +1,16 @@
+{
+  "url": "http://127.0.0.1:3241/v1/heartbeat/status",
+  "method": "GET",
+  "status": 200,
+  "request": null,
+  "response": {
+    "ok": true,
+    "data": {
+      "lastRunAt": "2026-04-19T17:09:25.952Z",
+      "result": "ok",
+      "intervalMs": 900000,
+      "nextRunAt": null
+    },
+    "requestId": "6e396742-3058-4180-81a6-69251e544094"
+  }
+}

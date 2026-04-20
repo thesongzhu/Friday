@@ -1,0 +1,887 @@
+[
+  {
+    "rawBody": {
+      "ok": true,
+      "data": {
+        "runId": "fd86e1dc-9ff9-4039-b64d-8921ed3473d9",
+        "status": "failed",
+        "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "toolCallCount": 0,
+        "durationMs": 50,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "b28f3d87-6f4e-4784-99f4-83a4cec333b7"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_0.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "536",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "9",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": true,
+        "data": {
+          "runId": "fd86e1dc-9ff9-4039-b64d-8921ed3473d9",
+          "status": "failed",
+          "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "toolCallCount": 0,
+          "durationMs": 50,
+          "usageInput": 0,
+          "usageOutput": 0,
+          "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "eventStreamAvailable": true
+        },
+        "requestId": "b28f3d87-6f4e-4784-99f4-83a4cec333b7"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": true,
+      "data": {
+        "runId": "72cad695-923d-4409-9509-923ddab0f08a",
+        "status": "failed",
+        "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "toolCallCount": 0,
+        "durationMs": 75,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "06521ef5-731b-4876-b1b7-8131a6301b9e"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_1.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "536",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "8",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": true,
+        "data": {
+          "runId": "72cad695-923d-4409-9509-923ddab0f08a",
+          "status": "failed",
+          "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "toolCallCount": 0,
+          "durationMs": 75,
+          "usageInput": 0,
+          "usageOutput": 0,
+          "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "eventStreamAvailable": true
+        },
+        "requestId": "06521ef5-731b-4876-b1b7-8131a6301b9e"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": true,
+      "data": {
+        "runId": "8069400d-e19c-44fe-9225-179e2ff354d7",
+        "status": "failed",
+        "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "toolCallCount": 0,
+        "durationMs": 63,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "daf4cbda-000c-4c3c-8368-4129cd3b513e"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_2.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "536",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "7",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": true,
+        "data": {
+          "runId": "8069400d-e19c-44fe-9225-179e2ff354d7",
+          "status": "failed",
+          "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "toolCallCount": 0,
+          "durationMs": 63,
+          "usageInput": 0,
+          "usageOutput": 0,
+          "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "eventStreamAvailable": true
+        },
+        "requestId": "daf4cbda-000c-4c3c-8368-4129cd3b513e"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": true,
+      "data": {
+        "runId": "ade31b8b-74c3-4e83-a37c-dac1b9989c9e",
+        "status": "failed",
+        "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "toolCallCount": 0,
+        "durationMs": 41,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "7a42cd07-6def-43a9-911e-cc84e4d3d2fd"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_3.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "536",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "6",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": true,
+        "data": {
+          "runId": "ade31b8b-74c3-4e83-a37c-dac1b9989c9e",
+          "status": "failed",
+          "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "toolCallCount": 0,
+          "durationMs": 41,
+          "usageInput": 0,
+          "usageOutput": 0,
+          "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "eventStreamAvailable": true
+        },
+        "requestId": "7a42cd07-6def-43a9-911e-cc84e4d3d2fd"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": true,
+      "data": {
+        "runId": "bf118614-da1e-4943-a7dd-439f16c0c51d",
+        "status": "failed",
+        "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "toolCallCount": 0,
+        "durationMs": 65,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "1155b45f-8016-4354-8b6e-4bdc24a0efb2"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_4.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "536",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "5",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": true,
+        "data": {
+          "runId": "bf118614-da1e-4943-a7dd-439f16c0c51d",
+          "status": "failed",
+          "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "toolCallCount": 0,
+          "durationMs": 65,
+          "usageInput": 0,
+          "usageOutput": 0,
+          "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "eventStreamAvailable": true
+        },
+        "requestId": "1155b45f-8016-4354-8b6e-4bdc24a0efb2"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": true,
+      "data": {
+        "runId": "968f6541-73a6-44fd-b2dc-76215e6368a4",
+        "status": "failed",
+        "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "toolCallCount": 0,
+        "durationMs": 48,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "25a42efb-3525-4c58-8319-b50fa698881e"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_5.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "536",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "4",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": true,
+        "data": {
+          "runId": "968f6541-73a6-44fd-b2dc-76215e6368a4",
+          "status": "failed",
+          "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "toolCallCount": 0,
+          "durationMs": 48,
+          "usageInput": 0,
+          "usageOutput": 0,
+          "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "eventStreamAvailable": true
+        },
+        "requestId": "25a42efb-3525-4c58-8319-b50fa698881e"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": true,
+      "data": {
+        "runId": "47c6758a-6164-44ce-a5dc-002cdb937cd5",
+        "status": "failed",
+        "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "toolCallCount": 0,
+        "durationMs": 42,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "f2a5e7c4-45dd-4a53-88e2-08ca34d8b5ab"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_6.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "536",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "3",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": true,
+        "data": {
+          "runId": "47c6758a-6164-44ce-a5dc-002cdb937cd5",
+          "status": "failed",
+          "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "toolCallCount": 0,
+          "durationMs": 42,
+          "usageInput": 0,
+          "usageOutput": 0,
+          "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "eventStreamAvailable": true
+        },
+        "requestId": "f2a5e7c4-45dd-4a53-88e2-08ca34d8b5ab"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": true,
+      "data": {
+        "runId": "fff9f8e4-dc03-422e-b2f5-315b7a12a85e",
+        "status": "failed",
+        "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "toolCallCount": 0,
+        "durationMs": 68,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "a4f56ea0-0882-4a63-a84e-44a0890d2029"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_7.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "536",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "2",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": true,
+        "data": {
+          "runId": "fff9f8e4-dc03-422e-b2f5-315b7a12a85e",
+          "status": "failed",
+          "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "toolCallCount": 0,
+          "durationMs": 68,
+          "usageInput": 0,
+          "usageOutput": 0,
+          "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "eventStreamAvailable": true
+        },
+        "requestId": "a4f56ea0-0882-4a63-a84e-44a0890d2029"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": true,
+      "data": {
+        "runId": "fd2c511a-2e16-4b03-a685-ab55242367bc",
+        "status": "failed",
+        "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "toolCallCount": 0,
+        "durationMs": 72,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "fa7e702c-5b9b-4337-9973-56a236d96094"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_8.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "536",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "1",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": true,
+        "data": {
+          "runId": "fd2c511a-2e16-4b03-a685-ab55242367bc",
+          "status": "failed",
+          "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "toolCallCount": 0,
+          "durationMs": 72,
+          "usageInput": 0,
+          "usageOutput": 0,
+          "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "eventStreamAvailable": true
+        },
+        "requestId": "fa7e702c-5b9b-4337-9973-56a236d96094"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": true,
+      "data": {
+        "runId": "3869ac0e-b9c7-45fc-9600-107a3dbc1b2a",
+        "status": "failed",
+        "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "toolCallCount": 0,
+        "durationMs": 77,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "435d1a8c-0789-4008-be2e-187f8fda63a2"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_9.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "536",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "0",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": true,
+        "data": {
+          "runId": "3869ac0e-b9c7-45fc-9600-107a3dbc1b2a",
+          "status": "failed",
+          "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "toolCallCount": 0,
+          "durationMs": 77,
+          "usageInput": 0,
+          "usageOutput": 0,
+          "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+          "eventStreamAvailable": true
+        },
+        "requestId": "435d1a8c-0789-4008-be2e-187f8fda63a2"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "RATE_LIMITED",
+        "message": "Rate limit exceeded for policy agent.run",
+        "retryable": true,
+        "retryAfterMs": 43196
+      },
+      "requestId": "efaba638-d17c-4bd6-b37a-458258a6c378"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_10.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 429,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "186",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "retry-after": "44",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "0",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "RATE_LIMITED",
+          "message": "Rate limit exceeded for policy agent.run",
+          "retryable": true,
+          "retryAfterMs": 43196
+        },
+        "requestId": "efaba638-d17c-4bd6-b37a-458258a6c378"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "RATE_LIMITED",
+        "message": "Rate limit exceeded for policy agent.run",
+        "retryable": true,
+        "retryAfterMs": 43196
+      },
+      "requestId": "b72aeaae-1d4c-41de-8a2b-a367476bbfd2"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_11.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 429,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "186",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "retry-after": "44",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "0",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "RATE_LIMITED",
+          "message": "Rate limit exceeded for policy agent.run",
+          "retryable": true,
+          "retryAfterMs": 43196
+        },
+        "requestId": "b72aeaae-1d4c-41de-8a2b-a367476bbfd2"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "RATE_LIMITED",
+        "message": "Rate limit exceeded for policy agent.run",
+        "retryable": true,
+        "retryAfterMs": 43196
+      },
+      "requestId": "6ec722f0-0d1f-4bef-b5f4-08ef5371ad09"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_12.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 429,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "186",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "retry-after": "44",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "0",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "RATE_LIMITED",
+          "message": "Rate limit exceeded for policy agent.run",
+          "retryable": true,
+          "retryAfterMs": 43196
+        },
+        "requestId": "6ec722f0-0d1f-4bef-b5f4-08ef5371ad09"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "RATE_LIMITED",
+        "message": "Rate limit exceeded for policy agent.run",
+        "retryable": true,
+        "retryAfterMs": 43195
+      },
+      "requestId": "29c20203-9390-4dc5-9faa-98c552384782"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_13.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 429,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "186",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "retry-after": "44",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "0",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "RATE_LIMITED",
+          "message": "Rate limit exceeded for policy agent.run",
+          "retryable": true,
+          "retryAfterMs": 43195
+        },
+        "requestId": "29c20203-9390-4dc5-9faa-98c552384782"
+      }
+    }
+  },
+  {
+    "rawBody": {
+      "ok": false,
+      "error": {
+        "code": "RATE_LIMITED",
+        "message": "Rate limit exceeded for policy agent.run",
+        "retryable": true,
+        "retryAfterMs": 43195
+      },
+      "requestId": "6e75da53-75e3-4d7a-abe5-605ec7ccde26"
+    },
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:3242/v1/agent/runs",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer <redacted>"
+      },
+      "body": {
+        "task": "Reply with only RATE_LIMIT_PROBE_OK_14.",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    "response": {
+      "status": 429,
+      "headers": {
+        "connection": "keep-alive",
+        "content-length": "186",
+        "content-type": "application/json; charset=utf-8",
+        "date": "Sun, 19 Apr 2026 14:33:16 GMT",
+        "keep-alive": "timeout=5",
+        "referrer-policy": "no-referrer",
+        "retry-after": "44",
+        "strict-transport-security": "max-age=63072000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "0",
+        "x-ratelimit-reset": "2026-04-19T14:34:00.000Z"
+      },
+      "body": {
+        "ok": false,
+        "error": {
+          "code": "RATE_LIMITED",
+          "message": "Rate limit exceeded for policy agent.run",
+          "retryable": true,
+          "retryAfterMs": 43195
+        },
+        "requestId": "6e75da53-75e3-4d7a-abe5-605ec7ccde26"
+      }
+    }
+  }
+]

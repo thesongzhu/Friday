@@ -183,7 +183,7 @@ export function PluginsPage() {
 
   const healthQuery = useQuery({
     queryKey: ["health", "plugins-page"],
-    queryFn: () => healthApi.getHealth(),
+    queryFn: () => healthApi.getCapabilityHealth(),
     refetchInterval: 30_000,
   });
   const pluginsQuery = useQuery({

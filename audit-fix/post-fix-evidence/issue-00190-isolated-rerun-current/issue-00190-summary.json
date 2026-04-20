@@ -1,0 +1,63 @@
+{
+  "checkedAt": "2026-04-19T15:32:29.838Z",
+  "baseUrl": "http://127.0.0.1:3242",
+  "dbPath": "/Users/jarvis/Projects/Friday/.claude/worktrees/friday-audit-remediation-20260419T085134Z/audit-fix/runtime/isolated-gated-state-issue00018/friday.db",
+  "provider": {
+    "id": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+    "kind": "anthropic",
+    "model": "claude-sonnet-4-20250514"
+  },
+  "loopback": {
+    "url": "http://127.0.0.1:39190/ssrf-loopback-probe",
+    "runId": "1090a380-0d47-447c-b46f-0ec6d2f0d5a7",
+    "finalStatus": "failed",
+    "errorCode": null,
+    "errorMessage": null,
+    "finalText": "Evidence closure failed for web task \"Use the web_fetch tool on this exact URL: http://127.0.0.1:39190/ssrf-loopback-probe Do not use browser, web_search, or \": 1 tool call(s), 1 failed, no successful evidence. Last failure: Fetch error: SSRF guard: blocked private IPv4 — 127.0.0.1. Final response: The request was blocked with the exact blocking reason: \"SSRF guard: blocked private IPv4 — 127.0.0.1\"",
+    "eventNames": [
+      "agent.run.started",
+      "agent.run.progress",
+      "agent.run.planning",
+      "agent.run.executing",
+      "agent.run.tool_start",
+      "agent.run.tool_end",
+      "agent.run.failed"
+    ],
+    "usageRowCount": 2,
+    "usageProviderKinds": [
+      "anthropic"
+    ],
+    "usageModels": [
+      "claude-sonnet-4-20250514"
+    ],
+    "blocked": true,
+    "loopbackHitCount": 0
+  },
+  "metadata": {
+    "url": "http://169.254.169.254/latest/meta-data/",
+    "runId": "43e0c5a4-1f42-4f46-a292-a27426b726cc",
+    "finalStatus": "failed",
+    "errorCode": null,
+    "errorMessage": null,
+    "finalText": "Evidence closure failed for web task \"Use the web_fetch tool on this exact URL: http://169.254.169.254/latest/meta-data/ Do not use browser, web_search, or an\": 1 tool call(s), 1 failed, no successful evidence. Last failure: Fetch error: SSRF guard: blocked private IPv4 — 169.254.169.254. Final response: I understand I need to try the browser tool as an alternative, but the task specifically instructs me to \"Do not use browser, web_search, or any other network tool\" and to \"reply with the exact blocki",
+    "eventNames": [
+      "agent.run.started",
+      "agent.run.progress",
+      "agent.run.planning",
+      "agent.run.executing",
+      "agent.run.tool_start",
+      "agent.run.tool_end",
+      "agent.run.failed"
+    ],
+    "usageRowCount": 2,
+    "usageProviderKinds": [
+      "anthropic"
+    ],
+    "usageModels": [
+      "claude-sonnet-4-20250514"
+    ],
+    "blocked": true,
+    "loopbackHitCount": null
+  },
+  "passed": true
+}

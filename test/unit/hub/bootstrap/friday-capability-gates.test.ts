@@ -13,7 +13,7 @@ describe("resolveFridayCapabilityGates", () => {
     expect(gates.marketplaceCommerceEnabled).toBe(true);
     expect(gates.marketplaceInstallRequired).toBe(true);
     expect(gates.marketplaceInstallMaterialize).toBe(true);
-    expect(gates.heartbeatEnabled).toBe(false);
+    expect(gates.heartbeatEnabled).toBe(true);
     expect(gates.heartbeatActiveHoursEnabled).toBe(true);
     expect(gates.autoFixDispatchEnabled).toBe(true);
   });
@@ -42,5 +42,13 @@ describe("resolveFridayCapabilityGates", () => {
     expect(gates.heartbeatEnabled).toBe(true);
     expect(gates.heartbeatActiveHoursEnabled).toBe(false);
     expect(gates.autoFixDispatchEnabled).toBe(false);
+  });
+
+  it("allows heartbeat to be explicitly disabled", () => {
+    const gates = resolveFridayCapabilityGates({
+      FRIDAY_HEARTBEAT_ENABLED: "false",
+    });
+
+    expect(gates.heartbeatEnabled).toBe(false);
   });
 });

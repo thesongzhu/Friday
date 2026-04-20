@@ -1,0 +1,11 @@
+{
+  "checkedAt": "2026-04-19T20:15:08Z",
+  "issueId": "ISSUE-00074",
+  "status": "verified_targeted_tests",
+  "routeFile": "src/api/http/routes/friday-discovery-routes.ts",
+  "testCommand": "npm exec vitest run test/unit/api/http/routes/friday-discovery-routes.test.ts",
+  "testFile": "test/unit/api/http/routes/friday-discovery-routes.test.ts",
+  "testsPassed": 2,
+  "typeErrors": "none",
+  "summary": "Current code no longer matches the original any-bearer-token claim: every inventory-bearing discovery route (scan, catalog, programs, recommendations, status) is gated by desktop.read, the policy read route additionally requires admin/operator roles, and targeted route coverage now locks those auth contracts in place."
+}

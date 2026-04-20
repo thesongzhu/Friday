@@ -1,0 +1,261 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+      "events": [
+        {
+          "seq": 1,
+          "type": "agent.run.started",
+          "timestamp": "2026-04-19T15:24:55.839Z",
+          "payload": {
+            "runId": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+            "task": "Reply with the exact text idempotent-ok and nothing else.",
+            "model": "claude-sonnet-4-20250514",
+            "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "taskProfile": {
+              "id": "default",
+              "model": "claude-sonnet-4-20250514",
+              "modelSelectionSource": "provider+model"
+            }
+          }
+        },
+        {
+          "seq": 9,
+          "type": "agent.run.route_selected",
+          "timestamp": "2026-04-19T15:24:57.919Z",
+          "payload": {
+            "runId": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+            "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "requestedModel": "claude-sonnet-4-20250514",
+            "taskProfileId": "default",
+            "taskProfileModel": "claude-sonnet-4-20250514",
+            "modelSelectionSource": "provider+model",
+            "actualProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "actualModel": "claude-sonnet-4-20250514",
+            "actualProviderKind": "anthropic",
+            "actualProviderApi": "anthropic-messages",
+            "backendKind": "http",
+            "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+            "learningAdjusted": false,
+            "routeDecisionTrace": {
+              "taskProfileId": "default",
+              "requiresNativeTools": true,
+              "learningAdjusted": false,
+              "learningSignalsPresent": true,
+              "orderingAdjusted": false,
+              "selectedAdjusted": false,
+              "reasonCode": "historical_bias",
+              "reasonText": "Historical route outcomes influenced candidate scoring.",
+              "historyWindow": {
+                "sampleLimit": 250
+              },
+              "selectedBeforeLearning": {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http"
+              },
+              "selectedAfterLearning": {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http"
+              },
+              "candidateScores": [
+                {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http",
+                  "originalRank": 1,
+                  "finalRank": 1,
+                  "selected": true,
+                  "eligible": true,
+                  "ineligibilityReasons": [],
+                  "pinned": false,
+                  "historicalSuccessRate": 1,
+                  "historicalFailureRate": 0,
+                  "sampleCount": 54,
+                  "baseRankScore": 1,
+                  "historyScore": 5.25,
+                  "patternScore": 0,
+                  "lessonScore": 0,
+                  "routePenaltyScore": 0,
+                  "pinBonus": 0,
+                  "finalScore": 6.25,
+                  "historyStats": {
+                    "sampleCount": 54,
+                    "successRate": 1,
+                    "failureRate": 0
+                  },
+                  "matchedLessonIds": [],
+                  "matchedPatternIds": []
+                }
+              ]
+            }
+          }
+        },
+        {
+          "seq": 12,
+          "type": "agent.run.completed",
+          "timestamp": "2026-04-19T15:24:57.925Z",
+          "payload": {
+            "runId": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+            "durationMs": 2090,
+            "toolCallCount": 0,
+            "testsPassed": true,
+            "artifacts": [
+              {
+                "type": "run_record",
+                "path": ".friday/agent-runs/e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0/run.json"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "requestId": "d2a70ac2-beae-4d96-90a6-3f1c9896ebf0"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3242/v1/agent/runs/e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0/audit",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "connection": "keep-alive",
+      "content-length": "2694",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Sun, 19 Apr 2026 15:24:57 GMT",
+      "keep-alive": "timeout=5",
+      "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY"
+    },
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+        "events": [
+          {
+            "seq": 1,
+            "type": "agent.run.started",
+            "timestamp": "2026-04-19T15:24:55.839Z",
+            "payload": {
+              "runId": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+              "task": "Reply with the exact text idempotent-ok and nothing else.",
+              "model": "claude-sonnet-4-20250514",
+              "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "taskProfile": {
+                "id": "default",
+                "model": "claude-sonnet-4-20250514",
+                "modelSelectionSource": "provider+model"
+              }
+            }
+          },
+          {
+            "seq": 9,
+            "type": "agent.run.route_selected",
+            "timestamp": "2026-04-19T15:24:57.919Z",
+            "payload": {
+              "runId": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+              "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "requestedModel": "claude-sonnet-4-20250514",
+              "taskProfileId": "default",
+              "taskProfileModel": "claude-sonnet-4-20250514",
+              "modelSelectionSource": "provider+model",
+              "actualProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "actualModel": "claude-sonnet-4-20250514",
+              "actualProviderKind": "anthropic",
+              "actualProviderApi": "anthropic-messages",
+              "backendKind": "http",
+              "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+              "learningAdjusted": false,
+              "routeDecisionTrace": {
+                "taskProfileId": "default",
+                "requiresNativeTools": true,
+                "learningAdjusted": false,
+                "learningSignalsPresent": true,
+                "orderingAdjusted": false,
+                "selectedAdjusted": false,
+                "reasonCode": "historical_bias",
+                "reasonText": "Historical route outcomes influenced candidate scoring.",
+                "historyWindow": {
+                  "sampleLimit": 250
+                },
+                "selectedBeforeLearning": {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http"
+                },
+                "selectedAfterLearning": {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http"
+                },
+                "candidateScores": [
+                  {
+                    "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                    "providerKind": "anthropic",
+                    "model": "claude-sonnet-4-20250514",
+                    "backendKind": "http",
+                    "originalRank": 1,
+                    "finalRank": 1,
+                    "selected": true,
+                    "eligible": true,
+                    "ineligibilityReasons": [],
+                    "pinned": false,
+                    "historicalSuccessRate": 1,
+                    "historicalFailureRate": 0,
+                    "sampleCount": 54,
+                    "baseRankScore": 1,
+                    "historyScore": 5.25,
+                    "patternScore": 0,
+                    "lessonScore": 0,
+                    "routePenaltyScore": 0,
+                    "pinBonus": 0,
+                    "finalScore": 6.25,
+                    "historyStats": {
+                      "sampleCount": 54,
+                      "successRate": 1,
+                      "failureRate": 0
+                    },
+                    "matchedLessonIds": [],
+                    "matchedPatternIds": []
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "seq": 12,
+            "type": "agent.run.completed",
+            "timestamp": "2026-04-19T15:24:57.925Z",
+            "payload": {
+              "runId": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+              "durationMs": 2090,
+              "toolCallCount": 0,
+              "testsPassed": true,
+              "artifacts": [
+                {
+                  "type": "run_record",
+                  "path": ".friday/agent-runs/e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0/run.json"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "requestId": "d2a70ac2-beae-4d96-90a6-3f1c9896ebf0"
+    }
+  }
+}

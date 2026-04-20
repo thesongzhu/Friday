@@ -69,6 +69,7 @@ describe("FridayAgentRoutes", () => {
 
   beforeEach(() => {
     stubDeps = {
+      validateRequestedRoute: vi.fn().mockResolvedValue(undefined),
       startRun: vi.fn<[{ task: string }], Promise<FridayAgentRuntimeResult>>().mockResolvedValue(createStubResult()),
       getRun: vi.fn<[string], FridayAgentRunRecord | null>().mockReturnValue(createStubRun()),
       listRuns: vi.fn().mockReturnValue([]),
@@ -231,6 +232,7 @@ describe("FridayAgentRoutes", () => {
         receivedAt: "2026-01-01T00:00:00.000Z",
       };
       const result = await route.handler(ctx);
+      expect(stubDeps.validateRequestedRoute).toHaveBeenCalledWith("openai", "gpt-4", undefined);
       expect(stubDeps.startRun).toHaveBeenCalledWith({
         task: "Build a feature",
         providerId: "openai",
@@ -241,6 +243,102 @@ describe("FridayAgentRoutes", () => {
         ...createStubResult(),
         eventStreamAvailable: true,
       });
+    });
+
+    it("passes Idempotency-Key transport metadata into startRun", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const ctx = {
+        body: { task: "Build a feature" },
+        params: {},
+        query: {},
+        headers: { "idempotency-key": "idem-1" },
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await route.handler(ctx);
+
+      expect(stubDeps.startRun).toHaveBeenCalledWith(expect.objectContaining({
+        task: "Build a feature",
+        apiIdempotencyKey: "idem-1",
+        apiIdempotencyReceivedAt: "2026-01-01T00:00:00.000Z",
+        apiIdempotencyPayloadHash: expect.any(String),
+      }));
+    });
+
+    it("accepts requestedProviderId/requestedModel aliases", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const ctx = {
+        body: {
+          task: "Build a feature",
+          requestedProviderId: "openai-alias",
+          requestedModel: "gpt-4o",
+          timeoutMs: 60000,
+        },
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-alias-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await route.handler(ctx);
+
+      expect(stubDeps.validateRequestedRoute).toHaveBeenCalledWith("openai-alias", "gpt-4o", undefined);
+      expect(stubDeps.startRun).toHaveBeenCalledWith({
+        task: "Build a feature",
+        providerId: "openai-alias",
+        model: "gpt-4o",
+        timeoutMs: 60000,
+      });
+    });
+
+    it("rejects conflicting provider/model aliases", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const ctx = {
+        body: {
+          task: "Build a feature",
+          providerId: "openai-primary",
+          requestedProviderId: "anthropic-alias",
+          model: "gpt-4o",
+          requestedModel: "claude-sonnet-4-20250514",
+        },
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-alias-2",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await expect(route.handler(ctx)).rejects.toThrow("providerId and requestedProviderId must match");
+      expect(stubDeps.startRun).not.toHaveBeenCalledWith(
+        expect.objectContaining({ providerId: "openai-primary" }),
+      );
+    });
+
+    it("fails before creating a run when the requested provider route is invalid", async () => {
+      stubDeps.validateRequestedRoute = vi.fn().mockRejectedValue(new Error("Provider \"missing-provider\" not found"));
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const ctx = {
+        body: { task: "Build a feature", providerId: "missing-provider", model: "gpt-4o" },
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-alias-3",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await expect(route.handler(ctx)).rejects.toThrow("Provider \"missing-provider\" not found");
+      expect(stubDeps.validateRequestedRoute).toHaveBeenCalledWith("missing-provider", "gpt-4o", undefined);
+      expect(stubDeps.startRun).not.toHaveBeenCalled();
     });
 
     it("forwards replyToMessageId when provided", async () => {

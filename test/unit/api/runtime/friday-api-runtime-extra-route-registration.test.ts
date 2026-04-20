@@ -130,11 +130,13 @@ describe("API Runtime — Extended Route Registration", () => {
     }
   });
 
-  it("does not register optional extended route families when deps are omitted", () => {
+  it("keeps stable disabled route surfaces while leaving unrelated optional families unregistered when deps are omitted", () => {
     const runtime = createFridayApiRuntime(makeBaseDeps());
     const operationIds = runtime.routes.getRoutes().map((route) => route.operationId);
 
     expect(operationIds).toContain("version.get");
+    expect(operationIds).toContain("tui.status.get");
+    expect(operationIds).toContain("tui.jobs.list");
     expect(operationIds).toContain("secrets.list");
     expect(operationIds).toContain("skills.catalog.list");
     expect(operationIds).toContain("skills.install");
@@ -144,10 +146,15 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(operationIds.some((id) => id.startsWith("config."))).toBe(false);
     expect(operationIds).not.toContain("audit.logs.list");
     expect(operationIds.some((id) => id.startsWith("desktop."))).toBe(false);
-    expect(operationIds.some((id) => id.startsWith("channels."))).toBe(false);
+    expect(operationIds).toContain("channels.webhooks.line");
+    expect(operationIds).toContain("channels.webhooks.whatsapp.verify");
+    expect(operationIds).toContain("channels.webhooks.whatsapp");
+    expect(operationIds).toContain("channels.webhooks.lark");
+    expect(operationIds.some((id) => id.startsWith("channels.") && !id.startsWith("channels.webhooks."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("system."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("discovery."))).toBe(false);
-    expect(operationIds.some((id) => id.startsWith("mcp.server."))).toBe(false);
+    expect(operationIds).toContain("mcp.server.rpc");
+    expect(operationIds).toContain("packaging.packages.list");
     expect(operationIds.some((id) => id.startsWith("marketplace."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("satellites."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("diagnosis."))).toBe(false);
@@ -163,7 +170,7 @@ describe("API Runtime — Extended Route Registration", () => {
       enabledChannelKinds: () => ["webchat"],
     });
 
-    const route = runtime.routes.getRoutes().find((entry) => entry.operationId === "health.check");
+    const route = runtime.routes.getRoutes().find((entry) => entry.operationId === "health.capabilities");
     expect(route).toBeDefined();
 
     const result = await route!.handler({
@@ -179,12 +186,26 @@ describe("API Runtime — Extended Route Registration", () => {
         channels: {
           supportedKinds: string[];
           enabledKinds: string[];
+          webhookEndpoints?: {
+            line: boolean;
+            whatsapp: boolean;
+            lark: boolean;
+          };
         };
+        mcp?: { enabled: boolean };
+        packaging?: { enabled: boolean };
       };
     };
 
     expect(result.capabilities.channels.supportedKinds).toEqual(["webchat", "irc"]);
     expect(result.capabilities.channels.enabledKinds).toEqual(["webchat"]);
+    expect(result.capabilities.channels.webhookEndpoints).toEqual({
+      line: false,
+      whatsapp: false,
+      lark: false,
+    });
+    expect(result.capabilities.mcp?.enabled).toBe(false);
+    expect(result.capabilities.packaging?.enabled).toBe(false);
   });
 
   it("registers optional extended route families when deps are provided", () => {

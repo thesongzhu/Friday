@@ -3,13 +3,12 @@
  * (AGENTS.md, SOUL.md, USER.md, MEMORY.md, etc.) and injects
  * their contents into the agent system prompt.
  *
- * Also reads exported memory items from `.friday/exports/memory/`
- * (written by the memory file sync service) to close the feedback
- * loop: memory_store → SQLite → file sync → workspace context → prompt.
+ * Also reads prompt-safe exported memory items from `.friday/exports/memory/`
+ * (currently limited to compaction summaries) so session continuity can
+ * survive restarts without turning durable user facts into hidden prompt state.
  *
- * This is the key mechanism that gives Friday persistent identity,
- * user knowledge, and long-term memory across sessions — matching
- * the OpenClaw workspace context injection pattern.
+ * Durable user facts and preferences must stay behind explicit
+ * memory surfaces such as `memory_search` or public memory APIs.
  *
  * Files are read fresh on each agent run so edits take effect
  * immediately without restart.
@@ -106,6 +105,9 @@ const MAX_TOTAL_CONTEXT_CHARS = 64_000;
 
 /** Maximum memory items to include from exported JSON files. */
 const MAX_MEMORY_EXPORT_ITEMS = 100;
+const WORKSPACE_CONTEXT_ALLOWED_MEMORY_EXPORT_NAMESPACES = new Set([
+  "compaction.summary",
+]);
 
 /** Maximum candidate blocks to inject when task-aware selection is active. */
 const MAX_SELECTED_CANDIDATE_BLOCKS = 3;
@@ -616,6 +618,10 @@ async function loadMemoryExports(workspaceDir: string): Promise<FridayStoredMemo
           createdAt?: string;
         }>;
       };
+
+      if (!parsed.namespace || !WORKSPACE_CONTEXT_ALLOWED_MEMORY_EXPORT_NAMESPACES.has(parsed.namespace)) {
+        continue;
+      }
 
       if (!parsed.items || !Array.isArray(parsed.items)) continue;
 

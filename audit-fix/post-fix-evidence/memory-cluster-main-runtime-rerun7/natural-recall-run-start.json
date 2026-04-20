@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "What should you call me? Reply with only the name.",
+      "providerId": "33525000-9455-4093-bb23-708db1235b0f"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "44d864eb-effd-4328-86d1-035f13f81443",
+        "status": "failed",
+        "response": "Validation criteria not met",
+        "toolCallCount": 1,
+        "durationMs": 15278,
+        "usageInput": 11294,
+        "usageOutput": 26,
+        "finalResponse": "Validation criteria not met",
+        "eventStreamAvailable": true
+      },
+      "requestId": "789a44c0-6368-4543-8e07-80f66b9cd783"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "44d864eb-effd-4328-86d1-035f13f81443",
+      "status": "failed",
+      "response": "Validation criteria not met",
+      "toolCallCount": 1,
+      "durationMs": 15278,
+      "usageInput": 11294,
+      "usageOutput": 26,
+      "finalResponse": "Validation criteria not met",
+      "eventStreamAvailable": true
+    },
+    "requestId": "789a44c0-6368-4543-8e07-80f66b9cd783"
+  }
+}

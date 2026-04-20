@@ -70,6 +70,27 @@ describe("Friday deterministic pipeline runtime wiring", () => {
     db.close();
   });
 
+  it("fails closed when evaluating a missing rules bundle", () => {
+    const db = createTestDb();
+    clearRulesState(db);
+    const runtime = createFridayDeterministicPipelineRuntime({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2026-02-27T00:00:00.000Z",
+      invokeSkill: async () => ({ ok: true }),
+    });
+
+    expect(() =>
+      runtime.rules.evaluateRules({
+        bundleId: "missing-bundle",
+        resource: "workflow",
+        action: "execute",
+        args: { task: "blocked" },
+      }),
+    ).toThrow(/Policy bundle 'missing-bundle' not found/);
+    db.close();
+  });
+
   it("relaxes deny decision in shadow mode for node-runner execution", async () => {
     process.env.FRIDAY_PIPELINE_MODE = "shadow";
     process.env.FRIDAY_PIPELINE_ENABLE = "true";

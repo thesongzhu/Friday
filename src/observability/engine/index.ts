@@ -33,6 +33,9 @@ export { FridayAuditTrail, canonicalizeAuditEntry } from "./audit-trail.js";
 
 export type {
   AppendAuditEntryOptions,
+  FridayAuditTrailOptions,
+  FridayAuditTrailPersistenceSnapshot,
+  FridayAuditTrailStore,
 } from "./audit-trail.js";
 
 // ─── Alert Engine ───

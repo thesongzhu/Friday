@@ -115,7 +115,7 @@ export { createFridayChannelSlowTaskNotifier } from "./friday-channel-slow-task-
 export { createFridayQqChannel } from "./qq/friday-qq-channel.js";
 export { createFridayLarkChannel } from "./lark/friday-lark-channel.js";
 export type { LarkChannelDeps } from "./lark/friday-lark-channel.js";
-export { createLarkWebhookRelayService } from "./lark/lark-webhook-relay.js";
+export { createLarkWebhookRelayService, validateLarkWebhookSignature } from "./lark/lark-webhook-relay.js";
 export type { LarkWebhookRelayService, LarkWebhookRelayResult } from "./lark/lark-webhook-relay.js";
 
 // Discord

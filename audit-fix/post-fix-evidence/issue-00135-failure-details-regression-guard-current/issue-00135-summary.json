@@ -1,0 +1,20 @@
+{
+  "issueId": "ISSUE-00135",
+  "canonicalFixId": "ISSUE-00135",
+  "phase": "phase5-regression-guards",
+  "status": "verified_targeted_tests",
+  "verifiedAt": "2026-04-19T19:20:40Z",
+  "evidenceType": "targeted_failure_repository_and_product_overview_tests",
+  "summary": "Targeted regression coverage now proves failed workflow finalization persists and rehydrates run.failure from SQLite, and the workflow product overview exposes the corresponding node.error message in latestRunNodeTimeline instead of collapsing into a null error summary.",
+  "artifacts": [
+    "test/unit/workflows/friday-workflow-run-repository.test.ts",
+    "test/unit/workflows/friday-workflow-product-service.test.ts"
+  ],
+  "tests": [
+    {
+      "command": "npm exec vitest run test/unit/workflows/friday-workflow-run-repository.test.ts test/unit/workflows/friday-workflow-product-service.test.ts",
+      "status": "passed",
+      "details": "2 files passed, 14 tests passed, Type Errors: no errors"
+    }
+  ]
+}

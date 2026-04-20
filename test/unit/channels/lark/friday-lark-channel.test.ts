@@ -82,15 +82,28 @@ function createMockFetch() {
 
 function createMockWebhookRelay(): LarkWebhookRelayService & {
   _handler: ((event: Record<string, unknown>) => void) | null;
+  verificationToken?: string;
+  encryptKey?: string;
 } {
   let listening = false;
   let handler: ((event: Record<string, unknown>) => void) | null = null;
+  let verificationToken: string | undefined;
+  let encryptKey: string | undefined;
   return {
     get _handler() {
       return handler;
     },
-    setAppSecret() {
-      // no-op in test mock
+    get verificationToken() {
+      return verificationToken;
+    },
+    get encryptKey() {
+      return encryptKey;
+    },
+    setVerificationToken(token) {
+      verificationToken = token;
+    },
+    setEncryptKey(key) {
+      encryptKey = key;
     },
     async start(onEvent) {
       listening = true;
@@ -652,6 +665,17 @@ describe("FridayLarkChannel", () => {
   });
 
   describe("webhook mode", () => {
+    it("rejects webhook mode when verificationToken is missing", async () => {
+      const webhookRelay = createMockWebhookRelay();
+      plugin = createFridayLarkChannel({ webhookRelay });
+
+      await expect(plugin.init({
+        appId: "cli-test",
+        appSecret: "secret-test",
+        receiveMode: "webhook",
+      })).rejects.toThrow("verificationToken");
+    });
+
     it("starts webhook relay when receiveMode is webhook and handles events", async () => {
       const webhookRelay = createMockWebhookRelay();
       plugin = createFridayLarkChannel({ webhookRelay });
@@ -660,6 +684,8 @@ describe("FridayLarkChannel", () => {
         appId: "cli-test",
         appSecret: "secret-test",
         receiveMode: "webhook",
+        verificationToken: "verify-token-1",
+        encryptKey: "encrypt-key-1",
       });
 
       fetchMock.responses.push({
@@ -676,6 +702,8 @@ describe("FridayLarkChannel", () => {
       await plugin.start((msg) => messages.push(msg));
 
       expect(webhookRelay.isListening()).toBe(true);
+      expect(webhookRelay.verificationToken).toBe("verify-token-1");
+      expect(webhookRelay.encryptKey).toBe("encrypt-key-1");
       expect(MockWebSocket.instances).toHaveLength(0);
 
       webhookRelay._handler?.({
@@ -709,6 +737,7 @@ describe("FridayLarkChannel", () => {
         appId: "cli-test",
         appSecret: "secret-test",
         receiveMode: "webhook",
+        verificationToken: "verify-token-1",
       });
       fetchMock.responses.push({
         url: "tenant_access_token",

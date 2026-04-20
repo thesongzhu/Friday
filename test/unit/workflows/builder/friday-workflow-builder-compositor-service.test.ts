@@ -12,6 +12,7 @@ import { createFridayWorkflowCompiler } from "#workflows";
 import { createFridayWorkflowValidator } from "#workflows";
 import { createFridayWorkflowCrudService } from "#workflows";
 import { createFridayWorkflowRepository } from "#workflows";
+import { getFridayBuiltinWorkflowTemplates } from "#workflows";
 import { createTestDb, createTestIdGenerator } from "../_helpers/create-test-db.helper.js";
 import { createTestSpec, createTestVisual } from "./_helpers/create-test-spec.helper.js";
 
@@ -192,6 +193,66 @@ describe("FridayWorkflowBuilderCompositorService", () => {
     expect(result.validation.valid).toBe(true);
 
     // Verify the version exists
+    const version = crudService.getVersion(result.workflowVersionId);
+    expect(version).not.toBeNull();
+    expect(version!.isPublished).toBe(true);
+  });
+
+  it("publishes the builtin blank template after compiling its transform starter into a data node", () => {
+    const {
+      draftService,
+      collaborationService,
+      compositorService,
+      crudService,
+    } = createAllServices();
+    const blankTemplate = getFridayBuiltinWorkflowTemplates().find(
+      (template) => template.templateId === "builtin-blank",
+    );
+
+    expect(blankTemplate).toBeDefined();
+
+    const workflow = crudService.createWorkflow({
+      slug: "blank-wf",
+      name: "Blank Workflow",
+    });
+    const spec = JSON.parse(JSON.stringify(blankTemplate!.spec)) as typeof blankTemplate.spec;
+    spec.workflowId = workflow.id;
+    spec.name = workflow.name;
+
+    const visual = JSON.parse(JSON.stringify(blankTemplate!.visual)) as typeof blankTemplate.visual;
+    visual.workflowId = workflow.id;
+
+    const draft = draftService.createDraft({
+      workflowId: workflow.id,
+      title: "Blank Workflow Draft",
+      spec,
+      visual,
+      ownerUserId: "test-user",
+    });
+    const compiled = compositorService.compileDraft(draft.draftId);
+    const compiledNode = compiled.compiled.graph.nodes.find((node) => node.id === "step-1");
+
+    expect(compiled.validation.valid).toBe(true);
+    expect(compiledNode?.type).toBe("data");
+    expect(compiledNode?.config).not.toHaveProperty("actionType");
+
+    const lockResult = collaborationService.acquireLock({
+      workflowId: workflow.id,
+      ownerUserId: "test-user",
+      ttlSec: 300,
+    });
+    const result = compositorService.publishDraft({
+      draftId: draft.draftId,
+      workflowId: workflow.id,
+      lockToken: lockResult.lock!.lockToken,
+      publishNow: true,
+      createdByUserId: "test-user",
+      changeNote: "Publish blank workflow template",
+    });
+
+    expect(result.published).toBe(true);
+    expect(result.validation.valid).toBe(true);
+
     const version = crudService.getVersion(result.workflowVersionId);
     expect(version).not.toBeNull();
     expect(version!.isPublished).toBe(true);

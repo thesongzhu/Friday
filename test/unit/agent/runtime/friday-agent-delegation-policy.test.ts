@@ -54,6 +54,16 @@ describe("shouldDelegateFridayAgentTask", () => {
     })).toBe(false);
   });
 
+  it("keeps direct memory recall questions on the main agent even when they mention memory_search", () => {
+    expect(shouldDelegateFridayAgentTask({
+      task: "What should you call me? Reply with only the name.",
+    })).toBe(false);
+
+    expect(shouldDelegateFridayAgentTask({
+      task: "Use memory_search if needed. What should you call me? Reply with only the name.",
+    })).toBe(false);
+  });
+
   it("delegates operational or multi-step work", () => {
     expect(shouldDelegateFridayAgentTask({
       task: "Open Facebook in the browser and tell me what is on the page.",

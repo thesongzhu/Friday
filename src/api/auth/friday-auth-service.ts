@@ -3,6 +3,7 @@ import * as crypto from "node:crypto";
 import { FridayDomainError } from "#errors";
 
 import type {
+  FridayAccessTokenClaims,
   FridayAuthBootstrapRequest,
   FridayAuthBootstrapResponse,
   FridayAuthBootstrapStatusResponse,
@@ -316,30 +317,36 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
   function generateTokenPair(
     user: FridayUserRow,
     sessionId: string,
-  ): { accessToken: string; refreshToken: string } {
+  ): {
+    accessToken: string;
+    refreshToken: string;
+    accessTokenClaims: FridayAccessTokenClaims;
+  } {
     const role = user.role as FridayRole;
     const scopes = [...getScopesForRole(role)] as FridayScope[];
     const nowSec = Math.floor(new Date(deps.nowIso()).getTime() / 1000);
     const tenantId = resolveTenantId(user);
 
+    const accessTokenClaims: FridayAccessTokenClaims = {
+      tokenId: deps.idGenerator(),
+      principalType: "user",
+      principalId: user.id,
+      tenantId,
+      userId: user.id,
+      role,
+      scopes,
+      iat: nowSec,
+      exp: nowSec + deps.accessTokenTtlSec,
+      sid: sessionId,
+    };
+
     const accessToken = encodeToken(
-      {
-        tokenId: deps.idGenerator(),
-        principalType: "user",
-        principalId: user.id,
-        tenantId,
-        userId: user.id,
-        role,
-        scopes,
-        iat: nowSec,
-        exp: nowSec + deps.accessTokenTtlSec,
-        sid: sessionId,
-      },
+      accessTokenClaims,
       deps.tokenSecret,
     );
 
     const refreshToken = deps.idGenerator();
-    return { accessToken, refreshToken };
+    return { accessToken, refreshToken, accessTokenClaims };
   }
 
   return {
@@ -523,7 +530,7 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
 
       const now = deps.nowIso();
       const sessionId = deps.idGenerator();
-      const { accessToken, refreshToken } = generateTokenPair(user, sessionId);
+      const { accessToken, refreshToken, accessTokenClaims } = generateTokenPair(user, sessionId);
       const refreshHash = hashToken(refreshToken);
       const expiresAt = new Date(
         new Date(now).getTime() + deps.refreshTokenTtlSec * 1000,
@@ -537,6 +544,13 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
           expiresAt,
           ipAddress: ip,
           userAgent,
+          now,
+        });
+        deps.registerIssuedAccessToken?.(db, {
+          tokenId: accessTokenClaims.tokenId,
+          sessionId,
+          userId: user.id,
+          expiresAtEpoch: accessTokenClaims.exp,
           now,
         });
 
@@ -577,7 +591,7 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         throw new FridayAuthError("USER_NOT_FOUND", "User no longer exists");
       }
 
-      const { accessToken, refreshToken: newRefreshToken } = generateTokenPair(
+      const { accessToken, refreshToken: newRefreshToken, accessTokenClaims } = generateTokenPair(
         user,
         session.id,
       );
@@ -589,7 +603,7 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
       // Atomic compare-and-swap: ensures a refresh token can only be used once.
       // If another request already rotated the token, this will fail (changes === 0).
       const swapped = deps.db.withWriteTransaction((db) => {
-        return sessionRepo.compareAndSwapRefreshHash(
+        const didSwap = sessionRepo.compareAndSwapRefreshHash(
           db,
           session.id,
           refreshHash,
@@ -597,6 +611,16 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
           newExpires,
           now,
         );
+        if (didSwap) {
+          deps.registerIssuedAccessToken?.(db, {
+            tokenId: accessTokenClaims.tokenId,
+            sessionId: session.id,
+            userId: user.id,
+            expiresAtEpoch: accessTokenClaims.exp,
+            now,
+          });
+        }
+        return didSwap;
       });
 
       if (!swapped) {

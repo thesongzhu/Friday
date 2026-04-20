@@ -174,6 +174,29 @@ describe("resolveFridayHubConfig", () => {
     expect(resolved.allowLocalBypassLogin).toBe(false);
   });
 
+  it("defaults allowPrivateNetwork=false in dev mode", () => {
+    const resolved = resolveFridayHubConfig(makeConfig(), emptyEnv());
+    expect(resolved.ssrfPolicy?.allowPrivateNetwork).toBe(false);
+  });
+
+  it("keeps allowPrivateNetwork=false in production by default", () => {
+    const resolved = resolveFridayHubConfig(makeConfig(), { NODE_ENV: "production" });
+    expect(resolved.ssrfPolicy?.allowPrivateNetwork).toBe(false);
+  });
+
+  it("enables allowPrivateNetwork when FRIDAY_ALLOW_PRIVATE_NETWORK=true", () => {
+    const resolved = resolveFridayHubConfig(makeConfig(), { FRIDAY_ALLOW_PRIVATE_NETWORK: "true" });
+    expect(resolved.ssrfPolicy?.allowPrivateNetwork).toBe(true);
+  });
+
+  it("enables allowPrivateNetwork when input ssrfPolicy explicitly opts in", () => {
+    const resolved = resolveFridayHubConfig(
+      makeConfig({ ssrfPolicy: { allowPrivateNetwork: true } }),
+      emptyEnv(),
+    );
+    expect(resolved.ssrfPolicy?.allowPrivateNetwork).toBe(true);
+  });
+
   it("respects explicit FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN=false even in dev mode", () => {
     const resolved = resolveFridayHubConfig(makeConfig(), { FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN: "false" });
     expect(resolved.allowLocalBypassLogin).toBe(false);

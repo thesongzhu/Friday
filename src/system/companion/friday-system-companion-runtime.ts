@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { FridayDomainError } from "#errors";
+import { toAppleScriptIdentifierLiteral } from "../friday-applescript.js";
 
 import type { FridayDesktopPlatform } from "../../desktop/model/friday-desktop.types.js";
 import type {
@@ -234,10 +235,6 @@ function buildFridaySystemCompanionActionCapabilities(
   };
 }
 
-function escapeAppleScriptString(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
-}
-
 function parseWindowIndex(windowId: string): number | null {
   const match = /:window:(\d+)$/.exec(windowId);
   if (!match) {
@@ -323,7 +320,7 @@ async function focusDarwinTarget(
     return null;
   }
   const script =
-    `tell application "${escapeAppleScriptString(appName)}" to activate`;
+    `tell application ${toAppleScriptIdentifierLiteral(appName, "app identifier")} to activate`;
   await execFileAsync("osascript", ["-e", script]);
   return {
     appIdentifier: input.appIdentifier ?? appName,
@@ -396,7 +393,7 @@ async function arrangeDarwinWindows(
     }
     return [
       `tell application "System Events"`,
-      `  tell process "${escapeAppleScriptString(appName)}"`,
+      `  tell process ${toAppleScriptIdentifierLiteral(appName, "app identifier")}`,
       `    set position of window ${windowIndex} to {${target.x}, ${target.y}}`,
       `    set size of window ${windowIndex} to {${target.width}, ${target.height}}`,
       "  end tell",

@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createFridayChannelRegistry } from "#channels";
-import { createFridaySkillExecutor } from "#skills";
+import {
+  createFridaySkillExecutor,
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+} from "#skills";
 import { createFridaySkillRunStore } from "#ledger";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
 import { makeManifest } from "../_helpers/make-manifest.helper.js";
@@ -395,11 +398,14 @@ describe("FridaySkillExecutor", () => {
   });
 
   it("injects readonly Friday runtime helpers into node skills without write interfaces", async () => {
+    const previousGate = process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+    process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = "true";
     const fs = await import("node:fs/promises");
     const scriptDir = await fs.mkdtemp("/tmp/friday-node-runtime-");
-    await fs.writeFile(
-      `${scriptDir}/index.mjs`,
-      `
+    try {
+      await fs.writeFile(
+        `${scriptDir}/index.mjs`,
+        `
 export async function execute(_input, ctx) {
   const snapshot = await ctx.system.getSnapshot();
   const issues = await ctx.diagnosis.listIssueCards(5);
@@ -421,68 +427,77 @@ export async function execute(_input, ctx) {
   };
 }
 `,
-      "utf8",
-    );
+        "utf8",
+      );
 
-    const skill = makeRegisteredSkill({
-      id: "node-runtime-skill",
-      runtimeKind: "node",
-      entrypoint: "index.mjs",
-      skillDir: scriptDir,
-    });
+      const skill = makeRegisteredSkill({
+        id: "node-runtime-skill",
+        runtimeKind: "node",
+        entrypoint: "index.mjs",
+        skillDir: scriptDir,
+      });
 
-    const skills = new Map<string, FridayRegisteredSkill>();
-    skills.set("node-runtime-skill", skill);
+      const skills = new Map<string, FridayRegisteredSkill>();
+      skills.set("node-runtime-skill", skill);
 
-    const executor = createFridaySkillExecutor({
-      db,
-      registry: createMockRegistry(skills),
-      runStore,
-      idGenerator: createTestIdGenerator(),
-      nowIso: () => "2025-01-15T10:00:00.000Z",
-      getSystemService: () => ({
-        getState: async () => ({
-          workspaceRoot: "/tmp/friday-workspace",
-          health: { status: "healthy" },
+      const executor = createFridaySkillExecutor({
+        db,
+        registry: createMockRegistry(skills),
+        runStore,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => "2025-01-15T10:00:00.000Z",
+        getSystemService: () => ({
+          getState: async () => ({
+            workspaceRoot: "/tmp/friday-workspace",
+            health: { status: "healthy" },
+          }),
         }),
-      }),
-      getSelfHealingService: () => ({
-        listIssueCards: () => [{ id: "issue-1", kind: "incident", incidentId: "incident-1" }],
-        listIncidents: () => [{ incident: { incidentId: "incident-1", category: "workflow" } }],
-        getIncident: () => ({ incident: { incidentId: "incident-1", category: "workflow" } }),
-        listActions: () => [{ action: { actionId: "action-1", incidentId: "incident-1" } }],
-        getAction: () => ({ action: { actionId: "action-1", incidentId: "incident-1" } }),
-      }),
-    });
+        getSelfHealingService: () => ({
+          listIssueCards: () => [{ id: "issue-1", kind: "incident", incidentId: "incident-1" }],
+          listIncidents: () => [{ incident: { incidentId: "incident-1", category: "workflow" } }],
+          getIncident: () => ({ incident: { incidentId: "incident-1", category: "workflow" } }),
+          listActions: () => [{ action: { actionId: "action-1", incidentId: "incident-1" } }],
+          getAction: () => ({ action: { actionId: "action-1", incidentId: "incident-1" } }),
+        }),
+      });
 
-    const result = await executor.execute({
-      ...baseRequest,
-      skillId: "node-runtime-skill",
-    }).result;
+      const result = await executor.execute({
+        ...baseRequest,
+        skillId: "node-runtime-skill",
+      }).result;
 
-    expect(result.status).toBe("completed");
-    expect(result.output).toMatchObject({
-      hasSystem: true,
-      hasDiagnosis: true,
-      hasAutofix: true,
-      hasWriteInterface: false,
-      workspaceRoot: "/tmp/friday-workspace",
-      issueCount: 1,
-      incidentCount: 1,
-      incidentId: "incident-1",
-      actionCount: 1,
-      actionId: "action-1",
-    });
-
-    await fs.rm(scriptDir, { recursive: true, force: true });
+      expect(result.status).toBe("completed");
+      expect(result.output).toMatchObject({
+        hasSystem: true,
+        hasDiagnosis: true,
+        hasAutofix: true,
+        hasWriteInterface: false,
+        workspaceRoot: "/tmp/friday-workspace",
+        issueCount: 1,
+        incidentCount: 1,
+        incidentId: "incident-1",
+        actionCount: 1,
+        actionId: "action-1",
+      });
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+      } else {
+        process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = previousGate;
+      }
+      await fs.rm(scriptDir, { recursive: true, force: true });
+    }
   });
 
   it("injects readonly channel runtime helpers into node skills", async () => {
+    const previousGate = process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+    process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = "true";
     const fs = await import("node:fs/promises");
     const scriptDir = await fs.mkdtemp("/tmp/friday-node-channels-");
-    await fs.writeFile(
-      `${scriptDir}/index.mjs`,
-      `
+    try {
+      await fs.writeFile(
+        `${scriptDir}/index.mjs`,
+        `
 export async function execute(_input, ctx) {
   const channels = await ctx.channels.listChannels();
   const discord = await ctx.channels.getChannel("discord");
@@ -494,77 +509,134 @@ export async function execute(_input, ctx) {
   };
 }
 `,
-      "utf8",
-    );
+        "utf8",
+      );
 
-    const channelRegistry = createFridayChannelRegistry();
-    channelRegistry.register({
-      kind: "discord",
-      init: async () => {},
-      start: async () => {},
-      stop: async () => {},
-      send: async () => ({ messageId: "sent-1" }),
-      contract: {
-        coreAuthority: {
-          messageRouting: true,
-          sessionMirroring: true,
-          audit: true,
-          evidence: true,
+      const channelRegistry = createFridayChannelRegistry();
+      channelRegistry.register({
+        kind: "discord",
+        init: async () => {},
+        start: async () => {},
+        stop: async () => {},
+        send: async () => ({ messageId: "sent-1" }),
+        contract: {
+          coreAuthority: {
+            messageRouting: true,
+            sessionMirroring: true,
+            audit: true,
+            evidence: true,
+          },
+          pluginResponsibilities: {
+            config: true,
+            auth: true,
+            pairing: false,
+            outboundDelivery: true,
+            threadResolution: true,
+            providerRetries: false,
+          },
+          supports: {
+            directMessages: true,
+            groupMessages: true,
+            threads: true,
+            typing: true,
+          },
         },
-        pluginResponsibilities: {
-          config: true,
-          auth: true,
-          pairing: false,
-          outboundDelivery: true,
-          threadResolution: true,
-          providerRetries: false,
+        adapters: {
+          status: {
+            status: () => "connected",
+          },
         },
-        supports: {
-          directMessages: true,
-          groupMessages: true,
-          threads: true,
-          typing: true,
-        },
-      },
-      adapters: {
-        status: {
-          status: () => "connected",
-        },
-      },
-    });
+      });
 
-    const skill = makeRegisteredSkill({
-      id: "node-channel-runtime-skill",
-      runtimeKind: "node",
-      entrypoint: "index.mjs",
-      skillDir: scriptDir,
-    });
+      const skill = makeRegisteredSkill({
+        id: "node-channel-runtime-skill",
+        runtimeKind: "node",
+        entrypoint: "index.mjs",
+        skillDir: scriptDir,
+      });
 
-    const skills = new Map<string, FridayRegisteredSkill>();
-    skills.set("node-channel-runtime-skill", skill);
+      const skills = new Map<string, FridayRegisteredSkill>();
+      skills.set("node-channel-runtime-skill", skill);
 
-    const executor = createFridaySkillExecutor({
-      db,
-      registry: createMockRegistry(skills),
-      runStore,
-      idGenerator: createTestIdGenerator(),
-      nowIso: () => "2025-01-15T10:00:00.000Z",
-      getChannelRegistry: () => channelRegistry,
-    });
+      const executor = createFridaySkillExecutor({
+        db,
+        registry: createMockRegistry(skills),
+        runStore,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => "2025-01-15T10:00:00.000Z",
+        getChannelRegistry: () => channelRegistry,
+      });
 
-    const result = await executor.execute({
-      ...baseRequest,
-      skillId: "node-channel-runtime-skill",
-    }).result;
+      const result = await executor.execute({
+        ...baseRequest,
+        skillId: "node-channel-runtime-skill",
+      }).result;
 
-    expect(result.status).toBe("completed");
-    expect(result.output).toMatchObject({
-      hasChannels: true,
-      channelCount: 1,
-      discordStatus: "connected",
-      discordThreads: true,
-    });
+      expect(result.status).toBe("completed");
+      expect(result.output).toMatchObject({
+        hasChannels: true,
+        channelCount: 1,
+        discordStatus: "connected",
+        discordThreads: true,
+      });
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+      } else {
+        process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = previousGate;
+      }
+      await fs.rm(scriptDir, { recursive: true, force: true });
+    }
+  });
 
-    await fs.rm(scriptDir, { recursive: true, force: true });
+  it("fails node skills with CAPABILITY_DISABLED metadata when the runtime gate is off", async () => {
+    const fs = await import("node:fs/promises");
+    const scriptDir = await fs.mkdtemp("/tmp/friday-node-disabled-");
+    const previousGate = process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+    delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+    try {
+      await fs.writeFile(
+        `${scriptDir}/index.mjs`,
+        `export async function execute() { return { ok: true }; }`,
+        "utf8",
+      );
+
+      const skill = makeRegisteredSkill({
+        id: "node-disabled-skill",
+        runtimeKind: "node",
+        entrypoint: "index.mjs",
+        skillDir: scriptDir,
+      });
+      const skills = new Map<string, FridayRegisteredSkill>();
+      skills.set("node-disabled-skill", skill);
+
+      const executor = createFridaySkillExecutor({
+        db,
+        registry: createMockRegistry(skills),
+        runStore,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => "2025-01-15T10:00:00.000Z",
+      });
+
+      const result = await executor.execute({
+        ...baseRequest,
+        skillId: "node-disabled-skill",
+      }).result;
+
+      expect(result.status).toBe("failed");
+      expect(result.stderr).toContain("disabled");
+      expect(result.output).toMatchObject({
+        code: "CAPABILITY_DISABLED",
+        capability: "skill_node_runtime",
+        runtimeKind: "node",
+      });
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+      } else {
+        process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = previousGate;
+      }
+      await fs.rm(scriptDir, { recursive: true, force: true });
+    }
   });
 });

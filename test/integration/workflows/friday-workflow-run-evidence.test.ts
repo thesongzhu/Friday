@@ -235,6 +235,9 @@ describe("Workflow runtime run evidence export", () => {
     expect(downloaded!.file.exists).toBe(true);
     expect(downloaded!.file.path).toBe(exportFilePath);
     expect(downloaded!.content.length).toBeGreaterThan(0);
+    expect(createHash("sha256").update(downloaded!.content).digest("hex")).toBe(
+      exported.export.checksum,
+    );
 
     db.close();
   });

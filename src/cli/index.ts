@@ -5,8 +5,10 @@ export {
   loadProcessEnvFromDotEnvFile,
   prepareStartupChannelsConfig,
   readSetupNetworkBinding,
+  runCliSkillCommand,
   resolveStartupNetworkBinding,
   type ParsedArgs,
+  type FridayCliRunCommandDeps,
   type FridayStartupNetworkBinding,
 } from "./friday-cli.js";
 export { runFridayCliLoop, type FridayCliRunLoopDeps } from "./friday-cli-run-loop.js";

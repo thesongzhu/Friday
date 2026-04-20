@@ -1,0 +1,90 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/agent/runs/b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c/audit",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c",
+        "events": [
+          {
+            "seq": 1,
+            "type": "agent.run.started",
+            "timestamp": "2026-04-19T12:07:29.548Z",
+            "payload": {
+              "runId": "b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c",
+              "task": "What should you call me? Reply with only the name.",
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "taskProfile": {
+                "id": "default",
+                "modelSelectionSource": "route_default"
+              }
+            }
+          },
+          {
+            "seq": 8,
+            "type": "agent.run.failed",
+            "timestamp": "2026-04-19T12:07:35.938Z",
+            "payload": {
+              "runId": "b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c",
+              "error": {
+                "code": "AGENT_VALIDATION_ERROR",
+                "message": "Validation criteria not met"
+              },
+              "durationMs": 6389,
+              "routeId": "agent.execute.run.validation",
+              "correlationId": "b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c"
+            }
+          }
+        ]
+      },
+      "requestId": "5028b205-6680-48dd-bce5-a75c265ab15f"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c",
+      "events": [
+        {
+          "seq": 1,
+          "type": "agent.run.started",
+          "timestamp": "2026-04-19T12:07:29.548Z",
+          "payload": {
+            "runId": "b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c",
+            "task": "What should you call me? Reply with only the name.",
+            "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfile": {
+              "id": "default",
+              "modelSelectionSource": "route_default"
+            }
+          }
+        },
+        {
+          "seq": 8,
+          "type": "agent.run.failed",
+          "timestamp": "2026-04-19T12:07:35.938Z",
+          "payload": {
+            "runId": "b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c",
+            "error": {
+              "code": "AGENT_VALIDATION_ERROR",
+              "message": "Validation criteria not met"
+            },
+            "durationMs": 6389,
+            "routeId": "agent.execute.run.validation",
+            "correlationId": "b0f22a6b-5bc9-4c92-8f06-cee1a04eb99c"
+          }
+        }
+      ]
+    },
+    "requestId": "5028b205-6680-48dd-bce5-a75c265ab15f"
+  }
+}

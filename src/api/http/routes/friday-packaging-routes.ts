@@ -8,6 +8,7 @@
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import { FridayDomainError } from "../../../errors/friday-domain-error.js";
+import { throwFridayCapabilityDisabled } from "./friday-capability-disabled.js";
 import type {
   FridayAddTrustedKeyRequest,
   FridayAddTrustedKeyResponse,
@@ -94,8 +95,19 @@ function requireEtag(body: unknown): void {
 // ─── Factory ───
 
 export function createFridayPackagingRoutes(
-  deps: FridayPackagingRoutesDeps,
+  deps?: FridayPackagingRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  function requireEnabled(): FridayPackagingRoutesDeps {
+    if (!deps) {
+      throwFridayCapabilityDisabled({
+        capability: "packaging",
+        surface: "/v1/packages",
+        message: "Packaging surface is disabled in this runtime",
+      });
+    }
+    return deps;
+  }
+
   return [
     // ═══════════════════════════════════════════════════════════════
     // PACKAGES
@@ -107,10 +119,11 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages",
       auth: { public: false, anyOfScopes: ["plugin.install"] },
       async handler(ctx) {
+        const services = requireEnabled();
         const body = ctx.body as FridayPublishPackageRequest;
         requireString(body, "archive");
         requireIdempotencyKey(body);
-        return deps.packages.publish(body);
+        return services.packages.publish(body);
       },
     },
     {
@@ -119,7 +132,8 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages",
       auth: { public: false, anyOfScopes: ["plugin.read"] },
       async handler(ctx) {
-        return deps.packages.list(ctx.query as FridayListPackagesQuery);
+        const services = requireEnabled();
+        return services.packages.list(ctx.query as FridayListPackagesQuery);
       },
     },
     {
@@ -128,8 +142,9 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/:packageId",
       auth: { public: false, anyOfScopes: ["plugin.read"] },
       async handler(ctx) {
+        const services = requireEnabled();
         const { packageId } = ctx.params as { packageId: UUID };
-        return deps.packages.get(packageId);
+        return services.packages.get(packageId);
       },
     },
     {
@@ -138,8 +153,9 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/:packageName/versions",
       auth: { public: false, anyOfScopes: ["plugin.read"] },
       async handler(ctx) {
+        const services = requireEnabled();
         const { packageName } = ctx.params as { packageName: string };
-        return deps.packages.listVersions(packageName, ctx.query as FridayListPackageVersionsQuery);
+        return services.packages.listVersions(packageName, ctx.query as FridayListPackageVersionsQuery);
       },
     },
     {
@@ -148,10 +164,11 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/:packageId/verify",
       auth: { public: false, anyOfScopes: ["plugin.install"] },
       async handler(ctx) {
+        const services = requireEnabled();
         const { packageId } = ctx.params as { packageId: UUID };
         const body = ctx.body as FridayVerifyPackageRequest;
         requireIdempotencyKey(body);
-        return deps.packages.verify(packageId, body);
+        return services.packages.verify(packageId, body);
       },
     },
     {
@@ -160,10 +177,11 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/:packageName/check-dependencies",
       auth: { public: false, anyOfScopes: ["plugin.read"] },
       async handler(ctx) {
+        const services = requireEnabled();
         const { packageName } = ctx.params as { packageName: string };
         const body = ctx.body as FridayCheckDependenciesRequest;
         requireString(body, "tenantId");
-        return deps.packages.checkDependencies(packageName, body);
+        return services.packages.checkDependencies(packageName, body);
       },
     },
 
@@ -177,11 +195,12 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/:packageName/install",
       auth: { public: false, anyOfScopes: ["plugin.install"] },
       async handler(ctx) {
+        const services = requireEnabled();
         const { packageName } = ctx.params as { packageName: string };
         const body = ctx.body as FridayInstallPackageRequest;
         requireString(body, "tenantId");
         requireIdempotencyKey(body);
-        return deps.installs.install(packageName, body);
+        return services.installs.install(packageName, body);
       },
     },
     {
@@ -190,11 +209,12 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/:packageName/upgrade",
       auth: { public: false, anyOfScopes: ["plugin.install"] },
       async handler(ctx) {
+        const services = requireEnabled();
         const { packageName } = ctx.params as { packageName: string };
         const body = ctx.body as FridayUpgradePackageRequest;
         requireEtag(body);
         requireIdempotencyKey(body);
-        return deps.installs.upgrade(packageName, body);
+        return services.installs.upgrade(packageName, body);
       },
     },
     {
@@ -203,13 +223,14 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/:packageName/rollback",
       auth: { public: false, anyOfScopes: ["plugin.install"] },
       async handler(ctx) {
+        const services = requireEnabled();
         const { packageName } = ctx.params as { packageName: string };
         const body = ctx.body as FridayRollbackPackageRequest;
         requireEtag(body);
         requireString(body, "targetVersion");
         requireString(body, "reason");
         requireIdempotencyKey(body);
-        return deps.installs.rollback(packageName, body);
+        return services.installs.rollback(packageName, body);
       },
     },
     {
@@ -218,11 +239,12 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/:packageName/uninstall",
       auth: { public: false, anyOfScopes: ["plugin.install"] },
       async handler(ctx) {
+        const services = requireEnabled();
         const { packageName } = ctx.params as { packageName: string };
         const body = ctx.body as FridayUninstallPackageRequest;
         requireEtag(body);
         requireIdempotencyKey(body);
-        return deps.installs.uninstall(packageName, body);
+        return services.installs.uninstall(packageName, body);
       },
     },
     {
@@ -231,7 +253,8 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/installs",
       auth: { public: false, anyOfScopes: ["plugin.read"] },
       async handler(ctx) {
-        return deps.installs.list(ctx.query as FridayListInstallsQuery);
+        const services = requireEnabled();
+        return services.installs.list(ctx.query as FridayListInstallsQuery);
       },
     },
     {
@@ -240,8 +263,9 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/installs/:installId",
       auth: { public: false, anyOfScopes: ["plugin.read"] },
       async handler(ctx) {
+        const services = requireEnabled();
         const { installId } = ctx.params as { installId: UUID };
-        return deps.installs.get(installId);
+        return services.installs.get(installId);
       },
     },
 
@@ -255,7 +279,8 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/lifecycle",
       auth: { public: false, anyOfScopes: ["plugin.read"] },
       async handler(ctx) {
-        return deps.lifecycle.list(ctx.query as FridayListLifecycleEventsQuery);
+        const services = requireEnabled();
+        return services.lifecycle.list(ctx.query as FridayListLifecycleEventsQuery);
       },
     },
 
@@ -269,7 +294,8 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/keys",
       auth: { public: false, anyOfScopes: ["plugin.read"] },
       async handler(ctx) {
-        return deps.keys.list(ctx.query as FridayListTrustedKeysRequest);
+        const services = requireEnabled();
+        return services.keys.list(ctx.query as FridayListTrustedKeysRequest);
       },
     },
     {
@@ -278,12 +304,13 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/keys",
       auth: { public: false, anyOfScopes: ["security.write"] },
       async handler(ctx) {
+        const services = requireEnabled();
         const body = ctx.body as FridayAddTrustedKeyRequest;
         requireString(body, "keyId");
         requireString(body, "publicKey");
         requireString(body, "owner");
         requireIdempotencyKey(body);
-        return deps.keys.add(body);
+        return services.keys.add(body);
       },
     },
     {
@@ -292,11 +319,12 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/keys/:keyId/revoke",
       auth: { public: false, anyOfScopes: ["security.write"] },
       async handler(ctx) {
+        const services = requireEnabled();
         const { keyId } = ctx.params as { keyId: string };
         const body = ctx.body as FridayRevokeTrustedKeyRequest;
         requireString(body, "reason");
         requireIdempotencyKey(body);
-        return deps.keys.revoke(keyId, body);
+        return services.keys.revoke(keyId, body);
       },
     },
     {
@@ -305,13 +333,14 @@ export function createFridayPackagingRoutes(
       path: "/v1/packages/keys/:keyId/rotate",
       auth: { public: false, anyOfScopes: ["security.write"] },
       async handler(ctx) {
+        const services = requireEnabled();
         const { keyId } = ctx.params as { keyId: string };
         const body = ctx.body as FridayRotateTrustedKeyRequest;
         requireString(body, "newKeyId");
         requireString(body, "newPublicKey");
         requireString(body, "owner");
         requireIdempotencyKey(body);
-        return deps.keys.rotate(keyId, body);
+        return services.keys.rotate(keyId, body);
       },
     },
   ];

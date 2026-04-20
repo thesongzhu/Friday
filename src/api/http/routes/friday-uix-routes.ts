@@ -25,8 +25,11 @@ import type {
 
 export interface FridayUixRoutesDeps {
   service: FridayUixSurfaceService;
+  readSetupCompletedAt?: () => string | null;
   /** Optional: expose learned preference facts to users for transparency. */
   listLearnedFacts?: (input: { userId: string }) => Array<{ key: string; value: unknown; confidence: number; evidenceCount: number; lastConfirmedAt: string }>;
+  deleteLearnedFact?: (input: { userId: string; key: string }) => boolean;
+  clearLearnedFacts?: (input: { userId: string }) => number;
   /** Optional: emit learning events when preferences are written via the API,
    *  so the preference-extraction pipeline can produce learned facts. */
   collectLearningEvents?: (events: Array<{ eventId: string; ts: string; userId: string; kind: "user_correction"; payload: Record<string, unknown> }>) => void;
@@ -104,13 +107,17 @@ function buildTenantContext(principal: unknown): FridayProviderTenantContext | u
   };
 }
 
-function readUserProfileResponse(service: FridayUixSurfaceService, userId: string): FridayUserProfileResponse {
+function readUserProfileResponse(
+  service: FridayUixSurfaceService,
+  userId: string,
+  readSetupCompletedAt?: () => string | null,
+): FridayUserProfileResponse {
   const prefs = service.listPreferences({ userId, category: "uix" });
   const profilePref = prefs.items.find((p) => p.key === "user.profile_type");
   const onboardedPref = prefs.items.find((p) => p.key === "user.onboarded_at");
   return {
     profileType: (profilePref?.value as FridayUserProfileType | undefined) ?? null,
-    onboardedAt: (onboardedPref?.value as string | undefined) ?? null,
+    onboardedAt: (onboardedPref?.value as string | undefined) ?? readSetupCompletedAt?.() ?? null,
   };
 }
 
@@ -382,7 +389,7 @@ export function createFridayUixRoutes(
       auth: { public: false, anyOfScopes: ["agent.run"] },
       async handler(ctx): Promise<FridayUserProfileResponse> {
         const userId = requireUserId(ctx.principal);
-        const current = readUserProfileResponse(deps.service, userId);
+        const current = readUserProfileResponse(deps.service, userId, deps.readSetupCompletedAt);
         const profileType = current.profileType ?? "beginner";
         const onboardedAt = current.onboardedAt ?? null;
         return { profileType, onboardedAt };
@@ -413,7 +420,7 @@ export function createFridayUixRoutes(
             request: { preferences } as never,
           });
         }
-        return readUserProfileResponse(deps.service, userId);
+        return readUserProfileResponse(deps.service, userId, deps.readSetupCompletedAt);
       },
     },
     {
@@ -455,6 +462,34 @@ export function createFridayUixRoutes(
         }
         const items = deps.listLearnedFacts({ userId });
         return { items };
+      },
+    },
+    {
+      operationId: "uix.learnedfacts.clear",
+      method: "DELETE",
+      path: "/v1/uix/learned-facts",
+      auth: { public: false, anyOfScopes: ["agent.run"] },
+      async handler(ctx): Promise<{ deletedCount: number }> {
+        const userId = requireUserId(ctx.principal);
+        return { deletedCount: deps.clearLearnedFacts ? deps.clearLearnedFacts({ userId }) : 0 };
+      },
+    },
+    {
+      operationId: "uix.learnedfacts.delete",
+      method: "DELETE",
+      path: "/v1/uix/learned-facts/:factKey",
+      auth: { public: false, anyOfScopes: ["agent.run"] },
+      async handler(ctx): Promise<{ deleted: true; key: string }> {
+        const userId = requireUserId(ctx.principal);
+        const { factKey } = ctx.params as { factKey: string };
+        const key = typeof factKey === "string" ? decodeURIComponent(factKey).trim() : "";
+        if (key.length === 0) {
+          throw new FridayDomainError("VALIDATION_ERROR", "factKey is required", { httpStatus: 400 });
+        }
+        if (!deps.deleteLearnedFact || !deps.deleteLearnedFact({ userId, key })) {
+          throw new FridayDomainError("UIX_PREFERENCE_NOT_FOUND", `Learned fact '${key}' was not found`, { httpStatus: 404 });
+        }
+        return { deleted: true, key };
       },
     },
   ];

@@ -817,8 +817,19 @@ export function createFridaySkillGeneratorService(
     stagedVerification: { packageLoaded: boolean; packageValidated: boolean; error?: string };
   }> {
     const missingEvidenceReasons: string[] = [];
-    if (input.evidenceRequirements.includes("skill_self_test") && !input.session.explicitTest) {
-      missingEvidenceReasons.push("Explicit self-test has not been run yet.");
+    if (input.evidenceRequirements.includes("skill_self_test")) {
+      if (!input.session.explicitTest) {
+        missingEvidenceReasons.push("Explicit self-test has not been run yet.");
+      } else {
+        if (!input.session.explicitTest.ok) {
+          missingEvidenceReasons.push("Explicit self-test must pass before approval.");
+        }
+        if (!input.session.explicitTest.executable) {
+          missingEvidenceReasons.push(
+            "Explicit self-test must execute real runtime behavior before approval.",
+          );
+        }
+      }
     }
     if (input.evidenceRequirements.includes("browser_qa")) {
       missingEvidenceReasons.push("Required browser QA evidence has not been attached.");
@@ -1051,8 +1062,9 @@ export function createFridaySkillGeneratorService(
                   type: "object",
                   properties: {
                     ok: { const: true },
+                    executable: { const: true },
                   },
-                  required: ["ok"],
+                  required: ["ok", "executable"],
                 },
               },
               required: ["selfTest"],

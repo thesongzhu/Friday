@@ -1,0 +1,11 @@
+{
+  "checkedAt": "2026-04-19T21:09:29Z",
+  "issueId": "ISSUE-00007",
+  "status": "verified_targeted_tests",
+  "runtimeFile": "src/agent/runtime/friday-agent-runtime.ts",
+  "testCommand": "npm exec vitest run test/unit/agent/runtime/friday-agent-runtime.test.ts",
+  "testFile": "test/unit/agent/runtime/friday-agent-runtime.test.ts",
+  "testsPassed": 121,
+  "typeErrors": "none",
+  "summary": "Agent runs now fail terminally when the task explicitly requests a file mutation but every file-mutating tool call fails, so blocked writes outside the workspace root can no longer persist a misleading `completed` terminal run even if the assistant truthfully explains the failure and self-tests otherwise pass."
+}

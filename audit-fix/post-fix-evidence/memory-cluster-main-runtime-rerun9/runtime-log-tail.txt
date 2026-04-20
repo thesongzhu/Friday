@@ -1,0 +1,200 @@
+[FRIDAY] GET /v1/uix/persona 200 2ms
+[FRIDAY] GET /v1/health 200 0ms
+[friday] WARNING: Local bypass login used (no-signin mode).
+[FRIDAY] POST /v1/auth/login 200 1ms
+[FRIDAY] GET /v1/providers 200 0ms
+[FRIDAY] DELETE /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 1ms
+[FRIDAY] POST /v1/memory/search 200 2ms
+[friday][marker] world_model_episode_extracted runId=de710503-8cca-46cb-baa0-60961ab81ba2 userId=admin-001 steps=1
+[friday][marker] world_model_snapshot_saved runId=de710503-8cca-46cb-baa0-60961ab81ba2 userId=admin-001
+[friday][marker] world_model_pattern_upserted runId=de710503-8cca-46cb-baa0-60961ab81ba2 userId=admin-001 count=5
+[FRIDAY] POST /v1/agent/runs 200 4572ms
+[FRIDAY] GET /v1/agent/runs/de710503-8cca-46cb-baa0-60961ab81ba2 200 2ms
+[FRIDAY] GET /v1/agent/runs/de710503-8cca-46cb-baa0-60961ab81ba2/audit 200 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 1ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 0ms
+[FRIDAY] POST /v1/memory/search 200 1ms
+[friday][marker] world_model_episode_extracted runId=535e8a92-217d-4e4a-ba3f-7dd477a56118 userId=admin-001 steps=0
+[friday][marker] world_model_snapshot_saved runId=535e8a92-217d-4e4a-ba3f-7dd477a56118 userId=admin-001
+[friday][marker] world_model_pattern_upserted runId=535e8a92-217d-4e4a-ba3f-7dd477a56118 userId=admin-001 count=5
+[FRIDAY] POST /v1/agent/runs 200 8430ms
+[FRIDAY] GET /v1/agent/runs/535e8a92-217d-4e4a-ba3f-7dd477a56118 200 0ms
+[FRIDAY] GET /v1/agent/runs/535e8a92-217d-4e4a-ba3f-7dd477a56118/audit 200 0ms
+[friday][marker] world_model_episode_extracted runId=ebb3f523-776f-4f6f-817a-cafa973866c1 userId=admin-001 steps=0
+[friday][marker] world_model_snapshot_saved runId=ebb3f523-776f-4f6f-817a-cafa973866c1 userId=admin-001
+[friday][marker] world_model_pattern_upserted runId=ebb3f523-776f-4f6f-817a-cafa973866c1 userId=admin-001 count=5
+[FRIDAY] POST /v1/agent/runs 200 5059ms
+[FRIDAY] GET /v1/agent/runs/ebb3f523-776f-4f6f-817a-cafa973866c1 200 1ms
+[FRIDAY] GET /v1/agent/runs/ebb3f523-776f-4f6f-817a-cafa973866c1/audit 200 1ms
+[FRIDAY] DELETE /v1/uix/learned-facts/pref%3Auser_name 200 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 0ms
+[FRIDAY] POST /v1/memory/search 200 1ms
+
+🛑 Shutting down Friday…
+[friday] Deterministic pipeline mode: enforce
+[friday] Agent OS system runtime enabled (remote=trusted_private_network, cloud=opt_in, companion=unix_socket/embedded)
+[friday] Plugin runtime mode: full
+[friday] Program discovery enabled (darwin).
+[friday] Marketplace commerce runtime: enabled
+[friday] ✓ Friday is running
+[friday]   Providers: 1
+[friday]   Channels:  0 — no messaging channels configured
+[friday]   Skills:    54
+🚀 Friday hub running — 54 skill(s) loaded
+🚀 Friday API server listening on http://127.0.0.1:3241
+   Open http://127.0.0.1:3241 in your browser to get started.
+[FRIDAY] GET / 200 1ms
+[FRIDAY] GET /v1/uix/preferences?category=uix 200 2ms
+[FRIDAY] GET /v1/auth/me 200 1ms
+[FRIDAY] GET /v1/setup/status 200 1ms
+[FRIDAY] GET /v1/uix/user-profile 200 1ms
+[FRIDAY] GET /v1/providers 200 0ms
+[FRIDAY] GET /v1/providers/templates 200 0ms
+[FRIDAY] GET /v1/uix/persona 200 1ms
+[FRIDAY] GET /v1/health 200 0ms
+[friday] WARNING: Local bypass login used (no-signin mode).
+[FRIDAY] POST /v1/auth/login 200 2ms
+[FRIDAY] GET /v1/providers 200 0ms
+[FRIDAY] DELETE /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 0ms
+[FRIDAY] POST /v1/memory/search 200 2ms
+[friday][marker] world_model_episode_extracted runId=bfdc6f78-5a51-4a01-bc72-9c8ca420d934 userId=admin-001 steps=1
+[friday][marker] world_model_snapshot_saved runId=bfdc6f78-5a51-4a01-bc72-9c8ca420d934 userId=admin-001
+[friday][marker] world_model_pattern_upserted runId=bfdc6f78-5a51-4a01-bc72-9c8ca420d934 userId=admin-001 count=5
+[FRIDAY] POST /v1/agent/runs 200 7216ms
+[FRIDAY] GET /v1/agent/runs/bfdc6f78-5a51-4a01-bc72-9c8ca420d934 200 0ms
+[FRIDAY] GET /v1/agent/runs/bfdc6f78-5a51-4a01-bc72-9c8ca420d934/audit 200 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 0ms
+[FRIDAY] POST /v1/memory/search 200 0ms
+[friday][marker] world_model_episode_extracted runId=44d864eb-effd-4328-86d1-035f13f81443 userId=admin-001 steps=1
+[friday][marker] world_model_snapshot_saved runId=44d864eb-effd-4328-86d1-035f13f81443 userId=admin-001
+[friday][marker] world_model_pattern_upserted runId=44d864eb-effd-4328-86d1-035f13f81443 userId=admin-001 count=5
+[FRIDAY] POST /v1/agent/runs 200 15291ms
+[FRIDAY] GET /v1/agent/runs/44d864eb-effd-4328-86d1-035f13f81443 200 1ms
+[FRIDAY] GET /v1/agent/runs/44d864eb-effd-4328-86d1-035f13f81443/audit 200 0ms
+[friday][marker] world_model_episode_extracted runId=e9e38ece-31e6-4a15-baa4-4beb6d0b97c5 userId=admin-001 steps=1
+[friday][marker] world_model_snapshot_saved runId=e9e38ece-31e6-4a15-baa4-4beb6d0b97c5 userId=admin-001
+[friday][marker] world_model_pattern_upserted runId=e9e38ece-31e6-4a15-baa4-4beb6d0b97c5 userId=admin-001 count=5
+[FRIDAY] POST /v1/agent/runs 200 19171ms
+[FRIDAY] GET /v1/agent/runs/e9e38ece-31e6-4a15-baa4-4beb6d0b97c5 200 1ms
+[FRIDAY] GET /v1/agent/runs/e9e38ece-31e6-4a15-baa4-4beb6d0b97c5/audit 200 1ms
+[FRIDAY] DELETE /v1/uix/learned-facts/pref%3Auser_name 200 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 0ms
+[FRIDAY] POST /v1/memory/search 200 1ms
+
+🛑 Shutting down Friday…
+[friday] Deterministic pipeline mode: enforce
+[friday] Agent OS system runtime enabled (remote=trusted_private_network, cloud=opt_in, companion=unix_socket/embedded)
+[friday] Plugin runtime mode: full
+[friday] Program discovery enabled (darwin).
+[friday] Marketplace commerce runtime: enabled
+[friday] ✓ Friday is running
+[friday]   Providers: 1
+[friday]   Channels:  0 — no messaging channels configured
+[friday]   Skills:    54
+🚀 Friday hub running — 54 skill(s) loaded
+🚀 Friday API server listening on http://127.0.0.1:3241
+   Open http://127.0.0.1:3241 in your browser to get started.
+[FRIDAY] GET / 200 2ms
+[FRIDAY] GET /v1/uix/preferences?category=uix 200 2ms
+[FRIDAY] GET /v1/auth/me 200 1ms
+[FRIDAY] GET /v1/setup/status 200 0ms
+[FRIDAY] GET /v1/uix/user-profile 200 0ms
+[FRIDAY] GET /v1/providers 200 1ms
+[FRIDAY] GET /v1/providers/templates 200 2ms
+[FRIDAY] GET /v1/uix/persona 200 3ms
+[FRIDAY] GET /v1/health 200 0ms
+[friday] WARNING: Local bypass login used (no-signin mode).
+[FRIDAY] POST /v1/auth/login 200 1ms
+[FRIDAY] GET /v1/providers 200 0ms
+[FRIDAY] DELETE /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 1ms
+[FRIDAY] POST /v1/memory/search 200 2ms
+[friday][marker] world_model_episode_extracted runId=50939dea-dde2-452a-a2fb-3fa1c5c4fad9 userId=admin-001 steps=1
+[friday][marker] world_model_snapshot_saved runId=50939dea-dde2-452a-a2fb-3fa1c5c4fad9 userId=admin-001
+[friday][marker] world_model_pattern_upserted runId=50939dea-dde2-452a-a2fb-3fa1c5c4fad9 userId=admin-001 count=5
+[FRIDAY] POST /v1/agent/runs 200 4928ms
+[FRIDAY] GET /v1/agent/runs/50939dea-dde2-452a-a2fb-3fa1c5c4fad9 200 1ms
+[FRIDAY] GET /v1/agent/runs/50939dea-dde2-452a-a2fb-3fa1c5c4fad9/audit 200 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 0ms
+[FRIDAY] POST /v1/memory/search 200 1ms
+[friday][marker] world_model_episode_extracted runId=5d27d467-bb2c-4893-94c0-e98d5f17c912 userId=admin-001 steps=0
+[friday][marker] world_model_snapshot_saved runId=5d27d467-bb2c-4893-94c0-e98d5f17c912 userId=admin-001
+[friday][marker] world_model_pattern_upserted runId=5d27d467-bb2c-4893-94c0-e98d5f17c912 userId=admin-001 count=5
+[FRIDAY] POST /v1/agent/runs 200 5318ms
+[FRIDAY] GET /v1/agent/runs/5d27d467-bb2c-4893-94c0-e98d5f17c912 200 1ms
+[FRIDAY] GET /v1/agent/runs/5d27d467-bb2c-4893-94c0-e98d5f17c912/audit 200 0ms
+[friday][marker] world_model_episode_extracted runId=5b738f58-820e-4feb-b125-f107ac27019a userId=admin-001 steps=1
+[friday][marker] world_model_snapshot_saved runId=5b738f58-820e-4feb-b125-f107ac27019a userId=admin-001
+[friday][marker] world_model_pattern_upserted runId=5b738f58-820e-4feb-b125-f107ac27019a userId=admin-001 count=5
+[FRIDAY] POST /v1/agent/runs 200 8584ms
+[FRIDAY] GET /v1/agent/runs/5b738f58-820e-4feb-b125-f107ac27019a 200 1ms
+[FRIDAY] GET /v1/agent/runs/5b738f58-820e-4feb-b125-f107ac27019a/audit 200 0ms
+[FRIDAY] DELETE /v1/uix/learned-facts/pref%3Adisplay_name 404 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 0ms
+[FRIDAY] POST /v1/memory/search 200 0ms
+
+🛑 Shutting down Friday…
+[friday] Deterministic pipeline mode: enforce
+[friday] Agent OS system runtime enabled (remote=trusted_private_network, cloud=opt_in, companion=unix_socket/embedded)
+[friday] Plugin runtime mode: full
+[friday] Program discovery enabled (darwin).
+[friday] Marketplace commerce runtime: enabled
+[friday] ✓ Friday is running
+[friday]   Providers: 1
+[friday]   Channels:  0 — no messaging channels configured
+[friday]   Skills:    54
+🚀 Friday hub running — 54 skill(s) loaded
+🚀 Friday API server listening on http://127.0.0.1:3241
+   Open http://127.0.0.1:3241 in your browser to get started.
+[FRIDAY] GET / 200 3ms
+[FRIDAY] GET /v1/uix/preferences?category=uix 200 1ms
+[FRIDAY] GET /v1/auth/me 200 0ms
+[FRIDAY] GET /v1/setup/status 200 1ms
+[FRIDAY] GET /v1/uix/user-profile 200 1ms
+[FRIDAY] GET /v1/providers 200 2ms
+[FRIDAY] GET /v1/providers/templates 200 1ms
+[FRIDAY] GET /v1/uix/persona 200 3ms
+[FRIDAY] GET /v1/health 200 0ms
+[friday] WARNING: Local bypass login used (no-signin mode).
+[FRIDAY] POST /v1/auth/login 200 1ms
+[FRIDAY] GET /v1/providers 200 0ms
+[FRIDAY] DELETE /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 0ms
+[FRIDAY] POST /v1/memory/search 200 2ms
+[friday][marker] world_model_episode_extracted runId=58293138-c4d0-4f56-a60a-7ce9d598e8cb userId=admin-001 steps=0
+[friday][marker] world_model_snapshot_saved runId=58293138-c4d0-4f56-a60a-7ce9d598e8cb userId=admin-001
+[friday][marker] world_model_pattern_upserted runId=58293138-c4d0-4f56-a60a-7ce9d598e8cb userId=admin-001 count=5
+[FRIDAY] POST /v1/agent/runs 200 3252ms
+[FRIDAY] GET /v1/agent/runs/58293138-c4d0-4f56-a60a-7ce9d598e8cb 200 0ms
+[FRIDAY] GET /v1/agent/runs/58293138-c4d0-4f56-a60a-7ce9d598e8cb/audit 200 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 0ms
+[FRIDAY] POST /v1/memory/search 200 0ms
+[friday][marker] world_model_episode_extracted runId=30e610f0-a6c9-4347-ad07-e00bc1635576 userId=admin-001 steps=1
+[friday][marker] world_model_snapshot_saved runId=30e610f0-a6c9-4347-ad07-e00bc1635576 userId=admin-001
+[friday][marker] world_model_pattern_upserted runId=30e610f0-a6c9-4347-ad07-e00bc1635576 userId=admin-001 count=5
+[FRIDAY] POST /v1/agent/runs 200 15897ms
+[FRIDAY] GET /v1/agent/runs/30e610f0-a6c9-4347-ad07-e00bc1635576 200 1ms
+[FRIDAY] GET /v1/agent/runs/30e610f0-a6c9-4347-ad07-e00bc1635576/audit 200 0ms
+[friday][marker] world_model_episode_extracted runId=ca30ca84-87f8-4a19-8097-f409412dd75e userId=admin-001 steps=1
+[friday][marker] world_model_snapshot_saved runId=ca30ca84-87f8-4a19-8097-f409412dd75e userId=admin-001
+[friday][marker] world_model_pattern_upserted runId=ca30ca84-87f8-4a19-8097-f409412dd75e userId=admin-001 count=5
+[FRIDAY] POST /v1/agent/runs 200 12121ms
+[FRIDAY] GET /v1/agent/runs/ca30ca84-87f8-4a19-8097-f409412dd75e 200 1ms
+[FRIDAY] GET /v1/agent/runs/ca30ca84-87f8-4a19-8097-f409412dd75e/audit 200 0ms
+[FRIDAY] DELETE /v1/uix/learned-facts/pref%3Adisplay_name 404 0ms
+[FRIDAY] GET /v1/uix/learned-facts 200 0ms
+[FRIDAY] GET /v1/memory/items?limit=50 200 0ms
+[FRIDAY] POST /v1/memory/search 200 0ms
+

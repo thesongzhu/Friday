@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3242/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "What should you call me? Reply with only the name.",
+      "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "f656a372-82a4-483a-b600-4dc96f2ac76c",
+        "status": "completed",
+        "response": "MemoryAuditName-1776603415082",
+        "toolCallCount": 3,
+        "durationMs": 8809,
+        "usageInput": 2781,
+        "usageOutput": 193,
+        "finalResponse": "MemoryAuditName-1776603415082",
+        "eventStreamAvailable": true
+      },
+      "requestId": "f0ac5bf0-5e6e-494e-b9ac-919f0a0037e4"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "f656a372-82a4-483a-b600-4dc96f2ac76c",
+      "status": "completed",
+      "response": "MemoryAuditName-1776603415082",
+      "toolCallCount": 3,
+      "durationMs": 8809,
+      "usageInput": 2781,
+      "usageOutput": 193,
+      "finalResponse": "MemoryAuditName-1776603415082",
+      "eventStreamAvailable": true
+    },
+    "requestId": "f0ac5bf0-5e6e-494e-b9ac-919f0a0037e4"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "main_fix_runtime": {
+    "state_dir": "/Users/jarvis/Projects/Friday/.claude/worktrees/friday-audit-remediation-20260419T085134Z/audit-fix/runtime/main-fix-state-issue173-postfix",
+    "port": 3241,
+    "ui_port": 5273
+  },
+  "isolated_gated_runtime": {
+    "state_dir": "/Users/jarvis/Projects/Friday/.claude/worktrees/friday-audit-remediation-20260419T085134Z/audit-fix/runtime/isolated-gated-state",
+    "port": 3242,
+    "ui_port": 5274
+  }
+}

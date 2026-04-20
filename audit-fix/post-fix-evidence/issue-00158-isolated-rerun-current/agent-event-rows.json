@@ -1,0 +1,93 @@
+[
+  {
+    "run_id": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+    "seq": 1,
+    "event_name": "agent.run.started",
+    "payload_json": "{\"runId\":\"e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0\",\"task\":\"Reply with the exact text idempotent-ok and nothing else.\",\"model\":\"claude-sonnet-4-20250514\",\"providerId\":\"66fef3c5-6032-4891-bb0c-e36fc08e6228\",\"taskProfile\":{\"id\":\"default\",\"model\":\"claude-sonnet-4-20250514\",\"modelSelectionSource\":\"provider+model\"}}",
+    "emitted_at": "2026-04-19T15:24:55.839Z"
+  },
+  {
+    "run_id": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+    "seq": 2,
+    "event_name": "agent.run.progress",
+    "payload_json": "{\"runId\":\"e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0\",\"phase\":\"pending\",\"elapsedMs\":6,\"subagentCount\":0,\"eta\":119994,\"etaConfidence\":\"low\"}",
+    "emitted_at": "2026-04-19T15:24:55.839Z"
+  },
+  {
+    "run_id": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+    "seq": 3,
+    "event_name": "agent.run.planning",
+    "payload_json": "{\"runId\":\"e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0\",\"message\":\"Planning approach (1 step(s))\"}",
+    "emitted_at": "2026-04-19T15:24:55.839Z"
+  },
+  {
+    "run_id": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+    "seq": 4,
+    "event_name": "agent.run.progress",
+    "payload_json": "{\"runId\":\"e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0\",\"phase\":\"planning\",\"elapsedMs\":6,\"subagentCount\":0,\"eta\":119994,\"etaConfidence\":\"low\"}",
+    "emitted_at": "2026-04-19T15:24:55.839Z"
+  },
+  {
+    "run_id": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+    "seq": 5,
+    "event_name": "agent.run.executing",
+    "payload_json": "{\"runId\":\"e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0\",\"step\":1,\"description\":\"LLM turn 1\"}",
+    "emitted_at": "2026-04-19T15:24:55.846Z"
+  },
+  {
+    "run_id": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+    "seq": 6,
+    "event_name": "agent.run.progress",
+    "payload_json": "{\"runId\":\"e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0\",\"phase\":\"executing\",\"elapsedMs\":14,\"subagentCount\":0,\"eta\":119986,\"etaConfidence\":\"low\"}",
+    "emitted_at": "2026-04-19T15:24:55.847Z"
+  },
+  {
+    "run_id": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+    "seq": 7,
+    "event_name": "agent.run.text_delta",
+    "payload_json": "{\"runId\":\"e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0\",\"delta\":\"id\"}",
+    "emitted_at": "2026-04-19T15:24:57.918Z"
+  },
+  {
+    "run_id": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+    "seq": 8,
+    "event_name": "agent.run.text_delta",
+    "payload_json": "{\"runId\":\"e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0\",\"delta\":\"empotent-ok\"}",
+    "emitted_at": "2026-04-19T15:24:57.918Z"
+  },
+  {
+    "run_id": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+    "seq": 9,
+    "event_name": "agent.run.route_selected",
+    "payload_json": "{\"runId\":\"e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0\",\"requestedProviderId\":\"66fef3c5-6032-4891-bb0c-e36fc08e6228\",\"requestedModel\":\"claude-sonnet-4-20250514\",\"taskProfileId\":\"default\",\"taskProfileModel\":\"claude-sonnet-4-20250514\",\"modelSelectionSource\":\"provider+model\",\"actualProviderId\":\"66fef3c5-6032-4891-bb0c-e36fc08e6228\",\"actualModel\":\"claude-sonnet-4-20250514\",\"actualProviderKind\":\"anthropic\",\"actualProviderApi\":\"anthropic-messages\",\"backendKind\":\"http\",\"routingDecisionReason\":\"Historical route outcomes influenced candidate scoring.\",\"learningAdjusted\":false,\"routeDecisionTrace\":{\"taskProfileId\":\"default\",\"requiresNativeTools\":true,\"learningAdjusted\":false,\"learningSignalsPresent\":true,\"orderingAdjusted\":false,\"selectedAdjusted\":false,\"reasonCode\":\"historical_bias\",\"reasonText\":\"Historical route outcomes influenced candidate scoring.\",\"historyWindow\":{\"sampleLimit\":250},\"selectedBeforeLearning\":{\"providerId\":\"66fef3c5-6032-4891-bb0c-e36fc08e6228\",\"providerKind\":\"anthropic\",\"model\":\"claude-sonnet-4-20250514\",\"backendKind\":\"http\"},\"selectedAfterLearning\":{\"providerId\":\"66fef3c5-6032-4891-bb0c-e36fc08e6228\",\"providerKind\":\"anthropic\",\"model\":\"claude-sonnet-4-20250514\",\"backendKind\":\"http\"},\"candidateScores\":[{\"providerId\":\"66fef3c5-6032-4891-bb0c-e36fc08e6228\",\"providerKind\":\"anthropic\",\"model\":\"claude-sonnet-4-20250514\",\"backendKind\":\"http\",\"originalRank\":1,\"finalRank\":1,\"selected\":true,\"eligible\":true,\"ineligibilityReasons\":[],\"pinned\":false,\"historicalSuccessRate\":1,\"historicalFailureRate\":0,\"sampleCount\":54,\"baseRankScore\":1,\"historyScore\":5.25,\"patternScore\":0,\"lessonScore\":0,\"routePenaltyScore\":0,\"pinBonus\":0,\"finalScore\":6.25,\"historyStats\":{\"sampleCount\":54,\"successRate\":1,\"failureRate\":0},\"matchedLessonIds\":[],\"matchedPatternIds\":[]}]}}",
+    "emitted_at": "2026-04-19T15:24:57.919Z"
+  },
+  {
+    "run_id": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+    "seq": 10,
+    "event_name": "agent.run.progress",
+    "payload_json": "{\"runId\":\"e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0\",\"phase\":\"executing\",\"elapsedMs\":2086,\"subagentCount\":0,\"eta\":117914,\"etaConfidence\":\"low\"}",
+    "emitted_at": "2026-04-19T15:24:57.919Z"
+  },
+  {
+    "run_id": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+    "seq": 11,
+    "event_name": "agent.run.progress",
+    "payload_json": "{\"runId\":\"e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0\",\"phase\":\"testing\",\"elapsedMs\":2090,\"subagentCount\":0,\"eta\":117910,\"etaConfidence\":\"low\"}",
+    "emitted_at": "2026-04-19T15:24:57.923Z"
+  },
+  {
+    "run_id": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+    "seq": 12,
+    "event_name": "agent.run.completed",
+    "payload_json": "{\"runId\":\"e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0\",\"durationMs\":2090,\"toolCallCount\":0,\"testsPassed\":true,\"artifacts\":[{\"type\":\"run_record\",\"path\":\".friday/agent-runs/e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0/run.json\"}]}",
+    "emitted_at": "2026-04-19T15:24:57.925Z"
+  },
+  {
+    "run_id": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+    "seq": 13,
+    "event_name": "agent.run.progress",
+    "payload_json": "{\"runId\":\"e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0\",\"phase\":\"completed\",\"elapsedMs\":2093,\"subagentCount\":0,\"eta\":117907,\"etaConfidence\":\"low\"}",
+    "emitted_at": "2026-04-19T15:24:57.926Z"
+  }
+]

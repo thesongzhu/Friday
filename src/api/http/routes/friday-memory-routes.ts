@@ -10,14 +10,32 @@ import type {
   FridayMemoryStoreRequest,
   FridayMemoryStoreResponse,
 } from "../../model/friday-api-memory.types.js";
-import type { FridayMemoryGuardServiceFactory } from "#memory";
+import type { FridayMemoryGuardServiceFactory, FridayMemoryItem } from "#memory";
+import type { FridayLearnedFactView } from "../../../learning/services/friday-learned-fact-memory-view.js";
+import {
+  FRIDAY_LEARNED_FACT_SOURCE,
+  isLearnedFactSyntheticId,
+  matchesLearnedFactQuery,
+  readLearnedFactKeyFromSyntheticId,
+  toLearnedFactMemoryItem,
+  toLearnedFactSearchResult,
+} from "../../../learning/services/friday-learned-fact-memory-view.js";
 import { FridayDomainError } from "#errors";
 import { FRIDAY_MEMORY_ERROR_CODES, FRIDAY_MEMORY_MAX_LIMIT } from "#memory";
+import {
+  hashIdempotencyPayload,
+  readIdempotencyKeyHeader,
+  readStoredIdempotencyPayloadHash,
+  throwIdempotencyConflict,
+} from "./friday-route-idempotency.js";
 
 // ─── Dependencies ───
 
 export interface FridayMemoryRoutesDeps {
   memoryGuardFactory: FridayMemoryGuardServiceFactory;
+  listLearnedFacts?: (input: { userId: string; limit: number }) => FridayLearnedFactView[];
+  deleteLearnedFact?: (input: { userId: string; key: string }) => boolean;
+  findStoreReplay?: (input: { principalId: string; idempotencyKey: string }) => FridayMemoryItem | null;
 }
 
 // ─── Validation helpers ───
@@ -100,6 +118,45 @@ function isStringOrStringArray(v: unknown): v is string | string[] {
   return typeof v === "string" || (Array.isArray(v) && v.every((x) => typeof x === "string"));
 }
 
+function readPrincipalUserId(principal: unknown): string {
+  if (!principal || typeof principal !== "object") {
+    throw new FridayDomainError("UNAUTHORIZED", "A user principal is required", { httpStatus: 401 });
+  }
+  const candidate = principal as { userId?: unknown; principalId?: unknown };
+  const userId = typeof candidate.userId === "string" && candidate.userId.trim().length > 0
+    ? candidate.userId.trim()
+    : typeof candidate.principalId === "string" && candidate.principalId.trim().length > 0
+      ? candidate.principalId.trim()
+      : undefined;
+  if (!userId) {
+    throw new FridayDomainError("UNAUTHORIZED", "A user principal is required", { httpStatus: 401 });
+  }
+  return userId;
+}
+
+function shouldIncludeLearnedFacts(input: {
+  namespace?: string | string[];
+  source?: string | string[];
+}): boolean {
+  const namespaces = Array.isArray(input.namespace)
+    ? input.namespace
+    : input.namespace
+      ? [input.namespace]
+      : [];
+  const sources = Array.isArray(input.source)
+    ? input.source
+    : input.source
+      ? [input.source]
+      : [];
+  if (sources.length > 0 && !sources.includes(FRIDAY_LEARNED_FACT_SOURCE)) {
+    return false;
+  }
+  if (namespaces.length === 0) {
+    return true;
+  }
+  return namespaces.some((value) => value === "preference" || value === "user" || value === "default");
+}
+
 function validatePruneBody(body: unknown): asserts body is FridayMemoryPruneRequest {
   if (body == null) return; // null/undefined body is valid (prune all in scope)
   if (typeof body !== "object" || Array.isArray(body)) {
@@ -172,6 +229,40 @@ export function createFridayMemoryRoutes(
         validateStoreBody(rawBody);
         const body = rawBody;
         const memory = deps.memoryGuardFactory.forPrincipal(ctx.principal);
+        const idempotencyKey = readIdempotencyKeyHeader(ctx.headers);
+        if (idempotencyKey) {
+          const principalId = readPrincipalUserId(ctx.principal);
+          const payloadHash = hashIdempotencyPayload({
+            namespace: body.namespace,
+            content: body.content,
+            source: body.source,
+            key: body.key,
+            tags: body.tags,
+            metadata: body.metadata,
+            ttlSeconds: body.ttlSeconds,
+            expiresAt: body.expiresAt,
+          });
+          const replay = deps.findStoreReplay?.({ principalId, idempotencyKey });
+          if (replay) {
+            const replayHash = readStoredIdempotencyPayloadHash(replay.metadata);
+            if (replayHash && replayHash !== payloadHash) {
+              throwIdempotencyConflict(idempotencyKey, "memory.items.create");
+            }
+            return { item: replay };
+          }
+          const metadata =
+            body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
+              ? { ...(body.metadata as Record<string, unknown>) }
+              : {};
+          metadata.apiRequest = {
+            operationId: "memory.items.create",
+            principalId,
+            idempotencyKey,
+            payloadHash,
+            receivedAt: ctx.receivedAt,
+          };
+          body.metadata = metadata;
+        }
         const item = await memory.store(body.namespace, body.content, {
           source: body.source,
           key: body.key,
@@ -204,6 +295,40 @@ export function createFridayMemoryRoutes(
         validateStoreNumericFields(rawBody);
         validateStoreBody(rawBody);
         const body = rawBody;
+        const principalId = readPrincipalUserId(ctx.principal);
+        const idempotencyKey = readIdempotencyKeyHeader(ctx.headers);
+        if (idempotencyKey) {
+          const payloadHash = hashIdempotencyPayload({
+            namespace: body.namespace,
+            content: body.content,
+            source: body.source,
+            key: body.key,
+            tags: body.tags,
+            metadata: body.metadata,
+            ttlSeconds: body.ttlSeconds,
+            expiresAt: body.expiresAt,
+          });
+          const replay = deps.findStoreReplay?.({ principalId, idempotencyKey });
+          if (replay) {
+            const replayHash = readStoredIdempotencyPayloadHash(replay.metadata);
+            if (replayHash && replayHash !== payloadHash) {
+              throwIdempotencyConflict(idempotencyKey, "memory.items.create");
+            }
+            return { item: replay };
+          }
+          const metadata =
+            body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
+              ? { ...(body.metadata as Record<string, unknown>) }
+              : {};
+          metadata.apiRequest = {
+            operationId: "memory.items.create",
+            principalId,
+            idempotencyKey,
+            payloadHash,
+            receivedAt: ctx.receivedAt,
+          };
+          body.metadata = metadata;
+        }
         const memory = deps.memoryGuardFactory.forPrincipal(ctx.principal);
         const item = await memory.store(body.namespace, body.content, {
           source: body.source,
@@ -227,6 +352,7 @@ export function createFridayMemoryRoutes(
         validateSearchBody(ctx.body);
         const body = ctx.body;
         const memory = deps.memoryGuardFactory.forPrincipal(ctx.principal);
+        const userId = readPrincipalUserId(ctx.principal);
         const items = await memory.search(body.query, {
           namespace: body.namespace,
           source: body.source,
@@ -237,7 +363,19 @@ export function createFridayMemoryRoutes(
           minScore: body.minScore,
           weights: body.weights,
         });
-        return { items };
+        const learnedItems = deps.listLearnedFacts && shouldIncludeLearnedFacts({
+          namespace: body.namespace,
+          source: body.source,
+        })
+          ? deps.listLearnedFacts({ userId, limit: body.limit ?? FRIDAY_MEMORY_MAX_LIMIT })
+            .filter((fact) => matchesLearnedFactQuery(fact, body.query))
+            .map((fact) => toLearnedFactSearchResult(fact, body.query))
+          : [];
+        return {
+          items: [...items, ...learnedItems]
+            .sort((a, b) => b.score - a.score)
+            .slice(0, body.limit ?? FRIDAY_MEMORY_MAX_LIMIT),
+        };
       },
     },
 
@@ -283,13 +421,20 @@ export function createFridayMemoryRoutes(
         const includeExpired = query.includeExpired === "true";
 
         const memory = deps.memoryGuardFactory.forPrincipal(ctx.principal);
+        const userId = readPrincipalUserId(ctx.principal);
         const items = await memory.list({
           namespace,
           source,
           includeExpired,
           limit,
         });
-        return { items };
+        const learnedItems = deps.listLearnedFacts && shouldIncludeLearnedFacts({ namespace, source })
+          ? deps.listLearnedFacts({ userId, limit: limit ?? FRIDAY_MEMORY_MAX_LIMIT })
+            .map((fact) => toLearnedFactMemoryItem(fact))
+          : [];
+        const combined = [...items, ...learnedItems]
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        return { items: typeof limit === "number" ? combined.slice(0, limit) : combined };
       },
     },
 
@@ -301,6 +446,35 @@ export function createFridayMemoryRoutes(
       auth: { public: false, anyOfScopes: ["hub.admin"] },
       async handler(ctx): Promise<FridayDeleteMemoryItemResponse> {
         const { id } = ctx.params as { id: string };
+        if (isLearnedFactSyntheticId(id)) {
+          if (!deps.deleteLearnedFact) {
+            throw new FridayDomainError(
+              FRIDAY_MEMORY_ERROR_CODES.NOT_FOUND,
+              `Memory item '${id}' not found`,
+              { httpStatus: 404 },
+            );
+          }
+          const key = readLearnedFactKeyFromSyntheticId(id);
+          if (!key) {
+            throw new FridayDomainError(
+              FRIDAY_MEMORY_ERROR_CODES.NOT_FOUND,
+              `Memory item '${id}' not found`,
+              { httpStatus: 404 },
+            );
+          }
+          const deleted = deps.deleteLearnedFact({
+            userId: readPrincipalUserId(ctx.principal),
+            key,
+          });
+          if (!deleted) {
+            throw new FridayDomainError(
+              FRIDAY_MEMORY_ERROR_CODES.NOT_FOUND,
+              `Memory item '${id}' not found`,
+              { httpStatus: 404 },
+            );
+          }
+          return { deleted: true };
+        }
         const memory = deps.memoryGuardFactory.forPrincipal(ctx.principal);
         const deleted = await memory.delete(id);
         if (!deleted) {

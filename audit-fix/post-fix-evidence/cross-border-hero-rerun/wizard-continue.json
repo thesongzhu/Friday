@@ -1,0 +1,59 @@
+{
+  "ok": true,
+  "data": {
+    "wizard": {
+      "wizardId": "cross-border-hero",
+      "contextId": "2b804e47-9f42-4c1b-86d8-85ddd4f1e6c4",
+      "title": "Cross-border Hero",
+      "status": "awaiting_input",
+      "currentStepId": "clarification",
+      "steps": [
+        {
+          "id": "goal",
+          "title": "Describe your goal",
+          "prompt": "What cross-border operating goal should Friday help with first? Friday will set up the profile, workflow, and next actions.",
+          "inputKey": "goal"
+        },
+        {
+          "id": "clarification",
+          "title": "Answer a follow-up",
+          "prompt": "If Friday needs more detail, answer the follow-up question.",
+          "inputKey": "answer"
+        }
+      ],
+      "collectedValues": {
+        "goal": "Set up a cross-border shop operating plan for TikTok Shop US.",
+        "questions": [
+          "What specific tasks should the operating plan include?",
+          "Are there any specific inputs or data sources required for the plan?",
+          "What format or platform should the output be delivered in?"
+        ]
+      },
+      "nextActionLabel": "Continue"
+    },
+    "summary": "What specific tasks should the operating plan include? Are there any specific inputs or data sources required for the plan? What format or platform should the output be delivered in?",
+    "result": {
+      "sessionId": "a4382274-c26b-45ac-ba3a-d58c6165a7ab",
+      "mode": "clarification_required",
+      "questions": [
+        "What specific tasks should the operating plan include?",
+        "Are there any specific inputs or data sources required for the plan?",
+        "What format or platform should the output be delivered in?"
+      ]
+    },
+    "state": "needs_one_answer",
+    "objective": "Set up a cross-border shop operating plan for TikTok Shop US.",
+    "assumptions": [
+      "Friday will use the current workspace and runtime defaults unless you override them.",
+      "Friday will prefer rollback-backed, observable actions when it can proceed safely.",
+      "Friday will carry forward likely defaults when they do not materially change risk."
+    ],
+    "unknowns": [
+      "What specific tasks should the operating plan include?",
+      "Are there any specific inputs or data sources required for the plan?"
+    ],
+    "successTest": "Friday will reach a verified next step. Objective: Set up a cross-border shop operating plan for TikTok Shop US..",
+    "fallbackPath": "Ask one decisive follow-up question or surface a blocked issue card with the missing detail."
+  },
+  "requestId": "9606986e-f22e-41dc-8f81-4118660f2d5e"
+}
